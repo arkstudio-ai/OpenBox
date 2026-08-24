@@ -1,0 +1,13 @@
+.env
+.env.*
+node_modules/
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+e2e/
+design-reference/
+docs/
+*.log
+.DS_Store

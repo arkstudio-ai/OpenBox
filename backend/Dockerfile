@@ -1,15 +1,20 @@
-FROM python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
+
+FROM ${UV_IMAGE} AS uv
+FROM ${PYTHON_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=uv /uv /bin/uv
 
 WORKDIR /app
+ENV PYTHONPATH=/app
 COPY pyproject.toml uv.lock* ./
-RUN uv export --frozen --no-dev --no-hashes 2>/dev/null > /tmp/requirements.txt || uv export --no-dev --no-hashes > /tmp/requirements.txt && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
+RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirements.txt && \
+    uv pip install --system --no-cache -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
 COPY . .

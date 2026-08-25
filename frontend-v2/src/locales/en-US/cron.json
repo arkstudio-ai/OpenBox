@@ -1,0 +1,142 @@
+{
+  "page": {
+    "create": "New scheduled task",
+    "pauseAll": "Pause all",
+    "resumeAll": "Resume all",
+    "loading": "Loading scheduled tasks…",
+    "loadFailed": "Failed to load scheduled tasks. Please refresh and try again.",
+    "empty": {
+      "title": "No scheduled tasks yet",
+      "body": "Tasks belong to a project and run in its directory; tasks created from a chat also post results back into that conversation."
+    },
+    "title": "Scheduled tasks",
+    "subtitle": "Managed per project; the agent runs them on schedule",
+    "createManual": "Create manually",
+    "createChat": "Create via chat"
+  },
+  "status": {
+    "healthy": "Scheduler healthy",
+    "unhealthy": "Scheduler unhealthy",
+    "lastTick": "Last tick {{when}}",
+    "enabledCount_one": "{{count}} task enabled",
+    "enabledCount_other": "{{count}} tasks enabled",
+    "runningCount_one": "{{count}} running",
+    "runningCount_other": "{{count}} running"
+  },
+  "job": {
+    "state": {
+      "running": "Running",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "autoDisabled": "Auto-disabled after repeated failures"
+    },
+    "action": {
+      "runNow": "Run now",
+      "enable": "Enable",
+      "disable": "Disable",
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "nextRun": "Next {{when}}",
+    "lastRun": "Last {{when}}",
+    "stats": "Runs {{total}} · OK {{ok}} · Failed {{failed}}",
+    "showRuns": "Show run history",
+    "hideRuns": "Hide run history",
+    "lastError": "The last run failed and the task is disabled; see run history for details.",
+    "deleteConfirm": {
+      "title": "Delete scheduled task",
+      "body": "Delete \"{{name}}\"? This cannot be undone; run history is kept for 30 days."
+    }
+  },
+  "run": {
+    "status": {
+      "ok": "OK",
+      "error": "Failed",
+      "skipped": "Skipped",
+      "running": "Running"
+    },
+    "silent": "Nothing to report",
+    "tokens": "{{formatted}} tokens",
+    "transcript": "View transcript",
+    "failed": "This run failed.",
+    "loading": "Loading run history…",
+    "loadFailed": "Failed to load run history.",
+    "empty": "No runs yet.",
+    "retentionHint": "The newest 20 transcripts per task are kept; run records for 30 days."
+  },
+  "form": {
+    "createTitle": "New scheduled task",
+    "editTitle": "Edit scheduled task",
+    "name": "Name",
+    "namePlaceholder": "e.g. Daily build check",
+    "task": "Task",
+    "taskPlaceholder": "Describe what the agent should do on schedule…",
+    "schedule": "Schedule",
+    "mode": {
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "interval": "Interval",
+      "custom": "Cron expression"
+    },
+    "weekday": "Weekday",
+    "time": "Time",
+    "timezone": "Timezone {{tz}}",
+    "every": "Every",
+    "unit": "Unit",
+    "minInterval_one": "Minimum interval: {{count}} minute",
+    "minInterval_other": "Minimum interval: {{count}} minutes",
+    "expr": "Cron expression",
+    "exprHint": "Five-field expression, interpreted in {{tz}}; on-the-hour jobs are staggered by up to 5 minutes.",
+    "saveFailed": "Save failed. Please check your input and try again.",
+    "cancel": "Cancel",
+    "create": "Create",
+    "save": "Save",
+    "saving": "Saving…",
+    "project": "Project",
+    "projectHint": "The task runs in this project's directory; run logs go to its cron/ folder."
+  },
+  "weekday": {
+    "sun": "Sunday",
+    "mon": "Monday",
+    "tue": "Tuesday",
+    "wed": "Wednesday",
+    "thu": "Thursday",
+    "fri": "Friday",
+    "sat": "Saturday"
+  },
+  "describe": {
+    "once": "Once at {{time}}",
+    "daily": "Daily at {{time}}",
+    "weekly": "Every {{weekday}} at {{time}}",
+    "everyMinutes_one": "Every {{count}} minute",
+    "everyMinutes_other": "Every {{count}} minutes",
+    "everyHours_one": "Every {{count}} hour",
+    "everyHours_other": "Every {{count}} hours",
+    "cron": "Cron: {{expr}}"
+  },
+  "panel": {
+    "empty": {
+      "title": "No scheduled tasks in this project",
+      "body": "Just ask in chat, e.g. \"every morning at 9…\", to create one for this project — or manage them all on the tasks page."
+    },
+    "manageAll": "Manage all scheduled tasks in Settings"
+  },
+  "pill": {
+    "running": "Running",
+    "paused": "Paused",
+    "lastOk": "Last: ok · {{when}}",
+    "lastFailed": "Last: failed · {{when}}",
+    "neverRan": "Never ran",
+    "next": "Next: {{when}}",
+    "aria": "Scheduled task status"
+  },
+  "chatCreate": {
+    "title": "Create via chat",
+    "body": "Pick the project this task belongs to; a new conversation opens and the agent guides you through the setup.",
+    "sessionTitle": "Set up a scheduled task",
+    "start": "Start chat",
+    "starting": "Opening…",
+    "failed": "Could not open the conversation. Please try again.",
+    "prompt": "Let's set up a scheduled task together. Start by briefly explaining how scheduled tasks work here, then ask me what I need to schedule and when it should run; create it once we've confirmed the details."
+  }
+}

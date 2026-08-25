@@ -2,6 +2,7 @@ import { Suspense, useEffect } from "react"
 import { Outlet, useParams } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents } from "@/features/workspace"
 import { WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
+import { CronPanelTab, CronStatusPill } from "@/features/cron"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -29,7 +30,11 @@ export default function WorkspaceLayout() {
     <div className="flex h-screen overflow-hidden bg-bg text-ink">
       <Sidebar />
       <main className="flex min-h-0 min-w-105 flex-1 flex-col overflow-hidden">
-        <Topbar panelOpen={panelOpen} onTogglePanel={togglePanel} />
+        <Topbar
+          panelOpen={panelOpen}
+          onTogglePanel={togglePanel}
+          statusSlot={<CronStatusPill sessionId={sessionId ?? null} />}
+        />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Suspense
             fallback={
@@ -46,7 +51,10 @@ export default function WorkspaceLayout() {
           without this that suspension escapes to the router boundary and blanks
           the whole workspace. */}
       <Suspense fallback={null}>
-        <WorkbenchPanel sessionId={sessionId ?? null} />
+        <WorkbenchPanel
+          sessionId={sessionId ?? null}
+          cronTab={<CronPanelTab sessionId={sessionId ?? null} />}
+        />
       </Suspense>
     </div>
   )

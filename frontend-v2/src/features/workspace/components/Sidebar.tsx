@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
-import { FolderPlus, PanelLeft, Plus, Search } from "lucide-react"
+import { Clock, FolderPlus, PanelLeft, Plus, Search } from "lucide-react"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
@@ -95,26 +95,43 @@ export function Sidebar() {
           </button>
         </div>
 
+        {/* DEEIX-style nav rows: left-aligned, icon column, the primary action
+            wears a round tinted icon chip instead of a filled pill. */}
         <button
           type="button"
           // Keep the current project: the new chat is created inside it, and
           // the tree's selection/expansion stays exactly as it was.
           onClick={() => navigate(newChatProject ? `${paths.app}?project=${newChatProject}` : paths.app)}
-          className="flex h-10 flex-none items-center justify-center gap-2 rounded-full bg-a200 text-base font-medium text-ink hover:bg-a300"
+          className="group flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium text-ink hover:bg-hairsoft"
         >
-          <Plus size={16} strokeWidth={2.75} />
+          <span className="flex size-7 flex-none items-center justify-center rounded-full bg-n200 transition-transform duration-150 group-hover:scale-105">
+            <Plus size={15} strokeWidth={2.5} />
+          </span>
           {t("newChat")}
         </button>
 
-        <div className="relative my-3 flex-none">
-          <Search size={15} strokeWidth={2.4} className="absolute start-3.5 top-2.5 text-n500" aria-hidden />
+        <div className="flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 focus-within:bg-hairsoft hover:bg-hairsoft">
+          <span className="flex size-7 flex-none items-center justify-center">
+            <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
+          </span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("search")}
-            className="h-8.5 w-full rounded-full border border-hair bg-transparent ps-9 pe-3 text-md text-ink outline-none placeholder:text-n500 focus-visible:border-n400"
+            className="min-w-0 flex-1 bg-transparent pe-2 text-base text-ink outline-none placeholder:text-n600"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={() => navigate(paths.cron)}
+          className="mt-2.5 mb-1.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
+        >
+          <span className="flex size-7 flex-none items-center justify-center">
+            <Clock size={16} strokeWidth={2.1} />
+          </span>
+          {t("scheduledTasks")}
+        </button>
 
         {draftOpen && (
           <div className="mb-1 flex flex-none items-center gap-2 rounded-full border border-hair px-3.5 py-2">

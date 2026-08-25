@@ -1,14 +1,52 @@
 import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router"
+import { Clock, MessageSquare } from "lucide-react"
 import type { Project, Session } from "@/shared/types/api"
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "@/shared/ui/Dialog"
 import { paths } from "@/shared/router/paths"
+import { cn } from "@/shared/lib/cn"
 import { useDeleteProject } from "../api/projects"
 import { useDeleteSession } from "../api/sessions"
-import { useWorkspaceUi } from "../stores/ui"
+import { useWorkspaceUi, type SessionFilter } from "../stores/ui"
 import { ProjectRow } from "./ProjectRow"
 import { SessionRow } from "./SessionRow"
+
+/** Tiny icon segment under a project header: conversations (default) / cron
+ *  runs. Rendered only when the project actually has cron run sessions. */
+function FilterToggle({
+  mode,
+  onChange,
+  cronCount,
+}: {
+  mode: SessionFilter
+  onChange: (mode: SessionFilter) => void
+  cronCount: number
+}) {
+  const { t } = useTranslation("workspace")
+  const segment = (value: SessionFilter, label: string, icon: React.ReactNode) => (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      aria-pressed={mode === value}
+      onClick={() => onChange(value)}
+      className={cn(
+        "flex h-6 items-center gap-1 rounded-full px-2 text-[11px]",
+        mode === value ? "bg-n200 text-ink" : "text-n600 hover:bg-hairsoft",
+      )}
+    >
+      {icon}
+      {value === "cron" && cronCount > 0 && <span>{cronCount}</span>}
+    </button>
+  )
+  return (
+    <div className="mb-0.5 flex items-center gap-0.5 ps-7">
+      {segment("chats", t("filter.chats"), <MessageSquare size={12} strokeWidth={2.2} />)}
+      {segment("cron", t("filter.cron"), <Clock size={12} strokeWidth={2.2} />)}
+    </div>
+  )
+}
 
 interface ProjectTreeProps {
   projects: Project[]
@@ -27,6 +65,8 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
   const { sessionId: activeSessionId } = useParams()
   const deleteProject = useDeleteProject()
   const deleteSession = useDeleteSession()
+  const sessionFilter = useWorkspaceUi((s) => s.sessionFilter)
+  const setSessionFilter = useWorkspaceUi((s) => s.setSessionFilter)
   const [confirmProject, setConfirmProject] = useState<Project | null>(null)
   const [confirmSession, setConfirmSession] = useState<Session | null>(null)
 
@@ -67,27 +107,44 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
 
   return (
     <>
-      {groups.map((g) => (
-        <div key={g.project?.id ?? "unsorted"} className="flex flex-col">
-          <ProjectRow
-            project={g.project}
-            forceExpanded={searching}
-            onAskDelete={() => g.project && setConfirmProject(g.project)}
-          >
-            {g.sessions.map((s) => (
-              <SessionRow
-                key={s.id}
-                session={s}
-                active={s.id === activeSessionId}
-                onAskDelete={() => setConfirmSession(s)}
-              />
-            ))}
-            {g.sessions.length === 0 && (
-              <div className="ps-7.5 pe-3 py-1 text-md text-n600">{t("noChats")}</div>
-            )}
-          </ProjectRow>
-        </div>
-      ))}
+      {groups.map((g) => {
+        const groupId = g.project?.id ?? "unsorted"
+        const crons = g.sessions.filter((s) => s.kind === "cron")
+        const mode = sessionFilter[groupId] ?? "chats"
+        // While searching, matches from both kinds show — a filter that hides
+        // a title you just typed reads as a broken search.
+        const visible = searching
+          ? g.sessions
+          : g.sessions.filter((s) => (mode === "cron" ? s.kind === "cron" : s.kind !== "cron"))
+        return (
+          <div key={groupId} className="flex flex-col">
+            <ProjectRow
+              project={g.project}
+              forceExpanded={searching}
+              onAskDelete={() => g.project && setConfirmProject(g.project)}
+            >
+              {crons.length > 0 && !searching && (
+                <FilterToggle
+                  mode={mode}
+                  cronCount={crons.length}
+                  onChange={(m) => setSessionFilter(groupId, m)}
+                />
+              )}
+              {visible.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeSessionId}
+                  onAskDelete={() => setConfirmSession(s)}
+                />
+              ))}
+              {visible.length === 0 && (
+                <div className="ps-7.5 pe-3 py-1 text-md text-n600">{t("noChats")}</div>
+              )}
+            </ProjectRow>
+          </div>
+        )
+      })}
 
       <Dialog open={confirmProject !== null} onClose={() => setConfirmProject(null)}>
         <DialogTitle>{t("delTitle", { name: confirmProject?.name ?? "" })}</DialogTitle>

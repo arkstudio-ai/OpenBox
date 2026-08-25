@@ -11,9 +11,12 @@ import { useSessionsQuery } from "../api/sessions"
 interface TopbarProps {
   panelOpen: boolean
   onTogglePanel: () => void
+  /** Status widgets rendered before the panel toggle (e.g. the cron pill),
+   *  injected by the assembly layer to keep features decoupled. */
+  statusSlot?: React.ReactNode
 }
 
-export function Topbar({ panelOpen, onTogglePanel }: TopbarProps) {
+export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
   const { t } = useTranslation("workspace")
   const { sessionId } = useParams()
   const location = useLocation()
@@ -24,6 +27,7 @@ export function Topbar({ panelOpen, onTogglePanel }: TopbarProps) {
   const { copy } = useCopy()
 
   const isSettings = location.pathname.includes("/settings")
+  const isCron = location.pathname.includes("/cron")
   const session = useMemo(
     () => (sessions.data ?? []).find((s) => s.id === sessionId) ?? null,
     [sessions.data, sessionId],
@@ -33,10 +37,16 @@ export function Topbar({ panelOpen, onTogglePanel }: TopbarProps) {
     [projects.data, session],
   )
 
-  const title = isSettings ? t("settings") : (session?.title ?? t("untitledChat"))
+  const title = isSettings
+    ? t("settings")
+    : isCron
+      ? t("scheduledTasks")
+      : (session?.title ?? t("untitledChat"))
   const subtitle = isSettings
     ? t("settings:subtitle", { ns: "settings" })
-    : (project?.name ?? t("unsorted"))
+    : isCron
+      ? t("scheduledTasksHint")
+      : (project?.name ?? t("unsorted"))
 
   const share = () => {
     copy(window.location.href)
@@ -60,6 +70,7 @@ export function Topbar({ panelOpen, onTogglePanel }: TopbarProps) {
         <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
         <span className="min-w-0 flex-none truncate text-sm text-n600">{subtitle}</span>
       </div>
+      {!isSettings && statusSlot}
       {session && (
         <button
           type="button"
@@ -71,7 +82,7 @@ export function Topbar({ panelOpen, onTogglePanel }: TopbarProps) {
           <Upload size={16} strokeWidth={2.4} />
         </button>
       )}
-      {!panelOpen && !isSettings && (
+      {!panelOpen && !isSettings && !isCron && (
         <button
           type="button"
           className="flex size-8 flex-none items-center justify-center rounded-full text-n700 hover:bg-n200"

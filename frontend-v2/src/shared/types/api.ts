@@ -24,6 +24,8 @@ export interface Session {
   updated_at: string
   slug?: string
   project_id?: string
+  /** "normal" | "cron" — cron run transcripts get a clock badge in the sidebar. */
+  kind?: string
   additions?: number
   deletions?: number
   files_changed?: number

@@ -63,5 +63,12 @@
     "process_one": "{{count}} 个进程",
     "process_other": "{{count}} 个进程"
   },
-  "userLine": "{{role}} · {{count}} 条对话"
+  "userLine": "{{role}} · {{count}} 条对话",
+  "scheduledTasks": "定时任务",
+  "scheduledTasksHint": "跨项目统一管理",
+  "cronRun": "定时任务运行",
+  "filter": {
+    "chats": "会话",
+    "cron": "定时运行"
+  }
 }

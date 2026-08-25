@@ -1390,3 +1390,41 @@ _FC_ID_OK = re.compile(r"fc_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")   # 总长 4..64,�
 - 流式消息 store（chat 特性）与 Query 缓存物理隔离；初始快照走 Query，增量走 WS（§7.4 落地形态）。
 
 ---
+
+## 附录 E · 定时任务页（2026-08-25）
+
+> 背景：后端 cron 子系统补齐生产化能力（服务层校验/配额/最小间隔 5 分钟、原子认领、连败 10 次自动停用、NO_REPLY 静默约定、token 计量、整点错峰、webhook 投递含 SSRF 防护），v2 同步补上管理界面。设计稿没有该页面，视觉沿用设置页既有模式（导航 pill + 卡片列表），不新造样式。
+
+- 页面位于 **设置 → 定时任务**（`features/cron`，spec §3.1 目录清单中的预留领域），列出该用户**全部**任务（跨会话）——对齐市场形态（ChatGPT Tasks / Manus / Devin 均为全局管理页 + 会话内自然语言创建双入口；会话内入口由后端 `cron` 工具承担）。
+- 表单四种计划模式（每天/每周/按间隔/Cron 表达式）在提交前于前端按后端同一规则预校验（最小间隔常量 `MIN_INTERVAL_MINUTES` 镜像后端 `cron_min_interval_seconds`）；后端拒绝时按 §10.7 显示兜底文案，不透传 detail。
+- 运行历史行内展示 token 消耗与「无事可报」（NO_REPLY）徽标；「查看过程」链接到临时会话（保留 24h，文案已提示）。
+- 会话下拉复用工作区 `["sessions", userId]` 缓存键（§7.2 同键共享，非跨特性 import）。
+- 新增 i18n 命名空间 `cron`（zh-CN/en-US 同步交付）；`settings` 命名空间加 `nav.cron`/`hint.cron`。
+- 语言偏好经外观 store 已持久化至 `preferences.extra.locale`，后端注入文案（[定时任务]/摘要标签/静默指令)据此本地化。
+
+### E.1 会话内入口与运行档案(2026-08-25 第二轮)
+
+- **运行会话实体化**:cron 临时会话为 `sessions.kind='cron'` 的真实会话(alembic f1a2b3c4d5e6),不入侧栏(靠 parent_id)、不占会话配额(count_by_user 排除)、保留策略=每任务最近 20 次 transcript + 30 天上限(reaper 按窗口修剪,超窗 run 行保留摘要但 temp_session_id 置空,UI 随之隐藏「查看过程」)。
+- **工作面板「定时任务」tab**(◷):workbench 只扩展 TabKind/菜单/骨架;内容组件 `CronPanelTab` 由装配层(WorkspaceLayout)以 `cronTab` slot 注入——workbench 与 cron 两特性零横向 import。
+- **顶栏状态胶囊 `CronStatusPill`**:经 Topbar `statusSlot` 注入;当前会话无任务时不渲染;点状态色(执行中呼吸/成功 sage/失败 danger+连败角标/停用灰)+ 距下次执行时间;hover Tooltip 两行(上次/下次);点击经 `workbench.open`(kind:"cron")应用内事件打开面板 tab。
+- **WS 实时**:`cron.job.*` 七个事件入 `shared/ws/events.ts` 契约;`useCronLiveEvents`(pill 挂载)收到即失效 cron 查询——运行开始/结束秒级反映到 pill 与面板。
+- **运行档案**:每次运行(含静默与失败)追加至项目工作区 `cron/<YYYY-MM-DD>.md`(按任务时区),任务 prompt 内置提示 agent 可查阅该目录(廉价跨次记忆);文件面板可见、可 git 提交。
+
+### E.2 项目级定时任务与独立入口(2026-08-25 第三轮)
+
+- **归属改为项目**(alembic a7b8c9d0e1f2):`cron_jobs.project_id` 为归属主键语义;`session_id` 降级为可空「通知会话」——聊天里创建的任务自动携带并把结果注回该会话,页面创建的任务只落运行记录与 cron/ 日志。会话删除仅置空通知引用(任务存活);项目删除级联软删其任务。配额随之改为每项目 10(`cron_max_jobs_per_project`)。
+- **入口迁移**:设置页 cron tab 移除;新增独立路由 `/app/cron`(懒加载 CronRoute),侧栏「新建对话」下方新增「◷ 定时任务」入口;Topbar 对该路由显示专属标题并隐藏面板开关。
+- **侧栏「新建对话」按钮**按用户反馈去除 a200 填充,改为 `border-hair` 描边 + hover hairsoft。
+- 面板 tab 与顶栏胶囊改为**按当前会话所属项目过滤**(经共享 `["sessions", userId]` 缓存解析 project_id)——同项目的所有会话都能看到该项目的任务与状态。
+
+### E.3 侧栏中的定时任务会话(2026-08-25 第四轮)
+
+- 侧栏顶部三行改为 DEEIX 参考样式:左对齐行 + 图标列,「新对话」的 + 号裹圆形浅底 chip(hover 轻放大),搜索改为行式无边框输入,「定时任务」入口为裸图标行。
+- **cron 运行会话回到侧栏**:`list_sessions` 放行 `kind='cron'`(无论是否带通知会话的 parent),task 子代理会话(normal+parent)仍隐藏;`SessionRow` 对 `kind==='cron'` 在标题前渲染小时钟图标(带 aria-label)。临时会话标题去掉「[定时]」前缀——图标接管身份标识,标题即任务名。配额与保留策略不变(不计配额、每任务 20 次 + 30 天)。
+- **E.3 补充(同日)**:历史 cron 会话标题的「[定时] /[Cron] 」前缀经数据迁移 b8c9d0e1f2a3 剥除;项目组头下新增图标分段筛选(💬 会话默认 / ◷ 定时运行,后者带数量角标),仅在该项目存在 cron 会话时出现,搜索时忽略筛选以免藏住命中项;筛选状态不持久化,刷新回默认「会话」。
+
+### E.4 聊天创建定时任务(2026-08-25 第五轮)
+
+- **skill**:`backend/.openbox/skills/scheduled-tasks/SKILL.md`(host 侧,agent 的 skill 工具已做容器+host 合并,容器同名优先)——引导流程:先 3-4 句说明工作方式(项目归属/cron 日志/回发对话/静默),再问「安排什么+何时运行」,确认后调 cron 工具;内含时区换算、5 分钟下限、NO_REPLY 建议与边界说明。`/api/agent/skill` 列表同步改为容器+host 合并,与 agent 视角一致。
+- **入口**:定时任务页「新建定时任务」改为下拉(shared/ui/Menu):「手动创建」=原表单;「聊天创建」=ChatCreateDialog 先选项目 → POST 创建该项目会话(标题「设置定时任务」)→ prompt_async 预设引导词 → 跳转会话,agent 端由 skill 接管引导。
+- 引导词与全部文案入 cron 命名空间(zh/en)。实测:agent 主动加载 skill,开场即「说明方式 + 两问」,与 ChatGPT Tasks 引导形态一致。

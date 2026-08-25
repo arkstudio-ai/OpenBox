@@ -31,6 +31,13 @@ class WorkbenchApi {
     return asString(resp.data?['directory']);
   }
 
+  /// The session's owning project (the cron tab scopes to it).
+  Future<String?> sessionProjectId(String sessionId) async {
+    final resp = await _dio
+        .get<Map<String, dynamic>>('/api/agent/session/$sessionId');
+    return asString(resp.data?['project_id']);
+  }
+
   Future<List<FileEntry>> listFiles(String containerId, String path) async {
     final resp = await _dio.post<dynamic>(
       '/api/containers/$containerId/files/list',

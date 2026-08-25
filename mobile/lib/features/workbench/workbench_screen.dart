@@ -5,6 +5,8 @@ import '../../shared/api/containers_api.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
+import '../cron/widgets/cron_panel_tab.dart';
+import 'state/workbench_providers.dart';
 import 'widgets/browser_tab.dart';
 import 'widgets/desktop_tab.dart';
 import 'widgets/files_tab.dart';
@@ -32,7 +34,14 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   late String _tab = widget.initialTab;
   bool _creatingSandbox = false;
 
-  static const _tabs = ['review', 'terminal', 'browser', 'files', 'desktop'];
+  static const _tabs = [
+    'review',
+    'terminal',
+    'browser',
+    'files',
+    'desktop',
+    'cron',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +60,8 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
-          child: Padding(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
             child: Row(
               children: [
@@ -86,6 +96,11 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
                 FilesTab(sessionId: widget.sessionId, containerId: containerId),
           ),
         'desktop' => const DesktopTab(),
+        'cron' => CronPanelTab(
+            projectId: ref
+                .watch(sessionProjectIdProvider(widget.sessionId))
+                .valueOrNull,
+          ),
         _ => ReviewTab(sessionId: widget.sessionId),
       },
     );

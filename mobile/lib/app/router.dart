@@ -6,6 +6,7 @@ import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
+import '../features/cron/cron_screen.dart';
 import '../features/landing/landing_page.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/workbench/workbench_screen.dart';
@@ -65,6 +66,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             child: ChatScreen(sessionId: sessionId),
           );
         },
+      ),
+      GoRoute(
+        path: Paths.cron,
+        builder: (context, state) => const CronScreen(),
       ),
       GoRoute(
         path: '/app/settings',

@@ -39,6 +39,7 @@ dependencies:
     sdk: flutter
   flutter_riverpod: ^2.6.1
   flutter_secure_storage: ^11.0.0
+  flutter_timezone: ^5.1.0
   go_router: ^17.5.0
   google_fonts: ^8.2.1
   gpt_markdown: ^1.2.1

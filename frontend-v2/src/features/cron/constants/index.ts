@@ -15,8 +15,8 @@ export const INTERVAL_UNITS = ["minutes", "hours"] as const
 export type IntervalUnit = (typeof INTERVAL_UNITS)[number]
 
 export const INTERVAL_UNIT_KEYS: Record<IntervalUnit, string> = {
-  minutes: "cron:form.unit.minutes",
-  hours: "cron:form.unit.hours",
+  minutes: "cron:form.unitOptions.minutes",
+  hours: "cron:form.unitOptions.hours",
 }
 
 // 0 = Sunday, matching cron day-of-week numbering.

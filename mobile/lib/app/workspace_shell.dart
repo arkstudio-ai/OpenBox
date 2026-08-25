@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/cron/widgets/cron_status_pill.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../features/workspace/widgets/session_drawer.dart';
 import '../shared/appearance/tokens.dart';
@@ -86,6 +87,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           ],
         ),
         actions: [
+          // Cron reminder pill before the panel toggle (web Topbar).
+          if (widget.sessionId != null)
+            CronStatusPill(
+              projectId: session?.projectId,
+              onOpen: () => context
+                  .push(Paths.workbench(widget.sessionId!, tab: 'cron')),
+            ),
           if (widget.sessionId != null)
             IconButton(
               icon: Icon(Icons.space_dashboard_outlined,

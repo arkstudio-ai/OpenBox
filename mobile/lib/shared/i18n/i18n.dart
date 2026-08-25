@@ -19,6 +19,7 @@ const _namespaces = [
   'auth',
   'chat',
   'common',
+  'cron',
   'errors',
   'landing',
   'settings',

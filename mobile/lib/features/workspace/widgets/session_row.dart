@@ -43,6 +43,10 @@ class SessionRow extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           child: Row(
             children: [
+              if (session.isCron) ...[
+                Icon(Icons.schedule, size: 13, color: t.n600),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                 child: Text(
                   title,

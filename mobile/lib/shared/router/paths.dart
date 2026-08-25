@@ -8,6 +8,8 @@ abstract final class Paths {
 
   static String chat(String sessionId) => '/app/s/$sessionId';
 
+  static const String cron = '/app/cron';
+
   static String settings([String? tab]) =>
       tab == null ? '/app/settings' : '/app/settings?tab=$tab';
 

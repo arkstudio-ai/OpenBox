@@ -30,6 +30,10 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
   final _search = TextEditingController();
   final Set<String> _collapsed = {};
 
+  /// Per-project sidebar filter: plain conversations (default) or cron runs
+  /// (web `useWorkspaceUi.sessionFilter`).
+  final Map<String, String> _sessionFilter = {};
+
   @override
   void dispose() {
     _search.dispose();
@@ -111,7 +115,40 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
+              // Scheduled-tasks entry, same spot as the web sidebar.
+              // Web Sidebar entry: h-10 rounded-full row, size-7 icon slot.
+              InkWell(
+                borderRadius: BorderRadius.circular(Radii.full),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(Paths.cron);
+                },
+                child: SizedBox(
+                  height: 40,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 28,
+                          child: Center(
+                            child:
+                                Icon(Icons.schedule, size: 16, color: t.ink),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          i18n.t('workspace:scheduledTasks'),
+                          style: TextStyle(
+                              fontSize: FontSizes.base, color: t.ink),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
               Expanded(
                 child: data == null
                     ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
@@ -156,8 +193,12 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
       children: [
         for (final (project, group) in grouped) ...[
           _groupHeader(i18n, t, project, searching),
-          if (searching || !_collapsed.contains(project?.id ?? '__loose'))
-            group.isEmpty
+          if (searching || !_collapsed.contains(project?.id ?? '__loose')) ...[
+            // While searching, matches from both kinds show (web parity).
+            if (!searching && group.any((s) => s.isCron))
+              _filterToggle(i18n, t, project?.id ?? '__loose',
+                  group.where((s) => s.isCron).length),
+            _visibleSessions(project, group, searching).isEmpty
                 ? Padding(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                     child: Text(
@@ -167,7 +208,8 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   )
                 : Column(
                     children: [
-                      for (final session in group)
+                      for (final session
+                          in _visibleSessions(project, group, searching))
                         SessionRow(
                           session: session,
                           active: session.id == widget.activeSessionId,
@@ -183,9 +225,67 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                         ),
                     ],
                   ),
+          ],
           const SizedBox(height: 4),
         ],
       ],
+    );
+  }
+
+  List<Session> _visibleSessions(
+      Project? project, List<Session> group, bool searching) {
+    if (searching) return group;
+    final mode = _sessionFilter[project?.id ?? '__loose'] ?? 'chats';
+    return group
+        .where((s) => mode == 'cron' ? s.isCron : !s.isCron)
+        .toList();
+  }
+
+  /// [会话 | 定时运行 N] segmented toggle under a project header
+  /// (web `FilterToggle`).
+  Widget _filterToggle(
+      I18nState i18n, BossipTokens t, String groupId, int cronCount) {
+    final mode = _sessionFilter[groupId] ?? 'chats';
+    Widget segment(String value, String label, IconData icon) {
+      final active = mode == value;
+      return InkWell(
+        borderRadius: BorderRadius.circular(Radii.full),
+        onTap: () => setState(() => _sessionFilter[groupId] = value),
+        child: Container(
+          height: 24,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: active ? t.n200 : Colors.transparent,
+            borderRadius: BorderRadius.circular(Radii.full),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 12, color: active ? t.ink : t.n600),
+              const SizedBox(width: 4),
+              Text(
+                value == 'cron' && cronCount > 0 ? '$label $cronCount' : label,
+                style: TextStyle(
+                  fontSize: FontSizes.xs2,
+                  color: active ? t.ink : t.n600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, bottom: 2),
+      child: Row(
+        children: [
+          segment('chats', i18n.t('workspace:filter.chats'),
+              Icons.chat_bubble_outline),
+          const SizedBox(width: 2),
+          segment(
+              'cron', i18n.t('workspace:filter.cron'), Icons.schedule),
+        ],
+      ),
     );
   }
 

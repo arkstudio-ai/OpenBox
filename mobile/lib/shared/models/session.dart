@@ -32,6 +32,7 @@ class Session {
     this.projectId = 'default',
     this.parentId,
     this.directory,
+    this.kind = 'chat',
   });
 
   factory Session.fromJson(Map<String, dynamic> json) => Session(
@@ -53,6 +54,7 @@ class Session {
         projectId: asString(json['project_id']) ?? 'default',
         parentId: asString(json['parent_id']),
         directory: asString(json['directory']),
+        kind: asString(json['kind']) ?? 'chat',
       );
 
   final String id;
@@ -73,6 +75,11 @@ class Session {
 
   /// Only present on `GET /session/{id}` (the `/workspace/<slug>` workdir).
   final String? directory;
+
+  /// `chat` (default) or `cron` — a scheduled run's transcript session.
+  final String kind;
+
+  bool get isCron => kind == 'cron';
 
   bool get isLive =>
       status == SessionStatus.busy ||
@@ -98,5 +105,6 @@ class Session {
         projectId: projectId,
         parentId: parentId,
         directory: directory,
+        kind: kind,
       );
 }

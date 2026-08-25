@@ -26,6 +26,29 @@ String formatDuration(num seconds) {
   return s > 0 ? '${m}m ${s}s' : '${m}m';
 }
 
+/// Localized relative time (web `formatRelative` via Intl.RelativeTimeFormat;
+/// Dart has no built-in, so the two supported languages are spelled out).
+String formatRelative(DateTime target, String language, {DateTime? now}) {
+  final diff = target.difference(now ?? DateTime.now());
+  final seconds = diff.inSeconds;
+  final abs = seconds.abs();
+  final zh = language.startsWith('zh');
+
+  final (value, zhUnit, enUnit) = abs < 60
+      ? (abs, '秒', 'second')
+      : abs < 3600
+          ? ((abs / 60).round(), '分钟', 'minute')
+          : abs < 86400
+              ? ((abs / 3600).round(), '小时', 'hour')
+              : ((abs / 86400).round(), '天', 'day');
+
+  final enPlural = value == 1 ? enUnit : '${enUnit}s';
+  if (seconds >= 0) {
+    return zh ? '$value$zhUnit后' : 'in $value $enPlural';
+  }
+  return zh ? '$value$zhUnit前' : '$value $enPlural ago';
+}
+
 /// Bytes → "1.2 MB" (web `formatBytes`).
 String formatBytes(num bytes) {
   if (bytes < 1024) return '$bytes B';

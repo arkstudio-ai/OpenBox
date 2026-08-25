@@ -24,6 +24,12 @@ final sessionWorkdirProvider =
   return ref.watch(workbenchApiProvider).sessionDirectory(sessionId);
 });
 
+/// The session's owning project (web `useCurrentProjectId`).
+final sessionProjectIdProvider =
+    FutureProvider.family<String?, String>((ref, sessionId) {
+  return ref.watch(workbenchApiProvider).sessionProjectId(sessionId);
+});
+
 /// Directory listing for (containerId, path).
 final fileListProvider = FutureProvider.family<List<FileEntry>,
     ({String containerId, String path})>((ref, key) {

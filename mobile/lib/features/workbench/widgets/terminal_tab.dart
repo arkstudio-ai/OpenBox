@@ -75,7 +75,15 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
               _terminal.write(utf8.decode(frame.sublist(1), allowMalformed: true));
             }
           } else if (frame is String) {
-            _terminal.write(frame);
+            // Text frames are JSON `{type:"error", data}` only.
+            try {
+              final parsed = jsonDecode(frame);
+              if (parsed is Map<String, dynamic> && parsed['type'] == 'error') {
+                if (mounted) setState(() => _disconnected = true);
+              }
+            } on FormatException {
+              _terminal.write(frame);
+            }
           }
         },
         onDone: () {

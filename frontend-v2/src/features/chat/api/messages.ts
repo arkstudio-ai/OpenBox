@@ -8,12 +8,18 @@ export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
 }
 
-export function useMessagesQuery(sessionId: string) {
+export function useMessagesQuery(sessionId: string, live = false) {
   const userId = useUserId()
   return useQuery({
     queryKey: chatKeys.messages(userId, sessionId),
     queryFn: () => http.get<MessageWithParts[]>(`/api/agent/session/${sessionId}/message`),
     enabled: sessionId.length > 0,
+    // A reconnect can only replay durable state, not the WS frames missed
+    // while the page was gone. Poll the durable snapshot during a live run so
+    // a refreshed/reopened page converges even if it reconnects between two
+    // events; take a fresh snapshot on every route mount for the same reason.
+    refetchOnMount: "always",
+    refetchInterval: live ? 1_000 : false,
   })
 }
 

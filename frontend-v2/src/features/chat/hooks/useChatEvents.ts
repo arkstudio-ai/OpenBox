@@ -35,7 +35,17 @@ export function useChatEvents(sessionId: string): void {
         stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data),
       ),
       wsClient.on("tool.error", (d) => stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)),
-      wsClient.on("session.status", (d) => stream.setStatus(d.sessionId, d.status)),
+      wsClient.on("session.status", (d) => {
+        stream.setStatus(d.sessionId, d.status)
+        qc.setQueryData(["session", userId, d.sessionId], (old: object | undefined) =>
+          old ? { ...old, status: d.status } : old,
+        )
+        // The terminal idle/error edge is also a consistency barrier: pull
+        // the final full parts in case this tab missed the last delta/update.
+        if (d.status === "idle" || d.status === "error") {
+          void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+        }
+      }),
       wsClient.on("session.finalizing", (d) => stream.setStatus(d.sessionId, "finalizing")),
       wsClient.on("session.error", (d) => stream.setStatus(d.sessionId, "error")),
       wsClient.on("session.title", () => void qc.invalidateQueries({ queryKey: ["sessions", userId] })),
@@ -58,6 +68,7 @@ export function useChatEvents(sessionId: string): void {
       wsClient.on("question.rejected", (d) => pending.removeQuestion(d.request_id)),
       wsClient.on("__connected", () => {
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
+        if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
         void qc.invalidateQueries({ queryKey: chatKeys.permissions(userId) })
         void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
       }),

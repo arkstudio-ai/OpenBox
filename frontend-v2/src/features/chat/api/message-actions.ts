@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import type { MessageReaction, Session } from "@/shared/types/api"
-import { useStreamStore } from "../stores/stream"
+import { isBusyStatus, useStreamStore } from "../stores/stream"
 import { chatKeys } from "./keys"
 import { useUserId } from "./messages"
 
@@ -16,6 +16,11 @@ export function useSessionQuery(sessionId: string) {
     queryFn: () => http.get<Session>(`/api/agent/session/${sessionId}`),
     enabled: sessionId.length > 0,
     staleTime: 30_000,
+    refetchOnMount: "always",
+    // The DB status is the recovery source when WebSocket events were missed.
+    // Keep polling only while it says work is live; the idle response stops
+    // the timer, so completed conversations stay quiet.
+    refetchInterval: (query) => (isBusyStatus(query.state.data?.status) ? 1_000 : false),
   })
 }
 

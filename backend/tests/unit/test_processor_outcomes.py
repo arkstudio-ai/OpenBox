@@ -102,6 +102,28 @@ async def test_reasoning_is_collected_separately(monkeypatch):
     assert result.text == "answer"
 
 
+async def test_streaming_parts_are_checkpointed_before_final_completion(monkeypatch):
+    saved = []
+
+    async def capture(part, *args, **kwargs):
+        saved.append((part.type, part.text, kwargs.get("is_new", False)))
+
+    monkeypatch.setattr(P, "save_part", capture)
+    monkeypatch.setattr(P, "STREAM_CHECKPOINT_INTERVAL", 0)
+    await run(monkeypatch, events=[
+        {"type": "reasoning_delta", "text": "think "},
+        {"type": "reasoning_delta", "text": "more"},
+        {"type": "text_delta", "text": "hello "},
+        {"type": "text_delta", "text": "world"},
+        {"type": "finish", "reason": "stop", "usage": {}},
+    ])
+
+    # The penultimate full prefixes are durable while the stream is still in
+    # progress; the last two writes are the ordinary final aggregates.
+    assert ("reasoning", "think more", False) in saved[:-2]
+    assert ("text", "hello world", False) in saved[:-1]
+
+
 async def test_empty_stream_still_returns_a_result(monkeypatch):
     result = await run(monkeypatch, events=[])
     assert result.outcome is StepOutcome.CONTINUE

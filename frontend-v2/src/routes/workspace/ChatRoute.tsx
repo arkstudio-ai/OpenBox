@@ -32,7 +32,10 @@ export default function ChatRoute() {
   const { sessionId = "" } = useParams()
   useChatEvents(sessionId)
 
-  const messagesQ = useMessagesQuery(sessionId)
+  const session = useSessionQuery(sessionId)
+  const liveStatus = useStreamStore((s) => s.status.get(sessionId))
+  const recoveredStatus = liveStatus ?? session.data?.status
+  const messagesQ = useMessagesQuery(sessionId, isBusyStatus(recoveredStatus))
   const permsQ = usePermissionsQuery()
   const questionsQ = useQuestionsQuery()
   const errorMessage = useApiErrorMessage()
@@ -52,7 +55,6 @@ export default function ChatRoute() {
   }, [messagesQ.error, errorMessage])
 
   const messages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
-  const status = useStreamStore((s) => s.status.get(sessionId))
   const turns = useMemo(() => mergeTurns(messages), [messages])
   // A tool part left as "running" is the fallback signal for busy, but only
   // while the session's real status is still unknown — a session opened
@@ -68,9 +70,8 @@ export default function ChatRoute() {
       ),
     [messages],
   )
-  const busy = status === undefined ? hasRunningTool : isBusyStatus(status)
+  const busy = recoveredStatus === undefined ? hasRunningTool : isBusyStatus(recoveredStatus)
 
-  const session = useSessionQuery(sessionId)
   const send = useSendChat(sessionId)
   const abort = useAbortSession(sessionId)
   const stop = () => {

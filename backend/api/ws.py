@@ -20,6 +20,48 @@ router = APIRouter()
 
 CRITICAL_EVENT_TYPES = {"session.status", "session.finalizing", "session.error", "message.created"}
 BROADCAST_WHITELIST = {"build.progress", "build.complete", "build.error", "server.announcement"}
+ACTIVE_SESSION_STATUSES = {"busy", "retry", "compacting"}
+
+
+async def _has_active_agent_sessions(user_id: str) -> bool:
+    """Durable guard used before deleting a disconnected user's sandbox."""
+    try:
+        from session.session import list_sessions
+
+        sessions = await list_sessions(user_id=user_id)
+        return any(
+            (s.status.value if hasattr(s.status, "value") else str(s.status)) in ACTIVE_SESSION_STATUSES
+            for s in sessions
+        )
+    except Exception as e:
+        # Losing a sandbox under a live run is worse than retaining it longer.
+        log.warning(f"Could not check active sessions for user={user_id}; deferring cleanup: {e}")
+        return True
+
+
+async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None:
+    """Replay durable session statuses after a socket reconnect.
+
+    Pub/sub only carries events produced while a client is connected. A page
+    opened after SESSION_STATUS=busy was published otherwise has no real-time
+    signal until the next transition, so it incorrectly looks idle throughout
+    the run. The DB snapshot closes that gap without replaying large histories.
+    """
+    try:
+        from session.session import list_sessions
+
+        for session in await list_sessions(user_id=user_id):
+            status = session.status.value if hasattr(session.status, "value") else str(session.status)
+            await queue.put({
+                "type": "session.status",
+                "data": {
+                    "userId": user_id,
+                    "sessionId": session.id,
+                    "status": status,
+                },
+            })
+    except Exception as e:
+        log.warning(f"Could not enqueue WS recovery snapshot for user={user_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -61,46 +103,65 @@ class WSConnectionManager:
         self.cancel_cleanup(user_id)
 
         async def _cleanup():
-            await asyncio.sleep(30 * 60)  # 30 minutes
-
-            # Skip if user has cron keepalive (high-frequency jobs need container)
             try:
-                from cron.warmup import is_keepalive_user
-                if is_keepalive_user(user_id):
-                    return
-            except Exception:
-                pass
+                while True:
+                    await asyncio.sleep(30 * 60)  # 30 minutes
 
-            # Re-check: user may have reconnected while we were sleeping.
-            # cancel_cleanup() cancels the task, but there's a tiny window
-            # where the sleep finishes before cancel() is called.
-            if self.has_connections(user_id):
-                log.info(f"User {user_id} reconnected during cleanup wait, skipping cleanup")
-                return
-
-            log.info(f"User {user_id} inactive for 30min, cleaning up containers")
-            from sandbox import provider
-            containers = provider.get_containers_for_user(user_id)
-            for info in containers:
-                # Double-check before each deletion in case user reconnects mid-cleanup
-                if self.has_connections(user_id):
-                    log.info(f"User {user_id} reconnected during cleanup, aborting")
-                    return
-                try:
-                    await provider.delete_container(info.id, user_id=user_id)
-                    log.info(f"Cleaned up container {info.name} ({info.id}) for inactive user {user_id}")
-                except Exception as e:
-                    log.warning(f"Failed to cleanup container {info.id} for user {user_id}: {e}")
-
-            # Also clean up sandbox manager state
-            from sandbox import sandbox_manager
-            for k in list(sandbox_manager._project_map.keys()):
-                sb = sandbox_manager._project_map.get(k)
-                if sb and sb.user_id == user_id:
-                    sandbox_manager._project_map.pop(k, None)
-                    sandbox_manager._clients.pop(k, None)
+                    outcome = await self._cleanup_user_if_inactive(user_id)
+                    if outcome != "active":
+                        return
+                    # A closed page is not a stopped Agent. Keep the sandbox
+                    # alive and reconsider after another idle window.
+                    log.info(f"User {user_id} has active agent work; deferring container cleanup")
+            finally:
+                current = asyncio.current_task()
+                if self._cleanup_timers.get(user_id) is current:
+                    self._cleanup_timers.pop(user_id, None)
 
         self._cleanup_timers[user_id] = asyncio.create_task(_cleanup())
+
+    async def _cleanup_user_if_inactive(self, user_id: str) -> str:
+        """Clean one user's containers, or explain why cleanup was deferred."""
+        # Skip if user has cron keepalive (high-frequency jobs need container)
+        try:
+            from cron.warmup import is_keepalive_user
+            if is_keepalive_user(user_id):
+                return "keepalive"
+        except Exception:
+            pass
+
+        # Re-check: user may have reconnected while the timer was waking.
+        if self.has_connections(user_id):
+            log.info(f"User {user_id} reconnected during cleanup wait, skipping cleanup")
+            return "connected"
+        if await _has_active_agent_sessions(user_id):
+            return "active"
+
+        log.info(f"User {user_id} inactive for 30min, cleaning up containers")
+        from sandbox import provider
+        containers = provider.get_containers_for_user(user_id)
+        for info in containers:
+            # Double-check before each deletion in case user reconnects mid-cleanup
+            if self.has_connections(user_id):
+                log.info(f"User {user_id} reconnected during cleanup, aborting")
+                return "connected"
+            if await _has_active_agent_sessions(user_id):
+                log.info(f"Agent work started for user {user_id} during cleanup, aborting")
+                return "active"
+            try:
+                await provider.delete_container(info.id, user_id=user_id)
+                log.info(f"Cleaned up container {info.name} ({info.id}) for inactive user {user_id}")
+            except Exception as e:
+                log.warning(f"Failed to cleanup container {info.id} for user {user_id}: {e}")
+
+        # Also clean up sandbox manager state
+        from sandbox import sandbox_manager
+        for k in list(sandbox_manager._project_map.keys()):
+            sb = sandbox_manager._project_map.get(k)
+            if sb and sb.user_id == user_id:
+                sandbox_manager._project_map.pop(k, None)
+                sandbox_manager._clients.pop(k, None)
+        return "cleaned"
 
     def cancel_cleanup(self, user_id: str):
         """Cancel a pending cleanup timer for a user."""
@@ -287,6 +348,7 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
 
     # Send connection confirmation
     await send_queue.put({"type": "server.connected", "data": {}})
+    await _enqueue_recovery_snapshot(user_id, send_queue)
     asyncio.create_task(_ensure_user_container(user_id))
 
     try:

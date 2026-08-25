@@ -54,6 +54,63 @@ function mapParts(
   return list.map((m) => (m.id === messageId ? { ...m, parts: fn(m.parts) } : m))
 }
 
+const TOOL_STATUS_RANK: Record<ToolStatus, number> = {
+  pending: 0,
+  running: 1,
+  completed: 2,
+  error: 2,
+}
+
+/** Reconcile one live part with a durable snapshot.
+ *
+ * Text/reasoning are append-only prefixes, so the longer copy is newer. Tool
+ * states are monotonic, so a delayed snapshot may fill output but may never
+ * turn a completed call back into a spinner. Other parts are server-owned and
+ * the freshly fetched snapshot wins (plan edits may legitimately get shorter).
+ */
+function mergePart(live: MessagePart, snapshot: MessagePart): MessagePart {
+  if (live.type !== snapshot.type) return snapshot
+  if (live.type === "text" && snapshot.type === "text") {
+    return live.text.length > snapshot.text.length ? live : { ...live, ...snapshot }
+  }
+  if (live.type === "reasoning" && snapshot.type === "reasoning") {
+    return live.text.length > snapshot.text.length ? live : { ...live, ...snapshot }
+  }
+  if (live.type === "tool" && snapshot.type === "tool") {
+    return TOOL_STATUS_RANK[live.status] > TOOL_STATUS_RANK[snapshot.status]
+      ? { ...snapshot, ...live }
+      : { ...live, ...snapshot }
+  }
+  return snapshot
+}
+
+export function mergeSnapshotMessages(
+  existing: MessageWithParts[],
+  incoming: MessageWithParts[],
+): MessageWithParts[] {
+  if (existing.length === 0) return incoming
+  const incomingIds = new Set(incoming.map((m) => m.id))
+  const incomingCids = new Set(incoming.map((m) => m.client_message_id).filter(Boolean))
+  const merged = incoming.map((snapshot) => {
+    const live = existing.find((m) => m.id === snapshot.id)
+    if (!live) return snapshot
+    const liveParts = new Map(live.parts.map((p) => [p.id, p]))
+    const snapshotPartIds = new Set(snapshot.parts.map((p) => p.id))
+    const parts = snapshot.parts.map((part) => {
+      const livePart = liveParts.get(part.id)
+      return livePart ? mergePart(livePart, part) : part
+    })
+    // A WS part may have landed after the DB SELECT but before this response.
+    // Keep it; the next snapshot will reconcile it once durable.
+    parts.push(...live.parts.filter((p) => !snapshotPartIds.has(p.id)))
+    return { ...live, ...snapshot, parts }
+  })
+  const extras = existing.filter(
+    (m) => !incomingIds.has(m.id) && !(m.client_message_id && incomingCids.has(m.client_message_id)),
+  )
+  return [...merged, ...extras]
+}
+
 /** Narrow a loose WS tool payload into a typed patch (no `any`). */
 function toolPatch(status: ToolStatus, data?: Record<string, unknown>): Partial<ToolPart> {
   const patch: Partial<ToolPart> = { status }
@@ -71,23 +128,13 @@ export const useStreamStore = create<StreamState>((set) => ({
   messages: new Map(),
   status: new Map(),
 
-  // Merge-union: keeps optimistic/streamed-ahead messages and the longer parts
-  // list so a late snapshot refetch (e.g. after reconnect) never clobbers live
-  // state, while an empty store is simply seeded with the snapshot.
+  // Merge the durable recovery snapshot with any WS frames that landed while
+  // its request was in flight. See mergeSnapshotMessages for the monotonic
+  // text/tool rules that prevent a late response from moving the UI backward.
   setMessages: (sessionId, incoming) =>
     set((s) => {
       const existing = s.messages.get(sessionId) ?? []
-      if (existing.length === 0) return commit(s.messages, sessionId, incoming)
-      const incomingIds = new Set(incoming.map((m) => m.id))
-      const incomingCids = new Set(incoming.map((m) => m.client_message_id).filter(Boolean))
-      const merged = incoming.map((im) => {
-        const ex = existing.find((e) => e.id === im.id)
-        return ex && ex.parts.length >= im.parts.length ? ex : im
-      })
-      const extras = existing.filter(
-        (e) => !incomingIds.has(e.id) && !(e.client_message_id && incomingCids.has(e.client_message_id)),
-      )
-      return commit(s.messages, sessionId, [...merged, ...extras])
+      return commit(s.messages, sessionId, mergeSnapshotMessages(existing, incoming))
     }),
 
   addMessage: (sessionId, message) =>

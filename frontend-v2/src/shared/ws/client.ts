@@ -7,10 +7,12 @@ import type { WsEventMap, WsEventName } from "@/shared/ws/events"
 
 type Handler<E extends WsEventName> = (data: WsEventMap[E]) => void
 
-class AgentWsClient {
+export class AgentWsClient {
   private ws: WebSocket | null = null
   private handlers = new Map<string, Set<Handler<WsEventName>>>()
   private reconnectTimer: number | null = null
+  private connectPromise: Promise<void> | null = null
+  private generation = 0
   private attempt = 0
   private closedByUser = false
   private _connected = false
@@ -19,10 +21,26 @@ class AgentWsClient {
     return this._connected
   }
 
-  async connect(): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return
+  connect(): Promise<void> {
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      return Promise.resolve()
+    }
+    // WorkspaceLayout and ChatRoute mount together and both ask for the
+    // app-global socket. The ticket fetch used to leave a window where each
+    // call opened its own socket; every delta was then delivered twice, and
+    // either socket closing could start a third reconnect loop. One in-flight
+    // handshake is the same connection attempt for every caller.
+    if (this.connectPromise) return this.connectPromise
     this.closedByUser = false
+    const generation = this.generation
+    const promise = this.openConnection(generation).finally(() => {
+      if (this.connectPromise === promise) this.connectPromise = null
+    })
+    this.connectPromise = promise
+    return promise
+  }
 
+  private async openConnection(generation: number): Promise<void> {
     let token = useAuthStore.getState().accessToken
     if (!token) return
 
@@ -39,20 +57,28 @@ class AgentWsClient {
         headers: { Authorization: `Bearer ${newToken}` },
       })
     }
+    if (generation !== this.generation || this.closedByUser) return
     if (!ticketResp.ok) {
       this.scheduleReconnect()
       return
     }
 
     const { ticket } = (await ticketResp.json()) as { ticket: string }
-    this.ws = new WebSocket(`${wsBase()}/ws/agent?ticket=${ticket}`)
+    if (generation !== this.generation || this.closedByUser) return
+    const socket = new WebSocket(`${wsBase()}/ws/agent?ticket=${ticket}`)
+    this.ws = socket
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket || generation !== this.generation) {
+        socket.close()
+        return
+      }
       this._connected = true
       this.attempt = 0
       this.dispatch("__connected", {})
     }
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) return
       try {
         const parsed = JSON.parse(event.data as string) as { type?: string; event?: string; data?: unknown }
         const name = parsed.type ?? parsed.event
@@ -61,23 +87,28 @@ class AgentWsClient {
         // non-JSON frame — ignore
       }
     }
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      // A stale socket must never null out or reconnect over its replacement.
+      if (this.ws !== socket) return
       this._connected = false
       this.ws = null
       this.dispatch("__disconnected", {})
       if (!this.closedByUser) this.scheduleReconnect()
     }
-    this.ws.onerror = () => {
-      this.ws?.close()
+    socket.onerror = () => {
+      socket.close()
     }
   }
 
   disconnect(): void {
     this.closedByUser = true
+    this.generation += 1
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer)
-    this.ws?.close()
+    this.reconnectTimer = null
+    const socket = this.ws
     this.ws = null
     this._connected = false
+    socket?.close()
   }
 
   send(payload: Record<string, unknown>): void {
@@ -107,6 +138,7 @@ class AgentWsClient {
   }
 
   private scheduleReconnect(): void {
+    if (this.closedByUser) return
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer)
     const delay = Math.min(30_000, 1000 * 2 ** this.attempt)
     this.attempt += 1

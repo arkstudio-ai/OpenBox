@@ -56,6 +56,14 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "child_session_id", "subagent_type", "questions", "answers",
 })
 
+# A browser can disappear at any point in a long model response. The first
+# chunk and the final aggregate were previously the only durable copies, so a
+# refresh in between could only restore the first few characters until the
+# whole turn ended. Checkpoint append-only text at a bounded rate: frequent
+# enough for a near-current recovery snapshot, without a database write per
+# token.
+STREAM_CHECKPOINT_INTERVAL = 0.5
+
 
 def persisted_tool_metadata(metadata: dict | None) -> dict:
     """Keep UI/diagnostic tool metadata while dropping internal payloads."""
@@ -192,6 +200,8 @@ async def process_step(
     collected_reasoning = ""
     text_part_id = None
     reasoning_part_id = None
+    text_checkpoint_at = 0.0
+    reasoning_checkpoint_at = 0.0
     pending_tool_calls = []      # collected during the stream, executed after
     streaming_tool_parts: dict[int, str] = {}   # tool-call index -> part id
     total_usage = {"input": 0, "output": 0, "total": 0}
@@ -226,6 +236,7 @@ async def process_step(
                         message_id=assistant_info.id,
                     )
                     await save_part(reasoning_part, is_new=True, user_id=user_id)
+                    reasoning_checkpoint_at = time.monotonic()
                 else:
                     from bus.events import PART_DELTA
                     bus.publish(PART_DELTA, {
@@ -235,6 +246,18 @@ async def process_step(
                         "partId": reasoning_part_id,
                         "delta": text,
                     })
+                    now = time.monotonic()
+                    if now - reasoning_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
+                        await save_part(
+                            ReasoningPart(
+                                id=reasoning_part_id,
+                                text=collected_reasoning,
+                                session_id=session_id,
+                                message_id=assistant_info.id,
+                            ),
+                            user_id=user_id,
+                        )
+                        reasoning_checkpoint_at = now
 
             elif event["type"] == "text_delta":
                 text = event["text"]
@@ -249,6 +272,7 @@ async def process_step(
                         message_id=assistant_info.id,
                     )
                     await save_part(text_part, is_new=True, user_id=user_id)
+                    text_checkpoint_at = time.monotonic()
                 else:
                     bus.publish(MESSAGE_TEXT_DELTA, {
                         "userId": user_id,
@@ -257,6 +281,18 @@ async def process_step(
                         "partId": text_part_id,
                         "text": text,
                     })
+                    now = time.monotonic()
+                    if now - text_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
+                        await save_part(
+                            TextPart(
+                                id=text_part_id,
+                                text=collected_text,
+                                session_id=session_id,
+                                message_id=assistant_info.id,
+                            ),
+                            user_id=user_id,
+                        )
+                        text_checkpoint_at = now
 
             elif event["type"] == "tool_call_start":
                 # LLM just started emitting a tool call — create a pending

@@ -6,13 +6,15 @@ English | [中文](README.zh-CN.md)
 
 > A general-purpose agent runtime (inspired by OpenCode/Claude Code), rewritten in Python around **Pydantic AI + LiteLLM**, with every file/command operation confined to a per-session **Docker / Kubernetes sandbox**. Deployed on GCP GKE.
 
+> **Frontend direction:** [`frontend-v2/`](frontend-v2/) is the primary and actively developed OpenBox web UI. The original [`frontend/`](frontend/) is retained only as a legacy migration reference.
+
 ---
 
 ## At a glance
 
 | | |
 |---|---|
-| **What it is** | A full-stack platform where an AI agent autonomously executes development tasks (edit code, run bash, git, browse) inside an isolated container, with a real-time web UI showing every tool call. |
+| **What it is** | A full-stack platform where an AI agent autonomously executes development tasks (edit code, run bash, git, browse) inside an isolated container, with the v2 web UI showing every tool call in real time. |
 | **Core stack** | FastAPI · Pydantic AI · LiteLLM (100+ models) · Docker/K8s sandbox · PostgreSQL · Redis · React 19 |
 | **Agent loop** | Pydantic AI single-turn tool calls wrapped by a custom outer loop: multi-turn orchestration, permission checks, retries, context compaction |
 | **Isolation** | Each session owns a dedicated sandbox container; user file/command tools run inside it, control-plane logic runs on the host |
@@ -74,7 +76,8 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - **Three-tier context/memory**: in-memory current turn → DB-persisted compacted history → long-term instruction files.
 - **Cron agents** (`backend/cron/`): scheduled autonomous agent runs.
 - **Session branch / rollback**: git-like session history management.
-- **Real-time UI**: PTY terminal (xterm.js + WebSocket), tool-execution timeline, diff viewer, SSE event stream.
+- **Frontend v2 workbench** (`frontend-v2/`): streaming chat, tool/thinking traces, permission/question/plan/todo cards, diff review, PTY terminal, browser, desktop and file panels.
+- **Product-grade UI foundation**: Chinese/English localization, eight theme families, light/dark modes, four font sizes, accessible interactions and responsive layouts.
 
 ---
 
@@ -86,12 +89,13 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - Docker SDK + Kubernetes client (sandbox) · Azure Blob Storage (user files)
 - JWT + Logto OIDC (enterprise SSO)
 
-**Frontend** (React 19)
-- Vite + TypeScript · Tailwind CSS 4 + Framer Motion
-- Zustand + TanStack Query · TanStack Router · xterm.js (PTY)
+**Frontend v2** (React 19)
+- Vite 8 + TypeScript 6 · Tailwind CSS 4 semantic tokens
+- Zustand 5 + TanStack Query 5 · React Router 8 · i18next
+- xterm.js 6 (PTY) · Vitest + Testing Library · Playwright
 
 **Infrastructure**
-- GCP GKE (K8s) · Docker Compose (local) · Makefile workflow · monorepo (npm workspace)
+- GCP GKE (K8s) · Docker Compose (local dependencies) · Makefile workflow · Python/Node monorepo
 
 ---
 
@@ -110,7 +114,8 @@ OpenBox/
 │   ├── cron/         # scheduled agents
 │   ├── api/ · auth/ · db/ · bus/ · cache/ · blob/
 │   └── main.py
-├── frontend/         # React 19 + Vite UI
+├── frontend-v2/      # Primary React 19 UI (active development)
+├── frontend/         # Legacy v1 UI (migration reference only)
 ├── container/        # sandbox image (action_server)
 ├── k8s/              # GKE manifests
 ├── docs/             # architecture & design docs
@@ -122,26 +127,33 @@ OpenBox/
 ## Quick start (local)
 
 ```bash
-# Backend (FastAPI, host)
-cd backend
-uv sync
-cp openbox.jsonc.example openbox.json   # configure model / providers
-cp .env.example .env                      # fill keys (never commit)
-uv run python main.py
+# Local dependencies (PostgreSQL + Redis + Azurite)
+make deps
 
-# Frontend
-cd frontend
-npm install
-npm run dev          # or: npm run dev:mock  (UI without backend)
+# Configure and run the backend (FastAPI, http://localhost:8080)
+cp backend/openbox.jsonc.example backend/openbox.json   # configure models/providers
+cp backend/.env.example backend/.env                    # fill keys (never commit)
+cd backend && uv sync && cd ..
+make backend
 ```
 
-Docker sandbox image + full stack:
+In a new terminal, start the primary frontend:
 
 ```bash
-docker compose up        # backend + frontend + sandbox
+cd frontend-v2
+npm ci
+npm run dev          # proxies /api and /ws to localhost:8080
 ```
 
-Deployment manifests for GKE live in `k8s/`. See `docs/gke.md`.
+Run the v2 quality gate before opening a pull request:
+
+```bash
+cd frontend-v2
+npm run check          # i18n parity + ESLint + TypeScript + Vitest
+npx playwright test    # E2E; requires the backend and a devtest account
+```
+
+The v2 production image is defined in `frontend-v2/Dockerfile`. Deployment manifests for GKE live in `k8s/`; see `docs/gke.md`.
 
 ---
 

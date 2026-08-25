@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router"
-import { Trash2 } from "lucide-react"
+import { Clock, Trash2 } from "lucide-react"
 import type { Session } from "@/shared/types/api"
 import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
@@ -33,9 +33,17 @@ export function SessionRow({ session, active, onAskDelete }: SessionRowProps) {
         to={paths.chat(session.id)}
         // Opening a chat makes its project the current one for "new chat".
         onClick={() => selectProject(session.project_id ?? null)}
-        className="min-w-0 flex-1 truncate text-base text-ink"
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-base text-ink"
       >
-        {session.title || t("untitledChat")}
+        {session.kind === "cron" && (
+          <Clock
+            size={13}
+            strokeWidth={2.2}
+            className="flex-none text-n600"
+            aria-label={t("cronRun")}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate">{session.title || t("untitledChat")}</span>
       </Link>
       {busy && <Spinner className="size-3 flex-none" />}
       {hover && (

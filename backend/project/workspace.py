@@ -307,6 +307,17 @@ async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
             .where(ProjectORM.id == project_id, ProjectORM.user_id == user_id)
             .values(is_deleted=True, deleted_at=now, updated_at=now)
         )
+        # Cron jobs belong to the project; they die with it.
+        from db.models.cron import CronJob
+        await db.execute(
+            update(CronJob)
+            .where(
+                CronJob.project_id == project_id,
+                CronJob.user_id == user_id,
+                CronJob.is_deleted == False,  # noqa: E712
+            )
+            .values(enabled=False, is_deleted=True, updated_at=now)
+        )
     invalidate_slug(project_id)
 
     if sandbox is not None:

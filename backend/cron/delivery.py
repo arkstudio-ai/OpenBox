@@ -61,6 +61,14 @@ async def _deliver_webhook(
     if not url:
         return DeliveryResult(success=False, error="No webhook_url configured")
 
+    # Re-check at send time: creation-time validation cannot stop a DNS record
+    # that later starts resolving to something inside our network.
+    try:
+        from cron.validation import check_webhook_url
+        check_webhook_url(url)
+    except ValueError as e:
+        return DeliveryResult(success=False, error=str(e))
+
     token = config.get("webhook_token")
     headers = {"Content-Type": "application/json"}
     if token:

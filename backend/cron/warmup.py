@@ -39,7 +39,7 @@ async def check_warmup() -> None:
     # Find jobs that will fire within the warmup horizon
     async with get_db_session() as db:
         result = await db.execute(
-            select(CronJob.user_id, CronJob.session_id, CronJob.schedule)
+            select(CronJob.user_id, CronJob.project_id, CronJob.schedule)
             .where(
                 CronJob.enabled == True,
                 CronJob.is_deleted == False,
@@ -53,15 +53,15 @@ async def check_warmup() -> None:
     if not upcoming:
         return
 
-    # Group by user_id
-    users_to_warm: dict[str, str] = {}  # user_id -> any session_id (for sandbox acquisition)
+    # Group by user_id; jobs are project-scoped, so warm the project's box.
+    users_to_warm: dict[str, str] = {}  # user_id -> project_id
     for row in upcoming:
-        user_id, session_id = row[0], row[1]
+        user_id, project_id = row[0], row[1]
         if user_id not in users_to_warm:
-            users_to_warm[user_id] = session_id
+            users_to_warm[user_id] = project_id or "default"
 
     # Warm up each user's container
-    for user_id, session_id in users_to_warm.items():
+    for user_id, project_id in users_to_warm.items():
         state = _warmup_state.get(user_id, {})
 
         # Cooldown check
@@ -81,8 +81,7 @@ async def check_warmup() -> None:
         _warmup_state[user_id] = {"requested_at": now_ms, "ready": False}
 
         try:
-            from sandbox import sandbox_manager
-            await sandbox_manager.get_client(session_id, user_id=user_id)
+            await provider.ensure_user_container(user_id, project_id)
             _warmup_state[user_id]["ready"] = True
             log.info(f"Container pre-warmed for user {user_id}")
         except Exception as e:

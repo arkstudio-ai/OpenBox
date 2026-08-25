@@ -13,7 +13,11 @@ class CronJob(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The owning project: a task acts on its files and logs into its cron/.
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Optional notify target — set when created from a chat; results are
+    # injected there. NULL for tasks created from the management page.
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Basic info
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -78,6 +82,8 @@ class CronJob(Base):
             "session_id",
             postgresql_where=text("NOT is_deleted"),
         ),
+        # Project's jobs
+        Index("ix_cron_jobs_project", "project_id"),
     )
 
 
@@ -88,7 +94,8 @@ class CronRun(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     job_id: Mapped[str] = mapped_column(String(64), nullable=False)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     temp_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Execution state

@@ -178,6 +178,24 @@ class OpenBoxConfig(BaseModel):
     logto_redirect_uri: str = "http://localhost:3000/callback"
     logto_post_logout_redirect_uri: str = "http://localhost:3000"
 
+    # -- Cron (scheduled tasks) --
+    # The Wuying deployment shares one cloud desktop across users, so the
+    # global concurrency stays small; raise it per-deployment when the sandbox
+    # provider can absorb more parallel agent loops.
+    cron_max_concurrent_jobs: int = 2
+    cron_max_concurrent_per_user: int = 2
+    cron_max_jobs_per_user: int = 20
+    cron_max_jobs_per_project: int = 10
+    cron_min_interval_seconds: int = 300           # recurring jobs may not fire more often
+    cron_max_task_prompt_length: int = 5000
+    cron_timeout_seconds_min: int = 60
+    cron_timeout_seconds_max: int = 7200
+    cron_auto_disable_after: int = 10              # consecutive failures before auto-disable
+    cron_missed_run_max_age_seconds: int = 6 * 3600  # older missed runs reschedule instead of replay
+    cron_summary_model: str = ""                   # "" = job model > session model > default model
+    cron_transcript_keep_per_job: int = 20         # newest run transcripts kept per job (30d cap on top)
+    cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
+
     # -- Agent --
     model: str = "anthropic/claude-sonnet-4-20250514"
     mcp_filter_model: str = ""

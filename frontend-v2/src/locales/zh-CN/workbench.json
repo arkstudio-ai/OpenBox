@@ -5,7 +5,8 @@
     "terminal": "终端",
     "browser": "浏览器",
     "files": "文件",
-    "desktop": "云桌面"
+    "desktop": "云桌面",
+    "cron": "定时任务"
   },
   "panel": {
     "collapse": "收起面板"
@@ -19,7 +20,8 @@
     "pending_other": "{{count}} 处待审",
     "clean": "无改动",
     "online": "沙箱在线",
-    "desktop": "云桌面"
+    "desktop": "云桌面",
+    "cron": "定时任务"
   },
   "sandbox": {
     "none": "没有运行中的沙箱",

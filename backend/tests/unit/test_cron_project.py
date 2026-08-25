@@ -1,8 +1,7 @@
-"""A scheduled task runs where the session that scheduled it runs.
+"""A scheduled task runs in its OWNING project's directory.
 
-Cron sessions used to be pinned to the default project, so "check my build
-every morning", set up inside a project, executed against a different directory
-and found nothing there.
+Jobs are project-scoped; the temp session is created directly under
+job.project_id — no longer derived from any conversation.
 """
 import pytest
 
@@ -35,19 +34,14 @@ def captured(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_temp_session_inherits_the_parent_project(captured, monkeypatch):
-    import session.session as sess
-
-    async def fake_project_id_for(session_id):
-        return "proj_SNAKE"
-
-    monkeypatch.setattr(sess, "project_id_for", fake_project_id_for)
-
+async def test_the_temp_session_uses_the_jobs_project(captured):
     await executor._create_temp_session({
         "id": "job1", "user_id": "u1", "session_id": "session_PARENT",
+        "project_id": "proj_SNAKE",
         "name": "nightly", "agent": "build", "model": "m",
     })
     assert captured[0]["project_id"] == "proj_SNAKE"
+    assert captured[0]["kind"] == "cron"
     assert captured[0]["parent_id"] == "session_PARENT"
 
 

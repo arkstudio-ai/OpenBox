@@ -137,9 +137,12 @@ async def test_host_skills_are_listed_without_consulting_a_sandbox(monkeypatch):
     from agent.tool_resolution import attach_skill_listing
     from tool.skill_tool import skill_tool
 
+    import time as _time
     monkeypatch.setattr(sk, "_skills",
                         {"dev-browser": SkillInfo("dev-browser", "drive a browser", "project", "b")})
     monkeypatch.setattr(sk, "_loaded", True)
+    monkeypatch.setattr(sk, "_last_check", _time.monotonic())
+    monkeypatch.setattr(sk, "_fingerprint", sk._current_fingerprint())
 
     tools = await attach_skill_listing({"skill": skill_tool}, sandbox=None)
     assert "<available_skills>" in tools["skill"].description
@@ -153,6 +156,9 @@ async def test_a_denied_skill_never_reaches_the_description(monkeypatch):
     from agent.tool_resolution import attach_skill_listing
     from tool.skill_tool import skill_tool
 
+    import time as _time
+    monkeypatch.setattr(sk, "_last_check", _time.monotonic())
+    monkeypatch.setattr(sk, "_fingerprint", sk._current_fingerprint())
     monkeypatch.setattr(sk, "_skills", {
         "ok": SkillInfo("ok", "fine", "project", "b"),
         "secret-ops": SkillInfo("secret-ops", "classified", "project", "b"),

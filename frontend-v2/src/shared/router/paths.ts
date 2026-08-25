@@ -7,9 +7,11 @@ export const paths = {
   app: "/app",
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
+  cron: "/app/cron",
 } as const
 
 export const routePatterns = {
   chat: "s/:sessionId",
   settings: "settings/:tab?",
+  cron: "cron",
 } as const

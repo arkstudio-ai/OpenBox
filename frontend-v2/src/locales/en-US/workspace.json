@@ -63,5 +63,12 @@
     "process_one": "{{count}} process",
     "process_other": "{{count}} processes"
   },
-  "userLine": "{{role}} · {{count}} chats"
+  "userLine": "{{role}} · {{count}} chats",
+  "scheduledTasks": "Scheduled tasks",
+  "scheduledTasksHint": "Managed across projects",
+  "cronRun": "Scheduled run",
+  "filter": {
+    "chats": "Conversations",
+    "cron": "Scheduled runs"
+  }
 }

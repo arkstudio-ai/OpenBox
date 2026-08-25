@@ -48,6 +48,23 @@ export interface WsEventMap {
   "question.asked": QuestionRequest
   "question.replied": { request_id: string }
   "question.rejected": { request_id: string }
+
+  // Cron lifecycle (backend cron/executor + timer). Payloads are camelCase
+  // like every other bus event; jobs/status queries invalidate on these.
+  "cron.job.created": CronJobEvent
+  "cron.job.updated": CronJobEvent
+  "cron.job.started": CronJobEvent
+  "cron.job.completed": CronJobEvent & { runId?: string; durationMs?: number; silent?: boolean }
+  "cron.job.failed": CronJobEvent & { error?: string }
+  "cron.job.injected": CronJobEvent & { runId?: string }
+  "cron.job.auto_disabled": CronJobEvent & { consecutiveErrors?: number; error?: string }
+}
+
+export interface CronJobEvent {
+  userId?: string
+  jobId?: string
+  sessionId?: string
+  jobName?: string
 }
 
 export type WsEventName = keyof WsEventMap

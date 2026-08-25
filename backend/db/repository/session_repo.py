@@ -58,7 +58,11 @@ class PgSessionRepo:
         async with get_db_session() as session:
             result = await session.execute(
                 select(func.count()).select_from(Session).where(
-                    Session.user_id == user_id, Session.is_deleted == False
+                    Session.user_id == user_id,
+                    Session.is_deleted == False,
+                    # Cron run transcripts have their own retention and would
+                    # otherwise eat the quota (a daily job = 365 sessions/yr).
+                    Session.kind != "cron",
                 )
             )
             return result.scalar_one()

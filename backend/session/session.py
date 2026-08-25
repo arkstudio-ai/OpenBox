@@ -37,6 +37,7 @@ class Session(BaseModel):
     # Internal fields
     project_id: str = "default"
     parent_id: str | None = None  # Links child (subtask) sessions to their parent
+    kind: str = "normal"  # "normal" | "cron" (cron run transcript)
 
 
 def _orm_to_session(row: SessionORM) -> Session:
@@ -57,6 +58,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         slug=row.slug or "",
         project_id=row.project_id or "default",
         parent_id=row.parent_id,
+        kind=getattr(row, "kind", None) or "normal",
     )
 
 
@@ -84,6 +86,7 @@ async def create_session(
     parent_id: str | None = None,
     user_id: str = "default",
     project_id: str | None = None,
+    kind: str = "normal",
 ) -> Session:
     """Create a new session."""
     from core.slug import create as create_slug
@@ -113,6 +116,7 @@ async def create_session(
             model=model,
             status="idle",
             slug=slug,
+            kind=kind,
             parent_id=parent_id,
             token_usage={},
             created_at=now,
@@ -131,6 +135,7 @@ async def create_session(
         slug=slug,
         project_id=project_id,
         parent_id=parent_id,
+        kind=kind,
     )
 
     bus.publish(SESSION_STATUS, {
@@ -180,10 +185,18 @@ async def list_sessions(project_id: str | None = None, user_id: str = "default")
     Passing no project returns every session, which is what the "All projects"
     view in the sidebar shows.
     """
+    from sqlalchemy import or_
+
     conditions = [
         SessionORM.user_id == user_id,
         SessionORM.is_deleted == False,  # noqa: E712
-        SessionORM.parent_id == None,  # noqa: E711
+        # Top-level chats, plus cron run sessions: those show in the sidebar
+        # (clock-badged) even though chat-created ones carry a parent_id.
+        # Subagent (task-tool) children stay hidden.
+        or_(
+            SessionORM.parent_id == None,  # noqa: E711
+            SessionORM.kind == "cron",
+        ),
     ]
     if project_id:
         conditions.append(SessionORM.project_id == project_id)
@@ -201,7 +214,8 @@ async def delete_session(session_id: str, user_id: str = "default") -> None:
     """
     now = datetime.now(timezone.utc)
 
-    # Cascade: soft-delete associated cron jobs
+    # Cascade: cron jobs are project-scoped and outlive conversations. The
+    # deleted session merely stops being their notify target.
     try:
         from db.models.cron import CronJob
         async with get_db_session() as db:
@@ -211,7 +225,7 @@ async def delete_session(session_id: str, user_id: str = "default") -> None:
                     CronJob.session_id == session_id,
                     CronJob.is_deleted == False,
                 )
-                .values(enabled=False, is_deleted=True, updated_at=now)
+                .values(session_id=None, updated_at=now)
             )
     except Exception as e:
         log.debug(f"Cron cascade cleanup: {e}")

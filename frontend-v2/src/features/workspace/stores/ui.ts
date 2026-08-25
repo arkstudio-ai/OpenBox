@@ -5,16 +5,22 @@
 // forgetting where the user was working.
 import { create } from "zustand"
 
+export type SessionFilter = "chats" | "cron"
+
 interface WorkspaceUiState {
   sidebarWidth: number
   sidebarCollapsed: boolean
   expanded: Record<string, boolean>
   selectedProject: string | null
+  // Per-project sidebar filter: plain conversations (default) or cron runs.
+  // Deliberately not persisted — a fresh load always starts on conversations.
+  sessionFilter: Record<string, SessionFilter>
   setSidebarWidth: (w: number) => void
   toggleSidebar: () => void
   toggleProject: (id: string) => void
   isExpanded: (id: string) => boolean
   selectProject: (id: string | null) => void
+  setSessionFilter: (projectId: string, mode: SessionFilter) => void
 }
 
 const KEY = "bossip:workspace-ui"
@@ -53,6 +59,7 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
     sidebarCollapsed: local.sidebarCollapsed ?? false,
     expanded: local.expanded ?? {},
     selectedProject: local.selectedProject ?? null,
+    sessionFilter: {},
     setSidebarWidth: (w) => {
       set({ sidebarWidth: Math.min(420, Math.max(220, w)), sidebarCollapsed: false })
       persist()
@@ -69,6 +76,9 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
     selectProject: (id) => {
       set({ selectedProject: id })
       persist()
+    },
+    setSessionFilter: (projectId, mode) => {
+      set((s) => ({ sessionFilter: { ...s.sessionFilter, [projectId]: mode } }))
     },
   }
 })

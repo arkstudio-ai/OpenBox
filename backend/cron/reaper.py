@@ -1,10 +1,13 @@
 """Periodic cleanup, piggybacked on the cron timer tick.
 
-Removes cron temp sessions older than RETENTION_HOURS, cron_runs older than
-RETENTION_DAYS, and project directories left behind in the sandbox by projects
-the user deleted. Nothing else reclaims the last of those: the sandbox outlives
-individual sessions, and WUYING's delete_container is a no-op, so without this
-sweep a deleted project's files stay on disk indefinitely.
+Cron run transcripts are real (kind='cron') sessions the user can open from
+run history, so retention is generous but bounded: the newest
+cron_transcript_keep_per_job transcripts per job survive, everything is capped
+at RETENTION_DAYS, and cron_runs rows die with the cap. Also reclaims project
+directories left behind in the sandbox by projects the user deleted — the
+sandbox outlives individual sessions, and WUYING's delete_container is a
+no-op, so without this sweep a deleted project's files stay on disk
+indefinitely.
 """
 from __future__ import annotations
 
@@ -16,8 +19,7 @@ from core.log import create_logger
 log = create_logger("cron.reaper")
 
 REAPER_INTERVAL_MS = 5 * 60 * 1000   # 5 minutes between sweeps
-RETENTION_HOURS = 24                   # Keep temp sessions for 24 hours
-RETENTION_DAYS = 30                    # Keep cron_runs for 30 days
+RETENTION_DAYS = 30                    # Keep cron_runs (and their transcripts) 30 days
 
 _last_sweep_at_ms: int = 0
 
@@ -45,56 +47,99 @@ async def sweep_if_due() -> None:
 
 
 async def _sweep_temp_sessions() -> None:
-    """Delete expired temporary cron sessions."""
+    """Trim run transcripts beyond the per-job keep count.
+
+    For each job, transcripts past the newest N (config
+    cron_transcript_keep_per_job) are deleted and their run rows keep only the
+    summary (temp_session_id goes NULL, so the UI stops offering "view
+    transcript"). Running runs never count against the window.
+    """
+    from core.config import get_config
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from sqlalchemy import select
+    from sqlalchemy import func, select, update
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=RETENTION_HOURS)
+    keep = max(0, get_config().cron_transcript_keep_per_job)
 
     from db.models.session import Session as SessionORM
+
+    rn = (
+        func.row_number()
+        .over(partition_by=CronRun.job_id, order_by=CronRun.started_at.desc())
+        .label("rn")
+    )
+    ranked = (
+        select(CronRun.id, CronRun.temp_session_id, rn)
+        .where(CronRun.temp_session_id.isnot(None), CronRun.status != "running")
+        .subquery()
+    )
 
     async with get_db_session() as db:
         # The owning user comes along: delete_session scopes its update by
         # user_id, and passing "default" against a real ULID matched no rows,
         # so nothing was ever actually reaped.
         result = await db.execute(
-            select(CronRun.temp_session_id, SessionORM.user_id)
-            .join(SessionORM, SessionORM.id == CronRun.temp_session_id)
-            .where(
-                CronRun.temp_session_id.isnot(None),
-                CronRun.status != "running",
-                CronRun.started_at < cutoff,
-                SessionORM.is_deleted == False,  # noqa: E712
-            )
-            .distinct()
+            select(ranked.c.id, ranked.c.temp_session_id, SessionORM.user_id)
+            .join(SessionORM, SessionORM.id == ranked.c.temp_session_id)
+            .where(ranked.c.rn > keep)
         )
-        expired = [(sid, uid) for sid, uid in result.all() if sid]
+        expired = result.all()
 
     if not expired:
         return
 
-    # Delete the temp sessions (cascade deletes messages + parts)
     from session.session import delete_session
+
     deleted = 0
-    for sid, uid in expired:
+    for run_id, sid, uid in expired:
         try:
             await delete_session(sid, user_id=uid)
             deleted += 1
         except Exception:
             pass  # Session may already be deleted
+        async with get_db_session() as db:
+            await db.execute(
+                update(CronRun).where(CronRun.id == run_id).values(temp_session_id=None)
+            )
 
     if deleted:
-        log.info(f"Reaped {deleted} expired cron temp session(s)")
+        log.info(f"Trimmed {deleted} cron transcript(s) beyond keep window")
 
 
 async def _sweep_old_runs() -> None:
-    """Delete cron_runs older than RETENTION_DAYS."""
+    """Delete cron_runs older than RETENTION_DAYS, transcripts first.
+
+    Deleting the run row while its transcript session lives would orphan the
+    session forever — nothing else knows it exists.
+    """
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+
+    from db.models.session import Session as SessionORM
+
+    async with get_db_session() as db:
+        result = await db.execute(
+            select(CronRun.temp_session_id, SessionORM.user_id)
+            .join(SessionORM, SessionORM.id == CronRun.temp_session_id)
+            .where(
+                CronRun.temp_session_id.isnot(None),
+                CronRun.started_at < cutoff,
+                SessionORM.is_deleted == False,  # noqa: E712
+            )
+            .distinct()
+        )
+        stale_sessions = [(sid, uid) for sid, uid in result.all() if sid]
+
+    from session.session import delete_session
+
+    for sid, uid in stale_sessions:
+        try:
+            await delete_session(sid, user_id=uid)
+        except Exception:
+            pass
 
     async with get_db_session() as db:
         result = await db.execute(

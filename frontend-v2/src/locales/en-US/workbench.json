@@ -5,7 +5,8 @@
     "terminal": "Terminal",
     "browser": "Browser",
     "files": "Files",
-    "desktop": "Cloud desktop"
+    "desktop": "Cloud desktop",
+    "cron": "Scheduled"
   },
   "panel": {
     "collapse": "Collapse panel"
@@ -19,7 +20,8 @@
     "pending_other": "{{count}} pending",
     "clean": "No changes",
     "online": "Sandbox online",
-    "desktop": "Cloud desktop"
+    "desktop": "Cloud desktop",
+    "cron": "Scheduled tasks"
   },
   "sandbox": {
     "none": "No running sandbox",

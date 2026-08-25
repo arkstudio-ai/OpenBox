@@ -1,7 +1,14 @@
 {
   "title": "Settings",
   "subtitle": "Account & preferences",
-  "nav": { "account": "Account", "usage": "Usage & cost", "models": "Models", "tools": "Tools & permissions", "browser": "Browser", "appearance": "Appearance" },
+  "nav": {
+    "account": "Account",
+    "usage": "Usage & cost",
+    "models": "Models",
+    "tools": "Tools & permissions",
+    "browser": "Browser",
+    "appearance": "Appearance"
+  },
   "hint": {
     "account": "Sign-in identity and session.",
     "usage": "Token consumption and cost per chat.",
@@ -42,7 +49,11 @@
     "permissionNote": "Tool permissions are confirmed per action in chat; enforcement happens on the backend."
   },
   "browser": {
-    "mode": { "auto": "Auto", "local": "Cloud browser", "remote": "My browser" },
+    "mode": {
+      "auto": "Auto",
+      "local": "Cloud browser",
+      "remote": "My browser"
+    },
     "desc": {
       "auto": "Prefer your own browser, and fall back to the cloud browser when it isn't connected.",
       "local": "Always use Chrome on the cloud desktop — no extension needed, but without your logins.",
@@ -71,7 +82,16 @@
     "system": "System",
     "dark": "Dark",
     "fontSize": "Font size",
-    "fs": { "sm": "Small", "base": "Default", "md": "Medium", "lg": "Large" },
-    "temp": { "warm": "warm", "cool": "cool", "neutral": "neutral" }
+    "fs": {
+      "sm": "Small",
+      "base": "Default",
+      "md": "Medium",
+      "lg": "Large"
+    },
+    "temp": {
+      "warm": "warm",
+      "cool": "cool",
+      "neutral": "neutral"
+    }
   }
 }

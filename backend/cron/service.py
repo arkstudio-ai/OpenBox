@@ -30,6 +30,10 @@ class CronService:
         self._started = True
         log.info("Cron scheduler starting...")
 
+        # Health baseline: "alive as of start", so a fresh scheduler is not
+        # reported unhealthy during the minute before its first tick.
+        self._state.last_tick_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
         # Recovery: clean stuck markers + replay missed jobs
         from cron.recovery import recover_on_startup
         await recover_on_startup()
@@ -63,7 +67,10 @@ class CronService:
         """Create a new cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
-        from cron.schedule import compute_next_run_at
+        from cron.schedule import apply_stagger, compute_next_run_at
+        from cron.validation import validate_create
+
+        await validate_create(user_id, create)
 
         now = datetime.now(timezone.utc)
         job_id = ascending("cron")
@@ -82,6 +89,7 @@ class CronService:
             schedule_dict["anchor_ms"] = int(now.timestamp() * 1000)
 
         next_run = compute_next_run_at(schedule_obj, now) if create.enabled else None
+        next_run = apply_stagger(next_run, schedule_obj, job_id)
 
         delivery_dict = create.delivery.model_dump() if create.delivery else {}
 
@@ -89,6 +97,7 @@ class CronService:
             row = CronJob(
                 id=job_id,
                 user_id=user_id,
+                project_id=create.project_id,
                 session_id=create.session_id,
                 name=create.name,
                 description=create.description,
@@ -110,7 +119,7 @@ class CronService:
         # Re-arm timer
         arm_timer(self._state)
 
-        log.info(f"Created cron job {job_id} ({create.name}) for session {create.session_id}")
+        log.info(f"Created cron job {job_id} ({create.name}) for project {create.project_id}")
 
         # Publish event
         from bus import bus
@@ -118,6 +127,7 @@ class CronService:
         bus.publish(CRON_JOB_CREATED, {
             "userId": user_id,
             "jobId": job_id,
+            "projectId": create.project_id,
             "sessionId": create.session_id,
             "name": create.name,
         })
@@ -129,6 +139,9 @@ class CronService:
         from db.base import get_db_session
         from db.models.cron import CronJob
         from sqlalchemy import select, update
+        from cron.validation import validate_update
+
+        await validate_update(user_id, job_id, patch)
 
         now = datetime.now(timezone.utc)
 
@@ -167,28 +180,26 @@ class CronService:
             if patch.schedule is not None:
                 values["schedule"] = patch.schedule.model_dump()
                 if patch.enabled is not False and (patch.enabled or job.enabled):
-                    from cron.schedule import compute_next_run_at
-                    values["next_run_at"] = compute_next_run_at(patch.schedule, now)
+                    from cron.schedule import apply_stagger, compute_next_run_at
+                    values["next_run_at"] = apply_stagger(
+                        compute_next_run_at(patch.schedule, now), patch.schedule, job_id
+                    )
                 else:
                     values["next_run_at"] = None
 
             # If enabled changed, recompute
             if patch.enabled is not None and patch.schedule is None:
                 if patch.enabled:
-                    from cron.schedule import compute_next_run_at
-                    from cron.types import CronScheduleCron, CronScheduleEvery, CronScheduleAt
-                    sched = job.schedule
-                    kind = sched.get("kind") if isinstance(sched, dict) else None
-                    if kind == "cron":
-                        sobj = CronScheduleCron(expr=sched["expr"], tz=sched.get("tz", "UTC"))
-                    elif kind == "every":
-                        sobj = CronScheduleEvery(every_ms=sched["every_ms"], anchor_ms=sched.get("anchor_ms"))
-                    elif kind == "at":
-                        sobj = CronScheduleAt(at=sched["at"])
-                    else:
-                        sobj = None
+                    from cron.schedule import (
+                        apply_stagger,
+                        compute_next_run_at,
+                        schedule_from_dict,
+                    )
+                    sobj = schedule_from_dict(job.schedule)
                     if sobj:
-                        values["next_run_at"] = compute_next_run_at(sobj, now)
+                        values["next_run_at"] = apply_stagger(
+                            compute_next_run_at(sobj, now), sobj, job_id
+                        )
                 else:
                     values["next_run_at"] = None
 
@@ -256,6 +267,7 @@ class CronService:
         job_dict = {
             "id": job.id,
             "user_id": job.user_id,
+            "project_id": job.project_id,
             "session_id": job.session_id,
             "name": job.name,
             "schedule": job.schedule,
@@ -311,8 +323,88 @@ class CronService:
         async with self._state.lock:
             await _apply_job_result(self._state, job_id, result)
 
-    async def list_jobs(self, user_id: str, session_id: str | None = None) -> list[dict]:
-        """List cron jobs, optionally filtered by session."""
+    async def pause_all(self, user_id: str, session_id: str | None = None) -> int:
+        """Disable all of a user's jobs (optionally one session's). Returns count."""
+        from db.base import get_db_session
+        from db.models.cron import CronJob
+        from sqlalchemy import update
+
+        query = (
+            update(CronJob)
+            .where(
+                CronJob.user_id == user_id,
+                CronJob.is_deleted == False,  # noqa: E712
+                CronJob.enabled == True,  # noqa: E712
+            )
+        )
+        if session_id:
+            query = query.where(CronJob.session_id == session_id)
+        # next_run_at is cleared like single-job disable does — otherwise a
+        # slot that lapses while paused fires immediately on resume.
+        query = query.values(
+            enabled=False, next_run_at=None, updated_at=datetime.now(timezone.utc)
+        )
+
+        async with get_db_session() as db:
+            result = await db.execute(query)
+
+        arm_timer(self._state)
+        return result.rowcount
+
+    async def resume_all(self, user_id: str, session_id: str | None = None) -> int:
+        """Re-enable all of a user's jobs and recompute their next fire times."""
+        from db.base import get_db_session
+        from db.models.cron import CronJob
+        from sqlalchemy import select, update
+        from cron.schedule import apply_stagger, compute_next_run_at, schedule_from_dict
+
+        now = datetime.now(timezone.utc)
+
+        query = (
+            update(CronJob)
+            .where(
+                CronJob.user_id == user_id,
+                CronJob.is_deleted == False,  # noqa: E712
+                CronJob.enabled == False,  # noqa: E712
+            )
+        )
+        if session_id:
+            query = query.where(CronJob.session_id == session_id)
+        query = query.values(enabled=True, updated_at=now)
+
+        async with get_db_session() as db:
+            result = await db.execute(query)
+
+        async with get_db_session() as db:
+            q = select(CronJob).where(
+                CronJob.user_id == user_id,
+                CronJob.is_deleted == False,  # noqa: E712
+                CronJob.enabled == True,  # noqa: E712
+                CronJob.next_run_at.is_(None),
+            )
+            if session_id:
+                q = q.where(CronJob.session_id == session_id)
+            rows = (await db.execute(q)).scalars().all()
+            for job in rows:
+                sobj = schedule_from_dict(job.schedule)
+                if sobj:
+                    next_run = apply_stagger(compute_next_run_at(sobj, now), sobj, job.id)
+                    await db.execute(
+                        update(CronJob)
+                        .where(CronJob.id == job.id)
+                        .values(next_run_at=next_run, updated_at=now)
+                    )
+
+        arm_timer(self._state)
+        return result.rowcount
+
+    async def list_jobs(
+        self,
+        user_id: str,
+        session_id: str | None = None,
+        project_id: str | None = None,
+    ) -> list[dict]:
+        """List cron jobs, optionally narrowed to one project or notify session."""
         from db.base import get_db_session
         from db.models.cron import CronJob
         from sqlalchemy import select
@@ -324,6 +416,8 @@ class CronService:
             )
             if session_id:
                 query = query.where(CronJob.session_id == session_id)
+            if project_id:
+                query = query.where(CronJob.project_id == project_id)
             query = query.order_by(CronJob.created_at.desc())
 
             result = await db.execute(query)
@@ -331,20 +425,14 @@ class CronService:
 
         jobs = [_job_to_dict(row) for row in rows]
 
-        # Which project each job runs in. Shown in the UI because a scheduled
-        # task acts on files, and "where" is the part you cannot infer from the
-        # prompt. Resolved through the cached slug lookup, so this is not a
-        # query per job.
+        # Which directory each job runs in — the part you cannot infer from
+        # the prompt. Resolved through the cached slug lookup.
         from project.workspace import project_directory, slug_for
-        from session.session import project_id_for
         for job in jobs:
             try:
-                pid = await project_id_for(job["session_id"])
-                slug = await slug_for(pid)
-                job["project_id"] = pid
+                slug = await slug_for(job["project_id"])
                 job["project_directory"] = project_directory(slug)
             except Exception:
-                job["project_id"] = None
                 job["project_directory"] = None
         return jobs
 
@@ -387,10 +475,11 @@ class CronService:
         return [_run_to_dict(row) for row in rows]
 
     async def status(self) -> dict:
-        """Get scheduler status."""
+        """Get scheduler status, including liveness for external monitoring."""
         from db.base import get_db_session
         from db.models.cron import CronJob
         from sqlalchemy import select, func
+        from cron.types import MAX_TIMER_DELAY_MS
 
         async with get_db_session() as db:
             total = await db.execute(
@@ -406,9 +495,33 @@ class CronService:
                     CronJob.running_at.isnot(None)
                 )
             )
+            next_wake = await db.execute(
+                select(func.min(CronJob.next_run_at)).where(
+                    CronJob.is_deleted == False,
+                    CronJob.enabled == True,
+                    CronJob.next_run_at.isnot(None),
+                )
+            )
 
+        # The timer promises a tick at least every MAX_TIMER_DELAY; if several
+        # windows pass without one, the scheduler is wedged — the exact failure
+        # mode that goes unnoticed when only in-process watchdogs exist.
+        last_tick_ms = self._state.last_tick_at_ms
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        healthy = self._started and (
+            last_tick_ms is not None and now_ms - last_tick_ms < 3 * MAX_TIMER_DELAY_MS
+        )
+
+        next_wake_at = next_wake.scalar()
         return {
             "running": self._started,
+            "healthy": healthy,
+            "last_tick_at": (
+                datetime.fromtimestamp(last_tick_ms / 1000, tz=timezone.utc).isoformat()
+                if last_tick_ms
+                else None
+            ),
+            "next_run_at": next_wake_at.isoformat() if next_wake_at else None,
             "total_jobs": total.scalar() or 0,
             "enabled_jobs": enabled.scalar() or 0,
             "running_jobs": running.scalar() or 0,
@@ -421,8 +534,7 @@ class CronService:
         from db.base import get_db_session
         from db.models.cron import CronJob
         from sqlalchemy import select, update
-        from cron.schedule import compute_next_run_at
-        from cron.types import CronScheduleCron, CronScheduleEvery, CronScheduleAt
+        from cron.schedule import apply_stagger, compute_next_run_at, schedule_from_dict
 
         now = datetime.now(timezone.utc)
 
@@ -435,19 +547,18 @@ class CronService:
             )
             jobs = result.scalars().all()
 
-            for job in jobs:
-                sched = job.schedule
-                kind = sched.get("kind") if isinstance(sched, dict) else None
-                sobj = None
-                if kind == "cron":
-                    sobj = CronScheduleCron(expr=sched["expr"], tz=sched.get("tz", "UTC"))
-                elif kind == "every":
-                    sobj = CronScheduleEvery(every_ms=sched["every_ms"], anchor_ms=sched.get("anchor_ms"))
-                elif kind == "at":
-                    sobj = CronScheduleAt(at=sched["at"])
+            from cron.schedule import as_aware_utc
 
+            for job in jobs:
+                sobj = schedule_from_dict(job.schedule)
                 if sobj:
-                    next_run = compute_next_run_at(sobj, now)
+                    next_run = apply_stagger(compute_next_run_at(sobj, now), sobj, job.id)
+                    # A job already due keeps its overdue next_run_at: recovery
+                    # decided whether it replays, and recomputing here would
+                    # silently skip the slot.
+                    stored_next = as_aware_utc(job.next_run_at)
+                    if stored_next and stored_next <= now:
+                        continue
                     if next_run != job.next_run_at:
                         await db.execute(
                             update(CronJob)
@@ -461,6 +572,7 @@ def _job_to_dict(job) -> dict:
     return {
         "id": job.id,
         "user_id": job.user_id,
+        "project_id": job.project_id,
         "session_id": job.session_id,
         "name": job.name,
         "description": job.description,
@@ -492,6 +604,7 @@ def _run_to_dict(run) -> dict:
     return {
         "id": run.id,
         "job_id": run.job_id,
+        "temp_session_id": run.temp_session_id,
         "status": run.status,
         "error_message": run.error_message,
         "task_prompt": run.task_prompt,

@@ -13,7 +13,7 @@ interface MenuTabProps {
   sessionId: string | null
 }
 
-const ROWS: TabKind[] = ["review", "terminal", "browser", "files", "desktop"]
+const ROWS: TabKind[] = ["review", "terminal", "browser", "files", "desktop", "cron"]
 
 export function MenuTab({ sessionId }: MenuTabProps) {
   const { t } = useTranslation("workbench")

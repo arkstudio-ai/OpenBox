@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/api/containers_api.dart';
+import '../../shared/appearance/tokens.dart';
+import '../../shared/appearance/type_scale.dart';
 import '../../shared/events/bus.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/router/paths.dart';
@@ -57,6 +60,8 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sandbox = ref.watch(runningContainerProvider);
+    final needsSandbox = sandbox.hasValue && sandbox.valueOrNull == null;
     return Column(
       children: [
         Expanded(
@@ -65,6 +70,7 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
             onPick: _startChat,
           ),
         ),
+        if (needsSandbox) const _SandboxCard(),
         SafeArea(
           top: false,
           child: Composer(
@@ -74,6 +80,94 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Sandbox gate (web `workspace:sandbox`): files and commands run in an
+/// isolated sandbox — offer to create one when none is running.
+class _SandboxCard extends ConsumerStatefulWidget {
+  const _SandboxCard();
+
+  @override
+  ConsumerState<_SandboxCard> createState() => _SandboxCardState();
+}
+
+class _SandboxCardState extends ConsumerState<_SandboxCard> {
+  bool _creating = false;
+
+  Future<void> _create() async {
+    setState(() => _creating = true);
+    try {
+      await ref.read(containersApiProvider).create();
+      ref.invalidate(runningContainerProvider);
+    } catch (_) {
+      if (mounted) {
+        ref
+            .read(toastProvider.notifier)
+            .error(ref.read(i18nProvider).t('workspace:sandbox.failed'));
+      }
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: t.card,
+        borderRadius: BorderRadius.circular(Radii.xl),
+        border: Border.all(color: t.hair),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  i18n.t('workspace:sandbox.title'),
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    fontWeight: FontWeight.w600,
+                    color: t.n800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  i18n.t('workspace:sandbox.body'),
+                  style: TextStyle(
+                      fontSize: FontSizes.xs, color: t.n600, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: _creating ? null : _create,
+            style: FilledButton.styleFrom(
+              backgroundColor: t.ink,
+              foregroundColor: t.bg,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(Radii.full),
+              ),
+            ),
+            child: Text(
+              _creating
+                  ? i18n.t('workspace:sandbox.creating')
+                  : i18n.t('workspace:sandbox.create'),
+              style: const TextStyle(fontSize: FontSizes.sm),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

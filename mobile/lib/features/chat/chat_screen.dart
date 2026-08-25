@@ -13,6 +13,7 @@ import 'widgets/cards/permission_card.dart';
 import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
+import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
 
@@ -45,16 +46,30 @@ class ChatScreen extends ConsumerWidget {
       for (final (index, row) in rows.indexed)
         switch (row) {
           UserRowData(:final message) => UserBubble(message: message),
-          AssistantTurnData() => AssistantTurn(
-              turn: row,
-              sessionId: sessionId,
-              streaming: busy && index == rows.length - 1,
-              onReview: () => context.push(Paths.workbench(sessionId)),
-              onRegenerate: (id) => ref
-                  .read(chatSessionProvider(sessionId).notifier)
-                  .regenerate(id),
-              onDismiss: (id) =>
-                  ref.read(chatSessionProvider(sessionId).notifier).dismiss(id),
+          AssistantTurnData() => GestureDetector(
+              onLongPress: busy
+                  ? null
+                  : () => showTurnActions(
+                        context,
+                        ref,
+                        sessionId: sessionId,
+                        turn: row,
+                        onRegenerate: (id) => ref
+                            .read(chatSessionProvider(sessionId).notifier)
+                            .regenerate(id),
+                      ),
+              child: AssistantTurn(
+                turn: row,
+                sessionId: sessionId,
+                streaming: busy && index == rows.length - 1,
+                onReview: () => context.push(Paths.workbench(sessionId)),
+                onRegenerate: (id) => ref
+                    .read(chatSessionProvider(sessionId).notifier)
+                    .regenerate(id),
+                onDismiss: (id) => ref
+                    .read(chatSessionProvider(sessionId).notifier)
+                    .dismiss(id),
+              ),
             ),
         },
       if (busy && (rows.isEmpty || rows.last is UserRowData)) const TypingRow(),

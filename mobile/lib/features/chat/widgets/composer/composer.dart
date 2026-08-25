@@ -1,13 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/api/containers_api.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/session.dart';
+import '../../api/mention_api.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
+import '../../utils/mention.dart';
 import 'context_ring.dart';
+import 'mention_menu.dart';
 import 'picker_sheets.dart';
 
 /// The chat input (web `Composer.tsx`), mobile-optimized: rounded-3xl card
@@ -42,13 +48,140 @@ class _ComposerState extends ConsumerState<Composer> {
   final _focusNode = FocusNode();
   bool _sending = false;
 
+  // Mention menu state (web `useMentionMenu`).
+  MentionTrigger? _trigger;
+  String? _dismissedKey;
+  Timer? _fileDebounce;
+  String _fileQuery = '';
+  List<String> _fileResults = const [];
+  bool _fileLoading = false;
+
   bool get _canSend => _controller.text.trim().isNotEmpty && !_sending;
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onComposerChanged);
+  }
+
+  @override
   void dispose() {
+    _fileDebounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onComposerChanged() {
+    final caret = _controller.selection.baseOffset;
+    final trigger =
+        caret < 0 ? null : resolveTrigger(_controller.text, caret);
+    if (trigger?.key != _trigger?.key) {
+      setState(() => _trigger = trigger);
+      _kickFileSearch(trigger);
+    }
+  }
+
+  /// Debounced sandbox file search for `@` queries (web: 160ms).
+  void _kickFileSearch(MentionTrigger? trigger) {
+    _fileDebounce?.cancel();
+    final containerId = ref.read(runningContainerProvider).valueOrNull?.id;
+    final query = trigger?.query.trim() ?? '';
+    if (trigger?.kind != MentionKind.at ||
+        containerId == null ||
+        query.isEmpty) {
+      return;
+    }
+    setState(() => _fileLoading = true);
+    _fileDebounce = Timer(const Duration(milliseconds: 160), () async {
+      try {
+        final files = await ref
+            .read(containersApiProvider)
+            .searchFiles(containerId, query);
+        if (mounted && _trigger?.query.trim() == query) {
+          setState(() {
+            _fileQuery = query;
+            _fileResults = files;
+            _fileLoading = false;
+          });
+        }
+      } catch (_) {
+        if (mounted) setState(() => _fileLoading = false);
+      }
+    });
+  }
+
+  bool _matches(String query, String name, String? description) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return '$name ${description ?? ''}'.toLowerCase().contains(q);
+  }
+
+  List<MentionSectionData> _buildMentionSections(String? containerId) {
+    final trigger = _trigger;
+    if (trigger == null) return const [];
+    final query = trigger.query;
+    final skills = ref.watch(mentionSkillsProvider);
+    final skillItems = [
+      for (final s in skills.valueOrNull ?? const <MentionEntry>[])
+        if (_matches(query, s.name, s.description))
+          MentionItem(
+            kind: 'skill',
+            label: s.name,
+            description: s.description,
+            insert: '@skill:${s.name}',
+          ),
+    ];
+    if (trigger.kind == MentionKind.at) {
+      return [
+        MentionSectionData(
+          kind: 'files',
+          needSandbox: containerId == null,
+          loading: _fileLoading,
+          items: [
+            if (containerId != null && _fileQuery == query.trim())
+              for (final path in _fileResults)
+                MentionItem(kind: 'file', label: path, insert: '@$path'),
+          ],
+        ),
+        MentionSectionData(
+            kind: 'skills', loading: skills.isLoading, items: skillItems),
+      ];
+    }
+    final commands = ref.watch(mentionCommandsProvider);
+    return [
+      MentionSectionData(
+        kind: 'commands',
+        loading: commands.isLoading,
+        items: [
+          for (final c in commands.valueOrNull ?? const <MentionEntry>[])
+            if (_matches(query, c.name, c.description))
+              MentionItem(
+                kind: 'command',
+                label: c.name,
+                description: c.description,
+                insert: '/${c.name} ',
+              ),
+        ],
+      ),
+      MentionSectionData(
+          kind: 'skills', loading: skills.isLoading, items: skillItems),
+    ];
+  }
+
+  void _selectMention(MentionItem item) {
+    final trigger = _trigger;
+    if (trigger == null) return;
+    final next = replaceTrigger(_controller.text, trigger, item.insert);
+    _controller.value = TextEditingValue(
+      text: next.text,
+      selection: TextSelection.collapsed(offset: next.caret),
+    );
+    setState(() {
+      _dismissedKey = null;
+      _trigger = null;
+    });
+    _focusNode.requestFocus();
   }
 
   Future<void> _submit() async {
@@ -79,8 +212,12 @@ class _ComposerState extends ConsumerState<Composer> {
     final activeAgent =
         pickedAgent ?? widget.session?.agent ?? config?.defaultAgent ?? 'build';
 
+    final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
+    final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: t.card,
         borderRadius: BorderRadius.circular(Radii.xl3),
@@ -89,6 +226,11 @@ class _ComposerState extends ConsumerState<Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (mentionOpen)
+            MentionMenu(
+              sections: _buildMentionSections(containerId),
+              onSelect: _selectMention,
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
             child: TextField(

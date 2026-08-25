@@ -18,15 +18,6 @@ final sessionDiffProvider =
   return ref.watch(workbenchApiProvider).sessionDiff(sessionId);
 });
 
-/// The user's running sandbox container, if any.
-final runningContainerProvider = FutureProvider<ContainerInfo?>((ref) async {
-  final containers = await ref.watch(workbenchApiProvider).listContainers();
-  for (final container in containers) {
-    if (container.isRunning) return container;
-  }
-  return null;
-});
-
 /// The session's project workdir (files-tab root).
 final sessionWorkdirProvider =
     FutureProvider.family<String?, String>((ref, sessionId) {

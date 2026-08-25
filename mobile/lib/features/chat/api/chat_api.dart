@@ -95,6 +95,16 @@ class ChatApi {
     );
   }
 
+  /// Fork the conversation at a message into a new session
+  /// (web `chat:meta.forkMessage`).
+  Future<Session> fork(String sessionId, String messageId) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/agent/session/$sessionId/fork',
+      data: {'message_id': messageId},
+    );
+    return Session.fromJson(resp.data ?? const {});
+  }
+
   Future<void> acceptPlan(String sessionId) async {
     await _dio.post<dynamic>('/api/agent/session/$sessionId/plan/accept');
   }

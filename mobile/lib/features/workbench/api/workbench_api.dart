@@ -23,25 +23,12 @@ class WorkbenchApi {
         .toList();
   }
 
-  Future<List<ContainerInfo>> listContainers() async {
-    final resp = await _dio.get<Map<String, dynamic>>('/api/containers');
-    return asList(resp.data?['containers'])
-        .whereType<Map<String, dynamic>>()
-        .map(ContainerInfo.fromJson)
-        .toList();
-  }
-
   /// The session's project workdir (`directory` on `GET /session/{id}`),
   /// used as the files-tab root (web D.4.7 — never climb above it).
   Future<String?> sessionDirectory(String sessionId) async {
     final resp = await _dio
         .get<Map<String, dynamic>>('/api/agent/session/$sessionId');
     return asString(resp.data?['directory']);
-  }
-
-  Future<ContainerInfo> createContainer() async {
-    final resp = await _dio.post<Map<String, dynamic>>('/api/containers');
-    return ContainerInfo.fromJson(resp.data ?? const {});
   }
 
   Future<List<FileEntry>> listFiles(String containerId, String path) async {

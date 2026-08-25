@@ -28,8 +28,12 @@ cd mobile && flutter run
 | `features/chat/lib/turn-view.ts`(连续 assistant 合并为一轮,traces 聚合) | `lib/features/chat/utils/turn_view.dart` |
 | streamdown 流式 markdown | `gpt_markdown` + `flutter_highlight`(`widgets/markdown_view.dart`) |
 | 左侧 Sidebar | 抽屉 `SessionDrawer` |
-| 右侧 WorkbenchPanel(审阅/终端/文件) | 路由页 `/app/w/:sessionId`(`WorkbenchScreen`) |
-| Settings 路由(6 个 tab) | `/app/settings`(账号/外观/模型三段;用量/工具/浏览器为桌面范畴) |
+| 右侧 WorkbenchPanel(审阅/终端/浏览器/文件/云桌面) | 路由页 `/app/w/:sessionId`(`WorkbenchScreen`,同款五 tab) |
+| DesktopTab(Wuying Web SDK) | `desktop_tab.dart`:原生轮询 `/api/desktop/ticket`(202→task_id 重试),WebView 装载同版本 SDK 引导页,JS channel 回报 connected/error,允许操控开关经 `__setControl` 注入 |
+| BrowserTab(dev-browser 截图流) | `browser_tab.dart`:原生 WS 客户端,JPEG 帧 → `Image.memory`(gapless),点击/滚动映射回页面像素坐标,4004 → 无沙箱 |
+| Composer 的 `/`、`@` 提及菜单 | `utils/mention.dart`(触发规则逐条移植)+ `mention_menu.dart`;文件搜索 160ms 防抖,技能/命令同款分组 |
+| hover meta 操作行(复制/点赞/点踩/重生成/复刻) | 长按助手轮 → 操作单(`turn_actions_sheet.dart`) |
+| Settings 路由(6 个 tab) | `/app/settings`(账号/外观/模型三段;用量/工具/浏览器设置为桌面范畴) |
 
 ## 分层(镜像 web ENGINEERING_SPEC §3/§4)
 
@@ -56,7 +60,7 @@ lib/
 ## 移动端偏差记录(对齐 web 附录 D 的做法:能力不具备则省略控件)
 
 - SSO/Logto 登录未做(当前 web LoginForm 也已移除 SSO 按钮;移动端需要 PKCE + 回调 scheme,后续补)。
-- 附件上传、`@` 文件提及、语音输入暂缺(composer 仅文本;上传链路 OSS 直传 + 8MB legacy 兜底待接)。
+- 附件上传、语音输入暂缺(composer 文本 + `/`/`@` 提及;上传链路 OSS 直传 + 8MB legacy 兜底待接)。
 - 顶栏"分享"(web 为复制 URL)在移动端无意义,省略。
-- 浏览器 / 云桌面两个面板 tab 为桌面范畴,不移植。
-- 会话列表虚拟化、消息列表 >50 行虚拟化暂未做(Flutter ListView.builder 本身惰性构建)。
+- 云桌面:剪贴板开关/文件上传/独立全屏未做(tab 本身已是全屏;操控开关已有);浏览器 tab 的键盘输入未做(截图流点击/滚动/导航已有)。
+- 消息列表 >50 行虚拟化未做专门处理(ListView.builder 本身惰性构建)。

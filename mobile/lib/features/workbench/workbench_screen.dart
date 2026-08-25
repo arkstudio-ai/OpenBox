@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../shared/api/containers_api.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
-import 'api/workbench_api.dart';
-import 'state/workbench_providers.dart';
+import 'widgets/browser_tab.dart';
+import 'widgets/desktop_tab.dart';
 import 'widgets/files_tab.dart';
 import 'widgets/review_tab.dart';
 import 'widgets/terminal_tab.dart';
 
 /// The web right-panel (`WorkbenchPanel`) re-flowed as a full-screen route
-/// with a segmented tab bar: 审阅 / 终端 / 文件. Browser/desktop tabs are out
-/// of scope on the phone.
+/// with a segmented tab bar, same tab set as web:
+/// 审阅 / 终端 / 浏览器 / 文件 / 云桌面.
 class WorkbenchScreen extends ConsumerStatefulWidget {
   const WorkbenchScreen({
     super.key,
@@ -31,7 +32,7 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   late String _tab = widget.initialTab;
   bool _creatingSandbox = false;
 
-  static const _tabs = ['review', 'terminal', 'files'];
+  static const _tabs = ['review', 'terminal', 'browser', 'files', 'desktop'];
 
   @override
   Widget build(BuildContext context) {
@@ -79,10 +80,12 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
       body: switch (_tab) {
         'terminal' => _withContainer(
             (containerId) => TerminalTab(containerId: containerId)),
+        'browser' => _withContainer((_) => const BrowserTab()),
         'files' => _withContainer(
             (containerId) =>
                 FilesTab(sessionId: widget.sessionId, containerId: containerId),
           ),
+        'desktop' => const DesktopTab(),
         _ => ReviewTab(sessionId: widget.sessionId),
       },
     );
@@ -135,7 +138,7 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
   Future<void> _createSandbox() async {
     setState(() => _creatingSandbox = true);
     try {
-      await ref.read(workbenchApiProvider).createContainer();
+      await ref.read(containersApiProvider).create();
       ref.invalidate(runningContainerProvider);
     } finally {
       if (mounted) setState(() => _creatingSandbox = false);

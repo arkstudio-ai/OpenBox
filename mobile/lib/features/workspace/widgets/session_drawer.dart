@@ -68,56 +68,79 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              // DEEIX-style nav rows (web Sidebar): left-aligned, icon
+              // column; the primary action wears a round tinted icon chip
+              // instead of a filled pill.
+              InkWell(
+                borderRadius: BorderRadius.circular(Radii.full),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.go(Paths.app);
+                },
+                child: SizedBox(
+                  height: 40,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                              color: t.n200, shape: BoxShape.circle),
+                          child: Icon(Icons.add, size: 15, color: t.ink),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          i18n.t('workspace:newChat'),
+                          style: TextStyle(
+                            fontSize: FontSizes.base,
+                            fontWeight: FontWeight.w500,
+                            color: t.ink,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // Borderless search row: only the focus tint marks it (web).
               SizedBox(
                 height: 40,
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    context.go(Paths.app);
-                  },
-                  style: FilledButton.styleFrom(
-                    backgroundColor: t.a200,
-                    foregroundColor: t.ink,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(Radii.full),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: Text(
-                    i18n.t('workspace:newChat'),
-                    style: TextStyle(
-                      fontSize: FontSizes.base,
-                      fontWeight: FontWeight.w500,
-                    ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        child: Center(
+                          child: Icon(Icons.search, size: 16, color: t.ink),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _search,
+                          onChanged: (_) => setState(() {}),
+                          style: TextStyle(
+                              fontSize: FontSizes.base, color: t.ink),
+                          decoration: InputDecoration(
+                            hintText: i18n.t('workspace:search'),
+                            hintStyle: TextStyle(
+                                color: t.n600, fontSize: FontSizes.base),
+                            isDense: true,
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
               const SizedBox(height: 10),
-              TextField(
-                controller: _search,
-                onChanged: (_) => setState(() {}),
-                style: TextStyle(fontSize: FontSizes.md, color: t.ink),
-                decoration: InputDecoration(
-                  hintText: i18n.t('workspace:search'),
-                  hintStyle: TextStyle(color: t.n500, fontSize: FontSizes.md),
-                  prefixIcon: Icon(Icons.search, size: 18, color: t.n500),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(Radii.full),
-                    borderSide: BorderSide(color: t.hair),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(Radii.full),
-                    borderSide: BorderSide(color: t.n400),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
               // Scheduled-tasks entry, same spot as the web sidebar.
-              // Web Sidebar entry: h-10 rounded-full row, size-7 icon slot.
               InkWell(
                 borderRadius: BorderRadius.circular(Radii.full),
                 onTap: () {
@@ -137,7 +160,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                                 Icon(Icons.schedule, size: 16, color: t.ink),
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 10),
                         Text(
                           i18n.t('workspace:scheduledTasks'),
                           style: TextStyle(
@@ -246,37 +269,45 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
   Widget _filterToggle(
       I18nState i18n, BossipTokens t, String groupId, int cronCount) {
     final mode = _sessionFilter[groupId] ?? 'chats';
+    // Icon-only segments (web FilterToggle) — the label lives in semantics;
+    // the cron segment carries its count.
     Widget segment(String value, String label, IconData icon) {
       final active = mode == value;
-      return InkWell(
-        borderRadius: BorderRadius.circular(Radii.full),
-        onTap: () => setState(() => _sessionFilter[groupId] = value),
-        child: Container(
-          height: 24,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color: active ? t.n200 : Colors.transparent,
-            borderRadius: BorderRadius.circular(Radii.full),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 12, color: active ? t.ink : t.n600),
-              const SizedBox(width: 4),
-              Text(
-                value == 'cron' && cronCount > 0 ? '$label $cronCount' : label,
-                style: TextStyle(
-                  fontSize: FontSizes.xs2,
-                  color: active ? t.ink : t.n600,
-                ),
-              ),
-            ],
+      return Semantics(
+        label: label,
+        button: true,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(Radii.full),
+          onTap: () => setState(() => _sessionFilter[groupId] = value),
+          child: Container(
+            height: 24,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: active ? t.n200 : Colors.transparent,
+              borderRadius: BorderRadius.circular(Radii.full),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 12, color: active ? t.ink : t.n600),
+                if (value == 'cron' && cronCount > 0) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '$cronCount',
+                    style: TextStyle(
+                      fontSize: FontSizes.xs2,
+                      color: active ? t.ink : t.n600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       );
     }
 
     return Padding(
-      padding: const EdgeInsets.only(left: 24, bottom: 2),
+      padding: const EdgeInsets.only(left: 28, bottom: 2),
       child: Row(
         children: [
           segment('chats', i18n.t('workspace:filter.chats'),
@@ -305,35 +336,37 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
       onLongPress:
           project == null ? null : () => _showProjectActions(i18n, project),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
         child: Row(
           children: [
             AnimatedRotation(
-              turns: collapsed && !searching ? -0.25 : 0,
+              turns: collapsed && !searching ? 0 : 0.25,
               duration: const Duration(milliseconds: 150),
-              child: Icon(Icons.expand_more, size: 15, color: t.n500),
+              child: Icon(Icons.chevron_right, size: 14, color: t.n600),
             ),
-            const SizedBox(width: 4),
-            Expanded(
+            const SizedBox(width: 6),
+            Flexible(
               child: Text(
                 name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: FontSizes.xs,
-                  fontWeight: FontWeight.w600,
-                  color: t.n600,
-                  letterSpacing: 0.2,
+                  fontSize: FontSizes.md,
+                  fontWeight: FontWeight.w500,
+                  color: t.ink,
                 ),
               ),
             ),
-            if (selected)
+            if (selected) ...[
+              const SizedBox(width: 6),
               Container(
                 width: 6,
                 height: 6,
                 decoration:
-                    BoxDecoration(color: t.a700, shape: BoxShape.circle),
+                    BoxDecoration(color: t.accent, shape: BoxShape.circle),
               ),
+            ],
+            const Spacer(),
           ],
         ),
       ),

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/appearance/tokens.dart';
+import '../../shared/appearance/type_scale.dart';
+import '../../shared/i18n/i18n.dart';
 import '../../shared/models/message.dart';
 import '../../shared/router/paths.dart';
 import 'state/chat_session_controller.dart';
@@ -82,7 +85,9 @@ class ChatScreen extends ConsumerWidget {
         Expanded(
           child: sessionState.loading && messages.isEmpty
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-              : ChatFlow(rows: widgets, forceScrollToken: lastUserId),
+              : sessionState.failed && messages.isEmpty
+                  ? _ErrorState(sessionId: sessionId)
+                  : ChatFlow(rows: widgets, forceScrollToken: lastUserId),
         ),
         for (final question in questions) QuestionDock(request: question),
         SafeArea(
@@ -99,6 +104,50 @@ class ChatScreen extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Snapshot fetch failed with nothing cached — error text + retry
+/// (was a silent blank screen when the backend was unreachable).
+class _ErrorState extends ConsumerWidget {
+  const _ErrorState({required this.sessionId});
+
+  final String sessionId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            i18n.t('common:state.error'),
+            style: TextStyle(fontSize: FontSizes.base, color: t.n700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            i18n.t('errors:network'),
+            style: TextStyle(fontSize: FontSizes.sm, color: t.n500),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton(
+            onPressed: () =>
+                ref.read(chatSessionProvider(sessionId).notifier).reload(),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: t.hair),
+              foregroundColor: t.ink,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(Radii.full),
+              ),
+            ),
+            child: Text(i18n.t('common:action.retry'),
+                style: const TextStyle(fontSize: FontSizes.sm)),
+          ),
+        ],
+      ),
     );
   }
 }

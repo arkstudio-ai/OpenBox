@@ -79,6 +79,7 @@ class _ChatFlowState extends State<ChatFlow> {
           child: ListView.separated(
             controller: _controller,
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             itemCount: widget.rows.length,
             separatorBuilder: (_, _) => const SizedBox(height: 20),
             itemBuilder: (context, index) => widget.rows[index],

@@ -29,6 +29,7 @@ class ChatEmptyState extends ConsumerWidget {
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       children: [
         Text(
           i18n.t('workspace:greeting.$slot', vars: {'name': name}),

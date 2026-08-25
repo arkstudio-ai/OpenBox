@@ -362,7 +362,9 @@ async def get_step_diff(
     await _require_session_owned(session_id, current_user["user_id"])
     if not from_snapshot or not to_snapshot or from_snapshot == to_snapshot:
         return []
-    return await snapshot.diff_full(from_snapshot, to_snapshot, session_id=session_id)
+    return await snapshot.diff_full(
+        from_snapshot, to_snapshot, session_id=session_id, user_id=current_user["user_id"]
+    )
 
 
 @router.post("/session/{session_id}/message/{message_id}/reaction")
@@ -841,9 +843,13 @@ async def get_diff(session_id: str, full: bool = False, current_user: dict = Dep
         return []
 
     if full:
-        return await snapshot.diff_full(first_snapshot, last_snapshot, session_id=session_id)
+        return await snapshot.diff_full(
+            first_snapshot, last_snapshot, session_id=session_id, user_id=user_id
+        )
     else:
-        diffs = await snapshot.diff(first_snapshot, last_snapshot, session_id=session_id)
+        diffs = await snapshot.diff(
+            first_snapshot, last_snapshot, session_id=session_id, user_id=user_id
+        )
         return [{"path": d.path, "additions": d.additions, "deletions": d.deletions, "status": d.status} for d in diffs]
 
 

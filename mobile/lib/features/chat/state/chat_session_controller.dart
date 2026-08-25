@@ -17,15 +17,20 @@ import 'stream_store.dart';
 /// refetch, send/stop/regenerate. Streaming frames land in
 /// [chatStreamProvider]; this controller only converges snapshots.
 class ChatSessionState {
-  const ChatSessionState({this.loading = true, this.session});
+  const ChatSessionState({this.loading = true, this.session, this.failed = false});
 
   final bool loading;
   final Session? session;
 
-  ChatSessionState copyWith({bool? loading, Session? session}) =>
+  /// The last snapshot fetch failed (backend unreachable). The screen shows
+  /// an error state with retry when there's nothing cached to render.
+  final bool failed;
+
+  ChatSessionState copyWith({bool? loading, Session? session, bool? failed}) =>
       ChatSessionState(
         loading: loading ?? this.loading,
         session: session ?? this.session,
+        failed: failed ?? this.failed,
       );
 }
 
@@ -126,9 +131,9 @@ class ChatSessionController
       final messages = results[0] as List<ChatMessage>;
       final session = results[1] as Session;
       ref.read(chatStreamProvider.notifier).setMessages(_sessionId, messages);
-      state = state.copyWith(session: session, loading: false);
+      state = state.copyWith(session: session, loading: false, failed: false);
     } catch (_) {
-      if (!_disposed) state = state.copyWith(loading: false);
+      if (!_disposed) state = state.copyWith(loading: false, failed: true);
     }
   }
 
@@ -161,6 +166,12 @@ class ChatSessionController
           model: model,
           attachments: attachments,
         );
+  }
+
+  /// Manual retry from the error state.
+  Future<void> reload() async {
+    state = state.copyWith(loading: true, failed: false);
+    await _refetch();
   }
 
   /// Stop generation (web `stop()`): abort + optimistic idle.

@@ -45,11 +45,20 @@ class BossipApp extends ConsumerWidget {
           data: media.copyWith(
             textScaler: TextScaler.linear(appearance.fontSize.scale),
           ),
-          child: Stack(
-            children: [
-              ?child,
-              const ToastHost(),
-            ],
+          // Tap on any empty area dismisses the keyboard — interactive
+          // widgets win the gesture arena, so buttons/fields are unaffected.
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              final focus = FocusManager.instance.primaryFocus;
+              if (focus != null && focus.context != null) focus.unfocus();
+            },
+            child: Stack(
+              children: [
+                ?child,
+                const ToastHost(),
+              ],
+            ),
           ),
         );
       },

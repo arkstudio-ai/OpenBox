@@ -6,6 +6,7 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
+import 'attachment_gallery.dart';
 
 const _attachmentsMarker = '\n\n[attachments]\n';
 
@@ -50,8 +51,14 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
         .join('\n\n');
     final (text, legacyFiles) = splitAttachments(rawText);
     final fileParts = widget.message.parts.whereType<FilePart>().toList();
+    // Media previews come from proper file parts (asset ids); the text
+    // trailer is only the fallback for pre-OSS messages (web parity).
+    final mediaParts = fileParts.where(isGalleryMedia).toList();
     final chips = fileParts.isNotEmpty
-        ? fileParts.map((f) => f.path.split('/').last).toList()
+        ? fileParts
+            .where((f) => !isGalleryMedia(f))
+            .map((f) => f.path.split('/').last)
+            .toList()
         : legacyFiles.map((p) => p.split('/').last).toList();
 
     final needsClamp = !_expanded && text.length > 360;
@@ -106,6 +113,11 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
                 ],
               ),
             ),
+            if (mediaParts.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: AttachmentGallery(parts: mediaParts, alignEnd: true),
+              ),
             if (chips.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -114,28 +126,7 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    for (final name in chips)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: t.hair),
-                          borderRadius: BorderRadius.circular(Radii.full),
-                          color: t.card,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.attach_file, size: 12, color: t.n600),
-                            const SizedBox(width: 4),
-                            Text(
-                              name,
-                              style: TextStyle(
-                                  fontSize: FontSizes.xs, color: t.n700),
-                            ),
-                          ],
-                        ),
-                      ),
+                    for (final name in chips) FileChipRow(name: name),
                   ],
                 ),
               ),

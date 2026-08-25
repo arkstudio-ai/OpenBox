@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/i18n/i18n.dart';
 import '../utils/turn_view.dart';
+import 'attachment_gallery.dart';
 import 'cards/inline_error_card.dart';
 import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
@@ -58,6 +59,21 @@ class AssistantTurn extends ConsumerWidget {
           PlanCard(plan: plan, sessionId: sessionId),
         for (final patch in turn.patches)
           PatchChip(patch: patch, onReview: onReview),
+        if (turn.files.any(isGalleryMedia))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: AttachmentGallery(
+              parts: turn.files.where(isGalleryMedia).toList(),
+            ),
+          ),
+        for (final file in turn.files.where((f) => !isGalleryMedia(f)))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: FileChipRow(name: file.path.split('/').last),
+            ),
+          ),
         if (turn.error != null && !streaming)
           InlineErrorCard(
             message: _errorMessage(i18n, turn.error!),

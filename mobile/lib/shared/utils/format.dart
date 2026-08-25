@@ -26,6 +26,14 @@ String formatDuration(num seconds) {
   return s > 0 ? '${m}m ${s}s' : '${m}m';
 }
 
+/// Bytes → "1.2 MB" (web `formatBytes`).
+String formatBytes(num bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${_trim(bytes / 1024)} KB';
+  if (bytes < 1024 * 1024 * 1024) return '${_trim(bytes / (1024 * 1024))} MB';
+  return '${_trim(bytes / (1024 * 1024 * 1024))} GB';
+}
+
 String _trim(double v) {
   final s = v.toStringAsFixed(1);
   return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;

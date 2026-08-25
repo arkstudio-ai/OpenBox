@@ -33,6 +33,7 @@ cd mobile && flutter run
 | BrowserTab(dev-browser 截图流) | `browser_tab.dart`:原生 WS 客户端,JPEG 帧 → `Image.memory`(gapless),点击/滚动映射回页面像素坐标,4004 → 无沙箱 |
 | Composer 的 `/`、`@` 提及菜单 | `utils/mention.dart`(触发规则逐条移植)+ `mention_menu.dart`;文件搜索 160ms 防抖,技能/命令同款分组 |
 | hover meta 操作行(复制/点赞/点踩/重生成/复刻) | 长按助手轮 → 操作单(`turn_actions_sheet.dart`) |
+| `AttachmentGallery`(图片附件宫格 + Lightbox) | `attachment_gallery.dart`:同款宫格/折叠/全屏(捏合缩放 + 下载);**视频**额外支持内联播放(web 只降级为胶囊);资产 URL 经 `/api/assets/{id}/url` 缓存 40 分钟 |
 | Settings 路由(6 个 tab) | `/app/settings`(账号/外观/模型三段;用量/工具/浏览器设置为桌面范畴) |
 
 ## 分层(镜像 web ENGINEERING_SPEC §3/§4)
@@ -60,7 +61,7 @@ lib/
 ## 移动端偏差记录(对齐 web 附录 D 的做法:能力不具备则省略控件)
 
 - SSO/Logto 登录未做(当前 web LoginForm 也已移除 SSO 按钮;移动端需要 PKCE + 回调 scheme,后续补)。
-- 附件上传、语音输入暂缺(composer 文本 + `/`/`@` 提及;上传链路 OSS 直传 + 8MB legacy 兜底待接)。
+- 附件**上传**、语音输入暂缺(composer 文本 + `/`/`@` 提及;上传链路 OSS 直传 + 8MB legacy 兜底待接)。附件**展示**已齐:图片宫格 + Lightbox + 视频播放。
 - 顶栏"分享"(web 为复制 URL)在移动端无意义,省略。
 - 云桌面:剪贴板开关/文件上传/独立全屏未做(tab 本身已是全屏;操控开关已有);浏览器 tab 的键盘输入未做(截图流点击/滚动/导航已有)。
 - 消息列表 >50 行虚拟化未做专门处理(ListView.builder 本身惰性构建)。

@@ -1,28 +1,123 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
+import '../../../../shared/models/message_part.dart';
 import '../../../../shared/models/todo.dart';
+import '../../../../shared/utils/format.dart';
+import '../../../../shared/widgets/fold.dart';
 import '../../../../shared/widgets/shimmer_text.dart';
-import '../../../../shared/widgets/spinner.dart';
+import '../../api/chat_api.dart';
+import '../../utils/todo_progress.dart';
+import '../../utils/tool_map.dart';
+import '../../utils/turn_view.dart';
+import '../traces/tool_chain_trace.dart' show ToolDetailBox;
 
-/// Task-list card (web `TodoCard`): checkmark timeline with the in-progress
-/// item shimmering its active form.
-class TodoCard extends ConsumerWidget {
-  const TodoCard({super.key, required this.items});
+/// The task card (web `TodoCard.tsx`): the model's todo list with each
+/// task's own calls folded underneath it. Replaces the flat tool chain for
+/// turns that kept a list; loose calls still render as a chain outside.
+class TodoCard extends ConsumerStatefulWidget {
+  const TodoCard({
+    super.key,
+    required this.todo,
+    required this.sessionId,
+    required this.streaming,
+    this.onStop,
+    this.editable = true,
+  });
 
-  final List<TodoItem> items;
+  final TodoView todo;
+  final String sessionId;
+
+  /// The turn is live — the card offers to stop it and keeps its bar moving.
+  final bool streaming;
+  final VoidCallback? onStop;
+
+  /// Only the conversation's newest card takes edits.
+  final bool editable;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TodoCard> createState() => _TodoCardState();
+}
+
+class _TodoCardState extends ConsumerState<TodoCard> {
+  Timer? _tick;
+  DateTime _now = DateTime.now();
+
+  // Once every task is done the card is a record, not a control: it folds
+  // to its heading (latched, so it doesn't snap under the user).
+  late bool _open = !widget.todo.allDone;
+  late bool _wasDone = widget.todo.allDone;
+
+  String? _adding; // afterId, or 'end' for the tail
+  final _draft = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTick();
+  }
+
+  @override
+  void didUpdateWidget(TodoCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTick();
+    if (_wasDone != widget.todo.allDone) {
+      _wasDone = widget.todo.allDone;
+      _open = !widget.todo.allDone;
+    }
+  }
+
+  void _syncTick() {
+    final active = widget.streaming && !widget.todo.allDone;
+    if (active && _tick == null) {
+      _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+        setState(() => _now = DateTime.now());
+      });
+    } else if (!active && _tick != null) {
+      _tick?.cancel();
+      _tick = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    _draft.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitAdd() async {
+    final subject = _draft.text.trim();
+    final afterId = _adding;
+    setState(() {
+      _adding = null;
+      _draft.clear();
+    });
+    if (subject.isEmpty || afterId == null) return;
+    await ref.read(chatApiProvider).addTodoItem(
+          widget.sessionId,
+          subject,
+          afterId: afterId == 'end' ? null : afterId,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final done = items.where((i) => i.status == TodoStatus.completed).length;
-    final allDone = items.isNotEmpty && done == items.length;
+    final todo = widget.todo;
+    // An add already being typed survives the last task completing.
+    final editable = widget.editable && (!todo.allDone || _adding != null);
+    final heading = todo.activeForm ??
+        i18n.t(widget.streaming ? 'chat:todo.working' : 'chat:todo.title');
+
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: t.card,
@@ -30,77 +125,466 @@ class TodoCard extends ConsumerWidget {
         border: Border.all(color: t.hair),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
               Expanded(
-                child: Text(
-                  i18n.t('chat:todo.title'),
-                  style: TextStyle(
-                    fontSize: FontSizes.sm,
-                    fontWeight: FontWeight.w600,
-                    color: t.n800,
+                child: InkWell(
+                  onTap: () => setState(() => _open = !_open),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: widget.streaming && !todo.allDone
+                            ? ShimmerText(
+                                heading,
+                                style: const TextStyle(
+                                  fontSize: FontSizes.base,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              )
+                            : Text(
+                                heading,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: FontSizes.base,
+                                  fontWeight: FontWeight.w500,
+                                  color: t.ink,
+                                ),
+                              ),
+                      ),
+                      if (todo.total > 0) ...[
+                        const SizedBox(width: 10),
+                        Text(
+                          todo.allDone
+                              ? i18n.t('chat:todo.allDone',
+                                  vars: {'total': todo.total})
+                              : i18n.t('chat:plan.stepCounter', vars: {
+                                  'current':
+                                      todo.current < 1 ? 1 : todo.current,
+                                  'total': todo.total,
+                                }),
+                          style: TextStyle(
+                              fontSize: FontSizes.sm, color: t.n600),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      AnimatedRotation(
+                        turns: _open ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child:
+                            Icon(Icons.expand_more, size: 15, color: t.n500),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              Text(
-                allDone
-                    ? i18n.t('chat:todo.allDone', vars: {'total': items.length})
-                    : '$done / ${items.length}',
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
-              ),
+              if (widget.streaming && widget.onStop != null)
+                GestureDetector(
+                  onTap: widget.onStop,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 10),
+                    child: Text(
+                      i18n.t('chat:plan.stop'),
+                      style:
+                          TextStyle(fontSize: FontSizes.sm, color: t.a700),
+                    ),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 10),
-          for (final item in items) _TodoRow(item: item),
+          Fold(
+            open: _open,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 8),
+                for (final task in todo.tasks)
+                  _TaskRow(
+                    task: task,
+                    now: _now,
+                    editable: editable,
+                    onAdd: (id) => setState(() {
+                      _adding = id;
+                      _draft.clear();
+                    }),
+                    onRemove: (id) => ref
+                        .read(chatApiProvider)
+                        .removeTodoItem(widget.sessionId, id),
+                  ),
+                if (editable)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: _adding != null
+                        ? TextField(
+                            controller: _draft,
+                            autofocus: true,
+                            onSubmitted: (_) => _submitAdd(),
+                            onTapOutside: (_) => _submitAdd(),
+                            style: TextStyle(
+                                fontSize: FontSizes.base, color: t.ink),
+                            decoration: InputDecoration(
+                              hintText: i18n.t('chat:todo.addPlaceholder'),
+                              hintStyle: TextStyle(
+                                  fontSize: FontSizes.base, color: t.n500),
+                              isDense: true,
+                              filled: true,
+                              fillColor: t.bg,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(Radii.md),
+                                borderSide: BorderSide(color: t.hair),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius:
+                                    BorderRadius.circular(Radii.md),
+                                borderSide: BorderSide(color: t.accent),
+                              ),
+                            ),
+                          )
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: GestureDetector(
+                              onTap: () => setState(() {
+                                _adding = 'end';
+                                _draft.clear();
+                              }),
+                              child: Text(
+                                i18n.t('chat:plan.addStep'),
+                                style: TextStyle(
+                                    fontSize: FontSizes.sm, color: t.a700),
+                              ),
+                            ),
+                          ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _TodoRow extends StatelessWidget {
-  const _TodoRow({required this.item});
+/// Status circle (web `StatusMark`): filled sage check when done, thick
+/// accent ring while running, muted ring otherwise.
+class _StatusMark extends StatelessWidget {
+  const _StatusMark({required this.item});
 
   final TodoItem item;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final active = item.status == TodoStatus.inProgress;
+    final done = item.status == TodoStatus.completed;
+    final running = item.status == TodoStatus.inProgress;
+    final cancelled = item.status == TodoStatus.cancelled;
+    return Opacity(
+      opacity: cancelled ? 0.6 : 1,
+      child: Container(
+        width: 18,
+        height: 18,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: done ? t.s600 : null,
+          border: done
+              ? null
+              : Border.all(color: running ? t.accent : t.n400, width: 2.5),
+        ),
+        child: done
+            ? Icon(Icons.check, size: 12, color: t.bg)
+            : null,
+      ),
+    );
+  }
+}
+
+class _TaskRow extends ConsumerStatefulWidget {
+  const _TaskRow({
+    required this.task,
+    required this.now,
+    required this.editable,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final TodoTask task;
+  final DateTime now;
+  final bool editable;
+  final void Function(String afterId) onAdd;
+  final void Function(String id) onRemove;
+
+  @override
+  ConsumerState<_TaskRow> createState() => _TaskRowState();
+}
+
+class _TaskRowState extends ConsumerState<_TaskRow> {
+  // A finished task folds its work away; the running one stays open so the
+  // calls stream where they happen. Latched after that.
+  late bool _open = widget.task.item.status == TodoStatus.inProgress;
+  late bool _wasRunning = widget.task.item.status == TodoStatus.inProgress;
+
+  @override
+  void didUpdateWidget(_TaskRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final running = widget.task.item.status == TodoStatus.inProgress;
+    if (_wasRunning != running) {
+      _wasRunning = running;
+      if (running) _open = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final item = widget.task.item;
+    final tools = widget.task.tools;
+    final running = item.status == TodoStatus.inProgress;
     final done = item.status == TodoStatus.completed;
     final cancelled = item.status == TodoStatus.cancelled;
-    final label = active && item.activeForm != null && item.activeForm!.isNotEmpty
+
+    final finishedCalls = tools
+        .where((p) =>
+            p is! ToolPart ||
+            (p.status != ToolStatus.running && p.status != ToolStatus.pending))
+        .length;
+    final percent = done
+        ? 100
+        : running
+            ? progressPercent(taskProgress(
+                startedAt: item.startedAt,
+                steps: finishedCalls,
+                now: widget.now,
+              ))
+            : 0;
+
+    final title = running &&
+            item.activeForm != null &&
+            item.activeForm!.trim().isNotEmpty
         ? item.activeForm!
         : item.subject;
-    final style = TextStyle(
-      fontSize: FontSizes.md,
-      height: 1.5,
-      color: done || cancelled ? t.n500 : t.ink,
-      decoration: cancelled ? TextDecoration.lineThrough : null,
-    );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: tools.isEmpty ? null : () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                _StatusMark(item: item),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: FontSizes.base,
+                      fontWeight: running ? FontWeight.w500 : FontWeight.w400,
+                      color: running
+                          ? t.ink
+                          : done
+                              ? t.n700
+                              : t.n500,
+                      decoration:
+                          cancelled ? TextDecoration.lineThrough : null,
+                    ),
+                  ),
+                ),
+                if (tools.isNotEmpty)
+                  AnimatedRotation(
+                    turns: _open ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(Icons.expand_more, size: 14, color: t.n500),
+                  ),
+                if (running) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '$percent%',
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
+                ],
+                if (widget.editable && !running && !done) ...[
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: () => widget.onAdd(item.id),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.add, size: 15, color: t.n500),
+                    ),
+                  ),
+                  if (!cancelled)
+                    InkWell(
+                      onTap: () => widget.onRemove(item.id),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(Icons.close, size: 15, color: t.n500),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (running)
           Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: done
-                ? Icon(Icons.check_circle, size: 16, color: t.s600)
-                : active
-                    ? const Spinner(size: 14)
-                    : Icon(Icons.circle_outlined, size: 15, color: t.n400),
+            padding: const EdgeInsets.only(top: 2, bottom: 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Radii.full),
+              child: SizedBox(
+                height: 4,
+                child: Stack(
+                  children: [
+                    ColoredBox(
+                        color: t.n300,
+                        child: const SizedBox.expand()),
+                    AnimatedFractionallySizedBox(
+                      duration: const Duration(milliseconds: 1000),
+                      curve: Curves.linear,
+                      alignment: Alignment.centerLeft,
+                      widthFactor: percent / 100,
+                      child: ColoredBox(
+                          color: t.accent, child: const SizedBox.expand()),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: active
-                ? ShimmerText(label, style: style)
-                : Text(label, style: style),
+        if (tools.isNotEmpty)
+          Fold(
+            open: _open,
+            child: Container(
+              margin: const EdgeInsets.only(left: 8, bottom: 4),
+              padding: const EdgeInsets.only(left: 14),
+              decoration: BoxDecoration(
+                border: Border(left: BorderSide(color: t.hair)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final part in tools) _TaskToolRow(part: part),
+                ],
+              ),
+            ),
           ),
-        ],
-      ),
+      ],
+    );
+  }
+}
+
+/// One call under a task (web `TaskToolRows`): kind, target, and how it
+/// went; opens to the same structured detail the flat chain shows.
+class _TaskToolRow extends ConsumerStatefulWidget {
+  const _TaskToolRow({required this.part});
+
+  final MessagePart part;
+
+  @override
+  ConsumerState<_TaskToolRow> createState() => _TaskToolRowState();
+}
+
+class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final part = widget.part;
+
+    final (label, target, running, failed, seconds) = switch (part) {
+      ToolPart() => (
+          i18n.t('chat:kind.${toolKindKey(part.tool)}'),
+          toolDetail(part),
+          part.status == ToolStatus.running ||
+              part.status == ToolStatus.pending,
+          part.status == ToolStatus.error,
+          toolDuration(part),
+        ),
+      SubtaskPart() => (
+          i18n.t('chat:kind.task'),
+          part.description,
+          false,
+          part.status == 'error',
+          null,
+        ),
+      _ => ('', '', false, false, null),
+    };
+
+    final meta = running
+        ? i18n.t('chat:toolMeta.running')
+        : [
+            if (seconds != null) formatDuration(seconds),
+            if (failed) i18n.t('chat:toolMeta.failed'),
+          ].join(' · ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: part is ToolPart
+              ? () => setState(() => _open = !_open)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: FontSizes.sm,
+                    fontWeight: FontWeight.w500,
+                    color: t.n700,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    target,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: FontSizes.sm,
+                      color: failed ? t.danger : t.n800,
+                      fontFamily: 'Menlo',
+                      fontFamilyFallback: const ['monospace'],
+                    ),
+                  ),
+                ),
+                if (meta.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  running
+                      ? ShimmerText(
+                          meta,
+                          style: const TextStyle(fontSize: FontSizes.xs),
+                        )
+                      : Text(
+                          meta,
+                          style: TextStyle(
+                              fontSize: FontSizes.xs, color: t.n600),
+                        ),
+                ],
+                if (part is ToolPart) ...[
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns: _open ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child:
+                        Icon(Icons.chevron_right, size: 14, color: t.n500),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_open && part is ToolPart) ToolDetailBox(part: part),
+      ],
     );
   }
 }

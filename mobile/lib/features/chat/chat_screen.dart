@@ -45,6 +45,11 @@ class ChatScreen extends ConsumerWidget {
       orElse: () => const ChatMessage(id: '', sessionId: '', role: '', parts: []),
     ).id;
 
+    // Only the conversation's newest task card takes edits (web parity).
+    final lastTodoIndex = rows.lastIndexWhere(
+      (r) => r is AssistantTurnData && r.todo != null,
+    );
+
     final widgets = <Widget>[
       for (final (index, row) in rows.indexed)
         switch (row) {
@@ -65,6 +70,12 @@ class ChatScreen extends ConsumerWidget {
                 turn: row,
                 sessionId: sessionId,
                 streaming: busy && index == rows.length - 1,
+                todoEditable: index == lastTodoIndex,
+                onStop: busy && index == rows.length - 1
+                    ? () => ref
+                        .read(chatSessionProvider(sessionId).notifier)
+                        .stop()
+                    : null,
                 onReview: () => context.push(Paths.workbench(sessionId)),
                 onRegenerate: (id) => ref
                     .read(chatSessionProvider(sessionId).notifier)

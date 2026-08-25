@@ -105,6 +105,20 @@ class ChatApi {
     return Session.fromJson(resp.data ?? const {});
   }
 
+  /// Insert a user task into the list (web `useAddTodoItem`).
+  Future<void> addTodoItem(String sessionId, String subject,
+      {String? afterId}) async {
+    await _dio.post<dynamic>(
+      '/api/agent/session/$sessionId/todo/items',
+      data: {'subject': subject, 'after_id': ?afterId},
+    );
+  }
+
+  Future<void> removeTodoItem(String sessionId, String itemId) async {
+    await _dio
+        .delete<dynamic>('/api/agent/session/$sessionId/todo/items/$itemId');
+  }
+
   Future<void> acceptPlan(String sessionId) async {
     await _dio.post<dynamic>('/api/agent/session/$sessionId/plan/accept');
   }

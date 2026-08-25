@@ -47,6 +47,14 @@ String toolDetail(ToolPart part) {
   return part.tool;
 }
 
+/// How long a call took, in seconds, or null if it never said. Two homes
+/// because the live event and the stored part disagree (web `toolDuration`).
+double? toolDuration(ToolPart part) {
+  if (part.duration != null) return part.duration;
+  final stored = part.metadata['duration'];
+  return stored is num ? stored.toDouble() : null;
+}
+
 /// Pretty-print tool input/output for the expandable detail body.
 String toolPayloadText(dynamic payload) {
   if (payload == null) return '';

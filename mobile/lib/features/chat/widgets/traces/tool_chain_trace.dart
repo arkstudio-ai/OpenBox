@@ -145,7 +145,7 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
                     ],
                   ),
                   if (_expanded && part is ToolPart)
-                    _ToolDetail(part: part),
+                    ToolDetailBox(part: part),
                 ],
               ),
             ),
@@ -156,8 +156,10 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
   }
 }
 
-class _ToolDetail extends ConsumerWidget {
-  const _ToolDetail({required this.part});
+/// Expandable request/response body for one tool call — shared by the flat
+/// chain and the task card's per-task rows.
+class ToolDetailBox extends ConsumerWidget {
+  const ToolDetailBox({super.key, required this.part});
 
   final ToolPart part;
 

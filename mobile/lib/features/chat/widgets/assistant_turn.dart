@@ -26,6 +26,8 @@ class AssistantTurn extends ConsumerWidget {
     required this.onReview,
     required this.onRegenerate,
     required this.onDismiss,
+    this.onStop,
+    this.todoEditable = false,
   });
 
   final AssistantTurnData turn;
@@ -38,6 +40,13 @@ class AssistantTurn extends ConsumerWidget {
   final void Function(String messageId) onRegenerate;
   final void Function(String messageId) onDismiss;
 
+  /// Abort the run — offered by the task card while one is in flight.
+  final VoidCallback? onStop;
+
+  /// This turn holds the conversation's newest task card, so its card is
+  /// the one that may be edited.
+  final bool todoEditable;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
@@ -47,9 +56,17 @@ class AssistantTurn extends ConsumerWidget {
         if (turn.hasProcess)
           ProcessTrace(turn: turn, active: streaming && !turn.hasBody),
         if (turn.hasThinking) ThinkingTrace(turn: turn),
+        // Web order: the task card sits between thinking and the (loose)
+        // tool chain, above the prose.
+        if (turn.todo != null)
+          TodoCard(
+            todo: turn.todo!,
+            sessionId: sessionId,
+            streaming: streaming,
+            onStop: onStop,
+            editable: todoEditable,
+          ),
         if (turn.hasTools) ToolChainTrace(turn: turn),
-        for (final notice in turn.notices) StepDivider(part: notice),
-        if (turn.todos.isNotEmpty) TodoCard(items: turn.todos.last.items),
         if (turn.hasBody)
           MarkdownView(
             turn.bodyText,
@@ -80,6 +97,7 @@ class AssistantTurn extends ConsumerWidget {
             onRegenerate: () => onRegenerate(turn.lastMessageId),
             onDismiss: () => onDismiss(turn.lastMessageId),
           ),
+        for (final notice in turn.notices) StepDivider(part: notice),
       ],
     );
   }

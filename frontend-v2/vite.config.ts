@@ -19,7 +19,9 @@ export default defineConfig({
     // Port 3000 matches the redirect URI registered in Logto
     // (http://localhost:3000/callback) — changing it means re-registering there.
     host: "0.0.0.0",
-    port: 3000,
+    // Fixed at 3000 (Logto redirect URI), but overridable via PORT so a
+    // second checkout can run its dev server alongside the main one.
+    port: Number(process.env.PORT) || 3000,
     strictPort: true,
     proxy: {
       "/api": "http://localhost:8080",

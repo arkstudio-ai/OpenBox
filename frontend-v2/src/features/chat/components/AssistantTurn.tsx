@@ -9,6 +9,7 @@ import { buildTurnView, type AssistantTurnMeta } from "../lib/turn-view"
 import { AssistantMeta } from "./meta/AssistantMeta"
 import { InlineErrorCard } from "./meta/InlineErrorCard"
 import { AttachmentGallery } from "./AttachmentGallery"
+import { isGalleryMedia } from "../lib/media"
 import { FileChip, PatchChip } from "./PatchChip"
 import { PlanPartCard } from "./PlanPartCard"
 import { ProcessTrace } from "./ProcessTrace"
@@ -33,10 +34,6 @@ interface Props {
   todoEditable?: boolean
 }
 
-/** Images with an OSS asset render as a gallery; anything else stays a chip. */
-function isGalleryImage(part: { asset_id?: string; mime_type?: string }): boolean {
-  return Boolean(part.asset_id) && Boolean(part.mime_type?.startsWith("image/"))
-}
 
 export function AssistantTurn({ parts, sessionId, meta, streaming, onStop, todoEditable }: Props) {
   const view = useMemo(() => buildTurnView(parts), [parts])
@@ -107,8 +104,8 @@ export function AssistantTurn({ parts, sessionId, meta, streaming, onStop, todoE
           {view.patches.map((p) => (
             <PatchChip key={p.id} part={p} sessionId={sessionId} />
           ))}
-          <AttachmentGallery parts={view.files.filter(isGalleryImage)} />
-          {view.files.filter((p) => !isGalleryImage(p)).map((p) => (
+          <AttachmentGallery parts={view.files.filter(isGalleryMedia)} />
+          {view.files.filter((p) => !isGalleryMedia(p)).map((p) => (
             <FileChip key={p.id} part={p} />
           ))}
           {view.plans.map((p) => (

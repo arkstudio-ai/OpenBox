@@ -5,12 +5,13 @@
 // the only place a download belongs.
 import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import { ChevronDown, Download, X } from "lucide-react"
+import { ChevronDown, Download, Play, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { http } from "@/shared/api/http"
 import { formatBytes } from "@/shared/lib/format"
 import type { FilePart } from "@/shared/types/api"
+import { isVideoPart } from "../lib/media"
 import { useAssetUrl } from "../api/assets"
 
 const VISIBLE_BY_DEFAULT = 6
@@ -34,13 +35,29 @@ function Thumb({ part, onOpen }: { part: FilePart; onOpen: () => void }) {
       className="border-hair hover:border-n400 group/thumb relative aspect-video overflow-hidden rounded-lg border transition-colors"
     >
       {data?.url && !broken ? (
-        <img
-          src={data.url}
-          alt={name}
-          loading="lazy"
-          onError={() => setBroken(true)}
-          className="size-full object-cover"
-        />
+        isVideoPart(part) ? (
+          <>
+            <video
+              src={`${data.url}#t=0.001`}
+              preload="metadata"
+              muted
+              playsInline
+              onError={() => setBroken(true)}
+              className="size-full object-cover"
+            />
+            <span className="bg-bg/90 text-ink absolute inset-0 m-auto flex size-8 items-center justify-center rounded-full">
+              <Play size={16} strokeWidth={2.2} className="translate-x-px" />
+            </span>
+          </>
+        ) : (
+          <img
+            src={data.url}
+            alt={name}
+            loading="lazy"
+            onError={() => setBroken(true)}
+            className="size-full object-cover"
+          />
+        )
       ) : (
         <span className="bg-n200/50 text-n600 flex size-full items-center justify-center text-2xs">
           {broken ? t("gallery.failed") : ""}
@@ -107,9 +124,12 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
             <X size={16} strokeWidth={2.2} />
           </button>
         </div>
-        {data?.url && (
-          <img src={data.url} alt={name} className="min-h-0 rounded-xl object-contain" />
-        )}
+        {data?.url &&
+          (isVideoPart(part) ? (
+            <video src={data.url} controls autoPlay playsInline className="min-h-0 rounded-xl object-contain" />
+          ) : (
+            <img src={data.url} alt={name} className="min-h-0 rounded-xl object-contain" />
+          ))}
       </div>
     </div>,
     document.body,

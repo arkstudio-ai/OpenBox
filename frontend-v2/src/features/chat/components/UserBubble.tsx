@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { FilePart, MessageWithParts } from "@/shared/types/api"
 import { AttachmentGallery } from "./AttachmentGallery"
+import { isGalleryMedia } from "../lib/media"
 import { UserMeta } from "./meta/UserMeta"
 
 const ATTACH_MARK = "\n\n[attachments]\n"
@@ -78,12 +79,9 @@ export function UserBubble({ message }: { message: MessageWithParts }) {
           {expanded ? t("meta.collapseMessage") : t("meta.expandMessage")}
         </button>
       )}
-      <AttachmentGallery
-        className="items-end"
-        parts={fileParts.filter((p) => p.asset_id && p.mime_type?.startsWith("image/"))}
-      />
+      <AttachmentGallery className="items-end" parts={fileParts.filter(isGalleryMedia)} />
       {fileParts
-        .filter((p) => !(p.asset_id && p.mime_type?.startsWith("image/")))
+        .filter((p) => !isGalleryMedia(p))
         .map((part) => (
           <div key={part.id} className="border-hair flex items-center gap-2 rounded-full border py-1 ps-1.5 pe-3.5">
             <span className="bg-n200 flex size-5.5 items-center justify-center rounded-full">

@@ -142,7 +142,7 @@ class _MediaThumb extends ConsumerWidget {
           color: t.n200.withValues(alpha: 0.5),
         ),
         child: isVideo
-            ? _videoTile(t)
+            ? _VideoTile(part: part)
             : asset.when(
                 loading: () => const SizedBox.expand(),
                 error: (_, _) => _failed(t, i18n),
@@ -156,46 +156,83 @@ class _MediaThumb extends ConsumerWidget {
     );
   }
 
-  Widget _videoTile(BossipTokens t) => Stack(
-        fit: StackFit.expand,
-        children: [
-          ColoredBox(color: t.term),
-          Center(
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: t.termInk.withValues(alpha: 0.9),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.play_arrow, size: 22, color: t.term),
-            ),
-          ),
-          Positioned(
-            left: 6,
-            right: 6,
-            bottom: 4,
-            child: Text(
-              _baseName(part.path),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: FontSizes.xs2,
-                color: t.termInk,
-                fontFamily: 'Menlo',
-                fontFamilyFallback: const ['monospace'],
-              ),
-            ),
-          ),
-        ],
-      );
-
   Widget _failed(BossipTokens t, I18nState i18n) => Center(
         child: Text(
           i18n.t('chat:gallery.failed'),
           style: TextStyle(fontSize: FontSizes.xs2, color: t.n600),
         ),
       );
+}
+
+/// Video gallery tile: first frame (natively extracted from the presigned
+/// URL) under a play badge; falls back to the dark tile while the frame
+/// loads or when extraction fails.
+class _VideoTile extends ConsumerWidget {
+  const _VideoTile({required this.part});
+
+  final FilePart part;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final frame =
+        ref.watch(videoThumbnailProvider(part.assetId!)).valueOrNull;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (frame != null)
+          Image.memory(frame, fit: BoxFit.cover, gaplessPlayback: true)
+        else
+          ColoredBox(color: t.term),
+        // Bottom scrim keeps the filename legible over any frame.
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 32,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.55),
+                  Colors.black.withValues(alpha: 0),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Center(
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.9),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.play_arrow, size: 22, color: Colors.black87),
+          ),
+        ),
+        Positioned(
+          left: 6,
+          right: 6,
+          bottom: 4,
+          child: Text(
+            _baseName(part.path),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: FontSizes.xs2,
+              color: Colors.white,
+              fontFamily: 'Menlo',
+              fontFamilyFallback: ['monospace'],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// Full-screen viewer (web Lightbox): dark scrim, mono filename + size +

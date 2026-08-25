@@ -130,6 +130,7 @@ async def _search_tavily(args: WebSearchArgs, api_key: str) -> ToolResult:
             title=f"Search: {args.query} ({len(results)} results)",
             output="\n".join(output_lines),
             metadata={
+                "provider": "tavily",
                 "query": args.query,
                 "results": [
                     {
@@ -183,6 +184,7 @@ async def _search_duckduckgo(query: str, max_results: int) -> ToolResult:
                 title=f"Search: {query} ({len(results)} results)",
                 output="\n".join(output_lines),
                 metadata={
+                    "provider": "duckduckgo",
                     "query": query,
                     "results": [
                         {
@@ -244,6 +246,18 @@ async def _search_custom(query: str, max_results: int, endpoint: str, api_key: s
             return ToolResult(
                 title=f"Search: {query} ({min(len(results), max_results)} results)",
                 output="\n".join(output_lines),
+                metadata={
+                    "provider": "custom",
+                    "query": query,
+                    "results": [
+                        {
+                            "title": r.get("title", r.get("name", "")),
+                            "url": r.get("url", r.get("link", "")),
+                            "snippet": r.get("content", r.get("snippet", r.get("description", ""))),
+                        }
+                        for r in results[:max_results]
+                    ],
+                },
             )
 
     except Exception as e:

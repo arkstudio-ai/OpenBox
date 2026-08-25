@@ -355,16 +355,23 @@ def _build_cron_prompt(job: dict, context_summary: str, locale: str = "zh-CN") -
     from cron.i18n import text
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    parts = []
 
-    if context_summary:
-        parts.append(f"[{text(locale, 'context_summary')}]\n{context_summary}")
-
-    parts.append(
+    # Instruction first, background last. With the summary leading, its
+    # narrative ("task created, runs already reported X, no action required")
+    # framed the whole prompt as a status update — models replied with an
+    # acknowledgment or a bare NO_REPLY in ~6s without a single tool call.
+    parts = [
         f"[{text(locale, 'scheduled_task')}: {job.get('name', 'unnamed')} | "
         f"job_id: {job['id']} | {now}]\n"
-        f"{job['task_prompt']}"
-    )
+        f"{text(locale, 'execute_now')}\n{job['task_prompt']}",
+        text(locale, "execute_first"),
+    ]
+
+    if context_summary:
+        parts.append(
+            f"[{text(locale, 'context_summary')}]\n"
+            f"{text(locale, 'context_note')}\n{context_summary}"
+        )
 
     parts.append(text(locale, "runlog_hint"))
     parts.append(text(locale, "silent_instruction"))

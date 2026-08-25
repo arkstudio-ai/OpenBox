@@ -528,6 +528,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 bus=bus,
                 abort=abort,
                 workdir=session_workdir,
+                available_tools=frozenset(tools),
             )
 
             # Create hooks with config permission rules + agent permission rules
@@ -537,6 +538,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 config_rules=config_rules,
                 agent_rules=agent_def.permission,
             )
+            ctx._authorize_tool = hooks.authorize_tool
 
             # Build system prompt (with instruction files)
             system = await _build_system_prompt(agent_def, model_id, workdir=session_workdir)

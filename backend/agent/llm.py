@@ -119,6 +119,29 @@ def build_responses_input(messages: list[dict], system: list[str] | None = None)
     return items
 
 
+def responses_event_error(data: dict) -> str | None:
+    """Turn terminal Responses SSE failures into an actionable error string.
+
+    These events arrive on an HTTP 200 stream. Ignoring them made a failed
+    vision/tool continuation look like a successful empty assistant turn.
+    """
+    event_type = data.get("type", "")
+    if event_type == "error":
+        error = data.get("error") or data
+    elif event_type == "response.failed":
+        error = (data.get("response") or {}).get("error") or data.get("error") or data
+    elif event_type == "response.incomplete":
+        response = data.get("response") or {}
+        error = response.get("incomplete_details") or response.get("error") or data
+    else:
+        return None
+    if isinstance(error, dict):
+        code = error.get("code") or error.get("reason") or event_type
+        message = error.get("message") or error.get("detail") or _json.dumps(error)
+        return f"{code}: {message}"
+    return f"{event_type}: {error}"
+
+
 def _get_max_output_tokens(model_id: str) -> int:
     """Return the max_output_tokens for a model.
 
@@ -545,6 +568,12 @@ async def _stream_responses_api(
                         continue
 
                     etype = data.get("type", "")
+
+                    terminal_error = responses_event_error(data)
+                    if terminal_error:
+                        log.error(f"Responses API stream failed: {terminal_error[:500]}")
+                        yield {"type": "error", "error": Exception(terminal_error)}
+                        return
 
                     # Reasoning summary text (the readable thinking content)
                     if etype == "response.reasoning_summary_text.delta":

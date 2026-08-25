@@ -32,6 +32,12 @@ class ToolContext:
     message_id: str = ""
     part_id: str = ""  # The tool call's part ID
     workdir: str = "/workspace"  # Session-specific working directory
+    # Tools exposed for this agent turn. Nested dispatchers such as `batch`
+    # must not use the global registry to escape the current agent's allowlist.
+    available_tools: frozenset[str] | None = None
+    # Permission callback installed by the processor for nested tool calls.
+    # It returns a ToolResult when execution must be blocked, else None.
+    _authorize_tool: Any = None
     _on_output: Any = None  # Callback: async fn(output: str) for incremental output updates
 
     async def update_output(self, output: str) -> None:
@@ -50,6 +56,9 @@ class ToolInfo:
     # Metadata
     sandbox_required: bool = True  # Whether this tool needs sandbox access
     never_prune: bool = False  # Whether output should never be pruned
+    # False for tools that mutate one shared state machine and therefore must
+    # never be launched by the generic parallel batch dispatcher.
+    parallel_safe: bool = True
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -64,6 +73,7 @@ def define_tool(
     execute: Callable[..., Awaitable[ToolResult]],
     sandbox_required: bool = True,
     never_prune: bool = False,
+    parallel_safe: bool = True,
     raw_schema: dict | None = None,
 ) -> ToolInfo:
     """Factory function to create a tool with automatic validation and truncation."""
@@ -98,5 +108,6 @@ def define_tool(
         execute=wrapped_execute,
         sandbox_required=sandbox_required,
         never_prune=never_prune,
+        parallel_safe=parallel_safe,
         raw_schema=raw_schema,
     )

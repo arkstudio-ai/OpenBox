@@ -12,9 +12,10 @@ Geometry is re-read on each capture rather than assumed.
 """
 import asyncio
 import shlex
-from typing import Literal
+import time
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from core.log import create_logger
 from sandbox.desktop import (
@@ -23,22 +24,13 @@ from sandbox.desktop import (
     ensure_desktop_tools,
     invalidate,
     take_screenshot,
+    take_stable_screenshot,
     to_native,
     x,
 )
 from tool.tool import ToolResult, ToolContext, define_tool
 
 log = create_logger("tool.computer")
-
-#: Let the UI settle before capturing the result of an action. Menus animate;
-#: capturing instantly shows the pre-action frame and the agent misreads it.
-#:
-#: This delay is also why no xdotool call uses `--sync`. `--sync` blocks until
-#: the X server reports the pointer moved — and when the pointer is ALREADY at
-#: the target that event never comes, so the call hangs for ~15s (measured on
-#: the live desktop; trivially reproduced by moving to the same spot twice).
-#: Settling here covers the same race without that failure mode.
-SETTLE_SECONDS = 1.2
 
 #: Actions that change the screen, so the result is worth showing the model.
 _VISUAL_ACTIONS = {
@@ -59,6 +51,48 @@ _SCROLL_BUTTON = {"up": "4", "down": "5", "left": "6", "right": "7"}
 #: Cached per container: the geometry of the last capture, so a click that
 #: follows a screenshot needs no extra round trip.
 _geometry_cache: dict[str, dict] = {}
+# Re-probe occasionally, not before every click. A missing helper still heals
+# on the next probe, while a normal desktop turn saves one tunnel round trip
+# per computer call.
+_probe_valid_until: dict[str, float] = {}
+_PROBE_TTL_SECONDS = 60.0
+
+AtomicAction = Literal[
+    "left_click",
+    "right_click",
+    "middle_click",
+    "double_click",
+    "triple_click",
+    "left_click_drag",
+    "mouse_move",
+    "left_mouse_down",
+    "left_mouse_up",
+    "type",
+    "key",
+    "hold_key",
+    "scroll",
+    "wait",
+]
+
+SingleAction = Literal[
+    "screenshot",
+    "left_click",
+    "right_click",
+    "middle_click",
+    "double_click",
+    "triple_click",
+    "left_click_drag",
+    "mouse_move",
+    "left_mouse_down",
+    "left_mouse_up",
+    "type",
+    "key",
+    "hold_key",
+    "scroll",
+    "cursor_position",
+    "wait",
+    "open_browser",
+]
 
 
 def _sandbox_key(ctx: ToolContext) -> str:
@@ -71,26 +105,9 @@ def _sandbox_key(ctx: ToolContext) -> str:
     return getattr(ctx.sandbox, "base_url", "") or f"{ctx.user_id}:{ctx.session_id}"
 
 
-class ComputerArgs(BaseModel):
-    action: Literal[
-        "screenshot",
-        "left_click",
-        "right_click",
-        "middle_click",
-        "double_click",
-        "triple_click",
-        "left_click_drag",
-        "mouse_move",
-        "left_mouse_down",
-        "left_mouse_up",
-        "type",
-        "key",
-        "hold_key",
-        "scroll",
-        "cursor_position",
-        "wait",
-        "open_browser",
-    ] = Field(description="What to do on the desktop")
+class _ActionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     coordinate: list[int] | None = Field(
         default=None,
         description="[x, y] in the coordinate space of the screenshot you were shown. "
@@ -111,8 +128,122 @@ class ComputerArgs(BaseModel):
     duration: float = Field(default=1.0, description="Seconds to wait (action=wait), max 10")
 
 
+class ComputerAction(_ActionPayload):
+    """One atomic action inside a local desktop batch."""
+
+    action: AtomicAction = Field(description="Atomic action to execute in the batch")
+
+
+class ComputerArgs(_ActionPayload):
+    """Runtime parser with the same invariants as the advertised union."""
+
+    action: SingleAction | Literal["batch"] = Field(description="What to do on the desktop")
+    actions: list[ComputerAction] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=12,
+        description="Ordered atomic actions for action=batch. They run locally in one "
+        "desktop round trip and produce one screenshot after the whole batch.",
+    )
+
+    @model_validator(mode="after")
+    def validate_action_shape(self):
+        if self.action == "batch" and not self.actions:
+            raise ValueError("action='batch' requires a non-empty actions list")
+        if self.action == "batch":
+            batch_extras = self.model_fields_set & {
+                "coordinate", "to_coordinate", "text", "scroll_direction",
+                "scroll_amount", "duration",
+            }
+            if batch_extras:
+                fields = ", ".join(sorted(batch_extras))
+                raise ValueError(
+                    f"action='batch' accepts only action and actions; remove: {fields}"
+                )
+        if self.action != "batch" and self.actions is not None:
+            raise ValueError("actions is only valid when action='batch'")
+        return self
+
+    @classmethod
+    def model_json_schema(cls, **kwargs) -> dict:
+        """Advertise two disjoint shapes instead of one ambiguous object.
+
+        The execution model stays convenient for internal callers, while the
+        LLM sees a discriminator: normal actions cannot emit `actions`, and a
+        batch cannot emit top-level coordinate/text/default fields.
+        """
+        schema = _computer_schema_adapter().json_schema(**kwargs)
+        # The action const/enum values already discriminate the two branches.
+        # Pydantic's optional `discriminator.mapping` contains $defs references
+        # which become stale after our provider-compatibility inliner removes
+        # $defs, so do not advertise that redundant keyword.
+        schema.pop("discriminator", None)
+        schema["type"] = "object"
+        return schema
+
+
+class _SingleComputerArgs(_ActionPayload):
+    action: SingleAction = Field(description="One desktop action to execute")
+
+
+class _BatchComputerArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["batch"] = Field(description="Execute ordered desktop actions locally")
+    actions: list[ComputerAction] = Field(
+        min_length=1,
+        max_length=12,
+        description="Ordered atomic actions. Exactly one final OSS screenshot is returned.",
+    )
+
+
+def _computer_schema_adapter() -> TypeAdapter:
+    return TypeAdapter(Annotated[
+        _SingleComputerArgs | _BatchComputerArgs,
+        Field(discriminator="action"),
+    ])
+
+
 def _bad(message: str) -> ToolResult:
     return ToolResult(title="computer: invalid arguments", output=message)
+
+
+def _finalize_result(
+    result: ToolResult,
+    action: str,
+    started: float,
+    lease: dict | None = None,
+) -> ToolResult:
+    """Attach honest end-to-end timing and lease evidence to every result."""
+    timings = result.metadata.setdefault("timings", {})
+    if lease is not None:
+        lease_metadata = {
+            "wait_ms": int(lease.get("wait_ms", 0)),
+            "ttl_seconds": int(lease.get("ttl_seconds", 0)),
+        }
+        result.metadata["lease"] = lease_metadata
+        timings["lease_wait_ms"] = lease_metadata["wait_ms"]
+    timings["total_ms"] = round((time.monotonic() - started) * 1000)
+
+    # Tool metadata is persisted for the UI, but the model only receives the
+    # textual tool result. Give it the same breakdown so it does not mistake
+    # frame-settle time for the whole desktop transaction.
+    visible = (
+        "prepare_ms", "geometry_ms", "execute_ms", "capture_ms",
+        "settle_capture_ms", "oss_ms", "lease_wait_ms", "total_ms",
+    )
+    has_work_timing = any(key in timings for key in visible[:-2])
+    if has_work_timing:
+        breakdown = ", ".join(
+            f"{key.removesuffix('_ms')}={timings[key]}ms"
+            for key in visible if key in timings
+        )
+        result.output = f"{result.output} Timings: {breakdown}."
+
+    log.info(
+        f"computer {action} batch={result.metadata.get('batch_size', 1)} timings={timings}"
+    )
+    return result
 
 
 def _validate_keys(text: str) -> str | None:
@@ -165,6 +296,9 @@ async def _prepare(ctx: ToolContext, key: str) -> None:
     into a silent reinstall.
     """
     await ensure_desktop_tools(ctx.sandbox, key)
+    now = time.monotonic()
+    if _probe_valid_until.get(key, 0.0) > now:
+        return
     probe = await ctx.sandbox.execute(
         'PATH="$HOME/.local/bin:$PATH" command -v obx-shot >/dev/null && command -v xdotool >/dev/null'
         " && echo ok || echo gone",
@@ -174,10 +308,12 @@ async def _prepare(ctx: ToolContext, key: str) -> None:
         log.info(f"desktop tooling vanished for {key}; reinstalling")
         invalidate(key)
         _geometry_cache.pop(key, None)
+        _probe_valid_until.pop(key, None)
         await ensure_desktop_tools(ctx.sandbox, key)
+    _probe_valid_until[key] = time.monotonic() + _PROBE_TTL_SECONDS
 
 
-def _build_command(action: str, args: ComputerArgs, geometry: dict) -> str | ToolResult:
+def _build_command(action: str, args: _ActionPayload, geometry: dict) -> str | ToolResult:
     """The xdotool invocation for an action, or a ToolResult explaining why not."""
     point = _point(args.coordinate, "coordinate")
 
@@ -254,7 +390,43 @@ def _build_command(action: str, args: ComputerArgs, geometry: dict) -> str | Too
     if action == "cursor_position":
         return "xdotool getmouselocation --shell"
 
+    if action == "wait":
+        seconds = max(0.0, min(10.0, args.duration))
+        return f"sleep {seconds:g}"
+
     return _bad(f"unknown action: {action}")
+
+
+def _build_batch(args: ComputerArgs, geometry: dict) -> tuple[str, list[ComputerAction]] | ToolResult:
+    """Build one shell program for an ordered batch of desktop actions."""
+    actions = args.actions or []
+    if not actions:
+        return _bad("action 'batch' needs a non-empty actions list")
+    total_wait = sum(
+        max(0.0, min(10.0, item.duration))
+        for item in actions
+        if item.action in {"wait", "hold_key"}
+    )
+    if total_wait > 30:
+        return _bad("a desktop batch may wait or hold keys for at most 30 seconds total")
+
+    commands: list[str] = []
+    for index, item in enumerate(actions, start=1):
+        command = _build_command(item.action, item, geometry)
+        if isinstance(command, ToolResult):
+            return ToolResult(
+                title=f"computer: batch action {index} invalid",
+                output=command.output,
+            )
+        commands.append(command)
+
+    # obx-x discovers DISPLAY/XAUTHORITY once, while sh performs every action
+    # locally. shlex.quote preserves the validation/quoting done above.
+    cleanup = ""
+    if any(item.action == "left_mouse_down" for item in actions):
+        cleanup = "trap 'xdotool mouseup 1 >/dev/null 2>&1 || true' EXIT; "
+    program = f"set -e; {cleanup}" + "; ".join(commands)
+    return x(f"sh -c {shlex.quote(program)}"), actions
 
 
 async def _attach_screenshot(ctx: ToolContext, geometry: dict) -> str:
@@ -347,7 +519,7 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
     )
 
 
-async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
+async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
 
     action = args.action
@@ -370,8 +542,11 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             output=f"Screenshots need OSS transfer, which is not configured: {e}",
         )
 
+    timings: dict[str, int] = {}
     try:
+        prepare_started = time.monotonic()
         await _prepare(ctx, key)
+        timings["prepare_ms"] = round((time.monotonic() - prepare_started) * 1000)
     except NoDesktopError as e:
         return ToolResult(title="no graphical desktop", output=str(e))
     except Exception as e:
@@ -379,9 +554,13 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
 
     try:
         if action == "screenshot":
+            capture_started = time.monotonic()
             geometry = await take_screenshot(ctx.sandbox)
+            timings["capture_ms"] = round((time.monotonic() - capture_started) * 1000)
             _geometry_cache[key] = geometry
+            oss_started = time.monotonic()
             dims = await _attach_screenshot(ctx, geometry)
+            timings["oss_ms"] = round((time.monotonic() - oss_started) * 1000)
             native = "x".join(str(v) for v in geometry["native"])
             return ToolResult(
                 title=f"screenshot {dims}",
@@ -390,15 +569,27 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
                     "It becomes visible to you on your next turn. Use these "
                     f"{dims} coordinates when clicking."
                 ),
-                metadata={"geometry": geometry},
+                metadata={"geometry": geometry, "timings": timings},
             )
 
+        geometry_started = time.monotonic()
         geometry = await _geometry(ctx, key)
-        command = _build_command(action, args, geometry)
+        timings["geometry_ms"] = round((time.monotonic() - geometry_started) * 1000)
+        batch_actions: list[ComputerAction] = []
+        if action == "batch":
+            batch = _build_batch(args, geometry)
+            if isinstance(batch, ToolResult):
+                return batch
+            command, batch_actions = batch
+        else:
+            command = _build_command(action, args, geometry)
         if isinstance(command, ToolResult):
             return command
 
-        result = await ctx.sandbox.execute(x(command), timeout=60)
+        execute_started = time.monotonic()
+        wrapped = command if action == "batch" else x(command)
+        result = await ctx.sandbox.execute(wrapped, timeout=120 if action == "batch" else 60)
+        timings["execute_ms"] = round((time.monotonic() - execute_started) * 1000)
         if result.exit_code != 0:
             return ToolResult(
                 title=f"computer: {action} failed",
@@ -419,29 +610,88 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             except (TypeError, ValueError):
                 return ToolResult(title="cursor position", output=result.stdout.strip()[:200])
 
-        # Show the model what the action did — a computer-use agent that acts
-        # without seeing the result drifts within a few steps.
+        # Show the model what the action or action batch did. Stability is
+        # measured inside the desktop, then the final frame follows the same
+        # OSS attachment path as before.
         note = ""
-        if action in _VISUAL_ACTIONS:
-            await asyncio.sleep(SETTLE_SECONDS)
+        capture = action == "batch" or action in _VISUAL_ACTIONS
+        if capture:
             try:
-                geometry = await take_screenshot(ctx.sandbox)
+                capture_started = time.monotonic()
+                geometry = await take_stable_screenshot(ctx.sandbox)
+                timings["settle_capture_ms"] = round(
+                    (time.monotonic() - capture_started) * 1000
+                )
                 _geometry_cache[key] = geometry
+                oss_started = time.monotonic()
                 dims = await _attach_screenshot(ctx, geometry)
-                note = f" Screenshot attached ({dims}); you will see it next turn."
+                timings["oss_ms"] = round((time.monotonic() - oss_started) * 1000)
+                settle_ms = int(geometry.get("settle_ms", 0))
+                stable = bool(geometry.get("stable", False))
+                state = "stable" if stable else "settle timeout"
+                note = (
+                    f" Screenshot attached via OSS ({dims}, {state} after {settle_ms}ms); "
+                    "you will see it next turn."
+                )
             except Exception as e:
                 log.warning(f"post-action screenshot failed: {e}")
                 note = " (screenshot after the action failed; take one explicitly)"
 
-        described = _describe(action, args)
-        return ToolResult(title=described, output=f"Done: {described}.{note}")
+        if action == "batch":
+            described = f"ran {len(batch_actions)} desktop actions"
+            summary = ", ".join(_describe(item.action, item) for item in batch_actions[:4])
+            if len(batch_actions) > 4:
+                summary += f", +{len(batch_actions) - 4} more"
+            output = f"Done in one local batch: {summary}.{note}"
+        else:
+            described = _describe(action, args)
+            output = f"Done: {described}.{note}"
+        return ToolResult(
+            title=described,
+            output=output,
+            metadata={
+                "geometry": geometry,
+                "batch_size": len(batch_actions) or 1,
+                "timings": timings,
+            },
+        )
 
     except Exception as e:
         log.warning(f"computer {action} failed: {e}")
         return ToolResult(title=f"computer: {action} failed", output=str(e)[:400])
 
 
-def _describe(action: str, args: ComputerArgs) -> str:
+async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
+    """Run one complete computer transaction under the remote desktop lease."""
+    started = time.monotonic()
+    if args.action == "wait":
+        result = await _execute_locked(args, ctx)
+        return _finalize_result(result, args.action, started)
+
+    lease_factory = getattr(ctx.sandbox, "desktop_lease", None)
+    if lease_factory is None:
+        result = await _execute_locked(args, ctx)
+        return _finalize_result(result, args.action, started)
+
+    try:
+        async with lease_factory(
+            session_id=ctx.session_id,
+            tool_call_id=ctx.part_id,
+            operation="computer",
+        ) as lease:
+            result = await _execute_locked(args, ctx)
+        return _finalize_result(result, args.action, started, lease)
+    except Exception as e:
+        log.warning(f"computer desktop lease failed: {e}")
+        result = ToolResult(
+            title="computer unavailable",
+            output=f"Could not acquire the shared desktop lease: {str(e)[:300]}",
+            metadata={"error": True},
+        )
+        return _finalize_result(result, args.action, started)
+
+
+def _describe(action: str, args: _ActionPayload) -> str:
     if action == "type":
         preview = (args.text or "")[:40]
         return f"typed {preview!r}"
@@ -462,6 +712,15 @@ in a GUI — a browser page, a desktop app, a dialog — when no CLI can do the 
 Workflow: take a `screenshot` first, read it on your next turn, then act on \
 what you see. Actions return a fresh screenshot automatically, so you can \
 chain steps without asking for one each time.
+
+Use this `computer` tool with `action: "batch"` when several actions do not \
+need an intermediate visual decision, \
+for example click a known field → type text → press Return. Put the ordered \
+atomic actions in `actions`; they execute locally and only one final screenshot \
+is uploaded through OSS. Never put `computer` calls inside the generic parallel \
+`batch` tool; one desktop is stateful and cannot be driven concurrently. Do not \
+batch a later coordinate click when its target \
+only appears after an earlier action — inspect the intermediate screenshot first.
 
 Coordinates: the screenshot you are shown is downscaled from the real screen. \
 Always give coordinates in the screenshot's own pixel space (its size is \
@@ -491,4 +750,5 @@ computer_tool = define_tool(
     description=COMPUTER_DESCRIPTION,
     parameters=ComputerArgs,
     execute=execute,
+    parallel_safe=False,
 )

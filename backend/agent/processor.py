@@ -50,6 +50,20 @@ log = create_logger("agent.processor")
 MAX_CALL_ID = 64
 _CALL_ID_ILLEGAL = re.compile(r"[^A-Za-z0-9_-]")
 
+PERSISTED_TOOL_METADATA_KEYS = frozenset({
+    "exit_code", "blocked", "truncated", "count", "duration",
+    "batch_size", "timings", "lease",
+    "child_session_id", "subagent_type", "questions", "answers",
+})
+
+
+def persisted_tool_metadata(metadata: dict | None) -> dict:
+    """Keep UI/diagnostic tool metadata while dropping internal payloads."""
+    return {
+        key: value for key, value in (metadata or {}).items()
+        if key in PERSISTED_TOOL_METADATA_KEYS
+    }
+
 
 def sanitize_call_id(raw: str) -> str:
     """A provider-portable form of a tool-call id.
@@ -400,16 +414,7 @@ async def process_step(
                 tool_part.output = result.output
                 tool_part.title = result.title
                 tool_part.error = result.output if result.metadata.get("error") else None
-                tool_part.metadata = {
-                    k: v for k, v in (result.metadata or {}).items()
-                    if k in (
-                        "exit_code", "blocked", "truncated", "count", "duration",
-                        # The child a task spawned, so the UI can follow it.
-                        "child_session_id", "subagent_type",
-                        # What was asked and what the user chose.
-                        "questions", "answers",
-                    )
-                }
+                tool_part.metadata = persisted_tool_metadata(result.metadata)
                 await save_part(tool_part, user_id=user_id)
 
                 # Track for doom loop detection (across steps)

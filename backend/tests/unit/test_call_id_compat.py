@@ -28,7 +28,7 @@ the real function drifted.
 """
 import re
 
-from agent.llm import _FC_ID_OK, build_responses_input, ensure_fc_id
+from agent.llm import _FC_ID_OK, build_responses_input, ensure_fc_id, responses_event_error
 from agent.processor import MAX_CALL_ID, sanitize_call_id
 
 SAFE = re.compile(r"[A-Za-z0-9_-]+")
@@ -184,3 +184,15 @@ def test_the_builder_normalises_ids_on_both_sides_of_a_pair():
     call, result = built[0], built[1]
     assert call["call_id"] == result["call_id"], "the pair came apart"
     assert _FC_ID_OK.fullmatch(call["call_id"])
+
+
+def test_responses_stream_failure_is_not_misreported_as_empty_success():
+    assert responses_event_error({
+        "type": "response.failed",
+        "response": {"error": {"code": "invalid_image", "message": "bad image"}},
+    }) == "invalid_image: bad image"
+    assert responses_event_error({
+        "type": "response.incomplete",
+        "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+    }) == 'max_output_tokens: {"reason": "max_output_tokens"}'
+    assert responses_event_error({"type": "response.completed"}) is None

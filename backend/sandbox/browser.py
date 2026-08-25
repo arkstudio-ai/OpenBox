@@ -452,7 +452,7 @@ def _effective_mode(relay: dict | None, fallback: str) -> str:
     return fallback
 
 
-async def ensure_browser(client, container_key: str, mode: str) -> dict:
+async def _ensure_browser_locked(client, container_key: str, mode: str) -> dict:
     """Bring up whichever browser `mode` asks for, falling back when it cannot.
 
     mode is the RELAY vocabulary: "auto" | "local" | "extension".
@@ -487,3 +487,21 @@ async def ensure_browser(client, container_key: str, mode: str) -> dict:
     chrome = await ensure_chrome(client, container_key)
     relay = await ensure_relay(client, container_key, "local")
     return {"mode": _effective_mode(relay, "local"), "relay": relay, "chrome": chrome}
+
+
+async def ensure_browser(client, container_key: str, mode: str) -> dict:
+    """Bring up a browser while holding the shared desktop lease.
+
+    Browser launch enters the X session and changes the visible desktop. The
+    skill tool can call this without going through `computer`, so the lock
+    belongs at this shared boundary rather than only in one caller.
+    """
+    lease_factory = getattr(client, "desktop_lease", None)
+    if lease_factory is None:
+        return await _ensure_browser_locked(client, container_key, mode)
+    async with lease_factory(
+        session_id=container_key,
+        tool_call_id=f"browser-{container_key}",
+        operation="browser",
+    ):
+        return await _ensure_browser_locked(client, container_key, mode)

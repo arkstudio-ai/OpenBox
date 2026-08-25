@@ -75,35 +75,205 @@ Prints one JSON line describing the geometry so the caller can map model
 coordinates back to real pixels. Downscaling happens HERE, on the desktop,
 so a 4K PNG never crosses the network.
 """
+import ctypes
+import ctypes.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageGrab
 
 max_w, max_h, dest = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+settle_ms = max(0, int(sys.argv[4])) if len(sys.argv) > 4 else 0
+interval_ms = max(40, int(sys.argv[5])) if len(sys.argv) > 5 else 120
+threshold = max(0.0, float(sys.argv[6])) if len(sys.argv) > 6 else 0.003
 
-tmp = tempfile.mktemp(suffix=".png")
-try:
+def capture():
+    # Pillow's XCB grab reads the root window as raw pixels in ~60ms on the
+    # 4K WUYING desktop. `scrot` first PNG-encoded the full 4K frame and then
+    # we decoded it again, which measured 3-4 seconds on a detailed browser
+    # page. Keep scrot only as a compatibility fallback.
+    try:
+        image = ImageGrab.grab()
+        sampler = ScreenSampler()
+        try:
+            pointer = sampler.pointer()
+        finally:
+            sampler.close()
+        if pointer:
+            px, py = pointer
+            points = [(px, py), (px + 9, py + 24), (px + 14, py + 16), (px + 23, py + 16)]
+            draw = ImageDraw.Draw(image)
+            draw.polygon(points, fill=(255, 255, 255))
+            draw.line(points + [points[0]], fill=(0, 0, 0), width=3)
+        return image.convert("RGB"), "xcb"
+    except Exception:
+        pass
+
+    tmp = tempfile.mktemp(suffix=".png")
     # -o overwrites; -p keeps the pointer visible so the model can see it.
-    subprocess.run(["scrot", "-o", "-p", tmp], check=True, capture_output=True, timeout=30)
-    img = Image.open(tmp)
-    native_w, native_h = img.size
-    scale = min(1.0, max_w / native_w, max_h / native_h)
-    img = img.convert("RGB")
-    if scale < 1.0:
-        img = img.resize((round(native_w * scale), round(native_h * scale)), Image.LANCZOS)
-    img.save(dest, "PNG", optimize=True)
-    print(json.dumps({
-        "native": [native_w, native_h],
-        "scaled": list(img.size),
-        "bytes": os.path.getsize(dest),
-    }))
-finally:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
+    try:
+        subprocess.run(["scrot", "-o", "-p", tmp], check=True, capture_output=True, timeout=30)
+        with Image.open(tmp) as source:
+            image = source.convert("RGB")
+            image.load()
+        return image, "scrot"
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+class ScreenSampler:
+    """Small visual signatures from X11 without encoding a full PNG."""
+
+    def __init__(self):
+        self.lib = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        self.lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        self.lib.XOpenDisplay.restype = ctypes.c_void_p
+        self.lib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        self.lib.XDefaultRootWindow.restype = ctypes.c_ulong
+        self.lib.XGetGeometry.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint),
+        ]
+        self.lib.XGetGeometry.restype = ctypes.c_int
+        self.lib.XGetImage.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+            ctypes.c_uint, ctypes.c_uint, ctypes.c_ulong, ctypes.c_int,
+        ]
+        self.lib.XGetImage.restype = ctypes.c_void_p
+        self.lib.XGetPixel.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+        self.lib.XGetPixel.restype = ctypes.c_ulong
+        self.lib.XQueryPointer.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_uint),
+        ]
+        self.lib.XQueryPointer.restype = ctypes.c_int
+        self.lib.XDestroyImage.argtypes = [ctypes.c_void_p]
+        self.lib.XDestroyImage.restype = ctypes.c_int
+        self.lib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+
+        self.display = self.lib.XOpenDisplay(None)
+        if not self.display:
+            raise RuntimeError("cannot open X display for frame sampling")
+        self.root = self.lib.XDefaultRootWindow(self.display)
+        root_return = ctypes.c_ulong()
+        x_return = ctypes.c_int()
+        y_return = ctypes.c_int()
+        width = ctypes.c_uint()
+        height = ctypes.c_uint()
+        border = ctypes.c_uint()
+        depth = ctypes.c_uint()
+        if not self.lib.XGetGeometry(
+            self.display, self.root, ctypes.byref(root_return),
+            ctypes.byref(x_return), ctypes.byref(y_return),
+            ctypes.byref(width), ctypes.byref(height),
+            ctypes.byref(border), ctypes.byref(depth),
+        ):
+            self.close()
+            raise RuntimeError("cannot read X display geometry")
+        self.width, self.height = width.value, height.value
+
+    def sample(self, columns=64, rows=36):
+        image = self.lib.XGetImage(
+            self.display, self.root, 0, 0, self.width, self.height,
+            ctypes.c_ulong(-1).value, 2,  # AllPlanes, ZPixmap
+        )
+        if not image:
+            raise RuntimeError("XGetImage failed")
+        try:
+            signature = bytearray()
+            for row in range(rows):
+                y = min(self.height - 1, round((row + 0.5) * self.height / rows))
+                for column in range(columns):
+                    x = min(self.width - 1, round((column + 0.5) * self.width / columns))
+                    pixel = int(self.lib.XGetPixel(image, x, y))
+                    signature.extend(pixel.to_bytes(4, sys.byteorder, signed=False))
+            return bytes(signature)
+        finally:
+            self.lib.XDestroyImage(image)
+
+    def pointer(self):
+        root_return = ctypes.c_ulong()
+        child_return = ctypes.c_ulong()
+        root_x = ctypes.c_int()
+        root_y = ctypes.c_int()
+        win_x = ctypes.c_int()
+        win_y = ctypes.c_int()
+        mask = ctypes.c_uint()
+        if not self.lib.XQueryPointer(
+            self.display, self.root, ctypes.byref(root_return), ctypes.byref(child_return),
+            ctypes.byref(root_x), ctypes.byref(root_y), ctypes.byref(win_x),
+            ctypes.byref(win_y), ctypes.byref(mask),
+        ):
+            return None
+        return root_x.value, root_y.value
+
+    def close(self):
+        if getattr(self, "display", None):
+            self.lib.XCloseDisplay(self.display)
+            self.display = None
+
+
+def signature_delta(previous, current):
+    if not previous or len(previous) != len(current):
+        return 1.0
+    return sum(abs(left - right) for left, right in zip(previous, current)) / (len(current) * 255)
+
+started = time.monotonic()
+stable = settle_ms <= 0
+stable_samples = 0
+delta = 0.0
+wait_ms = 0
+
+if settle_ms > 0:
+    deadline = started + settle_ms / 1000
+    sampler = None
+    try:
+        sampler = ScreenSampler()
+        previous = sampler.sample()
+        while time.monotonic() < deadline:
+            time.sleep(interval_ms / 1000)
+            current = sampler.sample()
+            delta = signature_delta(previous, current)
+            stable_samples = stable_samples + 1 if delta <= threshold else 0
+            previous = current
+            if stable_samples >= 2:
+                stable = True
+                break
+    except Exception:
+        # X11 sampling is an optimisation, not a reason to lose the screenshot.
+        # A short fallback delay remains substantially below the former 1.2s.
+        time.sleep(min(0.35, settle_ms / 1000))
+    finally:
+        if sampler is not None:
+            sampler.close()
+    wait_ms = round((time.monotonic() - started) * 1000)
+
+capture_started = time.monotonic()
+img, capture_backend = capture()
+native_w, native_h = img.size
+scale = min(1.0, max_w / native_w, max_h / native_h)
+if scale < 1.0:
+    img = img.resize((round(native_w * scale), round(native_h * scale)), Image.LANCZOS)
+img.save(dest, "PNG", optimize=False, compress_level=3)
+print(json.dumps({
+    "native": [native_w, native_h],
+    "scaled": list(img.size),
+    "bytes": os.path.getsize(dest),
+    "stable": stable,
+    "settle_ms": round((time.monotonic() - started) * 1000),
+    "wait_ms": wait_ms,
+    "capture_ms": round((time.monotonic() - capture_started) * 1000),
+    "capture_backend": capture_backend,
+    "frame_delta": round(delta, 6),
+}))
 '''
 
 #: Container keys whose desktop tooling is ready, for this process lifetime.
@@ -232,6 +402,42 @@ async def take_screenshot(client, dest: str = SHOT_PATH) -> dict:
     )
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip()[:300] or "screenshot failed")
+    line = (result.stdout or "").strip().splitlines()
+    if not line:
+        raise RuntimeError("obx-shot returned no geometry")
+    try:
+        return json.loads(line[-1])
+    except json.JSONDecodeError:
+        raise RuntimeError(f"unexpected obx-shot output: {line[-1][:160]}")
+
+
+async def take_stable_screenshot(
+    client,
+    dest: str = SHOT_PATH,
+    *,
+    timeout_ms: int = 1500,
+    interval_ms: int = 120,
+    threshold: float = 0.003,
+) -> dict:
+    """Wait for the desktop to stop changing, then keep its latest screenshot.
+
+    Stability sampling runs entirely on the desktop. Only the final PNG is
+    uploaded by the caller, so this replaces a blind fixed sleep without
+    adding tunnel or OSS round trips. Two consecutive quiet samples avoid
+    capturing the pre-action frame when an app reacts a little late.
+    """
+    timeout_ms = max(200, min(5000, int(timeout_ms)))
+    interval_ms = max(40, min(500, int(interval_ms)))
+    threshold = max(0.0, min(0.05, float(threshold)))
+    result = await client.execute(
+        x(
+            f"obx-shot {MODEL_MAX_W} {MODEL_MAX_H} {shlex.quote(dest)} "
+            f"{timeout_ms} {interval_ms} {threshold:g}"
+        ),
+        timeout=max(90, timeout_ms // 1000 + 45),
+    )
+    if result.exit_code != 0:
+        raise RuntimeError(result.stderr.strip()[:300] or "stable screenshot failed")
     line = (result.stdout or "").strip().splitlines()
     if not line:
         raise RuntimeError("obx-shot returned no geometry")

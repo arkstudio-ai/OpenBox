@@ -1,13 +1,16 @@
 import argparse
 import asyncio
 import fcntl
+import hashlib
 import json
+import logging
 import os
 import platform
 import pty
 import select
 import shutil
 import signal
+import secrets
 import struct
 import termios
 import time
@@ -29,6 +32,11 @@ import uvicorn
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
+ACTION_SERVER_VERSION = "2026.08.25-desktop-lease-v1"
+# Uvicorn owns the configured INFO handler in both containers and the WUYING
+# systemd service. A standalone child logger inherited the root WARNING level
+# and silently discarded the very traces this feature exists to preserve.
+trace_log = logging.getLogger("uvicorn.error")
 
 # --- Models ---
 class ExecuteRequest(BaseModel):
@@ -44,6 +52,14 @@ class ExecuteResponse(BaseModel):
     exit_code: int
     stdout: str
     stderr: str
+
+class DesktopLeaseRequest(BaseModel):
+    owner: str
+    wait_timeout: float = 90.0
+    ttl_seconds: float = 180.0
+
+class DesktopLeaseReleaseRequest(BaseModel):
+    token: str
 
 class ListFilesRequest(BaseModel):
     path: str = "/workspace"
@@ -130,6 +146,82 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 
+# A WUYING provider maps every OpenBox session to one physical desktop. This
+# process-level lease protects the whole input -> settle/capture -> OSS upload
+# transaction, rather than merely serialising individual shell commands.
+_desktop_lease_condition = asyncio.Condition()
+_desktop_lease: dict | None = None
+
+
+def _trace_value(request: Request, name: str, limit: int = 120) -> str:
+    value = request.headers.get(name, "")
+    return "".join(ch for ch in value if 32 <= ord(ch) < 127)[:limit]
+
+
+def _lease_is_live(now: float | None = None) -> bool:
+    return bool(_desktop_lease and _desktop_lease["expires_at"] > (now or time.monotonic()))
+
+
+def _desktop_command_kind(command: str) -> str:
+    """Classify without logging command contents, which may contain secrets."""
+    lowered = command.lower()
+    if "xdotool" in lowered:
+        return "desktop_input"
+    if "obx-shot" in lowered or "scrot" in lowered:
+        return "desktop_capture"
+    if "/tmp/obx-screen.png" in lowered and "obx-file" in lowered:
+        return "desktop_oss_upload"
+    if "obx-x" in lowered:
+        return "desktop_session"
+    return "shell"
+
+
+def _requires_desktop_lease(request: Request, command: str) -> bool:
+    operation = _trace_value(request, "X-OpenBox-Operation", 48)
+    return operation == "computer" or _desktop_command_kind(command) != "shell"
+
+
+async def _validate_desktop_lease(request: Request, command: str) -> None:
+    """Reject old/unleased desktop clients so they cannot corrupt a live turn."""
+    global _desktop_lease
+    if not _requires_desktop_lease(request, command):
+        return
+    token = _trace_value(request, "X-OpenBox-Desktop-Lease", 160)
+    async with _desktop_lease_condition:
+        now = time.monotonic()
+        if not _lease_is_live(now):
+            _desktop_lease = None
+        if not _desktop_lease or not secrets.compare_digest(token, _desktop_lease["token"]):
+            raise HTTPException(
+                status_code=423,
+                detail="Desktop command requires an active OpenBox desktop lease",
+            )
+        # Active work renews the crash-recovery deadline.
+        _desktop_lease["expires_at"] = now + _desktop_lease["ttl_seconds"]
+
+
+def _emit_execute_trace(
+    request: Request,
+    command: str,
+    *,
+    started: float,
+    exit_code: int,
+) -> None:
+    trace_log.info(
+        "execute_trace %s",
+        json.dumps({
+            "request": _trace_value(request, "X-OpenBox-Request"),
+            "instance": _trace_value(request, "X-OpenBox-Instance"),
+            "session": _trace_value(request, "X-OpenBox-Session"),
+            "tool_call": _trace_value(request, "X-OpenBox-Tool-Call"),
+            "operation": _trace_value(request, "X-OpenBox-Operation", 48),
+            "kind": _desktop_command_kind(command),
+            "command_sha256": hashlib.sha256(command.encode()).hexdigest()[:16],
+            "duration_ms": round((time.monotonic() - started) * 1000),
+            "exit_code": exit_code,
+        }, separators=(",", ":"), sort_keys=True),
+    )
+
 # --- API Key 中间件 ---
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
@@ -145,10 +237,98 @@ async def authenticate(request: Request, call_next):
 async def alive():
     return {
         "status": "ok",
+        "version": ACTION_SERVER_VERSION,
+        "capabilities": ["desktop_lease_v1", "execution_trace_v1"],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.post("/desktop/lease/acquire")
+async def acquire_desktop_lease(req: DesktopLeaseRequest, request: Request):
+    """Wait for exclusive access to the shared physical desktop."""
+    global _desktop_lease
+    instance = _trace_value(request, "X-OpenBox-Instance")
+    if not instance:
+        raise HTTPException(status_code=400, detail="X-OpenBox-Instance is required")
+    owner = "".join(ch for ch in req.owner if 32 <= ord(ch) < 127)[:300]
+    if not owner:
+        raise HTTPException(status_code=400, detail="lease owner is required")
+
+    wait_timeout = max(0.0, min(300.0, float(req.wait_timeout)))
+    ttl_seconds = max(30.0, min(600.0, float(req.ttl_seconds)))
+    wait_started = time.monotonic()
+    deadline = wait_started + wait_timeout
+
+    async with _desktop_lease_condition:
+        while True:
+            now = time.monotonic()
+            if not _lease_is_live(now):
+                _desktop_lease = None
+            if _desktop_lease is None or _desktop_lease["owner"] == owner:
+                reused = _desktop_lease is not None
+                token = _desktop_lease["token"] if reused else secrets.token_urlsafe(32)
+                _desktop_lease = {
+                    "token": token,
+                    "owner": owner,
+                    "instance": instance,
+                    "session": _trace_value(request, "X-OpenBox-Session"),
+                    "tool_call": _trace_value(request, "X-OpenBox-Tool-Call"),
+                    "ttl_seconds": ttl_seconds,
+                    "expires_at": now + ttl_seconds,
+                }
+                wait_ms = round((now - wait_started) * 1000)
+                trace_log.info(
+                    "desktop_lease_acquired %s",
+                    json.dumps({
+                        "instance": instance,
+                        "session": _desktop_lease["session"],
+                        "tool_call": _desktop_lease["tool_call"],
+                        "wait_ms": wait_ms,
+                        "reused": reused,
+                    }, separators=(",", ":"), sort_keys=True),
+                )
+                return {"token": token, "wait_ms": wait_ms, "ttl_seconds": ttl_seconds}
+
+            remaining = deadline - now
+            if remaining <= 0:
+                raise HTTPException(status_code=423, detail={
+                    "message": "Timed out waiting for the shared desktop",
+                    "holder_instance": _desktop_lease["instance"],
+                    "holder_session": _desktop_lease["session"],
+                })
+            until_expiry = max(0.05, _desktop_lease["expires_at"] - now)
+            try:
+                await asyncio.wait_for(
+                    _desktop_lease_condition.wait(),
+                    timeout=min(remaining, until_expiry),
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
+@app.post("/desktop/lease/release")
+async def release_desktop_lease(req: DesktopLeaseReleaseRequest, request: Request):
+    """Release a desktop lease; expiration remains the crash fallback."""
+    global _desktop_lease
+    released = False
+    async with _desktop_lease_condition:
+        if _desktop_lease and secrets.compare_digest(req.token, _desktop_lease["token"]):
+            holder = _desktop_lease
+            _desktop_lease = None
+            released = True
+            _desktop_lease_condition.notify_all()
+            trace_log.info(
+                "desktop_lease_released %s",
+                json.dumps({
+                    "instance": holder["instance"],
+                    "session": holder["session"],
+                    "tool_call": holder["tool_call"],
+                    "released_by": _trace_value(request, "X-OpenBox-Instance"),
+                }, separators=(",", ":"), sort_keys=True),
+            )
+    return {"released": released}
 
 # --- Helper: kill entire process group ---
 def _kill_process_tree(process):
@@ -191,10 +371,14 @@ async def kill_command(req: KillRequest):
 
 # --- 执行命令 ---
 @app.post("/execute", response_model=ExecuteResponse)
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, request: Request):
+    started = time.monotonic()
+    exit_code = 1
+    await _validate_desktop_lease(request, req.command)
     blocked = _is_protected_command(req.command)
     if blocked:
-        return ExecuteResponse(exit_code=1, stdout="", stderr=f"[BLOCKED] {blocked}")
+        _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
+        return ExecuteResponse(exit_code=exit_code, stdout="", stderr=f"[BLOCKED] {blocked}")
     workdir = req.workdir or "/workspace"
     try:
         process = await asyncio.create_subprocess_shell(
@@ -214,13 +398,19 @@ async def execute(req: ExecuteRequest):
                 await asyncio.wait_for(process.communicate(), timeout=2)
             except asyncio.TimeoutError:
                 pass
-            return ExecuteResponse(exit_code=-1, stdout="", stderr=f"Command timed out after {req.timeout}s")
-        return ExecuteResponse(
-            exit_code=process.returncode or 0,
+            exit_code = -1
+            _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
+            return ExecuteResponse(exit_code=exit_code, stdout="", stderr=f"Command timed out after {req.timeout}s")
+        exit_code = process.returncode or 0
+        response = ExecuteResponse(
+            exit_code=exit_code,
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
         )
+        _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
+        return response
     except Exception as e:
+        _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- 上传文件 ---
@@ -410,8 +600,10 @@ async def grep_files(req: GrepRequest):
 
 # --- Execute Stream (SSE) ---
 @app.post("/execute_stream")
-async def execute_stream(req: ExecuteRequest):
+async def execute_stream(req: ExecuteRequest, request: Request):
     """Execute a command with streaming output via SSE."""
+    started = time.monotonic()
+    await _validate_desktop_lease(request, req.command)
     blocked = _is_protected_command(req.command)
     if blocked:
         async def blocked_gen():
@@ -569,6 +761,13 @@ async def execute_stream(req: ExecuteRequest):
                 "type": "system",
                 "content": f"Command terminated: timeout {timeout_seconds}s exceeded\n",
             })}
+
+        _emit_execute_trace(
+            request,
+            req.command,
+            started=started,
+            exit_code=exit_code,
+        )
 
         yield {"event": "exit", "data": json.dumps({
             "exit_code": exit_code,

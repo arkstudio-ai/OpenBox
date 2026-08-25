@@ -19,15 +19,26 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     if len(args.invocations) > 25:
         return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
 
-    if any(inv.tool == "batch" for inv in args.invocations):
-        return ToolResult(title="Error", output="Cannot recursively call batch tool.")
-
     from tool.registry import get_tool
 
     async def run_one(inv: Invocation) -> str:
+        if inv.tool == "batch":
+            return "[batch] Error: Cannot recursively call batch tool."
+        if ctx.available_tools is not None and inv.tool not in ctx.available_tools:
+            return f"[{inv.tool}] Error: Tool is not available to the current agent."
         tool = get_tool(inv.tool)
         if not tool:
             return f"[{inv.tool}] Error: Tool not found"
+        if not tool.parallel_safe:
+            guidance = (
+                " Use computer(action='batch', actions=[...]) for ordered desktop actions."
+                if inv.tool == "computer" else ""
+            )
+            return f"[{inv.tool}] Error: Tool is not safe for parallel execution.{guidance}"
+        if ctx._authorize_tool is not None:
+            blocked = await ctx._authorize_tool(inv.tool, inv.parameters)
+            if blocked is not None:
+                return f"[{inv.tool}] {blocked.title}\n{blocked.output}"
         try:
             result = await tool.execute(inv.parameters, ctx)
             return f"[{inv.tool}] {result.title}\n{result.output}"
@@ -63,6 +74,8 @@ Notes:
 - All calls start in parallel; ordering NOT guaranteed
 - Partial failures do not stop other tool calls
 - Do NOT use the batch tool within another batch tool
+- `computer` is rejected here because one desktop is not parallel-safe. Use
+  `computer` with `action: "batch"` for ordered local desktop actions.
 
 Good Use Cases:
 - Read many files at once
@@ -73,6 +86,7 @@ Good Use Cases:
 When NOT to Use:
 - Operations that depend on prior tool output (e.g. create then read same file)
 - Ordered stateful mutations where sequence matters
+- Any desktop interaction (`computer`)
 
 Batching tool calls yields 2-5x efficiency gain and provides much better UX."""
 

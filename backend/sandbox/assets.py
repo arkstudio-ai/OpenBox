@@ -48,6 +48,16 @@ esac
 _installed: set[str] = set()
 
 
+def _use_internal_oss(oss: OssClient) -> bool:
+    """Cloud desktops use Alibaba's regional OSS network, not public egress."""
+    from core.config import get_config
+
+    return (
+        get_config().sandbox_provider.lower() == "wuying"
+        and oss.internal_host != oss.host
+    )
+
+
 async def ensure_cli(client, container_key: str) -> None:
     """Install obx-file into the sandbox (idempotent, cached per container).
 
@@ -77,7 +87,11 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
     await ensure_cli(client, container_key)
     landed: list[str] = []
     for asset in assets:
-        url = oss.presign_get(asset.oss_key, expires_sec=1800)
+        url = oss.presign_get(
+            asset.oss_key,
+            expires_sec=1800,
+            internal=_use_internal_oss(oss),
+        )
         dest = f"{UPLOAD_DIR}/{asset.name}"
         cmd = f'PATH="$HOME/.local/bin:$PATH" obx-file get {shlex.quote(url)} {shlex.quote(dest)}'
         try:
@@ -120,7 +134,12 @@ async def attach_sandbox_image(
     # Keyed by the machine, not the conversation: obx-file is a property of
     # the container, so a new chat must not reinstall it.
     await ensure_cli(ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id)
-    put_url = oss.presign_put(key, mime, expires_sec=600)
+    put_url = oss.presign_put(
+        key,
+        mime,
+        expires_sec=600,
+        internal=_use_internal_oss(oss),
+    )
     push = await ctx.sandbox.execute(
         f'PATH="$HOME/.local/bin:$PATH" obx-file put {shlex.quote(path)} {shlex.quote(put_url)} {shlex.quote(mime)}',
         timeout=120,

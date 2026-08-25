@@ -37,6 +37,18 @@ class OssClient:
     def host(self) -> str:
         return f"{self.bucket}.{self.endpoint}"
 
+    @property
+    def internal_host(self) -> str:
+        """Alibaba intranet host for cloud sandboxes in the bucket's region.
+
+        OSS V1 signs the canonical bucket/key, not the hostname, so public and
+        internal URLs carry the same signature. Custom/non-Alibaba endpoints
+        deliberately fall back to their configured public host.
+        """
+        if self.region and self.endpoint.endswith(".aliyuncs.com"):
+            return f"{self.bucket}.oss-{self.region}-internal.aliyuncs.com"
+        return self.host
+
     def _sign(self, string_to_sign: str) -> str:
         digest = hmac.new(self._key_secret.encode(), string_to_sign.encode(), hashlib.sha1).digest()
         return base64.b64encode(digest).decode()
@@ -48,6 +60,7 @@ class OssClient:
         expires_sec: int,
         content_type: str = "",
         subresource: dict[str, str] | None = None,
+        internal: bool = False,
     ) -> str:
         expires = int(time.time()) + expires_sec
         sub = subresource or {}
@@ -63,17 +76,34 @@ class OssClient:
             f"Signature={quote(signature)}",
         ]
         encoded_key = quote(key, safe="/")
-        return f"https://{self.host}/{encoded_key}?{'&'.join(query)}"
+        host = self.internal_host if internal else self.host
+        return f"https://{host}/{encoded_key}?{'&'.join(query)}"
 
-    def presign_put(self, key: str, content_type: str, expires_sec: int = 1800) -> str:
+    def presign_put(
+        self,
+        key: str,
+        content_type: str,
+        expires_sec: int = 1800,
+        *,
+        internal: bool = False,
+    ) -> str:
         """Direct browser upload; the client must send exactly this Content-Type."""
-        return self._presign("PUT", key, expires_sec, content_type=content_type)
+        return self._presign(
+            "PUT", key, expires_sec, content_type=content_type, internal=internal
+        )
 
-    def presign_get(self, key: str, expires_sec: int = 3600, download_name: str | None = None) -> str:
+    def presign_get(
+        self,
+        key: str,
+        expires_sec: int = 3600,
+        download_name: str | None = None,
+        *,
+        internal: bool = False,
+    ) -> str:
         sub = None
         if download_name:
             sub = {"response-content-disposition": f'attachment; filename="{download_name}"'}
-        return self._presign("GET", key, expires_sec, subresource=sub)
+        return self._presign("GET", key, expires_sec, subresource=sub, internal=internal)
 
     def presign_head(self, key: str, expires_sec: int = 120) -> str:
         return self._presign("HEAD", key, expires_sec)

@@ -1,8 +1,13 @@
 """HTTP client for communicating with the Action Server inside a sandbox container."""
 import asyncio
+import contextvars
 import json
+import os
+import secrets
 import shlex
+import socket
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import httpx
@@ -10,6 +15,11 @@ import httpx
 from core.log import create_logger
 
 log = create_logger("sandbox.client")
+
+_PROCESS_INSTANCE_ID = (
+    os.environ.get("OPENBOX_INSTANCE_ID", "").strip()
+    or f"{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(4)}"
+)
 
 
 @dataclass
@@ -35,6 +45,14 @@ class IdleNotification:
     pid: int
 
 
+@dataclass(frozen=True)
+class RequestTrace:
+    session_id: str = ""
+    tool_call_id: str = ""
+    operation: str = ""
+    lease_token: str = ""
+
+
 class SandboxClient:
     """HTTP client for the Action Server running inside a sandbox container.
 
@@ -47,6 +65,118 @@ class SandboxClient:
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
         self.api_key = api_key
         self._headers = {"X-API-Key": api_key}
+        self._trace: contextvars.ContextVar[RequestTrace] = contextvars.ContextVar(
+            f"sandbox_request_trace_{id(self)}", default=RequestTrace()
+        )
+
+    @staticmethod
+    def _header_value(value: str, limit: int = 120) -> str:
+        """Bound request metadata to visible ASCII safe for HTTP headers."""
+        return "".join(ch for ch in (value or "") if 32 <= ord(ch) < 127)[:limit]
+
+    def _request_headers(self) -> dict[str, str]:
+        trace = self._trace.get()
+        headers = {
+            "X-OpenBox-Instance": self._header_value(_PROCESS_INSTANCE_ID),
+            "X-OpenBox-Request": secrets.token_hex(8),
+        }
+        if trace.session_id:
+            headers["X-OpenBox-Session"] = self._header_value(trace.session_id)
+        if trace.tool_call_id:
+            headers["X-OpenBox-Tool-Call"] = self._header_value(trace.tool_call_id)
+        if trace.operation:
+            headers["X-OpenBox-Operation"] = self._header_value(trace.operation, 48)
+        if trace.lease_token:
+            headers["X-OpenBox-Desktop-Lease"] = self._header_value(trace.lease_token, 160)
+        return headers
+
+    @asynccontextmanager
+    async def request_context(
+        self,
+        *,
+        session_id: str = "",
+        tool_call_id: str = "",
+        operation: str = "",
+    ):
+        """Attach caller identity to sandbox requests in the current task."""
+        current = self._trace.get()
+        token = self._trace.set(RequestTrace(
+            session_id=session_id or current.session_id,
+            tool_call_id=tool_call_id or current.tool_call_id,
+            operation=operation or current.operation,
+            lease_token=current.lease_token,
+        ))
+        try:
+            yield
+        finally:
+            self._trace.reset(token)
+
+    @asynccontextmanager
+    async def desktop_lease(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        operation: str = "computer",
+        wait_timeout: float = 90.0,
+        ttl_seconds: float = 180.0,
+    ):
+        """Hold the remote desktop across input, capture and OSS upload.
+
+        The lease lives on the Action Server, so it serializes separate users,
+        backend processes and even separate OpenBox deployments that point at
+        one long-lived WUYING desktop.
+        """
+        current = self._trace.get()
+        if current.lease_token:
+            yield {"token": current.lease_token, "wait_ms": 0, "nested": True}
+            return
+
+        async with self.request_context(
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            operation=operation,
+        ):
+            owner = ":".join(part for part in (
+                _PROCESS_INSTANCE_ID, session_id, tool_call_id or secrets.token_hex(6)
+            ) if part)
+            async with self._client(timeout=wait_timeout + 15) as client:
+                response = await client.post(
+                    "/desktop/lease/acquire",
+                    headers=self._request_headers(),
+                    json={
+                        "owner": owner,
+                        "wait_timeout": wait_timeout,
+                        "ttl_seconds": ttl_seconds,
+                    },
+                )
+                response.raise_for_status()
+                lease = response.json()
+
+            active = self._trace.get()
+            lease_context = self._trace.set(RequestTrace(
+                session_id=active.session_id,
+                tool_call_id=active.tool_call_id,
+                operation=active.operation,
+                lease_token=lease["token"],
+            ))
+            try:
+                yield lease
+            finally:
+                try:
+                    async with self._client(timeout=10) as client:
+                        response = await client.post(
+                            "/desktop/lease/release",
+                            headers=self._request_headers(),
+                            json={"token": lease["token"]},
+                        )
+                        response.raise_for_status()
+                except Exception as exc:
+                    # The server-side TTL releases a lease after a crashed or
+                    # disconnected backend. Do not mask the actual tool result.
+                    log.warning(f"Failed to release desktop lease: {exc}")
+                finally:
+                    self._trace.reset(lease_context)
 
     def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
         """Create an httpx async client.
@@ -72,7 +202,7 @@ class SandboxClient:
     ) -> ExecuteResult:
         """Execute a command in the sandbox."""
         async with self._client(timeout=timeout + 10) as client:
-            resp = await client.post("/execute", json={
+            resp = await client.post("/execute", headers=self._request_headers(), json={
                 "command": command,
                 "timeout": timeout,
                 "workdir": workdir,
@@ -100,7 +230,7 @@ class SandboxClient:
         """
         pid = 0
         async with self._client(timeout=timeout + 10) as client:
-            async with client.stream("POST", "/execute_stream", json={
+            async with client.stream("POST", "/execute_stream", headers=self._request_headers(), json={
                 "command": command,
                 "timeout": timeout,
                 "idle_timeout": idle_timeout,

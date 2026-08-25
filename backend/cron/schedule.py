@@ -127,6 +127,102 @@ def compute_job_interval_ms(schedule: CronSchedule) -> int | None:
     return None
 
 
+def as_aware_utc(dt: datetime | None) -> datetime | None:
+    """Normalize a DB-read datetime to aware UTC.
+
+    The cron columns are TIMESTAMP WITHOUT TIME ZONE, so both asyncpg and
+    sqlite hand back naive values even though every write is UTC-aware;
+    comparing one against datetime.now(timezone.utc) raises TypeError.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def schedule_from_dict(sched: dict | None) -> "CronSchedule | None":
+    """Rebuild a schedule object from its stored JSON dict."""
+    from cron.types import CronScheduleAt, CronScheduleCron, CronScheduleEvery
+
+    if not isinstance(sched, dict):
+        return None
+    kind = sched.get("kind")
+    try:
+        if kind == "cron":
+            return CronScheduleCron(expr=sched["expr"], tz=sched.get("tz", "UTC"))
+        if kind == "every":
+            return CronScheduleEvery(
+                every_ms=sched["every_ms"], anchor_ms=sched.get("anchor_ms")
+            )
+        if kind == "at":
+            return CronScheduleAt(at=sched["at"])
+    except (KeyError, ValueError):
+        return None
+    return None
+
+
+# Top-of-hour cron jobs ("0 9 * * *", "0 * * * *") all fire in the same
+# second across every user, which stampedes the shared Wuying desktop and its
+# warmup path. A deterministic per-job offset inside this window spreads them
+# out; "every" schedules are naturally spread by their creation-time anchor.
+STAGGER_WINDOW_MS = 5 * 60 * 1000
+
+
+def min_gap_ms(schedule: CronSchedule) -> int | None:
+    """Smallest gap between two consecutive fires, for rate limiting.
+
+    Unlike compute_job_interval_ms this takes the MINIMUM over a few fires:
+    "0,1 * * * *" averages 30 minutes but actually fires 60s apart.
+    Returns None for one-shot schedules.
+    """
+    if schedule.kind == "at":
+        return None
+
+    if schedule.kind == "every":
+        return max(1, schedule.every_ms)
+
+    if schedule.kind == "cron":
+        try:
+            from croniter import croniter
+            import zoneinfo
+
+            tz = zoneinfo.ZoneInfo(schedule.tz) if schedule.tz else timezone.utc
+            cron = croniter(schedule.expr, datetime.now(timezone.utc).astimezone(tz))
+            fires = [cron.get_next(datetime) for _ in range(4)]
+            gaps = [
+                (b - a).total_seconds() * 1000
+                for a, b in zip(fires, fires[1:])
+            ]
+            return int(min(gaps)) if gaps else None
+        except Exception:
+            return None
+
+    return None
+
+
+def stagger_ms_for(job_id: str) -> int:
+    """Deterministic per-job offset in [0, STAGGER_WINDOW_MS)."""
+    import hashlib
+
+    digest = hashlib.md5(job_id.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % STAGGER_WINDOW_MS
+
+
+def apply_stagger(
+    next_run: datetime | None, schedule: CronSchedule, job_id: str
+) -> datetime | None:
+    """Shift a top-of-hour cron fire by the job's deterministic offset.
+
+    Only cron expressions whose minute field is exactly "0" are shifted —
+    those are the ones that pile up. One-shots and intervals pass through.
+    """
+    if next_run is None or schedule.kind != "cron":
+        return next_run
+    fields = schedule.expr.split()
+    if not fields or fields[0] != "0":
+        return next_run
+    return next_run + timedelta(milliseconds=stagger_ms_for(job_id))
+
+
 def _parse_iso(s: str) -> datetime | None:
     """Parse an ISO 8601 datetime string to UTC datetime."""
     try:

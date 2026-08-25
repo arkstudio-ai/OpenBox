@@ -28,11 +28,17 @@ class TimerState:
         self.timer_handle: asyncio.TimerHandle | None = None
         self.watchdog_handle: asyncio.TimerHandle | None = None
         self.lock = asyncio.Lock()
-        self.max_concurrent_jobs = 2
+        self.last_tick_at_ms: int | None = None
 
         # Callbacks (injected by CronService)
         self.execute_job: Any = None  # async (job_row) -> dict
         self.on_job_result: Any = None  # async (job_id, result) -> None
+
+    @property
+    def max_concurrent_jobs(self) -> int:
+        from core.config import get_config
+
+        return max(1, get_config().cron_max_concurrent_jobs)
 
 
 def arm_timer(state: TimerState) -> None:
@@ -85,6 +91,7 @@ async def on_timer(state: TimerState) -> None:
         return
 
     state.running = True
+    state.last_tick_at_ms = _now_ms()
     _arm_watchdog(state)
 
     try:
@@ -94,9 +101,16 @@ async def on_timer(state: TimerState) -> None:
         if not due_jobs:
             return
 
-        # Mark jobs as running in DB
-        async with state.lock:
-            await _mark_jobs_running(due_jobs)
+        # Claim jobs atomically: a conditional per-row UPDATE means a second
+        # scheduler (another replica, or a manual run racing the timer) loses
+        # the claim instead of executing the same job twice.
+        claimed = []
+        for job in due_jobs:
+            if await _claim_job(job["id"]):
+                claimed.append(job)
+        if not claimed:
+            return
+        due_jobs = claimed
 
         # Execute with concurrency control
         results = await _execute_jobs_concurrent(state, due_jobs)
@@ -187,16 +201,22 @@ async def _find_next_wake_ms(state: TimerState) -> int | None:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        return int(row.timestamp() * 1000)
+        # The column is timezone-naive; .timestamp() on a naive value applies
+        # the SERVER'S local timezone, which skews every wake-up by the UTC
+        # offset (hours of timer drift on a non-UTC host).
+        from cron.schedule import as_aware_utc
+        return int(as_aware_utc(row).timestamp() * 1000)
 
 
 async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
     """Query DB for due jobs that should be executed."""
+    from core.config import get_config
     from db.base import get_db_session
     from db.models.cron import CronJob
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     now = datetime.now(timezone.utc)
+    stuck_cutoff = now - timedelta(milliseconds=STUCK_RUN_MS)
 
     async with get_db_session() as db:
         result = await db.execute(
@@ -205,21 +225,26 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
                 CronJob.enabled == True,
                 CronJob.is_deleted == False,
                 CronJob.next_run_at <= now,
-                CronJob.running_at.is_(None),
+                # A running marker older than STUCK_RUN_MS belongs to a run
+                # that died without reporting (crash, lost worker); reclaim it
+                # instead of blocking the job until the next process restart.
+                or_(
+                    CronJob.running_at.is_(None),
+                    CronJob.running_at < stuck_cutoff,
+                ),
             )
             .order_by(CronJob.next_run_at.asc())
         )
         rows = result.scalars().all()
 
-    # Per-user concurrency limit: max 2 concurrent cron jobs per user
-    MAX_CONCURRENT_PER_USER = 2
+    max_per_user = max(1, get_config().cron_max_concurrent_per_user)
     user_running_count: dict[str, int] = {}
 
-    # Count already-running jobs per user
+    # Count already-running (non-stuck) jobs per user
     async with get_db_session() as db:
         running_result = await db.execute(
             select(CronJob.user_id)
-            .where(CronJob.running_at.isnot(None))
+            .where(CronJob.running_at.isnot(None), CronJob.running_at >= stuck_cutoff)
         )
         for r in running_result.all():
             user_running_count[r[0]] = user_running_count.get(r[0], 0) + 1
@@ -231,7 +256,7 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
             continue
         # Per-user concurrency check
         user_running = user_running_count.get(row.user_id, 0)
-        if user_running >= MAX_CONCURRENT_PER_USER:
+        if user_running >= max_per_user:
             continue
         user_running_count[row.user_id] = user_running + 1
         due.append({
@@ -257,10 +282,12 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
 
 def _is_in_backoff(job) -> bool:
     """Check if job is in error backoff window."""
+    from cron.schedule import as_aware_utc
+
     errors = job.consecutive_errors or 0
     if errors == 0:
         return False
-    last_run = job.last_run_at
+    last_run = as_aware_utc(job.last_run_at)
     if last_run is None:
         return False
     backoff_ms = error_backoff_ms(errors)
@@ -268,21 +295,36 @@ def _is_in_backoff(job) -> bool:
     return datetime.now(timezone.utc) < backoff_until
 
 
-async def _mark_jobs_running(jobs: list[dict]) -> None:
-    """Mark jobs as running in DB (persist before execution)."""
+async def _claim_job(job_id: str) -> bool:
+    """Atomically claim a job for execution.
+
+    The conditional UPDATE either wins the row (rowcount 1) or loses it to a
+    concurrent claimer (rowcount 0) — the single-statement write is what makes
+    running two backend replicas safe. A stale marker past STUCK_RUN_MS counts
+    as claimable so a crashed run cannot pin its job forever.
+    """
     from db.base import get_db_session
     from db.models.cron import CronJob
-    from sqlalchemy import update
+    from sqlalchemy import or_, update
 
     now = datetime.now(timezone.utc)
-    job_ids = [j["id"] for j in jobs]
+    stuck_cutoff = now - timedelta(milliseconds=STUCK_RUN_MS)
 
     async with get_db_session() as db:
-        await db.execute(
+        result = await db.execute(
             update(CronJob)
-            .where(CronJob.id.in_(job_ids))
+            .where(
+                CronJob.id == job_id,
+                CronJob.enabled == True,  # noqa: E712
+                CronJob.is_deleted == False,  # noqa: E712
+                or_(
+                    CronJob.running_at.is_(None),
+                    CronJob.running_at < stuck_cutoff,
+                ),
+            )
             .values(running_at=now)
         )
+    return result.rowcount == 1
 
 
 async def _execute_jobs_concurrent(
@@ -355,18 +397,35 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
             "total_runs": job.total_runs + 1,
         }
 
+        auto_disabled = False
         if status == "ok":
             values["consecutive_errors"] = 0
             values["last_error"] = None
             values["total_successes"] = job.total_successes + 1
         elif status == "error":
-            values["consecutive_errors"] = job.consecutive_errors + 1
+            consecutive = job.consecutive_errors + 1
+            values["consecutive_errors"] = consecutive
             values["last_error"] = error
             values["total_failures"] = job.total_failures + 1
+
+            # A job failing this many times in a row is broken, not unlucky.
+            # Backoff caps at 60 minutes, so without this the job would retry
+            # hourly forever, spending tokens and a Wuying lease each time.
+            from core.config import get_config
+            threshold = get_config().cron_auto_disable_after
+            if threshold > 0 and consecutive >= threshold:
+                auto_disabled = True
+                values["enabled"] = False
+                values["next_run_at"] = None
+                values["last_error"] = (
+                    f"[auto-disabled after {consecutive} consecutive failures] {error}"
+                )
 
         # Compute next_run_at
         schedule = job.schedule
         schedule_kind = schedule.get("kind") if isinstance(schedule, dict) else None
+        if auto_disabled:
+            schedule_kind = None  # skip schedule advancement entirely
 
         if schedule_kind == "at":
             # One-shot job
@@ -381,21 +440,14 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
                 else:
                     values["enabled"] = False
                     values["next_run_at"] = None
-        else:
+        elif schedule_kind is not None:
             # Recurring job
-            from cron.schedule import compute_next_run_at as _compute
-            from cron.types import CronScheduleCron, CronScheduleEvery
+            from cron.schedule import apply_stagger, compute_next_run_at as _compute, schedule_from_dict
 
-            # Reconstruct schedule object
-            if schedule_kind == "cron":
-                sched = CronScheduleCron(expr=schedule["expr"], tz=schedule.get("tz", "UTC"))
-            elif schedule_kind == "every":
-                sched = CronScheduleEvery(every_ms=schedule["every_ms"], anchor_ms=schedule.get("anchor_ms"))
-            else:
-                sched = None
+            sched = schedule_from_dict(schedule)
 
             if sched:
-                natural_next = _compute(sched, now)
+                natural_next = apply_stagger(_compute(sched, now), sched, job_id)
                 if status == "error" and job.enabled:
                     backoff = error_backoff_ms(values.get("consecutive_errors", 1))
                     backoff_next = now + timedelta(milliseconds=backoff)
@@ -416,6 +468,23 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
 
         await db.execute(
             update(CronJob).where(CronJob.id == job_id).values(**values)
+        )
+
+    if auto_disabled:
+        from bus import bus
+        from bus.events import CRON_JOB_AUTO_DISABLED
+
+        bus.publish(CRON_JOB_AUTO_DISABLED, {
+            "userId": job.user_id,
+            "jobId": job_id,
+            "sessionId": job.session_id,
+            "jobName": job.name,
+            "consecutiveErrors": values.get("consecutive_errors"),
+            "error": error,
+        })
+        log.warning(
+            f"Auto-disabled cron job {job_id} ({job.name}) after "
+            f"{values.get('consecutive_errors')} consecutive failures"
         )
 
     # Notify via callback

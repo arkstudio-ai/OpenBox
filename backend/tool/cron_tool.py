@@ -29,15 +29,20 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
     from cron.service import cron_service
     from cron.types import CronJobCreate, CronScheduleCron, CronScheduleEvery
 
-    # Determine the target session (main session, not temp session)
-    target_session = ctx.origin_session_id or ctx.session_id
+    # Jobs are project-scoped; the current conversation (its origin when this
+    # runs inside a cron temp session) becomes the notify target.
+    notify_session = ctx.origin_session_id or ctx.session_id
+    project_id = ctx.project_id
+    if not project_id and notify_session:
+        from session.session import project_id_for
+        project_id = await project_id_for(notify_session)
 
     if args.action == "list":
-        jobs = await cron_service.list_jobs(ctx.user_id, session_id=target_session)
+        jobs = await cron_service.list_jobs(ctx.user_id, project_id=project_id or None)
         if not jobs:
             return ToolResult(
                 title="No cron jobs",
-                output="No scheduled tasks found for this session.",
+                output="No scheduled tasks found for this project.",
             )
         lines = []
         for j in jobs:
@@ -62,20 +67,14 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
                 output="Required: name, schedule, and task. Example: cron(action='add', name='Daily Report', schedule='0 9 * * *', task='Generate a daily summary report')",
             )
 
-        # Permission checks
-        MAX_JOBS_PER_SESSION = 10
-        MAX_TASK_PROMPT_LENGTH = 5000
-        existing = await cron_service.list_jobs(ctx.user_id, session_id=target_session)
-        if len(existing) >= MAX_JOBS_PER_SESSION:
-            return ToolResult(
-                title="Limit reached",
-                output=f"Maximum {MAX_JOBS_PER_SESSION} cron jobs per session. Remove some first.",
-            )
-        if len(args.task) > MAX_TASK_PROMPT_LENGTH:
-            return ToolResult(
-                title="Task too long",
-                output=f"Task prompt must be under {MAX_TASK_PROMPT_LENGTH} characters.",
-            )
+        # Recursion guard on the CALLING session: a scheduled task's agent
+        # must not schedule further tasks, even though its tool context may
+        # point origin_session_id back at the main session.
+        from cron.validation import ensure_not_cron_session
+        try:
+            await ensure_not_cron_session(ctx.session_id)
+        except ValueError as e:
+            return ToolResult(title="Not allowed", output=str(e))
 
         # Parse schedule
         schedule = _parse_schedule(args.schedule, args.timezone)
@@ -85,20 +84,13 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
                 output=f"Could not parse schedule: '{args.schedule}'. Use cron syntax like '0 9 * * *' or interval like 'every 30m', 'every 1h'.",
             )
 
-        # Validate "at" jobs are in the future
-        if hasattr(schedule, "kind") and schedule.kind == "at":
-            from datetime import datetime, timezone
-            from cron.schedule import _parse_iso
-            at_dt = _parse_iso(schedule.at)
-            if at_dt and at_dt <= datetime.now(timezone.utc):
-                return ToolResult(
-                    title="Invalid time",
-                    output="One-shot schedule time must be in the future.",
-                )
-
+        # Quotas, prompt length, minimum interval, session ownership, and
+        # future-time checks all live in the service layer now — the REST API
+        # and this tool share one rulebook and one set of error messages.
         try:
             create = CronJobCreate(
-                session_id=target_session,
+                project_id=project_id or "",
+                session_id=notify_session,
                 name=args.name,
                 schedule=schedule,
                 task_prompt=args.task,
@@ -172,11 +164,11 @@ def _parse_schedule(schedule_str: str, tz: str = "UTC"):
 cron_tool = define_tool(
     "cron",
     description="""\
-Create, list, or manage scheduled tasks (cron jobs) for the current session.
+Create, list, or manage scheduled tasks (cron jobs) for the current project.
 
 Actions:
   - add: Create a new scheduled task (requires name, schedule, task)
-  - list: Show all cron jobs for this session
+  - list: Show all cron jobs for this project
   - remove: Delete a cron job (requires job_id)
   - enable/disable: Toggle a cron job (requires job_id)
 
@@ -184,7 +176,9 @@ Schedule formats:
   - Cron expression: "0 9 * * *" (daily at 9am), "*/30 * * * *" (every 30 min)
   - Interval: "every 30m", "every 1h", "every 6h"
 
-The job will execute automatically at the scheduled time. Results will appear in this conversation.""",
+Recurring jobs may not fire more often than every 5 minutes. The job executes
+automatically at the scheduled time and its result appears in this conversation;
+runs that produce nothing noteworthy stay silent.""",
     parameters=CronToolArgs,
     execute=execute,
     sandbox_required=False,

@@ -12,19 +12,20 @@ router = APIRouter(
 
 
 @router.get("/status")
-async def get_cron_status():
-    """Get cron scheduler status."""
+async def get_cron_status(current_user: dict = Depends(get_current_user)):
+    """Get cron scheduler status (liveness for monitoring; requires auth)."""
     return await cron_service.status()
 
 
 @router.get("/jobs")
 async def list_cron_jobs(
     session_id: str | None = None,
+    project_id: str | None = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """List cron jobs. Optionally filter by session_id."""
+    """List cron jobs. Optionally filter by project or notify session."""
     user_id = current_user["user_id"]
-    return await cron_service.list_jobs(user_id, session_id=session_id)
+    return await cron_service.list_jobs(user_id, session_id=session_id, project_id=project_id)
 
 
 @router.post("/jobs")
@@ -87,22 +88,8 @@ async def pause_all_cron_jobs(
 ):
     """Pause (disable) all cron jobs. Optionally filter by session."""
     user_id = current_user["user_id"]
-    from db.base import get_db_session
-    from db.models.cron import CronJob as CronJobORM
-    from sqlalchemy import update
-    from datetime import datetime, timezone
-
-    query = (
-        update(CronJobORM)
-        .where(CronJobORM.user_id == user_id, CronJobORM.is_deleted == False, CronJobORM.enabled == True)
-    )
-    if session_id:
-        query = query.where(CronJobORM.session_id == session_id)
-    query = query.values(enabled=False, updated_at=datetime.now(timezone.utc))
-
-    async with get_db_session() as db:
-        result = await db.execute(query)
-    return {"ok": True, "paused": result.rowcount}
+    paused = await cron_service.pause_all(user_id, session_id=session_id)
+    return {"ok": True, "paused": paused}
 
 
 @router.post("/jobs/resume-all")
@@ -112,57 +99,8 @@ async def resume_all_cron_jobs(
 ):
     """Resume (enable) all cron jobs. Optionally filter by session."""
     user_id = current_user["user_id"]
-    from db.base import get_db_session
-    from db.models.cron import CronJob as CronJobORM
-    from sqlalchemy import update, select
-    from datetime import datetime, timezone
-    from cron.schedule import compute_next_run_at
-    from cron.types import CronScheduleCron, CronScheduleEvery, CronScheduleAt
-
-    now = datetime.now(timezone.utc)
-
-    # Enable all disabled jobs
-    query = (
-        update(CronJobORM)
-        .where(CronJobORM.user_id == user_id, CronJobORM.is_deleted == False, CronJobORM.enabled == False)
-    )
-    if session_id:
-        query = query.where(CronJobORM.session_id == session_id)
-    query = query.values(enabled=True, updated_at=now)
-
-    async with get_db_session() as db:
-        result = await db.execute(query)
-
-    # Recompute next_run_at for all resumed jobs
-    async with get_db_session() as db:
-        q = select(CronJobORM).where(
-            CronJobORM.user_id == user_id, CronJobORM.is_deleted == False, CronJobORM.enabled == True,
-            CronJobORM.next_run_at.is_(None),
-        )
-        if session_id:
-            q = q.where(CronJobORM.session_id == session_id)
-        rows = (await db.execute(q)).scalars().all()
-        for job in rows:
-            sched = job.schedule
-            kind = sched.get("kind") if isinstance(sched, dict) else None
-            sobj = None
-            if kind == "cron":
-                sobj = CronScheduleCron(expr=sched["expr"], tz=sched.get("tz", "UTC"))
-            elif kind == "every":
-                sobj = CronScheduleEvery(every_ms=sched["every_ms"], anchor_ms=sched.get("anchor_ms"))
-            elif kind == "at":
-                sobj = CronScheduleAt(at=sched["at"])
-            if sobj:
-                next_run = compute_next_run_at(sobj, now)
-                await db.execute(
-                    update(CronJobORM).where(CronJobORM.id == job.id).values(next_run_at=next_run, updated_at=now)
-                )
-
-    from cron.timer import arm_timer
-    from cron.service import cron_service
-    arm_timer(cron_service._state)
-
-    return {"ok": True, "resumed": result.rowcount}
+    resumed = await cron_service.resume_all(user_id, session_id=session_id)
+    return {"ok": True, "resumed": resumed}
 
 
 @router.get("/jobs/{job_id}")

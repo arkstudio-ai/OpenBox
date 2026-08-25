@@ -21,7 +21,7 @@ async def execute_cron_job(job: dict) -> dict:
     """
     job_id = job["id"]
     user_id = job["user_id"]
-    session_id = job["session_id"]
+    session_id = job.get("session_id")
     job_name = job.get("name", "unnamed")
 
     log.info(f"Executing cron job {job_id} ({job_name}) for session {session_id}")
@@ -42,26 +42,32 @@ async def execute_cron_job(job: dict) -> dict:
     # Create cron_runs entry with status=running
     await _create_run_entry(run_id, job, started_at)
 
+    from cron.i18n import is_silent, resolve_locale
+
+    locale = await resolve_locale(user_id)
     temp_session_id = None
     try:
         # 1. Generate session summary (or reuse cache)
         context_summary = await _get_session_summary(job)
 
         # 2. Create temporary session
-        temp_session_id = await _create_temp_session(job)
+        temp_session_id = await _create_temp_session(job, locale)
 
         # 3. Build prompt and inject into temp session
-        prompt = _build_cron_prompt(job, context_summary)
+        prompt = _build_cron_prompt(job, context_summary, locale)
         await _inject_prompt(temp_session_id, user_id, prompt)
 
         # 4. Acquire sandbox and run agent loop
-        result_text = await _run_agent_loop(temp_session_id, user_id, job)
+        result_text = await _run_agent_loop(temp_session_id, user_id, job, locale)
 
         # 5. Extract result
         ended_at = datetime.now(timezone.utc)
         duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        tokens = await _collect_token_usage(temp_session_id, user_id)
+        silent = is_silent(result_text)
 
-        # Update cron_runs
+        # Update cron_runs. A silent run is marked injected up front — there
+        # is nothing to flush into the main session later.
         await _update_run_entry(
             run_id, job_id, temp_session_id,
             status="ok",
@@ -69,6 +75,8 @@ async def execute_cron_job(job: dict) -> dict:
             context_summary=context_summary,
             ended_at=ended_at,
             duration_ms=duration_ms,
+            tokens=tokens,
+            injected=True if silent else None,
         )
 
         # Publish success event
@@ -80,14 +88,65 @@ async def execute_cron_job(job: dict) -> dict:
             "jobName": job_name,
             "runId": run_id,
             "durationMs": duration_ms,
+            "silent": silent,
         })
 
-        # 6. Try to inject result into main session
-        from cron.injector import try_inject_result
-        await try_inject_result(run_id, job, result_text)
+        # 6. Append to the project's daily run log (every run, silent included)
+        from cron.runlog import append_run_log, build_log_entry
+        await append_run_log(
+            temp_session_id, user_id, job,
+            build_log_entry(
+                job, "ok", result_text, duration_ms,
+                tokens.get("total_tokens", 0), silent, locale,
+            ),
+            locale,
+        )
+
+        if silent:
+            # NO_REPLY: keep the run history, spare the conversation and the
+            # delivery channel.
+            log.info(f"Cron job {job_id} completed silently in {duration_ms}ms")
+            return {"status": "ok", "summary_text": result_text, "run_id": run_id}
+
+        # 7. Post the result into the notify conversation, when the job has
+        # one; page-created jobs live entirely in run history + the daily log.
+        if job.get("session_id"):
+            from cron.injector import try_inject_result
+            await try_inject_result(run_id, job, result_text)
+        else:
+            await _update_run_entry(
+                run_id, job_id, temp_session_id, status="ok", injected=True,
+                ended_at=ended_at, duration_ms=duration_ms,
+            )
+
+        # 8. External delivery (webhook), best-effort
+        await _dispatch_delivery(job, "ok", result_text, duration_ms)
 
         log.info(f"Cron job {job_id} completed in {duration_ms}ms")
         return {"status": "ok", "summary_text": result_text, "run_id": run_id}
+
+    except asyncio.CancelledError:
+        # The timer's wait_for timed out (or shutdown cancelled us). Close the
+        # run record here — the except-Exception path never sees CancelledError,
+        # which used to leave the row in status=running until the next restart.
+        ended_at = datetime.now(timezone.utc)
+        duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        await _update_run_entry(
+            run_id, job_id, temp_session_id,
+            status="error",
+            error_message="Job execution timed out or was cancelled",
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+        )
+        from bus.events import CRON_JOB_FAILED
+        bus.publish(CRON_JOB_FAILED, {
+            "userId": user_id,
+            "jobId": job_id,
+            "sessionId": session_id,
+            "jobName": job_name,
+            "error": "timeout",
+        })
+        raise
 
     except Exception as e:
         ended_at = datetime.now(timezone.utc)
@@ -111,8 +170,31 @@ async def execute_cron_job(job: dict) -> dict:
             "error": error_msg,
         })
 
+        # Failures always deliver (a broken monitor is itself an alert).
+        await _dispatch_delivery(job, "error", error_msg, duration_ms)
+
+        # Failed runs go into the daily log too — the file is the audit trail.
+        if temp_session_id:
+            from cron.runlog import append_run_log, build_log_entry
+            await append_run_log(
+                temp_session_id, user_id, job,
+                build_log_entry(job, "error", error_msg, duration_ms, 0, False, locale),
+                locale,
+            )
+
         log.error(f"Cron job {job_id} failed after {duration_ms}ms: {error_msg}")
         return {"status": "error", "error": error_msg, "run_id": run_id}
+
+    finally:
+        # Drop the temp session's sandbox binding. On Wuying the shared
+        # desktop survives (delete_container is a no-op there); on Docker the
+        # container is destroyed only if no live session still uses it.
+        if temp_session_id:
+            try:
+                from sandbox import sandbox_manager
+                await sandbox_manager.release(temp_session_id)
+            except Exception as e:
+                log.debug(f"Sandbox release for {temp_session_id} failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +202,14 @@ async def execute_cron_job(job: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 async def _get_session_summary(job: dict) -> str:
-    """Get or generate a summary of the main session's conversation history."""
-    session_id = job["session_id"]
+    """Get or generate a summary of the notify session's conversation history.
+
+    Jobs created from the management page have no session — they run on the
+    project alone, with the cron/ run log as their cross-run context.
+    """
+    session_id = job.get("session_id")
+    if not session_id:
+        return ""
     cached_summary = job.get("summary_cache")
     cached_msg_id = job.get("summary_cache_msg_id")
 
@@ -181,17 +269,28 @@ async def _generate_summary(messages, job: dict) -> str:
     )
     llm_messages.append({"role": "user", "content": prompt})
 
-    # Use a smaller model if available, otherwise use the job's model
-    model_id = job.get("model") or "openai/gpt-4o-mini"
+    # Summary model: deployment override > job model > deployment default.
+    # (The old hardcoded "openai/gpt-4o-mini" broke on deployments that never
+    # configured an OpenAI provider.)
+    from core.config import get_config
+    config = get_config()
+    model_id = config.cron_summary_model or job.get("model") or config.model
 
     summary = ""
     try:
+        from tool.tool import ToolContext
+
+        # Same shape as compaction's summarizer call: a bare context is enough
+        # for a tool-less LLM turn. (This call used to omit ctx entirely, so
+        # summary generation had never actually succeeded.)
+        ctx = ToolContext(session_id=job["session_id"], user_id=job["user_id"])
         async for event in stream_llm(
             agent_def=None,
             system=[],
             messages=llm_messages,
             tools={},
             model_id=model_id,
+            ctx=ctx,
         ):
             if event["type"] == "text_delta":
                 summary += event["text"]
@@ -217,14 +316,14 @@ async def _update_summary_cache(job_id: str, summary: str, msg_id: str | None) -
         )
 
 
-async def _create_temp_session(job: dict) -> str:
+async def _create_temp_session(job: dict, locale: str = "zh-CN") -> str:
     """Create a temporary session for cron execution."""
     from session.session import create_session
     from core.config import get_config
 
-    # Resolve model: job override > main session model > config default
+    # Resolve model: job override > notify session model > config default
     model = job.get("model") or ""
-    if not model:
+    if not model and job.get("session_id"):
         from session.session import get_session
         main_session = await get_session(job["session_id"], user_id=job["user_id"])
         if main_session and main_session.model:
@@ -233,36 +332,42 @@ async def _create_temp_session(job: dict) -> str:
         config = get_config()
         model = config.model or ""
 
-    # The run belongs in the same project as the session that scheduled it.
-    # Pinning it to "default" meant a task set up from a project ran against a
-    # different directory — "check my build every morning" would find nothing.
-    from session.session import project_id_for
-    project_id = await project_id_for(job["session_id"]) or None
+    # Jobs are project-scoped; the run executes in the owning project's
+    # directory regardless of which conversation (if any) gets the result.
+    project_id = job.get("project_id") or None
+
+    from cron.i18n import text
 
     session = await create_session(
         user_id=job["user_id"],
         agent=job.get("agent", "build"),
         model=model,
-        title=f"[Cron] {job.get('name', 'task')}",
+        title=text(locale, "temp_title", name=job.get("name", "task")),
         parent_id=job["session_id"],
         project_id=project_id,
+        kind="cron",
     )
     return session.id
 
 
-def _build_cron_prompt(job: dict, context_summary: str) -> str:
+def _build_cron_prompt(job: dict, context_summary: str, locale: str = "zh-CN") -> str:
     """Build the prompt for cron execution."""
+    from cron.i18n import text
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     parts = []
 
     if context_summary:
-        parts.append(f"[Session Context Summary]\n{context_summary}")
+        parts.append(f"[{text(locale, 'context_summary')}]\n{context_summary}")
 
     parts.append(
-        f"[Scheduled Task: {job.get('name', 'unnamed')} | "
+        f"[{text(locale, 'scheduled_task')}: {job.get('name', 'unnamed')} | "
         f"job_id: {job['id']} | {now}]\n"
         f"{job['task_prompt']}"
     )
+
+    parts.append(text(locale, "runlog_hint"))
+    parts.append(text(locale, "silent_instruction"))
 
     return "\n\n".join(parts)
 
@@ -278,7 +383,7 @@ async def _inject_prompt(temp_session_id: str, user_id: str, prompt: str) -> Non
     )
 
 
-async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict) -> str:
+async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict, locale: str = "zh-CN") -> str:
     """Run the agent loop in the temp session and extract the result."""
     from sandbox import sandbox_manager
 
@@ -341,7 +446,53 @@ async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict) -> str:
     if tool_outputs:
         return "Tool execution completed:\n" + "\n---\n".join(tool_outputs[-3:])
 
-    return "(No output)"
+    # Nothing textual at all: treated as a silent run (recorded, not injected).
+    return ""
+
+
+async def _collect_token_usage(temp_session_id: str, user_id: str) -> dict:
+    """Cumulative token usage of the run's temp session.
+
+    The temp session is fresh per run, so its session-level counters — which
+    the agent loop accumulates per step — are exactly this run's spend.
+    """
+    try:
+        from session.session import get_session
+
+        session = await get_session(temp_session_id, user_id=user_id)
+        usage = getattr(session, "token_usage", None) if session else None
+        if not usage:
+            return {}
+        return {
+            "input_tokens": usage.input or 0,
+            "output_tokens": usage.output or 0,
+            "total_tokens": usage.total or (usage.input or 0) + (usage.output or 0),
+        }
+    except Exception as e:
+        log.warning(f"Token usage collection failed for {temp_session_id}: {e}")
+        return {}
+
+
+async def _dispatch_delivery(job: dict, status: str, summary_text: str | None, duration_ms: int) -> None:
+    """Send the run result to the job's external delivery target, if any."""
+    delivery = job.get("delivery") or {}
+    if not delivery or delivery.get("mode", "none") == "none":
+        return
+    try:
+        from cron.delivery import dispatch_delivery
+
+        result = await dispatch_delivery(
+            delivery,
+            job_name=job.get("name", "unnamed"),
+            job_id=job["id"],
+            status=status,
+            summary_text=summary_text,
+            duration_ms=duration_ms,
+        )
+        if not result.success:
+            log.warning(f"Delivery failed for cron job {job['id']}: {result.error}")
+    except Exception as e:
+        log.warning(f"Delivery dispatch error for cron job {job['id']}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +509,8 @@ async def _create_run_entry(run_id: str, job: dict, started_at: datetime) -> Non
             id=run_id,
             job_id=job["id"],
             user_id=job["user_id"],
-            session_id=job["session_id"],
+            project_id=job.get("project_id"),
+            session_id=job.get("session_id"),
             status="running",
             task_prompt=job.get("task_prompt"),
             started_at=started_at,
@@ -376,6 +528,8 @@ async def _update_run_entry(
     error_message: str | None = None,
     ended_at: datetime | None = None,
     duration_ms: int = 0,
+    tokens: dict | None = None,
+    injected: bool | None = None,
 ) -> None:
     """Update a cron_runs entry with final results."""
     from db.base import get_db_session
@@ -395,6 +549,14 @@ async def _update_run_entry(
         values["context_summary"] = context_summary
     if error_message is not None:
         values["error_message"] = error_message
+    if tokens:
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            if tokens.get(key):
+                values[key] = tokens[key]
+    if injected is not None:
+        values["injected"] = injected
+        if injected:
+            values["injected_at"] = datetime.now(timezone.utc)
 
     async with get_db_session() as db:
         await db.execute(

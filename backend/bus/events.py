@@ -43,6 +43,7 @@ CRON_JOB_STARTED = "cron.job.started"
 CRON_JOB_COMPLETED = "cron.job.completed"
 CRON_JOB_FAILED = "cron.job.failed"
 CRON_JOB_INJECTED = "cron.job.injected"
+CRON_JOB_AUTO_DISABLED = "cron.job.auto_disabled"
 
 # Dev-browser events
 DEVBROWSER_STATUS = "devbrowser.status"

@@ -66,8 +66,16 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
     log.info(f"Flushing {len(pending)} pending cron result(s) for session {session_id}")
 
     injected_count = 0
+    from cron.i18n import is_silent
+
     for run in pending:
         try:
+            # A silent result (NO_REPLY / empty) stays in run history only;
+            # mark it consumed so it stops matching this query.
+            if is_silent(run.summary_text):
+                await _mark_injected(run.id)
+                continue
+
             # Get job info for the name
             async with get_db_session() as db:
                 job_result = await db.execute(
@@ -76,7 +84,7 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
                 job = job_result.scalar_one_or_none()
 
             job_name = job.name if job else "unknown"
-            summary = run.summary_text or "(No output)"
+            summary = run.summary_text
 
             # Check overflow before injection
             await _check_and_compact_if_needed(session_id, user_id, job_name, summary)
@@ -165,10 +173,11 @@ async def _check_and_compact_if_needed(
         log.info(f"Compacting session {session_id} before cron injection (context={current_context}, inject~{inject_tokens}, limit={limit})")
         try:
             from agent.compaction import create_compaction, process_compaction
+            from core.config import get_config
             from session.session import get_messages
             await create_compaction(session_id, auto=True, user_id=user_id)
             messages = await get_messages(session_id, user_id=user_id)
-            model_id = session.model or "openai/claude-sonnet-4-20250514"
+            model_id = session.model or get_config().model
             await process_compaction(session_id, messages, model_id, auto=True, user_id=user_id)
         except Exception as e:
             log.warning(f"Pre-injection compaction failed: {e}")
@@ -182,11 +191,13 @@ async def _inject_messages(
     from session.session import create_user_message, create_assistant_message, save_part
     from models.message import TextPart
     from core.identifier import ascending
+    from cron.i18n import resolve_locale, text
 
+    locale = await resolve_locale(user_id)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     # Synthetic user message: the task
-    user_text = f"[Scheduled Task: {job_name} | job_id: {job_id} | {now}]\n{task_prompt}"
+    user_text = f"[{text(locale, 'scheduled_task')}: {job_name} | job_id: {job_id} | {now}]\n{task_prompt}"
     user_msg = await create_user_message(
         session_id=session_id,
         text=user_text,

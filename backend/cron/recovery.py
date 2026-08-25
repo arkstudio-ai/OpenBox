@@ -4,7 +4,7 @@ Called once during CronService.start() before the timer is armed.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
 
@@ -78,13 +78,22 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
     """Detect and replay missed cron jobs (one execution per missed job, not per slot).
 
     A job is "missed" if: enabled, next_run_at < now, and last_run_at < next_run_at.
+
+    A run that is missed by more than the staleness window is rescheduled to
+    its next natural slot instead: a "morning report" fired at 11 pm after a
+    long outage is worse than no report, and each replay costs a full agent
+    run on the shared sandbox.
     """
+    from core.config import get_config
     from db.base import get_db_session
     from db.models.cron import CronJob
     from sqlalchemy import select, update
+    from cron.schedule import apply_stagger, compute_next_run_at, schedule_from_dict
 
     now = datetime.now(timezone.utc)
+    max_age = timedelta(seconds=get_config().cron_missed_run_max_age_seconds)
     replayed = 0
+    rescheduled = 0
 
     async with get_db_session() as db:
         result = await db.execute(
@@ -97,6 +106,8 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
         )
         candidates = result.scalars().all()
 
+    from cron.schedule import as_aware_utc
+
     for job in candidates:
         if job.id in skip_ids:
             continue
@@ -106,6 +117,34 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
             if job.last_run_at >= job.next_run_at:
                 continue  # Already ran for this slot
 
+        due_at = as_aware_utc(job.next_run_at)
+        overdue = now - due_at if due_at else timedelta(0)
+        if overdue > max_age:
+            sobj = schedule_from_dict(job.schedule)
+            next_run = (
+                apply_stagger(compute_next_run_at(sobj, now), sobj, job.id)
+                if sobj
+                else None
+            )
+            values: dict = {"next_run_at": next_run, "updated_at": now}
+            if next_run is None:
+                # One-shot whose moment has passed: park it disabled for
+                # inspection rather than leaving it enabled with no schedule.
+                values["enabled"] = False
+                values["last_error"] = "Missed one-shot run (server was down); disabled"
+            async with get_db_session() as db:
+                await db.execute(
+                    update(CronJob)
+                    .where(CronJob.id == job.id)
+                    .values(**values)
+                )
+            log.info(
+                f"Missed job {job.id} ({job.name}) was due {overdue} ago — "
+                f"rescheduled to {next_run} instead of replaying"
+            )
+            rescheduled += 1
+            continue
+
         log.info(f"Replaying missed job {job.id} ({job.name}), was due at {job.next_run_at}")
 
         # Don't execute here — just mark it as due so the timer picks it up.
@@ -113,4 +152,6 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
         # This avoids blocking startup with potentially long-running jobs.
         replayed += 1
 
+    if rescheduled:
+        log.info(f"Rescheduled {rescheduled} stale missed job(s)")
     return replayed

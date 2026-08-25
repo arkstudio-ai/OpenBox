@@ -86,23 +86,35 @@ async def list_agents():
 
 @router.get("/skill")
 async def list_skills(current_user: dict = Depends(get_current_user)):
-    """List available skills (from container + local fallback)."""
+    """List available skills — container and host merged, container winning.
+
+    The same union the agent's skill tool advertises: showing only the
+    container's list hid host-side skills that the loop could in fact load.
+    """
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
-    # Try container first
+
+    merged: list[dict] = []
     try:
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if client:
-            return await client.list_skills()
+            container = await client.list_skills()
+            if isinstance(container, list):
+                merged.extend(container)
     except Exception:
         pass
-    # Fall back to local skills
+
     try:
         from skill.skill import list_skills
-        skills = await list_skills()
-        return [{"name": s.name, "description": s.description, "source": s.source} for s in skills]
+        seen = {s.get("name") for s in merged}
+        for s in await list_skills():
+            if s.name in seen:
+                continue
+            merged.append({"name": s.name, "description": s.description, "source": s.source})
     except ImportError:
-        return []
+        pass
+
+    return merged
 
 
 @router.get("/skill/{name}")

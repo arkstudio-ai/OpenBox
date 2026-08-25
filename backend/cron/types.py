@@ -63,8 +63,13 @@ class CronDeliveryConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class CronJobCreate(BaseModel):
-    """Input for creating a new cron job."""
-    session_id: str
+    """Input for creating a new cron job.
+
+    A job belongs to a project; session_id is the optional conversation to
+    post results into (set automatically when created from a chat).
+    """
+    project_id: str
+    session_id: str | None = None
     name: str
     description: str = ""
     schedule: CronSchedule

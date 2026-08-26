@@ -1518,3 +1518,39 @@ _FC_ID_OK = re.compile(r"fc_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")   # 总长 4..64,�
 - **深链**:cron 胶囊(`tab=cron`)与聊天里的「审阅 →」(`tab=review`)在菜单之上 push 目标面,所以返回仍然落在菜单;`Paths.workbench` 的默认值从 `review` 改为 `menu`,顶栏面板图标现在开在菜单。`workbench.open` 事件此前忽略 payload 里的 `kind`,一并修好。
 - **文案**:菜单页需要一个页面标题(web 的 menu 在 tab 里,已有标题),新增 `workbench:menu.title`(工作面板 / Workbench)。locale 文件是两端唯一真相且移动端逐字节复制,所以这个只有移动端消费的 key 也住在 `src/locales/`。
 - **实测**(iPhone 17 Pro Max):菜单六行 + 三条实时提示(2 处待审 / 沙箱在线 / default)对齐 web;审阅打开真实 diff、终端连上真实 shell;边缘滑动从面回菜单、再滑一次退出面板;「审阅 →」深链直达且返回落在菜单;深浅两色 × 中英文各验收一次。
+
+---
+
+## 附录 H · 内置图片生成（2026-08-26）
+
+> 目标：让 build/general agent 直接完成文生图与图生图，同时沿用 OpenBox 的 OSS 资产链路。供应商密钥只留在后端，聊天消息、资源中心和无影云工作目录引用同一个 OSS 对象。
+
+### H.1 配置与能力边界
+
+- `openbox.json` 新增 `image_generation`：`provider`、`model`、`default_size`、`default_quality`、`output_format`、`timeout_seconds`。密钥与 `base_url` 仍从既有 `provider.<name>` 读取，不在 skill、提示词或无影云目录复制。
+- 默认模型为 `gpt-image-2`；无输入图调用 `/images/generations`，传入一个或多个 OSS 图片时调用 `/images/edits`，可选 PNG mask 作用于第一张输入图。
+- `image_gen` 只开放给可变更内容的 build/general agent，plan/explore 不开放；工具不依赖沙箱才能调用，也禁止通用 batch 并行，避免对同一消息附件和付费生成产生竞态。
+- 失败不自动重试。图片 API 的响应存在已生成但客户端未收到的歧义，自动重试可能产生第二张图片与第二次计费。
+
+### H.2 Skill 与 OSS 数据流
+
+- host skill 位于 `backend/.openbox/skills/imagegen/SKILL.md`，按 OpenAI 官方 imagegen skill 改写：保留提示词结构、编辑不变量、输入图角色、尺寸/质量/格式规则，但要求 agent 统一调用 OpenBox 的 `image_gen`，不得在 shell 里临时拼 SDK/HTTP 请求。
+- 文生图：后端请求供应商 → 校验真实返回格式 → 预签名 PUT 到 OSS → 新建 `file_assets(source='agent', transient=false, status='ready')` → 给当前 assistant message 写 `FilePart`。聊天图片卡和资源中心因此无需新增前端传输协议。
+- 图生图：`input_images` 接收 `asset_id`（首选）或 `/workspace/uploads/<name>`；后端先校验用户所有权和 ready 状态，再从 OSS 取源图并以 multipart 传给编辑接口。只在无影云本地存在的图片先用 `view_image` 推到 OSS，返回的 `asset_id` 再用于编辑。
+- 输出以 OSS 为耐久真相；若当前 turn 有无影云实例，再通过 `obx-file get` 拉到 `/workspace/generated_images/<name>`。无影云拉取失败不会删除已经付费生成且已入资源中心的对象。
+- `image_gen` 已经负责聊天挂图，agent 不应再对结果调用 `view_image` 或 `share_file`，否则会制造重复资源。
+
+### H.3 限制与校验
+
+- 输入支持 PNG/JPEG/WebP，单图 50 MB、组合 100 MB；mask 必须为 PNG 且不超过 4 MB；单次同一提示可生成 1–4 个变体。
+- `gpt-image-2` 尺寸支持 `auto` 或 `WIDTHxHEIGHT`：两边为 16 的倍数、最长边不超过 3840、宽高比不超过 3:1、总像素在 655,360–8,294,400 之间。质量为 low/medium/high/auto，输出格式为 PNG/JPEG/WebP。
+- 当前配置的 `gpt-image-2` 不提供原生透明背景，工具会明确拒绝 `background=transparent`，不会静默换模型。
+- 输出 MIME 与扩展名按实际文件魔数确定；供应商可对请求尺寸做归一化。浏览器验收中请求 `1024x1024`，供应商实际返回两张 `1254x1254` PNG，OpenBox 保存并展示真实文件。
+
+### H.4 验收（真实供应商 + 无影云 + OSS）
+
+- 直接启动后端 `:8080` 与前端 `:3000`，启动日志确认 sandbox provider 为 `wuying` 且 reconcile 成功；未构建 Docker/sandbox 镜像。
+- 浏览器真实对话加载 `imagegen` skill 后生成 `openbox-imagegen-e2e.png`；图片卡正常显示，资源中心「模型产出」可见，对象已拉到无影云工作目录。
+- 继续以第一张的 `asset_id` 调图生图，仅把蓝色立方体改为橙色；生成 `openbox-imagegen-edit-e2e.png`，证明 OSS 输入中间层与 `/images/edits` 路径可用。
+- 数据库与 OSS 复核：两条资产均为 `ready/source=agent/transient=false`，数据库和 OSS 字节数分别一致为 1,134,953 与 1,201,770；文件头均为有效 `1254x1254` PNG。
+- 后端 unit suite：630 passed；skill validator、配置加载、工具注册与前端检查均纳入最终验收。

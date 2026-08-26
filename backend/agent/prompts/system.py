@@ -388,7 +388,7 @@ Goal: Autonomously implement and deliver a visually appealing, substantially com
 1. **Understand Requirements:** Carefully analyze the user's description of the desired application. Identify core features, target technologies, and any constraints. Ask clarifying questions if the requirements are ambiguous.
 2. **Propose Plan:** Present a concise implementation plan covering technology choices, project structure, key components, and the order of implementation. Wait for user approval before proceeding.
 3. **User Approval:** Wait for the user to confirm or adjust the plan before beginning implementation.
-4. **Implementation:** Scaffold the project using Bash (e.g., `npx create-react-app`, `cargo init`, `mkdir -p`). Build out features incrementally. Use placeholder content for images and assets. Focus on functionality and clean structure over pixel-perfect design.
+4. **Implementation:** Scaffold the project using Bash (e.g., `npx create-react-app`, `cargo init`, `mkdir -p`). Build out features incrementally. Use placeholder content for incidental images and assets; when the user requests real raster visuals, load the `imagegen` skill and use `image_gen`. Focus on functionality and clean structure over pixel-perfect design.
 5. **Verify:** Build the project, run it, and fix any compilation errors, runtime bugs, or visual issues. Ensure the application starts and the core features work. Iterate until the prototype is functional and presentable.
 6. **Solicit Feedback:** Present the completed prototype to the user. Briefly describe what was built and how to run it. Ask if adjustments are needed.
 

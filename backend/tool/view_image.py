@@ -63,7 +63,10 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
 
     return ToolResult(
         title=name,
-        output=f"Image attached for viewing: {path} ({mime}, {size} bytes). It will be visible in your next turn.",
+        output=(
+            f"Image attached for viewing: {path} ({mime}, {size} bytes; asset_id={asset_id}). "
+            "It will be visible in your next turn. Use this asset_id for image_gen input_images."
+        ),
         metadata={"asset_id": asset_id, "mime": mime, "path": path, "size": verified},
     )
 

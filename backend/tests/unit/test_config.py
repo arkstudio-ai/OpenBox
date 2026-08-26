@@ -38,3 +38,12 @@ def test_rate_limit_config_defaults():
     config = OpenBoxConfig()
     assert config.rate_limit_login == "5/minute"
     assert config.rate_limit_api == "60/minute"
+
+
+def test_image_generation_config_defaults():
+    config = OpenBoxConfig()
+    assert config.image_generation.model == "gpt-image-2"
+    assert config.image_generation.default_size == "auto"
+    assert config.image_generation.default_quality == "medium"
+    assert config.image_generation.output_format == "png"
+    assert config.image_generation.timeout_seconds == 600

@@ -13,6 +13,10 @@ dependencies = [
     "python-multipart>=0.0.12",
     "aiofiles>=24.0.0",
     "litellm>=1.40.0",
+    # Direct dependency: the built-in image_gen tool uses the canonical
+    # multipart handling for /images/edits instead of relying on LiteLLM's
+    # transitive OpenAI dependency.
+    "openai>=2.21.0",
     "pydantic-ai>=0.1.0",
     "python-ulid>=3.0.0",
     "python-frontmatter>=1.1.0",

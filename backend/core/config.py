@@ -85,6 +85,23 @@ class SkillsConfig(BaseModel):
     urls: list[str] = []
 
 
+class ImageGenerationConfig(BaseModel):
+    """OpenAI-compatible Image API used by the built-in ``image_gen`` tool.
+
+    Credentials stay in the existing provider block.  This section only
+    selects which configured provider/model to use and supplies conservative
+    output defaults, so chat and image traffic can share one gateway without
+    duplicating secrets.
+    """
+
+    provider: str = ""  # empty = provider prefix of the default chat model
+    model: str = "gpt-image-2"
+    default_size: str = "auto"
+    default_quality: str = "medium"
+    output_format: str = "png"
+    timeout_seconds: int = Field(default=600, ge=30, le=1800)
+
+
 # ---------------------------------------------------------------------------
 # Unified root config
 # ---------------------------------------------------------------------------
@@ -211,6 +228,7 @@ class OpenBoxConfig(BaseModel):
     permission: dict[str, Any] = {}
     mcp: dict[str, McpServerConfig] = {}
     skills: SkillsConfig = SkillsConfig()
+    image_generation: ImageGenerationConfig = ImageGenerationConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

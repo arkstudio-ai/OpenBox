@@ -40,6 +40,13 @@ interface Props {
 export function AssistantTurn({ parts, sessionId, meta, streaming, retry, onStop, todoEditable }: Props) {
   const view = useMemo(() => buildTurnView(parts), [parts])
   const hasContent = view.content.trim().length > 0
+  // "Thinking" is the state of having nothing yet — not of having no prose
+  // yet. Once reasoning or a tool call has arrived the turn is visibly
+  // working, and each of those blocks carries its own live heading, so a
+  // second "正在思考中" underneath is both redundant and wrong: it claims the
+  // model has not responded when it plainly has.
+  const hasActivity =
+    hasContent || view.thinking.trim().length > 0 || view.tools.length > 0
   // Traces that opened themselves collapse once prose starts arriving.
   const autoCollapseReady = hasContent
   // Per-part activity flags (`thinkingStreaming` flips every time a tool part
@@ -83,7 +90,7 @@ export function AssistantTurn({ parts, sessionId, meta, streaming, retry, onStop
       />
 
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
-        {streaming && !hasContent ? (
+        {streaming && !hasActivity ? (
           <ThinkingRow attempt={retry?.attempt} maxAttempts={retry?.maxAttempts} />
         ) : hasContent ? (
           <Suspense fallback={<p className="whitespace-pre-wrap">{view.content}</p>}>

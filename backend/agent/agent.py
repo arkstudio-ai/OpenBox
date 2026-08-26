@@ -137,7 +137,7 @@ AGENTS: dict[str, AgentDef] = {
             "bash", "read", "write", "edit", "multiedit", "apply_patch", "glob", "grep",
             "task", "batch", "question", "todo_write", "todo_read",
             "plan_enter", "skill", "web_fetch", "web_search", "cron", "view_image",
-            "share_file", "computer", "browser_mode",
+            "share_file", "image_gen", "computer", "browser_mode",
         ],
         max_steps=200,
         # prompt is None — dynamically selected based on model_id
@@ -200,6 +200,7 @@ AGENTS: dict[str, AgentDef] = {
             # can already run anything a skill would instruct; what it adds is
             # the instructions.
             "skill",
+            "image_gen",
         ],
         max_steps=100,
         mode="subagent",

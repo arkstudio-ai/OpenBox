@@ -46,6 +46,19 @@
     // }
   },
 
+  // Built-in image generation/editing. Credentials and base_url are read
+  // from the provider above; do not duplicate an API key here. Generated
+  // images are uploaded to the configured OSS bucket and indexed in the
+  // resource centre automatically.
+  "image_generation": {
+    "provider": "openai",
+    "model": "gpt-image-2",
+    "default_size": "auto",
+    "default_quality": "medium",
+    "output_format": "png",
+    "timeout_seconds": 600
+  },
+
   // Per-agent overrides
   "agent": {
     // "build": { "model": "openai/gpt-4o", "max_steps": 100 },

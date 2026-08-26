@@ -49,5 +49,6 @@
     "todayTime": "Today {{time}}",
     "thisYearDateTime": "{{date}} {{time}}",
     "fullDateTime": "{{date}} {{time}}"
-  }
+  },
+  "close": "Close"
 }

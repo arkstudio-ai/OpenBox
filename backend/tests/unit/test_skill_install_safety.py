@@ -227,3 +227,35 @@ def test_mcp_attr_skips_none_valued_attribute(server):
         inputSchema = {"type": "object"}
 
     assert server["_mcp_attr"](NoneFirst(), "input_schema", "inputSchema", default={}) == {"type": "object"}
+
+
+# --- MCP manager surface -----------------------------------------------------
+
+def test_endpoints_only_touch_attributes_the_manager_has(server):
+    """Guards the refactor hazard that shipped a 500.
+
+    Making sessions per-operation removed _sessions from the manager, but the
+    delete endpoint still probed it — every DELETE /mcp/servers/{name} raised
+    AttributeError. Any `mcp_manager.<attr>` an endpoint reaches for has to
+    exist on the class.
+    """
+    import re
+
+    source = ACTION_SERVER.read_text()
+    manager = server["ContainerMcpManager"]
+    referenced = set(re.findall(r"mcp_manager\.(_?[a-zA-Z_][a-zA-Z0-9_]*)", source))
+    assert referenced, "expected the endpoints to use the manager"
+    missing = [name for name in referenced if not hasattr(manager, name)]
+    assert missing == [], f"endpoints reference attributes the manager lacks: {missing}"
+
+
+def test_manager_has_no_cross_request_session_state(server):
+    """Sessions must not be parked between requests.
+
+    anyio requires a task group to be exited by the task that entered it, so a
+    session held from /connect and closed by /disconnect is a crash waiting to
+    happen. Keeping the attribute absent is what stops it growing back.
+    """
+    manager = server["ContainerMcpManager"]()
+    assert not hasattr(manager, "_sessions")
+    assert not hasattr(manager, "_transports")

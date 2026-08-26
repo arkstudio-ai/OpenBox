@@ -2543,10 +2543,9 @@ async def add_mcp_server(req: AddMcpServerRequest):
 @app.delete("/mcp/servers/{name}")
 async def remove_mcp_server(name: str):
     """Remove an MCP server configuration."""
-    # Disconnect first if connected
-    if name in mcp_manager._sessions:
-        await mcp_manager.disconnect(name)
     try:
+        # remove_server drops the cached listing too; nothing is held open
+        # between requests, so there is no session to close first.
         mcp_manager.remove_server(name)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")

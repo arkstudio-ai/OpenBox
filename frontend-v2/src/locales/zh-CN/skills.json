@@ -109,5 +109,16 @@
   },
   "common": {
     "cancel": "取消"
+  },
+  "deps": {
+    "title": "还需要装 MCP 服务",
+    "subtitle": "「{{skill}}」的指令会调用下面这些服务提供的工具。现在一并装好，装完就能直接用。",
+    "willInstall": "将安装并连接",
+    "willConnect": "已配置，将重新连接",
+    "unknown": "这些依赖不在技能商店里，需要你手动添加：{{names}}",
+    "confirm": "一起安装",
+    "working": "处理中…",
+    "later": "稍后",
+    "fixNow": "一起安装"
   }
 }

@@ -109,5 +109,16 @@
   },
   "common": {
     "cancel": "Cancel"
+  },
+  "deps": {
+    "title": "This skill needs MCP servers",
+    "subtitle": "“{{skill}}” calls tools these servers provide. Set them up now and it will work straight away.",
+    "willInstall": "Will be installed and connected",
+    "willConnect": "Configured — will reconnect",
+    "unknown": "Not in the store, so these have to be added by hand: {{names}}",
+    "confirm": "Set them up",
+    "working": "Working…",
+    "later": "Later",
+    "fixNow": "Set up"
   }
 }

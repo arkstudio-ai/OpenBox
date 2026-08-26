@@ -60,6 +60,9 @@ export function EntryRow({
   badges,
   actions,
   warning,
+  onFixWarning,
+  fixLabel,
+  fixDisabled,
 }: {
   icon?: string
   name: string
@@ -67,6 +70,10 @@ export function EntryRow({
   badges?: ReactNode
   actions?: ReactNode
   warning?: string
+  /** Offered beside the warning so the gap is closed here, not elsewhere. */
+  onFixWarning?: () => void
+  fixLabel?: string
+  fixDisabled?: boolean
 }) {
   return (
     <div className="group flex min-h-16 items-center gap-3 rounded-xl bg-hairsoft/40 px-3 py-2.5 transition-colors hover:bg-hairsoft/70">
@@ -80,9 +87,19 @@ export function EntryRow({
           <p className="min-w-0 truncate text-xs leading-5 text-n600">{description}</p>
         )}
         {warning && (
-          <p className="flex items-center gap-1 text-xs leading-5 text-sage">
+          <p className="flex flex-wrap items-center gap-1 text-xs leading-5 text-sage">
             <AlertTriangle size={12} aria-hidden />
             {warning}
+            {onFixWarning && (
+              <button
+                type="button"
+                onClick={onFixWarning}
+                disabled={fixDisabled}
+                className="rounded-full bg-ink px-2 py-0.5 text-[11px] leading-4 text-bg hover:opacity-90 disabled:opacity-40"
+              >
+                {fixLabel}
+              </button>
+            )}
           </p>
         )}
       </div>

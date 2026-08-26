@@ -6,6 +6,8 @@ import type { InstalledSkill, McpServer } from "@/features/skills-center/types"
 
 export interface MineActions {
   uninstallSkill: (dir: string) => void
+  /** Offer to install/connect what a skill still needs. */
+  fixDependencies: (skill: InstalledSkill) => void
   connect: (name: string) => void
   disconnect: (name: string) => void
   removeMcp: (name: string) => void
@@ -15,7 +17,7 @@ export interface MineActions {
 export function MineList({
   skills,
   servers,
-  connectedNames,
+  unmetFor,
   showSkills,
   showMcp,
   actions,
@@ -23,7 +25,8 @@ export function MineList({
 }: {
   skills: InstalledSkill[]
   servers: McpServer[]
-  connectedNames: Set<string>
+  /** Declared servers that are not usable yet, per skill. */
+  unmetFor: (skill: InstalledSkill) => { name: string }[]
   showSkills: boolean
   showMcp: boolean
   actions: MineActions
@@ -58,7 +61,7 @@ export function MineList({
             {skills.map((s) => {
               // A declared dependency that is not connected is the difference
               // between "installed" and "will actually work".
-              const missing = (s.requires_mcp ?? []).filter((m) => !connectedNames.has(m))
+              const missing = unmetFor(s)
               return (
                 <EntryRow
                   key={s.name}
@@ -67,9 +70,14 @@ export function MineList({
                   description={s.description}
                   warning={
                     missing.length
-                      ? t("mine.missingDependency", { names: missing.join(", ") })
+                      ? t("mine.missingDependency", {
+                          names: missing.map((m) => m.name).join(", "),
+                        })
                       : undefined
                   }
+                  onFixWarning={missing.length ? () => actions.fixDependencies(s) : undefined}
+                  fixLabel={t("deps.fixNow")}
+                  fixDisabled={actions.busy}
                   badges={s.source === "container" ? null : <Badge>{t("badge.host")}</Badge>}
                   actions={
                     s.source === "container" ? (

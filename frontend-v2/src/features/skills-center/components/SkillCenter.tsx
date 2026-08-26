@@ -20,8 +20,14 @@ import {
   useUninstallSkill,
   useUploadSkillArchive,
 } from "@/features/skills-center/api/skills-center"
-import type { CenterTab, KindFilter } from "@/features/skills-center/types"
+import type { CenterTab, InstalledSkill, KindFilter } from "@/features/skills-center/types"
 import type { ParsedMcpEntry } from "@/features/skills-center/lib/parse-mcp-config"
+import { useDependencyResolver } from "@/features/skills-center/hooks/useDependencies"
+import {
+  DependencyDialog,
+  type Dependency,
+  type DependencyTarget,
+} from "./DependencyDialog"
 import { InstallDialog, type InstallTarget } from "./InstallDialog"
 import { MineList } from "./MineList"
 import { StoreList } from "./StoreList"
@@ -46,6 +52,7 @@ export function SkillCenter() {
   const [kind, setKind] = useState<KindFilter>("all")
   const [query, setQuery] = useState("")
   const [installTarget, setInstallTarget] = useState<InstallTarget | null>(null)
+  const [depTarget, setDepTarget] = useState<DependencyTarget | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -63,10 +70,7 @@ export function SkillCenter() {
   const uploadArchive = useUploadSkillArchive()
 
   const mcpServers = servers.data ?? []
-  const connectedNames = useMemo(
-    () => new Set(mcpServers.filter((s) => s.status === "connected").map((s) => s.name)),
-    [mcpServers],
-  )
+  const unmetFor = useDependencyResolver(mcpServers, catalog.data?.mcp ?? [])
 
   // Builtin skills are baked into the sandbox image and host skills live on the
   // backend; neither can be uninstalled here, and listing an action that cannot
@@ -115,6 +119,67 @@ export function SkillCenter() {
       () => onDone?.(),
       (e: unknown) => setActionError(errorText(e)),
     )
+  }
+
+  /**
+   * Offer to close a freshly installed skill's gaps straight away.
+   *
+   * Left to the row warning alone, a skill installs "successfully" and then
+   * quietly does not work until someone reads the warning and goes hunting for
+   * the server themselves. Asked here, the install finishes usable.
+   */
+  function promptForDependencies(skill: Pick<InstalledSkill, "name" | "requires_mcp">) {
+    const deps = unmetFor(skill)
+    if (!deps.length) return false
+    setDepTarget({ skillName: skill.name, deps })
+    return true
+  }
+
+  /** Install what is missing, reconnect what is merely disconnected. */
+  async function resolveDependencies(
+    deps: Dependency[],
+    env: Record<string, Record<string, string>>,
+  ) {
+    setActionError(null)
+    try {
+      for (const dep of deps) {
+        if (dep.configured) {
+          await connectMcp.mutateAsync(dep.name)
+        } else if (dep.catalog) {
+          await installFromCatalog.mutateAsync({
+            id: dep.catalog.id,
+            kind: "mcp",
+            env: dep.catalog.required_env?.length ? { [dep.catalog.id]: env[dep.catalog.id] ?? {} } : {},
+          })
+        }
+      }
+      setDepTarget(null)
+    } catch (e) {
+      setActionError(errorText(e))
+    }
+  }
+
+  /**
+   * Finish a skill install by asking about what it still needs.
+   *
+   * The freshly installed skill is read back from the list rather than the
+   * install response, because requires_mcp is parsed from the SKILL.md the
+   * sandbox unpacked — the caller never had it.
+   */
+  async function finishSkillInstall(promise: Promise<unknown>) {
+    setActionError(null)
+    try {
+      await promise
+      setUploadOpen(false)
+      const fresh = await skills.refetch()
+      await servers.refetch()
+      const installed = (fresh.data ?? []).filter((s) => (s.requires_mcp ?? []).length > 0)
+      for (const skill of installed) {
+        if (promptForDependencies(skill)) break
+      }
+    } catch (e) {
+      setActionError(errorText(e))
+    }
   }
 
   async function handleAddMcp(entries: ParsedMcpEntry[]) {
@@ -207,13 +272,21 @@ export function SkillCenter() {
         <MineList
           skills={mineSkills}
           servers={mineServers}
-          connectedNames={connectedNames}
+          unmetFor={unmetFor}
           showSkills={showSkills}
           showMcp={showMcp}
           onBrowseStore={() => setTab("store")}
           actions={{
             busy: rowBusy,
             uninstallSkill: (dir) => run(uninstallSkill.mutateAsync(dir)),
+            fixDependencies: (skill) => {
+              setActionError(null)
+              if (!promptForDependencies(skill)) {
+                // Everything it needs is already connected — refresh so the
+                // stale warning clears rather than sitting there.
+                void servers.refetch()
+              }
+            },
             connect: (name) => run(connectMcp.mutateAsync(name)),
             disconnect: (name) => run(disconnectMcp.mutateAsync(name)),
             removeMcp: (name) => run(removeMcp.mutateAsync(name)),
@@ -260,6 +333,19 @@ export function SkillCenter() {
         />
       )}
 
+      {depTarget && (
+        <DependencyDialog
+          target={depTarget}
+          busy={installFromCatalog.isPending || connectMcp.isPending}
+          error={actionError}
+          onCancel={() => {
+            setDepTarget(null)
+            setActionError(null)
+          }}
+          onConfirm={(deps, env) => void resolveDependencies(deps, env)}
+        />
+      )}
+
       {uploadOpen && (
         <UploadDialog
           busy={mutating}
@@ -269,13 +355,9 @@ export function SkillCenter() {
             setActionError(null)
           }}
           onUploadArchive={(file, name) =>
-            run(uploadArchive.mutateAsync({ file, name: name || undefined }), () =>
-              setUploadOpen(false),
-            )
+            void finishSkillInstall(uploadArchive.mutateAsync({ file, name: name || undefined }))
           }
-          onInstallSkill={(vars) =>
-            run(installSkill.mutateAsync(vars), () => setUploadOpen(false))
-          }
+          onInstallSkill={(vars) => void finishSkillInstall(installSkill.mutateAsync(vars))}
           onAddMcp={(entries) => void handleAddMcp(entries)}
         />
       )}

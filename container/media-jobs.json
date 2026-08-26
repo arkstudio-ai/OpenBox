@@ -1,0 +1,16 @@
+{
+  "state_root": "/data/openbox-media",
+  "temp_root": "/tmp/openbox-media",
+  "max_concurrency": 1,
+  "ffmpeg_threads": 2,
+  "job_timeout_seconds": 3600,
+  "command_timeout_seconds": 3000,
+  "max_input_bytes": 1073741824,
+  "cache_max_bytes": 21474836480,
+  "cache_ttl_seconds": 86400,
+  "job_record_ttl_seconds": 604800,
+  "hyperframes_cli": "/opt/openbox/media/node_modules/.bin/hyperframes",
+  "hyperframes_version": "0.7.94",
+  "gsap_path": "/opt/openbox/media/node_modules/gsap/dist/gsap.min.js",
+  "browser_path": "/usr/bin/google-chrome"
+}

@@ -12,9 +12,10 @@ from db.models.prompt_history import PromptHistory
 from db.models.file_asset import FileAsset
 from db.models.audit_log import AuditLog
 from db.models.cron import CronJob, CronRun
+from db.models.video_job import VideoJob
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
-    "PermissionRule", "Container", "Todo", "PromptHistory", "AuditLog",
-    "CronJob", "CronRun",
+    "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
+    "CronJob", "CronRun", "VideoJob",
 ]

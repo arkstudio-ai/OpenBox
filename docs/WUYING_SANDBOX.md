@@ -104,6 +104,8 @@ restrict,port-forwarding,permitlisten="18000" ssh-ed25519 AAAA…
 | A relay host | Any always-on host with a public IP and sshd that both the desktop and your laptop can reach. An ECS in the same account is the obvious choice. |
 | `aliyun` CLI | Configured with credentials that can call `ecd` and (optionally) `ecs`. Check with `aliyun sts GetCallerIdentity`. |
 | Outbound from the desktop | Package mirrors must be reachable. The bootstrap uses mainland mirrors throughout. |
+| Docker on the developer machine | Builds the pinned Linux/amd64 Node 22 + HyperFrames + GSAP media bundle locally; the desktop never runs `npm install`. |
+| OpenBox OSS configuration | Used as a short-lived internal transfer channel for the media bundle. The temporary object is deleted after installation. |
 
 The bootstrap needs **no SSH credentials for either machine**: it drives the
 desktop through `aliyun ecd run-command` and the relay through `aliyun ecs
@@ -122,15 +124,21 @@ python backend/scripts/wuying_bootstrap.py \
 
 Idempotent — re-run it to repair or upgrade a desktop. It will:
 
-1. Install Node 20 (from the npmmirror binary mirror) and create `/workspace`,
-   `/data/skills`, `/data/mcp/logs`.
-2. Upload `container/action_server.py` and install its Python dependencies from
-   the Tsinghua PyPI mirror.
-3. Install the `dev-browser` relay and its npm dependencies. Skip with
+1. Create `/workspace`, `/data/skills`, `/data/mcp/logs` and the persistent and
+   temporary media-job directories.
+2. Upload `container/action_server.py`, `container/media_jobs.py` and the pinned
+   media configuration, then install the Python dependencies from the Tsinghua
+   PyPI mirror.
+3. Build the Linux/amd64 Node 22 + HyperFrames 0.7.94 + GSAP 3.14.2 bundle in
+   local Docker, upload it as a temporary OSS object, let the desktop download
+   it through the OSS internal endpoint, verify its SHA-256, and atomically
+   install it under `/opt/openbox/media`. Both the local archive and temporary
+   OSS object are removed afterwards.
+4. Install the `dev-browser` relay and its npm dependencies. Skip with
    `--skip-dev-browser` if you do not need browser automation.
-4. Generate an ed25519 key on the desktop and install
+5. Generate an ed25519 key on the desktop and install
    `openbox-action-server.service` + `openbox-tunnel.service`.
-5. Add the desktop's public key to the relay's `authorized_keys`, scoped as
+6. Add the desktop's public key to the relay's `authorized_keys`, scoped as
    above. Without `--relay-instance` it prints the line for you to add by hand.
 
 Files are shipped as gzip + base64 chunks because `run-command` caps its payload
@@ -210,6 +218,11 @@ Everything on the desktop is systemd and self-heals across reboots:
 | `openbox-action-server.service` | The execution plane on `:8000` |
 | `openbox-tunnel.service` | Reverse tunnel to the relay |
 
+The action server also owns the durable media queue. Its SQLite state lives in
+`/data/openbox-media`, while per-attempt files and the reusable input cache live
+under `/tmp/openbox-media`. Queue concurrency and FFmpeg threads come from
+`container/media-jobs.json` (defaults: one render and two FFmpeg threads).
+
 The **dev-browser relay is not** a systemd unit. It is started on demand by
 `POST /dev-browser/start` (the *Enable Dev Browser* button), and does not come
 back on its own after a desktop reboot — press the button again.
@@ -226,6 +239,10 @@ aliyun ecd run-command --api-version 2020-09-30 \
 # Is the reverse tunnel actually bound on the relay?
 aliyun ecs RunCommand --RegionId cn-hangzhou --InstanceId.1 <relay-instance> \
   --Type RunShellScript --CommandContent 'ss -lntp | grep 18000'
+
+# Authenticated media queue status through the laptop tunnel
+curl -H "X-API-Key: $WUYING_API_KEY" \
+  http://127.0.0.1:18000/media/jobs/status
 ```
 
 Expect `127.0.0.1:18000` on the relay. `0.0.0.0:18000` means the port is exposed
@@ -236,6 +253,14 @@ To rotate the API key, set it on both sides and restart:
 ```bash
 python backend/scripts/wuying_bootstrap.py --desktop-id … --relay … --api-key <new>
 # then update WUYING_API_KEY in backend/.env and restart the backend
+```
+
+To refresh only the action server and media runtime, use the narrow deploy
+script. It reuses an already healthy pinned runtime by default; pass
+`--force-media-bundle` when the lockfile or Node bundle changed:
+
+```bash
+python backend/scripts/wuying_deploy_action_server.py --force-media-bundle
 ```
 
 ## Troubleshooting

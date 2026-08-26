@@ -222,6 +222,84 @@ class SandboxClient:
                 stderr=data["stderr"],
             )
 
+    async def submit_media_job(self, payload: dict) -> dict:
+        """Idempotently enqueue a render on this sandbox's durable media queue."""
+        async with self._client(timeout=30.0) as client:
+            response = await client.post(
+                "/media/jobs",
+                headers=self._request_headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def get_media_job(self, job_id: str, owner: str) -> dict:
+        async with self._client(timeout=15.0) as client:
+            response = await client.get(
+                f"/media/jobs/{job_id}",
+                headers=self._request_headers(),
+                params={"owner": owner},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def wait_media_job(
+        self,
+        job_id: str,
+        owner: str,
+        *,
+        after_version: int = 0,
+        timeout: float = 25.0,
+    ) -> dict:
+        """Long-poll one render without tying up an unbounded backend request."""
+        bounded = max(0.0, min(25.0, float(timeout)))
+        async with self._client(timeout=bounded + 15.0) as client:
+            response = await client.get(
+                f"/media/jobs/{job_id}/wait",
+                headers=self._request_headers(),
+                params={
+                    "owner": owner,
+                    "after_version": max(0, int(after_version)),
+                    "timeout": bounded,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def cancel_media_job(self, job_id: str, owner: str) -> dict:
+        async with self._client(timeout=15.0) as client:
+            response = await client.post(
+                f"/media/jobs/{job_id}/cancel",
+                headers=self._request_headers(),
+                json={"owner": owner},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def retry_media_job(
+        self, job_id: str, owner: str, replacement_payload: dict | None = None
+    ) -> dict:
+        body: dict = {"owner": owner}
+        if replacement_payload is not None:
+            body["payload"] = replacement_payload
+        async with self._client(timeout=15.0) as client:
+            response = await client.post(
+                f"/media/jobs/{job_id}/retry",
+                headers=self._request_headers(),
+                json=body,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def media_queue_status(self) -> dict:
+        async with self._client(timeout=15.0) as client:
+            response = await client.get(
+                "/media/jobs/status",
+                headers=self._request_headers(),
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def execute_stream(
         self,
         command: str,

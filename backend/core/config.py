@@ -102,6 +102,31 @@ class ImageGenerationConfig(BaseModel):
     timeout_seconds: int = Field(default=600, ge=30, le=1800)
 
 
+class VideoGenerationConfig(BaseModel):
+    """Async Seedance generation plus sandbox-render orchestration.
+
+    Provider credentials are selected from the existing provider map.  The
+    renderer itself never receives them; it only sees object-scoped OSS URLs.
+    """
+
+    provider: str = "doubao"
+    model: str = "doubao-seedance-2-0-260128"
+    default_resolution: str = "720p"
+    default_ratio: str = "9:16"
+    default_duration: int = Field(default=-1, ge=-1, le=30)
+    default_generate_audio: bool = True
+    default_watermark: bool = False
+    submit_timeout_seconds: int = Field(default=180, ge=30, le=600)
+    status_timeout_seconds: int = Field(default=60, ge=10, le=180)
+    poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    wait_timeout_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
+    provider_input_url_ttl_seconds: int = Field(default=3600, ge=600, le=86400)
+    render_url_ttl_seconds: int = Field(default=86400, ge=3600, le=604800)
+    max_provider_output_bytes: int = Field(
+        default=1024 * 1024 * 1024, ge=1024 * 1024, le=4 * 1024 * 1024 * 1024
+    )
+
+
 # ---------------------------------------------------------------------------
 # Unified root config
 # ---------------------------------------------------------------------------
@@ -229,6 +254,7 @@ class OpenBoxConfig(BaseModel):
     mcp: dict[str, McpServerConfig] = {}
     skills: SkillsConfig = SkillsConfig()
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
+    video_generation: VideoGenerationConfig = VideoGenerationConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

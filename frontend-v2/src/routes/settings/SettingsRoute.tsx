@@ -7,7 +7,6 @@ import {
   AccountPage,
   UsagePage,
   ModelsPage,
-  ToolsPage,
   BrowserPage,
   AppearancePage,
 } from "@/features/settings"
@@ -18,8 +17,6 @@ function ActivePage({ tab }: { tab: SettingsTab }) {
       return <UsagePage />
     case "models":
       return <ModelsPage />
-    case "tools":
-      return <ToolsPage />
     case "browser":
       return <BrowserPage />
     case "appearance":

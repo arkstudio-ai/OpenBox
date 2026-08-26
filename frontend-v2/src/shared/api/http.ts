@@ -30,8 +30,13 @@ async function toApiError(res: Response): Promise<ApiError> {
 }
 
 async function doFetch(path: string, options: RequestInit, token: string | null): Promise<Response> {
+  // A FormData body has to set its own Content-Type, because only the browser
+  // knows the multipart boundary it generated. Forcing application/json here
+  // left the server with a body it could not parse — an upload came back 422
+  // with the file never seen.
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...((options.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`

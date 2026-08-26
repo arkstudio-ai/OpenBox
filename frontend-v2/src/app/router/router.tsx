@@ -14,6 +14,7 @@ const ChatRoute = lazy(() => import("@/routes/workspace/ChatRoute"))
 const SettingsRoute = lazy(() => import("@/routes/settings/SettingsRoute"))
 const CronRoute = lazy(() => import("@/routes/cron/CronRoute"))
 const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
+const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 
 export const router = createBrowserRouter([
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
           { path: routePatterns.settings, element: <SettingsRoute /> },
           { path: routePatterns.cron, element: <CronRoute /> },
           { path: routePatterns.resources, element: <ResourcesRoute /> },
+          { path: routePatterns.skills, element: <SkillsRoute /> },
         ],
       },
       { path: "*", element: <NotFoundRoute /> },

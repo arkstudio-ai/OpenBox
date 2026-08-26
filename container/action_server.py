@@ -1269,21 +1269,66 @@ class InstallSkillRequest(BaseModel):
     content: str | None = None
 
 
+def _normalize_requires_mcp(value) -> list[str]:
+    """Read a skill's declared MCP dependencies into a list of server names.
+
+    Authors write this either as a YAML list or as one comma-separated string,
+    and the key itself appears both hyphenated and underscored in the wild, so
+    all four spellings resolve to the same thing rather than silently yielding
+    a skill that installs without the server it needs.
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace(",", " ").split()]
+    elif isinstance(value, (list, tuple)):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item.strip())
+            elif isinstance(item, dict) and item.get("name"):
+                parts.append(str(item["name"]).strip())
+    else:
+        return []
+    seen, out = set(), []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 def _parse_skill_frontmatter(md_content: str) -> dict:
-    """Parse YAML frontmatter from a SKILL.md file."""
+    """Parse YAML frontmatter from a SKILL.md file.
+
+    Beyond name/description this carries the two fields the skill centre needs:
+    an ``icon`` (an emoji, so there is no asset to serve or cache) and
+    ``requires-mcp``, the MCP servers the skill's instructions actually call.
+    A skill whose dependency is missing loads fine and then fails at the first
+    tool call, which is why the dependency has to be declarable.
+    """
     md_content = md_content.strip()
+    empty = {"name": "", "description": "", "icon": "", "requires_mcp": [], "homepage": ""}
     if not md_content.startswith("---"):
-        return {"name": "", "description": ""}
+        return dict(empty)
     parts = md_content.split("---", 2)
     if len(parts) < 3:
-        return {"name": "", "description": ""}
+        return dict(empty)
     try:
         meta = yaml.safe_load(parts[1]) or {}
     except yaml.YAMLError:
         meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     return {
         "name": meta.get("name", ""),
         "description": meta.get("description", ""),
+        "icon": str(meta.get("icon", "") or "")[:8],
+        "requires_mcp": _normalize_requires_mcp(
+            meta.get("requires-mcp") or meta.get("requires_mcp")
+            or meta.get("requiresMcp") or meta.get("mcp")
+        ),
+        "homepage": str(meta.get("homepage", "") or "")[:300],
     }
 
 
@@ -1409,6 +1454,9 @@ def _scan_skills_in_dir(skills_dir: Path, source: str) -> list[dict]:
             skills.append({
                 "name": meta.get("name") or skill_data_dir.name,
                 "description": meta.get("description", ""),
+                "icon": meta.get("icon", ""),
+                "requires_mcp": meta.get("requires_mcp", []),
+                "homepage": meta.get("homepage", ""),
                 "source": source,
                 "content": content,
                 "files": files,

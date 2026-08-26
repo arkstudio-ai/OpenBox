@@ -260,3 +260,79 @@ def test_composition_has_audio_clips_and_optional_subtitles():
     )
     assert "不应出现" not in clean
     assert 'id="channel"' not in clean
+
+
+def test_auto_engine_uses_ffmpeg_and_hyperframes_is_explicit():
+    manager = MediaJobManager(MediaJobConfig(render_engine="auto"))
+    assert manager._resolved_engine({"render_engine": "auto"}) == "ffmpeg"
+    assert manager._resolved_engine({"render_engine": "ffmpeg"}) == "ffmpeg"
+    assert manager._resolved_engine({"render_engine": "hyperframes"}) == "hyperframes"
+
+
+def test_ffmpeg_fast_path_command_and_ass_timeline():
+    manager = MediaJobManager(
+        MediaJobConfig(
+            output_fps=24,
+            ffmpeg_threads=4,
+            ffmpeg_preset="veryfast",
+            ffmpeg_crf=21,
+            ffmpeg_audio_bitrate_kbps=160,
+        )
+    )
+    ass = manager._ass_document(
+        durations=[4.2, 5.1],
+        captions=["第一段", "第二段\n换行"],
+        subtitles=True,
+        channel_name="旅途频道",
+        width=720,
+        height=1280,
+    )
+    assert "Dialogue: 0,0:00:00.00,0:00:04.20,Subtitle" in ass
+    assert "0:00:04.20,0:00:09.30,Subtitle" in ass
+    assert r"第二段\N换行" in ass
+    assert "● 旅途频道" in ass
+
+    command = manager._ffmpeg_render_command(
+        inputs=[Path("one.mp4"), Path("two.mp4")],
+        output=Path("final.mp4"),
+        width=720,
+        height=1280,
+        ass_file=Path("render.ass"),
+    )
+    rendered = " ".join(command)
+    assert command[0] == "ffmpeg"
+    assert "concat=n=2:v=1:a=1" in rendered
+    assert "scale=720:1280" in rendered
+    assert "fps=24" in rendered
+    assert "ass=filename=render.ass" in rendered
+    assert "-preset veryfast" in rendered
+    assert "-crf 21" in rendered
+    assert "-threads 4" in rendered
+    assert "-vsync cfr" in rendered
+    assert "fps_mode" not in rendered
+    assert "-b:a 160k" in rendered
+
+
+def test_hyperframes_command_is_bounded_for_small_wuying():
+    manager = MediaJobManager(
+        MediaJobConfig(
+            output_fps=24,
+            hyperframes_workers=1,
+            hyperframes_quality="standard",
+            hyperframes_low_memory_mode=True,
+            hyperframes_video_frame_format="jpg",
+        )
+    )
+    command = manager._hyperframes_render_command(Path("rendered.mp4"))
+    assert command[-9:] == [
+        "--fps", "24", "--quality", "standard", "--workers", "1",
+        "--low-memory-mode", "--video-frame-format", "jpg",
+    ]
+
+
+def test_payload_rejects_unknown_render_engine():
+    manager = MediaJobManager(MediaJobConfig())
+    invalid = payload("render-job-engine", "engine-key")
+    invalid["render_engine"] = "chrome-everything"
+    with pytest.raises(MediaJobConflict, match="render_engine"):
+        manager._validate_payload(invalid)

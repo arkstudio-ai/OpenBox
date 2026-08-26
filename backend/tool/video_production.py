@@ -69,11 +69,20 @@ class VideoRenderArgs(BaseModel):
     )
     subtitles: bool = True
     channel_name: str = Field(default="", max_length=100)
-    width: int = Field(default=1080, ge=320, le=3840)
-    height: int = Field(default=1920, ge=320, le=3840)
+    render_engine: Literal["auto", "ffmpeg", "hyperframes"] = "auto"
+    width: int = Field(default=720, ge=320, le=3840)
+    height: int = Field(default=1280, ge=320, le=3840)
     filename: str | None = Field(default=None, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
+    wait_iteration: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Increment on repeated wait calls when the returned version is unchanged; "
+            "it prevents an intentional long poll from being mistaken for a tool loop."
+        ),
+    )
 
     @model_validator(mode="after")
     def _required_by_action(self):
@@ -888,8 +897,9 @@ async def _render_payload(job, ctx: ToolContext, settings, oss) -> dict[str, Any
         "captions": list(data.get("captions") or []),
         "subtitles": bool(data.get("subtitles", True)),
         "channel_name": str(data.get("channel_name") or ""),
-        "width": int(data.get("width") or 1080),
-        "height": int(data.get("height") or 1920),
+        "render_engine": str(data.get("render_engine") or "auto"),
+        "width": int(data.get("width") or 720),
+        "height": int(data.get("height") or 1280),
     }
 
 
@@ -961,6 +971,7 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
                 "captions": args.captions,
                 "subtitles": args.subtitles,
                 "channel_name": args.channel_name,
+                "render_engine": args.render_engine,
                 "width": args.width,
                 "height": args.height,
             }
@@ -968,7 +979,7 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
                 ctx=ctx,
                 kind="render",
                 idempotency_key=args.idempotency_key or "",
-                model="hyperframes@0.7.94",
+                model="wuying-media@1",
                 prompt=None,
                 request_data=request_data,
                 filename=args.filename,
@@ -1054,6 +1065,12 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
         retry_after=retry_after or 5,
     )
     progress = remote.get("progress") or {}
+    version = int(remote.get("version") or 0)
+    lines.append(f"version={version}")
+    if job.status not in _RENDER_TERMINAL:
+        lines.append(
+            f"next_wait_after_version={version} next_wait_iteration={args.wait_iteration + 1}"
+        )
     if progress:
         lines.append(f"progress={progress}")
     resource_check = (remote.get("result") or {}).get("resource_check")
@@ -1068,7 +1085,7 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
             "asset_id": asset.id if asset and asset.status == "ready" else None,
             "queue_position": queue_position,
             "retry_after_seconds": retry_after,
-            "version": remote.get("version", 0),
+            "version": version,
             "attached": attached,
             "resource_check": resource_check,
         },

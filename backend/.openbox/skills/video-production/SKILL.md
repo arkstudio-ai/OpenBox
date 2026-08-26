@@ -72,12 +72,21 @@ never copy a key into a prompt, command, workspace file, or sandbox.
 6. Call `video_render(action="submit")` with segment asset IDs in narrative
    order. Supply one caption per segment for subtitled output, or set
    `subtitles=false` for a clean master. Use another stable idempotency key.
+   Keep `render_engine="auto"` for ordinary spoken-video concatenation and
+   burned captions; the WUYING worker selects its pure-FFmpeg fast path and
+   does not start Chrome. Use `render_engine="hyperframes"` only when the
+   requested deliverable genuinely needs HTML/GSAP/Lottie animation.
    Match the render size to the generated sources: use `width=720,
    height=1280` for ordinary 720p vertical clips. Reserve 1080x1920 for a
    user-requested 1080p master or genuinely 1080p inputs; upscaling 720p clips
    adds render time without restoring source detail.
 7. Wait with `video_render(action="wait", wait_seconds=25,
-   after_version=<last version>)`. Interpret the states exactly as follows:
+   after_version=<returned version>, wait_iteration=<counter>)`. Start the
+   counter at 0 and increment it on each repeated wait. Always reuse the exact
+   returned `version` as `after_version`; never invent or increment a version.
+   `wait_iteration` is deliberately ignored by the queue and only distinguishes
+   legitimate repeated long polls from a stuck identical-tool loop. Interpret
+   the states exactly as follows:
 
    - `queued`: tell the user the `queue_position`; wait again after the returned
      delay. This is expected when another browser window is rendering.

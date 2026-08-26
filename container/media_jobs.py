@@ -54,7 +54,16 @@ class MediaJobConfig:
     state_root: str = "/data/openbox-media"
     temp_root: str = "/tmp/openbox-media"
     max_concurrency: int = 1
-    ffmpeg_threads: int = 2
+    render_engine: str = "auto"
+    output_fps: int = 24
+    ffmpeg_threads: int = 4
+    ffmpeg_preset: str = "veryfast"
+    ffmpeg_crf: int = 21
+    ffmpeg_audio_bitrate_kbps: int = 160
+    hyperframes_workers: int = 1
+    hyperframes_quality: str = "standard"
+    hyperframes_low_memory_mode: bool = True
+    hyperframes_video_frame_format: str = "jpg"
     job_timeout_seconds: int = 3600
     command_timeout_seconds: int = 3000
     max_input_bytes: int = 1024 * 1024 * 1024
@@ -84,25 +93,67 @@ class MediaJobConfig:
             "state_root": "MEDIA_JOB_STATE_ROOT",
             "temp_root": "MEDIA_JOB_TEMP_ROOT",
             "max_concurrency": "MEDIA_JOB_MAX_CONCURRENCY",
+            "render_engine": "MEDIA_JOB_RENDER_ENGINE",
+            "output_fps": "MEDIA_JOB_OUTPUT_FPS",
             "ffmpeg_threads": "MEDIA_JOB_FFMPEG_THREADS",
+            "ffmpeg_preset": "MEDIA_JOB_FFMPEG_PRESET",
+            "ffmpeg_crf": "MEDIA_JOB_FFMPEG_CRF",
+            "ffmpeg_audio_bitrate_kbps": "MEDIA_JOB_FFMPEG_AUDIO_BITRATE_KBPS",
+            "hyperframes_workers": "MEDIA_JOB_HYPERFRAMES_WORKERS",
+            "hyperframes_quality": "MEDIA_JOB_HYPERFRAMES_QUALITY",
+            "hyperframes_low_memory_mode": "MEDIA_JOB_HYPERFRAMES_LOW_MEMORY_MODE",
+            "hyperframes_video_frame_format": "MEDIA_JOB_HYPERFRAMES_VIDEO_FRAME_FORMAT",
             "job_timeout_seconds": "MEDIA_JOB_TIMEOUT_SECONDS",
             "hyperframes_cli": "MEDIA_JOB_HYPERFRAMES_CLI",
             "gsap_path": "MEDIA_JOB_GSAP_PATH",
             "browser_path": "HYPERFRAMES_BROWSER_PATH",
         }
         numeric = {
-            "max_concurrency", "ffmpeg_threads", "job_timeout_seconds",
+            "max_concurrency", "output_fps", "ffmpeg_threads", "ffmpeg_crf",
+            "ffmpeg_audio_bitrate_kbps", "hyperframes_workers",
+            "job_timeout_seconds",
         }
+        booleans = {"hyperframes_low_memory_mode"}
         for key, env_name in env_map.items():
             if env_name in os.environ:
-                values[key] = int(os.environ[env_name]) if key in numeric else os.environ[env_name]
+                raw_value = os.environ[env_name]
+                if key in numeric:
+                    values[key] = int(raw_value)
+                elif key in booleans:
+                    values[key] = raw_value.strip().lower() in {"1", "true", "yes", "on"}
+                else:
+                    values[key] = raw_value
 
         config = cls(**values)
+        render_engine = str(config.render_engine).lower()
+        if render_engine not in {"auto", "ffmpeg", "hyperframes"}:
+            render_engine = "auto"
+        ffmpeg_preset = str(config.ffmpeg_preset).lower()
+        if ffmpeg_preset not in {
+            "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"
+        }:
+            ffmpeg_preset = "veryfast"
+        hyperframes_quality = str(config.hyperframes_quality).lower()
+        if hyperframes_quality not in {"draft", "standard", "high"}:
+            hyperframes_quality = "standard"
+        frame_format = str(config.hyperframes_video_frame_format).lower()
+        if frame_format not in {"auto", "jpg", "png"}:
+            frame_format = "jpg"
         return cls(
             **{
                 **asdict(config),
                 "max_concurrency": max(1, min(4, int(config.max_concurrency))),
+                "render_engine": render_engine,
+                "output_fps": max(12, min(60, int(config.output_fps))),
                 "ffmpeg_threads": max(1, min(4, int(config.ffmpeg_threads))),
+                "ffmpeg_preset": ffmpeg_preset,
+                "ffmpeg_crf": max(0, min(51, int(config.ffmpeg_crf))),
+                "ffmpeg_audio_bitrate_kbps": max(
+                    64, min(320, int(config.ffmpeg_audio_bitrate_kbps))
+                ),
+                "hyperframes_workers": max(1, min(24, int(config.hyperframes_workers))),
+                "hyperframes_quality": hyperframes_quality,
+                "hyperframes_video_frame_format": frame_format,
                 "job_timeout_seconds": max(60, min(6 * 3600, int(config.job_timeout_seconds))),
             }
         )
@@ -229,9 +280,15 @@ class MediaJobManager:
 
     def capabilities(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "max_concurrency": self.config.max_concurrency,
+            "render_engine": self.config.render_engine,
+            "output_fps": self.config.output_fps,
             "ffmpeg_threads": self.config.ffmpeg_threads,
+            "ffmpeg_preset": self.config.ffmpeg_preset,
+            "ffmpeg_crf": self.config.ffmpeg_crf,
+            "hyperframes_workers": self.config.hyperframes_workers,
+            "hyperframes_low_memory_mode": self.config.hyperframes_low_memory_mode,
             "temp_root": str(self.temp_root),
             "state_root": str(self.state_root),
             "hyperframes_version": self.config.hyperframes_version,
@@ -280,9 +337,12 @@ class MediaJobManager:
             raise MediaJobConflict("captions length must match inputs length")
         if any(len(str(value)) > 2000 for value in captions):
             raise MediaJobConflict("each caption must be at most 2000 characters")
+        render_engine = str(payload.get("render_engine") or "auto").lower()
+        if render_engine not in {"auto", "ffmpeg", "hyperframes"}:
+            raise MediaJobConflict("render_engine must be auto, ffmpeg, or hyperframes")
         for dimension in ("width", "height"):
             try:
-                value = int(payload.get(dimension) or (1080 if dimension == "width" else 1920))
+                value = int(payload.get(dimension) or (720 if dimension == "width" else 1280))
             except (TypeError, ValueError) as exc:
                 raise MediaJobConflict(f"{dimension} must be an integer") from exc
             if not 320 <= value <= 3840:
@@ -631,8 +691,160 @@ class MediaJobManager:
         await self._notify()
         self._wake.set()
 
+    def _resolved_engine(self, payload: dict[str, Any]) -> str:
+        requested = str(payload.get("render_engine") or "auto").lower()
+        if requested != "auto":
+            return requested
+        if self.config.render_engine != "auto":
+            return self.config.render_engine
+        # The current payload contract is a linear spoken-video timeline. It
+        # does not need a browser unless the caller explicitly requests the
+        # HyperFrames authoring path.
+        return "ffmpeg"
+
+    @staticmethod
+    def _ass_timestamp(seconds: float) -> str:
+        centiseconds = max(0, round(float(seconds) * 100))
+        hours, remainder = divmod(centiseconds, 360_000)
+        minutes, remainder = divmod(remainder, 6_000)
+        whole_seconds, fraction = divmod(remainder, 100)
+        return f"{hours}:{minutes:02d}:{whole_seconds:02d}.{fraction:02d}"
+
+    @staticmethod
+    def _ass_escape(value: str) -> str:
+        return (
+            str(value)
+            .replace("\\", r"\\")
+            .replace("{", r"\{")
+            .replace("}", r"\}")
+            .replace("\r", "")
+            .replace("\n", r"\N")
+        )
+
+    @classmethod
+    def _ass_document(
+        cls,
+        *,
+        durations: list[float],
+        captions: list[str],
+        subtitles: bool,
+        channel_name: str,
+        width: int,
+        height: int,
+    ) -> str:
+        subtitle_size = max(28, round(width * 0.048))
+        channel_size = max(20, round(width * 0.027))
+        subtitle_margin = max(24, round(height * 0.095))
+        channel_margin_v = max(18, round(height * 0.04))
+        side_margin = max(24, round(width * 0.055))
+        header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+ScaledBorderAndShadow: yes
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Subtitle,Noto Sans CJK SC,{subtitle_size},&H00FFFFFF,&H000000FF,&H00000000,&H78000000,-1,0,0,0,100,100,1,0,1,3,1,2,{side_margin},{side_margin},{subtitle_margin},1
+Style: Channel,Noto Sans CJK SC,{channel_size},&H20FFFFFF,&H000000FF,&H00000000,&H78000000,-1,0,0,0,100,100,0,0,1,2,1,1,{side_margin},{side_margin},{channel_margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        events: list[str] = []
+        current = 0.0
+        for duration, caption in zip(durations, captions):
+            end = current + float(duration)
+            if subtitles and str(caption).strip():
+                events.append(
+                    "Dialogue: 0,"
+                    f"{cls._ass_timestamp(current)},{cls._ass_timestamp(end)},"
+                    f"Subtitle,,0,0,0,,{cls._ass_escape(str(caption).strip())}"
+                )
+            current = end
+        if channel_name.strip() and current > 0:
+            events.append(
+                "Dialogue: 1,"
+                f"0:00:00.00,{cls._ass_timestamp(current)},Channel,,0,0,0,,"
+                f"● {cls._ass_escape(channel_name.strip())}"
+            )
+        return header + "\n".join(events) + "\n"
+
+    def _ffmpeg_render_command(
+        self,
+        *,
+        inputs: list[Path],
+        output: Path,
+        width: int,
+        height: int,
+        ass_file: Path | None,
+    ) -> list[str]:
+        command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+        for path in inputs:
+            command.extend(["-i", str(path)])
+        filters: list[str] = []
+        concat_inputs: list[str] = []
+        for index in range(len(inputs)):
+            filters.append(
+                f"[{index}:v:0]"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},fps={self.config.output_fps},"
+                "setsar=1,settb=AVTB,setpts=PTS-STARTPTS"
+                f"[v{index}]"
+            )
+            filters.append(
+                f"[{index}:a:0]aresample=48000:async=1:first_pts=0,"
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                f"asetpts=PTS-STARTPTS[a{index}]"
+            )
+            concat_inputs.extend([f"[v{index}]", f"[a{index}]"])
+        filters.append(
+            f"{''.join(concat_inputs)}concat=n={len(inputs)}:v=1:a=1[vcat][acat]"
+        )
+        if ass_file is not None:
+            filters.append(f"[vcat]ass=filename={ass_file.name}[vout]")
+        else:
+            filters.append("[vcat]null[vout]")
+        command.extend(
+            [
+                "-filter_complex_threads", str(self.config.ffmpeg_threads),
+                "-filter_complex", ";".join(filters),
+                "-map", "[vout]", "-map", "[acat]",
+                "-c:v", "libx264", "-preset", self.config.ffmpeg_preset,
+                "-crf", str(self.config.ffmpeg_crf),
+                "-threads", str(self.config.ffmpeg_threads),
+                "-pix_fmt", "yuv420p", "-vsync", "cfr",
+                "-c:a", "aac", "-b:a", f"{self.config.ffmpeg_audio_bitrate_kbps}k",
+                "-ar", "48000", "-movflags", "+faststart",
+                "-max_muxing_queue_size", "2048", str(output),
+            ]
+        )
+        return command
+
+    def _hyperframes_render_command(self, output: Path) -> list[str]:
+        return [
+            self.config.hyperframes_cli,
+            "render",
+            "compositions",
+            "-o",
+            output.name,
+            "--fps",
+            str(self.config.output_fps),
+            "--quality",
+            self.config.hyperframes_quality,
+            "--workers",
+            str(self.config.hyperframes_workers),
+            "--low-memory-mode"
+            if self.config.hyperframes_low_memory_mode
+            else "--no-low-memory-mode",
+            "--video-frame-format",
+            self.config.hyperframes_video_frame_format,
+        ]
+
     async def _render(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_runtime()
+        engine = self._resolved_engine(payload)
+        self._require_runtime(engine)
         job_dir = self.jobs_root / job_id
         comps_dir = job_dir / "compositions"
         # The directory passed to HyperFrames is its project root. Keep every
@@ -681,56 +893,107 @@ class MediaJobManager:
         if not captions:
             captions = [""] * len(local_inputs)
 
-        gsap_target = comps_dir / "gsap.min.js"
-        shutil.copy2(self.config.gsap_path, gsap_target)
-        width = max(320, min(3840, int(payload.get("width") or 1080)))
-        height = max(320, min(3840, int(payload.get("height") or 1920)))
-        composition = self._composition_html(
-            job_id=job_id,
-            inputs=local_inputs,
-            durations=durations,
-            captions=[str(value) for value in captions],
-            subtitles=bool(payload.get("subtitles", True)),
-            channel_name=str(payload.get("channel_name") or ""),
-            width=width,
-            height=height,
-        )
-        # HyperFrames 0.7.94 discovers each composition by its index.html
-        # entrypoint.  Other filenames lint as "No composition found" even
-        # when their markup is otherwise valid.
-        (comps_dir / "index.html").write_text(composition, encoding="utf-8")
-
-        await self._set_progress(job_id, {"stage": "hyperframes_lint"})
-        await self._run_command(
-            job_id,
-            [self.config.hyperframes_cli, "lint", "compositions/"],
-            cwd=job_dir,
-            timeout=min(600, self.config.command_timeout_seconds),
-        )
-        raw_output = job_dir / "rendered.mp4"
-        await self._set_progress(job_id, {"stage": "hyperframes_render", "duration_seconds": round(sum(durations), 3)})
-        env = {**os.environ, "HYPERFRAMES_BROWSER_PATH": self.config.browser_path}
-        render_metrics = await self._run_command(
-            job_id,
-            [self.config.hyperframes_cli, "render", "compositions", "-o", raw_output.name],
-            cwd=job_dir,
-            timeout=self.config.command_timeout_seconds,
-            env=env,
-        )
-
+        width = max(320, min(3840, int(payload.get("width") or 720)))
+        height = max(320, min(3840, int(payload.get("height") or 1280)))
         final_output = job_dir / "final.mp4"
-        await self._set_progress(job_id, {"stage": "ffmpeg_faststart"})
-        ffmpeg_metrics = await self._run_command(
-            job_id,
-            [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-threads", str(self.config.ffmpeg_threads), "-i", str(raw_output),
-                "-map", "0:v:0", "-map", "0:a?", "-c", "copy",
-                "-movflags", "+faststart", str(final_output),
-            ],
-            cwd=job_dir,
-            timeout=min(900, self.config.command_timeout_seconds),
-        )
+        if engine == "ffmpeg":
+            ass_file: Path | None = None
+            if (
+                bool(payload.get("subtitles", True)) and any(str(value).strip() for value in captions)
+            ) or str(payload.get("channel_name") or "").strip():
+                ass_file = job_dir / "render.ass"
+                ass_file.write_text(
+                    self._ass_document(
+                        durations=durations,
+                        captions=[str(value) for value in captions],
+                        subtitles=bool(payload.get("subtitles", True)),
+                        channel_name=str(payload.get("channel_name") or ""),
+                        width=width,
+                        height=height,
+                    ),
+                    encoding="utf-8",
+                )
+            await self._set_progress(
+                job_id,
+                {
+                    "stage": "ffmpeg_render",
+                    "duration_seconds": round(sum(durations), 3),
+                    "fps": self.config.output_fps,
+                },
+            )
+            ffmpeg_metrics = await self._run_command(
+                job_id,
+                self._ffmpeg_render_command(
+                    inputs=local_inputs,
+                    output=final_output,
+                    width=width,
+                    height=height,
+                    ass_file=ass_file,
+                ),
+                cwd=job_dir,
+                timeout=self.config.command_timeout_seconds,
+            )
+            render_metrics = ffmpeg_metrics
+        else:
+            gsap_target = comps_dir / "gsap.min.js"
+            shutil.copy2(self.config.gsap_path, gsap_target)
+            composition = self._composition_html(
+                job_id=job_id,
+                inputs=local_inputs,
+                durations=durations,
+                captions=[str(value) for value in captions],
+                subtitles=bool(payload.get("subtitles", True)),
+                channel_name=str(payload.get("channel_name") or ""),
+                width=width,
+                height=height,
+                fps=self.config.output_fps,
+            )
+            # HyperFrames 0.7.94 discovers each composition by its index.html
+            # entrypoint. Other filenames lint as "No composition found".
+            (comps_dir / "index.html").write_text(composition, encoding="utf-8")
+            await self._set_progress(job_id, {"stage": "hyperframes_lint"})
+            await self._run_command(
+                job_id,
+                [self.config.hyperframes_cli, "lint", "compositions/"],
+                cwd=job_dir,
+                timeout=min(600, self.config.command_timeout_seconds),
+            )
+            raw_output = job_dir / "rendered.mp4"
+            await self._set_progress(
+                job_id,
+                {
+                    "stage": "hyperframes_render",
+                    "duration_seconds": round(sum(durations), 3),
+                    "fps": self.config.output_fps,
+                    "workers": self.config.hyperframes_workers,
+                },
+            )
+            env = {
+                **os.environ,
+                "HYPERFRAMES_BROWSER_PATH": self.config.browser_path,
+                "PRODUCER_LOW_MEMORY_MODE": (
+                    "1" if self.config.hyperframes_low_memory_mode else "0"
+                ),
+            }
+            render_metrics = await self._run_command(
+                job_id,
+                self._hyperframes_render_command(raw_output),
+                cwd=job_dir,
+                timeout=self.config.command_timeout_seconds,
+                env=env,
+            )
+            await self._set_progress(job_id, {"stage": "ffmpeg_faststart"})
+            ffmpeg_metrics = await self._run_command(
+                job_id,
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-threads", str(self.config.ffmpeg_threads), "-i", str(raw_output),
+                    "-map", "0:v:0", "-map", "0:a?", "-c", "copy",
+                    "-movflags", "+faststart", str(final_output),
+                ],
+                cwd=job_dir,
+                timeout=min(900, self.config.command_timeout_seconds),
+            )
         final_probe = await self._probe(job_id, final_output)
         expected = sum(durations)
         tolerance = max(2.0, expected * 0.05)
@@ -752,18 +1015,33 @@ class MediaJobManager:
             "input_durations": durations,
             "cache_hits": cache_hits,
             "subtitles": bool(payload.get("subtitles", True)),
+            "render_engine": engine,
+            "output_fps": self.config.output_fps,
+            "width": width,
+            "height": height,
             "render_peak_rss_mb": render_metrics["peak_rss_mb"],
             "ffmpeg_peak_rss_mb": ffmpeg_metrics["peak_rss_mb"],
         }
 
-    def _require_runtime(self) -> None:
+    def _require_runtime(self, engine: str) -> None:
         required = {
             "ffmpeg": shutil.which("ffmpeg"),
             "ffprobe": shutil.which("ffprobe"),
-            "hyperframes": self.config.hyperframes_cli if Path(self.config.hyperframes_cli).is_file() else None,
-            "gsap": self.config.gsap_path if Path(self.config.gsap_path).is_file() else None,
-            "browser": self.config.browser_path if Path(self.config.browser_path).is_file() else None,
         }
+        if engine == "hyperframes":
+            required.update(
+                {
+                    "hyperframes": self.config.hyperframes_cli
+                    if Path(self.config.hyperframes_cli).is_file()
+                    else None,
+                    "gsap": self.config.gsap_path
+                    if Path(self.config.gsap_path).is_file()
+                    else None,
+                    "browser": self.config.browser_path
+                    if Path(self.config.browser_path).is_file()
+                    else None,
+                }
+            )
         missing = [name for name, path in required.items() if not path]
         if missing:
             raise MediaJobError(f"ENV_MISSING: {', '.join(missing)}")
@@ -1120,6 +1398,7 @@ class MediaJobManager:
         channel_name: str,
         width: int,
         height: int,
+        fps: int = 24,
     ) -> str:
         total = round(sum(durations), 3)
         current = 0.0
@@ -1170,7 +1449,7 @@ class MediaJobManager:
   </style>
 </head>
 <body>
-  <div id="root" data-composition-id="{safe_id}" data-start="0" data-duration="{total}" data-width="{width}" data-height="{height}">
+  <div id="root" data-composition-id="{safe_id}" data-start="0" data-duration="{total}" data-width="{width}" data-height="{height}" data-fps="{fps}">
     {''.join(clips)}
     <div id="vignette" class="vignette clip" data-start="0" data-duration="{total}" data-track-index="1"></div>
     {''.join(subtitle_nodes)}

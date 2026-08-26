@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import subprocess
 
@@ -59,7 +59,7 @@ from media_jobs import (  # noqa: E402
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.08.26-media-jobs-v1"
+ACTION_SERVER_VERSION = "2026.08.27-media-fastpath-v2"
 # Uvicorn owns the configured INFO handler in both containers and the WUYING
 # systemd service. A standalone child logger inherited the root WARNING level
 # and silently discarded the very traces this feature exists to preserve.
@@ -115,8 +115,9 @@ class MediaJobSubmitRequest(BaseModel):
     )
     subtitles: bool = True
     channel_name: str = PydanticField(default="", max_length=100)
-    width: int = PydanticField(default=1080, ge=320, le=3840)
-    height: int = PydanticField(default=1920, ge=320, le=3840)
+    render_engine: Literal["auto", "ffmpeg", "hyperframes"] = "auto"
+    width: int = PydanticField(default=720, ge=320, le=3840)
+    height: int = PydanticField(default=1280, ge=320, le=3840)
 
 
 class MediaJobOwnerRequest(BaseModel):
@@ -313,7 +314,12 @@ async def alive():
     return {
         "status": "ok",
         "version": ACTION_SERVER_VERSION,
-        "capabilities": ["desktop_lease_v1", "execution_trace_v1", "media_jobs_v1"],
+        "capabilities": [
+            "desktop_lease_v1",
+            "execution_trace_v1",
+            "media_jobs_v1",
+            "media_jobs_fastpath_v2",
+        ],
         "media_jobs": media_job_manager.capabilities(),
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),

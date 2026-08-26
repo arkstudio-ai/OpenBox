@@ -59,6 +59,17 @@ def test_render_captions_must_match_segments():
         )
 
 
+def test_render_defaults_to_fast_auto_path_and_source_resolution():
+    args = VideoRenderArgs(
+        action="submit",
+        idempotency_key="travel-final-v1",
+        segment_assets=["asset-1"],
+    )
+    assert args.render_engine == "auto"
+    assert (args.width, args.height) == (720, 1280)
+    assert args.wait_iteration == 0
+
+
 def test_seedance_spoken_video_constraints():
     _validate_generation("doubao-seedance-2-0-260128", "1080p", -1, True)
     with pytest.raises(RuntimeError, match="standard model"):
@@ -87,3 +98,6 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     assert "Never vary seeds while claiming" in skill
     assert "width=720" in skill
     assert "height=1280" in skill
+    assert 'render_engine="auto"' in skill
+    assert "wait_iteration=<counter>" in skill
+    assert "never invent or increment a version" in skill

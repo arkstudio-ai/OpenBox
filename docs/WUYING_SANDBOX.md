@@ -221,7 +221,23 @@ Everything on the desktop is systemd and self-heals across reboots:
 The action server also owns the durable media queue. Its SQLite state lives in
 `/data/openbox-media`, while per-attempt files and the reusable input cache live
 under `/tmp/openbox-media`. Queue concurrency and FFmpeg threads come from
-`container/media-jobs.json` (defaults: one render and two FFmpeg threads).
+`container/media-jobs.json` (defaults: one render and four FFmpeg threads).
+Linear spoken-video concatenation uses the pure-FFmpeg fast path; HyperFrames
+and Chrome start only when the request explicitly selects the HTML-animation
+engine.
+
+Recommended values for the current 4-core, 8-GB-class desktop are:
+
+| Media setting | Default | Purpose |
+|---|---:|---|
+| `render_engine` | `auto` | Select FFmpeg for the current linear timeline; `hyperframes` is an explicit opt-in. |
+| `max_concurrency` | `1` | Other sessions remain queued and receive a queue position. |
+| `output_fps` | `24` | Avoids rendering unused 30-fps frames for normal speech. |
+| `ffmpeg_threads` | `4` | Uses the available CPU cores on the fast path. |
+| `ffmpeg_preset` / `ffmpeg_crf` | `veryfast` / `21` | Production-speed H.264 with good short-video quality. |
+| `hyperframes_workers` | `1` | Prevents multiple Chrome renderers from exhausting RAM. |
+| `hyperframes_low_memory_mode` | `true` | Forces the safe low-memory profile. |
+| `hyperframes_video_frame_format` | `jpg` | Appropriate for camera footage; use PNG for UI/screen recordings. |
 
 The **dev-browser relay is not** a systemd unit. It is started on demand by
 `POST /dev-browser/start` (the *Enable Dev Browser* button), and does not come

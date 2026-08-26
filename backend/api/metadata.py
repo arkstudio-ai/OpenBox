@@ -188,6 +188,124 @@ async def upload_skill_archive(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/catalog")
+async def get_catalog(current_user: dict = Depends(get_current_user)):
+    """The skill store's catalogue, annotated with what is already installed.
+
+    Installed state is resolved here rather than in the browser: the store and
+    the "mine" tab would otherwise each derive it from two lists and drift.
+    """
+    from skill.catalog import load_catalog
+    from sandbox.manager import sandbox_manager
+
+    user_id = current_user["user_id"]
+    catalog = await load_catalog()
+
+    installed_skills: set[str] = set()
+    installed_mcp: set[str] = set()
+    try:
+        client = await sandbox_manager.get_client_any(user_id=user_id)
+        if client:
+            for s in await client.list_skills() or []:
+                if s.get("name"):
+                    installed_skills.add(s["name"])
+                if s.get("install_dir"):
+                    installed_skills.add(s["install_dir"])
+            for m in await client.list_mcp_servers() or []:
+                if m.get("name"):
+                    installed_mcp.add(m["name"])
+    except Exception:
+        # An unreachable sandbox still leaves a browsable store; entries just
+        # cannot say whether they are installed yet.
+        pass
+
+    for entry in catalog["mcp"]:
+        entry["installed"] = entry["name"] in installed_mcp
+    for entry in catalog["skills"]:
+        entry["installed"] = (
+            entry["name"] in installed_skills
+            or entry.get("install", {}).get("name") in installed_skills
+        )
+        # Tell the browser which dependencies are still missing so the install
+        # dialog can offer them, rather than making it join two lists itself.
+        entry["missing_mcp"] = [
+            dep for dep in entry.get("requires_mcp", []) if dep not in installed_mcp
+        ]
+
+    return catalog
+
+
+class InstallCatalogBody(BaseModel):
+    id: str
+    kind: str = "skill"
+    #: Catalogue MCP ids to install alongside a skill.
+    with_mcp: list[str] = []
+    #: Values for entries that declare required_env, keyed by server id.
+    env: dict[str, dict[str, str]] = {}
+
+
+@router.post("/catalog/install")
+async def install_from_catalog(
+    body: InstallCatalogBody, current_user: dict = Depends(get_current_user),
+):
+    """Install one catalogue entry, plus any MCP servers it was asked to bring.
+
+    Dependencies install first: a skill whose server is missing loads fine and
+    then fails at its first tool call, which reads as a broken skill rather
+    than a missing dependency.
+    """
+    from skill.catalog import catalog_index
+    from sandbox.manager import sandbox_manager
+
+    user_id = current_user["user_id"]
+    index = catalog_index()
+
+    entry = index.get(f"{body.kind}:{body.id}")
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Unknown catalog entry: {body.kind}:{body.id}")
+
+    client = await sandbox_manager.get_client_any(user_id=user_id)
+    if not client:
+        raise HTTPException(status_code=503, detail="No sandbox available")
+
+    installed: list[dict] = []
+
+    async def install_mcp(mcp_entry: dict) -> dict:
+        config = {k: v for k, v in mcp_entry["config"].items()}
+        supplied = body.env.get(mcp_entry["id"], {})
+        if supplied:
+            config["env"] = {**(config.get("env") or {}), **supplied}
+        await client.add_mcp_server(name=mcp_entry["name"], config=config)
+        # Connect immediately: a configured-but-unconnected server contributes
+        # no tools, so the skill that needed it is still broken.
+        try:
+            await client.connect_mcp(mcp_entry["name"])
+            status = "connected"
+            error = None
+        except Exception as e:
+            status = "error"
+            error = str(e)
+        return {"kind": "mcp", "id": mcp_entry["id"], "name": mcp_entry["name"],
+                "status": status, "error": error}
+
+    for dep_id in body.with_mcp:
+        dep = index.get(f"mcp:{dep_id}")
+        if dep:
+            installed.append(await install_mcp(dep))
+
+    if body.kind == "mcp":
+        installed.append(await install_mcp(entry))
+    else:
+        spec = entry.get("install", {})
+        result = await client.install_skill(
+            url=spec.get("url"), name=spec.get("name"), content=spec.get("content"),
+        )
+        installed.append({"kind": "skill", "id": entry["id"],
+                          "name": result.get("name") or entry["name"], "status": "installed"})
+
+    return {"ok": True, "installed": installed}
+
+
 @router.get("/command")
 async def list_commands():
     """List available slash commands."""

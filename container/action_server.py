@@ -142,7 +142,15 @@ async def lifespan(app: FastAPI):
             pass
     # Create name-based symlinks for user-installed skills (skill packs, etc.)
     _ensure_skill_symlinks()
-    yield
+    # MCP config outlives the container but connections do not, so a restart
+    # used to leave every configured server listed as disconnected with its
+    # tools silently missing from the agent. Reconnect in the background: a
+    # server that is slow or gone must not delay the container coming up.
+    reconnect_task = asyncio.create_task(mcp_manager.reconnect_configured())
+    try:
+        yield
+    finally:
+        reconnect_task.cancel()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 
@@ -1179,27 +1187,148 @@ SKILLS_DIR = Path("/data/skills")            # User-installed skills (bind-mount
 BUILTIN_SKILLS_DIR = Path("/opt/openbox/skills")  # System built-in skills (baked into image)
 
 
+#: URL schemes accepted for skill installation.
+#: Git's ``ext::`` transport runs an arbitrary shell command as part of the
+#: clone, so an unrestricted URL is remote code execution rather than a
+#: download. Clones additionally pass -c protocol.ext.allow=never as defence in
+#: depth for redirects and submodules.
+_SKILL_URL_SCHEMES = ("https://", "http://", "git://", "ssh://", "git@")
+
+
+def _safe_skill_name(name: str) -> str:
+    """Validate a skill directory name, or raise 400.
+
+    The name is joined onto SKILLS_DIR and the result is both written to and
+    (on reinstall or uninstall) removed with shutil.rmtree. ``Path('/data/skills')
+    / '../../opt/openbox/skills'`` resolves cleanly outside the skills tree, so
+    an unchecked name is an arbitrary-directory delete, not a naming nit.
+    """
+    cleaned = (name or "").strip().replace(" ", "-")
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Skill name is required")
+    if cleaned in (".", "..") or cleaned.startswith("."):
+        raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
+    if "/" in cleaned or "\\" in cleaned or "\x00" in cleaned:
+        raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
+    # Belt and braces: confirm the join really lands inside the skills tree.
+    try:
+        resolved = (SKILLS_DIR / cleaned).resolve()
+        if not resolved.is_relative_to(SKILLS_DIR.resolve()):
+            raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
+    except HTTPException:
+        raise
+    except OSError:
+        raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
+    return cleaned
+
+
+def _validate_skill_url(url: str) -> str:
+    """Reject clone URLs whose scheme can execute a command."""
+    candidate = (url or "").strip()
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Skill URL is required")
+    if not candidate.startswith(_SKILL_URL_SCHEMES):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported skill URL. Use https://, http://, git://, ssh:// "
+                "or git@host:path."
+            ),
+        )
+    return candidate
+
+
+def _run_skill_install_script(target: Path) -> str:
+    """Run a skill's install.sh, returning its combined output.
+
+    Shared by both install routes so a skill pack sets up its dependencies the
+    same way whether it arrived as an archive or a git clone.
+    """
+    install_sh = target / "install.sh"
+    if not install_sh.exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["bash", str(install_sh)],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(target),
+        )
+        log = result.stdout + result.stderr
+        if result.returncode != 0:
+            log = f"install.sh exited with code {result.returncode}:\n{log}"
+        return log
+    except subprocess.TimeoutExpired:
+        return "install.sh timed out (120s)"
+    except Exception as e:
+        return f"install.sh failed: {e}"
+
+
 class InstallSkillRequest(BaseModel):
     url: str | None = None
     name: str | None = None
     content: str | None = None
 
 
+def _normalize_requires_mcp(value) -> list[str]:
+    """Read a skill's declared MCP dependencies into a list of server names.
+
+    Authors write this either as a YAML list or as one comma-separated string,
+    and the key itself appears both hyphenated and underscored in the wild, so
+    all four spellings resolve to the same thing rather than silently yielding
+    a skill that installs without the server it needs.
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace(",", " ").split()]
+    elif isinstance(value, (list, tuple)):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item.strip())
+            elif isinstance(item, dict) and item.get("name"):
+                parts.append(str(item["name"]).strip())
+    else:
+        return []
+    seen, out = set(), []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 def _parse_skill_frontmatter(md_content: str) -> dict:
-    """Parse YAML frontmatter from a SKILL.md file."""
+    """Parse YAML frontmatter from a SKILL.md file.
+
+    Beyond name/description this carries the two fields the skill centre needs:
+    an ``icon`` (an emoji, so there is no asset to serve or cache) and
+    ``requires-mcp``, the MCP servers the skill's instructions actually call.
+    A skill whose dependency is missing loads fine and then fails at the first
+    tool call, which is why the dependency has to be declarable.
+    """
     md_content = md_content.strip()
+    empty = {"name": "", "description": "", "icon": "", "requires_mcp": [], "homepage": ""}
     if not md_content.startswith("---"):
-        return {"name": "", "description": ""}
+        return dict(empty)
     parts = md_content.split("---", 2)
     if len(parts) < 3:
-        return {"name": "", "description": ""}
+        return dict(empty)
     try:
         meta = yaml.safe_load(parts[1]) or {}
     except yaml.YAMLError:
         meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     return {
         "name": meta.get("name", ""),
         "description": meta.get("description", ""),
+        "icon": str(meta.get("icon", "") or "")[:8],
+        "requires_mcp": _normalize_requires_mcp(
+            meta.get("requires-mcp") or meta.get("requires_mcp")
+            or meta.get("requiresMcp") or meta.get("mcp")
+        ),
+        "homepage": str(meta.get("homepage", "") or "")[:300],
     }
 
 
@@ -1309,6 +1438,11 @@ def _scan_skills_in_dir(skills_dir: Path, source: str) -> list[dict]:
         # the real skills are found via _find_skill_mds on actual directories)
         if not skill_dir.is_dir() or skill_dir.is_symlink():
             continue
+        # Dot-directories are bookkeeping, not skills — an install in flight
+        # stages into `.<name>.incoming` and must not surface as a half-written
+        # skill while it is being swapped in.
+        if skill_dir.name.startswith("."):
+            continue
         skill_mds = _find_skill_mds(skill_dir)
         if not skill_mds:
             continue
@@ -1320,6 +1454,9 @@ def _scan_skills_in_dir(skills_dir: Path, source: str) -> list[dict]:
             skills.append({
                 "name": meta.get("name") or skill_data_dir.name,
                 "description": meta.get("description", ""),
+                "icon": meta.get("icon", ""),
+                "requires_mcp": meta.get("requires_mcp", []),
+                "homepage": meta.get("homepage", ""),
                 "source": source,
                 "content": content,
                 "files": files,
@@ -1372,40 +1509,70 @@ async def install_skill(req: InstallSkillRequest):
     """Install a skill from URL (git clone) or from pasted content."""
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
+    install_log = ""
+
     if req.url:
+        url = _validate_skill_url(req.url)
         # Determine name from URL or explicit name
         skill_name = req.name
         if not skill_name:
             # Extract name from git URL: https://github.com/user/repo.git -> repo
-            url_path = req.url.rstrip("/").rstrip(".git")
+            url_path = url.rstrip("/")
+            if url_path.endswith(".git"):
+                url_path = url_path[:-4]
             skill_name = url_path.split("/")[-1] or "unnamed-skill"
+        skill_name = _safe_skill_name(skill_name)
         target = SKILLS_DIR / skill_name
-        if target.exists():
-            shutil.rmtree(target)
+        # Clone into a staging directory and swap it in only once it is whole.
+        # Removing the old copy up front meant a failed clone left the user with
+        # neither the new skill nor the one they already had.
+        staging = SKILLS_DIR / f".{skill_name}.incoming"
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
         try:
             result = subprocess.run(
-                ["git", "clone", "--depth=1", req.url, str(target)],
+                [
+                    "git",
+                    # ext:: hands the URL to a shell; no skill install needs it.
+                    "-c", "protocol.ext.allow=never",
+                    "-c", "protocol.file.allow=never",
+                    "clone", "--depth=1", "--", url, str(staging),
+                ],
                 capture_output=True, text=True, timeout=60,
             )
             if result.returncode != 0:
+                shutil.rmtree(staging, ignore_errors=True)
                 raise HTTPException(
                     status_code=400,
                     detail=f"git clone failed: {result.stderr.strip()}",
                 )
             # Remove .git directory to save space
-            git_dir = target / ".git"
+            git_dir = staging / ".git"
             if git_dir.exists():
                 shutil.rmtree(git_dir)
-        except subprocess.TimeoutExpired:
+            if not _find_skill_mds(staging):
+                shutil.rmtree(staging, ignore_errors=True)
+                raise HTTPException(status_code=400, detail="No SKILL.md found after install")
             if target.exists():
                 shutil.rmtree(target)
+            staging.replace(target)
+        except subprocess.TimeoutExpired:
+            shutil.rmtree(staging, ignore_errors=True)
             raise HTTPException(status_code=504, detail="git clone timed out")
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+        # A cloned skill pack gets the same dependency setup an uploaded archive
+        # does; running install.sh on only one of the two install routes made
+        # the same skill work as a zip and fail from git.
+        install_log = _run_skill_install_script(target)
     elif req.content:
         skill_name = req.name
         if not skill_name:
             # Try to extract name from frontmatter
             meta = _parse_skill_frontmatter(req.content)
             skill_name = meta.get("name") or "unnamed-skill"
+        skill_name = _safe_skill_name(skill_name)
         target = SKILLS_DIR / skill_name
         target.mkdir(parents=True, exist_ok=True)
         (target / "SKILL.md").write_text(req.content, encoding="utf-8")
@@ -1433,6 +1600,7 @@ async def install_skill(req: InstallSkillRequest):
         "files": files,
         "install_dir": skill_name,
         "base_dir": str(skill_data_dir),
+        "install_log": install_log,
     }
 
 
@@ -1474,7 +1642,9 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
     for suffix in (".tar", ".tgz"):
         if skill_name.endswith(suffix):
             skill_name = skill_name[:-len(suffix)]
-    skill_name = skill_name.replace(" ", "-")
+    # Both the explicit name and the uploaded filename are caller-controlled and
+    # end up joined onto SKILLS_DIR, where the existing copy is rmtree'd.
+    skill_name = _safe_skill_name(skill_name)
 
     # Extract to temp dir first for validation
     tmp_dir = Path(f"/tmp/skill_upload_{skill_name}_{os.getpid()}")
@@ -1501,7 +1671,14 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
                 for member in tf.getmembers():
                     if ".." in member.name or member.name.startswith("/"):
                         raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.name}")
-                tf.extractall(tmp_dir)
+                # The name check above cannot see a link escape: an archive can
+                # carry `link -> /` and then `link/etc/x`, and no member name
+                # contains "..". filter="data" is what refuses absolute and
+                # upward links, plus devices and setuid bits, during extraction.
+                try:
+                    tf.extractall(tmp_dir, filter="data")
+                except tarfile.TarError as e:
+                    raise HTTPException(status_code=400, detail=f"Unsafe archive rejected: {e}")
 
         elif archive_type == "rar":
             # Write to temp file for rarfile/unrar
@@ -1534,33 +1711,24 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
                 detail=f"No SKILL.md found in archive. Expected SKILL.md at root, skills/*/SKILL.md, or .claude/skills/*/SKILL.md.\nFiles found: {', '.join(found_files)}",
             )
 
-        # Validation passed — move to skills directory
+        # Validation passed — move to skills directory. Stage the new copy
+        # beside the target first so a failed move cannot leave the user with
+        # the old skill deleted and nothing in its place.
         target = SKILLS_DIR / skill_name
+        staging = SKILLS_DIR / f".{skill_name}.incoming"
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        shutil.move(str(extract_root), str(staging))
         if target.exists():
             shutil.rmtree(target)
-        shutil.move(str(extract_root), str(target))
+        staging.replace(target)
 
     finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Run install.sh if present (for dependency setup)
-    install_log = ""
-    install_sh = target / "install.sh"
-    if install_sh.exists():
-        try:
-            result = subprocess.run(
-                ["bash", str(install_sh)],
-                capture_output=True, text=True, timeout=120,
-                cwd=str(target),
-            )
-            install_log = result.stdout + result.stderr
-            if result.returncode != 0:
-                install_log = f"install.sh exited with code {result.returncode}:\n{install_log}"
-        except subprocess.TimeoutExpired:
-            install_log = "install.sh timed out (120s)"
-        except Exception as e:
-            install_log = f"install.sh failed: {e}"
+    install_log = _run_skill_install_script(target)
 
     # Create symlinks
     _ensure_skill_symlinks()
@@ -1609,7 +1777,9 @@ async def uninstall_skill(name: str):
         if skill["name"] == name or skill.get("install_dir") == name:
             raise HTTPException(status_code=403, detail=f"Cannot uninstall builtin skill '{name}'")
 
-    # Direct match by directory name in user skills
+    # Direct match by directory name in user skills. The name is joined onto
+    # SKILLS_DIR and handed to rmtree, so it has to be checked first.
+    name = _safe_skill_name(name)
     target = SKILLS_DIR / name
     if target.exists() and not target.is_symlink():
         shutil.rmtree(target)
@@ -1650,6 +1820,41 @@ def _cleanup_broken_symlinks():
 # ============================================================
 
 MCP_CONFIG_PATH = Path("/data/mcp/config.json")
+
+#: Environment variables never handed to a stdio MCP subprocess.
+#: An MCP server is third-party code — usually an npx package chosen by whoever
+#: added it. SESSION_API_KEY authenticates every caller of this action server,
+#: so passing it down would let that package drive the sandbox as the backend.
+#: The cloud credentials are here for the same reason: nothing an MCP server
+#: does should be able to reach the account that owns the sandbox.
+_MCP_ENV_DENYLIST = frozenset({
+    "SESSION_API_KEY",
+    # Model provider keys bill to whoever owns the account, so an MCP server
+    # that can read one can spend real money. Verified reachable: an
+    # `@modelcontextprotocol/server-everything` child listed ANTHROPIC_AUTH_TOKEN
+    # among its inherited variables before this list covered it.
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MOONSHOT_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "ALIBABA_CLOUD_ACCESS_KEY_ID",
+    "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+    "ALIBABA_CLOUD_SECURITY_TOKEN",
+    "ALICLOUD_ACCESS_KEY_ID",
+    "ALICLOUD_ACCESS_KEY_SECRET",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "JWT_SECRET",
+    "DATABASE_URL",
+    "POSTGRES_PASSWORD",
+    "REDIS_URL",
+})
 
 
 class AddMcpServerRequest(BaseModel):
@@ -1843,16 +2048,63 @@ class RawStreamableHttpSession:
             self._client = None
 
 
+def _mcp_attr(obj, *names, default=None):
+    """Read the first attribute in ``names`` that ``obj`` actually has.
+
+    The MCP Python SDK renamed its model fields to snake_case in 2.0
+    (Tool.inputSchema -> input_schema, Resource.mimeType -> mime_type,
+    CallToolResult.isError -> is_error). Reading only the camelCase name made
+    every tool arrive with an empty schema — so the model had no parameters to
+    fill in and every call failed validation — and made isError read as False
+    on results that were errors, reporting failures as successes. Accepting
+    both keeps one action server working against either SDK line.
+    """
+    for n in names:
+        if hasattr(obj, n):
+            value = getattr(obj, n)
+            if value is not None:
+                return value
+    return default
+
+
 class ContainerMcpManager:
-    """Manages MCP server processes inside the container."""
+    """Manages MCP servers reachable from the container.
+
+    Sessions are opened per operation rather than held open across requests.
+
+    The SDK's stdio_client / sse_client and ClientSession are all built on
+    ``anyio.create_task_group()``, and anyio requires a task group to be exited
+    by the same task that entered it. A manager that opened a transport inside
+    the POST /connect request, stashed the context manager, and closed it later
+    from POST /disconnect violated that rule outright. It also never entered
+    ClientSession at all, so BaseSession._receive_loop never ran and the very
+    first initialize() blocked forever waiting for a reply nobody was reading.
+
+    Opening and closing inside one ``async with`` keeps every task group inside
+    a single task, which is the only shape anyio supports here. ``connect`` is
+    therefore a probe: it dials the server, caches the tool/resource/prompt
+    listing, and hangs up. Each later call redials. For stdio that costs one
+    process spawn per call, which is the price of a transport that cannot be
+    parked between requests.
+
+    Remote streamable-HTTP keeps using RawStreamableHttpSession, which is
+    stateless httpx and has no task-group constraint.
+    """
+
+    #: Seconds allowed for initialize() before a server is declared unreachable.
+    #: A stdio server that never speaks used to hang the request forever.
+    DEFAULT_TIMEOUT = 60
 
     def __init__(self):
-        self._servers: dict[str, dict] = {}  # name -> server state
-        self._sessions: dict[str, object] = {}  # name -> ClientSession
-        self._transports: dict[str, object] = {}  # name -> transport context manager
+        self._servers: dict[str, dict] = {}  # name -> {"status", "error"}
         self._tools: dict[str, list[dict]] = {}  # name -> list of tool dicts
         self._resources: dict[str, list[dict]] = {}  # name -> list of resource dicts
         self._prompts: dict[str, list[dict]] = {}  # name -> list of prompt dicts
+        #: Remote servers whose raw HTTP probe failed, so call paths skip
+        #: straight to the SSE transport instead of paying the failure twice.
+        self._remote_transport: dict[str, str] = {}  # name -> "raw" | "sse"
+
+    # -- config persistence --
 
     def _load_config(self) -> dict:
         """Load MCP config from persistent storage."""
@@ -1868,27 +2120,34 @@ class ContainerMcpManager:
         MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MCP_CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
+    def _server_config(self, name: str) -> dict:
+        cfg = self._load_config().get("servers", {}).get(name)
+        if not cfg:
+            raise KeyError(f"MCP server '{name}' not configured")
+        return cfg
+
+    def _timeout(self, cfg: dict) -> float:
+        try:
+            return float(cfg.get("timeout") or self.DEFAULT_TIMEOUT)
+        except (TypeError, ValueError):
+            return float(self.DEFAULT_TIMEOUT)
+
     def list_servers(self) -> list[dict]:
         """List all configured MCP servers with their status."""
         config = self._load_config()
         result = []
         for name, cfg in config.get("servers", {}).items():
-            status = "disconnected"
-            tools = []
-            error = None
-            if name in self._sessions:
-                status = "connected"
-                tools = self._tools.get(name, [])
-            if name in self._servers and self._servers[name].get("error"):
-                status = "error"
-                error = self._servers[name]["error"]
+            state = self._servers.get(name) or {}
+            status = state.get("status", "disconnected")
+            error = state.get("error")
+            connected = status == "connected"
             result.append({
                 "name": name,
                 "type": cfg.get("type", "stdio"),
                 "status": status,
-                "tools": tools,
-                "resources": self._resources.get(name, []) if status == "connected" else [],
-                "prompts": self._prompts.get(name, []) if status == "connected" else [],
+                "tools": self._tools.get(name, []) if connected else [],
+                "resources": self._resources.get(name, []) if connected else [],
+                "prompts": self._prompts.get(name, []) if connected else [],
                 "error": error,
                 "command": cfg.get("command"),
                 "args": cfg.get("args"),
@@ -1910,382 +2169,343 @@ class ContainerMcpManager:
             raise KeyError(f"MCP server '{name}' not found")
         del servers[name]
         self._save_config(full_config)
+        self._forget(name)
 
-    async def connect(self, name: str):
-        """Connect to an MCP server (starts subprocess for stdio type)."""
-        config = self._load_config()
-        server_cfg = config.get("servers", {}).get(name)
-        if not server_cfg:
-            raise KeyError(f"MCP server '{name}' not configured")
+    def _forget(self, name: str) -> None:
+        self._servers.pop(name, None)
+        self._tools.pop(name, None)
+        self._resources.pop(name, None)
+        self._prompts.pop(name, None)
+        self._remote_transport.pop(name, None)
 
-        # Disconnect existing if any
-        if name in self._sessions:
-            await self.disconnect(name)
+    # -- session helpers: every one opens and closes within a single task --
 
-        server_type = server_cfg.get("type", "stdio")
-        try:
-            if server_type == "stdio":
-                await self._connect_stdio(name, server_cfg)
-            elif server_type == "remote":
-                await self._connect_remote(name, server_cfg)
-            else:
-                raise ValueError(f"Unknown MCP server type: {server_type}")
-            self._servers[name] = {"status": "connected", "error": None}
-        except Exception as e:
-            self._servers[name] = {"status": "error", "error": str(e)}
-            raise
-
-    async def _connect_stdio(self, name: str, cfg: dict):
-        """Connect to a stdio MCP server."""
+    @asynccontextmanager
+    async def _stdio_session(self, cfg: dict):
+        """Open a stdio MCP session for the duration of the block."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         command = cfg.get("command", "")
-        args = cfg.get("args", [])
-        env_vars = cfg.get("env", {})
+        if not command:
+            raise ValueError("stdio MCP server requires 'command'")
 
-        # Merge with current env
-        env = dict(os.environ)
-        env.update(env_vars)
+        # The child inherits the action server's environment minus the secrets
+        # it has no business seeing. SESSION_API_KEY authenticates every caller
+        # of this server, so handing it to an arbitrary npx package would let
+        # that package impersonate the backend.
+        env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
+        env.update(cfg.get("env") or {})
 
-        server_params = StdioServerParameters(
-            command=command, args=args, env=env,
+        params = StdioServerParameters(
+            command=command, args=cfg.get("args") or [], env=env,
         )
+        timeout = self._timeout(cfg)
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await asyncio.wait_for(session.initialize(), timeout=timeout)
+                yield session
 
-        transport_ctx = stdio_client(server_params)
-        transport = await transport_ctx.__aenter__()
-        read_stream, write_stream = transport
-
-        session = ClientSession(read_stream, write_stream)
-        await session.initialize()
-
-        # Discover tools
-        tools_resp = await session.list_tools()
-        tool_list = [
-            {
-                "name": t.name,
-                "description": t.description or "",
-                "input_schema": t.inputSchema if hasattr(t, "inputSchema") else {},
-                "server": name,
-            }
-            for t in tools_resp.tools
-        ]
-
-        self._transports[name] = transport_ctx
-        self._sessions[name] = session
-        self._tools[name] = tool_list
-        # Discover resources (best-effort, SDK session)
-        try:
-            res_resp = await session.list_resources()
-            self._resources[name] = [
-                {"uri": str(r.uri), "name": r.name or "", "description": getattr(r, "description", "") or "",
-                 "mimeType": getattr(r, "mimeType", "") or "", "server": name}
-                for r in res_resp.resources
-            ]
-        except Exception:
-            self._resources[name] = []
-        # Discover prompts (best-effort, SDK session)
-        try:
-            pr_resp = await session.list_prompts()
-            self._prompts[name] = [
-                {"name": p.name, "description": p.description or "",
-                 "arguments": [{"name": a.name, "description": getattr(a, "description", "") or "",
-                               "required": getattr(a, "required", False)} for a in (p.arguments or [])],
-                 "server": name}
-                for p in pr_resp.prompts
-            ]
-        except Exception:
-            self._prompts[name] = []
-
-    async def _connect_remote(self, name: str, cfg: dict):
-        """Connect to a remote MCP server via Streamable HTTP.
-
-        Uses a raw HTTP implementation because the MCP SDK's streamablehttp_client
-        has a bug where session.initialize() hangs on certain servers (e.g. Tavily).
-        Falls back to the SDK's SSE client if raw HTTP fails.
-        """
-        import httpx
-
-        url = cfg.get("url", "")
-        if not url:
-            raise ValueError("Remote MCP server requires 'url'")
-
-        extra_headers = cfg.get("headers", {})
-        timeout = cfg.get("timeout", 60)
-
-        # Try raw Streamable HTTP first (works around SDK bug)
-        try:
-            raw_session = RawStreamableHttpSession(url, headers=extra_headers, timeout=timeout)
-            await raw_session.initialize()
-            tools = await raw_session.list_tools()
-            tool_list = [
-                {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "input_schema": t.get("inputSchema", {}),
-                    "server": name,
-                }
-                for t in tools
-            ]
-            self._transports[name] = None  # No context manager to clean up
-            self._sessions[name] = raw_session
-            self._tools[name] = tool_list
-            # Discover resources (best-effort)
-            try:
-                resources = await raw_session.list_resources()
-                self._resources[name] = [
-                    {"uri": r.get("uri", ""), "name": r.get("name", ""), "description": r.get("description", ""),
-                     "mimeType": r.get("mimeType", ""), "server": name}
-                    for r in resources
-                ]
-            except Exception:
-                self._resources[name] = []
-            # Discover prompts (best-effort)
-            try:
-                prompts = await raw_session.list_prompts()
-                self._prompts[name] = [
-                    {"name": p.get("name", ""), "description": p.get("description", ""),
-                     "arguments": p.get("arguments", []), "server": name}
-                    for p in prompts
-                ]
-            except Exception:
-                self._prompts[name] = []
-            return
-        except Exception as e:
-            print(f"[MCP] Raw HTTP failed for '{name}': {e}, trying SDK SSE...")
-
-        # Fall back to SDK SSE client
+    @asynccontextmanager
+    async def _sse_session(self, cfg: dict):
+        """Open an SSE MCP session for the duration of the block."""
         from mcp import ClientSession
         from mcp.client.sse import sse_client
 
-        sse_headers = extra_headers if extra_headers else None
-        transport_ctx = sse_client(url, headers=sse_headers)
-        transport = await transport_ctx.__aenter__()
-        read_stream, write_stream = transport
-        session = ClientSession(read_stream, write_stream)
-        await asyncio.wait_for(session.initialize(), timeout=timeout)
+        url = cfg.get("url", "")
+        headers = cfg.get("headers") or None
+        timeout = self._timeout(cfg)
+        async with sse_client(url, headers=headers) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await asyncio.wait_for(session.initialize(), timeout=timeout)
+                yield session
 
-        tools_resp = await session.list_tools()
-        tool_list = [
-            {
-                "name": t.name,
-                "description": t.description or "",
-                "input_schema": t.inputSchema if hasattr(t, "inputSchema") else {},
-                "server": name,
-            }
-            for t in tools_resp.tools
-        ]
-
-        self._transports[name] = transport_ctx
-        self._sessions[name] = session
-        self._tools[name] = tool_list
-        # Discover resources (best-effort, SDK session)
+    @asynccontextmanager
+    async def _raw_session(self, cfg: dict):
+        """Open a raw streamable-HTTP MCP session for the duration of the block."""
+        url = cfg.get("url", "")
+        session = RawStreamableHttpSession(
+            url, headers=cfg.get("headers") or {}, timeout=int(self._timeout(cfg)),
+        )
         try:
-            res_resp = await session.list_resources()
-            self._resources[name] = [
-                {"uri": str(r.uri), "name": r.name or "", "description": getattr(r, "description", "") or "",
-                 "mimeType": getattr(r, "mimeType", "") or "", "server": name}
-                for r in res_resp.resources
-            ]
-        except Exception:
-            self._resources[name] = []
-        # Discover prompts (best-effort, SDK session)
-        try:
-            pr_resp = await session.list_prompts()
-            self._prompts[name] = [
-                {"name": p.name, "description": p.description or "",
-                 "arguments": [{"name": a.name, "description": getattr(a, "description", "") or "",
-                               "required": getattr(a, "required", False)} for a in (p.arguments or [])],
-                 "server": name}
-                for p in pr_resp.prompts
-            ]
-        except Exception:
-            self._prompts[name] = []
-
-    async def disconnect(self, name: str):
-        """Disconnect from an MCP server."""
-        session = self._sessions.pop(name, None)
-        transport_ctx = self._transports.pop(name, None)
-        self._tools.pop(name, None)
-        self._resources.pop(name, None)
-        self._prompts.pop(name, None)
-
-        # Close RawStreamableHttpSession if applicable
-        if isinstance(session, RawStreamableHttpSession):
+            await asyncio.wait_for(session.initialize(), timeout=self._timeout(cfg))
+            yield session
+        finally:
             try:
                 await session.close()
             except Exception:
                 pass
 
-        if transport_ctx:
-            try:
-                await transport_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
+    @asynccontextmanager
+    async def _session(self, name: str):
+        """Open a session to ``name`` using whichever transport it needs.
 
-        self._servers.pop(name, None)
+        Remote servers try raw streamable HTTP first and fall back to SSE. The
+        winning transport is remembered so later calls do not re-pay a failed
+        probe.
+        """
+        cfg = self._server_config(name)
+        server_type = cfg.get("type", "stdio")
+
+        if server_type == "stdio":
+            async with self._stdio_session(cfg) as session:
+                yield session
+            return
+
+        if server_type != "remote":
+            raise ValueError(f"Unknown MCP server type: {server_type}")
+
+        if not cfg.get("url"):
+            raise ValueError("Remote MCP server requires 'url'")
+
+        preferred = self._remote_transport.get(name)
+        if preferred == "sse":
+            async with self._sse_session(cfg) as session:
+                yield session
+            return
+
+        try:
+            cm = self._raw_session(cfg)
+            session = await cm.__aenter__()
+        except Exception as e:
+            # The raw probe failed before yielding, so nothing needs unwinding
+            # here and SSE is still worth a try.
+            print(f"[MCP] Raw HTTP failed for '{name}': {e}, trying SDK SSE...")
+            self._remote_transport[name] = "sse"
+            async with self._sse_session(cfg) as session:
+                yield session
+            return
+
+        # Past this point the raw session is live; its own context manager owns
+        # cleanup, and a failure inside the body is the caller's, not a reason
+        # to retry on SSE.
+        self._remote_transport[name] = "raw"
+        try:
+            yield session
+        finally:
+            await cm.__aexit__(None, None, None)
+
+    # -- discovery --
+
+    @staticmethod
+    def _tools_from(session, name: str, raw: list | object) -> list[dict]:
+        if isinstance(session, RawStreamableHttpSession):
+            return [
+                {"name": t.get("name", ""), "description": t.get("description", "") or "",
+                 "input_schema": t.get("inputSchema", {}) or {}, "server": name}
+                for t in (raw or [])
+            ]
+        return [
+            {"name": t.name, "description": t.description or "",
+             "input_schema": _mcp_attr(t, "input_schema", "inputSchema", default={}) or {}, "server": name}
+            for t in raw.tools
+        ]
+
+    async def _discover(self, name: str, session) -> None:
+        """Cache the tool/resource/prompt listing for ``name``."""
+        is_raw = isinstance(session, RawStreamableHttpSession)
+
+        raw_tools = await (session.list_tools() if is_raw else session.list_tools())
+        self._tools[name] = self._tools_from(session, name, raw_tools)
+
+        # Resources and prompts are optional in the protocol; a server that does
+        # not implement them answers with an error, which is not a connect
+        # failure. Tools have already been cached by this point.
+        try:
+            res = await session.list_resources()
+            if is_raw:
+                self._resources[name] = [
+                    {"uri": r.get("uri", ""), "name": r.get("name", ""),
+                     "description": r.get("description", ""),
+                     "mimeType": r.get("mimeType", ""), "server": name}
+                    for r in (res or [])
+                ]
+            else:
+                self._resources[name] = [
+                    {"uri": str(r.uri), "name": r.name or "",
+                     "description": getattr(r, "description", "") or "",
+                     "mimeType": _mcp_attr(r, "mime_type", "mimeType", default="") or "", "server": name}
+                    for r in res.resources
+                ]
+        except Exception:
+            self._resources[name] = []
+
+        try:
+            pr = await session.list_prompts()
+            if is_raw:
+                self._prompts[name] = [
+                    {"name": p.get("name", ""), "description": p.get("description", ""),
+                     "arguments": p.get("arguments", []), "server": name}
+                    for p in (pr or [])
+                ]
+            else:
+                self._prompts[name] = [
+                    {"name": p.name, "description": p.description or "",
+                     "arguments": [
+                         {"name": a.name, "description": getattr(a, "description", "") or "",
+                          "required": getattr(a, "required", False)}
+                         for a in (p.arguments or [])
+                     ],
+                     "server": name}
+                    for p in pr.prompts
+                ]
+        except Exception:
+            self._prompts[name] = []
+
+    async def connect(self, name: str):
+        """Probe an MCP server and cache what it offers.
+
+        Nothing stays open afterwards — 'connected' means the last probe
+        succeeded and the cached listing is usable.
+        """
+        self._server_config(name)  # raises KeyError when unknown
+        try:
+            async with self._session(name) as session:
+                await self._discover(name, session)
+            self._servers[name] = {"status": "connected", "error": None}
+        except asyncio.TimeoutError:
+            self._servers[name] = {
+                "status": "error",
+                "error": "Timed out waiting for the MCP server to initialize",
+            }
+            self._tools.pop(name, None)
+            raise
+        except Exception as e:
+            self._servers[name] = {"status": "error", "error": str(e)}
+            self._tools.pop(name, None)
+            raise
+
+    async def disconnect(self, name: str):
+        """Drop a server's cached listing and mark it disconnected.
+
+        No live resources are held between requests, so there is nothing to
+        close here.
+        """
+        self._forget(name)
 
     def get_all_tools(self) -> list[dict]:
         """Get all tools from all connected servers."""
         all_tools = []
-        for tools in self._tools.values():
-            all_tools.extend(tools)
+        for name, tools in self._tools.items():
+            if (self._servers.get(name) or {}).get("status") == "connected":
+                all_tools.extend(tools)
         return all_tools
+
+    def _require_connected(self, name: str) -> None:
+        if (self._servers.get(name) or {}).get("status") != "connected":
+            raise KeyError(f"MCP server '{name}' is not connected")
 
     async def call_tool(self, server_name: str, tool_name: str, arguments: dict) -> dict:
         """Call a tool on a connected MCP server."""
-        session = self._sessions.get(server_name)
-        if not session:
-            raise KeyError(f"MCP server '{server_name}' is not connected")
+        self._require_connected(server_name)
+        async with self._session(server_name) as session:
+            if isinstance(session, RawStreamableHttpSession):
+                result = await session.call_tool(tool_name, arguments)
+                content_parts = []
+                for part in result.get("content", []):
+                    if isinstance(part, dict):
+                        content_parts.append(part)
+                    else:
+                        content_parts.append({"type": "text", "text": str(part)})
+                return {"content": content_parts, "isError": result.get("isError", False)}
 
-        # RawStreamableHttpSession returns plain dicts
-        if isinstance(session, RawStreamableHttpSession):
             result = await session.call_tool(tool_name, arguments)
             content_parts = []
-            for part in result.get("content", []):
-                if isinstance(part, dict):
-                    content_parts.append(part)
+            for part in result.content:
+                if hasattr(part, "text"):
+                    content_parts.append({"type": "text", "text": part.text})
+                elif hasattr(part, "data"):
+                    content_parts.append({"type": "resource", "data": str(part.data)})
                 else:
-                    content_parts.append({"type": "text", "text": str(part)})
-            return {
-                "content": content_parts,
-                "isError": result.get("isError", False),
-            }
-
-        # SDK ClientSession returns typed objects
-        result = await session.call_tool(tool_name, arguments)
-        content_parts = []
-        for part in result.content:
-            if hasattr(part, "text"):
-                content_parts.append({"type": "text", "text": part.text})
-            elif hasattr(part, "data"):
-                content_parts.append({"type": "resource", "data": str(part.data)})
-            else:
-                content_parts.append({"type": "unknown", "value": str(part)})
-        return {
-            "content": content_parts,
-            "isError": getattr(result, "isError", False),
-        }
+                    content_parts.append({"type": "unknown", "value": str(part)})
+            return {"content": content_parts,
+                    "isError": bool(_mcp_attr(result, "is_error", "isError", default=False))}
 
     def get_all_resources(self) -> list[dict]:
         """Get all resources from all connected servers."""
         all_res = []
-        for res in self._resources.values():
-            all_res.extend(res)
+        for name, res in self._resources.items():
+            if (self._servers.get(name) or {}).get("status") == "connected":
+                all_res.extend(res)
         return all_res
 
     async def read_resource(self, server_name: str, uri: str) -> dict:
         """Read a resource from a connected MCP server."""
-        session = self._sessions.get(server_name)
-        if not session:
-            raise KeyError(f"MCP server '{server_name}' is not connected")
-        if isinstance(session, RawStreamableHttpSession):
-            return await session.read_resource(uri)
-        result = await session.read_resource(uri)
-        contents = []
-        for part in result.contents:
-            if hasattr(part, "text"):
-                contents.append({"uri": str(part.uri), "text": part.text, "mimeType": getattr(part, "mimeType", "")})
-            elif hasattr(part, "blob"):
-                contents.append({"uri": str(part.uri), "blob": part.blob, "mimeType": getattr(part, "mimeType", "")})
-            else:
-                contents.append({"uri": str(part.uri), "text": str(part)})
-        return {"contents": contents}
+        self._require_connected(server_name)
+        async with self._session(server_name) as session:
+            if isinstance(session, RawStreamableHttpSession):
+                return await session.read_resource(uri)
+            result = await session.read_resource(uri)
+            contents = []
+            for part in result.contents:
+                if hasattr(part, "text"):
+                    contents.append({"uri": str(part.uri), "text": part.text,
+                                     "mimeType": _mcp_attr(part, "mime_type", "mimeType", default="")})
+                elif hasattr(part, "blob"):
+                    contents.append({"uri": str(part.uri), "blob": part.blob,
+                                     "mimeType": _mcp_attr(part, "mime_type", "mimeType", default="")})
+                else:
+                    contents.append({"uri": str(part.uri), "text": str(part)})
+            return {"contents": contents}
 
     def get_all_prompts(self) -> list[dict]:
         """Get all prompts from all connected servers."""
         all_pr = []
-        for pr in self._prompts.values():
-            all_pr.extend(pr)
+        for name, pr in self._prompts.items():
+            if (self._servers.get(name) or {}).get("status") == "connected":
+                all_pr.extend(pr)
         return all_pr
 
     async def get_prompt(self, server_name: str, prompt_name: str, arguments: dict | None = None) -> dict:
         """Get a prompt from a connected MCP server."""
-        session = self._sessions.get(server_name)
-        if not session:
-            raise KeyError(f"MCP server '{server_name}' is not connected")
-        if isinstance(session, RawStreamableHttpSession):
-            return await session.get_prompt(prompt_name, arguments)
-        result = await session.get_prompt(prompt_name, arguments)
-        messages = []
-        for msg in result.messages:
-            parts = []
-            content = msg.content
-            if isinstance(content, list):
-                for p in content:
-                    if hasattr(p, "text"):
-                        parts.append({"type": "text", "text": p.text})
-            elif hasattr(content, "text"):
-                parts.append({"type": "text", "text": content.text})
-            messages.append({"role": msg.role, "content": parts})
-        return {"messages": messages}
+        self._require_connected(server_name)
+        async with self._session(server_name) as session:
+            if isinstance(session, RawStreamableHttpSession):
+                return await session.get_prompt(prompt_name, arguments)
+            result = await session.get_prompt(prompt_name, arguments)
+            messages = []
+            for msg in result.messages:
+                parts = []
+                content = msg.content
+                if isinstance(content, list):
+                    for p in content:
+                        if hasattr(p, "text"):
+                            parts.append({"type": "text", "text": p.text})
+                elif hasattr(content, "text"):
+                    parts.append({"type": "text", "text": content.text})
+                messages.append({"role": msg.role, "content": parts})
+            return {"messages": messages}
 
     async def refresh_server(self, name: str) -> dict:
         """Re-fetch tools/resources/prompts from a connected server."""
-        session = self._sessions.get(name)
-        if not session:
-            raise KeyError(f"MCP server '{name}' is not connected")
+        self._require_connected(name)
         old_tools = len(self._tools.get(name, []))
-        # Refresh tools
-        if isinstance(session, RawStreamableHttpSession):
-            tools = await session.list_tools()
-            self._tools[name] = [
-                {"name": t["name"], "description": t.get("description", ""),
-                 "input_schema": t.get("inputSchema", {}), "server": name}
-                for t in tools
-            ]
-            try:
-                resources = await session.list_resources()
-                self._resources[name] = [
-                    {"uri": r.get("uri", ""), "name": r.get("name", ""), "description": r.get("description", ""),
-                     "mimeType": r.get("mimeType", ""), "server": name}
-                    for r in resources
-                ]
-            except Exception:
-                pass
-            try:
-                prompts = await session.list_prompts()
-                self._prompts[name] = [
-                    {"name": p.get("name", ""), "description": p.get("description", ""),
-                     "arguments": p.get("arguments", []), "server": name}
-                    for p in prompts
-                ]
-            except Exception:
-                pass
-        else:
-            tools_resp = await session.list_tools()
-            self._tools[name] = [
-                {"name": t.name, "description": t.description or "",
-                 "input_schema": t.inputSchema if hasattr(t, "inputSchema") else {},
-                 "server": name}
-                for t in tools_resp.tools
-            ]
-            try:
-                res_resp = await session.list_resources()
-                self._resources[name] = [
-                    {"uri": str(r.uri), "name": r.name or "", "description": getattr(r, "description", "") or "",
-                     "mimeType": getattr(r, "mimeType", "") or "", "server": name}
-                    for r in res_resp.resources
-                ]
-            except Exception:
-                pass
-            try:
-                pr_resp = await session.list_prompts()
-                self._prompts[name] = [
-                    {"name": p.name, "description": p.description or "",
-                     "arguments": [{"name": a.name, "description": getattr(a, "description", "") or "",
-                                   "required": getattr(a, "required", False)} for a in (p.arguments or [])],
-                     "server": name}
-                    for p in pr_resp.prompts
-                ]
-            except Exception:
-                pass
+        async with self._session(name) as session:
+            await self._discover(name, session)
         return {
             "tools": len(self._tools.get(name, [])),
             "resources": len(self._resources.get(name, [])),
             "prompts": len(self._prompts.get(name, [])),
             "tools_changed": old_tools != len(self._tools.get(name, [])),
         }
+
+    async def reconnect_configured(self) -> None:
+        """Reconnect every configured server, as a background startup task.
+
+        Runs after the app is serving rather than inside lifespan setup: a
+        server that is slow or gone must not hold the container's startup, and
+        each failure is recorded for the UI instead of raised.
+        """
+        names = list(self._load_config().get("servers", {}).keys())
+        if not names:
+            return
+        print(f"[MCP] Reconnecting {len(names)} configured server(s)...")
+        for name in names:
+            try:
+                await self.connect(name)
+                print(f"[MCP] Reconnected '{name}' ({len(self._tools.get(name, []))} tools)")
+            except Exception as e:
+                print(f"[MCP] Reconnect failed for '{name}': {e}")
 
 
 # Singleton MCP manager
@@ -2323,10 +2543,9 @@ async def add_mcp_server(req: AddMcpServerRequest):
 @app.delete("/mcp/servers/{name}")
 async def remove_mcp_server(name: str):
     """Remove an MCP server configuration."""
-    # Disconnect first if connected
-    if name in mcp_manager._sessions:
-        await mcp_manager.disconnect(name)
     try:
+        # remove_server drops the cached listing too; nothing is held open
+        # between requests, so there is no session to close first.
         mcp_manager.remove_server(name)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
@@ -2369,10 +2588,26 @@ async def call_mcp_tool(server_name: str, tool_name: str, req: CallMcpToolReques
     except Exception as e:
         # Return MCP errors as tool results (isError=true) instead of HTTP 500.
         # This lets the LLM see the error and decide how to handle it.
-        return {
-            "content": [{"type": "text", "text": f"MCP tool error: {e}"}],
-            "isError": True,
-        }
+        #
+        # Timeouts and connection errors stringify to nothing, so interpolating
+        # them produced "MCP tool error:" and stopped — the one case where the
+        # model most needs to know whether to retry or change approach.
+        import httpx as _httpx
+
+        if isinstance(e, (asyncio.TimeoutError, _httpx.TimeoutException)):
+            text = (
+                f"MCP tool '{tool_name}' on server '{server_name}' timed out. "
+                f"The server did not answer within its configured timeout. "
+                f"Try a narrower request, or a tool that returns less."
+            )
+        elif isinstance(e, _httpx.HTTPError):
+            text = (
+                f"Could not reach MCP server '{server_name}': "
+                f"{str(e).strip() or type(e).__name__}"
+            )
+        else:
+            text = f"MCP tool error: {str(e).strip() or type(e).__name__}"
+        return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
 @app.get("/mcp/resources")

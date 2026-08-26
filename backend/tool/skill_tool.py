@@ -233,15 +233,9 @@ skill_tool = define_tool(
 # A frontmatter description is a one-line trigger hint by design — enough for the
 # model to decide whether to load the skill, which is when the real content
 # arrives. Anything past that is paid for on every request and read on none.
-MAX_DESCRIPTION_CHARS = 500
+from core.markdown import MAX_DESCRIPTION_CHARS, clip_description as _clip
+
 LISTING_BUDGET_TOKENS = 2_000
-
-
-def _clip(text: str, limit: int = MAX_DESCRIPTION_CHARS) -> str:
-    text = " ".join((text or "").split())
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + "…"
 
 
 def _permitted(skills: list[dict], ruleset: list) -> list[dict]:

@@ -38,7 +38,10 @@ export function useStartChat(
         sessionId = session.id
       } catch (err) {
         toast("error", errorMessage(err))
-        return
+        // Rethrow so the composer knows the send never happened and can put
+        // the draft back. Swallowing it here left an empty box that read as
+        // "sent".
+        throw err
       }
 
       const clientMessageId = makeClientId()
@@ -58,6 +61,7 @@ export function useStartChat(
       } catch (err) {
         useStreamStore.getState().setStatus(sessionId, "idle")
         toast("error", errorMessage(err))
+        throw err
       }
     },
     [create, onSession, errorMessage],

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
-import { Clock, FolderPlus, Layers, PanelLeft, Plus, Search } from "lucide-react"
+import { Blocks, Clock, FolderPlus, Layers, PanelLeft, Plus, Search } from "lucide-react"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
@@ -133,6 +133,17 @@ export function Sidebar() {
             <Layers size={16} strokeWidth={2.1} />
           </span>
           {t("resourceCenter")}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigate(paths.skills)}
+          className="flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
+        >
+          <span className="flex size-7 flex-none items-center justify-center">
+            <Blocks size={16} strokeWidth={2.1} />
+          </span>
+          {t("skillCenter")}
         </button>
 
         <button

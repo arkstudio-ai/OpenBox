@@ -3,6 +3,13 @@
 Each check function raises HTTPException(429) if the user has exceeded
 their quota.  The *config* parameter is an ``OpenBoxConfig`` instance
 that carries the per-user limits.
+
+Every refusal carries a machine-readable ``code`` and the two numbers behind
+it. All three quotas used to answer with a bare 429 and prose, so the browser
+could not tell "you have too many conversations" from "too many agents are
+running" — and neither of those from a model failing. The code picks the copy;
+the numbers let it say how far over the line the person is, which is the part
+that tells them what to do.
 """
 from __future__ import annotations
 
@@ -11,6 +18,15 @@ from fastapi import HTTPException
 from core.log import create_logger
 
 log = create_logger("auth.quota")
+
+
+def _quota_error(code: str, message: str, used: int, limit: int) -> HTTPException:
+    """A 429 the frontend can map to specific copy rather than a generic one."""
+    return HTTPException(
+        status_code=429,
+        detail={"code": code, "message": message, "used": used, "limit": limit},
+        headers={"X-Error-Code": code},
+    )
 
 
 async def check_container_quota(user_id: str, config) -> None:
@@ -23,9 +39,10 @@ async def check_container_quota(user_id: str, config) -> None:
 
     if count >= limit:
         log.warning(f"User {user_id} hit container quota ({count}/{limit})")
-        raise HTTPException(
-            status_code=429,
-            detail=f"Container quota exceeded: {count}/{limit} containers in use.",
+        raise _quota_error(
+            "CONTAINER_QUOTA_EXCEEDED",
+            f"Container quota exceeded: {count}/{limit} containers in use.",
+            count, limit,
         )
 
 
@@ -39,9 +56,10 @@ async def check_session_quota(user_id: str, config) -> None:
 
     if count >= limit:
         log.warning(f"User {user_id} hit session quota ({count}/{limit})")
-        raise HTTPException(
-            status_code=429,
-            detail=f"Session quota exceeded: {count}/{limit} sessions.",
+        raise _quota_error(
+            "SESSION_QUOTA_EXCEEDED",
+            f"Session quota exceeded: {count}/{limit} sessions.",
+            count, limit,
         )
 
 
@@ -55,9 +73,10 @@ async def check_concurrent_agents(user_id: str, config) -> None:
 
     if busy >= limit:
         log.warning(f"User {user_id} hit concurrent agent quota ({busy}/{limit})")
-        raise HTTPException(
-            status_code=429,
-            detail=f"Concurrent agent quota exceeded: {busy}/{limit} agents running.",
+        raise _quota_error(
+            "CONCURRENT_AGENT_QUOTA_EXCEEDED",
+            f"Concurrent agent quota exceeded: {busy}/{limit} agents running.",
+            busy, limit,
         )
 
 

@@ -1,6 +1,7 @@
 """MCP tool wrapper: dynamically create ToolInfo for MCP tools from container."""
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, ClassVar
 
@@ -12,6 +13,36 @@ from tool.tool import ToolInfo, ToolResult, ToolContext
 log = create_logger("tool.mcp")
 
 MAX_TOOL_NAME_LEN = 64
+
+
+def _describe_failure(e: Exception, server: str, tool: str) -> str:
+    """Explain a failed MCP call to the model in terms it can act on.
+
+    Several of the exceptions this path sees stringify to nothing at all —
+    httpx.ReadTimeout is the common one — so interpolating str(e) produced
+    "Failed to call MCP tool:" and stopped. That tells the model no more than
+    silence would, and it is exactly the case where the model most needs to
+    know whether to retry, use a different tool, or give up.
+    """
+    import httpx
+
+    if isinstance(e, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout,
+                      asyncio.TimeoutError)):
+        return (
+            f"MCP tool {server}/{tool} timed out. The server did not answer in time.\n"
+            f"This tool may be too slow for a single call — try a narrower request, "
+            f"or a different tool that returns less."
+        )
+    if isinstance(e, httpx.ConnectError):
+        return (
+            f"Could not reach the MCP server '{server}'. It may be disconnected — "
+            f"check the skill centre, or reconnect it and retry."
+        )
+
+    detail = str(e).strip()
+    # Fall back to the type when the message is empty, so the reader always has
+    # a name to search for.
+    return f"MCP tool {server}/{tool} failed: {detail or type(e).__name__}"
 
 
 def _sanitize_tool_name(server: str, name: str) -> str:
@@ -154,10 +185,12 @@ def _make_mcp_executor(server_name: str, tool_name: str):
                 output=raw_output,
             )
         except Exception as e:
-            log.error(f"MCP tool {server_name}/{tool_name} failed: {e}", exc_info=True)
+            log.error(
+                f"MCP tool {server_name}/{tool_name} failed: {e!r}", exc_info=True
+            )
             return ToolResult(
                 title=f"MCP tool error: {tool_name}",
-                output=f"Failed to call MCP tool: {e}",
+                output=_describe_failure(e, server_name, tool_name),
             )
 
     return executor
@@ -570,7 +603,11 @@ def _create_meta_tools(mcp_tools: list[dict], sandbox_ref) -> dict[str, ToolInfo
                 output=raw_output,
             )
         except Exception as e:
-            return ToolResult(title=f"MCP call failed: {tool_name}", output=str(e))
+            log.error(f"MCP tool {server}/{tool_name} failed: {e!r}", exc_info=True)
+            return ToolResult(
+                title=f"MCP call failed: {tool_name}",
+                output=_describe_failure(e, server, tool_name),
+            )
 
     call_tool = ToolInfo(
         id="mcp_call_tool",

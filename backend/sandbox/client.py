@@ -16,6 +16,13 @@ from core.log import create_logger
 
 log = create_logger("sandbox.client")
 
+#: Backstop for an MCP tool call, in seconds.
+#: Deliberately well above the container's own per-server timeout (60s by
+#: default) so that the container decides when a server has taken too long and
+#: can say so. An outer budget equal to the inner one just races it and
+#: replaces a useful message with a timeout.
+MCP_CALL_TIMEOUT_SECONDS = 180.0
+
 _PROCESS_INSTANCE_ID = (
     os.environ.get("OPENBOX_INSTANCE_ID", "").strip()
     or f"{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(4)}"
@@ -461,10 +468,22 @@ class SandboxClient:
         return await self._get("/mcp/tools")
 
     async def call_mcp_tool(self, server: str, tool: str, arguments: dict) -> dict:
-        """Call a tool on a connected MCP server."""
+        """Call a tool on a connected MCP server.
+
+        The budget here has to exceed the container's own per-server timeout,
+        which defaults to 60s. When both were 60s the two expired together, so
+        the container's explanation never made it back — the caller got a bare
+        httpx.ReadTimeout, which stringifies to nothing.
+
+        The container is the layer that knows which server it is talking to and
+        what that server's limit is, so it should be the one to give up first.
+        This is only a backstop against the container itself hanging. A remote
+        call also costs two round trips under the per-operation session model
+        (initialize, then the call), so 60s was not even the real ceiling.
+        """
         return await self._post(
             f"/mcp/tools/{server}/{tool}",
-            timeout=60.0,
+            timeout=MCP_CALL_TIMEOUT_SECONDS,
             json={"arguments": arguments},
         )
 

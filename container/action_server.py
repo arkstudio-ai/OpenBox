@@ -2588,10 +2588,26 @@ async def call_mcp_tool(server_name: str, tool_name: str, req: CallMcpToolReques
     except Exception as e:
         # Return MCP errors as tool results (isError=true) instead of HTTP 500.
         # This lets the LLM see the error and decide how to handle it.
-        return {
-            "content": [{"type": "text", "text": f"MCP tool error: {e}"}],
-            "isError": True,
-        }
+        #
+        # Timeouts and connection errors stringify to nothing, so interpolating
+        # them produced "MCP tool error:" and stopped — the one case where the
+        # model most needs to know whether to retry or change approach.
+        import httpx as _httpx
+
+        if isinstance(e, (asyncio.TimeoutError, _httpx.TimeoutException)):
+            text = (
+                f"MCP tool '{tool_name}' on server '{server_name}' timed out. "
+                f"The server did not answer within its configured timeout. "
+                f"Try a narrower request, or a tool that returns less."
+            )
+        elif isinstance(e, _httpx.HTTPError):
+            text = (
+                f"Could not reach MCP server '{server_name}': "
+                f"{str(e).strip() or type(e).__name__}"
+            )
+        else:
+            text = f"MCP tool error: {str(e).strip() or type(e).__name__}"
+        return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
 @app.get("/mcp/resources")

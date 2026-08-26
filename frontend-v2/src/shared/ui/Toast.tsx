@@ -106,7 +106,7 @@ function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) 
       role={item.kind === "error" ? "alert" : "status"}
       aria-live={item.kind === "error" ? "assertive" : "polite"}
       className={cn(
-        "pointer-events-auto animate-fade-up w-full overflow-hidden rounded-2xl border border-hair",
+        "pointer-events-auto animate-fade-down w-full overflow-hidden rounded-2xl border border-hair",
         "bg-card shadow-pop",
       )}
     >
@@ -141,11 +141,16 @@ export function ToastHost() {
     <div
       className={cn(
         "pointer-events-none fixed z-60 flex flex-col items-center gap-2",
-        // Narrow screens: a full-width column inset from both edges, clear of
-        // the home indicator. Wider ones: a centred column that stops growing,
-        // so a long message wraps instead of spanning the display.
-        "inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))]",
-        "sm:inset-x-0 sm:bottom-6 sm:mx-auto sm:max-w-[26rem]",
+        // Top, not bottom: the composer and its send button live along the
+        // bottom edge, and a toast landing there covered the very control the
+        // person had just pressed — including the draft it was telling them
+        // had been kept.
+        //
+        // Narrow screens: a full-width column inset from both edges, below the
+        // status bar. Wider ones: a centred column that stops growing, so a
+        // long message wraps instead of spanning the display.
+        "inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))]",
+        "sm:inset-x-0 sm:top-4 sm:mx-auto sm:max-w-[26rem]",
       )}
     >
       {items.map((item) => (

@@ -12,7 +12,7 @@
   "AUTH_USER_EXISTS": "该账号已存在。",
   "SESSION_BUSY": "会话正在运行中，请稍候。",
   "HTTP_429": "请求过于频繁，请稍后再试。",
-  "SESSION_QUOTA_EXCEEDED": "对话数量已达上限（{{used}}/{{limit}}），无法新建对话。请删除一些不再需要的旧对话后重试——已有对话可以继续聊。",
-  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "同时运行的任务已达上限（{{used}}/{{limit}}）。请等正在跑的任务结束，或先停掉其中一个。",
-  "CONTAINER_QUOTA_EXCEEDED": "沙箱数量已达上限（{{used}}/{{limit}}）。请先释放一个不用的沙箱。"
+  "SESSION_QUOTA_EXCEEDED": "对话已满（{{used}}/{{limit}}），请删除旧对话。",
+  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "任务并发已满（{{used}}/{{limit}}），请稍候。",
+  "CONTAINER_QUOTA_EXCEEDED": "沙箱已满（{{used}}/{{limit}}），请释放一个。"
 }

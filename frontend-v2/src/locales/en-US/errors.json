@@ -12,7 +12,7 @@
   "AUTH_USER_EXISTS": "That account already exists.",
   "SESSION_BUSY": "The session is still running — hold on.",
   "HTTP_429": "Too many requests. Please try again shortly.",
-  "SESSION_QUOTA_EXCEEDED": "You have reached the conversation limit ({{used}}/{{limit}}), so a new one cannot start. Delete some old conversations and try again — existing ones still work.",
-  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "Too many tasks are running at once ({{used}}/{{limit}}). Wait for one to finish, or stop one.",
-  "CONTAINER_QUOTA_EXCEEDED": "You have reached the sandbox limit ({{used}}/{{limit}}). Release one you are not using."
+  "SESSION_QUOTA_EXCEEDED": "Conversations full ({{used}}/{{limit}}). Delete some old ones.",
+  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "Too many tasks running ({{used}}/{{limit}}). Please wait.",
+  "CONTAINER_QUOTA_EXCEEDED": "Sandboxes full ({{used}}/{{limit}}). Release one."
 }

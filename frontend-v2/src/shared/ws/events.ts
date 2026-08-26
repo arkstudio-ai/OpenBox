@@ -14,7 +14,7 @@ export interface WsEventMap {
   "__connected": Record<string, never>
   "__disconnected": Record<string, never>
 
-  "session.status": { sessionId: string; status: SessionStatus }
+  "session.status": { sessionId: string; status: SessionStatus ; attempt?: number; maxAttempts?: number }
   "session.finalizing": { sessionId: string }
   "session.error": { sessionId: string; error?: { message?: string; code?: string } }
   "session.title": { sessionId: string; title: string }

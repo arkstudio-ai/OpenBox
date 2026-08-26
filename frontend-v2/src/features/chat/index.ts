@@ -1,5 +1,6 @@
 // Public surface of the chat feature — only what the workspace routes consume.
 export { ChatFlow } from "./components/ChatFlow"
+export { RunErrorNotice } from "./components/RunErrorNotice"
 export { Composer } from "./components/Composer"
 export { EmptyState } from "./components/EmptyState"
 export { PermissionCard } from "./components/PermissionCard"

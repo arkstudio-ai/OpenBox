@@ -674,8 +674,12 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                         f"(attempt {llm_retry_count}/{MAX_LLM_RETRIES}): "
                         f"{result.retry_reason}. Retrying in {delay:.1f}s"
                     )
+                    # Carry the attempt so the waiting turn can say which try
+                    # it is on. A silent "retry" status is indistinguishable
+                    # from a slow model, and a run can spend a minute here.
                     bus.publish(SESSION_STATUS, {
                         "userId": user_id, "sessionId": session_id, "status": "retry",
+                        "attempt": llm_retry_count, "maxAttempts": MAX_LLM_RETRIES,
                     })
                     await asyncio.sleep(delay)
                     step -= 1  # a retried attempt is not a step
@@ -683,7 +687,14 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 log.error(f"LLM error in session {session_id} after {llm_retry_count} retries: {result.error}")
                 bus.publish(SESSION_ERROR, {
                     "userId": user_id, "sessionId": session_id,
-                    "error": {"message": result.error or "LLM request failed"},
+                    "error": {
+                        "code": "LLM_UNAVAILABLE",
+                        # Kept for the log and for support, but the client shows
+                        # copy chosen from the code — a raw
+                        # "litellm.ServiceUnavailableError: OpenAIException ..."
+                        # is a stack trace wearing a message's clothes.
+                        "message": result.error or "LLM request failed",
+                    },
                 })
                 break
 

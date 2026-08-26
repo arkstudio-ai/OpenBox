@@ -25,6 +25,7 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
       const store = useStreamStore.getState()
       store.addMessage(sessionId, optimisticUserMessage(sessionId, trimmed, clientMessageId))
       store.setStatus(sessionId, "busy")
+      store.clearRunError(sessionId)
       const vars: SendMessageVars = {
         text: trimmed,
         model: opts?.model,

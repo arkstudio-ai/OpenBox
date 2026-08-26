@@ -54,10 +54,12 @@ interface Props {
   footer?: ReactNode
   /** Abort the run; the live turn's task card offers it. */
   onStop?: () => void
+  /** Set while a stalled run is retrying, so the wait can say which try. */
+  retry?: { attempt: number; maxAttempts: number }
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, footer, onStop }: Props) {
+export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -86,16 +88,17 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop }: Props) {
             meta={turn.meta}
             sessionId={sessionId}
             streaming={busy && i === turns.length - 1}
+            retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
             todoEditable={turn.key === lastTodoKey}
           />
         ),
     }))
     if (busy && turns.length > 0 && turns[turns.length - 1].kind === "user") {
-      list.push({ key: "typing", node: <TypingRow /> })
+      list.push({ key: "typing", node: <TypingRow retry={retry} /> })
     }
     return list
-  }, [turns, sessionId, busy, onStop, lastTodoKey])
+  }, [turns, sessionId, busy, onStop, lastTodoKey, retry])
 
   const atBottomRef = useRef(true)
   const onScroll = useCallback(() => {

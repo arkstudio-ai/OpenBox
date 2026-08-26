@@ -3,6 +3,8 @@
 // permission/question prompts land in the pending store; a reconnect refetches
 // the current session snapshot and the pending lists it may have missed.
 import { useEffect } from "react"
+import { useTranslation } from "react-i18next"
+import { toast } from "@/shared/ui/Toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { wsClient } from "@/shared/ws/client"
 import { chatKeys } from "../api/keys"
@@ -10,9 +12,28 @@ import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
 import { useStreamStore } from "../stores/stream"
 
+/** Copy for a run that ended in failure.
+ *
+ * Prefers a known code, falls back to whatever the server said, and only then
+ * to the generic line — the upstream reason ("Configured account requires
+ * re-authentication") is the one thing that tells someone what to fix.
+ */
+function useRunFailureMessage() {
+  const { t } = useTranslation("errors")
+  return (error?: { message?: string; code?: string }): string => {
+    if (error?.code) {
+      const byCode = t(error.code, { defaultValue: "" })
+      if (byCode) return byCode
+    }
+    const detail = error?.message?.trim()
+    return detail || t("runFailed")
+  }
+}
+
 export function useChatEvents(sessionId: string): void {
   const qc = useQueryClient()
   const userId = useUserId()
+  const runFailureMessage = useRunFailureMessage()
 
   useEffect(() => {
     // Ensure the socket is up while a chat is open (idempotent; never disconnects
@@ -37,6 +58,11 @@ export function useChatEvents(sessionId: string): void {
       wsClient.on("tool.error", (d) => stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)),
       wsClient.on("session.status", (d) => {
         stream.setStatus(d.sessionId, d.status)
+        // A fresh run supersedes whatever the last one failed with.
+        if (d.status === "busy") stream.clearRunError(d.sessionId)
+        if (d.status === "retry" && d.attempt) {
+          stream.setRetry(d.sessionId, d.attempt, d.maxAttempts ?? d.attempt)
+        }
         qc.setQueryData(["session", userId, d.sessionId], (old: object | undefined) =>
           old ? { ...old, status: d.status } : old,
         )
@@ -47,7 +73,16 @@ export function useChatEvents(sessionId: string): void {
         }
       }),
       wsClient.on("session.finalizing", (d) => stream.setStatus(d.sessionId, "finalizing")),
-      wsClient.on("session.error", (d) => stream.setStatus(d.sessionId, "error")),
+      wsClient.on("session.error", (d) => {
+        stream.setStatus(d.sessionId, "error")
+        // Say it twice, deliberately. The toast is what someone sees if they
+        // are looking; the line above the composer is what remains for someone
+        // who was not, or who dismissed the toast — without it, a failed run
+        // leaves a screen that looks exactly like a working one.
+        const message = runFailureMessage(d.error)
+        toast("error", message)
+        stream.setRunError(d.sessionId, message)
+      }),
       wsClient.on("session.title", () => void qc.invalidateQueries({ queryKey: ["sessions", userId] })),
       // Also the single session, not just the sidebar list: the composer's
       // mode picker reads that record, and the agent changes underneath it
@@ -76,5 +111,5 @@ export function useChatEvents(sessionId: string): void {
     return () => {
       for (const off of offs) off()
     }
-  }, [qc, userId, sessionId])
+  }, [qc, userId, sessionId, runFailureMessage])
 }

@@ -7,6 +7,7 @@ import type { MessageWithParts, PermissionRequest, QuestionRequest } from "@/sha
 import {
   ChatFlow,
   Composer,
+  RunErrorNotice,
   PermissionCard,
   QuestionDock,
   isBusyStatus,
@@ -35,6 +36,8 @@ export default function ChatRoute() {
 
   const session = useSessionQuery(sessionId)
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))
+  const retry = useStreamStore((s) => s.retry.get(sessionId))
+  const runError = useStreamStore((s) => s.runError.get(sessionId))
   const recoveredStatus = liveStatus ?? session.data?.status
   const messagesQ = useMessagesQuery(sessionId, isBusyStatus(recoveredStatus))
   const permsQ = usePermissionsQuery()
@@ -125,13 +128,19 @@ export default function ChatRoute() {
           <Spinner className="size-6" />
         </div>
       ) : (
-        <ChatFlow turns={turns} sessionId={sessionId} busy={busy} footer={footer} onStop={stop} />
+        <ChatFlow turns={turns} sessionId={sessionId} busy={busy} footer={footer} onStop={stop} retry={retry} />
       )}
       {/* Above the composer, outside the scroll area: the run is blocked on
           this, so it must not be scrollable away while the agent waits. */}
       {questions.map((q) => (
         <QuestionDock key={q.id} request={q} />
       ))}
+      {runError && (
+        <RunErrorNotice
+          message={runError}
+          onDismiss={() => useStreamStore.getState().clearRunError(sessionId)}
+        />
+      )}
       <Composer
         busy={busy}
         onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}

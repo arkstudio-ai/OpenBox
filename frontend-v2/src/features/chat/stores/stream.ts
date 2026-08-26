@@ -18,6 +18,10 @@ interface StreamState {
   messages: MsgMap
   /** Live session status, fed by WS session.status + optimistic send. */
   status: Map<string, SessionStatus>
+  /** Which retry a stalled run is on, so the wait can account for itself. */
+  retry: Map<string, { attempt: number; maxAttempts: number }>
+  /** Why the last run failed, shown above the composer until the next send. */
+  runError: Map<string, string>
   setMessages: (sessionId: string, messages: MessageWithParts[]) => void
   addMessage: (sessionId: string, message: MessageWithParts) => void
   /** Take back an optimistic message whose send was rejected. */
@@ -38,6 +42,9 @@ interface StreamState {
    *  the very turn that was just removed. */
   clearMessages: (sessionId: string) => void
   setStatus: (sessionId: string, status: SessionStatus) => void
+  setRetry: (sessionId: string, attempt: number, maxAttempts: number) => void
+  setRunError: (sessionId: string, message: string) => void
+  clearRunError: (sessionId: string) => void
   /** Optimistic thumbs up/down for one message (server echo follows). */
   setMessageReaction: (sessionId: string, messageId: string, reaction: MessageReaction) => void
 }
@@ -129,6 +136,8 @@ function toolPatch(status: ToolStatus, data?: Record<string, unknown>): Partial<
 export const useStreamStore = create<StreamState>((set) => ({
   messages: new Map(),
   status: new Map(),
+  retry: new Map(),
+  runError: new Map(),
 
   // Merge the durable recovery snapshot with any WS frames that landed while
   // its request was in flight. See mergeSnapshotMessages for the monotonic
@@ -247,7 +256,33 @@ export const useStreamStore = create<StreamState>((set) => ({
     set((s) => {
       const map = new Map(s.status)
       map.set(sessionId, status)
-      return { status: map }
+      // Leaving a stale attempt behind would have the next wait open on
+      // "retry 5 of 5" before anything had gone wrong.
+      const retry = new Map(s.retry)
+      if (status !== "retry") retry.delete(sessionId)
+      return { status: map, retry }
+    }),
+
+  setRetry: (sessionId, attempt, maxAttempts) =>
+    set((s) => {
+      const retry = new Map(s.retry)
+      retry.set(sessionId, { attempt, maxAttempts })
+      return { retry }
+    }),
+
+  setRunError: (sessionId, message) =>
+    set((s) => {
+      const runError = new Map(s.runError)
+      runError.set(sessionId, message)
+      return { runError }
+    }),
+
+  clearRunError: (sessionId) =>
+    set((s) => {
+      if (!s.runError.has(sessionId)) return s
+      const runError = new Map(s.runError)
+      runError.delete(sessionId)
+      return { runError }
     }),
 
   setMessageReaction: (sessionId, messageId, reaction) =>

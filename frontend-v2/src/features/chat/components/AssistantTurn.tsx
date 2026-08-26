@@ -14,7 +14,7 @@ import { FileChip, PatchChip } from "./PatchChip"
 import { PlanPartCard } from "./PlanPartCard"
 import { ProcessTrace } from "./ProcessTrace"
 import { StepDivider } from "./StepDivider"
-import { StreamSkeleton } from "./StreamSkeleton"
+import { ThinkingRow } from "./ThinkingRow"
 import { ThinkingTrace } from "./ThinkingTrace"
 import { TodoCard } from "./TodoCard"
 import { ToolChainTrace } from "./ToolChainTrace"
@@ -27,6 +27,8 @@ interface Props {
   meta: AssistantTurnMeta
   /** This is the live turn. */
   streaming: boolean
+  /** Set while a stalled run is retrying, so the wait can say which try. */
+  retry?: { attempt: number; maxAttempts: number }
   /** Abort the run — offered by the task card while one is in flight. */
   onStop?: () => void
   /** This turn holds the conversation's newest task card, so its card is the
@@ -35,7 +37,7 @@ interface Props {
 }
 
 
-export function AssistantTurn({ parts, sessionId, meta, streaming, onStop, todoEditable }: Props) {
+export function AssistantTurn({ parts, sessionId, meta, streaming, retry, onStop, todoEditable }: Props) {
   const view = useMemo(() => buildTurnView(parts), [parts])
   const hasContent = view.content.trim().length > 0
   // Traces that opened themselves collapse once prose starts arriving.
@@ -82,7 +84,7 @@ export function AssistantTurn({ parts, sessionId, meta, streaming, onStop, todoE
 
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
         {streaming && !hasContent ? (
-          <StreamSkeleton />
+          <ThinkingRow attempt={retry?.attempt} maxAttempts={retry?.maxAttempts} />
         ) : hasContent ? (
           <Suspense fallback={<p className="whitespace-pre-wrap">{view.content}</p>}>
             <Markdown text={view.content} streaming={streaming} />
@@ -133,10 +135,14 @@ export function AssistantTurn({ parts, sessionId, meta, streaming, onStop, todoE
 }
 
 /** Placeholder before the assistant's first part arrives. */
-export function TypingRow() {
+export function TypingRow({
+  retry,
+}: {
+  retry?: { attempt: number; maxAttempts: number }
+}) {
   return (
     <div className="flex w-full min-w-0 flex-col">
-      <StreamSkeleton />
+      <ThinkingRow attempt={retry?.attempt} maxAttempts={retry?.maxAttempts} />
     </div>
   )
 }

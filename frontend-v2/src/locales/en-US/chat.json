@@ -250,5 +250,9 @@
     "left": "{{tokens}} left",
     "compactSoon": "Filling up — history will be compacted soon",
     "aria": "Context {{pct}}% full"
+  },
+  "status": {
+    "thinking": "Thinking…",
+    "retrying": "No response — retrying ({{attempt}}/{{total}})"
   }
 }

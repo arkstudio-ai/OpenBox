@@ -250,5 +250,9 @@
     "left": "剩余 {{tokens}}",
     "compactSoon": "接近上限，稍后会自动压缩历史",
     "aria": "上下文已用 {{pct}}%"
+  },
+  "status": {
+    "thinking": "正在思考中…",
+    "retrying": "模型无响应，正在重试（第 {{attempt}}/{{total}} 次）"
   }
 }

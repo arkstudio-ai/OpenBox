@@ -2,16 +2,19 @@
 name: video-production
 description: Create spoken-person videos with Seedance, including image-to-video character references, generated speech with lip sync, multi-segment waiting, subtitles or clean output, and final HyperFrames/FFmpeg composition.
 allowed-tools:
+  - image_gen
   - video_generate
   - video_render
 ---
 
 # OpenBox Video Production
 
-Use the skill-only `video_generate` and `video_render` tools. Their schemas are
-absent from ordinary conversations and become available only after this skill
-is loaded for the current agent run. Provider credentials stay on the backend;
-never copy a key into a prompt, command, workspace file, or sandbox.
+Use the skill-only `image_gen`, `video_generate`, and `video_render` tools. Their
+schemas are absent from ordinary conversations and become available only after
+this skill is loaded for the current agent run. `image_gen` is included so an
+end-to-end production can create one durable host portrait before any video
+segments are submitted. Provider credentials stay on the backend; never copy a
+key into a prompt, command, workspace file, or sandbox.
 
 ## Storage and execution contract
 
@@ -43,9 +46,17 @@ never copy a key into a prompt, command, workspace file, or sandbox.
    same person; do not describe it as identity-consistent. If a text-only
    fallback is explicitly accepted, at least reuse one fixed `seed` for every
    segment. Never vary seeds while claiming that the host is the same person.
+   If the user has not supplied a portrait, call `image_gen` once to create a
+   clean vertical host portrait, inspect the attached result, and retain its
+   returned OSS `asset_id`. Do not start any Seedance segment until that single
+   portrait exists and is visibly suitable. Image generation is also a paid
+   provider call, so it is covered only by the same explicit end-to-end approval
+   or by separate confirmation.
 3. For each segment call `video_generate(action="submit")` with:
 
-   - the same portrait `input_assets` when identity continuity is required;
+   - the same `character_reference_asset=<portrait asset_id>` when identity
+     continuity is required; reserve `input_assets` for additional scene or
+     motion references and do not duplicate the portrait there;
    - the standard `doubao-seedance-2-0-260128` model for spoken audio;
    - `generate_audio=true`, normally `resolution="720p"`, `ratio="9:16"`, and
      `duration=-1` for intelligent duration;

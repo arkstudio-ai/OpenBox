@@ -36,6 +36,14 @@ class VideoGenerateArgs(BaseModel):
     job_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
+    character_reference_asset: str | None = Field(
+        default=None,
+        max_length=512,
+        description=(
+            "Owned ready OSS image asset used as the on-camera character reference. "
+            "Reuse the exact same asset ID for every segment that must show one person."
+        ),
+    )
     input_assets: list[str] = Field(default_factory=list, max_length=8)
     model: str | None = Field(default=None, max_length=160)
     resolution: Literal["480p", "720p", "1080p"] | None = None
@@ -207,6 +215,36 @@ async def _resolve_inputs(refs: list[str], ctx: ToolContext) -> list[Any]:
             raise RuntimeError(f"asset '{ref}' is {row.mime}; video generation inputs must be image or video")
         rows.append(row)
     return rows
+
+
+async def _resolve_generation_inputs(
+    character_reference: str | None,
+    refs: list[str],
+    ctx: ToolContext,
+) -> tuple[list[Any], Any | None]:
+    """Resolve provider inputs with one explicit, auditable character image first."""
+    rows = await _resolve_inputs(refs, ctx)
+    if not character_reference:
+        return rows, None
+
+    character = await _find_owned_asset(character_reference, ctx)
+    if not character:
+        raise RuntimeError(
+            f"character reference '{character_reference}' is not a ready OSS resource owned by this user"
+        )
+    if not character.mime.startswith(_IMAGE_PREFIX):
+        raise RuntimeError(
+            f"character reference '{character_reference}' is {character.mime}; "
+            "character_reference_asset must be an image"
+        )
+
+    # The explicit reference is always first in the provider content and is
+    # recorded separately in request_data. Deduplicate it if an agent also put
+    # the same asset in the generic list, so provider input limits stay stable.
+    ordered = [character, *(row for row in rows if row.id != character.id)]
+    if len(ordered) > 8:
+        raise RuntimeError("video generation accepts at most 8 distinct input assets")
+    return ordered, character
 
 
 def _validate_generation(model: str, resolution: str, duration: int, generate_audio: bool) -> None:
@@ -568,6 +606,9 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
 
 def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_after: int = 5) -> list[str]:
     lines = [f"job_id={job.id}", f"status={job.status}"]
+    character_reference = (job.request_data or {}).get("character_reference_asset_id")
+    if character_reference:
+        lines.append(f"character_reference_asset_id={character_reference}")
     if job.provider_task_id:
         lines.append(f"provider_task_id={job.provider_task_id}")
     if job.sandbox_job_id:
@@ -621,9 +662,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             _validate_generation(target.model, resolution, duration, generate_audio)
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
-            inputs = await _resolve_inputs(args.input_assets, ctx)
+            inputs, character_reference = await _resolve_generation_inputs(
+                args.character_reference_asset,
+                args.input_assets,
+                ctx,
+            )
             request_data = {
                 "input_asset_ids": [row.id for row in inputs],
+                "character_reference_asset_id": (
+                    character_reference.id if character_reference else None
+                ),
                 "resolution": resolution,
                 "ratio": ratio,
                 "duration": duration,
@@ -1094,7 +1142,9 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
 VIDEO_GENERATE_DESCRIPTION = """\
 Submit, inspect, wait for, or cancel an asynchronous Seedance video generation. \
-Inputs are owned OSS image/video asset IDs. Completed output is copied to OSS, \
+Use character_reference_asset for the one shared OSS portrait that must remain \
+the same across spoken segments; input_assets are optional additional image/video \
+references. Completed output is copied to OSS, \
 indexed in the resource centre, and attached to chat. Billable submit requires \
 an idempotency_key; never automatically create a replacement task after an \
 ambiguous provider error. Load the video-production skill before use."""

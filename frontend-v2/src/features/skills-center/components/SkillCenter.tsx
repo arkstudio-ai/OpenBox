@@ -278,7 +278,15 @@ export function SkillCenter() {
           onBrowseStore={() => setTab("store")}
           actions={{
             busy: rowBusy,
-            uninstallSkill: (dir) => run(uninstallSkill.mutateAsync(dir)),
+            uninstallSkill: (dir, count) => {
+              // A pack install unpacks into many skills that share one
+              // directory, so removing it removes all of them. Say the number
+              // rather than letting one click take eighteen others quietly.
+              if (count > 1 && !window.confirm(t("mine.confirmPack", { name: dir, count }))) {
+                return
+              }
+              run(uninstallSkill.mutateAsync(dir))
+            },
             fixDependencies: (skill) => {
               setActionError(null)
               if (!promptForDependencies(skill)) {

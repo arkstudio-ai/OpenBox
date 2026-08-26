@@ -1,11 +1,14 @@
 // What this account has installed: skills, then the MCP servers behind them.
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Plug, Trash2, Unplug } from "lucide-react"
+import { ChevronDown, ChevronRight, Plug, Trash2, Unplug } from "lucide-react"
 import { Badge, EntryRow, IconButton } from "./EntryRow"
+import { groupSkills } from "@/features/skills-center/lib/group-skills"
 import type { InstalledSkill, McpServer } from "@/features/skills-center/types"
 
 export interface MineActions {
-  uninstallSkill: (dir: string) => void
+  /** `count` is how many skills the removal actually takes with it. */
+  uninstallSkill: (dir: string, count: number) => void
   /** Offer to install/connect what a skill still needs. */
   fixDependencies: (skill: InstalledSkill) => void
   connect: (name: string) => void
@@ -33,6 +36,8 @@ export function MineList({
   onBrowseStore: () => void
 }) {
   const { t } = useTranslation("skills")
+  const [open, setOpen] = useState<string[]>([])
+  const groups = groupSkills(skills)
 
   if (skills.length === 0 && servers.length === 0) {
     return (
@@ -55,43 +60,86 @@ export function MineList({
       {showSkills && skills.length > 0 && (
         <section>
           <h2 className="mb-2 text-xs font-medium text-n600">
-            {t("section.skills", { count: skills.length })}
+            {t("section.skills", { count: groups.length })}
           </h2>
           <div className="flex flex-col gap-1.5">
-            {skills.map((s) => {
-              // A declared dependency that is not connected is the difference
-              // between "installed" and "will actually work".
-              const missing = unmetFor(s)
+            {groups.map((group) => {
+              // Every member's gaps roll up: a pack is only usable when all of
+              // its skills are.
+              const missing = [
+                ...new Set(group.members.flatMap((m) => unmetFor(m).map((d) => d.name))),
+              ]
+              const expanded = open.includes(group.id)
               return (
-                <EntryRow
-                  key={s.name}
-                  icon={s.icon}
-                  name={s.name}
-                  description={s.description}
-                  warning={
-                    missing.length
-                      ? t("mine.missingDependency", {
-                          names: missing.map((m) => m.name).join(", "),
-                        })
-                      : undefined
-                  }
-                  onFixWarning={missing.length ? () => actions.fixDependencies(s) : undefined}
-                  fixLabel={t("deps.fixNow")}
-                  fixDisabled={actions.busy}
-                  badges={s.source === "container" ? null : <Badge>{t("badge.host")}</Badge>}
-                  actions={
-                    s.source === "container" ? (
-                      <IconButton
-                        danger
-                        title={t("action.uninstall")}
-                        disabled={actions.busy}
-                        onClick={() => actions.uninstallSkill(s.install_dir || s.name)}
-                      >
-                        <Trash2 size={14} />
-                      </IconButton>
-                    ) : null
-                  }
-                />
+                <div key={group.id}>
+                  <EntryRow
+                    icon={group.icon}
+                    name={group.name}
+                    description={
+                      group.isPack
+                        ? group.members.map((m) => m.name).join(", ")
+                        : group.description
+                    }
+                    warning={
+                      missing.length
+                        ? t("mine.missingDependency", { names: missing.join(", ") })
+                        : undefined
+                    }
+                    onFixWarning={
+                      missing.length ? () => actions.fixDependencies(group.members[0]) : undefined
+                    }
+                    fixLabel={t("deps.fixNow")}
+                    fixDisabled={actions.busy}
+                    badges={
+                      <>
+                        {group.isPack && (
+                          <Badge>{t("badge.packCount", { count: group.members.length })}</Badge>
+                        )}
+                        {!group.removable && <Badge>{t("badge.host")}</Badge>}
+                      </>
+                    }
+                    actions={
+                      <>
+                        {group.isPack && (
+                          <IconButton
+                            title={expanded ? t("action.collapse") : t("action.expand")}
+                            onClick={() =>
+                              setOpen((prev) =>
+                                prev.includes(group.id)
+                                  ? prev.filter((x) => x !== group.id)
+                                  : [...prev, group.id],
+                              )
+                            }
+                          >
+                            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          </IconButton>
+                        )}
+                        {group.removable ? (
+                          <IconButton
+                            danger
+                            title={t("action.uninstall")}
+                            disabled={actions.busy}
+                            onClick={() => actions.uninstallSkill(group.id, group.members.length)}
+                          >
+                            <Trash2 size={14} />
+                          </IconButton>
+                        ) : null}
+                      </>
+                    }
+                  />
+                  {group.isPack && expanded && (
+                    <ul className="mt-1 ml-6 flex flex-col gap-1 border-l border-hair pl-3">
+                      {group.members.map((m) => (
+                        <li key={m.name} className="flex items-baseline gap-2 py-0.5">
+                          <span className="text-xs text-ink">{m.name}</span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-n600">
+                            {m.description}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )
             })}
           </div>

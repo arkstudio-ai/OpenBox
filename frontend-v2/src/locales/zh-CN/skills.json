@@ -28,7 +28,8 @@
     "host": "宿主机",
     "tools": "{{count}} 个工具",
     "needsMcp": "需要 {{names}}",
-    "needsKey": "需要密钥"
+    "needsKey": "需要密钥",
+    "packCount": "{{count}} 个 skill"
   },
   "action": {
     "add": "添加",
@@ -38,13 +39,16 @@
     "remove": "移除",
     "connect": "连接",
     "disconnect": "断开",
-    "homepage": "查看主页"
+    "homepage": "查看主页",
+    "expand": "展开",
+    "collapse": "收起"
   },
   "mine": {
     "emptyTitle": "还没有安装任何 Skill 或 MCP",
     "emptyHint": "去技能商店挑一个，或上传你自己的。",
     "browseStore": "浏览技能商店",
-    "missingDependency": "依赖的 MCP 未连接：{{names}}"
+    "missingDependency": "依赖的 MCP 未连接：{{names}}",
+    "confirmPack": "「{{name}}」是一个技能包，卸载会同时移除其中全部 {{count}} 个 skill。确定吗？"
   },
   "store": {
     "noMatch": "没有匹配的结果。"

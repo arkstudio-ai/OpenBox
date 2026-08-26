@@ -25,12 +25,14 @@
     "error": "Error"
   },
   "badge": {
-    "host": "Host",
+    "host": "Built-in",
     "tools": "{{count}} tools",
     "needsMcp": "Needs {{names}}",
     "needsKey": "Needs a key",
     "packCount": "{{count}} skills",
-    "builtin": "Built-in"
+    "builtin": "Built-in",
+    "builtinHint": "Baked into the sandbox image and cannot be uninstalled. Its bundled scripts and resources are readable by the agent.",
+    "hostHint": "Installed on the backend host and cannot be uninstalled. Only its SKILL.md applies — the agent cannot read its bundled files, because its tools run in the sandbox."
   },
   "action": {
     "add": "Add",

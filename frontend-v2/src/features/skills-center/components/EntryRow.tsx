@@ -8,9 +8,12 @@ import { EntryIcon } from "./EntryIcon"
 export function Badge({
   children,
   tone = "muted",
+  title,
 }: {
   children: ReactNode
   tone?: "muted" | "ok" | "warn"
+  /** The consequence behind a short label, for anyone who wonders. */
+  title?: string
 }) {
   const tones = {
     muted: "bg-n200 text-n700",
@@ -18,7 +21,10 @@ export function Badge({
     warn: "bg-a200 text-n800",
   } as const
   return (
-    <span className={`flex-none rounded-md px-1.5 py-0.5 text-[10px] leading-4 ${tones[tone]}`}>
+    <span
+      title={title}
+      className={`flex-none rounded-md px-1.5 py-0.5 text-[10px] leading-4 ${tones[tone]}`}
+    >
       {children}
     </span>
   )

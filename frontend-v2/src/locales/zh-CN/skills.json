@@ -25,12 +25,14 @@
     "error": "异常"
   },
   "badge": {
-    "host": "宿主机",
+    "host": "内置",
     "tools": "{{count}} 个工具",
     "needsMcp": "需要 {{names}}",
     "needsKey": "需要密钥",
     "packCount": "{{count}} 个 skill",
-    "builtin": "内置"
+    "builtin": "内置",
+    "builtinHint": "预装在沙箱镜像里，不可卸载。附带的脚本和资源 agent 可以直接读取。",
+    "hostHint": "装在后端主机上，不可卸载。只有 SKILL.md 的指令生效——它附带的文件 agent 读不到，因为工具运行在沙箱里。"
   },
   "action": {
     "add": "添加",

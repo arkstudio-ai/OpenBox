@@ -95,7 +95,11 @@ export function MineList({
                         {group.isPack && (
                           <Badge>{t("badge.packCount", { count: group.members.length })}</Badge>
                         )}
-                        {group.origin !== "container" && <Badge>{t(`badge.${group.origin}`)}</Badge>}
+                        {group.origin !== "container" && (
+                          <Badge title={t(`badge.${group.origin}Hint`)}>
+                            {t(`badge.${group.origin}`)}
+                          </Badge>
+                        )}
                       </>
                     }
                     actions={

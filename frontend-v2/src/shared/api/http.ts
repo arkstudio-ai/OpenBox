@@ -6,27 +6,43 @@ import { refreshAccessToken, useAuthStore } from "@/shared/api/auth-store"
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  /** Numbers a quota refusal carries, so the copy can say how far over it is. */
+  readonly meta: Record<string, unknown>
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, meta: Record<string, unknown> = {}) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.code = code
+    this.meta = meta
   }
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
   let detail = res.statusText
   let code = `HTTP_${res.status}`
+  let meta: Record<string, unknown> = {}
   try {
     const body = (await res.json()) as { detail?: unknown; code?: unknown }
     if (typeof body.code === "string") code = body.code
-    if (typeof body.detail === "string") detail = body.detail
-    else if (body.detail) detail = JSON.stringify(body.detail)
+    if (typeof body.detail === "string") {
+      detail = body.detail
+    } else if (body.detail && typeof body.detail === "object") {
+      // FastAPI puts a structured refusal under `detail`. Quota replies use it
+      // to carry a code and the two numbers; reading only the top level left
+      // every quota looking like a bare HTTP_429.
+      const inner = body.detail as Record<string, unknown>
+      if (typeof inner.code === "string") code = inner.code
+      if (typeof inner.message === "string") detail = inner.message
+      else detail = JSON.stringify(body.detail)
+      meta = inner
+    } else if (body.detail) {
+      detail = JSON.stringify(body.detail)
+    }
   } catch {
     // non-JSON body — keep statusText
   }
-  return new ApiError(res.status, code, detail)
+  return new ApiError(res.status, code, detail, meta)
 }
 
 async function doFetch(path: string, options: RequestInit, token: string | null): Promise<Response> {

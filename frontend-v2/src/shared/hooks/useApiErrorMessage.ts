@@ -8,7 +8,14 @@ export function useApiErrorMessage() {
   return useCallback(
     (err: unknown): string => {
       if (err instanceof ApiError) {
-        const byCode = t(err.code, { defaultValue: "" })
+        // A quota refusal carries its two numbers; interpolate them so the copy
+        // says how far over the line the person is rather than that a limit
+        // exists somewhere.
+        const byCode = t(err.code, {
+          defaultValue: "",
+          used: err.meta.used as number | undefined,
+          limit: err.meta.limit as number | undefined,
+        })
         if (byCode) return byCode
         const byStatus = t(`HTTP_${err.status}`, { defaultValue: "" })
         if (byStatus) return byStatus

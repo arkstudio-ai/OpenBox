@@ -41,7 +41,7 @@ async def test_container_quota_at_limit_raises(config):
         with pytest.raises(HTTPException) as exc_info:
             await check_container_quota("user1", config)
         assert exc_info.value.status_code == 429
-        assert "Container quota" in exc_info.value.detail
+        assert "Container quota" in exc_info.value.detail["message"]
 
 
 async def test_container_quota_over_limit_raises(config):
@@ -75,7 +75,7 @@ async def test_session_quota_at_limit_raises(config):
         with pytest.raises(HTTPException) as exc_info:
             await check_session_quota("user1", config)
         assert exc_info.value.status_code == 429
-        assert "Session quota" in exc_info.value.detail
+        assert "Session quota" in exc_info.value.detail["message"]
 
 
 # ── check_concurrent_agents ────────────────────────────────────────────────
@@ -98,7 +98,7 @@ async def test_concurrent_agents_at_limit_raises(config):
         with pytest.raises(HTTPException) as exc_info:
             await check_concurrent_agents("user1", config)
         assert exc_info.value.status_code == 429
-        assert "Concurrent agent" in exc_info.value.detail
+        assert "Concurrent agent" in exc_info.value.detail["message"]
 
 
 # ── check_monthly_cost ─────────────────────────────────────────────────────
@@ -167,4 +167,4 @@ async def test_custom_limits(config):
         with pytest.raises(HTTPException) as exc_info:
             await check_container_quota("user1", config)
         assert exc_info.value.status_code == 429
-        assert "2/2" in exc_info.value.detail
+        assert "2/2" in exc_info.value.detail["message"]

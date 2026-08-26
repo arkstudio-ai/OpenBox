@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router"
 import { paths } from "@/shared/router/paths"
 import { Composer, EmptyState, useChatAgents, useStartChat } from "@/features/chat"
 import type { ChatAgent } from "@/features/chat/api/agents"
+import { useResourceMention } from "@/features/resources"
 
 const EMPTY_AGENTS: ChatAgent[] = []
 
@@ -18,6 +19,9 @@ export default function EmptyChatRoute() {
   // wants plan mode, and making them send once in build first would defeat it.
   const { data: agents } = useChatAgents()
   const [agent, setAgent] = useState("build")
+  // No session yet, so the menu opens on whichever project this first message
+  // will be filed under.
+  const resourceScope = useResourceMention(null, projectId)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -29,6 +33,7 @@ export default function EmptyChatRoute() {
         agents={agents ?? EMPTY_AGENTS}
         sessionAgent={agent}
         onPickAgent={setAgent}
+        resourceScope={resourceScope}
       />
     </div>
   )

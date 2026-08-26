@@ -6,8 +6,12 @@ import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
+import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
 import '../features/landing/landing_page.dart';
+import '../features/resources/resources_screen.dart';
+import '../features/resources/utils/upload_flow.dart';
+import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
@@ -63,13 +67,19 @@ final routerProvider = Provider<GoRouter>((ref) {
           final sessionId = state.pathParameters['sessionId']!;
           return WorkspaceShell(
             sessionId: sessionId,
-            child: ChatScreen(sessionId: sessionId),
+            child: _ChatRoute(sessionId: sessionId),
           );
         },
       ),
       GoRoute(
         path: Paths.cron,
         builder: (context, state) => const CronScreen(),
+      ),
+      GoRoute(
+        path: '/app/resources',
+        builder: (context, state) => ResourcesScreen(
+          initialProject: state.uri.queryParameters['project'],
+        ),
       ),
       GoRoute(
         path: '/app/settings',
@@ -81,12 +91,41 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/app/w/:sessionId',
         builder: (context, state) => WorkbenchScreen(
           sessionId: state.pathParameters['sessionId']!,
-          initialTab: state.uri.queryParameters['tab'] ?? 'review',
+          initialTab:
+              state.uri.queryParameters['tab'] ?? WorkbenchScreen.menuTab,
         ),
       ),
     ],
   );
 });
+
+/// The composition layer's job (§分层): the resources feature owns the data,
+/// the chat composer owns the menu that shows it, and they meet here — the
+/// same hand-off the web does in `routes/workspace/*`.
+ComposerResourceSlot _resourceSlot(WidgetRef ref) => ComposerResourceSlot(
+      mentionSection: (context, {
+        required query,
+        required projectId,
+        required onPick,
+      }) =>
+          ResourceMentionSection(
+            query: query,
+            projectId: projectId,
+            onPick: onPick,
+          ),
+      pickAndUpload: (context, {required projectId}) =>
+          pickAndUploadResources(ref, projectId: projectId),
+    );
+
+class _ChatRoute extends ConsumerWidget {
+  const _ChatRoute({required this.sessionId});
+
+  final String sessionId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) =>
+      ChatScreen(sessionId: sessionId, resources: _resourceSlot(ref));
+}
 
 /// `/app` index (web `EmptyChatRoute`): the empty chat inside the shell,
 /// scoped to the drawer's selected project.
@@ -102,6 +141,7 @@ class _EmptyChatRoute extends ConsumerWidget {
       child: EmptyChatScreen(
         projectId: projectId,
         projectName: project?.name,
+        resources: _resourceSlot(ref),
       ),
     );
   }

@@ -1,6 +1,8 @@
 /// Number/duration formatters, mirroring frontend-v2 `shared/utils/format.ts`.
 library;
 
+import 'package:intl/intl.dart';
+
 String formatTokens(num tokens) {
   if (tokens >= 1000000) {
     return '${_trim(tokens / 1000000)}M';
@@ -48,6 +50,11 @@ String formatRelative(DateTime target, String language, {DateTime? now}) {
   }
   return zh ? '$value$zhUnit前' : '$value $enPlural ago';
 }
+
+/// Absolute date + time in the active language (web `formatDateTime`,
+/// `Intl.DateTimeFormat` with medium date and short time).
+String formatDateTime(DateTime when, String language) =>
+    DateFormat.yMMMd(language).add_Hm().format(when.toLocal());
 
 /// Bytes → "1.2 MB" (web `formatBytes`).
 String formatBytes(num bytes) {

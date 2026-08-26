@@ -209,7 +209,12 @@
       "commands": "Commands",
       "empty": "No matches",
       "needSandbox": "Needs a running sandbox",
-      "loading": "Searching…"
+      "loading": "Searching…",
+      "resources": "Resources",
+      "allProjects": "All projects",
+      "sourceAll": "Any",
+      "sourceUser": "Mine",
+      "sourceAgent": "Model"
     },
     "sendShortcut": {
       "label": "Send shortcut",
@@ -217,7 +222,8 @@
       "modEnter": "⌘/Ctrl + Enter to send",
       "hintEnter": "Enter to send · Shift+Enter for newline",
       "hintModEnter": "⌘/Ctrl+Enter to send · Enter for newline"
-    }
+    },
+    "resourceCenter": "Resources"
   },
   "diff": {
     "unmodified_one": "{{count}} unmodified line",

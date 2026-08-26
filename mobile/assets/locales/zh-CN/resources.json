@@ -1,0 +1,74 @@
+{
+  "scope": {
+    "title": "项目分类",
+    "allProjects": "全部资源",
+    "unfiled": "未归档"
+  },
+  "source": {
+    "all": "全部来源",
+    "user": "我上传的",
+    "agent": "模型产出"
+  },
+  "kind": {
+    "all": "全部类型",
+    "image": "图片",
+    "video": "视频",
+    "audio": "音频",
+    "document": "文档",
+    "archive": "压缩包",
+    "code": "代码",
+    "other": "其他"
+  },
+  "sort": {
+    "created": "按时间",
+    "name": "按名称",
+    "size": "按大小"
+  },
+  "actions": {
+    "search": "搜索",
+    "upload": "上传文件",
+    "filter": "筛选",
+    "sort": "排序",
+    "selectAll": "全选",
+    "clearSelection": "取消选择",
+    "deleteCount_one": "删除 {{count}} 项",
+    "deleteCount_other": "删除 {{count}} 项",
+    "delete": "删除",
+    "rename": "重命名",
+    "select": "选择此文件",
+    "open": "新窗口打开",
+    "download": "下载",
+    "resize": "拖动调整列表宽度"
+  },
+  "list": {
+    "title": "资源中心",
+    "searchPlaceholder": "搜索资源名称",
+    "empty": "这里还没有资源",
+    "emptyHint": "上传文件，或让模型把产出交回给你。",
+    "allLoaded_one": "已加载全部 {{count}} 个资源",
+    "allLoaded_other": "已加载全部 {{count}} 个资源",
+    "loadMore": "加载更多（{{shown}} / {{total}}）",
+    "loadingMore": "加载中…"
+  },
+  "upload": {
+    "failed": "「{{name}}」上传失败",
+    "failedShort": "失败"
+  },
+  "detail": {
+    "empty": "从左侧选择一个资源查看"
+  },
+  "preview": {
+    "unsupported": "该类型暂不支持预览",
+    "textFailed": "无法读取文本内容"
+  },
+  "delete": {
+    "title": "删除资源？",
+    "one": "「{{name}}」将从对象存储中移除，此操作无法撤销。",
+    "many_one": "选中的 {{count}} 个资源将从对象存储中移除，此操作无法撤销。",
+    "many_other": "选中的 {{count}} 个资源将从对象存储中移除，此操作无法撤销。"
+  },
+  "toast": {
+    "deleted_one": "已删除 {{count}} 个资源",
+    "deleted_other": "已删除 {{count}} 个资源"
+  }
+}

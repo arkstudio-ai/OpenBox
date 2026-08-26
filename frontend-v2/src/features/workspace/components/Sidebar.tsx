@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
-import { Clock, FolderPlus, PanelLeft, Plus, Search } from "lucide-react"
+import { Clock, FolderPlus, Layers, PanelLeft, Plus, Search } from "lucide-react"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
@@ -124,8 +124,21 @@ export function Sidebar() {
 
         <button
           type="button"
+          // Opens on the project in view, which is the one whose files the
+          // person was just looking at.
+          onClick={() => navigate(paths.resources(newChatProject ?? undefined))}
+          className="mt-2.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
+        >
+          <span className="flex size-7 flex-none items-center justify-center">
+            <Layers size={16} strokeWidth={2.1} />
+          </span>
+          {t("resourceCenter")}
+        </button>
+
+        <button
+          type="button"
           onClick={() => navigate(paths.cron)}
-          className="mt-2.5 mb-1.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
+          className="mb-1.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
         >
           <span className="flex size-7 flex-none items-center justify-center">
             <Clock size={16} strokeWidth={2.1} />

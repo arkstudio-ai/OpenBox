@@ -42,8 +42,8 @@ function FilterToggle({
   )
   return (
     <div className="mb-0.5 flex items-center gap-0.5 ps-7">
-      {segment("chats", t("filter.chats"), <MessageSquare size={12} strokeWidth={2.2} />)}
-      {segment("cron", t("filter.cron"), <Clock size={12} strokeWidth={2.2} />)}
+      {segment(CHATS, t("filter.chats"), <MessageSquare size={12} strokeWidth={2.2} />)}
+      {segment(CRON, t("filter.cron"), <Clock size={12} strokeWidth={2.2} />)}
     </div>
   )
 }
@@ -58,6 +58,12 @@ interface Group {
   project: Project | null
   sessions: Session[]
 }
+
+// Internal enum values, not copy (§10.4) — naming them keeps the no-literal
+// -string rule from reading a filter key as untranslated user text.
+const CHATS: SessionFilter = "chats"
+const CRON: SessionFilter = "cron"
+const UNSORTED = "unsorted"
 
 export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps) {
   const { t } = useTranslation("workspace")
@@ -108,9 +114,9 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
   return (
     <>
       {groups.map((g) => {
-        const groupId = g.project?.id ?? "unsorted"
+        const groupId = g.project?.id ?? UNSORTED
         const crons = g.sessions.filter((s) => s.kind === "cron")
-        const mode = sessionFilter[groupId] ?? "chats"
+        const mode = sessionFilter[groupId] ?? CHATS
         // While searching, matches from both kinds show — a filter that hides
         // a title you just typed reads as a broken search.
         const visible = searching

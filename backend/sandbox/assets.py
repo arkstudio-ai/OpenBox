@@ -105,6 +105,23 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
     return landed
 
 
+async def _session_project(db, session_id: str | None, user_id: str) -> str | None:
+    """The project a conversation belongs to, or None when it has no session."""
+    from sqlalchemy import select
+
+    from db.models.session import Session as SessionRow
+
+    if not session_id:
+        return None
+    return (
+        await db.execute(
+            select(SessionRow.project_id).where(
+                SessionRow.id == session_id, SessionRow.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def attach_sandbox_image(
     ctx, path: str, mime: str, size: int, name: str | None = None, transient: bool = False
 ) -> tuple[str, int]:
@@ -157,12 +174,17 @@ async def attach_sandbox_image(
                 id=asset_id,
                 user_id=ctx.user_id,
                 session_id=ctx.session_id,
+                # The resource centre files agent output under the same project
+                # the conversation runs in.
+                project_id=await _session_project(db, ctx.session_id, ctx.user_id),
                 name=obj_name,
                 oss_key=key,
                 mime=mime,
                 size=verified,
                 status="ready",
-                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                source="agent",
+                transient=transient,
+                created_at=datetime.now(timezone.utc),
             )
         )
         await db.commit()

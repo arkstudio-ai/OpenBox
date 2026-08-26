@@ -2,7 +2,7 @@
 // getDisplayMedia → draw one video frame to a canvas → PNG File, and the menu
 // item hides entirely when the browser can't offer it.
 import { useRef, useState } from "react"
-import { Crop, Plus, Upload } from "lucide-react"
+import { Crop, Layers, Plus, Upload } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Menu, MenuItem } from "@/shared/ui/Menu"
 import { toast } from "@/shared/ui/Toast"
@@ -11,6 +11,10 @@ interface Props {
   disabled?: boolean
   title?: string
   onFiles: (files: File[]) => void
+  /** Opens the resource centre in the composer's own "@" menu. */
+  onBrowseResources: () => void
+  /** False when no resource scope was wired in — the item is then hidden. */
+  hasResources?: boolean
 }
 
 const canScreenshot = (): boolean =>
@@ -40,7 +44,7 @@ async function captureScreenshot(): Promise<File | null> {
   }
 }
 
-export function ComposerActions({ disabled, title, onFiles }: Props) {
+export function ComposerActions({ disabled, title, onFiles, onBrowseResources, hasResources }: Props) {
   const { t } = useTranslation("chat")
   const [open, setOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -69,6 +73,19 @@ export function ComposerActions({ disabled, title, onFiles }: Props) {
         }}
       />
       <Menu open={open} onClose={() => setOpen(false)} className="bottom-10 start-0 w-44">
+        {hasResources && (
+          <MenuItem
+            onClick={() => {
+              setOpen(false)
+              onBrowseResources()
+            }}
+          >
+            <span className="flex items-center gap-2.5">
+              <Layers className="size-4 flex-none" />
+              {t("composer.resourceCenter")}
+            </span>
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             setOpen(false)
@@ -91,8 +108,11 @@ export function ComposerActions({ disabled, title, onFiles }: Props) {
       </Menu>
       <button
         type="button"
+        data-testid="composer-tools"
         onClick={() => setOpen((o) => !o)}
-        disabled={disabled}
+        // Resources live in object storage, so the menu still has something to
+        // offer when no sandbox is running — only the upload items need one.
+        disabled={disabled && !hasResources}
         title={title}
         aria-label={t("composer.tools")}
         className="text-n700 hover:bg-hairsoft flex size-8 items-center justify-center rounded-full disabled:opacity-40"

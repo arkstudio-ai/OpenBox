@@ -140,36 +140,26 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 ),
               ),
               const SizedBox(height: 10),
+              // Resource centre, above the scheduled tasks like the web
+              // sidebar; opens on the project the tree is showing.
+              _NavRow(
+                icon: Icons.layers_outlined,
+                label: i18n.t('workspace:resourceCenter'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(
+                    Paths.resources(ref.read(selectedProjectProvider)),
+                  );
+                },
+              ),
               // Scheduled-tasks entry, same spot as the web sidebar.
-              InkWell(
-                borderRadius: BorderRadius.circular(Radii.full),
+              _NavRow(
+                icon: Icons.schedule,
+                label: i18n.t('workspace:scheduledTasks'),
                 onTap: () {
                   Navigator.pop(context);
                   context.push(Paths.cron);
                 },
-                child: SizedBox(
-                  height: 40,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 28,
-                          child: Center(
-                            child:
-                                Icon(Icons.schedule, size: 16, color: t.ink),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          i18n.t('workspace:scheduledTasks'),
-                          style: TextStyle(
-                              fontSize: FontSizes.base, color: t.ink),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               ),
               const SizedBox(height: 4),
               Expanded(
@@ -492,5 +482,47 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
       ),
     );
     return result ?? false;
+  }
+}
+
+/// A drawer nav row: icon column + label, the shape the web sidebar uses for
+/// everything above the project tree.
+class _NavRow extends StatelessWidget {
+  const _NavRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
+      borderRadius: BorderRadius.circular(Radii.full),
+      onTap: onTap,
+      child: SizedBox(
+        height: 40,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 28,
+                child: Center(child: Icon(icon, size: 16, color: t.ink)),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

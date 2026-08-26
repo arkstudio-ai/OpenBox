@@ -22,6 +22,7 @@ import {
 } from "@/features/chat"
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
+import { useResourceMention } from "@/features/resources"
 
 const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
@@ -97,6 +98,10 @@ export default function ChatRoute() {
   }
   const sessionAgent = pickedAgent ?? serverAgent
 
+  // Composition layer: the resource centre owns this data, the composer owns
+  // the menu that shows it, and they meet here (ENGINEERING_SPEC §4.2).
+  const resourceScope = useResourceMention(sessionId)
+
   const permissions = usePendingStore((s) => s.permissions.get(sessionId) ?? EMPTY_PERMS)
   const questions = usePendingStore((s) => s.questions.get(sessionId) ?? EMPTY_QUESTIONS)
 
@@ -138,6 +143,7 @@ export default function ChatRoute() {
         agents={agents ?? EMPTY_AGENTS}
         sessionAgent={sessionAgent}
         onPickAgent={setPickedAgent}
+        resourceScope={resourceScope}
       />
     </div>
   )

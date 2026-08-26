@@ -28,6 +28,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
 
   const isSettings = location.pathname.includes("/settings")
   const isCron = location.pathname.includes("/cron")
+  const isResources = location.pathname.includes("/resources")
   const session = useMemo(
     () => (sessions.data ?? []).find((s) => s.id === sessionId) ?? null,
     [sessions.data, sessionId],
@@ -37,16 +38,17 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
     [projects.data, session],
   )
 
-  const title = isSettings
-    ? t("settings")
+  // Pages that are not a conversation name themselves; everything else is a
+  // chat, and falls back to its title and project.
+  const standalone = isSettings
+    ? { title: t("settings"), subtitle: t("settings:subtitle", { ns: "settings" }) }
     : isCron
-      ? t("scheduledTasks")
-      : (session?.title ?? t("untitledChat"))
-  const subtitle = isSettings
-    ? t("settings:subtitle", { ns: "settings" })
-    : isCron
-      ? t("scheduledTasksHint")
-      : (project?.name ?? t("unsorted"))
+      ? { title: t("scheduledTasks"), subtitle: t("scheduledTasksHint") }
+      : isResources
+        ? { title: t("resourceCenter"), subtitle: t("resourceCenterHint") }
+        : null
+  const title = standalone?.title ?? session?.title ?? t("untitledChat")
+  const subtitle = standalone?.subtitle ?? project?.name ?? t("unsorted")
 
   const share = () => {
     copy(window.location.href)
@@ -70,7 +72,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
         <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
         <span className="min-w-0 flex-none truncate text-sm text-n600">{subtitle}</span>
       </div>
-      {!isSettings && statusSlot}
+      {!isSettings && !isResources && statusSlot}
       {session && (
         <button
           type="button"
@@ -82,7 +84,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
           <Upload size={16} strokeWidth={2.4} />
         </button>
       )}
-      {!panelOpen && !isSettings && !isCron && (
+      {!panelOpen && !standalone && (
         <button
           type="button"
           className="flex size-8 flex-none items-center justify-center rounded-full text-n700 hover:bg-n200"

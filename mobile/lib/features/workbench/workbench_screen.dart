@@ -1,29 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../shared/api/containers_api.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
-import '../cron/widgets/cron_panel_tab.dart';
-import 'state/workbench_providers.dart';
-import 'widgets/browser_tab.dart';
-import 'widgets/desktop_tab.dart';
-import 'widgets/files_tab.dart';
-import 'widgets/review_tab.dart';
-import 'widgets/terminal_tab.dart';
+import 'widgets/workbench_menu.dart';
+import 'workbench_surface_page.dart';
 
-/// The web right-panel (`WorkbenchPanel`) re-flowed as a full-screen route
-/// with a segmented tab bar, same tab set as web:
-/// 审阅 / 终端 / 浏览器 / 文件 / 云桌面.
+/// The web right-panel (`WorkbenchPanel`) re-flowed as a route.
+///
+/// Web opens the panel on a **menu tab** and turns it into whichever surface
+/// you pick; the tab strip is how you come back. A phone has no room for a
+/// strip, so the same menu is this route and a pick *pushes* the surface —
+/// which means the stock back arrow and the iOS edge-swipe both return here,
+/// and one more back leaves the panel. Same six surfaces, same live hints.
 class WorkbenchScreen extends ConsumerStatefulWidget {
   const WorkbenchScreen({
     super.key,
     required this.sessionId,
-    this.initialTab = 'review',
+    this.initialTab = menuTab,
   });
 
+  /// `initialTab` value meaning "stay on the menu".
+  static const menuTab = 'menu';
+
   final String sessionId;
+
+  /// A surface to open straight away — the cron pill and chat's "审阅 →" both
+  /// deep-link one. It opens *on top of* the menu, so back still lands here.
   final String initialTab;
 
   @override
@@ -31,17 +35,24 @@ class WorkbenchScreen extends ConsumerStatefulWidget {
 }
 
 class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
-  late String _tab = widget.initialTab;
-  bool _creatingSandbox = false;
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialTab != WorkbenchScreen.menuTab) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _open(widget.initialTab);
+      });
+    }
+  }
 
-  static const _tabs = [
-    'review',
-    'terminal',
-    'browser',
-    'files',
-    'desktop',
-    'cron',
-  ];
+  void _open(String kind) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            WorkbenchSurfacePage(sessionId: widget.sessionId, kind: kind),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,112 +62,15 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
       backgroundColor: t.bg,
       appBar: AppBar(
         title: Text(
-          i18n.t('workbench:tabs.$_tab'),
+          i18n.t('workbench:menu.title'),
           style: TextStyle(
             fontSize: FontSizes.lg,
             fontWeight: FontWeight.w500,
             color: t.ink,
           ),
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(46),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-            child: Row(
-              children: [
-                for (final tab in _tabs)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(
-                        i18n.t('workbench:tabs.$tab'),
-                        style: const TextStyle(fontSize: FontSizes.sm),
-                      ),
-                      selected: _tab == tab,
-                      showCheckmark: false,
-                      selectedColor: t.a200,
-                      backgroundColor: t.bg,
-                      labelStyle: TextStyle(color: t.ink),
-                      side: BorderSide(color: _tab == tab ? t.a700 : t.hair),
-                      onSelected: (_) => setState(() => _tab = tab),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
       ),
-      body: switch (_tab) {
-        'terminal' => _withContainer(
-            (containerId) => TerminalTab(containerId: containerId)),
-        'browser' => _withContainer((_) => const BrowserTab()),
-        'files' => _withContainer(
-            (containerId) =>
-                FilesTab(sessionId: widget.sessionId, containerId: containerId),
-          ),
-        'desktop' => const DesktopTab(),
-        'cron' => CronPanelTab(
-            projectId: ref
-                .watch(sessionProjectIdProvider(widget.sessionId))
-                .valueOrNull,
-          ),
-        _ => ReviewTab(sessionId: widget.sessionId),
-      },
+      body: WorkbenchMenu(sessionId: widget.sessionId, onOpen: _open),
     );
-  }
-
-  /// Terminal/files need a running sandbox (web `TerminalTab` empty state).
-  Widget _withContainer(Widget Function(String containerId) builder) {
-    final t = context.tokens;
-    final i18n = ref.watch(i18nProvider);
-    final container = ref.watch(runningContainerProvider);
-    return container.when(
-      loading: () =>
-          const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      error: (_, _) => Center(
-        child: Text(i18n.t('workbench:sandbox.none'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
-      ),
-      data: (info) {
-        if (info == null) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(i18n.t('workbench:sandbox.none'),
-                    style: TextStyle(fontSize: FontSizes.base, color: t.n700)),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _creatingSandbox ? null : _createSandbox,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: t.ink,
-                    foregroundColor: t.bg,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(Radii.full),
-                    ),
-                  ),
-                  child: Text(
-                    i18n.t('workbench:sandbox.create'),
-                    style: const TextStyle(fontSize: FontSizes.sm),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-        return builder(info.id);
-      },
-    );
-  }
-
-  Future<void> _createSandbox() async {
-    setState(() => _creatingSandbox = true);
-    try {
-      await ref.read(containersApiProvider).create();
-      ref.invalidate(runningContainerProvider);
-    } finally {
-      if (mounted) setState(() => _creatingSandbox = false);
-    }
   }
 }

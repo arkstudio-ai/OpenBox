@@ -8,6 +8,7 @@ import { env } from "@/shared/config/env"
 import { ApiError } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { completeAsset, createAsset, putToOss } from "../api/assets"
+import type { AttachableResource } from "../lib/resource-ref"
 
 export interface PendingAttachment {
   id: string
@@ -119,6 +120,30 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
     [containerId, sessionId],
   )
 
+  /** Pin something that already lives in OSS — a pick from the resource
+   *  centre. No transfer happens: the bytes are there, the message just has
+   *  to name them, and the backend pulls them into the sandbox on send. */
+  const addResource = useCallback((resource: AttachableResource) => {
+    setItems((list) =>
+      list.some((a) => a.assetId === resource.id)
+        ? list
+        : [
+            ...list,
+            {
+              id: `att-${++seq}`,
+              name: resource.name,
+              size: resource.size,
+              mime: resource.mime,
+              status: "done",
+              progress: 1,
+              preview: resource.kind === "image" ? resource.url : undefined,
+              path: resource.sandboxPath,
+              assetId: resource.id,
+            },
+          ],
+    )
+  }, [])
+
   const remove = useCallback((id: string) => {
     setItems((list) => list.filter((a) => a.id !== id))
   }, [])
@@ -141,5 +166,5 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
   )
 
   const uploading = items.some((a) => a.status === "uploading")
-  return { items, addFiles, remove, clear, decorate, assetIds, uploading }
+  return { items, addFiles, addResource, remove, clear, decorate, assetIds, uploading }
 }

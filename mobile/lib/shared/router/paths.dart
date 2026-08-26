@@ -10,9 +10,16 @@ abstract final class Paths {
 
   static const String cron = '/app/cron';
 
+  /// Optional project scope, like the web `paths.resources(projectId)`.
+  static String resources([String? projectId]) => projectId == null
+      ? '/app/resources'
+      : '/app/resources?project=$projectId';
+
   static String settings([String? tab]) =>
       tab == null ? '/app/settings' : '/app/settings?tab=$tab';
 
-  static String workbench(String sessionId, {String tab = 'review'}) =>
+  /// `tab` defaults to the panel's menu page; pass a surface to deep-link
+  /// straight into it (the cron pill and chat's "审阅 →" both do).
+  static String workbench(String sessionId, {String tab = 'menu'}) =>
       '/app/w/$sessionId?tab=$tab';
 }

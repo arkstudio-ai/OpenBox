@@ -1,0 +1,74 @@
+{
+  "scope": {
+    "title": "Projects",
+    "allProjects": "All resources",
+    "unfiled": "Unfiled"
+  },
+  "source": {
+    "all": "Any source",
+    "user": "Uploaded by me",
+    "agent": "Model output"
+  },
+  "kind": {
+    "all": "All types",
+    "image": "Images",
+    "video": "Video",
+    "audio": "Audio",
+    "document": "Documents",
+    "archive": "Archives",
+    "code": "Code",
+    "other": "Other"
+  },
+  "sort": {
+    "created": "Newest",
+    "name": "Name",
+    "size": "Size"
+  },
+  "actions": {
+    "search": "Search",
+    "upload": "Upload files",
+    "filter": "Filter",
+    "sort": "Sort",
+    "selectAll": "Select all",
+    "clearSelection": "Clear selection",
+    "deleteCount_one": "Delete {{count}}",
+    "deleteCount_other": "Delete {{count}}",
+    "delete": "Delete",
+    "rename": "Rename",
+    "select": "Select this file",
+    "open": "Open in new tab",
+    "download": "Download",
+    "resize": "Drag to resize the list"
+  },
+  "list": {
+    "title": "Resources",
+    "searchPlaceholder": "Search by name",
+    "empty": "Nothing here yet",
+    "emptyHint": "Upload a file, or have the model hand its output back.",
+    "allLoaded_one": "All {{count}} resource loaded",
+    "allLoaded_other": "All {{count}} resources loaded",
+    "loadMore": "Load more ({{shown}} / {{total}})",
+    "loadingMore": "Loading…"
+  },
+  "upload": {
+    "failed": "Upload of \"{{name}}\" failed",
+    "failedShort": "Failed"
+  },
+  "detail": {
+    "empty": "Pick a resource on the left to view it"
+  },
+  "preview": {
+    "unsupported": "No preview for this file type",
+    "textFailed": "Could not read the text"
+  },
+  "delete": {
+    "title": "Delete resource?",
+    "one": "\"{{name}}\" will be removed from object storage. This cannot be undone.",
+    "many_one": "{{count}} selected resource will be removed from object storage. This cannot be undone.",
+    "many_other": "{{count}} selected resources will be removed from object storage. This cannot be undone."
+  },
+  "toast": {
+    "deleted_one": "Deleted {{count}} resource",
+    "deleted_other": "Deleted {{count}} resources"
+  }
+}

@@ -22,6 +22,7 @@ const _namespaces = [
   'cron',
   'errors',
   'landing',
+  'resources',
   'settings',
   'workbench',
   'workspace',

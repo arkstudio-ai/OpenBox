@@ -108,6 +108,9 @@ class OssClient:
     def presign_head(self, key: str, expires_sec: int = 120) -> str:
         return self._presign("HEAD", key, expires_sec)
 
+    def presign_delete(self, key: str, expires_sec: int = 120) -> str:
+        return self._presign("DELETE", key, expires_sec)
+
     async def head(self, key: str) -> dict | None:
         """Existence + size check after a client-side upload. None if absent."""
         import httpx
@@ -121,6 +124,15 @@ class OssClient:
                 "mime": resp.headers.get("content-type", ""),
             }
         return None
+
+    async def delete(self, key: str) -> bool:
+        """Remove the object. OSS answers 204 whether or not it existed."""
+        import httpx
+
+        url = self.presign_delete(key)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.delete(url)
+        return resp.status_code in (200, 204)
 
 
 def get_oss() -> OssClient:

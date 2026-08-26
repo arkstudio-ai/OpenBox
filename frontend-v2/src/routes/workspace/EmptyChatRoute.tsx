@@ -29,7 +29,7 @@ export default function EmptyChatRoute() {
       <Composer
         busy={false}
         autoFocus
-        onSubmit={(text, opts) => void start(text, { ...opts, projectId, agent })}
+        onSubmit={(text, opts) => start(text, { ...opts, projectId, agent })}
         agents={agents ?? EMPTY_AGENTS}
         sessionAgent={agent}
         onPickAgent={setAgent}

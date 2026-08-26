@@ -10,5 +10,6 @@
   "SANDBOX_NOT_READY": "沙箱环境尚未就绪，请先创建沙箱。",
   "AUTH_INVALID_CREDENTIALS": "账号或密码不正确。",
   "AUTH_USER_EXISTS": "该账号已存在。",
-  "SESSION_BUSY": "会话正在运行中，请稍候。"
+  "SESSION_BUSY": "会话正在运行中，请稍候。",
+  "HTTP_429": "请求过于频繁，或已达到配额上限。请稍后再试，或清理一些旧会话。"
 }

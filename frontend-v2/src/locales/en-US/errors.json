@@ -10,5 +10,6 @@
   "SANDBOX_NOT_READY": "The sandbox isn't ready yet — create one first.",
   "AUTH_INVALID_CREDENTIALS": "Wrong account or password.",
   "AUTH_USER_EXISTS": "That account already exists.",
-  "SESSION_BUSY": "The session is still running — hold on."
+  "SESSION_BUSY": "The session is still running — hold on.",
+  "HTTP_429": "Too many requests, or a quota is full. Wait a moment, or clear out some old sessions."
 }

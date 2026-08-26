@@ -33,7 +33,8 @@ export interface ComposerSubmit {
 
 interface Props {
   busy: boolean
-  onSubmit: (text: string, opts: ComposerSubmit) => void
+  /** May return a promise; the draft is only discarded once it resolves. */
+  onSubmit: (text: string, opts: ComposerSubmit) => void | Promise<void>
   onStop?: () => void
   autoFocus?: boolean
   /** The model this conversation last used. Each session carries its own, so
@@ -173,9 +174,22 @@ export function Composer({
 
   const submit = () => {
     if (!canSend) return
-    onSubmit(attachments.decorate(text.trim()), { model: activeId, attachments: attachments.assetIds() })
+    const decorated = attachments.decorate(text.trim())
+    const assetIds = attachments.assetIds()
+    // Clear optimistically so the composer feels immediate, but keep the draft
+    // and put it back if the send never lands. Discarding it up front meant a
+    // rejected send — a quota, a dropped connection — silently ate what the
+    // person had typed, with the empty box reading as success.
+    const draft = text
     setText("")
     attachments.clear()
+
+    const result = onSubmit(decorated, { model: activeId, attachments: assetIds })
+    if (result && typeof result.then === "function") {
+      void result.catch(() => {
+        setText((current) => (current ? current : draft))
+      })
+    }
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

@@ -12,6 +12,12 @@ export function useApiErrorMessage() {
         if (byCode) return byCode
         const byStatus = t(`HTTP_${err.status}`, { defaultValue: "" })
         if (byStatus) return byStatus
+        // Before giving up, use what the server said. Quota and validation
+        // replies carry a specific reason ("Session quota exceeded: 200/200"),
+        // and dropping it for a generic fallback hides the one detail that
+        // tells someone what to do about it.
+        const detail = err.message?.trim()
+        if (detail && detail !== err.code) return detail
         return t("fallback")
       }
       if (err instanceof TypeError) return t("network")

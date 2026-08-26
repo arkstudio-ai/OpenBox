@@ -20,6 +20,8 @@ interface StreamState {
   status: Map<string, SessionStatus>
   setMessages: (sessionId: string, messages: MessageWithParts[]) => void
   addMessage: (sessionId: string, message: MessageWithParts) => void
+  /** Take back an optimistic message whose send was rejected. */
+  dropOptimistic: (sessionId: string, clientMessageId: string) => void
   updateMessage: (sessionId: string, message: MessageWithParts) => void
   appendPartDelta: (sessionId: string, messageId: string, partId: string, delta: string) => void
   addPart: (sessionId: string, messageId: string, part: MessagePart) => void
@@ -135,6 +137,19 @@ export const useStreamStore = create<StreamState>((set) => ({
     set((s) => {
       const existing = s.messages.get(sessionId) ?? []
       return commit(s.messages, sessionId, mergeSnapshotMessages(existing, incoming))
+    }),
+
+  dropOptimistic: (sessionId, clientMessageId) =>
+    set((s) => {
+      const list = s.messages.get(sessionId)
+      if (!list) return s
+      // Only ever removes the temp echo — a server-confirmed message with the
+      // same client id must survive, or a slow success would erase itself.
+      const next = list.filter(
+        (m) => !(m.id.startsWith("tmp-") && m.client_message_id === clientMessageId),
+      )
+      if (next.length === list.length) return s
+      return commit(s.messages, sessionId, next)
     }),
 
   addMessage: (sessionId, message) =>

@@ -99,6 +99,22 @@ async def test_a_container_skill_keeps_its_base_directory(host_skill):
 
 
 @pytest.mark.asyncio
+async def test_container_skill_allowed_tools_are_read_from_its_content(host_skill):
+    payload = {
+        "content": (
+            "---\nname: imagegen\ndescription: d\n"
+            "allowed-tools: [image_gen]\n---\nbody"
+        ),
+        "base_dir": "/data/skills/imagegen",
+        "files": [],
+    }
+    result = await execute(
+        SkillArgs(skill="imagegen"), ctx(LiveSandbox(payload))
+    )
+    assert result.metadata["activated_tools"] == ["image_gen"]
+
+
+@pytest.mark.asyncio
 async def test_an_unreachable_container_is_not_reported_as_a_missing_skill(host_skill):
     # "Not found" tells the model to give up on a skill that may well exist.
     result = await execute(SkillArgs(skill="pdf-tools"), ctx(DeadSandbox()))
@@ -127,6 +143,16 @@ async def test_arguments_are_substituted(host_skill):
         "---\nname: demo\ndescription: d\n---\nTarget is $ARGUMENTS")
     out = (await execute(SkillArgs(skill="demo", args="prod"), ctx())).output
     assert "Target is prod" in out
+
+
+@pytest.mark.asyncio
+async def test_a_host_skill_activates_its_declared_tools(host_skill):
+    (host_skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: d\nallowed-tools:\n  - image_gen\n---\nUse it"
+    )
+    result = await execute(SkillArgs(skill="demo"), ctx())
+    assert result.metadata["activated_tools"] == ["image_gen"]
+    assert "Activated tools for this agent run: image_gen" in result.output
 
 
 @pytest.mark.asyncio

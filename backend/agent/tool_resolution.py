@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from core.log import create_logger
 from permission.permission import Rule, disabled_tools
-from tool.registry import get_tools_for_agent
+from tool.registry import get_tool, get_tools_for_agent
 
 log = create_logger("agent.tool_resolution")
 
@@ -90,9 +90,40 @@ async def attach_skill_listing(tools: dict, sandbox, ruleset: list | None = None
     return tools
 
 
-async def resolve_step_tools(agent_def, sandbox, config_rules: list) -> dict:
+def activate_skill_tools(tools: dict, requested: set[str] | None) -> dict:
+    """Expose registered skill-only tools declared by a loaded skill.
+
+    A skill cannot widen the ordinary agent whitelist: only tools explicitly
+    marked ``skill_only`` at registration time are eligible. Permission rules
+    are still applied afterwards.
+    """
+    for name in sorted(requested or ()):
+        tool = get_tool(name)
+        if not tool:
+            log.warning("Loaded skill requested unknown tool %r", name)
+            continue
+        if not tool.skill_only:
+            log.warning("Loaded skill cannot activate non-skill tool %r", name)
+            continue
+        tools[name] = tool
+    return tools
+
+
+async def resolve_step_tools(
+    agent_def,
+    sandbox,
+    config_rules: list,
+    activated_tools: set[str] | None = None,
+) -> dict:
     """The full set of tools a step may call, schema included."""
-    tools = get_tools_for_agent(agent_def.tools)
+    # Even if a config accidentally lists a skill-only tool in the fixed
+    # whitelist, keep its schema hidden until a skill has activated it.
+    tools = {
+        name: tool
+        for name, tool in get_tools_for_agent(agent_def.tools).items()
+        if not tool.skill_only
+    }
+    tools = activate_skill_tools(tools, activated_tools)
     # The same rules that strip tools also decide which skills are worth listing.
     ruleset = list(config_rules) + agent_ruleset(agent_def)
     tools = await merge_sandbox_tools(tools, sandbox, ruleset)

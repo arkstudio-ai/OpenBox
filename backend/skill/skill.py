@@ -19,6 +19,9 @@ class SkillInfo:
     # Directory holding SKILL.md, on the machine running the backend. Note this
     # is NOT reachable from the agent's tools, which execute in the sandbox.
     path: str = ""
+    # Registered skill-only tools this skill unlocks after it is loaded. The
+    # names alone are cheap frontmatter; their schemas are not sent yet.
+    allowed_tools: tuple[str, ...] = ()
 
 
 # Cache
@@ -107,6 +110,11 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
             # on all of them. The full text is in the body, which the skill tool
             # returns when the model actually loads it.
             description = clip_description(metadata.get("description", ""))
+            allowed_tools = normalize_skill_tools(
+                metadata.get("allowed-tools")
+                or metadata.get("allowed_tools")
+                or metadata.get("tools")
+            )
 
             results.append(SkillInfo(
                 name=name,
@@ -114,11 +122,30 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
                 source=source,
                 content=body,
                 path=str(skill_md.parent),
+                allowed_tools=allowed_tools,
             ))
         except Exception as e:
             log.warning(f"Failed to load skill from {skill_md}: {e}")
 
     return results
+
+
+def normalize_skill_tools(value) -> tuple[str, ...]:
+    """Normalize a skill's optional ``allowed-tools`` declaration."""
+    if isinstance(value, str):
+        values = value.replace(",", " ").split()
+    elif isinstance(value, (list, tuple)):
+        values = value
+    else:
+        return ()
+    out: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if name and name not in out:
+            out.append(name)
+    return tuple(out)
 
 
 async def load_skills() -> None:

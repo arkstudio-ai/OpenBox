@@ -59,6 +59,10 @@ class ToolInfo:
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
     parallel_safe: bool = True
+    # Skill-only tools are registered on the backend but omitted from the
+    # model's ordinary tool schema. A successfully loaded skill must declare
+    # the tool before it is exposed for the remainder of that agent run.
+    skill_only: bool = False
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -74,6 +78,7 @@ def define_tool(
     sandbox_required: bool = True,
     never_prune: bool = False,
     parallel_safe: bool = True,
+    skill_only: bool = False,
     raw_schema: dict | None = None,
 ) -> ToolInfo:
     """Factory function to create a tool with automatic validation and truncation."""
@@ -109,5 +114,6 @@ def define_tool(
         sandbox_required=sandbox_required,
         never_prune=never_prune,
         parallel_safe=parallel_safe,
+        skill_only=skill_only,
         raw_schema=raw_schema,
     )

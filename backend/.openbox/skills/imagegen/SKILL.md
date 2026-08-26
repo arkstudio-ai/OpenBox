@@ -1,6 +1,8 @@
 ---
 name: imagegen
-description: Generate or edit raster images with OpenBox's built-in image_gen tool when the user needs photos, illustrations, textures, sprites, mockups, infographics, reference-based variants, or image-to-image changes. Do not use for repo-native SVG/vector/code assets that should be edited deterministically.
+description: Generate or edit raster images through OpenBox for image creation, image-to-image changes, compositing, illustrations, mockups, or other bitmap assets.
+allowed-tools:
+  - image_gen
 ---
 
 # OpenBox Image Generation
@@ -8,6 +10,9 @@ description: Generate or edit raster images with OpenBox's built-in image_gen to
 Use the built-in `image_gen` tool for image generation and editing. The tool
 reads its provider, model, defaults, API key, and base URL from `openbox.json`;
 never copy credentials into a command, prompt, or workspace file.
+
+Loading this skill activates `image_gen` only for the current agent run. Its
+schema is intentionally absent from ordinary conversations.
 
 ## Storage contract
 

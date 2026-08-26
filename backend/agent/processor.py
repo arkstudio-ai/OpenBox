@@ -114,6 +114,9 @@ class StepResult:
     # Completed tool parts from this step, appended to the loop's doom-loop
     # history. Returned rather than mutated so the step owns no shared state.
     completed_tool_parts: list = field(default_factory=list)
+    # Skill-only tools unlocked by successful skill calls in this step. The
+    # outer loop owns the run-scoped set and applies it on the next step.
+    activated_tools: set[str] = field(default_factory=set)
     agent_switch: str | None = None
     retry_reason: str | None = None
     error: str | None = None
@@ -207,6 +210,7 @@ async def process_step(
     total_usage = {"input": 0, "output": 0, "total": 0}
     finish_reason = "unknown"
     completed_tool_parts: list = []
+    activated_tools: set[str] = set()
     agent_switch: str | None = None
     step_start_time = time.time()
 
@@ -428,6 +432,15 @@ async def process_step(
                     break
                 result = exec_task.result()
 
+                if tool_name == "skill":
+                    declared = result.metadata.get("activated_tools", [])
+                    if isinstance(declared, (list, tuple, set)):
+                        activated_tools.update(
+                            name.strip()
+                            for name in declared
+                            if isinstance(name, str) and name.strip()
+                        )
+
                 # Check for agent_switch metadata
                 agent_switch = result.metadata.get("agent_switch")
                 if agent_switch:
@@ -518,6 +531,7 @@ async def process_step(
         reasoning=collected_reasoning,
         usage=total_usage,
         completed_tool_parts=completed_tool_parts,
+        activated_tools=activated_tools,
         agent_switch=agent_switch,
         duration=time.time() - step_start_time,
     )

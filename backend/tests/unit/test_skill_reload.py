@@ -91,6 +91,16 @@ async def test_get_skill_sees_changes_too(skills_dir):
 
 
 @pytest.mark.asyncio
+async def test_skill_tool_declarations_are_parsed_without_loading_a_schema(skills_dir):
+    path = write_skill(skills_dir, "demo", "d")
+    (path / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: d\nallowed-tools: [image_gen, image_gen]\n---\nbody"
+    )
+    skill = await sk.get_skill("demo")
+    assert skill.allowed_tools == ("image_gen",)
+
+
+@pytest.mark.asyncio
 async def test_an_unchanged_tree_is_not_rescanned(skills_dir, monkeypatch):
     write_skill(skills_dir, "demo", "d")
     await sk.list_skills()

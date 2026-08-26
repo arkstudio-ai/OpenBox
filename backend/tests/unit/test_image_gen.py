@@ -49,13 +49,16 @@ def test_output_names_are_safe_unique_variants():
     assert _safe_filename("hero.png", "asset_1", 2, 3, "webp") == "hero-2.webp"
 
 
-def test_mutating_agents_receive_the_tool_but_read_only_agents_do_not():
+def test_image_gen_is_not_a_fixed_agent_tool():
     from agent.agent import AGENTS
 
-    assert "image_gen" in AGENTS["build"].tools
-    assert "image_gen" in AGENTS["general"].tools
-    assert "image_gen" not in AGENTS["plan"].tools
-    assert "image_gen" not in AGENTS["explore"].tools
+    assert all("image_gen" not in agent.tools for agent in AGENTS.values())
+
+
+def test_image_gen_is_registered_as_skill_only():
+    from tool.image_gen import image_gen_tool
+
+    assert image_gen_tool.skill_only is True
 
 
 @pytest.mark.asyncio
@@ -238,4 +241,3 @@ async def test_execute_returns_oss_asset_ids_for_generation(monkeypatch):
     assert result.metadata["asset_ids"] == ["asset_generated"]
     assert observed["images"] == []
     assert "resource centre" in result.output
-

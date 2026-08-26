@@ -76,6 +76,7 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     files: list[str] = []
     host_only = False
     container_error: str | None = None
+    activated_tools: tuple[str, ...] = ()
 
     # Try loading from container sandbox first
     if ctx.sandbox:
@@ -84,6 +85,15 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
             content = skill_data.get("content", "")
             base_dir = skill_data.get("base_dir", "")
             files = skill_data.get("files", [])
+            from core.markdown import parse_frontmatter
+            from skill.skill import normalize_skill_tools
+            metadata, _ = parse_frontmatter(content)
+            activated_tools = normalize_skill_tools(
+                skill_data.get("allowed_tools")
+                or skill_data.get("tools")
+                or metadata.get("allowed-tools")
+                or metadata.get("allowed_tools")
+            )
         except Exception as e:
             # Kept, not swallowed: an unreachable container and a genuinely
             # missing skill need different answers. Reporting "not found" for a
@@ -119,6 +129,7 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         # over a path the model would only fail to read.
         host_only = True
         files = _host_files(skill.path) if skill.path else []
+        activated_tools = skill.allowed_tools
 
     if args.args:
         content = content.replace("$ARGUMENTS", args.args)
@@ -153,6 +164,12 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         output_parts.append("</skill_files>")
     output_parts.append("</skill_content>")
 
+    if activated_tools:
+        output_parts.append("")
+        output_parts.append(
+            "Activated tools for this agent run: " + ", ".join(activated_tools)
+        )
+
     if args.skill == "dev-browser":
         output_parts.append("")
         output_parts.append(await _browser_readiness(ctx))
@@ -160,6 +177,7 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
         output="\n".join(output_parts),
+        metadata={"activated_tools": list(activated_tools)},
     )
 
 

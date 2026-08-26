@@ -622,4 +622,5 @@ image_gen_tool = define_tool(
     execute=execute,
     sandbox_required=False,
     parallel_safe=False,
+    skill_only=True,
 )

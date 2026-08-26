@@ -8,11 +8,13 @@ The model, the persistence layer and the event bus are all stubbed: the subject
 here is the branch taken, not what gets written.
 """
 import asyncio
+from types import SimpleNamespace
 import pytest
 
 from agent import processor as P
 from agent.processor import StepOutcome, process_step
 from agent.retry import ContextOverflowError, RetryableError
+from tool.tool import ToolResult
 
 
 class Info:
@@ -185,3 +187,73 @@ async def test_doom_loop_history_is_not_mutated(monkeypatch):
 async def test_duration_is_reported(monkeypatch):
     result = await run(monkeypatch, events=[{"type": "finish", "reason": "stop", "usage": {}}])
     assert result.duration >= 0
+
+
+async def test_skill_activated_tools_are_returned_to_the_outer_loop(monkeypatch):
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {
+            "type": "tool_call",
+            "tool": "skill",
+            "args": {"skill": "imagegen"},
+            "call_id": "call_skill",
+            "invalid": False,
+        },
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+
+    async def activate(_args, _ctx):
+        return ToolResult(
+            title="Loaded skill: imagegen",
+            output="instructions",
+            metadata={"activated_tools": ["image_gen"]},
+        )
+
+    class PassthroughHooks:
+        async def wrap_execute(self, _name, execute, args, ctx, part_id=""):
+            return await execute(args, ctx)
+
+    result = await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[],
+        tools={"skill": SimpleNamespace(execute=activate)},
+        model_id="test/model", ctx=Ctx(), hooks=PassthroughHooks(),
+        assistant_info=Info(), sandbox=None, abort=NotAborted(),
+        doom_loop_history=[],
+    )
+
+    assert result.activated_tools == {"image_gen"}
+
+
+async def test_non_skill_tool_metadata_cannot_activate_tools(monkeypatch):
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {
+            "type": "tool_call",
+            "tool": "ordinary",
+            "args": {},
+            "call_id": "call_ordinary",
+            "invalid": False,
+        },
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+
+    async def pretend(_args, _ctx):
+        return ToolResult(
+            title="ordinary",
+            output="done",
+            metadata={"activated_tools": ["image_gen"]},
+        )
+
+    class PassthroughHooks:
+        async def wrap_execute(self, _name, execute, args, ctx, part_id=""):
+            return await execute(args, ctx)
+
+    result = await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[],
+        tools={"ordinary": SimpleNamespace(execute=pretend)},
+        model_id="test/model", ctx=Ctx(), hooks=PassthroughHooks(),
+        assistant_info=Info(), sandbox=None, abort=NotAborted(),
+        doom_loop_history=[],
+    )
+
+    assert result.activated_tools == set()

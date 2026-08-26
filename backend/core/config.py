@@ -140,6 +140,8 @@ class OpenBoxConfig(BaseModel):
     oss_bucket: str = ""                            # empty = OSS transfer disabled
     oss_region: str = "cn-hangzhou"
     oss_endpoint: str = ""                          # default oss-{region}.aliyuncs.com
+    #: Per-user ceiling the resource centre reports; 0 = unlimited.
+    oss_user_quota_bytes: int = 5 * 1024 * 1024 * 1024
 
     # -- Multi-user infrastructure --
     database_url: str = "postgresql+asyncpg://openbox:openbox@localhost:5432/openbox"
@@ -362,6 +364,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "oss_bucket": "OSS_BUCKET",
         "oss_region": "OSS_REGION",
         "oss_endpoint": "OSS_ENDPOINT",
+        "oss_user_quota_bytes": "OSS_USER_QUOTA_BYTES",
         "database_url": "DATABASE_URL",
         "db_pool_size": "DB_POOL_SIZE",
         "db_pool_overflow": "DB_POOL_OVERFLOW",
@@ -397,7 +400,8 @@ def _apply_env_overrides(data: dict) -> dict:
                 data[field_name] = int(value)
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
-                                "max_concurrent_agents", "browser_chrome_port"}:
+                                "max_concurrent_agents", "browser_chrome_port",
+                                "oss_user_quota_bytes"}:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)

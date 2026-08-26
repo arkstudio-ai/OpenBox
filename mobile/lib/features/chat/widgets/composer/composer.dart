@@ -7,7 +7,9 @@ import '../../../../shared/api/containers_api.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
+import '../../../../shared/models/resource.dart';
 import '../../../../shared/models/session.dart';
+import '../../../../shared/utils/format.dart';
 import '../../api/mention_api.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
@@ -15,6 +17,7 @@ import '../../utils/mention.dart';
 import 'context_ring.dart';
 import 'mention_menu.dart';
 import 'picker_sheets.dart';
+import 'resource_slot.dart';
 
 /// The chat input (web `Composer.tsx`), mobile-optimized: rounded-3xl card
 /// shell, chromeless auto-growing field, mode/model pickers, context ring,
@@ -28,6 +31,7 @@ class Composer extends ConsumerStatefulWidget {
     this.session,
     this.onStop,
     this.autofocus = false,
+    this.resources,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -35,9 +39,16 @@ class Composer extends ConsumerStatefulWidget {
 
   final Session? session;
   final bool busy;
-  final Future<void> Function(String text) onSend;
+
+  /// [attachments] are OSS asset ids the backend pulls into the sandbox
+  /// before the run starts.
+  final Future<void> Function(String text, List<String> attachments) onSend;
   final VoidCallback? onStop;
   final bool autofocus;
+
+  /// Resource centre, injected by the app layer (see [ComposerResourceSlot]).
+  /// Without it the "@" menu falls back to sandbox files and skills only.
+  final ComposerResourceSlot? resources;
 
   @override
   ConsumerState<Composer> createState() => _ComposerState();
@@ -56,7 +67,15 @@ class _ComposerState extends ConsumerState<Composer> {
   List<String> _fileResults = const [];
   bool _fileLoading = false;
 
-  bool get _canSend => _controller.text.trim().isNotEmpty && !_sending;
+  /// Resources pinned to the next message. Already in OSS, so nothing
+  /// transfers here — the message only has to name them.
+  final _attachments = <Resource>[];
+  bool _uploading = false;
+
+  bool get _canSend =>
+      (_controller.text.trim().isNotEmpty || _attachments.isNotEmpty) &&
+      !_sending &&
+      !_uploading;
 
   @override
   void initState() {
@@ -169,6 +188,93 @@ class _ComposerState extends ConsumerState<Composer> {
     ];
   }
 
+  /// Picking a resource attaches it: drop the trigger span entirely (the
+  /// normal replace always leaves a trailing space, which would strand one
+  /// mid-sentence) and pin the file.
+  void _attachResource(Resource resource) {
+    final trigger = _trigger;
+    final text = _controller.text;
+    if (trigger != null) {
+      final next = text.substring(0, trigger.start) + text.substring(trigger.end);
+      _controller.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: trigger.start),
+      );
+    }
+    setState(() {
+      if (!_attachments.any((r) => r.id == resource.id)) {
+        _attachments.add(resource);
+      }
+      _dismissedKey = null;
+      _trigger = null;
+    });
+    _focusNode.requestFocus();
+  }
+
+  /// "+ → resource centre" types the "@" the menu keys off, so browsing and
+  /// typing share one code path (web `insertMentionTrigger`).
+  void _openResourceMenu() {
+    final text = _controller.text;
+    final caret = _controller.selection.baseOffset;
+    final at = caret < 0 ? text.length : caret.clamp(0, text.length);
+    final needsSpace = at > 0 && !RegExp(r'\s').hasMatch(text[at - 1]);
+    final insert = needsSpace ? ' @' : '@';
+    _controller.value = TextEditingValue(
+      text: text.substring(0, at) + insert + text.substring(at),
+      selection: TextSelection.collapsed(offset: at + insert.length),
+    );
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _uploadAndAttach() async {
+    final slot = widget.resources;
+    if (slot == null) return;
+    setState(() => _uploading = true);
+    try {
+      final landed = await slot.pickAndUpload(
+        context,
+        projectId: widget.session?.projectId,
+      );
+      if (!mounted) return;
+      setState(() => _attachments.addAll(landed));
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _showToolsMenu() async {
+    final i18n = ref.read(i18nProvider);
+    final t = context.tokens;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            ListTile(
+              dense: true,
+              leading: Icon(Icons.layers_outlined, size: 18, color: t.n600),
+              title: Text(i18n.t('chat:composer.resourceCenter'),
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              onTap: () => Navigator.pop(sheetContext, 'resources'),
+            ),
+            ListTile(
+              dense: true,
+              leading: Icon(Icons.upload_outlined, size: 18, color: t.n600),
+              title: Text(i18n.t('chat:composer.uploadFile'),
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              onTap: () => Navigator.pop(sheetContext, 'upload'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'resources') _openResourceMenu();
+    if (choice == 'upload') await _uploadAndAttach();
+  }
+
   void _selectMention(MentionItem item) {
     final trigger = _trigger;
     if (trigger == null) return;
@@ -186,11 +292,12 @@ class _ComposerState extends ConsumerState<Composer> {
 
   Future<void> _submit() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    if ((text.isEmpty && _attachments.isEmpty) || _sending) return;
     setState(() => _sending = true);
     try {
-      await widget.onSend(text);
+      await widget.onSend(text, [for (final r in _attachments) r.id]);
       _controller.clear();
+      if (mounted) setState(_attachments.clear);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -230,6 +337,24 @@ class _ComposerState extends ConsumerState<Composer> {
             MentionMenu(
               sections: _buildMentionSections(containerId),
               onSelect: _selectMention,
+              // The resource centre leads the menu: referencing a file
+              // someone already has beats searching the sandbox for one, and
+              // it is the only source that survives a recycled container.
+              leading: widget.resources == null
+                  ? null
+                  : widget.resources!.mentionSection(
+                      context,
+                      query: _trigger?.query ?? '',
+                      projectId: widget.session?.projectId,
+                      onPick: _attachResource,
+                    ),
+            ),
+          if (_attachments.isNotEmpty || _uploading)
+            _AttachmentStrip(
+              attachments: _attachments,
+              uploading: _uploading,
+              onRemove: (resource) =>
+                  setState(() => _attachments.remove(resource)),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
@@ -260,6 +385,18 @@ class _ComposerState extends ConsumerState<Composer> {
             padding: const EdgeInsets.fromLTRB(10, 4, 8, 8),
             child: Row(
               children: [
+                if (widget.resources != null) ...[
+                  IconButton(
+                    onPressed: _showToolsMenu,
+                    icon: Icon(Icons.add, size: 20, color: t.n700),
+                    tooltip: i18n.t('chat:composer.tools'),
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints.tightFor(width: 32, height: 32),
+                    padding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(width: 2),
+                ],
                 _pill(
                   t,
                   label: _agentDisplay(i18n, activeAgent),
@@ -386,6 +523,113 @@ class _SendButton extends StatelessWidget {
             color: t.bg,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Pinned resources above the field (web `AttachmentRow`). These are already
+/// in OSS, so a chip appears the moment one is picked — nothing to transfer.
+class _AttachmentStrip extends StatelessWidget {
+  const _AttachmentStrip({
+    required this.attachments,
+    required this.uploading,
+    required this.onRemove,
+  });
+
+  final List<Resource> attachments;
+  final bool uploading;
+  final ValueChanged<Resource> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return SizedBox(
+      height: 56,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        children: [
+          if (uploading)
+            Container(
+              width: 56,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                border: Border.all(color: t.hair),
+                borderRadius: BorderRadius.circular(Radii.lg),
+              ),
+              child: const Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+          for (final resource in attachments)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.fromLTRB(8, 0, 4, 0),
+              constraints: const BoxConstraints(maxWidth: 190),
+              decoration: BoxDecoration(
+                color: t.n200,
+                border: Border.all(color: t.hair),
+                borderRadius: BorderRadius.circular(Radii.lg),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (resource.kind == 'image' && resource.url.isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                      child: Image.network(
+                        resource.url,
+                        width: 26,
+                        height: 26,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Icon(
+                            Icons.image_outlined, size: 15, color: t.n600),
+                      ),
+                    )
+                  else
+                    Icon(Icons.insert_drive_file_outlined,
+                        size: 15, color: t.n600),
+                  const SizedBox(width: 7),
+                  Flexible(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          resource.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: FontSizes.xs,
+                            fontWeight: FontWeight.w500,
+                            color: t.ink,
+                          ),
+                        ),
+                        Text(
+                          formatBytes(resource.size),
+                          style: TextStyle(
+                              fontSize: FontSizes.xs2, color: t.n600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => onRemove(resource),
+                    icon: Icon(Icons.close, size: 13, color: t.n600),
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints.tightFor(width: 26, height: 26),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

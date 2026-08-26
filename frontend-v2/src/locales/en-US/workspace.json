@@ -4,6 +4,8 @@
   "expand": "Expand sidebar",
   "newChat": "New chat",
   "search": "Search",
+  "resourceCenter": "Resources",
+  "resourceCenterHint": "Everything in object storage",
   "projectName": "Project name",
   "rename": "Rename project",
   "newChatIn": "New chat here",

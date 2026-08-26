@@ -297,6 +297,7 @@ async def _attach_file_parts(session_id: str, message_id: str, user_id: str, ass
     from core.identifier import ascending
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
+    from db.models.session import Session as SessionRow
     from models.message import FilePart
 
     async with get_db_session() as db:
@@ -309,6 +310,24 @@ async def _attach_file_parts(session_id: str, message_id: str, user_id: str, ass
                 )
             )
         ).scalars().all()
+        # An attachment picked before the chat existed has no home yet; sending
+        # it is what files it, so the resource centre sees it under this
+        # conversation's project.
+        project_id = (
+            await db.execute(
+                select(SessionRow.project_id).where(SessionRow.id == session_id)
+            )
+        ).scalar_one_or_none()
+        changed = False
+        for row in rows:
+            if not row.session_id:
+                row.session_id = session_id
+                changed = True
+            if not row.project_id and project_id:
+                row.project_id = project_id
+                changed = True
+        if changed:
+            await db.commit()
     by_id = {r.id: r for r in rows}
     for asset_id in asset_ids:
         row = by_id.get(asset_id)

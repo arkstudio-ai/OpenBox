@@ -12,6 +12,7 @@
     "collapse": "收起面板"
   },
   "menu": {
+    "title": "工作面板",
     "review": "审阅",
     "terminal": "终端",
     "browser": "浏览器",

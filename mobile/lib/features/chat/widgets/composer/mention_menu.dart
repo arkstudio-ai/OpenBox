@@ -37,10 +37,19 @@ class MentionSectionData {
 /// The `@` / `/` mention menu (web `MentionMenu.tsx`), rendered in-flow
 /// above the composer input. Mobile: tap to select, no keyboard nav.
 class MentionMenu extends ConsumerWidget {
-  const MentionMenu({super.key, required this.sections, required this.onSelect});
+  const MentionMenu({
+    super.key,
+    required this.sections,
+    required this.onSelect,
+    this.leading,
+  });
 
   final List<MentionSectionData> sections;
   final void Function(MentionItem item) onSelect;
+
+  /// Rendered above the sections — the resource-centre block, injected so the
+  /// chat feature never imports the resources one.
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -55,6 +64,7 @@ class MentionMenu extends ConsumerWidget {
         shrinkWrap: true,
         padding: const EdgeInsets.symmetric(vertical: 6),
         children: [
+          ?leading,
           for (final section in sections) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),

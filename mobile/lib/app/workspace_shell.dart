@@ -34,8 +34,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       // Cross-feature: chat "审阅 →" emits workbench.open (web D.6).
       ref.read(appEventBusProvider).on('workbench.open').listen((event) {
         final sessionId = event.payload['sessionId'];
+        final kind = event.payload['kind'];
         if (sessionId is String && mounted) {
-          context.push(Paths.workbench(sessionId));
+          context.push(Paths.workbench(
+            sessionId,
+            tab: kind is String && kind.isNotEmpty ? kind : 'review',
+          ));
         }
       });
     });

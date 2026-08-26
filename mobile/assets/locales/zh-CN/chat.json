@@ -209,7 +209,12 @@
       "commands": "命令",
       "empty": "没有匹配项",
       "needSandbox": "需要运行中的沙箱",
-      "loading": "查找中…"
+      "loading": "查找中…",
+      "resources": "资源中心",
+      "allProjects": "全部项目",
+      "sourceAll": "全部",
+      "sourceUser": "我上传的",
+      "sourceAgent": "模型产出"
     },
     "sendShortcut": {
       "label": "发送快捷键",
@@ -217,7 +222,8 @@
       "modEnter": "⌘/Ctrl + Enter 发送",
       "hintEnter": "Enter 发送 · Shift+Enter 换行",
       "hintModEnter": "⌘/Ctrl+Enter 发送 · Enter 换行"
-    }
+    },
+    "resourceCenter": "资源中心"
   },
   "diff": {
     "unmodified_one": "{{count}} 行未修改",

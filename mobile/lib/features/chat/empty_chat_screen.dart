@@ -14,6 +14,7 @@ import 'api/chat_api.dart';
 import 'state/chat_session_controller.dart';
 import 'state/config_providers.dart';
 import 'widgets/composer/composer.dart';
+import 'widgets/composer/resource_slot.dart';
 import 'widgets/empty_state.dart';
 
 const draftSessionKey = 'draft';
@@ -22,18 +23,27 @@ const draftSessionKey = 'draft';
 /// The first send creates the session, then navigates into it
 /// (web `useStartChat`).
 class EmptyChatScreen extends ConsumerStatefulWidget {
-  const EmptyChatScreen({super.key, this.projectId, this.projectName});
+  const EmptyChatScreen({
+    super.key,
+    this.projectId,
+    this.projectName,
+    this.resources,
+  });
 
   final String? projectId;
   final String? projectName;
+
+  /// Resource centre, handed down by the app layer.
+  final ComposerResourceSlot? resources;
 
   @override
   ConsumerState<EmptyChatScreen> createState() => _EmptyChatScreenState();
 }
 
 class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
-  Future<void> _startChat(String text) async {
-    if (text.trim().isEmpty) return;
+  Future<void> _startChat(String text,
+      [List<String> attachments = const []]) async {
+    if (text.trim().isEmpty && attachments.isEmpty) return;
     try {
       final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
       final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
@@ -46,7 +56,9 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
       ref.read(pickedModelProvider(session.id).notifier).state =
           model.isEmpty ? null : model;
       ref.read(pickedAgentProvider(session.id).notifier).state = agent;
-      await ref.read(chatSessionProvider(session.id).notifier).send(text);
+      await ref
+          .read(chatSessionProvider(session.id).notifier)
+          .send(text, attachments: attachments);
       ref.read(appEventBusProvider).emit('workspace.refresh');
       if (mounted) context.go(Paths.chat(session.id));
     } catch (e) {
@@ -76,6 +88,7 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
           child: Composer(
             sessionKey: draftSessionKey,
             busy: false,
+            resources: widget.resources,
             onSend: _startChat,
           ),
         ),

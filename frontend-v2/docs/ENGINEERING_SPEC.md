@@ -1428,3 +1428,93 @@ _FC_ID_OK = re.compile(r"fc_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")   # 总长 4..64,�
 - **skill**:`backend/.openbox/skills/scheduled-tasks/SKILL.md`(host 侧,agent 的 skill 工具已做容器+host 合并,容器同名优先)——引导流程:先 3-4 句说明工作方式(项目归属/cron 日志/回发对话/静默),再问「安排什么+何时运行」,确认后调 cron 工具;内含时区换算、5 分钟下限、NO_REPLY 建议与边界说明。`/api/agent/skill` 列表同步改为容器+host 合并,与 agent 视角一致。
 - **入口**:定时任务页「新建定时任务」改为下拉(shared/ui/Menu):「手动创建」=原表单;「聊天创建」=ChatCreateDialog 先选项目 → POST 创建该项目会话(标题「设置定时任务」)→ prompt_async 预设引导词 → 跳转会话,agent 端由 skill 接管引导。
 - 引导词与全部文案入 cron 命名空间(zh/en)。实测:agent 主动加载 skill,开场即「说明方式 + 两问」,与 ChatGPT Tasks 引导形态一致。
+
+---
+
+## 附录 F · 资源中心（2026-08-26）
+
+> 背景：附件此前只有「上传即发送」一条命，OSS 里的对象没有任何浏览入口，模型经 `share_file`/`view_image` 交回的产出也只存在于某条历史消息里。本轮把 `file_assets` 从「上传流水账」升级为**对象存储的索引**，并按 workspace 中 DEEIX-Chat「文件」页的形态做出资源中心（`features/resources`）。**管理的是 OSS，不是本地目录** —— 沙箱容器会被回收，资源不会。
+
+### F.1 数据模型（alembic c9d0e1f2a3b4）
+
+`file_assets` 增四列一索引：
+
+| 列 | 语义 |
+|---|---|
+| `project_id` | 一级分类。上传时取显式入参，缺省取会话所属项目；为空即「未归档」 |
+| `source` | 二级分类：`user`（人上传）/ `agent`（模型在沙箱里产出后推出去的） |
+| `transient` | 计算机使用的逐动作截图。留给会话 transcript，**不进资源中心列表** |
+| `is_deleted` / `deleted_at` | 软删除。OSS 对象真删，行留着——历史消息的 file part 指着它 |
+
+- 存量数据由迁移回填：`parts.data->>'asset_id'` 挂在 assistant 消息上 ⇒ `source='agent'`；该 part 的 `transient` ⇒ 同步置位。
+- **归档时机**：`_attach_file_parts`（发消息时）为尚未归档的附件补上项目与会话——「@ 引用一个未归档资源并发出去」这件事本身就是归档动作；已有归属的资源**不重挂**，避免旧资源被新会话夺走。
+
+### F.2 后端接口（`/api/assets`）
+
+- `GET ""`：`project`(id/`all`/`none`) × `source` × `kind` × `q` × `sort`，返回带**新鲜预签名 GET** 的列表；`kind` 由 mime+文件名派生（`api/asset_kinds.py`，唯一分类点，前端图标/筛选/预览模式共用），因此在 Python 侧过滤而非 SQL；单次扫描上限 `_SCAN_CAP=3000`。
+- `GET "/usage"`：已用字节 / 配额（`OSS_USER_QUOTA_BYTES`，0=不限）。**接口在，UI 不在**——存储卡片按验收反馈撤掉了（§F.8），端点留着，卡片要回来时不用重开。
+- `PATCH "/{id}"` 改名（只动展示名，OSS key 不可变）；`DELETE "/{id}"` 软删行 + `OssClient.delete` 真删对象（新增 `presign_delete`）。
+- `GET "/{id}/text"`：**唯一一处让字节过后端的接口**。桶不允许浏览器跨域读，`<iframe>` 对多数文本类型会触发下载，所以文本/代码预览由后端代取，256 KB 封顶。图片/视频/音频/PDF 一律直接吃预签名 URL，不经后端。
+
+### F.3 前端形态
+
+- 路由 `/app/resources`（懒加载），侧栏「资源中心」入口带当前项目；Topbar 对该路由显示专属标题并隐藏面板开关。
+- 三栏：**项目分类栏**（一级=项目，展开后的二级=全部/我上传的/模型产出——这个嵌套*就是*需求里的二级分类）→ **列表栏**（标题+搜索+上传，全选/筛选/排序；宽度可拖，见 §F.8）→ **预览栏**（图片/视频/音频内联播放，PDF iframe，文本/代码走 §F.2 的接口，其余给下载卡片）。
+- 筛选、排序、搜索、当前打开的资源**全部进 URL**（§8.4）：`?project=&source=&kind=&q=&sort=&id=`。
+- 列表按 100 条一页增长（footer「加载更多（已显示 / 总数）」，`hasMore` 为假时才说「已加载全部 N 个」）——页大小不进 URL（它是滚动位置那一类的临时状态），但**进 query key**，否则加大页数会命中同一份缓存。
+- 上传走 `shared/api/upload.ts` 的 `putToStorage`（纯传输、无业务语义，chat 与 resources 共用），落在当前浏览的项目下。
+
+### F.4 输入框引用（@ / + / /）
+
+需求是「@ 之后默认进当前项目，也能切别的项目」，三个入口功能一致。实现上**只有一条代码路径**：
+
+- `features/resources` 出 `useResourceMention(sessionId, fallbackProject)`（数据：项目列表、当前 scope、来源、条目）；`features/chat` 的 `useMentionMenu` 接 `scope` 渲染成菜单首段，`MentionScopeBar` 提供项目下拉 + 来源 chip。两个特性零横向 import，**在 `routes/workspace/*` 组合**（§4.2 首选手段）。
+- 选中资源**不插文本**：删掉触发段、把已在 OSS 的对象直接挂成附件（`useAttachments.addResource`，无传输），发送时后端照常 `obx-file get` 拉进沙箱。
+- `+ → 资源中心` 与 `/` 菜单都落到同一个 `@`：`insertMentionTrigger` 在光标处补一个 `@`（必要时前置空格，否则 `resolveTrigger` 会把它当成前一个词的一部分而不触发）。
+
+### F.5 实测（2026-08-26 浏览器验收）
+
+- 上传 → 列表刷新 → 文本预览 → 改名 → 删除：删除后 `oss.head` 返回 `None`，对象确实不在桶里。
+- `@color-test` → 选中 → 发送：用户气泡挂出缩略图，模型答「图片的主色调是橙色。」——引用的资源真的到了模型眼前。
+- 未归档资源在 Default 项目的会话里 @ 引用并发出后，`project_id`/`session_id` 双双回填（F.1 的归档时机）。
+- 深浅两色模式各验收一次（§9.3）。来源徽标改用 `text-a700`——`--t-a800` 在深色下没有反色定义，`bg-a100 text-a800` 是深底深字（该问题在 `tool-map.ts` 与 `QuestionDock` 上是既有的，另案处理）。
+- E2E：`e2e/resources.spec.ts` 三例（项目→来源两级筛选打到真实 `/api/assets`；`@` 选中即挂附件且不写入文本；`+ → 资源中心` 落到同一个 `@`）。composer 的 `+` 加 `data-testid="composer-tools"`——它与元信息条的「更多」重名，靠 aria-label 选不中。
+- 顺带修掉 `ProjectTree.tsx` 里 4 处既有 lint 报错（筛选枚举值被 `no-literal-string` 当成未翻译文案，提为具名常量），`npm run check` 现已全绿。
+
+### F.6 移动端(2026-08-26 同日)
+
+> `mobile/` 是 1:1 移植的 Flutter 端,不是 web 的响应式布局(workspace 本身是桌面尺寸,只有落地页有断点)。资源中心同步移植,针对手机重排。
+
+- **重排**:三栏压成一屏 —— 一级(项目)与二级(来源)折叠成两行 chip 条,第三栏(预览)变成 pushed 页 `ResourceDetailPage`;web 的 hover 操作变长按操作单,内联改名变对话框,`全选` 进入多选态(勾选框 + 「删除 N 项」)。
+- **特性边界**:mobile 与 web 同规矩(特性之间禁止互相 import)。chat 侧声明 `ComposerResourceSlot`(只用 `shared/models` 的类型),`features/resources` 出组件,`app/router.dart` 拼装 —— 与 web 在 `routes/workspace/*` 做的是同一件事。
+- **上传**:新增 `file_picker` 依赖,资源中心的 `+` 与 composer 的 `+` 都直传 OSS(预签名 PUT,不经后端),关掉了 README 里记的「附件上传暂缺」。代价:iOS 最低版本 13.0 → **14.0**(`file_picker` 12 的 darwin 实现要求 14;10/11 与 `flutter_secure_storage` 11 的 win32 约束冲突)。
+- **locale**:`assets/locales/` 按规矩逐字节从 `src/locales/` 复制(含新增的 `resources.json`),`i18n.dart` 的命名空间表加 `resources`。
+- **iOS 模拟器实测**(iPhone 17 Pro Max):项目/来源两级筛选、搜索、类型筛选、多选、长按改名与删除(删除后 `oss.head` 返回 `None`)、文本/图片/视频预览、`+ → 资源中心` 与直接键入 `@` 的两条路径、切换项目 scope、`file_picker` 上传落库(`status=ready`,归到当前会话的项目)。最后 `@` 引用一张图发出去,模型答 `Purple` —— 引用的资源确实到了模型眼前。深浅两色 × 中英文各验收一次。
+
+### F.7 顺带修掉的时间戳缺陷(2026-08-26)
+
+资源中心是第一个显示 `file_assets` 时间的地方,一显示就露馅:所有时间都比真实时间早 8 小时(开发机在 UTC+8)。
+
+- **成因**:`add_file_assets` 迁移把两列建成 `sa.DateTime()`(naive),而 `Base.type_annotation_map` 声明 `datetime → DateTime(timezone=True)`。SQLAlchemy 因此按 timestamptz 绑参,asyncpg 把我们传进去的 naive 值当**本地时间**解释再转 UTC,于是每次写入都偏移一个时区。全库 14 张表只有 `file_assets` 是 naive —— 这一列建错了。
+- **修**:迁移 `d0e1f2a3b4c5` 把两列改成 `timestamptz`(与其余 12 张表一致),写入端改传 aware 的 `datetime.now(timezone.utc)`(`api/assets.py`、`sandbox/assets.py`)。读取端 `_utc()` 兼容迁移前留下的 naive 值。
+- **历史数据不在迁移里改**:偏移量等于当年写入进程所在时区,SQL 无从还原;跑在 UTC 的部署本来就是对的,不是的应按自己的偏移自行修。本机的 167 行已用一次性 SQL 校正。
+
+### F.8 验收反馈两条(2026-08-26 第二轮)
+
+- **撤掉存储空间卡片**(web + 移动端):列表底部那张「已用 0% / 剩余 5 GB」信息量太低,还占掉一块本可以放文件的高度。前端删干净(组件、query、`ResourceUsage` 类型、`storage.*` 文案),**后端 `GET /api/assets/usage` 保留** —— 端点本身没问题,要把卡片放回来时不必重开一遍。
+- **列表栏宽度可拖**:文件名长短差得远(`screen-part_01M0HJBGVH6YAWC4H4Y5PH509X.png` vs `a.png`),固定 `w-72` 要么截断要么浪费。`ColumnResizer` 复用侧栏那套机制(监听挂 window 上,指针甩出 8px 条也不脱手;拖动期间锁 `user-select`),宽度进 `features/resources/stores/ui.ts` 并持久化到 localStorage,夹在 220–560px。与侧栏唯一的差别:分隔线加了 hover 底色 —— 侧栏可以指望人知道那里能拖,一条列分隔线不能。
+- 移动端没有分栏,只跟第一条(卡片一并删掉);`ResourceUsage` 模型与 `resourceUsageProvider` 同步删除,locale 重新逐字节同步。
+- 实测:web 拖 288→423→夹到下限 220,刷新后仍是拖过的宽度;`user-select` 在 mouseup 后已复原(不会留下满页选不中文字)。移动端重装后列表直通底部,`存储空间` 节点数 0。
+
+---
+
+## 附录 G · 移动端工作面板菜单(2026-08-26 第三轮)
+
+> 反馈:移动端的工作面板是一条横向滚动的 tab 条(审阅/终端/浏览器/文件/云桌面/定时…),要求参考 web 改成「菜单页 → 点进 tab 页」。
+
+- **web 本来就是这个形态**:`WorkbenchPanel` 打开时是一个 **menu tab**(`MenuTab.tsx`),六行入口各带一条实时提示(待审数 / 沙箱在线 / 项目目录),点一行把这个 menu tab **就地变成**那个 kind;tab 条负责回头。移动端此前把 menu 这一层丢了,直接铺 tab 条。
+- **移动端重排**:`WorkbenchScreen` = 菜单页(`WorkbenchMenu`,与 web 同一组 kind、同一份 glyph `± ›_ ⊕ ▤ ▣ ◷`、同一套 hint 逻辑),点一行 **push** `WorkbenchSurfacePage`。手机没有 tab 条,**返回手势 + 返回箭头就是那条 tab 条的替代**。
+- **为什么是 push 而不是一个 state 标志**:先做的版本是「menu/surface 用一个 `_kind` 切换 + `PopScope(canPop:false)` 拦返回」,实测 iOS 上边缘滑动**直接失效** —— `canPop:false` 会让系统压根不启动交互式 pop,那个「回到菜单」的回调永远不触发,手势就这么被吞了。改成真正的 route 之后,滑动、返回箭头、返回栈全部是系统原生行为。
+- **深链**:cron 胶囊(`tab=cron`)与聊天里的「审阅 →」(`tab=review`)在菜单之上 push 目标面,所以返回仍然落在菜单;`Paths.workbench` 的默认值从 `review` 改为 `menu`,顶栏面板图标现在开在菜单。`workbench.open` 事件此前忽略 payload 里的 `kind`,一并修好。
+- **文案**:菜单页需要一个页面标题(web 的 menu 在 tab 里,已有标题),新增 `workbench:menu.title`(工作面板 / Workbench)。locale 文件是两端唯一真相且移动端逐字节复制,所以这个只有移动端消费的 key 也住在 `src/locales/`。
+- **实测**(iPhone 17 Pro Max):菜单六行 + 三条实时提示(2 处待审 / 沙箱在线 / default)对齐 web;审阅打开真实 diff、终端连上真实 shell;边缘滑动从面回菜单、再滑一次退出面板;「审阅 →」深链直达且返回落在菜单;深浅两色 × 中英文各验收一次。

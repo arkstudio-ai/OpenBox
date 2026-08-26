@@ -10,6 +10,7 @@ import { useMentionMenu } from "../hooks/useMentionMenu"
 import { useSendShortcut } from "../hooks/useSendShortcut"
 import { useModelChoice } from "../hooks/useModelChoice"
 import { useComposerDrop } from "../hooks/useComposerDrop"
+import { useMentionTrigger } from "../hooks/useMentionTrigger"
 import { modelContextLimit } from "../lib/model"
 import { ContextRing } from "./composer/ContextRing"
 import { InputGroup } from "./composer/InputGroup"
@@ -20,6 +21,7 @@ import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import type { ChatAgent } from "../api/agents"
+import type { MentionScope } from "../hooks/useMentionMenu"
 
 export interface ComposerSubmit {
   model?: string
@@ -55,6 +57,10 @@ interface Props {
   /** The agent this conversation is on. */
   sessionAgent?: string
   onPickAgent?: (name: string) => void
+  /** Resource centre for the "@" menu, handed down by the workspace route —
+   *  features do not reach across to each other (§4.2). Without it the menu
+   *  falls back to sandbox files and skills only. */
+  resourceScope?: MentionScope
 }
 
 const EMPTY_AGENTS: ChatAgent[] = []
@@ -100,6 +106,7 @@ export function Composer({
   agents = EMPTY_AGENTS,
   sessionAgent = "build",
   onPickAgent,
+  resourceScope,
 }: Props) {
   const { t } = useTranslation("chat")
   const { data: config } = useConfigQuery()
@@ -137,6 +144,17 @@ export function Composer({
     caret,
     textareaRef: taRef,
     containerId: running?.id ?? null,
+    onReplace: (nextText, nextCaret) => {
+      setText(nextText)
+      setCaret(nextCaret)
+    },
+    scope: resourceScope,
+    onPickResource: attachments.addResource,
+  })
+
+  const openResources = useMentionTrigger({
+    text,
+    textareaRef: taRef,
     onReplace: (nextText, nextCaret) => {
       setText(nextText)
       setCaret(nextCaret)
@@ -220,6 +238,7 @@ export function Composer({
                 activeIndex={mention.activeIndex}
                 onActiveIndexChange={mention.setActiveIndex}
                 onSelect={mention.select}
+                scope={resourceScope}
               />
             )}
             {mentionSlot}
@@ -230,6 +249,8 @@ export function Composer({
               disabled={!running}
               title={running ? t("attachTitle") : t("attachNeedSandbox")}
               onFiles={pickFiles}
+              onBrowseResources={openResources}
+              hasResources={!!resourceScope}
             />
 
             <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />

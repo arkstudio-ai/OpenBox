@@ -16,6 +16,7 @@ import 'widgets/cards/permission_card.dart';
 import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
+import 'widgets/composer/resource_slot.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
@@ -23,9 +24,13 @@ import 'widgets/user_bubble.dart';
 /// Live chat pane for one session (web `ChatRoute`): flow + pending prompts
 /// + composer. The screen chrome (app bar/drawer) lives in the app shell.
 class ChatScreen extends ConsumerWidget {
-  const ChatScreen({super.key, required this.sessionId});
+  const ChatScreen({super.key, required this.sessionId, this.resources});
 
   final String sessionId;
+
+  /// Resource centre, handed down by the app layer (§分层: features never
+  /// import each other, the composition layer wires them together).
+  final ComposerResourceSlot? resources;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -76,7 +81,7 @@ class ChatScreen extends ConsumerWidget {
                         .read(chatSessionProvider(sessionId).notifier)
                         .stop()
                     : null,
-                onReview: () => context.push(Paths.workbench(sessionId)),
+                onReview: () => context.push(Paths.workbench(sessionId, tab: 'review')),
                 onRegenerate: (id) => ref
                     .read(chatSessionProvider(sessionId).notifier)
                     .regenerate(id),
@@ -107,8 +112,10 @@ class ChatScreen extends ConsumerWidget {
             sessionKey: sessionId,
             session: sessionState.session,
             busy: busy,
-            onSend: (text) =>
-                ref.read(chatSessionProvider(sessionId).notifier).send(text),
+            resources: resources,
+            onSend: (text, attachments) => ref
+                .read(chatSessionProvider(sessionId).notifier)
+                .send(text, attachments: attachments),
             onStop: busy
                 ? () => ref.read(chatSessionProvider(sessionId).notifier).stop()
                 : null,

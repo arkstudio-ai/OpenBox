@@ -12,6 +12,7 @@
     "collapse": "Collapse panel"
   },
   "menu": {
+    "title": "Workbench",
     "review": "Review",
     "terminal": "Terminal",
     "browser": "Browser",

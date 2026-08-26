@@ -29,7 +29,8 @@
     "tools": "{{count}} 个工具",
     "needsMcp": "需要 {{names}}",
     "needsKey": "需要密钥",
-    "packCount": "{{count}} 个 skill"
+    "packCount": "{{count}} 个 skill",
+    "builtin": "内置"
   },
   "action": {
     "add": "添加",

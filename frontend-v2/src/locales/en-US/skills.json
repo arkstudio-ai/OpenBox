@@ -29,7 +29,8 @@
     "tools": "{{count}} tools",
     "needsMcp": "Needs {{names}}",
     "needsKey": "Needs a key",
-    "packCount": "{{count}} skills"
+    "packCount": "{{count}} skills",
+    "builtin": "Built-in"
   },
   "action": {
     "add": "Add",

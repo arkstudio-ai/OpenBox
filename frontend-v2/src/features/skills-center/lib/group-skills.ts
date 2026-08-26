@@ -18,6 +18,8 @@ export interface SkillGroup {
   isPack: boolean
   /** Only container installs can be removed from here. */
   removable: boolean
+  /** Where it came from — decides which badge the row wears. */
+  origin: "container" | "builtin" | "host"
   icon?: string
   description?: string
 }
@@ -45,6 +47,11 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
       members,
       isPack,
       removable: members.some((m) => m.source === "container"),
+      origin: members.some((m) => m.source === "container")
+        ? "container"
+        : members.some((m) => m.source === "builtin")
+          ? "builtin"
+          : "host",
       icon: isPack ? undefined : first.icon,
       description: isPack ? undefined : first.description,
     })

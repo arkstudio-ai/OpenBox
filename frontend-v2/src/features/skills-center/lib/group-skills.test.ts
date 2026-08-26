@@ -61,4 +61,21 @@ describe("groupSkills", () => {
     ])
     expect(groups.map((g) => g.id)).toEqual(["pack", "alpha", "zebra"])
   })
+
+  it("names where a group came from, so the row can say so", () => {
+    const [container] = groupSkills([skill("mine", "mine")])
+    const [builtin] = groupSkills([skill("dev-browser", "dev-browser", "builtin")])
+    const [host] = groupSkills([skill("scheduled-tasks", undefined, "project")])
+    expect(container.origin).toBe("container")
+    expect(builtin.origin).toBe("builtin")
+    expect(host.origin).toBe("host")
+  })
+
+  it("keeps builtin skills in the list, just not removable", () => {
+    // Hiding them made this an inventory of what is removable rather than of
+    // what the agent actually has.
+    const [group] = groupSkills([skill("dev-browser", "dev-browser", "builtin")])
+    expect(group.removable).toBe(false)
+    expect(group.members).toHaveLength(1)
+  })
 })

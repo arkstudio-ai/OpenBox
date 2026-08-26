@@ -72,14 +72,13 @@ export function SkillCenter() {
   const mcpServers = servers.data ?? []
   const unmetFor = useDependencyResolver(mcpServers, catalog.data?.mcp ?? [])
 
-  // Builtin skills are baked into the sandbox image and host skills live on the
-  // backend; neither can be uninstalled here, and listing an action that cannot
-  // work is worse than not listing one.
+  // Every skill the agent can reach is listed, including the ones baked into
+  // the sandbox image and the ones living on the backend. Hiding those made the
+  // list an inventory of what is removable rather than of what the agent has,
+  // so a capability like dev-browser was simply invisible. Removability is a
+  // property of a row, not a reason to omit it.
   const mineSkills = useMemo(
-    () =>
-      (skills.data ?? []).filter(
-        (s) => matches(query, s.name, s.description) && s.source !== "builtin",
-      ),
+    () => (skills.data ?? []).filter((s) => matches(query, s.name, s.description)),
     [skills.data, query],
   )
   const mineServers = useMemo(

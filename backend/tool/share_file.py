@@ -50,7 +50,16 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
 
     name = path.split("/")[-1]
     try:
-        asset_id, verified = await attach_sandbox_image(ctx, path, mime, size, name=name)
+        asset_id, verified = await attach_sandbox_image(
+            ctx,
+            path,
+            mime,
+            size,
+            name=name,
+            relation_kind="shared_file",
+            relation_role="result",
+            relation_label=name,
+        )
     except Exception as e:
         return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])
 

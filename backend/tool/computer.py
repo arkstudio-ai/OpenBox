@@ -441,6 +441,9 @@ async def _attach_screenshot(ctx: ToolContext, geometry: dict) -> str:
         int(geometry.get("bytes", 0)),
         name=f"screen-{ctx.part_id or 'shot'}.png",
         transient=True,
+        relation_kind="computer_screenshot",
+        relation_role="evidence",
+        relation_label="Computer checkpoint",
     )
     log.debug(f"screenshot asset={asset_id} {width}x{height} {size}B")
     return f"{width}x{height}"

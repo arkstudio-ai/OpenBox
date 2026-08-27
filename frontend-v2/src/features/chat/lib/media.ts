@@ -13,3 +13,7 @@ export function isGalleryMedia(part: { asset_id?: string; mime_type?: string }):
 export function isVideoPart(part: { mime_type?: string }): boolean {
   return Boolean(part.mime_type?.startsWith("video/"))
 }
+
+export function isAudioPart(part: { mime_type?: string }): boolean {
+  return Boolean(part.mime_type?.startsWith("audio/"))
+}

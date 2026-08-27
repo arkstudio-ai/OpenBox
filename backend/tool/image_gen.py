@@ -400,6 +400,8 @@ async def _store_output(
     data: bytes,
     fallback_format: str,
     requested_name: str | None,
+    prompt: str,
+    mode: str,
     index: int,
     total: int,
 ) -> StoredImage:
@@ -408,7 +410,7 @@ async def _store_output(
     from core.identifier import ascending
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
-    from models.message import FilePart
+    from models.message import FilePart, FileRelation
     from sandbox.assets import _session_project, _use_internal_oss, ensure_cli
     from session.session import save_part
 
@@ -478,6 +480,16 @@ async def _store_output(
                 oss_key=key,
                 size=size,
                 transient=False,
+                relation=FileRelation(
+                    source_part_id=ctx.part_id or None,
+                    group_id=f"tool:{ctx.part_id}" if ctx.part_id else asset_id,
+                    role="result",
+                    kind="generated_image",
+                    label="Edited image" if mode == "edit" else "Generated image",
+                    caption=prompt[:4000],
+                    ordinal=index,
+                    metadata={"mode": mode, "variant_count": total},
+                ),
                 session_id=ctx.session_id,
                 message_id=ctx.message_id,
             ),
@@ -569,6 +581,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                     payload,
                     output_format,
                     args.filename,
+                    args.prompt,
+                    mode,
                     index,
                     len(payloads),
                 )

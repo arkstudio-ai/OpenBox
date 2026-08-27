@@ -1,8 +1,6 @@
-// Assembles one assistant turn into DEEIX-Chat's message shape: the traces are
-// aggregated to the top of the turn (process → thinking → tool chain) and the
-// answer prose follows as one continuous body. This is deliberately NOT an
-// interleaved block sequence — the reference UI keeps exactly three collapsed
-// trace rows per turn no matter how many steps ran.
+// Assembles the operational trace for one assistant turn. Message boundaries
+// are retained alongside the flattened trace so content-view can distinguish
+// tool-step commentary from the terminal answer and keep files with owners.
 import type {
   AgentSwitchPart,
   CompactionPart,
@@ -25,10 +23,10 @@ export interface UserTurn {
   key: string
   message: MessageWithParts
 }
-/** Identity + meta of the turn's *last* assistant message, so the meta bar has
- *  something to hang on after {@link mergeTurns} collapses the parts lists. */
+/** Identity + meta of the turn's *last* assistant message. */
 export interface AssistantTurnMeta {
   messageId: string
+  finish?: string | null
   tokens?: TokenUsage | null
   reaction?: MessageReaction
   error?: Record<string, unknown> | null
@@ -37,6 +35,9 @@ export interface AssistantTurnMeta {
 export interface AssistantTurn {
   kind: "assistant"
   key: string
+  /** Keep step boundaries: finish/tool_calls is process, finish/stop is the
+   *  terminal answer. `parts` remains the flattened trace stream. */
+  messages: MessageWithParts[]
   parts: MessagePart[]
   meta: AssistantTurnMeta
 }
@@ -45,6 +46,7 @@ export type Turn = UserTurn | AssistantTurn
 function metaOf(m: MessageWithParts): AssistantTurnMeta {
   return {
     messageId: m.id,
+    finish: m.finish,
     tokens: m.tokens,
     reaction: m.reaction,
     error: m.error,
@@ -62,6 +64,7 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
     }
     const last = turns[turns.length - 1]
     if (last && last.kind === "assistant") {
+      last.messages = [...last.messages, m]
       last.parts = [...last.parts, ...m.parts]
       // Adopt the newest message's meta — reaction/tokens belong to the final
       // assistant message of the merged turn. The error is the exception: it
@@ -70,7 +73,13 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // affordance would vanish with it.
       last.meta = { ...metaOf(m), error: m.error ?? last.meta.error }
     } else {
-      turns.push({ kind: "assistant", key: m.id, parts: [...m.parts], meta: metaOf(m) })
+      turns.push({
+        kind: "assistant",
+        key: m.id,
+        messages: [m],
+        parts: [...m.parts],
+        meta: metaOf(m),
+      })
     }
   }
   return turns

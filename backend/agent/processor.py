@@ -479,6 +479,23 @@ async def process_step(
                                         model_id=model_id)
         finish_reason = "compact"
     except Exception as e:
+        # Preserve partial prose as process narration before returning early;
+        # the normal final-save block below is skipped by both retry and error
+        # outcomes, and leaving channel unset makes a legacy client guess.
+        if text_part_id and collected_text:
+            try:
+                await save_part(
+                    TextPart(
+                        id=text_part_id,
+                        text=collected_text,
+                        channel="commentary",
+                        session_id=session_id,
+                        message_id=assistant_info.id,
+                    ),
+                    user_id=user_id,
+                )
+            except Exception:
+                log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)
         if retry_msg:
             # Classify only. Whether to retry at all, and how long to wait, is
@@ -519,6 +536,10 @@ async def process_step(
         final_text = TextPart(
             id=text_part_id,
             text=collected_text,
+            # A step that hands control to tools is narration, not the answer.
+            # Persisting that distinction prevents a stopped/interrupted run
+            # from presenting "I will continue..." as its final response.
+            channel="final" if finish_reason == "stop" else "commentary",
             session_id=session_id,
             message_id=assistant_info.id,
         )

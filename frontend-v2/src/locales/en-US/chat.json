@@ -136,7 +136,33 @@
       "collapse": "Collapse",
       "statusRunning": "Running",
       "statusFailed": "Failed"
+    },
+    "work": {
+      "titleActive": "Working",
+      "titleDone": "Work log",
+      "summary": "{{messages}} progress notes · {{screenshots}} visual checkpoints",
+      "checkpoint": "Page checkpoint",
+      "omitted": "{{count}} repetitive process screenshots folded away"
     }
+  },
+  "final": {
+    "title": "Final answer",
+    "missingTitle": "No final answer was produced",
+    "missingBody": "The run has ended. Its progress notes and intermediate outputs remain available."
+  },
+  "artifacts": {
+    "result": "Result",
+    "finalVideo": "Final video",
+    "videoSegment": "Video segment",
+    "segment": "Segment {{number}}",
+    "segmentCollection": "Segment materials · {{count}}",
+    "generatedImages": "Generated images · {{count}}",
+    "revision": "Revision {{number}}",
+    "prompt": "Prompt",
+    "transcript": "View transcript",
+    "sttOk": "Speech QA passed",
+    "sttReview": "Speech QA needs review",
+    "verification": "Final page state"
   },
   "meta": {
     "copyReply": "Copy",

@@ -136,7 +136,33 @@
       "collapse": "收起",
       "statusRunning": "调用中",
       "statusFailed": "失败"
+    },
+    "work": {
+      "titleActive": "执行过程中",
+      "titleDone": "执行过程",
+      "summary": "{{messages}} 条过程说明 · {{screenshots}} 个过程画面",
+      "checkpoint": "页面检查点",
+      "omitted": "已折叠另外 {{count}} 张重复过程截图"
     }
+  },
+  "final": {
+    "title": "最终答复",
+    "missingTitle": "本轮未生成最终答复",
+    "missingBody": "执行已经结束；本轮的过程说明和中间产出仍然保留，可继续查看。"
+  },
+  "artifacts": {
+    "result": "生成结果",
+    "finalVideo": "最终成片",
+    "videoSegment": "视频片段",
+    "segment": "第 {{number}} 段",
+    "segmentCollection": "分段素材 · {{count}} 段",
+    "generatedImages": "生成图片 · {{count}} 张",
+    "revision": "修订 {{number}}",
+    "prompt": "提示词",
+    "transcript": "查看转写文本",
+    "sttOk": "口播校验通过",
+    "sttReview": "口播待复核",
+    "verification": "最终页面状态"
   },
   "meta": {
     "copyReply": "复制",

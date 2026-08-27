@@ -46,6 +46,10 @@ class TextPart(BaseModel):
     type: Literal["text"] = "text"
     id: str = Field(default_factory=lambda: ascending("part"))
     text: str = ""
+    #: Presentation channel for assistant prose.  Tool-step narration is
+    #: commentary; only the terminal answer is final.  Older rows omit this
+    #: field and the frontend falls back to the parent message's finish reason.
+    channel: Literal["commentary", "final"] | None = None
     session_id: str = ""
     message_id: str = ""
     synthetic: bool = False
@@ -179,6 +183,27 @@ class PatchPart(BaseModel):
     message_id: str = ""
 
 
+class FileRelation(BaseModel):
+    """Why a file exists and which operation/business object owns it.
+
+    File parts used to carry only bytes and a filename.  That forced clients
+    to collect every image/video into one turn-wide gallery, losing the link
+    between a segment, its script, and its output.  This optional envelope is
+    deliberately generic: renderers may specialise on ``kind`` while unknown
+    kinds still retain source, order, caption, and role.
+    """
+
+    source_part_id: str | None = None
+    group_id: str | None = None
+    role: Literal["input", "evidence", "intermediate", "result", "final"] = "result"
+    kind: str = "file"
+    label: str | None = None
+    caption: str | None = None
+    ordinal: int | None = None
+    revision: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class FilePart(BaseModel):
     type: Literal["file"] = "file"
     id: str = Field(default_factory=lambda: ascending("part"))
@@ -200,6 +225,9 @@ class FilePart(BaseModel):
     #: These arrive once per action, so context keeps only the newest few —
     #: unlike a user's attachment, which stays for the whole conversation.
     transient: bool = False
+    #: Semantic ownership used by the chat's ordered artifact renderers.  It
+    #: lives inside the JSON part, so adding it needs no relational migration.
+    relation: FileRelation | None = None
     session_id: str = ""
     message_id: str = ""
 

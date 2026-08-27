@@ -298,7 +298,7 @@ async def _attach_file_parts(session_id: str, message_id: str, user_id: str, ass
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from db.models.session import Session as SessionRow
-    from models.message import FilePart
+    from models.message import FilePart, FileRelation
 
     async with get_db_session() as db:
         rows = (
@@ -341,6 +341,12 @@ async def _attach_file_parts(session_id: str, message_id: str, user_id: str, ass
                 asset_id=row.id,
                 oss_key=row.oss_key,
                 size=row.size,
+                relation=FileRelation(
+                    group_id=f"message:{message_id}:attachments",
+                    role="input",
+                    kind="user_attachment",
+                    label=row.name,
+                ),
                 session_id=session_id,
                 message_id=message_id,
             ),

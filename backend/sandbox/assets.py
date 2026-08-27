@@ -123,7 +123,18 @@ async def _session_project(db, session_id: str | None, user_id: str) -> str | No
 
 
 async def attach_sandbox_image(
-    ctx, path: str, mime: str, size: int, name: str | None = None, transient: bool = False
+    ctx,
+    path: str,
+    mime: str,
+    size: int,
+    name: str | None = None,
+    transient: bool = False,
+    *,
+    relation_kind: str = "file",
+    relation_role: str = "result",
+    relation_group_id: str | None = None,
+    relation_label: str | None = None,
+    relation_caption: str | None = None,
 ) -> tuple[str, int]:
     """Push a sandbox image to OSS and pin a file part on the current message.
 
@@ -140,7 +151,7 @@ async def attach_sandbox_image(
     from core.oss import get_oss
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
-    from models.message import FilePart
+    from models.message import FilePart, FileRelation
     from session.session import save_part
 
     oss = get_oss()
@@ -198,6 +209,14 @@ async def attach_sandbox_image(
             oss_key=key,
             size=verified,
             transient=transient,
+            relation=FileRelation(
+                source_part_id=ctx.part_id or None,
+                group_id=relation_group_id or (f"tool:{ctx.part_id}" if ctx.part_id else None),
+                role=relation_role,
+                kind=relation_kind,
+                label=relation_label,
+                caption=relation_caption,
+            ),
             session_id=ctx.session_id,
             message_id=ctx.message_id,
         ),

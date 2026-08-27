@@ -50,6 +50,8 @@ export interface TextPart {
   type: "text"
   id: string
   text: string
+  /** Tool-step narration is commentary; only terminal prose is final. */
+  channel?: "commentary" | "final" | null
   synthetic?: boolean
 }
 export interface ReasoningPart {
@@ -112,6 +114,21 @@ export interface PatchPart {
   from_snapshot?: string | null
   to_snapshot?: string | null
 }
+export interface FileRelation {
+  /** Tool part that produced this resource. */
+  source_part_id?: string | null
+  /** Resources in one semantic variant/result set share a group. */
+  group_id?: string | null
+  role?: "input" | "evidence" | "intermediate" | "result" | "final"
+  /** Extensible renderer hint, e.g. computer_screenshot or video_segment. */
+  kind?: string
+  label?: string | null
+  caption?: string | null
+  ordinal?: number | null
+  revision?: number | null
+  metadata?: Record<string, unknown>
+}
+
 export interface FilePart {
   type: "file"
   id: string
@@ -120,6 +137,9 @@ export interface FilePart {
   url?: string
   asset_id?: string
   size?: number
+  /** Working evidence such as Computer screenshots; excluded from Resources. */
+  transient?: boolean
+  relation?: FileRelation | null
 }
 export interface AgentSwitchPart {
   type: "agent"

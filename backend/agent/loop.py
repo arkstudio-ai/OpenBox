@@ -395,10 +395,14 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         active_skill_tools: set[str] = set()
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
+        last_step_info = None  # Persists an explicit aborted boundary between steps.
 
         while True:
             if abort.is_set():
                 log.info(f"Session {session_id} aborted")
+                if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):
+                    last_step_info.finish = "aborted"
+                    await update_message_info(last_step_info, user_id=user_id)
                 break
 
             # Load messages and apply compaction boundary filtering
@@ -620,6 +624,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 agent=agent_name,
                 user_id=user_id,
             )
+            last_step_info = assistant_info
 
             # Step start with snapshot
             start_snapshot = await snapshot.track(session_id, sandbox)
@@ -720,6 +725,8 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 break
 
             finish_reason = result.finish_reason
+            if abort.is_set() and finish_reason != "stop":
+                finish_reason = "aborted"
             collected_text = result.text
             total_usage = result.usage
             step_duration = result.duration
@@ -849,6 +856,8 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                     parts=[],
                     created_at=id_to_iso(assistant_info.id),
                 )
+                break
+            elif finish_reason == "aborted":
                 break
             elif finish_reason == "compact":
                 finish_reason_prev = "compact"

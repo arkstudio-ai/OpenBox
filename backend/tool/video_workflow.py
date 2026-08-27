@@ -999,8 +999,11 @@ async def record_segment_transcript(
     threshold: float,
 ) -> dict[str, Any]:
     from db.base import get_db_session
+    from db.models.part import Part as PartORM
     from db.models.video_production import VideoProduction, VideoSegment
 
+    updated_parts: list[dict[str, Any]] = []
+    owner_id = ""
     async with get_db_session() as db:
         segment = await db.get(VideoSegment, segment_id)
         if not segment or not segment.is_active:
@@ -1017,9 +1020,73 @@ async def record_segment_transcript(
         segment.updated_at = datetime.now(timezone.utc)
         production = await db.get(VideoProduction, segment.production_id)
         if production:
+            owner_id = production.user_id
             segments = await _active_segments(db, production.id)
             await _refresh_status(db, production, segments)
-        return comparison
+            # The video file is attached before STT runs.  Refresh its semantic
+            # envelope now so an older turn's segment card gains transcript and
+            # QA state without depending on a later message being merged into
+            # the same visual turn.
+            if production.session_id and segment.output_asset_id:
+                rows = (
+                    await db.execute(
+                        select(PartORM).where(
+                            PartORM.session_id == production.session_id,
+                            PartORM.type == "file",
+                        )
+                    )
+                ).scalars().all()
+                for row in rows:
+                    data = dict(row.data or {})
+                    if data.get("asset_id") != segment.output_asset_id:
+                        continue
+                    relation = dict(data.get("relation") or {})
+                    metadata = dict(relation.get("metadata") or {})
+                    metadata.update(
+                        {
+                            "production_id": production.id,
+                            "segment_id": segment.id,
+                            "transcript": segment.transcript_text,
+                            "stt_verdict": segment.stt_verdict,
+                            "stt_similarity": segment.stt_similarity,
+                        }
+                    )
+                    relation.update(
+                        {
+                            "source_part_id": relation.get("source_part_id"),
+                            "group_id": f"video:{production.id}:segment:{segment.id}",
+                            "role": "intermediate",
+                            "kind": "video_segment",
+                            "label": production.title,
+                            "caption": segment.script_text,
+                            "ordinal": segment.ordinal,
+                            "revision": segment.revision,
+                            "metadata": metadata,
+                        }
+                    )
+                    data["relation"] = relation
+                    row.data = data
+                    updated_parts.append(data)
+
+    if updated_parts and owner_id:
+        from bus import bus
+        from bus.events import PART_UPDATED
+
+        for data in updated_parts:
+            bus.publish(
+                PART_UPDATED,
+                {
+                    "userId": owner_id,
+                    "sessionId": data.get("session_id", ""),
+                    "messageId": data.get("message_id", ""),
+                    "part": {
+                        key: value
+                        for key, value in data.items()
+                        if key not in ("session_id", "message_id", "state")
+                    },
+                },
+            )
+    return comparison
 
 
 async def prepare_transcription(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:

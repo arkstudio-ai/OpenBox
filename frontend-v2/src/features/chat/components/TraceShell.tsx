@@ -14,10 +14,12 @@ interface Props {
   streaming?: boolean
   /** The turn has started answering — collapse a trace that opened itself. */
   autoCollapseReady?: boolean
+  /** Completed-but-incomplete work should reopen on transcript reload. */
+  defaultOpen?: boolean
   children: ReactNode
 }
 
-export function TraceShell({ title, subtitle, streaming, autoCollapseReady, children }: Props) {
+export function TraceShell({ title, subtitle, streaming, autoCollapseReady, defaultOpen, children }: Props) {
   // Open/closed is LATCHED, never derived. A turn's activity flags flip many
   // times (tool 1 ends before tool 2 starts; reasoning alternates with tool
   // calls), and deriving `open` from them made the row pop open and shut on
@@ -27,7 +29,7 @@ export function TraceShell({ title, subtitle, streaming, autoCollapseReady, chil
   // user's own toggle.
   const live = Boolean(streaming)
   const ready = Boolean(autoCollapseReady)
-  const [open, setOpen] = useState(live)
+  const [open, setOpen] = useState(live || Boolean(defaultOpen))
   const [seen, setSeen] = useState({ live, ready })
 
   if (seen.live !== live || seen.ready !== ready) {

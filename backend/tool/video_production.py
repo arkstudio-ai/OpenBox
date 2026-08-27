@@ -467,8 +467,9 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
         return bool(job.attached_message_id)
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
+    from db.models.video_production import VideoProduction, VideoSegment
     from db.models.video_job import VideoJob
-    from models.message import FilePart
+    from models.message import FilePart, FileRelation
     from session.session import save_part
 
     claimed = False
@@ -480,6 +481,16 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
         )
         claimed = result.rowcount == 1
         asset = await db.get(FileAsset, job.output_asset_id)
+        production = (
+            await db.get(VideoProduction, job.production_id)
+            if job.production_id
+            else None
+        )
+        segment = (
+            await db.get(VideoSegment, job.segment_id)
+            if job.segment_id
+            else None
+        )
     if not claimed:
         return True
     if not asset:
@@ -494,6 +505,42 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
                 oss_key=asset.oss_key,
                 size=asset.size,
                 transient=False,
+                relation=FileRelation(
+                    source_part_id=ctx.part_id or None,
+                    group_id=(
+                        f"video:{job.production_id}:segment:{job.segment_id}"
+                        if job.kind == "segment" and job.segment_id
+                        else f"video:{job.production_id or job.id}:final"
+                    ),
+                    role="intermediate" if job.kind == "segment" else "final",
+                    kind="video_segment" if job.kind == "segment" else "video_final",
+                    label=(production.title if production else asset.name),
+                    caption=(
+                        segment.script_text
+                        if segment
+                        else ((production.brief or production.title) if production else None)
+                    ),
+                    ordinal=segment.ordinal if segment else None,
+                    revision=segment.revision if segment else None,
+                    metadata={
+                        "production_id": job.production_id,
+                        "segment_id": job.segment_id,
+                        "job_id": job.id,
+                        "transcript": segment.transcript_text if segment else None,
+                        "stt_verdict": segment.stt_verdict if segment else None,
+                        "stt_similarity": segment.stt_similarity if segment else None,
+                        "subtitles": (
+                            bool((job.request_data or {}).get("subtitles"))
+                            if job.kind == "render"
+                            else None
+                        ),
+                        "render_engine": (
+                            (job.request_data or {}).get("render_engine")
+                            if job.kind == "render"
+                            else None
+                        ),
+                    },
+                ),
                 session_id=ctx.session_id,
                 message_id=ctx.message_id,
             ),

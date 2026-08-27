@@ -84,7 +84,7 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
           <UserBubble message={turn.message} />
         ) : (
           <AssistantTurn
-            parts={turn.parts}
+            messages={turn.messages}
             meta={turn.meta}
             sessionId={sessionId}
             streaming={busy && i === turns.length - 1}

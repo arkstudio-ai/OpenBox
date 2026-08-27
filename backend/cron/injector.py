@@ -217,6 +217,7 @@ async def _inject_messages(
     text_part = TextPart(
         id=ascending("part"),
         text=result_text,
+        channel="final",
         session_id=session_id,
         message_id=assistant_info.id,
     )

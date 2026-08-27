@@ -1,8 +1,6 @@
-// Image attachments as a gallery rather than a stack. A computer-use turn
-// produces a screenshot per action, and one full-width card each pushed the
-// actual answer off screen — so thumbnails tile three to a row, the first six
-// show and the rest fold away. Clicking one opens it full size, which is also
-// the only place a download belongs.
+// Preview one semantic resource group. Computer-use evidence is handled by
+// WorkLogTrace; this gallery therefore preserves producer order instead of
+// reversing a whole turn's unrelated media into a contact sheet.
 import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { ChevronDown, Download, Play, X } from "lucide-react"
@@ -43,7 +41,7 @@ function Thumb({ part, onOpen }: { part: FilePart; onOpen: () => void }) {
               muted
               playsInline
               onError={() => setBroken(true)}
-              className="size-full object-cover"
+              className="bg-n900 size-full object-contain"
             />
             <span className="bg-bg/90 text-ink absolute inset-0 m-auto flex size-8 items-center justify-center rounded-full">
               <Play size={16} strokeWidth={2.2} className="translate-x-px" />
@@ -59,7 +57,7 @@ function Thumb({ part, onOpen }: { part: FilePart; onOpen: () => void }) {
           />
         )
       ) : (
-        <span className="bg-n200/50 text-n600 flex size-full items-center justify-center text-2xs">
+        <span className="bg-n200/50 text-n600 text-2xs flex size-full items-center justify-center">
           {broken ? t("gallery.failed") : ""}
         </span>
       )}
@@ -126,7 +124,13 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
         </div>
         {data?.url &&
           (isVideoPart(part) ? (
-            <video src={data.url} controls autoPlay playsInline className="min-h-0 rounded-xl object-contain" />
+            <video
+              src={data.url}
+              controls
+              autoPlay
+              playsInline
+              className="min-h-0 rounded-xl object-contain"
+            />
           ) : (
             <img src={data.url} alt={name} className="min-h-0 rounded-xl object-contain" />
           ))}
@@ -136,26 +140,39 @@ function Lightbox({ part, onClose }: { part: FilePart; onClose: () => void }) {
   )
 }
 
-export function AttachmentGallery({ parts, className }: { parts: FilePart[]; className?: string }) {
+interface Props {
+  parts: FilePart[]
+  className?: string
+  /** Full-width treatment for a final deliverable. */
+  hero?: boolean
+  /** Small checkpoint/group treatment inside another card. */
+  compact?: boolean
+}
+
+export function AttachmentGallery({ parts, className, hero = false, compact = false }: Props) {
   const { t } = useTranslation("chat")
   const [expanded, setExpanded] = useState(false)
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const close = useCallback(() => setOpenIndex(null), [])
 
   if (parts.length === 0) return null
-  // Newest first. A computer-use turn appends a screenshot per action, so the
-  // last one is the current state of the screen and the early ones are
-  // history — showing the oldest six and folding the rest away hid exactly
-  // the frame worth looking at.
-  const ordered = [...parts].reverse()
-  const shown = expanded ? ordered : ordered.slice(0, VISIBLE_BY_DEFAULT)
+  const ordered = parts
+  const visibleLimit = compact ? 3 : VISIBLE_BY_DEFAULT
+  const shown = expanded ? ordered : ordered.slice(0, visibleLimit)
   const hidden = ordered.length - shown.length
   // One or two images are the subject, not a contact sheet — don't shrink
   // them into a third of the column just to keep the grid uniform.
-  const columns = parts.length === 1 ? "grid-cols-1" : parts.length === 2 ? "grid-cols-2" : "grid-cols-3"
+  const columns =
+    hero || parts.length === 1 ? "grid-cols-1" : parts.length === 2 ? "grid-cols-2" : "grid-cols-3"
 
   return (
-    <div className={cn("flex flex-col gap-1.5", parts.length === 1 ? "max-w-90" : "max-w-165", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-1.5",
+        hero || compact ? "w-full max-w-full" : parts.length === 1 ? "max-w-90" : "max-w-165",
+        className,
+      )}
+    >
       <div className={cn("grid gap-1.5", columns)}>
         {shown.map((part, i) => (
           <Thumb key={part.id} part={part} onOpen={() => setOpenIndex(i)} />
@@ -167,15 +184,14 @@ export function AttachmentGallery({ parts, className }: { parts: FilePart[]; cla
           onClick={() => setExpanded((v) => !v)}
           className="text-n600 hover:text-ink inline-flex items-center gap-1 self-start text-xs transition-colors"
         >
-          <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} strokeWidth={2} />
+          <ChevronDown
+            className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
+            strokeWidth={2}
+          />
           {expanded ? t("gallery.less") : t("gallery.more", { count: hidden })}
         </button>
       )}
-      {/* Indexes address `ordered`, not `parts` — opening the first thumbnail
-          must show the newest image, not the oldest. */}
-      {openIndex !== null && ordered[openIndex] && (
-        <Lightbox part={ordered[openIndex]} onClose={close} />
-      )}
+      {openIndex !== null && ordered[openIndex] && <Lightbox part={ordered[openIndex]} onClose={close} />}
     </div>
   )
 }

@@ -106,6 +106,46 @@ async def test_queue_serializes_jobs_and_long_poll_is_bounded(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_running_command_cancel_is_reported_as_cancelled(tmp_path: Path):
+    manager = MediaJobManager(
+        MediaJobConfig(state_root=str(tmp_path / "state"), temp_root=str(tmp_path / "temp"))
+    )
+
+    async def slow_render(job_id, _payload):
+        await manager._run_command(
+            job_id,
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=tmp_path,
+            timeout=60,
+        )
+        return {"uploaded": True}
+
+    manager._render = slow_render
+    await manager.start()
+    try:
+        submitted = await manager.submit(payload("render-job-cancel", "cancel-key"))
+        for _ in range(100):
+            current = await manager.get(submitted["job_id"], "user-1")
+            if current["status"] == "in_progress" and manager._active_processes:
+                break
+            await asyncio.sleep(0.01)
+        assert current["status"] == "in_progress"
+
+        await manager.cancel(submitted["job_id"], "user-1")
+        for _ in range(100):
+            current = await manager.get(submitted["job_id"], "user-1")
+            if current["status"] in {"cancelled", "failed"}:
+                break
+            await asyncio.sleep(0.01)
+
+        assert current["status"] == "cancelled"
+        assert current["result"]["resource_check"]["temp_removed"] is True
+        assert current["result"]["resource_check"]["remaining_job_processes"] == []
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
 async def test_submit_is_idempotent_per_owner_and_key(tmp_path: Path):
     manager = MediaJobManager(
         MediaJobConfig(state_root=str(tmp_path / "state"), temp_root=str(tmp_path / "temp"))

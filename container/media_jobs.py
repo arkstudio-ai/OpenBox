@@ -1180,6 +1180,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             stderr_handle.close()
             stdout = self._tail_text(stdout_path, 200_000)
             stderr = self._tail_text(stderr_path, 20_000)
+            # cancel() terminates the active process immediately. The waiter
+            # can therefore finish between loop iterations, before the loop
+            # observes cancel_requested. Preserve the user's intent instead
+            # of misclassifying SIGTERM's non-zero exit as a render failure.
+            if await self._cancel_requested(job_id):
+                raise MediaJobCancelled("cancelled during rendering")
             if process.returncode != 0:
                 # Some CLIs (notably HyperFrames lint) report validation
                 # failures on stdout while returning a non-zero code.

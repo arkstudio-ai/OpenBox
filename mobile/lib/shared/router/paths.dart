@@ -10,6 +10,8 @@ abstract final class Paths {
 
   static const String cron = '/app/cron';
 
+  static const String skills = '/app/skills';
+
   /// Optional project scope, like the web `paths.resources(projectId)`.
   static String resources([String? projectId]) => projectId == null
       ? '/app/resources'

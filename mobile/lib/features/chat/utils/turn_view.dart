@@ -171,6 +171,9 @@ class AssistantTurnData extends ChatRow {
 
   String get lastMessageId => messages.last.id;
 
+  /// The newest message's finish reason (web `AssistantTurnMeta.finish`).
+  String? get finish => messages.last.finish;
+
   bool get hasBody => bodyText.trim().isNotEmpty;
 
   bool get hasTools => toolChain.isNotEmpty;
@@ -179,6 +182,12 @@ class AssistantTurnData extends ChatRow {
 
   bool get hasProcess => stepCount > 0 || durationSec > 0;
 }
+
+/// Internal continuation/plan/compaction prompts belong to the model
+/// protocol, not to the user's transcript (web `isSyntheticOnlyUserMessage`).
+bool isSyntheticOnlyUserMessage(ChatMessage message) =>
+    message.parts.isNotEmpty &&
+    message.parts.every((part) => part is TextPart && part.synthetic);
 
 /// Merge consecutive assistant messages into turns, then aggregate.
 List<ChatRow> buildChatRows(List<ChatMessage> messages) {
@@ -194,6 +203,9 @@ List<ChatRow> buildChatRows(List<ChatMessage> messages) {
 
   for (final message in messages) {
     if (message.isUser) {
+      // Skipping the synthetic turn also lets its following assistant
+      // message stay in the same visible turn as the preceding real request.
+      if (isSyntheticOnlyUserMessage(message)) continue;
       flush();
       rows.add(UserRowData(message));
     } else if (message.isAssistant) {

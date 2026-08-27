@@ -1,0 +1,163 @@
+{
+  "page": {
+    "title": "技能中心",
+    "subtitle": "管理已安装的 Skill 与 MCP 服务，或从技能商店添加新能力。"
+  },
+  "tab": {
+    "mine": "我的",
+    "store": "技能商店"
+  },
+  "filter": {
+    "all": "全部",
+    "skill": "Skill",
+    "mcp": "MCP"
+  },
+  "searchPlaceholder": "搜索 Skill 与 MCP",
+  "section": {
+    "personal": "个人 · {{count}}",
+    "skills": "Skill · {{count}}",
+    "mcp": "MCP 服务 · {{count}}",
+    "storeSkills": "Skill",
+    "storeMcp": "MCP 服务"
+  },
+  "status": {
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "error": "异常"
+  },
+  "badge": {
+    "host": "内置",
+    "tools": "{{count}} 个工具",
+    "needsMcp": "需要 {{names}}",
+    "needsKey": "需要密钥",
+    "packCount": "{{count}} 个 skill",
+    "personal": "个人",
+    "unpublished": "未上传",
+    "published": "已发布",
+    "storeInstalled": "商店安装",
+    "community": "用户共享",
+    "builtin": "内置",
+    "builtinHint": "预装在沙箱镜像里，不可卸载。附带的脚本和资源 agent 可以直接读取。",
+    "hostHint": "装在后端主机上，不可卸载。只有 SKILL.md 的指令生效——它附带的文件 agent 读不到，因为工具运行在沙箱里。"
+  },
+  "action": {
+    "add": "添加",
+    "createWithChat": "聊天创建",
+    "install": "安装",
+    "installed": "已安装",
+    "uninstall": "卸载",
+    "remove": "移除",
+    "connect": "连接",
+    "disconnect": "断开",
+    "homepage": "查看主页",
+    "publish": "上传到商店",
+    "updatePublish": "更新商店版本",
+    "download": "下载 ZIP",
+    "expand": "展开",
+    "collapse": "收起"
+  },
+  "mine": {
+    "emptyTitle": "还没有安装任何 Skill 或 MCP",
+    "emptyHint": "去技能商店挑一个，或上传你自己的。",
+    "browseStore": "浏览技能商店",
+    "missingDependency": "依赖的 MCP 未连接：{{names}}",
+    "confirmPack": "「{{name}}」是一个技能包，卸载会同时移除其中全部 {{count}} 个 skill。确定吗？"
+  },
+  "store": {
+    "noMatch": "没有匹配的结果。"
+  },
+  "publish": {
+    "title": "上传到技能商店",
+    "updateTitle": "更新商店版本",
+    "body": "确认把「{{name}}」上传到技能商店？",
+    "updateBody": "确认用当前的「{{name}}」更新技能商店中的公开版本？",
+    "publicNotice": "上传后，所有用户都能在技能商店中看到并安装这个 Skill。请确认其中不包含密钥、账号或其他私密内容。",
+    "confirm": "确认上传",
+    "confirmUpdate": "确认更新",
+    "working": "上传中…"
+  },
+  "create": {
+    "title": "通过聊天创建 Skill",
+    "subtitle": "描述你想要的能力，agent 会在真实对话中确认需求、创建并校验 Skill。",
+    "projectLabel": "保存到项目",
+    "noProjects": "暂无可用项目",
+    "briefLabel": "你想创建什么 Skill？",
+    "briefPlaceholder": "例如：帮我做一个每周整理竞品动态、输出带来源摘要的 Skill。",
+    "chatHint": "开始后会跳转到新的对话，你可以像平常聊天一样继续补充和调整。",
+    "prompt": "请通过自然对话帮我创建一个个人 Skill。\n我的需求是：{{brief}}\n请使用 skill-creator 的流程；如有必要只问关键问题，创建后保存到我的 Skill 并完成校验。",
+    "confirm": "开始聊天创建",
+    "starting": "正在创建对话…"
+  },
+  "install": {
+    "title": "安装",
+    "confirm": "安装",
+    "installing": "安装中…",
+    "dependsTitle": "这个 Skill 依赖 MCP 服务",
+    "dependsHint": "它的指令会调用这些服务提供的工具。不装的话 Skill 能加载，但第一次调用工具就会失败。",
+    "dependsWarning": "已取消勾选部分依赖，该 Skill 可能无法正常工作。",
+    "credentialsFor": "{{name}} 需要的凭据"
+  },
+  "upload": {
+    "title": "添加 Skill 或 MCP",
+    "subtitle": "把压缩包、SKILL.md、Git 仓库或 MCP 服务添加到“我的”。",
+    "modeArchive": "压缩包",
+    "modePaste": "粘贴 SKILL.md",
+    "modeGit": "Git 仓库",
+    "modeMcp": "MCP 服务",
+    "pickArchive": "选择压缩包",
+    "archiveHint": "支持 .zip / .tar / .tar.gz，最大 50MB",
+    "nameLabel": "名称（可选）",
+    "contentLabel": "SKILL.md 内容",
+    "frontmatterHint": "frontmatter 支持 icon（emoji）和 requires-mcp（依赖的 MCP 服务名）。",
+    "gitLabel": "仓库地址",
+    "gitHint": "支持 https / git / ssh。仓库里存在 install.sh 时会自动执行。",
+    "mcpTab": {
+      "form": "表单",
+      "json": "粘贴 JSON"
+    },
+    "transport": {
+      "stdio": "本地进程",
+      "remote": "远程"
+    },
+    "mcpName": "服务名",
+    "command": "命令",
+    "args": "参数",
+    "env": "环境变量（每行 KEY=value）",
+    "mcpUrl": "服务地址",
+    "headers": "请求头（每行 Key: value）",
+    "remoteHint": "远程服务会先尝试 Streamable HTTP，失败后回退到 SSE。",
+    "jsonLabel": "MCP 配置 JSON",
+    "jsonHint": "支持 mcpServers / servers 包裹格式，也支持单个服务对象。",
+    "jsonError": {
+      "invalidJson": "JSON 格式有误，无法解析。",
+      "invalidShape": "结构无法识别，请粘贴一个服务对象或 mcpServers 映射。",
+      "noServers": "没有解析出任何 MCP 服务。",
+      "needName": "单个服务对象需要填写服务名。",
+      "empty": "请粘贴配置内容。"
+    },
+    "confirm": "添加",
+    "installing": "处理中…",
+    "skillTemplate": "---\nname: my-skill\ndescription: ...\nicon: 🛠️\n---\n\n# My Skill",
+    "gitPlaceholder": "https://github.com/owner/repo.git",
+    "namePlaceholder": "my-server",
+    "argsPlaceholder": "-y @modelcontextprotocol/server-memory",
+    "envPlaceholder": "API_KEY=sk-...",
+    "urlPlaceholder": "https://mcp.example.com/mcp",
+    "headersPlaceholder": "Authorization: Bearer ...",
+    "jsonPlaceholder": "{\n  \"mcpServers\": {\n    \"memory\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-memory\"]\n    }\n  }\n}"
+  },
+  "common": {
+    "cancel": "取消"
+  },
+  "deps": {
+    "title": "还需要装 MCP 服务",
+    "subtitle": "「{{skill}}」的指令会调用下面这些服务提供的工具。现在一并装好，装完就能直接用。",
+    "willInstall": "将安装并连接",
+    "willConnect": "已配置，将重新连接",
+    "unknown": "这些依赖不在技能商店里，需要你手动添加：{{names}}",
+    "confirm": "一起安装",
+    "working": "处理中…",
+    "later": "稍后",
+    "fixNow": "一起安装"
+  }
+}

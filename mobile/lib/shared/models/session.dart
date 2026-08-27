@@ -108,3 +108,12 @@ class Session {
         kind: kind,
       );
 }
+
+/// Which retry a stalled run is on, carried by `session.status` when the
+/// status is `retry` (web `StreamState.retry`).
+class RetryProgress {
+  const RetryProgress({required this.attempt, required this.maxAttempts});
+
+  final int attempt;
+  final int maxAttempts;
+}

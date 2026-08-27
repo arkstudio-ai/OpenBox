@@ -152,6 +152,16 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   );
                 },
               ),
+              // 技能中心, between the resource centre and the scheduled
+              // tasks — the same order the web sidebar uses.
+              _NavRow(
+                icon: Icons.extension_outlined,
+                label: i18n.t('workspace:skillCenter'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(Paths.skills);
+                },
+              ),
               // Scheduled-tasks entry, same spot as the web sidebar.
               _NavRow(
                 icon: Icons.schedule,

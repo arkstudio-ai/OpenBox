@@ -80,7 +80,21 @@
     "other": "Or write your own answer",
     "answer": "Write your answer",
     "needAll": "Answer all {{count}} questions",
-    "unanswered": "Unanswered"
+    "unanswered": "Unanswered",
+    "videoApproval": {
+      "fullScript": "Full script",
+      "segment": "Segment {{number}}",
+      "role": "Role: {{role}}",
+      "transcript": "Verbatim script",
+      "prompt": "Visual prompt",
+      "roles": {
+        "hook": "Hook",
+        "body": "Body",
+        "transition": "Transition",
+        "closing": "Closing",
+        "unknown": "Unspecified role"
+      }
+    }
   },
   "compaction": "Context compacted",
   "retry": "Retry #{{attempt}}",
@@ -110,7 +124,7 @@
   "attachNeedSandbox": "Attachments need a running sandbox",
   "attachUploading": "Uploading…",
   "attachFailed": "Upload failed",
-  "attachTooLarge": "File exceeds 8 MB",
+  "attachTooLarge": "File exceeds 1 GB",
   "trace": {
     "process": {
       "titleActive": "Processing",
@@ -136,7 +150,33 @@
       "collapse": "Collapse",
       "statusRunning": "Running",
       "statusFailed": "Failed"
+    },
+    "work": {
+      "titleActive": "Working",
+      "titleDone": "Work log",
+      "summary": "{{messages}} progress notes · {{screenshots}} visual checkpoints",
+      "checkpoint": "Page checkpoint",
+      "omitted": "{{count}} repetitive process screenshots folded away"
     }
+  },
+  "final": {
+    "title": "Final answer",
+    "missingTitle": "No final answer was produced",
+    "missingBody": "The run has ended. Its progress notes and intermediate outputs remain available."
+  },
+  "artifacts": {
+    "result": "Result",
+    "finalVideo": "Final video",
+    "videoSegment": "Video segment",
+    "segment": "Segment {{number}}",
+    "segmentCollection": "Segment materials · {{count}}",
+    "generatedImages": "Generated images · {{count}}",
+    "revision": "Revision {{number}}",
+    "prompt": "Prompt",
+    "transcript": "View transcript",
+    "sttOk": "Speech QA passed",
+    "sttReview": "Speech QA needs review",
+    "verification": "Final page state"
   },
   "meta": {
     "copyReply": "Copy",
@@ -250,5 +290,9 @@
     "left": "{{tokens}} left",
     "compactSoon": "Filling up — history will be compacted soon",
     "aria": "Context {{pct}}% full"
+  },
+  "status": {
+    "thinking": "Thinking…",
+    "retrying": "No response — retrying ({{attempt}}/{{total}})"
   }
 }

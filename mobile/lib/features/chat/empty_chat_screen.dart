@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -67,6 +69,9 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
             .read(toastProvider.notifier)
             .error(errorText(ref.read(i18nProvider), e));
       }
+      // Rethrow so the composer knows the send never happened and keeps the
+      // draft. Swallowing it left an empty box that read as "sent".
+      rethrow;
     }
   }
 
@@ -79,7 +84,9 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
         Expanded(
           child: ChatEmptyState(
             projectName: widget.projectName,
-            onPick: _startChat,
+            // A suggestion tap has no draft to preserve, so the rethrow that
+            // the composer relies on is nothing to act on here.
+            onPick: (text) => unawaited(_startChat(text).catchError((_) {})),
           ),
         ),
         if (needsSandbox) const _SandboxCard(),

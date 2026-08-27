@@ -10,10 +10,19 @@ import 'trace_shell.dart';
 
 /// Process trace (web `ProcessTrace`): step count, context tokens, duration.
 class ProcessTrace extends ConsumerWidget {
-  const ProcessTrace({super.key, required this.turn, required this.active});
+  const ProcessTrace({
+    super.key,
+    required this.turn,
+    required this.active,
+    required this.autoCollapseReady,
+  });
 
   final AssistantTurnData turn;
   final bool active;
+
+  /// Only an actual final answer closes the live rows — process narration
+  /// must not collapse the trace or masquerade as an answer (web parity).
+  final bool autoCollapseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -30,7 +39,7 @@ class ProcessTrace extends ConsumerWidget {
         count: turn.stepCount,
       ),
       active: active,
-      autoCollapseReady: turn.hasBody,
+      autoCollapseReady: autoCollapseReady,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

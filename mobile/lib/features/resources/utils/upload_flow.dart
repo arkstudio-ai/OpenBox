@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/resource.dart';
 import '../../../shared/utils/error_text.dart';
+import '../../../shared/utils/format.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/resources_api.dart';
 import 'resource_display.dart';
@@ -26,6 +27,14 @@ Future<List<Resource>> pickAndUploadResources(
   for (final file in picked) {
     try {
       final bytes = await file.readAsBytes();
+      // Refuse here rather than partway through a multi-hundred-megabyte PUT
+      // that the bucket will reject anyway.
+      if (bytes.length > maxUploadBytes) {
+        ref
+            .read(toastProvider.notifier)
+            .error(ref.read(i18nProvider).t('chat:attachTooLarge'));
+        continue;
+      }
       landed.add(
         await api.upload(
           name: file.name,

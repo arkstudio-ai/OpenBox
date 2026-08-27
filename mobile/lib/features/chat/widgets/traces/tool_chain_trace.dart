@@ -8,27 +8,39 @@ import '../../../../shared/models/message_part.dart';
 import '../../../../shared/widgets/spinner.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/turn_view.dart';
+import 'subagent_line.dart';
+import 'tool_output.dart';
 import 'trace_shell.dart';
 
 /// Tool-chain trace (web `ToolChainTrace`): timeline with a connector rail,
 /// per-call dot (danger=failed, accent pulse=running, n500=done), kind label
 /// + detail, tap to expand request/response.
 class ToolChainTrace extends ConsumerWidget {
-  const ToolChainTrace({super.key, required this.turn});
+  const ToolChainTrace({
+    super.key,
+    required this.turn,
+    required this.active,
+    required this.autoCollapseReady,
+  });
 
   final AssistantTurnData turn;
+
+  /// Held live for the whole tool phase — `toolsStreaming` drops in the gap
+  /// between two calls, which made the row title flicker (web parity).
+  final bool active;
+  final bool autoCollapseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     return TraceShell(
-      title: turn.toolsStreaming
+      title: active
           ? i18n.t('chat:trace.tool.titleActive')
           : i18n.t('chat:trace.tool.titleDone'),
       summary: i18n
           .t('chat:trace.tool.summaryCount', count: turn.toolChain.length),
-      active: turn.toolsStreaming,
-      autoCollapseReady: turn.hasBody,
+      active: active,
+      autoCollapseReady: autoCollapseReady,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -88,9 +100,7 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
     };
 
     return InkWell(
-      onTap: part is ToolPart
-          ? () => setState(() => _expanded = !_expanded)
-          : null,
+      onTap: () => setState(() => _expanded = !_expanded),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: Row(
@@ -144,8 +154,11 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
                         ),
                     ],
                   ),
-                  if (_expanded && part is ToolPart)
-                    ToolDetailBox(part: part),
+                  // A task row is silent for as long as its subagent works,
+                  // which is usually the longest thing in the chain.
+                  if (part is ToolPart && part.tool == 'task')
+                    SubagentLine(part: part),
+                  if (_expanded) ToolDetailBox(part: part),
                 ],
               ),
             ),
@@ -156,21 +169,20 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
   }
 }
 
-/// Expandable request/response body for one tool call — shared by the flat
-/// chain and the task card's per-task rows.
-class ToolDetailBox extends ConsumerWidget {
+/// Expandable detail body for one tool call — shared by the flat chain and
+/// the task card's per-task rows.
+///
+/// The phone keeps the tap-to-expand the web does not need (a row here is one
+/// line wide), but what opens is the same structured column: a shell call
+/// reads as its command and output, a skill load as just its name.
+class ToolDetailBox extends StatelessWidget {
   const ToolDetailBox({super.key, required this.part});
 
-  final ToolPart part;
-
-  static const _maxLines = 8;
+  final MessagePart part;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final t = context.tokens;
-    final i18n = ref.watch(i18nProvider);
-    final input = toolPayloadText(part.input);
-    final output = part.error ?? toolPayloadText(part.output);
     return Container(
       margin: const EdgeInsets.only(top: 6, bottom: 6),
       padding: const EdgeInsets.all(10),
@@ -178,51 +190,7 @@ class ToolDetailBox extends ConsumerWidget {
         color: t.n200.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(Radii.md),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (input.isNotEmpty) ...[
-            _label(t, i18n.t('chat:toolDetail.request')),
-            _mono(t, input),
-          ],
-          if (output.isNotEmpty) ...[
-            if (input.isNotEmpty) const SizedBox(height: 8),
-            _label(
-              t,
-              part.error != null
-                  ? i18n.t('chat:toolDetail.error')
-                  : i18n.t('chat:toolDetail.response'),
-            ),
-            _mono(t, output, danger: part.error != null),
-          ],
-        ],
-      ),
+      child: ToolOutput(part: part),
     );
   }
-
-  Widget _label(BossipTokens t, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 3),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: FontSizes.xs2,
-            fontWeight: FontWeight.w600,
-            color: t.n500,
-            letterSpacing: 0.4,
-          ),
-        ),
-      );
-
-  Widget _mono(BossipTokens t, String text, {bool danger = false}) => Text(
-        text,
-        maxLines: _maxLines,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: FontSizes.xs,
-          height: 1.6,
-          color: danger ? t.dangerInk : t.n700,
-          fontFamily: 'Menlo',
-          fontFamilyFallback: const ['monospace'],
-        ),
-      );
 }

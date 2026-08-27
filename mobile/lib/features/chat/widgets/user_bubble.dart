@@ -47,6 +47,7 @@ class _UserBubbleState extends ConsumerState<UserBubble> {
     final i18n = ref.watch(i18nProvider);
     final rawText = widget.message.parts
         .whereType<TextPart>()
+        .where((p) => !p.synthetic)
         .map((p) => p.text)
         .join('\n\n');
     final (text, legacyFiles) = splitAttachments(rawText);

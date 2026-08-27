@@ -2,25 +2,56 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../../../shared/models/session.dart';
+import '../../../shared/utils/error_text.dart';
+import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
 
 /// Streaming chat state — a 1:1 port of frontend-v2
 /// `features/chat/stores/stream.ts` reducers plus the `useChatEvents` WS
 /// dispatch. Physically isolated from REST fetching (web §7.4).
 class ChatStreamState {
-  const ChatStreamState({this.messages = const {}, this.status = const {}});
+  const ChatStreamState({
+    this.messages = const {},
+    this.status = const {},
+    this.retry = const {},
+    this.runError = const {},
+  });
 
   final Map<String, List<ChatMessage>> messages;
   final Map<String, SessionStatus> status;
+
+  /// Which retry a stalled run is on, so the wait can account for itself.
+  final Map<String, RetryProgress> retry;
+
+  /// Why the last run failed, shown above the composer until the next send.
+  final Map<String, String> runError;
 
   List<ChatMessage> messagesOf(String sessionId) =>
       messages[sessionId] ?? const [];
 
   SessionStatus? statusOf(String sessionId) => status[sessionId];
+
+  RetryProgress? retryOf(String sessionId) => retry[sessionId];
+
+  String? runErrorOf(String sessionId) => runError[sessionId];
+
+  ChatStreamState copyWith({
+    Map<String, List<ChatMessage>>? messages,
+    Map<String, SessionStatus>? status,
+    Map<String, RetryProgress>? retry,
+    Map<String, String>? runError,
+  }) =>
+      ChatStreamState(
+        messages: messages ?? this.messages,
+        status: status ?? this.status,
+        retry: retry ?? this.retry,
+        runError: runError ?? this.runError,
+      );
 }
 
 /// Web `isBusyStatus`: busy | finalizing | retry | compacting.
@@ -86,12 +117,32 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
         updateToolStatus(sessionId, asString(event.data['partId']) ?? '',
             ToolStatus.error, event.data);
       case 'session.status':
-        setStatus(sessionId,
-            sessionStatusFrom(asString(event.data['status'])));
+        final status = sessionStatusFrom(asString(event.data['status']));
+        setStatus(sessionId, status);
+        // A fresh run supersedes whatever the last one failed with.
+        if (status == SessionStatus.busy) clearRunError(sessionId);
+        final attempt = asInt(event.data['attempt']);
+        if (status == SessionStatus.retry && attempt != null && attempt > 0) {
+          setRetry(
+            sessionId,
+            attempt,
+            asInt(event.data['maxAttempts']) ?? attempt,
+          );
+        }
       case 'session.finalizing':
         setStatus(sessionId, SessionStatus.finalizing);
       case 'session.error':
         setStatus(sessionId, SessionStatus.error);
+        // Say it twice, deliberately. The toast is what someone sees if they
+        // are looking; the line above the composer is what remains for
+        // someone who was not, or who dismissed the toast — without it a
+        // failed run leaves a screen that looks exactly like a working one.
+        final message = runFailureText(
+          ref.read(i18nProvider),
+          asMap(event.data['error']),
+        );
+        ref.read(toastProvider.notifier).error(message);
+        setRunError(sessionId, message);
     }
   }
 
@@ -251,16 +302,52 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   void setStatus(String sessionId, SessionStatus status) {
-    state = ChatStreamState(
-      messages: state.messages,
+    // Leaving a stale attempt behind would have the next wait open on
+    // "retry 5 of 5" before anything had gone wrong.
+    final retry = Map<String, RetryProgress>.of(state.retry);
+    if (status != SessionStatus.retry) retry.remove(sessionId);
+    state = state.copyWith(
       status: {...state.status, sessionId: status},
+      retry: retry,
     );
+  }
+
+  void setRetry(String sessionId, int attempt, int maxAttempts) {
+    state = state.copyWith(retry: {
+      ...state.retry,
+      sessionId: RetryProgress(attempt: attempt, maxAttempts: maxAttempts),
+    });
+  }
+
+  void setRunError(String sessionId, String message) {
+    state = state.copyWith(
+      runError: {...state.runError, sessionId: message},
+    );
+  }
+
+  void clearRunError(String sessionId) {
+    if (!state.runError.containsKey(sessionId)) return;
+    final runError = Map<String, String>.of(state.runError)..remove(sessionId);
+    state = state.copyWith(runError: runError);
+  }
+
+  /// Take back an optimistic message whose send was rejected. Only ever
+  /// removes the temp echo — a server-confirmed message with the same client
+  /// id must survive, or a slow success would erase itself.
+  void dropOptimistic(String sessionId, String clientMessageId) {
+    final list = state.messagesOf(sessionId);
+    final next = list
+        .where((m) =>
+            !(m.id.startsWith('tmp-') && m.clientMessageId == clientMessageId))
+        .toList();
+    if (next.length == list.length) return;
+    _setSessionMessages(sessionId, next);
   }
 
   void clearMessages(String sessionId) {
     final messages = Map<String, List<ChatMessage>>.of(state.messages)
       ..remove(sessionId);
-    state = ChatStreamState(messages: messages, status: state.status);
+    state = state.copyWith(messages: messages);
   }
 
   void _patchMessage(
@@ -273,10 +360,7 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   void _setSessionMessages(String sessionId, List<ChatMessage> list) {
-    state = ChatStreamState(
-      messages: {...state.messages, sessionId: list},
-      status: state.status,
-    );
+    state = state.copyWith(messages: {...state.messages, sessionId: list});
   }
 }
 

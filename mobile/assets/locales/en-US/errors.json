@@ -10,5 +10,11 @@
   "SANDBOX_NOT_READY": "The sandbox isn't ready yet — create one first.",
   "AUTH_INVALID_CREDENTIALS": "Wrong account or password.",
   "AUTH_USER_EXISTS": "That account already exists.",
-  "SESSION_BUSY": "The session is still running — hold on."
+  "SESSION_BUSY": "The session is still running — hold on.",
+  "HTTP_429": "Too many requests. Please try again shortly.",
+  "SESSION_QUOTA_EXCEEDED": "Conversations full ({{used}}/{{limit}}). Delete some old ones.",
+  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "Too many tasks running ({{used}}/{{limit}}). Please wait.",
+  "CONTAINER_QUOTA_EXCEEDED": "Sandboxes full ({{used}}/{{limit}}). Release one.",
+  "runFailed": "The reply failed. Please try again.",
+  "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model."
 }

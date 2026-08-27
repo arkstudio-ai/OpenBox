@@ -17,6 +17,7 @@ sealed class MessagePart {
         return TextPart(
           id: id,
           text: asString(json['text']) ?? '',
+          channel: asString(json['channel']),
           synthetic: asBool(json['synthetic']) ?? false,
         );
       case 'reasoning':
@@ -72,6 +73,10 @@ sealed class MessagePart {
           url: asString(json['url']),
           assetId: asString(json['asset_id']),
           size: asInt(json['size']),
+          transient: asBool(json['transient']) ?? false,
+          relation: json['relation'] is Map<String, dynamic>
+              ? FileRelation.fromJson(json['relation'] as Map<String, dynamic>)
+              : null,
         );
       case 'agent':
         return AgentPart(id: id, agent: asString(json['agent']) ?? '');
@@ -113,16 +118,33 @@ ToolStatus toolStatusFrom(String? value) => switch (value) {
     };
 
 class TextPart extends MessagePart {
-  const TextPart({required super.id, required this.text, this.synthetic = false});
+  const TextPart({
+    required super.id,
+    required this.text,
+    this.channel,
+    this.synthetic = false,
+  });
 
   final String text;
+
+  /// Tool-step narration is `commentary`; only terminal prose is `final`.
+  /// Null on rows written before the backend carried the field.
+  final String? channel;
   final bool synthetic;
+
+  bool get isCommentary => channel == 'commentary';
+
+  bool get isFinal => channel == 'final';
 
   @override
   String get type => 'text';
 
-  TextPart appendDelta(String delta) =>
-      TextPart(id: id, text: text + delta, synthetic: synthetic);
+  TextPart appendDelta(String delta) => TextPart(
+        id: id,
+        text: text + delta,
+        channel: channel,
+        synthetic: synthetic,
+      );
 }
 
 class ReasoningPart extends MessagePart {
@@ -255,6 +277,52 @@ class PatchPart extends MessagePart {
   String get type => 'patch';
 }
 
+/// Where a produced file came from and what it is (`FileRelation`,
+/// frontend-v2 `shared/types/api.ts`). Absent on rows written before the
+/// backend started recording provenance — every reader must cope with null.
+class FileRelation {
+  const FileRelation({
+    this.sourcePartId,
+    this.groupId,
+    this.role,
+    this.kind,
+    this.label,
+    this.caption,
+    this.ordinal,
+    this.revision,
+    this.metadata = const {},
+  });
+
+  factory FileRelation.fromJson(Map<String, dynamic> json) => FileRelation(
+        sourcePartId: asString(json['source_part_id']),
+        groupId: asString(json['group_id']),
+        role: asString(json['role']),
+        kind: asString(json['kind']),
+        label: asString(json['label']),
+        caption: asString(json['caption']),
+        ordinal: asInt(json['ordinal']),
+        revision: asInt(json['revision']),
+        metadata: asMap(json['metadata']),
+      );
+
+  /// Tool part that produced this resource.
+  final String? sourcePartId;
+
+  /// Resources in one semantic variant/result set share a group.
+  final String? groupId;
+
+  /// input | evidence | intermediate | result | final
+  final String? role;
+
+  /// Extensible renderer hint, e.g. computer_screenshot or video_segment.
+  final String? kind;
+  final String? label;
+  final String? caption;
+  final int? ordinal;
+  final int? revision;
+  final Map<String, dynamic> metadata;
+}
+
 class FilePart extends MessagePart {
   const FilePart({
     required super.id,
@@ -263,6 +331,8 @@ class FilePart extends MessagePart {
     this.url,
     this.assetId,
     this.size,
+    this.transient = false,
+    this.relation,
   });
 
   final String path;
@@ -270,6 +340,10 @@ class FilePart extends MessagePart {
   final String? url;
   final String? assetId;
   final int? size;
+
+  /// Working evidence such as Computer screenshots; excluded from Resources.
+  final bool transient;
+  final FileRelation? relation;
 
   @override
   String get type => 'file';

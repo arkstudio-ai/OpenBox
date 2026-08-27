@@ -13,6 +13,7 @@ import '../features/resources/resources_screen.dart';
 import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/skills/skills_screen.dart';
 import '../features/workbench/workbench_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/auth_store.dart';
@@ -80,6 +81,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => ResourcesScreen(
           initialProject: state.uri.queryParameters['project'],
         ),
+      ),
+      GoRoute(
+        path: Paths.skills,
+        builder: (context, state) => const SkillsScreen(),
       ),
       GoRoute(
         path: '/app/settings',

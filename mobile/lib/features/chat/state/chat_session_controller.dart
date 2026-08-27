@@ -3,9 +3,12 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../../../shared/models/session.dart';
+import '../../../shared/utils/error_text.dart';
+import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
 import '../api/chat_api.dart';
 import 'config_providers.dart';
@@ -140,6 +143,10 @@ class ChatSessionController
   /// Optimistic send (web `useSendChat`): tmp message + busy + prompt_async.
   /// Model/agent come from the per-session picks, falling back to the
   /// session's own values.
+  ///
+  /// Rethrows on rejection so the composer knows the send never happened and
+  /// can keep the draft. Swallowing it here left an empty box that read as
+  /// "sent".
   Future<void> send(String text, {List<String> attachments = const []}) async {
     final model = ref.read(pickedModelProvider(_sessionId));
     final agent =
@@ -158,14 +165,27 @@ class ChatSessionController
       ),
     );
     stream.setStatus(_sessionId, SessionStatus.busy);
-    await ref.read(chatApiProvider).promptAsync(
-          _sessionId,
-          text: text,
-          clientMessageId: cmid,
-          agent: agent,
-          model: model,
-          attachments: attachments,
-        );
+    stream.clearRunError(_sessionId);
+    try {
+      await ref.read(chatApiProvider).promptAsync(
+            _sessionId,
+            text: text,
+            clientMessageId: cmid,
+            agent: agent,
+            model: model,
+            attachments: attachments,
+          );
+    } catch (error) {
+      stream.setStatus(_sessionId, SessionStatus.idle);
+      // Take the optimistic echo back down. Leaving it there showed the
+      // message sitting in the transcript as though it had been sent, which
+      // is the opposite of what happened.
+      stream.dropOptimistic(_sessionId, cmid);
+      ref
+          .read(toastProvider.notifier)
+          .error(errorText(ref.read(i18nProvider), error));
+      rethrow;
+    }
   }
 
   /// Manual retry from the error state.

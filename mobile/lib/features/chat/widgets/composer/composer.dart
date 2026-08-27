@@ -296,8 +296,12 @@ class _ComposerState extends ConsumerState<Composer> {
     setState(() => _sending = true);
     try {
       await widget.onSend(text, [for (final r in _attachments) r.id]);
+      // Only now: a rejected send — a quota, a dropped connection — must not
+      // eat what the person typed, with an empty box reading as success.
       _controller.clear();
       if (mounted) setState(_attachments.clear);
+    } catch (_) {
+      // The send path already reported it; the draft above is the remedy.
     } finally {
       if (mounted) setState(() => _sending = false);
     }

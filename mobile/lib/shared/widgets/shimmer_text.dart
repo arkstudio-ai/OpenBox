@@ -6,13 +6,22 @@ import '../appearance/tokens.dart';
 /// gradient `n600 → ink → n600` sliding across, 2s linear infinite.
 /// Honors reduced motion by falling back to solid n600.
 class ShimmerText extends StatefulWidget {
-  const ShimmerText(this.text, {super.key, this.style, this.enabled = true});
+  const ShimmerText(
+    this.text, {
+    super.key,
+    this.style,
+    this.enabled = true,
+    this.maxLines,
+  });
 
   final String text;
   final TextStyle? style;
 
   /// When false renders static n600 text (done state / reduced motion).
   final bool enabled;
+
+  /// Clamp + ellipsis, for the rows that mirror a web `truncate`.
+  final int? maxLines;
 
   @override
   State<ShimmerText> createState() => _ShimmerTextState();
@@ -53,7 +62,12 @@ class _ShimmerTextState extends State<ShimmerText>
     final style = widget.style ?? DefaultTextStyle.of(context).style;
     final reduceMotion = MediaQuery.of(context).disableAnimations;
     if (!widget.enabled || reduceMotion) {
-      return Text(widget.text, style: style.copyWith(color: t.n600));
+      return Text(
+        widget.text,
+        maxLines: widget.maxLines,
+        overflow: widget.maxLines == null ? null : TextOverflow.ellipsis,
+        style: style.copyWith(color: t.n600),
+      );
     }
     return AnimatedBuilder(
       animation: _controller,
@@ -73,7 +87,12 @@ class _ShimmerTextState extends State<ShimmerText>
               Rect.fromLTWH(0, 0, bounds.width * 2.2, bounds.height),
             );
           },
-          child: Text(widget.text, style: style.copyWith(color: Colors.white)),
+          child: Text(
+            widget.text,
+            maxLines: widget.maxLines,
+            overflow: widget.maxLines == null ? null : TextOverflow.ellipsis,
+            style: style.copyWith(color: Colors.white),
+          ),
         );
       },
     );

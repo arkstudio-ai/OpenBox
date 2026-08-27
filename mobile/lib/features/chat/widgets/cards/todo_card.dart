@@ -15,6 +15,7 @@ import '../../api/chat_api.dart';
 import '../../utils/todo_progress.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/turn_view.dart';
+import '../traces/subagent_line.dart';
 import '../traces/tool_chain_trace.dart' show ToolDetailBox;
 
 /// The task card (web `TodoCard.tsx`): the model's todo list with each
@@ -583,7 +584,8 @@ class _TaskToolRowState extends ConsumerState<_TaskToolRow> {
             ),
           ),
         ),
-        if (_open && part is ToolPart) ToolDetailBox(part: part),
+        if (part is ToolPart && part.tool == 'task') SubagentLine(part: part),
+        if (_open) ToolDetailBox(part: part),
       ],
     );
   }

@@ -3,6 +3,11 @@ library;
 
 import 'package:intl/intl.dart';
 
+/// Attachments upload straight from the device to OSS, so they do not consume
+/// backend memory or WUYING tunnel bandwidth. Keep this in sync with the
+/// server-side asset ceiling in `backend/api/assets.py`.
+const int maxUploadBytes = 1024 * 1024 * 1024;
+
 String formatTokens(num tokens) {
   if (tokens >= 1000000) {
     return '${_trim(tokens / 1000000)}M';

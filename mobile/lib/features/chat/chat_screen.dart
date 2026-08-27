@@ -17,6 +17,7 @@ import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
+import 'widgets/run_error_notice.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
 import 'widgets/user_bubble.dart';
@@ -40,6 +41,8 @@ class ChatScreen extends ConsumerWidget {
     final messages = stream.messagesOf(sessionId);
     final liveStatus = stream.statusOf(sessionId);
     final busy = isBusyStatus(liveStatus ?? sessionState.session?.status);
+    final retry = stream.retryOf(sessionId);
+    final runError = stream.runErrorOf(sessionId);
 
     final rows = buildChatRows(messages);
     final permissions = pending.permissionsOf(sessionId);
@@ -75,6 +78,7 @@ class ChatScreen extends ConsumerWidget {
                 turn: row,
                 sessionId: sessionId,
                 streaming: busy && index == rows.length - 1,
+                retry: busy && index == rows.length - 1 ? retry : null,
                 todoEditable: index == lastTodoIndex,
                 onStop: busy && index == rows.length - 1
                     ? () => ref
@@ -91,7 +95,8 @@ class ChatScreen extends ConsumerWidget {
               ),
             ),
         },
-      if (busy && (rows.isEmpty || rows.last is UserRowData)) const TypingRow(),
+      if (busy && (rows.isEmpty || rows.last is UserRowData))
+        TypingRow(retry: retry),
       for (final permission in permissions)
         PermissionCard(request: permission),
     ];
@@ -106,6 +111,15 @@ class ChatScreen extends ConsumerWidget {
                   : ChatFlow(rows: widgets, forceScrollToken: lastUserId),
         ),
         for (final question in questions) QuestionDock(request: question),
+        // Above the composer, outside the scroll area: a failed run must not
+        // be scrollable away, or it leaves a screen that looks like a
+        // working one.
+        if (runError != null)
+          RunErrorNotice(
+            message: runError,
+            onDismiss: () =>
+                ref.read(chatStreamProvider.notifier).clearRunError(sessionId),
+          ),
         SafeArea(
           top: false,
           child: Composer(

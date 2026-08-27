@@ -10,5 +10,11 @@
   "SANDBOX_NOT_READY": "沙箱环境尚未就绪，请先创建沙箱。",
   "AUTH_INVALID_CREDENTIALS": "账号或密码不正确。",
   "AUTH_USER_EXISTS": "该账号已存在。",
-  "SESSION_BUSY": "会话正在运行中，请稍候。"
+  "SESSION_BUSY": "会话正在运行中，请稍候。",
+  "HTTP_429": "请求过于频繁，请稍后再试。",
+  "SESSION_QUOTA_EXCEEDED": "对话已满（{{used}}/{{limit}}），请删除旧对话。",
+  "CONCURRENT_AGENT_QUOTA_EXCEEDED": "任务并发已满（{{used}}/{{limit}}），请稍候。",
+  "CONTAINER_QUOTA_EXCEEDED": "沙箱已满（{{used}}/{{limit}}），请释放一个。",
+  "runFailed": "这轮回复失败了，请重试。",
+  "LLM_UNAVAILABLE": "模型服务暂时不可用，请稍后重试或换一个模型。"
 }

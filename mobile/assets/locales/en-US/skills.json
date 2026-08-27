@@ -1,0 +1,163 @@
+{
+  "page": {
+    "title": "Skill Centre",
+    "subtitle": "Manage installed skills and MCP servers, or add new ones from the store."
+  },
+  "tab": {
+    "mine": "Mine",
+    "store": "Store"
+  },
+  "filter": {
+    "all": "All",
+    "skill": "Skills",
+    "mcp": "MCP"
+  },
+  "searchPlaceholder": "Search skills and MCP servers",
+  "section": {
+    "personal": "Personal · {{count}}",
+    "skills": "Skills · {{count}}",
+    "mcp": "MCP servers · {{count}}",
+    "storeSkills": "Skills",
+    "storeMcp": "MCP servers"
+  },
+  "status": {
+    "connected": "Connected",
+    "disconnected": "Not connected",
+    "error": "Error"
+  },
+  "badge": {
+    "host": "Built-in",
+    "tools": "{{count}} tools",
+    "needsMcp": "Needs {{names}}",
+    "needsKey": "Needs a key",
+    "packCount": "{{count}} skills",
+    "personal": "Personal",
+    "unpublished": "Not uploaded",
+    "published": "Published",
+    "storeInstalled": "From store",
+    "community": "Community",
+    "builtin": "Built-in",
+    "builtinHint": "Baked into the sandbox image and cannot be uninstalled. Its bundled scripts and resources are readable by the agent.",
+    "hostHint": "Installed on the backend host and cannot be uninstalled. Only its SKILL.md applies — the agent cannot read its bundled files, because its tools run in the sandbox."
+  },
+  "action": {
+    "add": "Add",
+    "createWithChat": "Create in chat",
+    "install": "Install",
+    "installed": "Installed",
+    "uninstall": "Uninstall",
+    "remove": "Remove",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "homepage": "Open homepage",
+    "publish": "Upload to store",
+    "updatePublish": "Update store version",
+    "download": "Download ZIP",
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "mine": {
+    "emptyTitle": "Nothing installed yet",
+    "emptyHint": "Pick something from the store, or upload your own.",
+    "browseStore": "Browse the store",
+    "missingDependency": "Required MCP server not connected: {{names}}",
+    "confirmPack": "“{{name}}” is a pack — uninstalling removes all {{count}} skills in it. Continue?"
+  },
+  "store": {
+    "noMatch": "Nothing matches that search."
+  },
+  "publish": {
+    "title": "Upload to the skill store",
+    "updateTitle": "Update the store version",
+    "body": "Upload “{{name}}” to the skill store?",
+    "updateBody": "Replace the public store version with the current “{{name}}”?",
+    "publicNotice": "After upload, every user can find and install this skill. Make sure it contains no keys, account details, or other private information.",
+    "confirm": "Upload",
+    "confirmUpdate": "Update",
+    "working": "Uploading…"
+  },
+  "create": {
+    "title": "Create a skill in chat",
+    "subtitle": "Describe the capability you want. The agent will clarify, create, and validate it in a real conversation.",
+    "projectLabel": "Save in project",
+    "noProjects": "No projects available",
+    "briefLabel": "What should this skill do?",
+    "briefPlaceholder": "For example: create a skill that summarizes competitor updates every week with linked sources.",
+    "chatHint": "You’ll move to a new conversation where you can keep refining it naturally.",
+    "prompt": "Help me create a personal skill through a natural conversation.\nMy requirement: {{brief}}\nUse the skill-creator workflow. Ask only essential questions if needed, then save it under My Skills and validate it.",
+    "confirm": "Start creating in chat",
+    "starting": "Starting conversation…"
+  },
+  "install": {
+    "title": "Install",
+    "confirm": "Install",
+    "installing": "Installing…",
+    "dependsTitle": "This skill needs an MCP server",
+    "dependsHint": "Its instructions call tools these servers provide. Without them the skill loads and then fails at its first tool call.",
+    "dependsWarning": "Some dependencies are unchecked — the skill may not work.",
+    "credentialsFor": "Credentials for {{name}}"
+  },
+  "upload": {
+    "title": "Add a skill or MCP server",
+    "subtitle": "Add an archive, SKILL.md, Git repository, or MCP server to Mine.",
+    "modeArchive": "Archive",
+    "modePaste": "Paste SKILL.md",
+    "modeGit": "Git repo",
+    "modeMcp": "MCP server",
+    "pickArchive": "Choose an archive",
+    "archiveHint": ".zip / .tar / .tar.gz, up to 50MB",
+    "nameLabel": "Name (optional)",
+    "contentLabel": "SKILL.md content",
+    "frontmatterHint": "Frontmatter supports icon (an emoji) and requires-mcp (MCP server names it depends on).",
+    "gitLabel": "Repository URL",
+    "gitHint": "https, git or ssh. An install.sh in the repo runs automatically.",
+    "mcpTab": {
+      "form": "Form",
+      "json": "Paste JSON"
+    },
+    "transport": {
+      "stdio": "Local process",
+      "remote": "Remote"
+    },
+    "mcpName": "Server name",
+    "command": "Command",
+    "args": "Arguments",
+    "env": "Environment (KEY=value per line)",
+    "mcpUrl": "Server URL",
+    "headers": "Headers (Key: value per line)",
+    "remoteHint": "Remote servers try Streamable HTTP first and fall back to SSE.",
+    "jsonLabel": "MCP configuration JSON",
+    "jsonHint": "Accepts an mcpServers / servers wrapper, or a single server object.",
+    "jsonError": {
+      "invalidJson": "That is not valid JSON.",
+      "invalidShape": "Unrecognised shape — paste a server object or an mcpServers map.",
+      "noServers": "No MCP servers found in that configuration.",
+      "needName": "A single server object needs a name.",
+      "empty": "Paste a configuration first."
+    },
+    "confirm": "Add",
+    "installing": "Working…",
+    "skillTemplate": "---\nname: my-skill\ndescription: ...\nicon: 🛠️\n---\n\n# My Skill",
+    "gitPlaceholder": "https://github.com/owner/repo.git",
+    "namePlaceholder": "my-server",
+    "argsPlaceholder": "-y @modelcontextprotocol/server-memory",
+    "envPlaceholder": "API_KEY=sk-...",
+    "urlPlaceholder": "https://mcp.example.com/mcp",
+    "headersPlaceholder": "Authorization: Bearer ...",
+    "jsonPlaceholder": "{\n  \"mcpServers\": {\n    \"memory\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-memory\"]\n    }\n  }\n}"
+  },
+  "common": {
+    "cancel": "Cancel"
+  },
+  "deps": {
+    "title": "This skill needs MCP servers",
+    "subtitle": "“{{skill}}” calls tools these servers provide. Set them up now and it will work straight away.",
+    "willInstall": "Will be installed and connected",
+    "willConnect": "Configured — will reconnect",
+    "unknown": "Not in the store, so these have to be added by hand: {{names}}",
+    "confirm": "Set them up",
+    "working": "Working…",
+    "later": "Later",
+    "fixNow": "Set up"
+  }
+}

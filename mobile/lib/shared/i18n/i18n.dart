@@ -24,6 +24,7 @@ const _namespaces = [
   'landing',
   'resources',
   'settings',
+  'skills',
   'workbench',
   'workspace',
 ];

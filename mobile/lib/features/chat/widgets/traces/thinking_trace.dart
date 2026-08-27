@@ -9,26 +9,37 @@ import 'trace_shell.dart';
 /// Thinking trace (web `ThinkingTrace`): collapsible muted markdown of the
 /// reasoning text.
 class ThinkingTrace extends ConsumerWidget {
-  const ThinkingTrace({super.key, required this.turn});
+  const ThinkingTrace({
+    super.key,
+    required this.turn,
+    required this.active,
+    required this.autoCollapseReady,
+  });
 
   final AssistantTurnData turn;
+
+  /// Held live for the whole reasoning phase rather than derived per frame —
+  /// `thinkingStreaming` flips every time a tool part lands after reasoning,
+  /// which made the title flicker between 正在思考 and 思考完成.
+  final bool active;
+  final bool autoCollapseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = ref.watch(i18nProvider);
     return TraceShell(
-      title: turn.thinkingStreaming
+      title: active
           ? i18n.t('chat:trace.think.titleActive')
           : i18n.t('chat:trace.think.titleDone'),
-      summary: turn.thinkingStreaming
+      summary: active
           ? i18n.t('chat:trace.think.subtitleActive')
           : i18n.t('chat:trace.think.subtitleDone'),
-      active: turn.thinkingStreaming,
-      autoCollapseReady: turn.hasBody,
+      active: active,
+      autoCollapseReady: autoCollapseReady,
       child: MarkdownView(
         turn.thinkingText,
         variant: MarkdownVariant.thinking,
-        streaming: turn.thinkingStreaming,
+        streaming: active,
       ),
     );
   }

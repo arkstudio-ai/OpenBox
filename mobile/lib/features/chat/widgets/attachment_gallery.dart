@@ -23,17 +23,36 @@ bool isGalleryMedia(FilePart part) {
       (mime.startsWith('image/') || mime.startsWith('video/'));
 }
 
+/// An uploaded audio asset — rendered as a player rather than a thumbnail
+/// (web `isAudioPart`).
+bool isAudioPart(FilePart part) =>
+    (part.mimeType ?? '').startsWith('audio/');
+
 String _baseName(String path) => path.split('/').last;
 
-/// Media attachments as a tiled gallery (web `AttachmentGallery`):
-/// newest first, three to a row (one/two get the full width), first six
-/// shown and the rest folded away. Tapping opens the full-size viewer —
-/// the only place a download belongs.
+/// Preview one semantic resource group (web `AttachmentGallery`).
+///
+/// Computer-use evidence is handled by [WorkLogTrace]; this gallery therefore
+/// preserves producer order instead of reversing a whole turn's unrelated
+/// media into a contact sheet. Tapping opens the full-size viewer — the only
+/// place a download belongs.
 class AttachmentGallery extends ConsumerStatefulWidget {
-  const AttachmentGallery({super.key, required this.parts, this.alignEnd = false});
+  const AttachmentGallery({
+    super.key,
+    required this.parts,
+    this.alignEnd = false,
+    this.hero = false,
+    this.compact = false,
+  });
 
   final List<FilePart> parts;
   final bool alignEnd;
+
+  /// Full-width treatment for a final deliverable.
+  final bool hero;
+
+  /// Small checkpoint/group treatment inside another card.
+  final bool compact;
 
   @override
   ConsumerState<AttachmentGallery> createState() => _AttachmentGalleryState();
@@ -47,21 +66,28 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
     if (widget.parts.isEmpty) return const SizedBox.shrink();
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    // Newest first: a computer-use turn appends a screenshot per action, so
-    // the last one is the current state of the screen (web comment).
-    final ordered = widget.parts.reversed.toList();
-    final shown =
-        _expanded ? ordered : ordered.take(_visibleByDefault).toList();
+    // Producer order. Each group is one semantic result now, so reversing
+    // would show a video's segments backwards.
+    final ordered = widget.parts;
+    final limit = widget.compact ? 3 : _visibleByDefault;
+    final shown = _expanded ? ordered : ordered.take(limit).toList();
     final hidden = ordered.length - shown.length;
-    final columns = ordered.length == 1 ? 1 : (ordered.length == 2 ? 2 : 3);
+    // One or two images are the subject, not a contact sheet — don't shrink
+    // them into a third of the column just to keep the grid uniform.
+    final columns = widget.hero || ordered.length == 1
+        ? 1
+        : (ordered.length == 2 ? 2 : 3);
 
     return Column(
       crossAxisAlignment:
           widget.alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
         ConstrainedBox(
-          constraints:
-              BoxConstraints(maxWidth: ordered.length == 1 ? 360 : 660),
+          constraints: BoxConstraints(
+            maxWidth: widget.hero || widget.compact
+                ? double.infinity
+                : (ordered.length == 1 ? 360 : 660),
+          ),
           child: GridView.count(
             crossAxisCount: columns,
             shrinkWrap: true,
@@ -180,10 +206,9 @@ class _VideoTile extends ConsumerWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
+        ColoredBox(color: t.term),
         if (frame != null)
-          Image.memory(frame, fit: BoxFit.cover, gaplessPlayback: true)
-        else
-          ColoredBox(color: t.term),
+          Image.memory(frame, fit: BoxFit.contain, gaplessPlayback: true),
         // Bottom scrim keeps the filename legible over any frame.
         Positioned(
           left: 0,
@@ -421,17 +446,46 @@ class _VideoBoxState extends State<_VideoBox> {
   }
 }
 
-/// Non-media file row (web `FileChip`): icon pill + mono filename.
-class FileChipRow extends StatelessWidget {
-  const FileChipRow({super.key, required this.name});
+/// Non-media file row (web `FileChip`): icon pill + mono filename. When the
+/// file is a stored asset the chip downloads it, so a produced file is
+/// reachable rather than merely named.
+class FileChipRow extends ConsumerStatefulWidget {
+  const FileChipRow({super.key, required this.name, this.assetId});
 
   final String name;
+  final String? assetId;
+
+  @override
+  ConsumerState<FileChipRow> createState() => _FileChipRowState();
+}
+
+class _FileChipRowState extends ConsumerState<FileChipRow> {
+  bool _downloading = false;
+
+  Future<void> _download() async {
+    final assetId = widget.assetId;
+    if (assetId == null || _downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final resp = await ref.read(apiDioProvider).get<Map<String, dynamic>>(
+        '/api/assets/$assetId/url',
+        queryParameters: {'download': true},
+      );
+      final url = asString(resp.data?['url']);
+      if (url != null) {
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(6, 4, 14, 4),
+    final downloadable = widget.assetId != null;
+    final chip = Container(
+      padding: EdgeInsets.fromLTRB(6, 4, downloadable ? 8 : 14, 4),
       decoration: BoxDecoration(
         border: Border.all(color: t.hair),
         borderRadius: BorderRadius.circular(Radii.full),
@@ -447,17 +501,36 @@ class FileChipRow extends StatelessWidget {
             child: Icon(Icons.description_outlined, size: 12, color: t.n600),
           ),
           const SizedBox(width: 8),
-          Text(
-            name,
-            style: TextStyle(
-              fontSize: FontSizes.xs,
-              color: t.ink,
-              fontFamily: 'Menlo',
-              fontFamilyFallback: const ['monospace'],
+          Flexible(
+            child: Text(
+              widget.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: FontSizes.xs,
+                color: t.ink,
+                fontFamily: 'Menlo',
+                fontFamilyFallback: const ['monospace'],
+              ),
             ),
           ),
+          if (downloadable) ...[
+            const SizedBox(width: 8),
+            _downloading
+                ? SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: t.n600,
+                    ),
+                  )
+                : Icon(Icons.file_download_outlined, size: 14, color: t.n600),
+          ],
         ],
       ),
     );
+    if (!downloadable) return chip;
+    return GestureDetector(onTap: _download, child: chip);
   }
 }

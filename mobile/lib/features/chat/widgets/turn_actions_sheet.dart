@@ -10,6 +10,7 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/toast.dart';
 import '../api/chat_api.dart';
+import '../utils/content_view.dart';
 import '../utils/turn_view.dart';
 
 /// Long-press actions on an assistant turn — the mobile analog of the web
@@ -24,7 +25,10 @@ Future<void> showTurnActions(
   final t = context.tokens;
   final i18n = ref.read(i18nProvider);
   final api = ref.read(chatApiProvider);
-  final messageId = turn.lastMessageId;
+  // Copy and react address the answer, not the whole trace: the meta row
+  // belongs to the message that produced the final prose (web AssistantMeta).
+  final content = buildAssistantContentView(turn.messages, false);
+  final messageId = content.finalMessageId ?? turn.lastMessageId;
   final reaction = turn.messages.last.reaction;
 
   return showModalBottomSheet<void>(
@@ -39,7 +43,8 @@ Future<void> showTurnActions(
             icon: Icons.copy_outlined,
             label: i18n.t('chat:meta.copyReply'),
             onTap: () async {
-              await Clipboard.setData(ClipboardData(text: turn.bodyText));
+              await Clipboard.setData(
+                  ClipboardData(text: content.finalText));
               ref.read(toastProvider.notifier).info(i18n.t('chat:meta.copied'));
             },
           ),

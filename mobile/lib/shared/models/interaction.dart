@@ -52,6 +52,7 @@ class QuestionItem {
     this.options = const [],
     this.multiple = false,
     this.custom = false,
+    this.detail,
   });
 
   factory QuestionItem.fromJson(Map<String, dynamic> json) => QuestionItem(
@@ -63,6 +64,9 @@ class QuestionItem {
             .toList(),
         multiple: asBool(json['multiple']) ?? false,
         custom: asBool(json['custom']) ?? false,
+        detail: json['detail'] is Map<String, dynamic>
+            ? json['detail'] as Map<String, dynamic>
+            : null,
       );
 
   final String question;
@@ -70,6 +74,10 @@ class QuestionItem {
   final List<QuestionOption> options;
   final bool multiple;
   final bool custom;
+
+  /// Structured context rendered by first-party confirmation cards
+  /// (video script/segment approvals).
+  final Map<String, dynamic>? detail;
 }
 
 class QuestionRequest {

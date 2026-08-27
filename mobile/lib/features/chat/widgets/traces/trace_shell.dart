@@ -17,6 +17,7 @@ class TraceShell extends StatefulWidget {
     required this.autoCollapseReady,
     required this.child,
     this.summary,
+    this.defaultOpen = false,
   });
 
   final String title;
@@ -25,8 +26,11 @@ class TraceShell extends StatefulWidget {
   /// This phase is currently live (streams shimmer on the title).
   final bool active;
 
-  /// The turn has begun producing body prose → collapse once.
+  /// The turn has begun producing its answer → collapse once.
   final bool autoCollapseReady;
+
+  /// Completed-but-incomplete work should reopen on transcript reload.
+  final bool defaultOpen;
 
   final Widget child;
 
@@ -35,7 +39,7 @@ class TraceShell extends StatefulWidget {
 }
 
 class _TraceShellState extends State<TraceShell> {
-  late bool _open = widget.active;
+  late bool _open = widget.active || widget.defaultOpen;
   bool _autoCollapsed = false;
 
   @override

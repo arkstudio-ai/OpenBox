@@ -6,6 +6,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../api/chat_api.dart';
+import 'video_approval_detail.dart';
 
 /// Blocking question prompt above the composer (web `QuestionDock`):
 /// answers post as one label-array per question, in order.
@@ -161,6 +162,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             question.question,
             style: TextStyle(fontSize: FontSizes.base, color: t.ink, height: 1.5),
           ),
+          VideoApprovalDetail(item: question),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,

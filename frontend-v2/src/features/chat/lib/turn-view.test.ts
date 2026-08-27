@@ -199,6 +199,53 @@ describe("merging messages into turns", () => {
     const parts = turns[0].kind === "assistant" ? turns[0].parts : []
     expect(parts.map((p) => (p as ToolPart).tool)).toEqual(["read", "write"])
   })
+
+  it("does not expose a synthetic user continuation as a user turn", () => {
+    const turns = mergeTurns([
+      {
+        id: "user-real",
+        session_id: "s",
+        role: "user",
+        parts: [{ type: "text", id: "real-text", text: "do the work" }],
+        created_at: "",
+      },
+      {
+        id: "assistant-1",
+        session_id: "s",
+        role: "assistant",
+        parts: [tool("read")],
+        created_at: "",
+      },
+      {
+        id: "user-synthetic",
+        session_id: "s",
+        role: "user",
+        parts: [
+          {
+            type: "text",
+            id: "synthetic-text",
+            text: "Continue working on the next pending task now.",
+            synthetic: true,
+          },
+        ],
+        created_at: "",
+      },
+      {
+        id: "assistant-2",
+        session_id: "s",
+        role: "assistant",
+        parts: [tool("write")],
+        created_at: "",
+      },
+    ])
+
+    expect(turns.map((turn) => turn.kind)).toEqual(["user", "assistant"])
+    const assistant = turns[1]
+    expect(assistant.kind === "assistant" && assistant.messages.map((message) => message.id)).toEqual([
+      "assistant-1",
+      "assistant-2",
+    ])
+  })
 })
 
 describe("a real recorded run", () => {

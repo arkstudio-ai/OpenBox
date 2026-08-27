@@ -24,7 +24,10 @@ function splitAttachments(full: string): { text: string; files: string[] } {
 /** Joins the user message's text parts into one visible string. */
 function userMessageText(message: MessageWithParts): { text: string; files: string[] } {
   const full = message.parts
-    .filter((p): p is Extract<MessageWithParts["parts"][number], { type: "text" }> => p.type === "text")
+    .filter(
+      (p): p is Extract<MessageWithParts["parts"][number], { type: "text" }> =>
+        p.type === "text" && !p.synthetic,
+    )
     .map((p) => p.text)
     .join("\n")
     .trim()

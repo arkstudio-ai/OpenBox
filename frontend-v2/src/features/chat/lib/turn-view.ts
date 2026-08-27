@@ -54,11 +54,23 @@ function metaOf(m: MessageWithParts): AssistantTurnMeta {
   }
 }
 
+function isSyntheticOnlyUserMessage(message: MessageWithParts): boolean {
+  return (
+    message.parts.length > 0 &&
+    message.parts.every((part) => part.type === "text" && part.synthetic === true)
+  )
+}
+
 /** Group the flat message list into user bubbles and merged assistant turns. */
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
   for (const m of messages) {
     if (m.role === "user") {
+      // Internal continuation/plan/compaction prompts belong to the model
+      // protocol, not to the user's transcript. Skipping the synthetic turn
+      // also lets its following assistant message remain in the same visible
+      // turn as the preceding real user request.
+      if (isSyntheticOnlyUserMessage(m)) continue
       turns.push({ kind: "user", key: m.id, message: m })
       continue
     }

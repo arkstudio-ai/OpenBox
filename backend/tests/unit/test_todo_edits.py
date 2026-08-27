@@ -6,7 +6,7 @@ the JSON lands.
 import pytest
 
 import session.todo as todo_mod
-from agent.loop import _insert_todo_notices, _insert_todo_pacing, _unnudged_user_todos
+from agent.loop import _insert_todo_notices, _insert_todo_pacing
 from models.message import TodoItem
 
 
@@ -118,33 +118,6 @@ async def test_a_notice_survives_a_conversation_with_no_user_message():
     await todo_mod.add_notice("s", "- added: mine")
     out = await _insert_todo_notices([{"role": "assistant", "content": "x"}], "s")
     assert out == [{"role": "assistant", "content": "x"}]
-
-
-# ── the end-of-run backstop ──
-
-async def test_a_task_added_late_is_raised_before_the_run_ends():
-    await todo_mod.add_todo_item("s", "mine")
-    fresh = await _unnudged_user_todos("s", set())
-    assert [t.subject for t in fresh] == ["mine"]
-
-
-async def test_it_is_only_raised_once():
-    await todo_mod.add_todo_item("s", "mine")
-    seen = {t.id for t in await _unnudged_user_todos("s", set())}
-    assert await _unnudged_user_todos("s", seen) == []
-
-
-async def test_the_models_own_pending_task_is_not_raised_this_way():
-    await todo_mod.replace_todos("s", [TodoItem(subject="theirs")])
-    assert await _unnudged_user_todos("s", set()) == []
-
-
-async def test_a_finished_task_is_not_raised():
-    todo = await todo_mod.add_todo_item("s", "mine")
-    await todo_mod.replace_todos(
-        "s", [TodoItem(subject="mine", status="completed")]
-    )
-    assert await _unnudged_user_todos("s", set()) == []
 
 
 # ── pacing ──

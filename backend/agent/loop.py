@@ -190,37 +190,6 @@ def resolve_agent_name(last_user, session, is_child: bool = False) -> str:
 from agent.agent import apply_agent_overrides  # noqa: E402,F401
 
 
-async def _has_pending_todos(session_id: str) -> bool:
-    """Check if the session has any pending or in_progress todo items.
-
-    Used to prevent the loop from stopping when the model has planned
-    tasks (via todo_write) but hasn't executed them yet.
-    """
-    from session.todo import get_todo
-    todo = await get_todo(session_id)
-    if not todo.items:
-        return False
-    return any(item.status in ("pending", "in_progress") for item in todo.items)
-
-
-async def _unnudged_user_todos(session_id: str, already: set[str]) -> list:
-    """Tasks the user added that are still waiting and not yet raised.
-
-    Used once per run, at the point the loop would otherwise finish. See the
-    call site for why these do not share the ordinary nudge budget.
-    """
-    from session.todo import get_todo
-    todo = await get_todo(session_id)
-    return [
-        item
-        for item in todo.items
-        if item.source == "user"
-        and item.status in ("pending", "in_progress")
-        and item.id not in already
-    ]
-
-
-
 async def _upsert_plan_part(
     session_id: str,
     message_id: str,
@@ -357,21 +326,11 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         step = 0
         llm_retry_count = 0
         MAX_LLM_RETRIES = 5
-        todo_nudge_count = 0  # How many times we've nudged for pending todos
-        max_todo_nudges = 0
-        # Todo items the user added mid-run that we have already pointed the
-        # model at. Tracked separately from todo_nudge_count: the ordinary
-        # nudge budget guards against a model that plans and stops, but a task
-        # the *user* typed was never the model's to skip, so it gets its own
-        # one-shot regardless of how much of that budget is left.
-        nudged_user_todos: set[str] = set()
         last_assistant_msg = None
         last_finished = None  # Last assistant with a finish field (from message scan)
         last_finished_tokens = None  # Track last token usage for proactive overflow
         from core.config import get_config
         config = get_config()
-        todo_nudge_enabled = bool(getattr(config, "agent_todo_nudge_enabled", True))
-        max_todo_nudges = max(0, int(getattr(config, "agent_max_todo_nudges", 3)))
         # A session's stored model can outlive the provider that served it.
         # Honour it only while the deployment still offers it, and write the
         # replacement back so the fallback happens once rather than every step.
@@ -459,16 +418,14 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
 
             # Check termination (see should_terminate for the rule itself).
             if should_terminate(last_assistant, last_user):
-                # Don't terminate if there are pending todos and we haven't
-                # exhausted nudge attempts (model may have planned but not executed)
-                if todo_nudge_enabled and todo_nudge_count < max_todo_nudges and await _has_pending_todos(session_id):
-                    pass  # Fall through to continue the loop
-                else:
-                    # Also skip if the assistant message has an error
-                    has_error = getattr(last_assistant, "error", None) is not None
-                    if not has_error:
-                        last_assistant_msg = last_assistant
-                    break
+                # Todo state is presentation and planning data, not a scheduler.
+                # A provider stop remains a real stop even when tasks are still
+                # pending; fabricating a user turn here leaks internal control
+                # text into the transcript and can make the model loop forever.
+                has_error = getattr(last_assistant, "error", None) is not None
+                if not has_error:
+                    last_assistant_msg = last_assistant
+                break
 
             step += 1
 
@@ -811,43 +768,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             # Check result
             log.info(f"Step {step} finished: reason={finish_reason}, tool_calls={len(result.completed_tool_parts)}, text={len(collected_text)} chars")
             if finish_reason == "stop":
-                # Nudge: if the model stopped but there are pending/in_progress
-                # todo items, inject a "Continue" message to keep the loop going.
-                # This prevents models (especially codex) from creating a plan
-                # then stopping instead of executing it.
-                if todo_nudge_enabled and todo_nudge_count < max_todo_nudges and await _has_pending_todos(session_id):
-                    todo_nudge_count += 1
-                    log.info(f"Session {session_id}: model stopped with pending todos, nudging ({todo_nudge_count}/{max_todo_nudges})")
-                    from session.session import create_user_message
-                    await create_user_message(
-                        session_id,
-                        "You have pending tasks in your todo list. "
-                        "Continue working on the next pending task now.",
-                        synthetic=True,
-                        user_id=user_id,
-                    )
-                    continue
-
-                # Last look before the run ends: did the user add a task while
-                # this was running? Their edit reaches the model as a reminder
-                # on the next step, so a task added during the final step would
-                # otherwise be recorded and never acted on.
-                fresh = await _unnudged_user_todos(session_id, nudged_user_todos)
-                if fresh:
-                    nudged_user_todos.update(item.id for item in fresh)
-                    subjects = "\n".join(f"- {item.subject}" for item in fresh)
-                    log.info(f"Session {session_id}: {len(fresh)} user-added todo(s) still pending, continuing")
-                    from session.session import create_user_message
-                    await create_user_message(
-                        session_id,
-                        "The user added these tasks to the todo list:\n"
-                        f"{subjects}\n\n"
-                        "Work on them now, and keep them in your todo list.",
-                        synthetic=True,
-                        user_id=user_id,
-                    )
-                    continue
-
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(
                     id=assistant_info.id,
@@ -862,9 +782,8 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             elif finish_reason == "compact":
                 finish_reason_prev = "compact"
                 continue
-            # "tool_calls" -> loop continues; reset nudge counter since model is active
+            # "tool_calls" -> loop continues.
             finish_reason_prev = finish_reason
-            todo_nudge_count = 0
 
         # Flush pending cron results BEFORE setting IDLE (no race with prompt_async)
         try:

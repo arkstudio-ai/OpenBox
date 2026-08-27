@@ -118,6 +118,7 @@ class _CreateSkillSheetState extends ConsumerState<CreateSkillSheet> {
             placeholder: i18n.t('skills:create.briefPlaceholder'),
             controller: _brief,
             lines: 4,
+            prose: true,
             onChanged: (_) => setState(() {}),
           ),
           Padding(

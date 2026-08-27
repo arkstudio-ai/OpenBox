@@ -97,6 +97,7 @@ class SkillBadge extends StatelessWidget {
       BadgeTone.warn => (t.a200, t.n800),
     };
     return Container(
+      constraints: const BoxConstraints(maxWidth: 150),
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         color: background,
@@ -104,6 +105,8 @@ class SkillBadge extends StatelessWidget {
       ),
       child: Text(
         text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: FontSizes.xs2, color: foreground),
       ),
     );
@@ -188,9 +191,13 @@ class EntryRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
+                Wrap(
+                  spacing: 5,
+                  runSpacing: 3,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Flexible(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 210),
                       child: Text(
                         name,
                         maxLines: 1,
@@ -202,11 +209,7 @@ class EntryRow extends StatelessWidget {
                         ),
                       ),
                     ),
-                    for (final badge in badges)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 5),
-                        child: badge,
-                      ),
+                    ...badges,
                   ],
                 ),
                 if (description != null && description!.isNotEmpty)

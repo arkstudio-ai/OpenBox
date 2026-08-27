@@ -108,7 +108,15 @@ McpParseResult parseMcpConfig(String text, {String fallbackName = ''}) {
   try {
     data = jsonDecode(trimmed);
   } catch (_) {
-    return const McpParseResult(error: 'invalidJson');
+    // Only after a straight parse fails: a snippet copied off a web page —
+    // or typed on iOS, whose keyboard substitutes as you go — carries curly
+    // quotes and en-dashes that no JSON parser accepts. Valid JSON is never
+    // rewritten, so a string that legitimately contains “ ” survives.
+    try {
+      data = jsonDecode(_straightenPunctuation(trimmed));
+    } catch (_) {
+      return const McpParseResult(error: 'invalidJson');
+    }
   }
   if (data is! Map<String, dynamic>) {
     return const McpParseResult(error: 'invalidShape');
@@ -148,6 +156,21 @@ McpParseResult parseMcpConfig(String text, {String fallbackName = ''}) {
   return entries.isEmpty
       ? const McpParseResult(error: 'noServers')
       : McpParseResult(entries: entries);
+}
+
+const _typographic = {
+  '\u201C': '"',
+  '\u201D': '"',
+  '\u2018': "'",
+  '\u2019': "'",
+  '\u2013': '-',
+  '\u2014': '-',
+};
+
+String _straightenPunctuation(String text) {
+  var out = text;
+  _typographic.forEach((from, to) => out = out.replaceAll(from, to));
+  return out;
 }
 
 /// "KEY=value" or "Key: value" per line — the shape people already have.

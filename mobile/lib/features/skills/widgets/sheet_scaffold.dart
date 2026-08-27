@@ -167,6 +167,7 @@ class SheetField extends StatelessWidget {
     this.lines = 1,
     this.mono = false,
     this.obscure = false,
+    this.prose = false,
     this.onChanged,
   });
 
@@ -176,6 +177,12 @@ class SheetField extends StatelessWidget {
   final int lines;
   final bool mono;
   final bool obscure;
+
+  /// Free text a person writes for another person. Everything else in these
+  /// sheets is configuration — JSON, argv, env pairs, URLs — where iOS's
+  /// smart punctuation silently swaps `"` for `“` and `-` for `–` and leaves
+  /// a value that cannot parse.
+  final bool prose;
   final ValueChanged<String>? onChanged;
 
   @override
@@ -193,8 +200,13 @@ class SheetField extends StatelessWidget {
             maxLines: obscure ? 1 : lines,
             minLines: obscure ? 1 : lines,
             obscureText: obscure,
-            autocorrect: !mono,
-            enableSuggestions: !mono,
+            autocorrect: prose,
+            enableSuggestions: prose,
+            smartQuotesType:
+                prose ? SmartQuotesType.enabled : SmartQuotesType.disabled,
+            smartDashesType:
+                prose ? SmartDashesType.enabled : SmartDashesType.disabled,
+            keyboardType: lines > 1 ? TextInputType.multiline : null,
             onChanged: onChanged,
             style: TextStyle(
               fontSize: mono ? FontSizes.xs : FontSizes.sm,

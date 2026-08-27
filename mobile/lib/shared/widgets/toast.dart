@@ -242,13 +242,21 @@ class _ToastCardState extends ConsumerState<_ToastCard>
                 ),
               ),
               const SizedBox(width: 4),
-              IconButton(
-                onPressed: widget.onDismiss,
-                icon: Icon(Icons.close, size: 14, color: t.n600),
-                tooltip: i18n.t('common:close'),
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-                padding: EdgeInsets.zero,
+              // No `tooltip:` here. The host sits in MaterialApp.builder,
+              // above the Navigator, so there is no Overlay for a tooltip to
+              // float in and one throws on first build. A semantics label is
+              // the right affordance on touch anyway.
+              Semantics(
+                label: i18n.t('common:close'),
+                button: true,
+                child: IconButton(
+                  onPressed: widget.onDismiss,
+                  icon: Icon(Icons.close, size: 14, color: t.n600),
+                  visualDensity: VisualDensity.compact,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 26, height: 26),
+                  padding: EdgeInsets.zero,
+                ),
               ),
             ],
           ),

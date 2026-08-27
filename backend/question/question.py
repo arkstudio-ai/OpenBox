@@ -26,6 +26,10 @@ class Question(BaseModel):
     options: list[QuestionOption] = []
     multiple: bool = False  # Allow selecting multiple choices
     custom: bool = True  # Allow typing a custom "Other" answer (default: true)
+    # Optional structured context for first-party confirmation cards. Keeping
+    # this generic lets older stored requests (which do not have it) continue
+    # to deserialize while richer system workflows can show what is approved.
+    detail: dict[str, Any] | None = None
 
 
 class QuestionRequest(BaseModel):

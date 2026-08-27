@@ -1,4 +1,5 @@
 """Hash-bound spoken-video workflow, prompt lint, STT, and render source gates."""
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -48,6 +49,27 @@ def test_prompt_lint_requires_recipe_and_valid_reference_numbers():
     assert invalid["ok"] is False
     assert any("参考图片2" in message for message in invalid["failures"])
     assert any("无字幕" in message for message in invalid["failures"])
+
+
+def test_prompt_lint_accepts_the_documented_english_recipe():
+    script = "今天给大家看一枚很适合日常佩戴的和田玉平安扣。"
+    prompt = (
+        "Consistent visual base: same presenter, wardrobe, studio, lighting, and jade pendant "
+        "throughout the entire video. Fixed shot, fixed camera. Vertical 9:16 half-body "
+        "medium shot. Natural gestures: point to the pendant. Tone: calm, professional, "
+        f"friendly. Speak exactly: @{script} No subtitles; subtitles added only in post-production."
+    )
+
+    result = lint_segment_prompt(
+        script_text=script,
+        prompt=prompt,
+        visual_anchor="A detailed approved presenter and jade-studio anchor",
+        image_count=1,
+        video_count=0,
+    )
+
+    assert result["ok"] is True
+    assert result["issues"] == []
 
 
 def test_stt_comparison_keeps_phrase_omission_as_suspect():
@@ -152,6 +174,37 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
         f"固定镜头中景，{anchor}，面对镜头开口说出@{script}，"
         "手势随语气自然舒展，语气亲切，无字幕"
     )
+    rejected = await execute_project(
+        VideoProjectArgs(
+            action="set_segments",
+            production_id=production_id,
+            visual_anchor=anchor,
+            character_reference_asset=portrait_id,
+            segments=[
+                SegmentSpec(
+                    ordinal=1,
+                    role="hook",
+                    script_text=script,
+                    prompt=f"{anchor}，@{script}",
+                )
+            ],
+        ),
+        ctx,
+    )
+    rejected_payload = json.loads(rejected.output)
+    assert rejected.title == "Prompt lint failed"
+    # A lint refusal is a handled, completed tool result. Keeping it completed
+    # preserves the full original arguments alongside the structured repair
+    # recipe when the next model step is assembled.
+    assert rejected.metadata["validation_failed"] is True
+    assert rejected.metadata.get("error") is not True
+    assert rejected.metadata["retry_requires_changed_args"] is True
+    assert rejected_payload["error_code"] == "prompt_lint_failed"
+    assert rejected_payload["segments"][0]["ordinal"] == 1
+    assert "fixed_camera" in rejected_payload["segments"][0]["missing"]
+    assert anchor in rejected_payload["segments"][0]["corrected_prompt_template"]
+    assert f"@{script}" in rejected_payload["segments"][0]["corrected_prompt_template"]
+
     planned = await execute_project(
         VideoProjectArgs(
             action="set_segments",

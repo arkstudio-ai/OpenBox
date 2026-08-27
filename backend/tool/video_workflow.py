@@ -139,6 +139,166 @@ def compare_transcript(script_text: str, transcript_text: str, threshold: float 
     }
 
 
+_PROMPT_LINT_RULES: dict[str, dict[str, Any]] = {
+    "dialogue_exact": {
+        "requirement": (
+            "The prompt must contain @ immediately followed by the exact segment dialogue."
+        ),
+        "accepted_examples": ["@<本段逐字台词>", "Speak exactly: @<exact segment dialogue>"],
+    },
+    "visual_continuity": {
+        "requirement": "Declare one consistent visual base/anchor for the whole video.",
+        "accepted_examples": [
+            "全片一致的画面基底：同一人物、服装、场景、光线和产品",
+            (
+                "Consistent visual base: same presenter, wardrobe, set, lighting, "
+                "and product throughout"
+            ),
+            "Visual anchor: same presenter and setting in every segment",
+        ],
+    },
+    "fixed_camera": {
+        "requirement": "Explicitly use a fixed/locked shot.",
+        "accepted_examples": [
+            "固定镜头",
+            "固定机位",
+            "Fixed shot",
+            "Fixed camera",
+            "Locked-off camera",
+        ],
+    },
+    "framing": {
+        "requirement": "Specify medium, half-body, or close-up framing.",
+        "accepted_examples": ["中景", "半身", "近景", "Medium shot", "Half-body", "Close-up"],
+    },
+    "natural_action": {
+        "requirement": "Describe a natural body/hand action for the presenter.",
+        "accepted_examples": [
+            "自然肢体动作：抬手展示产品",
+            "Natural gestures: gently point to the product",
+        ],
+    },
+    "tone": {
+        "requirement": "Describe the speaking/performance tone.",
+        "accepted_examples": ["语气：专业亲切", "Tone: calm, professional, and friendly"],
+    },
+    "no_subtitles": {
+        "requirement": (
+            "State that the generated segment has no subtitles; captions are added only in post."
+        ),
+        "accepted_examples": [
+            "无字幕，字幕只能后期合成",
+            "No subtitles; subtitles are added only in post-production",
+            "Subtitles: none; captions added in post",
+        ],
+    },
+    "unsafe_asset_reference": {
+        "requirement": (
+            "Do not put URLs or asset IDs in prompt text; use numbered reference labels."
+        ),
+        "accepted_examples": ["参考图片1", "参考视频1"],
+    },
+    "invalid_image_reference": {
+        "requirement": (
+            "Every numbered image reference must exist in this segment's supplied assets."
+        ),
+        "accepted_examples": ["参考图片1"],
+    },
+    "invalid_video_reference": {
+        "requirement": (
+            "Every numbered video reference must exist in this segment's supplied assets."
+        ),
+        "accepted_examples": ["参考视频1"],
+    },
+    "invalid_asset": {
+        "requirement": "Every input_assets entry must be a ready image/video owned by this user.",
+        "accepted_examples": ["Remove the invalid id or replace it with a ready owned asset id"],
+    },
+    "dialogue_too_long": {
+        "requirement": "A segment may contain at most 48 normalized spoken characters.",
+        "accepted_examples": ["Split this dialogue into two contiguous segments"],
+    },
+}
+
+
+def _contains_any(value: str, phrases: tuple[str, ...]) -> bool:
+    lowered = value.casefold()
+    return any(phrase.casefold() in lowered for phrase in phrases)
+
+
+def _lint_issue(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def _corrected_prompt_template(*, script_text: str, visual_anchor: str) -> str:
+    """A directly usable bilingual-safe recipe accepted by the linter."""
+    return (
+        f"Consistent visual base: {visual_anchor}\n"
+        "Fixed shot / fixed camera.\n"
+        "Framing: vertical 9:16 half-body medium shot.\n"
+        "Natural gestures: use restrained, natural hand gestures appropriate to this line.\n"
+        "Tone: natural, professional, and friendly.\n"
+        f"Speak exactly: @{script_text.strip()}\n"
+        "Subtitles: none; subtitles are added only in post-production."
+    )
+
+
+def _prompt_lint_failure_result(
+    *,
+    action: str,
+    visual_anchor: str,
+    segments: list[tuple[int, str, list[dict[str, str]]]],
+) -> ToolResult:
+    """Return actionable lint evidence without making the model guess synonyms."""
+    used_codes = {
+        issue["code"]
+        for _ordinal, _script, issues in segments
+        for issue in issues
+    }
+    rules = {
+        code: _PROMPT_LINT_RULES.get(
+            code,
+            {"requirement": "Correct the reported validation failure.", "accepted_examples": []},
+        )
+        for code in sorted(used_codes)
+    }
+    payload = {
+        "error_code": "prompt_lint_failed",
+        "action": action,
+        "retry_policy": (
+            "Do not submit identical arguments again. Change every segment listed below, "
+            "using corrected_prompt_template as the safe starting point."
+        ),
+        "required_visual_anchor": visual_anchor,
+        "rules": rules,
+        "segments": [
+            {
+                "ordinal": ordinal,
+                "missing": [issue["code"] for issue in issues],
+                "failures": issues,
+                "corrected_prompt_template": _corrected_prompt_template(
+                    script_text=script_text,
+                    visual_anchor=visual_anchor,
+                ),
+            }
+            for ordinal, script_text, issues in segments
+        ],
+    }
+    return ToolResult(
+        title="Prompt lint failed",
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        metadata={
+            # It is a real failed mutation, while validation_failed tells the
+            # history converter to replay this structured recipe in full
+            # instead of applying the ordinary 200-character error truncation.
+            "error": True,
+            "validation_failed": True,
+            "retry_requires_changed_args": True,
+            "failure_code": "prompt_lint_failed",
+        },
+    )
+
+
 def lint_segment_prompt(
     *,
     script_text: str,
@@ -148,35 +308,130 @@ def lint_segment_prompt(
     video_count: int,
 ) -> dict:
     failures: list[str] = []
+    issues: list[dict[str, str]] = []
     warnings: list[str] = []
+
+    def fail(code: str, message: str) -> None:
+        failures.append(message)
+        issues.append(_lint_issue(code, message))
+
     spoken_length = len(normalize_spoken_text(script_text))
     if spoken_length > 48:
-        failures.append(f"台词 {spoken_length} 字，超过 48 字硬上限")
+        fail("dialogue_too_long", f"台词 {spoken_length} 字，超过 48 字硬上限")
     elif spoken_length > 40:
         warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
     if f"@{script_text.strip()}" not in prompt:
-        failures.append("prompt 必须用 @ 紧接本段逐字台词")
-    if visual_anchor.strip() not in prompt:
-        failures.append("prompt 缺少全片一致的画面基底")
-    if "固定镜头" not in prompt:
-        failures.append("prompt 必须显式声明固定镜头")
-    if not any(token in prompt for token in ("中景", "半身", "近景")):
-        failures.append("prompt 缺少中景/半身/近景构图")
-    if not any(token in prompt for token in ("手势", "姿态", "微笑", "点头", "前倾")):
-        failures.append("prompt 缺少自然肢体动作")
-    if "语气" not in prompt:
-        failures.append("prompt 缺少语气描述")
-    if "无字幕" not in prompt:
-        failures.append("prompt 必须写明无字幕，字幕只能后期合成")
+        fail("dialogue_exact", "prompt 必须用 @ 紧接本段逐字台词")
+
+    anchor = visual_anchor.strip()
+    anchor_is_literal = bool(anchor) and anchor.casefold() in prompt.casefold()
+    anchor_is_declared = _contains_any(
+        prompt,
+        (
+            "全片一致的画面基底",
+            "全片一致画面基底",
+            "画面一致性",
+            "一致的视觉基底",
+            "consistent visual base",
+            "consistent visual anchor",
+            "visual anchor",
+        ),
+    )
+    if not (anchor_is_literal or anchor_is_declared):
+        fail("visual_continuity", "prompt 缺少全片一致的画面基底")
+    if not _contains_any(
+        prompt,
+        (
+            "固定镜头",
+            "固定机位",
+            "锁定镜头",
+            "fixed shot",
+            "fixed camera",
+            "locked-off camera",
+            "locked off camera",
+            "static camera",
+        ),
+    ):
+        fail("fixed_camera", "prompt 必须显式声明固定镜头")
+    if not _contains_any(
+        prompt,
+        (
+            "中景",
+            "半身",
+            "近景",
+            "中近景",
+            "medium shot",
+            "half-body",
+            "half body",
+            "close-up",
+            "close up",
+            "medium close-up",
+        ),
+    ):
+        fail("framing", "prompt 缺少中景/半身/近景构图")
+    if not _contains_any(
+        prompt,
+        (
+            "自然肢体动作",
+            "自然动作",
+            "手势",
+            "姿态",
+            "微笑",
+            "点头",
+            "前倾",
+            "抬手",
+            "举起",
+            "拿起",
+            "转动",
+            "托住",
+            "放回",
+            "指向",
+            "natural gesture",
+            "natural movement",
+            "hand gesture",
+            "point to",
+            "point toward",
+            "gently lift",
+            "gently hold",
+        ),
+    ):
+        fail("natural_action", "prompt 缺少自然肢体动作")
+    if not _contains_any(
+        prompt,
+        ("语气", "口播语气", "tone", "delivery", "speaking style", "performance style"),
+    ):
+        fail("tone", "prompt 缺少语气描述")
+    if not _contains_any(
+        prompt,
+        (
+            "无字幕",
+            "不要字幕",
+            "不显示字幕",
+            "no subtitles",
+            "without subtitles",
+            "subtitles: none",
+            "captions: none",
+        ),
+    ):
+        fail("no_subtitles", "prompt 必须写明无字幕，字幕只能后期合成")
     if re.search(r"https?://|asset://|asset[_-][A-Za-z0-9]", prompt, re.IGNORECASE):
-        failures.append("prompt 正文不得包含 URL 或素材 ID，只能用参考图片N/参考视频N")
+        fail(
+            "unsafe_asset_reference",
+            "prompt 正文不得包含 URL 或素材 ID，只能用参考图片N/参考视频N",
+        )
     for value in re.findall(r"参考图片(\d+)", prompt):
         if int(value) < 1 or int(value) > image_count:
-            failures.append(f"prompt 引用了不存在的参考图片{value}（实际 {image_count} 张）")
+            fail(
+                "invalid_image_reference",
+                f"prompt 引用了不存在的参考图片{value}（实际 {image_count} 张）",
+            )
     for value in re.findall(r"参考视频(\d+)", prompt):
         if int(value) < 1 or int(value) > video_count:
-            failures.append(f"prompt 引用了不存在的参考视频{value}（实际 {video_count} 个）")
-    return {"ok": not failures, "failures": failures, "warnings": warnings}
+            fail(
+                "invalid_video_reference",
+                f"prompt 引用了不存在的参考视频{value}（实际 {video_count} 个）",
+            )
+    return {"ok": not failures, "failures": failures, "issues": issues, "warnings": warnings}
 
 
 async def _owned_production(db, production_id: str, user_id: str):
@@ -540,14 +795,17 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                         output="character_reference_asset must be a ready owned image asset.",
                     )
             validated: list[tuple[SegmentSpec, list[Any], dict[str, Any], str]] = []
-            all_failures: list[str] = []
+            issues_by_ordinal: dict[int, list[dict[str, str]]] = {}
             for item in args.segments:
                 assets: list[Any] = []
                 seen: set[str] = set()
                 for ref in item.input_assets:
                     asset = await _owned_ready_asset(db, ref, ctx.user_id)
                     if not asset or not (asset.mime.startswith("image/") or asset.mime in _VIDEO_MIMES):
-                        all_failures.append(f"段{item.ordinal}: 素材 {ref} 不是可用的自有图片/视频")
+                        message = f"素材 {ref} 不是可用的自有图片/视频"
+                        issues_by_ordinal.setdefault(item.ordinal, []).append(
+                            _lint_issue("invalid_asset", message)
+                        )
                         continue
                     if asset.id not in seen and (not character or asset.id != character.id):
                         assets.append(asset)
@@ -561,7 +819,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     image_count=image_count,
                     video_count=video_count,
                 )
-                all_failures.extend(f"段{item.ordinal}: {message}" for message in lint["failures"])
+                if lint["issues"]:
+                    issues_by_ordinal.setdefault(item.ordinal, []).extend(lint["issues"])
                 item_hash = content_hash(
                     {
                         "role": item.role,
@@ -573,8 +832,20 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     }
                 )
                 validated.append((item, assets, lint, item_hash))
-            if all_failures:
-                return ToolResult(title="Prompt lint failed", output="\n".join(all_failures))
+            if issues_by_ordinal:
+                return _prompt_lint_failure_result(
+                    action="set_segments",
+                    visual_anchor=(args.visual_anchor or "").strip(),
+                    segments=[
+                        (
+                            item.ordinal,
+                            item.script_text.strip(),
+                            issues_by_ordinal[item.ordinal],
+                        )
+                        for item in args.segments
+                        if item.ordinal in issues_by_ordinal
+                    ],
+                )
 
             current = {row.ordinal: row for row in await _active_segments(db, production.id)}
             for row in current.values():
@@ -675,12 +946,10 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 video_count=sum(row.mime in _VIDEO_MIMES for row in assets),
             )
             if lint["failures"]:
-                return ToolResult(
-                    title="Prompt lint failed",
-                    output=(
-                        "\n".join(lint["failures"])
-                        + f"\nrequired_visual_anchor={production.visual_anchor}"
-                    ),
+                return _prompt_lint_failure_result(
+                    action="revise_segment",
+                    visual_anchor=production.visual_anchor,
+                    segments=[(source.ordinal, revised_script, lint["issues"])],
                 )
 
             if revised_script != source.script_text:
@@ -745,17 +1014,34 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
             question = ""
             options: list[tuple[str, str]] = []
             metadata: dict[str, Any] = {}
+            question_detail: dict[str, Any] | None = None
             if kind == "script":
                 if not production.script_hash:
                     return ToolResult(title="Nothing to approve", output="Set the script first.")
                 scope = production.script_hash
                 question = f"完整讲稿共 {len(normalize_spoken_text(production.script_text))} 字，确认按这版进入分段吗？"
+                question_detail = {
+                    "kind": "video_script_approval",
+                    "script_text": production.script_text,
+                }
                 options = [("可以，按这版分段", "确认当前讲稿内容哈希"), ("需要修改", "不确认，先修改讲稿")]
             elif kind == "segments":
                 if not segments or not production.plan_hash:
                     return ToolResult(title="Nothing to approve", output="Set and lint the segment plan first.")
                 scope = production.plan_hash
                 question = f"以上 {len(segments)} 段完整台词、提示词和素材已通过 lint，确认按这版生成吗？"
+                question_detail = {
+                    "kind": "video_segments_approval",
+                    "segments": [
+                        {
+                            "ordinal": row.ordinal,
+                            "role": row.role,
+                            "script_text": row.script_text,
+                            "prompt": row.prompt,
+                        }
+                        for row in sorted(segments, key=lambda row: row.ordinal)
+                    ],
+                }
                 options = [("分段可以", "确认当前分段与素材快照"), ("需要调整", "不确认，先调整分段或画面")]
             elif kind == "spend":
                 if not await _matching_approval(db, production.id, "segments", production.plan_hash):
@@ -816,6 +1102,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                             options=[QuestionOption(label=label, description=description) for label, description in options],
                             multiple=False,
                             custom=False,
+                            detail=question_detail,
                         )
                     ],
                     tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,

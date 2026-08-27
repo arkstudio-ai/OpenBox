@@ -14,6 +14,7 @@ import { Check } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import type { QuestionItem, QuestionRequest } from "@/shared/types/api"
 import { useRejectQuestion, useReplyQuestion } from "../api/question"
+import { VideoApprovalDetail } from "./VideoApprovalDetail"
 
 /** Chosen labels per question, in the order asked. */
 type Draft = string[][]
@@ -56,6 +57,8 @@ function OneQuestion({ item, index, total, picked, onPick }: OneProps) {
         </span>
         <span className="text-ink text-base">{item.question}</span>
       </div>
+
+      <VideoApprovalDetail item={item} />
 
       {options.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

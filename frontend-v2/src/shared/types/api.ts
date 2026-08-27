@@ -296,6 +296,8 @@ export interface QuestionItem {
    *  questions may close it: plan mode's "switch to build?" is Yes or No, and
    *  a text box there invites an answer nothing will read. */
   custom?: boolean
+  /** Structured context rendered by first-party confirmation cards. */
+  detail?: Record<string, unknown> | null
 }
 export interface QuestionRequest {
   id: string

@@ -80,7 +80,21 @@
     "other": "Or write your own answer",
     "answer": "Write your answer",
     "needAll": "Answer all {{count}} questions",
-    "unanswered": "Unanswered"
+    "unanswered": "Unanswered",
+    "videoApproval": {
+      "fullScript": "Full script",
+      "segment": "Segment {{number}}",
+      "role": "Role: {{role}}",
+      "transcript": "Verbatim script",
+      "prompt": "Visual prompt",
+      "roles": {
+        "hook": "Hook",
+        "body": "Body",
+        "transition": "Transition",
+        "closing": "Closing",
+        "unknown": "Unspecified role"
+      }
+    }
   },
   "compaction": "Context compacted",
   "retry": "Retry #{{attempt}}",

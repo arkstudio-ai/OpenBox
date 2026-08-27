@@ -80,7 +80,21 @@
     "other": "或者自己写一个答案",
     "answer": "写下你的回答",
     "needAll": "请回答全部 {{count}} 个问题",
-    "unanswered": "未回答"
+    "unanswered": "未回答",
+    "videoApproval": {
+      "fullScript": "完整讲稿",
+      "segment": "第 {{number}} 段",
+      "role": "角色：{{role}}",
+      "transcript": "逐字稿",
+      "prompt": "画面提示词",
+      "roles": {
+        "hook": "开场钩子",
+        "body": "正文",
+        "transition": "转场",
+        "closing": "收尾",
+        "unknown": "未指定角色"
+      }
+    }
   },
   "compaction": "上下文已压缩",
   "retry": "第 {{attempt}} 次重试",

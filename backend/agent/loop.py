@@ -1074,6 +1074,7 @@ def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> 
                     tool_output = p.get("output", "") or ""
                     tool_error = p.get("error", "")
                     tool_status = p.get("status", "")
+                    tool_metadata = p.get("metadata") or {}
                     part_id = p.get("id", "")
 
                     # Check if compacted
@@ -1103,8 +1104,21 @@ def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> 
                             },
                         })
                         if tool_status == "error":
-                            err_msg = (tool_error or "Unknown error")[:200]
-                            result_content = f"[Error] {err_msg}"
+                            if (
+                                isinstance(tool_metadata, dict)
+                                and tool_metadata.get("validation_failed")
+                            ):
+                                # Validation tools return a structured repair
+                                # recipe.  Truncating it like an exception is
+                                # exactly what makes a model guess and retry.
+                                result_content = (
+                                    tool_output
+                                    or tool_error
+                                    or "Unknown validation error"
+                                )
+                            else:
+                                err_msg = (tool_error or "Unknown error")[:200]
+                                result_content = f"[Error] {err_msg}"
                         else:
                             result_content = "[Tool execution was interrupted]"
                     else:

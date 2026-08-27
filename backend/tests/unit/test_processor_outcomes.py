@@ -71,6 +71,23 @@ def fake_stream(events=None, raises=None):
     return _stream
 
 
+def test_actionable_validation_metadata_survives_persistence_filter():
+    observed = P.persisted_tool_metadata(
+        {
+            "validation_failed": True,
+            "retry_requires_changed_args": True,
+            "failure_code": "prompt_lint_failed",
+            "private_payload": {"do_not": "persist"},
+        }
+    )
+
+    assert observed == {
+        "validation_failed": True,
+        "retry_requires_changed_args": True,
+        "failure_code": "prompt_lint_failed",
+    }
+
+
 async def run(monkeypatch, **stream_kwargs):
     monkeypatch.setattr(P, "stream_llm", fake_stream(**stream_kwargs))
     return await process_step(
@@ -182,6 +199,66 @@ async def test_doom_loop_history_is_not_mutated(monkeypatch):
     )
     assert history == [], "the caller stays the only writer of doom-loop history"
     assert result.completed_tool_parts == []
+
+
+async def test_identical_retry_after_actionable_validation_failure_is_blocked(monkeypatch):
+    args = {
+        "action": "set_segments",
+        "production_id": "production_1",
+        "visual_anchor": "same presenter",
+        "segments": [{"ordinal": 1, "prompt": "unchanged"}],
+    }
+    history = [
+        SimpleNamespace(
+            tool="video_project",
+            input=args,
+            metadata={
+                "validation_failed": True,
+                "retry_requires_changed_args": True,
+                "failure_code": "prompt_lint_failed",
+            },
+        )
+    ]
+    saved = []
+    executed = False
+
+    async def capture(part, *_capture_args, **_capture_kwargs):
+        saved.append(part)
+
+    async def should_not_execute(_args, _ctx):
+        nonlocal executed
+        executed = True
+        return ToolResult(title="unexpected", output="unexpected")
+
+    monkeypatch.setattr(P, "save_part", capture)
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=[
+        {
+            "type": "tool_call",
+            "tool": "video_project",
+            "args": args,
+            "call_id": "call_same_validation_failure",
+            "invalid": False,
+        },
+        {"type": "finish", "reason": "tool_calls", "usage": {}},
+    ]))
+
+    await process_step(
+        session_id="s1", user_id="u1", session=None, agent_def=None,
+        system=[], llm_messages=[],
+        tools={"video_project": SimpleNamespace(execute=should_not_execute)},
+        model_id="test/model", ctx=Ctx(), hooks=None,
+        assistant_info=Info(), sandbox=None, abort=NotAborted(),
+        doom_loop_history=history,
+    )
+
+    assert executed is False
+    blocked = next(
+        part for part in reversed(saved)
+        if getattr(part, "tool", "") == "video_project"
+    )
+    assert blocked.status.value == "error"
+    assert blocked.title == "Unchanged validation retry blocked"
+    assert "corrected_prompt_template" in blocked.error
 
 
 async def test_duration_is_reported(monkeypatch):

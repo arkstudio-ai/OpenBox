@@ -5,7 +5,12 @@ All pure, and all previously only reachable through a live run.
 """
 import pytest
 
-from agent.loop import apply_agent_overrides, resolve_agent_name, scan_messages
+from agent.loop import (
+    _to_llm_messages,
+    apply_agent_overrides,
+    resolve_agent_name,
+    scan_messages,
+)
 from agent.tool_resolution import agent_ruleset, strip_denied
 
 
@@ -188,3 +193,39 @@ def test_missing_rule_fields_get_wildcards():
     a = AgentWithRules([{"permission": "bash"}])
     rule = agent_ruleset(a)[0]
     assert (rule.pattern, rule.action) == ("*", "ask")
+
+
+def test_structured_validation_error_is_replayed_to_the_model_in_full():
+    structured = (
+        '{"error_code":"prompt_lint_failed","segments":['
+        + ",".join(
+            '{"ordinal":1,"corrected_prompt_template":"fixed"}' for _ in range(10)
+        )
+        + "]}"
+    )
+
+    class AssistantMessage:
+        role = "assistant"
+        error = None
+        parts = [
+            {
+                "type": "tool",
+                "id": "part_validation",
+                "tool": "video_project",
+                "call_id": "call_validation",
+                "status": "error",
+                "input": {"action": "set_segments", "segments": ["large original input"]},
+                "output": structured,
+                "error": structured,
+                "metadata": {"validation_failed": True},
+            }
+        ]
+
+    converted = _to_llm_messages([AssistantMessage()], user_id="user_1")
+
+    assert converted[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_validation",
+        "content": structured,
+    }
+    assert len(converted[-1]["content"]) > 200

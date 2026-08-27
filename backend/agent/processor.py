@@ -54,6 +54,9 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "questions", "answers",
+    # Validation tools use these to stop an unchanged retry immediately while
+    # still replaying the original, structured result in full to the model.
+    "validation_failed", "retry_requires_changed_args", "failure_code",
 })
 
 # A browser can disappear at any point in a long model response. The first
@@ -71,6 +74,54 @@ def persisted_tool_metadata(metadata: dict | None) -> dict:
         key: value for key, value in (metadata or {}).items()
         if key in PERSISTED_TOOL_METADATA_KEYS
     }
+
+
+def unchanged_validation_failure(
+    completed_tool_parts: list,
+    tool_name: str,
+    tool_args: dict,
+    *,
+    window: int = 20,
+) -> str | None:
+    """Return the prior failure code when a model retries unchanged arguments.
+
+    Ordinary doom-loop detection intentionally allows two retries.  A handled
+    validation response is different: the previous result already contains a
+    correction recipe, so executing the exact same mutation again cannot make
+    progress.  The history is scoped to one user-initiated run by the outer
+    loop, which means a later explicit user retry starts with a clean slate.
+    """
+    current_key = json.dumps(
+        tool_args,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    for part in reversed(completed_tool_parts[-window:]):
+        metadata = (
+            part.get("metadata")
+            if isinstance(part, dict)
+            else getattr(part, "metadata", None)
+        )
+        if not isinstance(metadata, dict) or not metadata.get("retry_requires_changed_args"):
+            continue
+        previous_tool = part.get("tool") if isinstance(part, dict) else getattr(part, "tool", "")
+        if previous_tool != tool_name:
+            continue
+        previous_args = (
+            part.get("input")
+            if isinstance(part, dict)
+            else getattr(part, "input", None)
+        )
+        previous_key = json.dumps(
+            previous_args or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if previous_key == current_key:
+            return str(metadata.get("failure_code") or "validation_failed")
+    return None
 
 
 def sanitize_call_id(raw: str) -> str:
@@ -396,6 +447,34 @@ async def process_step(
             if is_invalid:
                 tool_part.status = ToolStatus.ERROR
                 tool_part.error = f"Tool '{tool_name}' not found. Available: {', '.join(tools.keys())}"
+                await save_part(tool_part, user_id=user_id)
+                continue
+
+            # A semantic validation failure already returned a structured fix
+            # recipe.  Re-executing the identical mutation cannot change the
+            # outcome, so block the first unchanged retry instead of waiting
+            # for the generic three-call doom-loop threshold.
+            prior_failure = unchanged_validation_failure(
+                [*doom_loop_history, *completed_tool_parts],
+                tool_name,
+                tool_args,
+            )
+            if prior_failure:
+                log.warning(
+                    "Blocked unchanged retry after %s: %s",
+                    prior_failure,
+                    tool_name,
+                )
+                tool_part.status = ToolStatus.ERROR
+                tool_part.title = "Unchanged validation retry blocked"
+                tool_part.error = (
+                    f"Identical retry blocked after {prior_failure}. Change the arguments using "
+                    "the previous result's corrected_prompt_template before calling this tool again."
+                )
+                tool_part.metadata = {
+                    "blocked": True,
+                    "failure_code": prior_failure,
+                }
                 await save_part(tool_part, user_id=user_id)
                 continue
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Push the current action_server.py to a WUYING desktop and restart it.
+"""Push the current action server and video skill to a WUYING desktop.
 
-The full bootstrap installs a runtime, dev-browser and systemd units; when only
-container/action_server.py has changed, re-running all of that is minutes of
-work to replace one file. This does just that file plus the restart, reusing
-the bootstrap's Desktop primitives so the upload path stays identical.
+The full bootstrap installs a runtime, dev-browser and systemd units; when the
+action server, media queue, or video-production skill changes, re-running all
+of that is minutes of unnecessary work. This deploys those small system-owned
+artifacts plus the restart, reusing the bootstrap's Desktop primitives so the
+upload path stays identical. The skill contains instructions only; provider
+credentials remain in the backend environment.
 
     python backend/scripts/wuying_deploy_action_server.py            # reads backend/.env
     python backend/scripts/wuying_deploy_action_server.py --desktop-id ecd-xxx
@@ -31,7 +33,11 @@ MEDIA_JOBS = REPO / "container" / "media_jobs.py"
 MEDIA_CONFIG = REPO / "container" / "media-jobs.json"
 MEDIA_PACKAGE = REPO / "container" / "media-runtime" / "package.json"
 MEDIA_LOCK = REPO / "container" / "media-runtime" / "package-lock.json"
+VIDEO_PRODUCTION_SKILL = (
+    REPO / "backend" / ".openbox" / "skills" / "video-production" / "SKILL.md"
+)
 REMOTE_PATH = "/opt/action_server/action_server.py"
+REMOTE_VIDEO_PRODUCTION_SKILL = "/opt/openbox/skills/video-production/SKILL.md"
 SERVICE = "openbox-action-server"
 
 
@@ -68,6 +74,9 @@ def main() -> int:
     if not ACTION_SERVER.exists():
         print(f"error: {ACTION_SERVER} not found", file=sys.stderr)
         return 2
+    if not VIDEO_PRODUCTION_SKILL.exists():
+        print(f"error: {VIDEO_PRODUCTION_SKILL} not found", file=sys.stderr)
+        return 2
 
     d = Desktop(desktop_id, region)
     print(f"deploying {ACTION_SERVER.name} -> {desktop_id} ({region})")
@@ -78,6 +87,7 @@ def main() -> int:
     d.put(MEDIA_JOBS, "/opt/action_server/media_jobs.py")
     d.put(MEDIA_CONFIG, "/opt/openbox/media/media-jobs.json")
     d.put(MEDIA_PACKAGE, "/opt/openbox/media/package.json")
+    d.put(VIDEO_PRODUCTION_SKILL, REMOTE_VIDEO_PRODUCTION_SKILL)
     if MEDIA_LOCK.exists():
         d.put(MEDIA_LOCK, "/opt/openbox/media/package-lock.json")
     d.run(

@@ -126,9 +126,11 @@ Idempotent — re-run it to repair or upgrade a desktop. It will:
 
 1. Create `/workspace`, `/data/skills`, `/data/mcp/logs` and the persistent and
    temporary media-job directories.
-2. Upload `container/action_server.py`, `container/media_jobs.py` and the pinned
-   media configuration, then install the Python dependencies from the Tsinghua
-   PyPI mirror.
+2. Upload `container/action_server.py`, `container/media_jobs.py`, the pinned
+   media configuration, and the system-owned `video-production` skill under
+   `/opt/openbox/skills`. Then install the Python dependencies from the
+   Tsinghua PyPI mirror. The skill carries workflow instructions only; provider
+   credentials remain in the backend environment.
 3. Build the Linux/amd64 Node 22 + HyperFrames 0.7.94 + GSAP 3.14.2 bundle in
    local Docker, upload it as a temporary OSS object, let the desktop download
    it through the OSS internal endpoint, verify its SHA-256, and atomically
@@ -218,7 +220,10 @@ Everything on the desktop is systemd and self-heals across reboots:
 | `openbox-action-server.service` | The execution plane on `:8000` |
 | `openbox-tunnel.service` | Reverse tunnel to the relay |
 
-The action server also owns the durable media queue. Its SQLite state lives in
+The action server also owns the durable media queue. The `video-production`
+skill is loaded on demand from the desktop, so its detailed workflow and the
+`image_gen`/`video_generate`/`video_render` schemas are absent from ordinary
+turns. The queue's SQLite state lives in
 `/data/openbox-media`, while per-attempt files and the reusable input cache live
 under `/tmp/openbox-media`. Queue concurrency and FFmpeg threads come from
 `container/media-jobs.json` (defaults: one render and four FFmpeg threads).

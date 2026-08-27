@@ -38,6 +38,18 @@ def payload(job_id: str, key: str) -> dict:
     }
 
 
+def extract_payload(job_id: str, key: str) -> dict:
+    value = payload(job_id, key)
+    value["operation"] = "extract_audio"
+    value["output"] = {
+        "name": "speech.mp3",
+        "mime": "audio/mpeg",
+        "put_url": "https://oss.example.test/speech.mp3?signature=hidden",
+    }
+    value["captions"] = []
+    return value
+
+
 @pytest.mark.asyncio
 async def test_queue_serializes_jobs_and_long_poll_is_bounded(tmp_path: Path):
     config = MediaJobConfig(
@@ -376,3 +388,41 @@ def test_payload_rejects_unknown_render_engine():
     invalid["render_engine"] = "chrome-everything"
     with pytest.raises(MediaJobConflict, match="render_engine"):
         manager._validate_payload(invalid)
+
+
+def test_extract_audio_payload_is_strict_and_advertised():
+    manager = MediaJobManager(MediaJobConfig())
+    assert "extract_audio" in manager.capabilities()["operations"]
+    manager._validate_payload(extract_payload("extract-job-0001", "extract-key"))
+
+    invalid = extract_payload("extract-job-0002", "extract-key-2")
+    invalid["output"]["mime"] = "video/mp4"
+    with pytest.raises(MediaJobConflict, match="audio/mpeg"):
+        manager._validate_payload(invalid)
+
+
+@pytest.mark.asyncio
+async def test_worker_dispatches_extract_audio_operation(tmp_path: Path):
+    manager = MediaJobManager(
+        MediaJobConfig(state_root=str(tmp_path / "state"), temp_root=str(tmp_path / "temp"))
+    )
+    observed = {}
+
+    async def fake_extract(job_id, value):
+        observed["job_id"] = job_id
+        observed["operation"] = value["operation"]
+        return {"uploaded": True, "operation": "extract_audio", "has_audio": True}
+
+    manager._extract_audio = fake_extract
+    await manager.start()
+    try:
+        submitted = await manager.submit(extract_payload("extract-job-0003", "extract-key-3"))
+        for _ in range(100):
+            current = await manager.get(submitted["job_id"], "user-1")
+            if current["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert current["status"] == "completed"
+        assert observed == {"job_id": "extract-job-0003", "operation": "extract_audio"}
+    finally:
+        await manager.stop()

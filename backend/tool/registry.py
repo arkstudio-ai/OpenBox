@@ -58,7 +58,8 @@ def register_builtin_tools() -> None:
     from tool.view_image import view_image_tool
     from tool.share_file import share_file_tool
     from tool.image_gen import image_gen_tool
-    from tool.video_production import video_generate_tool, video_render_tool
+    from tool.video_workflow import video_project_tool
+    from tool.video_production import video_generate_tool, video_transcribe_tool, video_render_tool
     from tool.computer import computer_tool
     from tool.browser_mode import browser_mode_tool
 
@@ -68,7 +69,7 @@ def register_builtin_tools() -> None:
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
         skill_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
-        video_generate_tool, video_render_tool,
+        video_project_tool, video_generate_tool, video_transcribe_tool, video_render_tool,
         computer_tool, browser_mode_tool,
     ]:
         register(tool)

@@ -4,9 +4,12 @@ These are the decisions that end a run. Both have failed silently in the past â€
 a stranded tool call looks like the agent simply stopping mid-task â€” so they are
 kept as pure functions and asserted directly rather than through the loop.
 """
+import json
+
 import pytest
 
-from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeat_of_recent
+from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeat_of_recent, is_repeatable_poll
+from agent.hooks import ToolHooks
 from agent.loop import (
     ABORTED_TOOL_ERROR,
     has_live_tool_calls,
@@ -171,3 +174,32 @@ def test_key_order_does_not_affect_the_comparison():
 
 def test_short_history_is_never_a_doom_loop():
     assert not is_repeat_of_recent([], "bash", {"command": "ls"})
+
+
+def test_identical_video_waits_are_not_a_doom_loop():
+    args = {"action": "wait", "job_id": "video_123", "wait_seconds": 25}
+    history = [_part("video_generate", args)] * (DOOM_LOOP_THRESHOLD - 1)
+    assert is_repeatable_poll("video_generate", args)
+    assert not is_repeat_of_recent(history, "video_generate", args)
+
+
+def test_identical_media_status_calls_are_not_a_doom_loop():
+    for tool in ("video_generate", "video_transcribe", "video_render"):
+        args = {"action": "status", "job_id": "job_123"}
+        history = [_part(tool, args)] * (DOOM_LOOP_THRESHOLD - 1)
+        assert not is_repeat_of_recent(history, tool, args)
+
+
+def test_identical_video_submits_remain_protected():
+    args = {"action": "submit", "segment_id": "segment_123"}
+    history = [_part("video_generate", args)] * (DOOM_LOOP_THRESHOLD - 1)
+    assert not is_repeatable_poll("video_generate", args)
+    assert is_repeat_of_recent(history, "video_generate", args)
+
+
+def test_tool_hooks_also_allow_repeated_media_polls():
+    hooks = ToolHooks(session_id="session_123")
+    args = {"action": "wait", "job_id": "video_123"}
+    signature = json.dumps(args, sort_keys=True)
+    hooks.call_history = [("video_generate", signature)] * DOOM_LOOP_THRESHOLD
+    assert not hooks._check_doom_loop("video_generate", args)

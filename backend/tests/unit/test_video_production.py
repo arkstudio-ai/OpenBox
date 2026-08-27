@@ -1,4 +1,5 @@
 """Skill-only video tools validate billable and render calls conservatively."""
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,20 +12,101 @@ from core.markdown import parse_frontmatter
 import tool.video_production as video_mod
 from tool.registry import register_builtin_tools
 from tool.video_production import (
+    VideoTranscriptionTarget,
     VideoGenerateArgs,
     VideoRenderArgs,
     _auth_header,
+    _provider_transcribe,
     _resolve_generation_inputs,
     _validate_generation,
     video_generate_tool,
+    video_transcribe_tool,
     video_render_tool,
 )
 
 
+@pytest.mark.asyncio
+async def test_dashscope_transcription_submit_poll_and_result(monkeypatch):
+    import httpx
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._data
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, headers, json):
+            assert url.endswith("/api/v1/services/audio/asr/transcription")
+            assert headers["X-DashScope-Async"] == "enable"
+            assert json == {
+                "model": "fun-asr",
+                "input": {"file_urls": ["https://oss.test/speech.mp3"]},
+                "parameters": {"channel_id": [0], "language_hints": ["zh"]},
+            }
+            return FakeResponse({"output": {"task_id": "task-1", "task_status": "PENDING"}})
+
+        async def get(self, url, *, headers=None):
+            if url.endswith("/api/v1/tasks/task-1"):
+                return FakeResponse(
+                    {
+                        "output": {
+                            "task_status": "SUCCEEDED",
+                            "results": [
+                                {
+                                    "subtask_status": "SUCCEEDED",
+                                    "transcription_url": "https://result.test/transcript.json",
+                                }
+                            ],
+                        }
+                    }
+                )
+            assert url == "https://result.test/transcript.json"
+            return FakeResponse(
+                {
+                    "properties": {"original_duration_in_milliseconds": 6123},
+                    "transcripts": [{"text": "上海的早晨"}, {"text": "从外滩开始。"}],
+                }
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    target = VideoTranscriptionTarget(
+        engine="dashscope",
+        model="fun-asr",
+        api_key="test-only",
+        base_url="https://dashscope.aliyuncs.com",
+        timeout_seconds=30,
+        poll_interval_seconds=0.25,
+        similarity_threshold=0.9,
+    )
+
+    result = await _provider_transcribe(target, "https://oss.test/speech.mp3")
+
+    assert result == {
+        "text": "上海的早晨\n从外滩开始。",
+        "duration_ms": 6123,
+        "model": "fun-asr",
+        "provider": "dashscope",
+    }
+
+
 def test_video_tools_are_skill_only_and_not_parallel_safe():
     assert video_generate_tool.skill_only is True
+    assert video_transcribe_tool.skill_only is True
     assert video_render_tool.skill_only is True
     assert video_generate_tool.parallel_safe is False
+    assert video_transcribe_tool.parallel_safe is False
     assert video_render_tool.parallel_safe is False
 
 
@@ -34,17 +116,20 @@ async def test_video_schemas_are_absent_until_the_skill_activates_them():
 
     ordinary = await resolve_step_tools(AGENTS["build"], None, [])
     assert "image_gen" not in ordinary
+    assert "video_project" not in ordinary
     assert "video_generate" not in ordinary
+    assert "video_transcribe" not in ordinary
     assert "video_render" not in ordinary
 
     loaded = await resolve_step_tools(
         AGENTS["build"],
         None,
         [],
-        activated_tools={"image_gen", "video_generate", "video_render"},
+        activated_tools={"image_gen", "video_project", "video_generate", "video_transcribe", "video_render"},
     )
     assert loaded["image_gen"].skill_only is True
     assert loaded["video_generate"].skill_only is True
+    assert loaded["video_transcribe"].skill_only is True
     assert loaded["video_render"].skill_only is True
 
 
@@ -55,10 +140,44 @@ def test_billable_submit_requires_idempotency_key():
         VideoRenderArgs(action="submit", segment_assets=["asset-1"])
 
 
+def test_generation_schema_exposes_only_control_plane_fields():
+    properties = set(VideoGenerateArgs.model_json_schema()["properties"])
+
+    assert properties == {
+        "action",
+        "job_id",
+        "production_id",
+        "segment_id",
+        "idempotency_key",
+        "wait_seconds",
+    }
+
+
+def test_completed_segment_explicitly_hands_off_to_transcription():
+    job = SimpleNamespace(
+        id="video_123",
+        kind="segment",
+        status="completed",
+        production_id="production_123",
+        segment_id="segment_123",
+        request_data={},
+        provider_task_id="provider_123",
+        sandbox_job_id=None,
+        error=None,
+    )
+
+    output = "\n".join(video_mod._job_lines(job))
+
+    assert "next_action=video_transcribe.submit" in output
+    assert "transcription_idempotency_key=production_123:segment_123:stt" in output
+    assert "do not call video_generate again" in output
+
+
 def test_render_captions_must_match_segments():
     with pytest.raises(ValidationError, match="captions"):
         VideoRenderArgs(
             action="submit",
+            production_id="production_1",
             idempotency_key="travel-final-v1",
             segment_assets=["a", "b"],
             captions=["only one"],
@@ -68,6 +187,7 @@ def test_render_captions_must_match_segments():
 def test_render_defaults_to_fast_auto_path_and_source_resolution():
     args = VideoRenderArgs(
         action="submit",
+        production_id="production_1",
         idempotency_key="travel-final-v1",
         segment_assets=["asset-1"],
     )
@@ -147,6 +267,8 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
         provider_task_id=None,
         sandbox_job_id=None,
         output_asset_id=output_asset.id,
+        production_id="production_1",
+        segment_id="segment_1",
         error=None,
     )
     observed = {}
@@ -177,7 +299,7 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
         return job
 
     async def fake_progress(_message):
-        return None
+        raise asyncio.CancelledError
 
     monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
     monkeypatch.setattr(core.oss, "get_oss", lambda: FakeOss())
@@ -186,16 +308,45 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
     monkeypatch.setattr(video_mod, "_provider_submit", fake_submit)
     monkeypatch.setattr(video_mod, "_update_job", fake_update)
     monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    import tool.video_workflow as workflow_mod
+
+    async def fake_prepare(_ctx, production_id, segment_id):
+        assert production_id == "production_1"
+        assert segment_id == "segment_1"
+        return {
+            "production_id": production_id,
+            "segment_id": segment_id,
+            "prompt": "主持人说一句话",
+            "character_reference_asset": "asset_portrait",
+            "input_assets": ["asset_scene"],
+            "resolution": "720p",
+            "ratio": "9:16",
+            "duration": -1,
+            "generate_audio": True,
+            "watermark": False,
+            "content_hash": "content-hash",
+            "plan_hash": "plan-hash",
+            "spend_approval_id": "approval_1",
+        }
+
+    async def fake_consume(approval_id):
+        assert approval_id == "approval_1"
+
+    async def fake_mark(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(workflow_mod, "prepare_segment_submission", fake_prepare)
+    monkeypatch.setattr(workflow_mod, "consume_spend_approval", fake_consume)
+    monkeypatch.setattr(workflow_mod, "mark_segment_job", fake_mark)
 
     result = await video_mod.execute_generate(
         VideoGenerateArgs(
             action="submit",
-            idempotency_key="trip-segment-01-v1",
-            prompt="主持人说一句话",
-            character_reference_asset="asset_portrait",
-            input_assets=["asset_scene"],
+            production_id="production_1",
+            segment_id="segment_1",
+            idempotency_key="production_1:segment_1:generate",
         ),
-        SimpleNamespace(update_output=fake_progress),
+        SimpleNamespace(update_output=fake_progress, user_id="user_1"),
     )
 
     assert observed["request_data"]["character_reference_asset_id"] == "asset_portrait"
@@ -232,13 +383,16 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     )
     metadata, skill = parse_frontmatter(skill_path.read_text(encoding="utf-8"))
 
-    assert metadata["allowed-tools"] == ["image_gen", "video_generate", "video_render"]
-    assert "call `image_gen` once" in skill
-    assert "character_reference_asset=<portrait asset_id>" in skill
-    assert "reuse that exact asset for every" in skill
-    assert "Never vary seeds while claiming" in skill
-    assert "width=720" in skill
-    assert "height=1280" in skill
+    assert metadata["allowed-tools"] == [
+        "image_gen", "video_project", "video_generate", "video_transcribe", "video_render"
+    ]
+    assert "`image_gen` once" in skill
+    assert "Reuse that exact `asset_id` across every segment" in skill
+    assert "request `spend` approval" in skill
+    assert "accepted STT text" in skill
     assert 'render_engine="auto"' in skill
-    assert "wait_iteration=<counter>" in skill
-    assert "never invent or increment a version" in skill
+    assert "wait_iteration" in skill
+    assert "exact returned `version`" in skill
+    assert "Do not wrap" in skill
+    assert "generic Batch/parallel tool" in skill
+    assert "generation_job_id" in skill

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenBox spoken video production contract",
+  "type": "object",
+  "required": ["production_id", "status", "segments", "approvals"],
+  "properties": {
+    "production_id": {"type": "string"},
+    "status": {
+      "enum": [
+        "init", "needs_script_approval", "script_ok",
+        "needs_segments_approval", "needs_spend_approval", "spend_ok",
+        "generating", "needs_segment_revision", "generated", "needs_quality_approval",
+        "needs_render_approval", "ready_to_render", "delivered"
+      ]
+    },
+    "approvals": {
+      "type": "object",
+      "required": ["script", "segments", "spend", "quality", "render"],
+      "additionalProperties": {"type": "boolean"}
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "segment_id", "ordinal", "revision", "script_text", "prompt",
+          "content_hash", "status", "generation_idempotency_key",
+          "transcription_idempotency_key"
+        ],
+        "properties": {
+          "stt_verdict": {"enum": ["ok", "suspect", null]},
+          "review_status": {"enum": ["accepted", "override", null]}
+        }
+      }
+    },
+    "render_idempotency_key": {"type": "string"},
+    "render_asset_id": {"type": ["string", "null"]}
+  }
+}

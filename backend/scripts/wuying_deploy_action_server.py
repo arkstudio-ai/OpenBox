@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import shlex
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -33,11 +34,11 @@ MEDIA_JOBS = REPO / "container" / "media_jobs.py"
 MEDIA_CONFIG = REPO / "container" / "media-jobs.json"
 MEDIA_PACKAGE = REPO / "container" / "media-runtime" / "package.json"
 MEDIA_LOCK = REPO / "container" / "media-runtime" / "package-lock.json"
-VIDEO_PRODUCTION_SKILL = (
-    REPO / "backend" / ".openbox" / "skills" / "video-production" / "SKILL.md"
+VIDEO_PRODUCTION_SKILL_DIR = (
+    REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
 REMOTE_PATH = "/opt/action_server/action_server.py"
-REMOTE_VIDEO_PRODUCTION_SKILL = "/opt/openbox/skills/video-production/SKILL.md"
+REMOTE_VIDEO_PRODUCTION_SKILL_DIR = "/opt/openbox/skills/video-production"
 SERVICE = "openbox-action-server"
 
 
@@ -74,8 +75,8 @@ def main() -> int:
     if not ACTION_SERVER.exists():
         print(f"error: {ACTION_SERVER} not found", file=sys.stderr)
         return 2
-    if not VIDEO_PRODUCTION_SKILL.exists():
-        print(f"error: {VIDEO_PRODUCTION_SKILL} not found", file=sys.stderr)
+    if not (VIDEO_PRODUCTION_SKILL_DIR / "SKILL.md").exists():
+        print(f"error: {VIDEO_PRODUCTION_SKILL_DIR / 'SKILL.md'} not found", file=sys.stderr)
         return 2
 
     d = Desktop(desktop_id, region)
@@ -87,7 +88,18 @@ def main() -> int:
     d.put(MEDIA_JOBS, "/opt/action_server/media_jobs.py")
     d.put(MEDIA_CONFIG, "/opt/openbox/media/media-jobs.json")
     d.put(MEDIA_PACKAGE, "/opt/openbox/media/package.json")
-    d.put(VIDEO_PRODUCTION_SKILL, REMOTE_VIDEO_PRODUCTION_SKILL)
+    skill_files = sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file())
+    remote_dirs = sorted(
+        {
+            str(pathlib.PurePosixPath(REMOTE_VIDEO_PRODUCTION_SKILL_DIR) / path.relative_to(VIDEO_PRODUCTION_SKILL_DIR).parent)
+            for path in skill_files
+        }
+    )
+    d.run("mkdir -p " + " ".join(shlex.quote(path) for path in remote_dirs), timeout=120)
+    for local_path in skill_files:
+        relative = local_path.relative_to(VIDEO_PRODUCTION_SKILL_DIR)
+        remote_path = str(pathlib.PurePosixPath(REMOTE_VIDEO_PRODUCTION_SKILL_DIR) / relative)
+        d.put(local_path, remote_path)
     if MEDIA_LOCK.exists():
         d.put(MEDIA_LOCK, "/opt/openbox/media/package-lock.json")
     d.run(

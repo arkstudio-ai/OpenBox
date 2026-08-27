@@ -47,3 +47,13 @@ def test_image_generation_config_defaults():
     assert config.image_generation.default_quality == "medium"
     assert config.image_generation.output_format == "png"
     assert config.image_generation.timeout_seconds == 600
+
+
+def test_video_transcription_config_defaults():
+    config = OpenBoxConfig()
+    assert config.video_transcription.engine == "dashscope"
+    assert config.video_transcription.base_url == "https://dashscope.aliyuncs.com"
+    assert config.video_transcription.model == "fun-asr"
+    assert config.video_transcription.timeout_seconds == 180
+    assert config.video_transcription.poll_interval_seconds == 1.0
+    assert config.video_transcription.similarity_threshold == 0.90

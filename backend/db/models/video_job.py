@@ -14,8 +14,15 @@ class VideoJob(Base):
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # segment | render
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # segment | stt | render
+    production_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("video_productions.id"), nullable=True
+    )
+    segment_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("video_segments.id"), nullable=True
+    )
     idempotency_key: Mapped[str] = mapped_column(String(180), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     provider_task_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -39,4 +46,6 @@ class VideoJob(Base):
         Index("ix_video_jobs_user_created", "user_id", "created_at"),
         Index("ix_video_jobs_status_updated", "status", "updated_at"),
         Index("ix_video_jobs_provider_task", "provider_task_id"),
+        Index("ix_video_jobs_production", "production_id", "created_at"),
+        Index("ix_video_jobs_segment", "segment_id", "created_at"),
     )

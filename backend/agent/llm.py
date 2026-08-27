@@ -242,9 +242,25 @@ def _inline_refs(schema: dict) -> dict:
 
 
 def _strip_titles(obj: Any) -> Any:
-    """Remove 'title' keys from a JSON Schema (Pydantic adds these)."""
+    """Remove schema annotations named ``title`` without dropping properties.
+
+    A JSON Schema ``properties`` object is a name-to-schema mapping, so a model
+    field can legitimately be named ``title``.  Treating every dictionary key
+    named ``title`` as an annotation removes that field from the tool schema.
+    """
     if isinstance(obj, dict):
-        return {k: _strip_titles(v) for k, v in obj.items() if k != "title"}
+        result = {}
+        for key, value in obj.items():
+            if key == "title":
+                continue
+            if key == "properties" and isinstance(value, dict):
+                result[key] = {
+                    property_name: _strip_titles(property_schema)
+                    for property_name, property_schema in value.items()
+                }
+            else:
+                result[key] = _strip_titles(value)
+        return result
     if isinstance(obj, list):
         return [_strip_titles(v) for v in obj]
     return obj

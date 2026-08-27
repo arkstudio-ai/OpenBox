@@ -138,6 +138,18 @@ async def test_the_host_copy_is_used_when_the_container_lacks_the_skill(host_ski
 
 
 @pytest.mark.asyncio
+async def test_a_project_host_skill_overrides_a_stale_container_copy(host_skill):
+    stale = {
+        "content": "STALE CONTAINER WORKFLOW",
+        "base_dir": "/opt/openbox/skills/demo",
+        "files": [],
+    }
+    out = (await execute(SkillArgs(skill="demo"), ctx(LiveSandbox(stale)))).output
+    assert "Run scripts/setup.sh" in out
+    assert "STALE CONTAINER WORKFLOW" not in out
+
+
+@pytest.mark.asyncio
 async def test_arguments_are_substituted(host_skill):
     (host_skill / "SKILL.md").write_text(
         "---\nname: demo\ndescription: d\n---\nTarget is $ARGUMENTS")

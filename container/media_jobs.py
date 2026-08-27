@@ -280,7 +280,8 @@ class MediaJobManager:
 
     def capabilities(self) -> dict[str, Any]:
         return {
-            "version": 2,
+            "version": 3,
+            "operations": ["render", "extract_audio"],
             "max_concurrency": self.config.max_concurrency,
             "render_engine": self.config.render_engine,
             "output_fps": self.config.output_fps,
@@ -306,6 +307,7 @@ class MediaJobManager:
         inputs = payload.get("inputs")
         output = payload.get("output")
         captions = payload.get("captions") or []
+        operation = str(payload.get("operation") or "render").lower()
         if not re.fullmatch(r"[A-Za-z0-9_.:-]{8,96}", job_id):
             raise MediaJobConflict("job_id must be 8-96 safe identifier characters")
         if not owner or len(owner) > 128:
@@ -314,6 +316,10 @@ class MediaJobManager:
             raise MediaJobConflict("idempotency_key is required")
         if not isinstance(inputs, list) or not 1 <= len(inputs) <= 100:
             raise MediaJobConflict("inputs must contain 1-100 video objects")
+        if operation not in {"render", "extract_audio"}:
+            raise MediaJobConflict("operation must be render or extract_audio")
+        if operation == "extract_audio" and len(inputs) != 1:
+            raise MediaJobConflict("extract_audio requires exactly one video input")
         for item in inputs:
             if not isinstance(item, dict):
                 raise MediaJobConflict("each input must be an object")
@@ -331,12 +337,21 @@ class MediaJobManager:
                 raise MediaJobConflict("input size exceeds the configured limit")
         if not isinstance(output, dict) or not str(output.get("put_url") or "").startswith("https://"):
             raise MediaJobConflict("output.put_url must be an HTTPS presigned URL")
+        output_mime = str(output.get("mime") or "video/mp4").lower()
+        if operation == "extract_audio" and output_mime != "audio/mpeg":
+            raise MediaJobConflict("extract_audio output.mime must be audio/mpeg")
+        if operation == "render" and output_mime != "video/mp4":
+            raise MediaJobConflict("render output.mime must be video/mp4")
         if not isinstance(captions, list) or len(captions) > 100:
             raise MediaJobConflict("captions must be a list of at most 100 items")
         if captions and len(captions) != len(inputs):
             raise MediaJobConflict("captions length must match inputs length")
         if any(len(str(value)) > 2000 for value in captions):
             raise MediaJobConflict("each caption must be at most 2000 characters")
+        if operation == "extract_audio" and captions:
+            raise MediaJobConflict("extract_audio does not accept captions")
+        if operation == "extract_audio":
+            return job_id, owner, idempotency_key
         render_engine = str(payload.get("render_engine") or "auto").lower()
         if render_engine not in {"auto", "ffmpeg", "hyperframes"}:
             raise MediaJobConflict("render_engine must be auto, ffmpeg, or hyperframes")
@@ -609,13 +624,13 @@ class MediaJobManager:
         leaked_before_cleanup: list[int] = []
         remaining_after_termination: list[int] = []
         try:
-            result = await asyncio.wait_for(
-                self._render(job_id, payload), timeout=self.config.job_timeout_seconds
-            )
+            operation = str(payload.get("operation") or "render").lower()
+            work = self._extract_audio(job_id, payload) if operation == "extract_audio" else self._render(job_id, payload)
+            result = await asyncio.wait_for(work, timeout=self.config.job_timeout_seconds)
         except MediaJobCancelled as exc:
             status, error = "cancelled", str(exc) or "cancelled"
         except asyncio.TimeoutError:
-            status, error = "failed", f"render exceeded {self.config.job_timeout_seconds}s timeout"
+            status, error = "failed", f"media operation exceeded {self.config.job_timeout_seconds}s timeout"
         except asyncio.CancelledError:
             await self._kill_job_process(job_id)
             raise
@@ -1005,7 +1020,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
         await self._set_progress(job_id, {"stage": "uploading_output"})
-        size = await self._upload_output(job_id, final_output, payload["output"]["put_url"])
+        size = await self._upload_output(
+            job_id,
+            final_output,
+            payload["output"]["put_url"],
+            content_type="video/mp4",
+        )
         return {
             "uploaded": True,
             "bytes": size,
@@ -1021,6 +1041,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "height": height,
             "render_peak_rss_mb": render_metrics["peak_rss_mb"],
             "ffmpeg_peak_rss_mb": ffmpeg_metrics["peak_rss_mb"],
+        }
+
+    async def _extract_audio(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Extract a stable mono MP3 for URL-based STT on the same bounded queue."""
+        self._require_runtime("ffmpeg")
+        job_dir = self.jobs_root / job_id
+        shutil.rmtree(job_dir, ignore_errors=True)
+        job_dir.mkdir(parents=True)
+        item = payload["inputs"][0]
+        await self._set_progress(job_id, {"stage": "downloading_input"})
+        cached, reused = await self._cached_input(job_id, item)
+        local_input = job_dir / f"segment{cached.suffix or '.mp4'}"
+        try:
+            os.link(cached, local_input)
+        except OSError:
+            shutil.copy2(cached, local_input)
+        await self._set_progress(job_id, {"stage": "probing_input", "cache_hit": reused})
+        source_probe = await self._probe(job_id, local_input)
+        if not source_probe["has_audio"]:
+            raise MediaJobError("input segment has no audio track")
+        output = job_dir / "speech.mp3"
+        await self._set_progress(
+            job_id,
+            {"stage": "extracting_audio", "duration_seconds": source_probe["duration_seconds"]},
+        )
+        metrics = await self._run_command(
+            job_id,
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-threads", str(self.config.ffmpeg_threads),
+                "-i", str(local_input), "-vn", "-ac", "1", "-ar", "16000",
+                "-codec:a", "libmp3lame", "-b:a", "64k", str(output),
+            ],
+            cwd=job_dir,
+            timeout=min(600, self.config.command_timeout_seconds),
+        )
+        audio_probe = await self._probe(job_id, output)
+        if not audio_probe["has_audio"] or audio_probe["duration_seconds"] <= 0:
+            raise MediaJobError("extracted audio is empty")
+        await self._set_progress(job_id, {"stage": "uploading_audio"})
+        size = await self._upload_output(
+            job_id,
+            output,
+            payload["output"]["put_url"],
+            content_type="audio/mpeg",
+        )
+        return {
+            "operation": "extract_audio",
+            "uploaded": True,
+            "bytes": size,
+            "duration_seconds": audio_probe["duration_seconds"],
+            "has_audio": True,
+            "cache_hit": reused,
+            "ffmpeg_peak_rss_mb": metrics["peak_rss_mb"],
         }
 
     def _require_runtime(self, engine: str) -> None:
@@ -1109,7 +1183,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "has_video": any(item.get("codec_type") == "video" for item in streams),
         }
 
-    async def _upload_output(self, job_id: str, path: Path, put_url: str) -> int:
+    async def _upload_output(
+        self,
+        job_id: str,
+        path: Path,
+        put_url: str,
+        *,
+        content_type: str,
+    ) -> int:
         size = path.stat().st_size
 
         async def body():
@@ -1125,7 +1206,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             response = await client.put(
                 put_url,
                 content=body(),
-                headers={"Content-Type": "video/mp4", "Content-Length": str(size)},
+                headers={"Content-Type": content_type, "Content-Length": str(size)},
             )
         if response.status_code not in (200, 201, 204):
             raise MediaJobError(f"OSS output upload returned HTTP {response.status_code}")

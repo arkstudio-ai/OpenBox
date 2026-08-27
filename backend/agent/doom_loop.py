@@ -16,6 +16,25 @@ import json
 
 DOOM_LOOP_THRESHOLD = 3
 
+# These tools expose long-running jobs. Repeating a read-only ``wait`` or
+# ``status`` call with the same job id is their documented polling contract,
+# not evidence that the model is stuck. Mutating actions such as ``submit``,
+# ``retry`` and ``cancel`` deliberately remain protected by the ordinary doom
+# loop guard.
+_REPEATABLE_POLL_ACTIONS = {
+    "video_generate": frozenset({"wait", "status"}),
+    "video_transcribe": frozenset({"wait", "status"}),
+    "video_render": frozenset({"wait", "status"}),
+}
+
+
+def is_repeatable_poll(tool_name: str, tool_args: dict) -> bool:
+    """Whether an identical call is a safe, read-only async-job poll."""
+    actions = _REPEATABLE_POLL_ACTIONS.get(tool_name)
+    if not actions or not isinstance(tool_args, dict):
+        return False
+    return str(tool_args.get("action") or "").strip().lower() in actions
+
 
 def is_repeat_of_recent(completed_tool_parts: list, tool_name: str, tool_args: dict) -> bool:
     """Whether this call repeats the last DOOM_LOOP_THRESHOLD - 1 completed ones.
@@ -23,6 +42,8 @@ def is_repeat_of_recent(completed_tool_parts: list, tool_name: str, tool_args: d
     Args are compared by canonical JSON so key ordering never masks a repeat.
     Mirrors opencode's processor.ts doom-loop detection.
     """
+    if is_repeatable_poll(tool_name, tool_args):
+        return False
     if len(completed_tool_parts) < DOOM_LOOP_THRESHOLD - 1:
         return False
     recent = completed_tool_parts[-(DOOM_LOOP_THRESHOLD - 1):]

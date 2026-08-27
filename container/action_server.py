@@ -59,7 +59,7 @@ from media_jobs import (  # noqa: E402
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.08.27-media-fastpath-v2"
+ACTION_SERVER_VERSION = "2026.08.27-video-production-v3"
 # Uvicorn owns the configured INFO handler in both containers and the WUYING
 # systemd service. A standalone child logger inherited the root WARNING level
 # and silently discarded the very traces this feature exists to preserve.
@@ -104,6 +104,7 @@ class MediaOutputRequest(BaseModel):
 
 
 class MediaJobSubmitRequest(BaseModel):
+    operation: Literal["render", "extract_audio"] = "render"
     job_id: str = PydanticField(min_length=8, max_length=96)
     owner: str = PydanticField(min_length=1, max_length=128)
     session_id: str = PydanticField(default="", max_length=128)
@@ -319,6 +320,7 @@ async def alive():
             "execution_trace_v1",
             "media_jobs_v1",
             "media_jobs_fastpath_v2",
+            "media_jobs_audio_extract_v3",
         ],
         "media_jobs": media_job_manager.capabilities(),
         "uptime": round(time.time() - START_TIME, 2),

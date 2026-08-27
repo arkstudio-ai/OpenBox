@@ -127,6 +127,23 @@ class VideoGenerationConfig(BaseModel):
     )
 
 
+class VideoTranscriptionConfig(BaseModel):
+    """Segment-level speech QA through a backend-owned provider.
+
+    WUYING extracts a stable audio object first.  The backend then gives its
+    short-lived URL to DashScope (default) or an explicitly configured
+    OpenAI-compatible gateway.  Credentials never enter the sandbox or prompt.
+    """
+
+    engine: str = "dashscope"
+    base_url: str = "https://dashscope.aliyuncs.com"
+    api_key: str = ""
+    model: str = "fun-asr"
+    timeout_seconds: int = Field(default=180, ge=30, le=600)
+    poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=10.0)
+    similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
+
+
 # ---------------------------------------------------------------------------
 # Unified root config
 # ---------------------------------------------------------------------------
@@ -255,6 +272,7 @@ class OpenBoxConfig(BaseModel):
     skills: SkillsConfig = SkillsConfig()
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
+    video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

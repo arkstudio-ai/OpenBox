@@ -1,140 +1,107 @@
 ---
 name: video-production
-description: Create spoken-person videos with Seedance, including image-to-video character references, generated speech with lip sync, multi-segment waiting, subtitles or clean output, and final HyperFrames/FFmpeg composition.
+description: Create a complete vertical spoken-person short video from a topic or script, with a shared host, script and segment approvals, Seedance lip-synced speech, segment-level STT review, selective regeneration, and subtitled or clean composition.
 allowed-tools:
   - image_gen
+  - video_project
   - video_generate
+  - video_transcribe
   - video_render
 ---
 
-# OpenBox Video Production
+# OpenBox Spoken Video Production
 
-Use the skill-only `image_gen`, `video_generate`, and `video_render` tools. Their
-schemas are absent from ordinary conversations and become available only after
-this skill is loaded for the current agent run. `image_gen` is included so an
-end-to-end production can create one durable host portrait before any video
-segments are submitted. Provider credentials stay on the backend; never copy a
-key into a prompt, command, workspace file, or sandbox.
+Turn a topic or supplied script into one real-person vertical spoken video. This
+skill is the only place the five media tool schemas are exposed; do not use shell
+commands for generation, FFmpeg, Chrome, HyperFrames, uploads, or provider calls.
+Credentials remain on the backend and must never appear in prompts or files.
+Call these skill-only tools directly after loading the skill. Do not wrap
+`video_project`, `video_generate`, `video_transcribe`, or `video_render` in a
+generic Batch/parallel tool: the wrapper does not inherit skill-only schemas or
+their sequential safety guarantees.
 
-## Storage and execution contract
+Before planning segments, read [references/prompt-recipes.md](references/prompt-recipes.md).
+For gates and recovery read [references/workflow-gates.md](references/workflow-gates.md).
+Read [references/asset-contract.md](references/asset-contract.md) when references
+are used, and [references/quality-and-retries.md](references/quality-and-retries.md)
+before reviewing or regenerating results. The machine contract is
+[references/io-schema.json](references/io-schema.json).
 
-- All source images/videos must already be ready OSS assets owned by the user.
-  Pass their `asset_id`; a displayed attachment path is also accepted.
-- Seedance outputs are immediately copied from the provider's expiring URL to
-  OpenBox OSS, indexed in `file_assets`, and attached to chat.
-- FFmpeg and HyperFrames run only through `video_render` on the user's WUYING
-  desktop. Do not start either program through shell/terminal.
-- The WUYING queue is durable and enforces the configured desktop concurrency
-  (currently 1). Each user will ultimately have an independent desktop, so the
-  queue is deliberately per desktop rather than a global AWS queue.
-- The renderer downloads over internal OSS URLs, reuses a cache keyed by the
-  stable OSS object, writes attempts under `/tmp/openbox-media/jobs/<job_id>`,
-  uploads the final MP4 to OSS, and removes the attempt directory on every
-  terminal path.
+## Required workflow
 
-## Spoken-video workflow
+1. Call `video_project(action="create")` once. Use `mode="standard"` unless the
+   user explicitly delegates a bounded end-to-end test. Delegation changes who
+   evaluates the result, not the stored gates or paid-call ceiling.
+2. Draft the complete word-for-word script. Default to 45–60 seconds and about
+   3.2 Chinese characters per second. Show the entire script in chat, call
+   `video_project(action="set_script")`, then call
+   `video_project(action="request_approval", approval_kind="script")`. Do not
+   design segments before that card is approved.
+3. Establish one host reference. Reuse a suitable user-owned portrait, or call
+   `image_gen` once for a clean vertical host portrait and inspect its attached
+   result. Reuse that exact `asset_id` across every segment. Never claim identity
+   continuity from unrelated text-only generations.
+4. Split the approved script at semantic boundaries. Use 5 segments as a useful
+   30–60 second default, normally ≤40 Chinese characters each and never >48.
+   Write every prompt with the five-part recipe and one identical `visual_anchor`.
+   Call `video_project(action="set_segments")`; its server-side lint is final.
+5. Show the user the full asset list and, for every segment, the exact dialogue
+   and exact complete prompt that will be sent. Then request `segments` approval.
+   After it passes, immediately request `spend` approval. The spend card records
+   a hash-bound maximum number of new Seedance submissions. Without it,
+   `video_generate` rejects every submit.
+6. Read the returned segment IDs, current generation job IDs, and idempotency
+   keys from `video_project status`.
+   Submit each segment with only its `production_id`, `segment_id`, and exact
+   `generation_idempotency_key`; do not invent placeholder prompt/model/media
+   arguments. The narrow tool schema intentionally omits those fields. The
+   backend supplies the approved prompt,
+   references, `duration=-1`, `ratio=9:16`, `resolution=720p`, generated audio,
+   and no watermark. Wait on each returned job; never create a replacement merely
+   because the provider is slow.
+7. For every completed segment, submit `video_transcribe` with its exact
+   `transcription_idempotency_key`, then wait. The WUYING queue extracts a mono
+   MP3 with FFmpeg; the backend runs STT, persists actual spoken text, similarity,
+   and phrase-level omissions/replacements. Show all segment video attachments
+   plus each script/transcript/verdict. Request `quality` approval only after all
+   active segments have STT evidence.
+8. If the user chooses to rework suspect segments, call
+   `video_project(action="revise_segment")` only for those segments. This creates
+   a new revision while preserving the paid old result. For another take with
+   identical words, pass only `segment_id` and `revision_reason`. If the dialogue
+   changes, pass the new word-for-word `script_text` and a complete lintable
+   `segment_prompt`; this atomically updates that one segment and the full script
+   while keeping every other active generated segment. Never use `set_script` or
+   `set_segments` as a workaround for a selective revision. Reapprove the script
+   when its hash changed, then show and reapprove the new segment plan and spend
+   ceiling, generate/transcribe only the planned revision, and repeat quality
+   review.
+9. Request `render` approval. Its card chooses subtitled or clean output. After
+   approval, call status to obtain `render_idempotency_key`, then submit
+   `video_render` with `production_id` and that key. Do not supply captions:
+   subtitled output is built only from the accepted STT text. Keep
+   `render_engine="auto"` unless the user genuinely requests HTML/GSAP/Lottie
+   animation; normal concatenation and captions use the fast FFmpeg path.
+10. Wait with the exact returned `version` as `after_version` and increment only
+    `wait_iteration`. On completion, verify `resource_check.temp_removed=true`,
+    no `remaining_job_processes`, a real audio track, and consistent duration.
+    Only then say the final video is complete; the OSS MP4 is already attached.
+    A displayed `/workspace/generated_videos/...` path describes the attachment
+    contract and is not guaranteed to be mounted in a later tool sandbox. Inspect
+    the attachment/status rather than trying to reopen that path with `read_file`.
 
-1. Draft the complete script and split it into short, independently regenerable
-   segments. Five segments is a good default for a 30-60 second short video.
-2. Confirm the script, portrait/reference image, aspect ratio, subtitles versus
-   clean output, and expected paid generation calls before submission. A direct
-   user request to run a named end-to-end production is confirmation for those
-   requested segments, but not for unbounded retries.
-   For a multi-segment video presented as one host, require one shared portrait
-   asset before submitting any segment and reuse that exact asset for every
-   segment. A text-only run cannot guarantee that the generated people are the
-   same person; do not describe it as identity-consistent. If a text-only
-   fallback is explicitly accepted, at least reuse one fixed `seed` for every
-   segment. Never vary seeds while claiming that the host is the same person.
-   If the user has not supplied a portrait, call `image_gen` once to create a
-   clean vertical host portrait, inspect the attached result, and retain its
-   returned OSS `asset_id`. Do not start any Seedance segment until that single
-   portrait exists and is visibly suitable. Image generation is also a paid
-   provider call, so it is covered only by the same explicit end-to-end approval
-   or by separate confirmation.
-3. For each segment call `video_generate(action="submit")` with:
+## Non-negotiable rules
 
-   - the same `character_reference_asset=<portrait asset_id>` when identity
-     continuity is required; reserve `input_assets` for additional scene or
-     motion references and do not duplicate the portrait there;
-   - the standard `doubao-seedance-2-0-260128` model for spoken audio;
-   - `generate_audio=true`, normally `resolution="720p"`, `ratio="9:16"`, and
-     `duration=-1` for intelligent duration;
-   - a unique stable `idempotency_key`, such as
-     `<project>-segment-03-v1`. Never reuse one for a different prompt;
-   - a prompt that quotes the exact Mandarin line and explicitly requires the
-     visible person to speak it naturally, with accurate Mandarin lip motion,
-     stable identity/camera, clean audio, and no generated captions or watermark.
-
-4. Wait for every segment with `video_generate(action="wait", job_id=...,
-   wait_seconds=25)`. The tool polls the provider inside that bounded window.
-   Repeat only while the returned status is `queued` or `in_progress`, using
-   `retry_after_seconds`; do not create a replacement task merely because it is
-   slow. Keep the user informed when several waits are needed.
-5. Review each completed segment before composing:
-
-   - confirm the returned asset is ready in OSS;
-   - confirm the same person remains visible and the mouth changes naturally
-     during speech; listen for missing, duplicated, or badly pronounced words;
-   - the renderer will independently require a real audio track and validate
-     duration. If speech is materially wrong, regenerate only that segment with
-     a new versioned idempotency key after explicit approval for the extra call.
-
-6. Call `video_render(action="submit")` with segment asset IDs in narrative
-   order. Supply one caption per segment for subtitled output, or set
-   `subtitles=false` for a clean master. Use another stable idempotency key.
-   Keep `render_engine="auto"` for ordinary spoken-video concatenation and
-   burned captions; the WUYING worker selects its pure-FFmpeg fast path and
-   does not start Chrome. Use `render_engine="hyperframes"` only when the
-   requested deliverable genuinely needs HTML/GSAP/Lottie animation.
-   Match the render size to the generated sources: use `width=720,
-   height=1280` for ordinary 720p vertical clips. Reserve 1080x1920 for a
-   user-requested 1080p master or genuinely 1080p inputs; upscaling 720p clips
-   adds render time without restoring source detail.
-7. Wait with `video_render(action="wait", wait_seconds=25,
-   after_version=<returned version>, wait_iteration=<counter>)`. Start the
-   counter at 0 and increment it on each repeated wait. Always reuse the exact
-   returned `version` as `after_version`; never invent or increment a version.
-   `wait_iteration` is deliberately ignored by the queue and only distinguishes
-   legitimate repeated long polls from a stuck identical-tool loop. Interpret
-   the states exactly as follows:
-
-   - `queued`: tell the user the `queue_position`; wait again after the returned
-     delay. This is expected when another browser window is rendering.
-   - `in_progress`: report the current stage and wait again.
-   - `completed`: use the returned OSS `asset_id`; the MP4 is already attached
-     and needs no `share_file` call.
-   - `failed` or `cancelled`: inspect the error. Use
-     `video_render(action="retry")` only for a retryable render failure; this
-     retains verified downloads and does not regenerate billed Seedance clips.
-
-8. Before claiming success, inspect the terminal `resource_check`. Require
-   `temp_removed=true`, an empty `remaining_job_processes`, a present audio
-   track, and a final duration consistent with the input sum. Report a cleanup
-   failure rather than hiding it.
-
-## Prompt pattern for one spoken segment
-
-```text
-Use the reference portrait as the same on-camera host. Vertical medium close-up,
-stable tripod camera, natural daylight and subtle realistic gestures. The host
-looks into the lens and says in clear natural Mandarin, exactly: “<line>”. Match
-mouth shapes and timing accurately to every spoken word; keep facial identity,
-clothing, background and voice consistent. Clean speech audio. No on-screen
-text, captions, logos, watermark, cuts, extra people or background voices.
-```
-
-Keep each quoted line short enough for a natural take. Do not ask one segment
-to deliver several dense paragraphs.
-
-## Failure and retry rules
-
-- `submit` is billable and never auto-retried by the tool. A network timeout can
-  be ambiguous: report it and do not submit a duplicate without a decision.
-- Reusing the same idempotency key returns the existing OpenBox job rather than
-  billing a second generation.
-- A provider failure needs a new segment idempotency key only when intentionally
-  regenerating. A render retry uses the same render job and cached inputs.
-- Never download a completed provider URL manually or upload a final MP4 by
-  hand. Doing so bypasses ownership checks, OSS indexing, queue coordination,
-  temp cleanup, and chat rendering.
+- A visible plan or todo is not approval. The approval record must exist for the
+  exact current hash; editing content or references invalidates downstream gates.
+- User-facing confirmation always follows the complete content it refers to.
+- Never retry an ambiguous paid submit. Reusing the same key only reconciles the
+  same request; the server rejects that key with a different request hash.
+- A `submitting` job without `provider_task_id` or output is ambiguous. Use the
+  exact `generation_job_id` reported for that segment, never a job remembered
+  from an older revision. Do not bind an older revision's asset to the new one.
+- Never manually caption from the intended script. Captions use accepted STT
+  actual speech. A clean master may omit captions but may not falsify QA.
+- Never discard old segment outputs. Selective regeneration creates a revision.
+- For a progress question, call `video_project(action="status")` and continue
+  from its `status`, active segment IDs, approvals, and idempotency keys.

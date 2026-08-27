@@ -2,12 +2,13 @@
 
 Provider calls and ownership checks live on the backend.  FFmpeg and
 HyperFrames live behind the sandbox action server's durable per-desktop queue.
-The two tools in this module are registered globally but hidden until the
+The three tools in this module are registered globally but hidden until the
 ``video-production`` skill explicitly activates them for an agent run.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,34 +35,18 @@ _RESOLUTIONS = {"480p", "720p", "1080p"}
 class VideoGenerateArgs(BaseModel):
     action: Literal["submit", "status", "wait", "cancel"]
     job_id: str | None = Field(default=None, max_length=96)
+    production_id: str | None = Field(default=None, max_length=96)
+    segment_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
-    prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
-    character_reference_asset: str | None = Field(
-        default=None,
-        max_length=512,
-        description=(
-            "Owned ready OSS image asset used as the on-camera character reference. "
-            "Reuse the exact same asset ID for every segment that must show one person."
-        ),
-    )
-    input_assets: list[str] = Field(default_factory=list, max_length=8)
-    model: str | None = Field(default=None, max_length=160)
-    resolution: Literal["480p", "720p", "1080p"] | None = None
-    ratio: Literal["16:9", "9:16", "3:4", "1:1", "4:3", "21:9", "adaptive"] | None = None
-    duration: int | None = Field(default=None, ge=-1, le=30)
-    generate_audio: bool | None = None
-    watermark: bool | None = None
-    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
-    filename: str | None = Field(default=None, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
 
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "submit":
-            if not self.prompt:
-                raise ValueError("submit requires prompt")
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key to prevent duplicate billing")
+            if not self.production_id or not self.segment_id:
+                raise ValueError("submit requires production_id and segment_id from video_project")
         elif not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
@@ -70,6 +55,7 @@ class VideoGenerateArgs(BaseModel):
 class VideoRenderArgs(BaseModel):
     action: Literal["submit", "status", "wait", "cancel", "retry"]
     job_id: str | None = Field(default=None, max_length=96)
+    production_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     segment_assets: list[str] = Field(default_factory=list, max_length=100)
     captions: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
@@ -97,10 +83,32 @@ class VideoRenderArgs(BaseModel):
         if self.action == "submit":
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key")
-            if not self.segment_assets:
-                raise ValueError("submit requires at least one segment asset")
+            if not self.production_id:
+                raise ValueError("submit requires production_id from video_project")
             if self.captions and len(self.captions) != len(self.segment_assets):
                 raise ValueError("captions must be empty or match segment_assets length")
+        elif not self.job_id:
+            raise ValueError(f"{self.action} requires job_id")
+        return self
+
+
+class VideoTranscribeArgs(BaseModel):
+    action: Literal["submit", "status", "wait", "cancel", "retry"]
+    job_id: str | None = Field(default=None, max_length=96)
+    production_id: str | None = Field(default=None, max_length=96)
+    segment_id: str | None = Field(default=None, max_length=96)
+    idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
+    wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
+    after_version: int = Field(default=0, ge=0)
+    wait_iteration: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _required_by_action(self):
+        if self.action == "submit":
+            if not self.production_id or not self.segment_id:
+                raise ValueError("submit requires production_id and segment_id")
+            if not self.idempotency_key:
+                raise ValueError("submit requires idempotency_key")
         elif not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
@@ -114,6 +122,17 @@ class VideoProviderTarget:
     base_url: str
     submit_timeout_seconds: int
     status_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class VideoTranscriptionTarget:
+    engine: str
+    model: str
+    api_key: str
+    base_url: str
+    timeout_seconds: int
+    poll_interval_seconds: float
+    similarity_threshold: float
 
 
 def _configured_target(model_override: str | None = None) -> tuple[VideoProviderTarget, object]:
@@ -153,6 +172,31 @@ def _configured_target(model_override: str | None = None) -> tuple[VideoProvider
     )
 
 
+def _configured_transcription_target() -> VideoTranscriptionTarget:
+    from core.config import get_config
+
+    settings = get_config().video_transcription
+    engine = settings.engine.strip().lower()
+    if engine not in {"dashscope", "openai_url"}:
+        raise RuntimeError("video_transcription.engine must be dashscope or openai_url")
+    base_url = settings.base_url.rstrip("/")
+    if not base_url.startswith("http://") and not base_url.startswith("https://"):
+        raise RuntimeError("video_transcription.base_url is not configured")
+    if not settings.api_key:
+        raise RuntimeError("video_transcription.api_key is not configured")
+    if not settings.model:
+        raise RuntimeError("video_transcription.model is not configured")
+    return VideoTranscriptionTarget(
+        engine=engine,
+        model=settings.model,
+        api_key=settings.api_key,
+        base_url=base_url,
+        timeout_seconds=settings.timeout_seconds,
+        poll_interval_seconds=settings.poll_interval_seconds,
+        similarity_threshold=settings.similarity_threshold,
+    )
+
+
 def _auth_header(key: str) -> str:
     return key if key.lower().startswith("bearer ") else f"Bearer {key}"
 
@@ -163,6 +207,13 @@ def _safe_filename(requested: str | None, job_id: str, *, rendered: bool = False
     stem = re.sub(r"\.(mp4|mov|webm|m4v)$", "", raw, flags=re.IGNORECASE)
     stem = re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", stem).strip("._") or fallback[:-4]
     return f"{stem[:180]}.mp4"
+
+
+def _safe_audio_filename(requested: str | None, job_id: str) -> str:
+    raw = PurePosixPath(requested or f"speech-{job_id}.mp3").name
+    stem = re.sub(r"\.(mp3|wav|m4a|aac|ogg)$", "", raw, flags=re.IGNORECASE)
+    stem = re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", stem).strip("._") or f"speech-{job_id}"
+    return f"{stem[:180]}.mp3"
 
 
 async def _find_owned_asset(ref: str, ctx: ToolContext, *, ready: bool = True):
@@ -271,6 +322,11 @@ async def _create_pending_job(
     prompt: str | None,
     request_data: dict[str, Any],
     filename: str | None,
+    request_hash: str,
+    production_id: str | None = None,
+    segment_id: str | None = None,
+    output_mime: str = "video/mp4",
+    transient: bool = False,
 ) -> tuple[Any, Any, bool]:
     """Reserve job+asset before a paid/remote call; return existing on a race."""
     from core.identifier import ascending
@@ -290,12 +346,20 @@ async def _create_pending_job(
             )
         ).scalar_one_or_none()
         if existing:
+            if existing.request_hash and existing.request_hash != request_hash:
+                raise RuntimeError(
+                    "idempotency key conflict: the existing job has a different request hash"
+                )
             asset = await db.get(FileAsset, existing.output_asset_id) if existing.output_asset_id else None
             return existing, asset, False
 
     job_id = ascending("video")
     asset_id = ascending("asset")
-    name = _safe_filename(filename, job_id, rendered=kind == "render")
+    name = (
+        _safe_audio_filename(filename, job_id)
+        if output_mime == "audio/mpeg"
+        else _safe_filename(filename, job_id, rendered=kind == "render")
+    )
     key = f"assets/{ctx.user_id}/{asset_id}/{name}"
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
@@ -307,11 +371,11 @@ async def _create_pending_job(
             project_id=project_id or None,
             name=name,
             oss_key=key,
-            mime="video/mp4",
+            mime=output_mime,
             size=0,
             status="pending",
             source="agent",
-            transient=False,
+            transient=transient,
             created_at=now,
         )
         job = VideoJob(
@@ -320,7 +384,10 @@ async def _create_pending_job(
             session_id=ctx.session_id or None,
             project_id=project_id or None,
             kind=kind,
+            production_id=production_id,
+            segment_id=segment_id,
             idempotency_key=idempotency_key,
+            request_hash=request_hash,
             status="submitting" if kind == "segment" else "dispatching",
             model=model,
             prompt=prompt,
@@ -349,6 +416,10 @@ async def _create_pending_job(
                 )
             )
         ).scalar_one()
+        if existing.request_hash and existing.request_hash != request_hash:
+            raise RuntimeError(
+                "idempotency key conflict: the existing job has a different request hash"
+            )
         asset = await db.get(FileAsset, existing.output_asset_id) if existing.output_asset_id else None
         return existing, asset, False
 
@@ -488,6 +559,117 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
         response.raise_for_status()
 
 
+async def _dashscope_transcribe(
+    target: VideoTranscriptionTarget, audio_url: str
+) -> dict[str, Any]:
+    import httpx
+
+    async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
+        submitted = await client.post(
+            f"{target.base_url}/api/v1/services/audio/asr/transcription",
+            headers={
+                "Authorization": _auth_header(target.api_key),
+                "Content-Type": "application/json",
+                "X-DashScope-Async": "enable",
+            },
+            json={
+                "model": target.model,
+                "input": {"file_urls": [audio_url]},
+                "parameters": {"channel_id": [0], "language_hints": ["zh"]},
+            },
+        )
+        submitted.raise_for_status()
+        submitted_data = submitted.json()
+        task_id = str((submitted_data.get("output") or {}).get("task_id") or "")
+        if not task_id:
+            raise RuntimeError("DashScope transcription response did not include a task_id")
+
+        deadline = asyncio.get_running_loop().time() + target.timeout_seconds
+        finished: dict[str, Any] | None = None
+        while asyncio.get_running_loop().time() < deadline:
+            response = await client.get(
+                f"{target.base_url}/api/v1/tasks/{task_id}",
+                headers={"Authorization": _auth_header(target.api_key)},
+            )
+            response.raise_for_status()
+            data = response.json()
+            state = str((data.get("output") or {}).get("task_status") or "").upper()
+            if state in {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"}:
+                finished = data
+                break
+            await asyncio.sleep(target.poll_interval_seconds)
+        if finished is None:
+            raise RuntimeError("DashScope transcription timed out")
+
+        output = finished.get("output") or {}
+        results = output.get("results") or []
+        result = results[0] if results and isinstance(results[0], dict) else {}
+        state = str(output.get("task_status") or "").upper()
+        subtask_state = str(result.get("subtask_status") or "").upper()
+        code = str(result.get("code") or output.get("code") or "")
+        if state != "SUCCEEDED" or subtask_state not in {"", "SUCCEEDED"}:
+            if "HAVE_NO_WORDS" in code.upper():
+                return {
+                    "text": "",
+                    "duration_ms": None,
+                    "model": target.model,
+                    "provider": "dashscope",
+                }
+            detail = str(result.get("message") or output.get("message") or code or state)
+            raise RuntimeError(f"DashScope transcription failed: {detail[:300]}")
+        result_url = str(result.get("transcription_url") or "")
+        if not result_url.startswith("https://"):
+            raise RuntimeError("DashScope transcription completed without a result URL")
+        downloaded = await client.get(result_url)
+        downloaded.raise_for_status()
+        transcript_data = downloaded.json()
+
+    transcripts = transcript_data.get("transcripts") or []
+    text = "\n".join(
+        str(item.get("text") or "").strip()
+        for item in transcripts
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ).strip()
+    duration_ms = (transcript_data.get("properties") or {}).get(
+        "original_duration_in_milliseconds"
+    )
+    return {
+        "text": text,
+        "duration_ms": duration_ms,
+        "model": target.model,
+        "provider": "dashscope",
+    }
+
+
+async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str) -> dict[str, Any]:
+    if target.engine == "dashscope":
+        return await _dashscope_transcribe(target, audio_url)
+
+    import httpx
+
+    async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
+        response = await client.post(
+            f"{target.base_url}/v1/audio/transcriptions",
+            headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
+            json={
+                "model": target.model,
+                "audio_url": audio_url,
+                "response_format": "json",
+            },
+        )
+    response.raise_for_status()
+    data = response.json()
+    text = str(data.get("text") or "").strip()
+    if not text:
+        raise RuntimeError("transcription returned no spoken text")
+    return {
+        "text": text,
+        "duration_ms": data.get("duration_ms") or data.get("durationMs"),
+        "model": target.model,
+        "provider": "openai_url",
+    }
+
+
 def _provider_state(data: dict[str, Any]) -> str:
     value = str(data.get("status") or "").lower()
     return {
@@ -601,11 +783,26 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
         error=None,
         completed_at=datetime.now(timezone.utc),
     )
+    if getattr(job, "segment_id", None):
+        from tool.video_workflow import mark_segment_job
+
+        await mark_segment_job(
+            job.segment_id,
+            job.id,
+            status="completed",
+            output_asset_id=job.output_asset_id,
+        )
     return await _owned_job(job.id, ctx, "segment")
 
 
 def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_after: int = 5) -> list[str]:
     lines = [f"job_id={job.id}", f"status={job.status}"]
+    production_id = getattr(job, "production_id", None)
+    segment_id = getattr(job, "segment_id", None)
+    if production_id:
+        lines.append(f"production_id={production_id}")
+    if segment_id:
+        lines.append(f"segment_id={segment_id}")
     character_reference = (job.request_data or {}).get("character_reference_asset_id")
     if character_reference:
         lines.append(f"character_reference_asset_id={character_reference}")
@@ -628,6 +825,18 @@ def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_afte
         )
     if job.error:
         lines.append(f"error={job.error}")
+    if getattr(job, "kind", None) == "segment" and job.status == "completed" and production_id and segment_id:
+        lines.extend(
+            [
+                f"transcription_idempotency_key={production_id}:{segment_id}:stt",
+                "next_action=video_transcribe.submit",
+                (
+                    "instruction=generation is terminal; do not call video_generate again; "
+                    "submit video_transcribe for this segment, then wait on the returned "
+                    "transcription job_id"
+                ),
+            ]
+        )
     return lines
 
 
@@ -643,7 +852,7 @@ async def _job_asset(job):
 
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     try:
-        target, settings = _configured_target(args.model)
+        target, settings = _configured_target(None)
         from core.oss import get_oss
 
         oss = get_oss()
@@ -651,23 +860,41 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         return ToolResult(title="Video generation is not configured", output=_public_error(exc))
 
     if args.action == "submit":
-        resolution = args.resolution or settings.default_resolution
-        ratio = args.ratio or settings.default_ratio
-        duration = args.duration if args.duration is not None else settings.default_duration
-        generate_audio = (
-            args.generate_audio if args.generate_audio is not None else settings.default_generate_audio
-        )
-        watermark = args.watermark if args.watermark is not None else settings.default_watermark
         try:
+            from tool.video_workflow import (
+                consume_spend_approval,
+                content_hash,
+                mark_segment_job,
+                prepare_segment_submission,
+            )
+
+            approved = await prepare_segment_submission(
+                ctx, args.production_id or "", args.segment_id or ""
+            )
+            expected_key = f"{approved['production_id']}:{approved['segment_id']}:generate"
+            if args.idempotency_key != expected_key:
+                raise RuntimeError(
+                    f"idempotency_key must be the approved segment key: {expected_key}"
+                )
+            prompt = approved["prompt"]
+            resolution = approved["resolution"]
+            ratio = approved["ratio"]
+            duration = approved["duration"]
+            generate_audio = approved["generate_audio"]
+            watermark = approved["watermark"]
             _validate_generation(target.model, resolution, duration, generate_audio)
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
             inputs, character_reference = await _resolve_generation_inputs(
-                args.character_reference_asset,
-                args.input_assets,
+                approved["character_reference_asset"],
+                approved["input_assets"],
                 ctx,
             )
             request_data = {
+                "production_id": approved["production_id"],
+                "segment_id": approved["segment_id"],
+                "content_hash": approved["content_hash"],
+                "plan_hash": approved["plan_hash"],
                 "input_asset_ids": [row.id for row in inputs],
                 "character_reference_asset_id": (
                     character_reference.id if character_reference else None
@@ -677,27 +904,61 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "duration": duration,
                 "generate_audio": generate_audio,
                 "watermark": watermark,
-                "seed": args.seed,
             }
+            request_hash = content_hash(
+                {
+                    "kind": "segment",
+                    "model": target.model,
+                    "prompt": prompt,
+                    "request_data": request_data,
+                }
+            )
             job, asset, created = await _create_pending_job(
                 ctx=ctx,
                 kind="segment",
                 idempotency_key=args.idempotency_key or "",
                 model=target.model,
-                prompt=args.prompt,
+                prompt=prompt,
                 request_data=request_data,
-                filename=args.filename,
+                filename=None,
+                request_hash=request_hash,
+                production_id=approved["production_id"],
+                segment_id=approved["segment_id"],
             )
             if not created:
                 if job.status == "completed":
+                    await mark_segment_job(
+                        approved["segment_id"],
+                        job.id,
+                        status="completed",
+                        output_asset_id=job.output_asset_id,
+                    )
                     await _attach_completed(job, ctx)
+                lines = _job_lines(job, asset)
+                ambiguous_submit = job.status == "submitting" and not job.provider_task_id
+                if ambiguous_submit:
+                    lines.extend(
+                        [
+                            "recovery=ambiguous_submit_without_provider_task_id",
+                            "instruction=do_not_resubmit; cancel or obtain operator review before creating a revision",
+                        ]
+                    )
                 return ToolResult(
-                    title="Existing video generation job",
-                    output="\n".join(_job_lines(job, asset)),
-                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
+                    title=(
+                        "Existing video submission needs operator review"
+                        if ambiguous_submit
+                        else "Existing video generation job"
+                    ),
+                    output="\n".join(lines),
+                    metadata={
+                        "job_id": job.id,
+                        "status": job.status,
+                        "idempotent_reuse": True,
+                        "ambiguous_submit": ambiguous_submit,
+                    },
                 )
 
-            content: list[dict[str, Any]] = [{"type": "text", "text": args.prompt}]
+            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
             for row in inputs:
                 url = oss.presign_get(row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds)
                 if row.mime.startswith(_IMAGE_PREFIX):
@@ -717,24 +978,48 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
-            if args.seed is not None:
-                payload["seed"] = args.seed
-            await ctx.update_output("Submitting the asynchronous Seedance video task…")
-            response = await _provider_submit(target, payload)
-            state = _provider_state(response)
-            # A provider may return a terminal state from the initial POST.  In
-            # our state machine, "completed" means the output is already safe
-            # in OSS, so retain an in-progress state until finalization wins
-            # the database claim and completes that transfer.
-            stored_state = "in_progress" if state == "completed" else state
-            await _update_job(
-                job.id,
-                provider_task_id=response["id"],
-                status=stored_state,
-                attempt=1,
-                started_at=datetime.now(timezone.utc),
-                error=None,
-            )
+            async def submit_and_persist_provider_identity():
+                try:
+                    await consume_spend_approval(approved["spend_approval_id"])
+                except Exception:
+                    await _update_job(
+                        job.id,
+                        status="failed",
+                        error="approved generation call limit is unavailable",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    await _mark_asset(job.output_asset_id, status="failed")
+                    raise
+                await mark_segment_job(approved["segment_id"], job.id, status="submitting")
+                submitted = await _provider_submit(target, payload)
+                submitted_state = _provider_state(submitted)
+                # A provider may return a terminal state from the initial POST. In
+                # our state machine, "completed" means the output is already safe
+                # in OSS, so retain an in-progress state until finalization wins
+                # the database claim and completes that transfer.
+                stored_state = "in_progress" if submitted_state == "completed" else submitted_state
+                await _update_job(
+                    job.id,
+                    provider_task_id=submitted["id"],
+                    status=stored_state,
+                    attempt=1,
+                    started_at=datetime.now(timezone.utc),
+                    error=None,
+                )
+                return submitted, submitted_state
+
+            try:
+                await ctx.update_output("Submitting the asynchronous Seedance video task…")
+            except asyncio.CancelledError:
+                # The paid operation below still needs an auditable terminal or
+                # provider-owned identity even when the chat turn is interrupted.
+                log.info("video generation output update interrupted; securing submit state")
+            critical_submit = asyncio.create_task(submit_and_persist_provider_identity())
+            try:
+                response, state = await asyncio.shield(critical_submit)
+            except asyncio.CancelledError:
+                log.info("video generation turn interrupted; waiting to persist provider task identity")
+                response, state = await critical_submit
             job = await _owned_job(job.id, ctx, "segment")
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
@@ -750,6 +1035,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
+                await mark_segment_job(approved["segment_id"], job.id, status=state)
                 job = await _owned_job(job.id, ctx, "segment")
             return ToolResult(
                 title=("Video segment ready" if job.status == "completed" else "Video generation submitted"),
@@ -807,6 +1093,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
+                if job.segment_id:
+                    from tool.video_workflow import mark_segment_job
+
+                    await mark_segment_job(job.segment_id, job.id, status="failed")
             return ToolResult(title="Video generation submit failed", output=_public_error(exc))
 
     job = await _owned_job(args.job_id or "", ctx, "segment")
@@ -835,6 +1125,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             job.id, status="cancelled", completed_at=datetime.now(timezone.utc), error="cancelled"
         )
         await _mark_asset(job.output_asset_id, status="failed")
+        if job.segment_id:
+            from tool.video_workflow import mark_segment_job
+
+            await mark_segment_job(job.segment_id, job.id, status="cancelled")
         job = await _owned_job(job.id, ctx, "segment")
         return ToolResult(title="Video generation cancelled", output="\n".join(_job_lines(job)))
 
@@ -871,6 +1165,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
+                if job.segment_id:
+                    from tool.video_workflow import mark_segment_job
+
+                    await mark_segment_job(job.segment_id, job.id, status=state)
                 job = await _owned_job(job.id, ctx, "segment")
             else:
                 await _update_job(job.id, status=state, error=None)
@@ -892,16 +1190,365 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         title = "Video segment ready"
     else:
         attached = False
-        title = "Video generation status"
+        title = (
+            "Video submission needs operator review"
+            if job.status == "submitting" and not job.provider_task_id
+            else "Video generation status"
+        )
+    lines = _job_lines(job, asset, retry_after=round(settings.poll_interval_seconds))
+    ambiguous_submit = job.status == "submitting" and not job.provider_task_id
+    if ambiguous_submit:
+        lines.extend(
+            [
+                "recovery=ambiguous_submit_without_provider_task_id",
+                "instruction=do_not_resubmit; cancel or obtain operator review before creating a revision",
+            ]
+        )
     return ToolResult(
         title=title,
-        output="\n".join(_job_lines(job, asset, retry_after=round(settings.poll_interval_seconds))),
+        output="\n".join(lines),
         metadata={
             "job_id": job.id,
             "status": job.status,
             "asset_id": asset.id if asset and asset.status == "ready" else None,
             "attached": attached,
+            "ambiguous_submit": ambiguous_submit,
             "retry_after_seconds": round(settings.poll_interval_seconds),
+        },
+    )
+
+
+async def _transcription_payload(job, ctx: ToolContext, video_settings, oss) -> dict[str, Any]:
+    from sandbox.assets import _use_internal_oss
+
+    source_id = str((job.request_data or {}).get("source_asset_id") or "")
+    rows = await _resolve_inputs([source_id], ctx)
+    source = rows[0]
+    if source.mime not in _VIDEO_MIMES:
+        raise RuntimeError("transcription source must be a video asset")
+    output = await _job_asset(job)
+    if not output:
+        raise RuntimeError("reserved transcription audio asset is missing")
+    ttl = video_settings.render_url_ttl_seconds
+    internal = _use_internal_oss(oss)
+    return {
+        "operation": "extract_audio",
+        "job_id": job.id,
+        "owner": ctx.user_id,
+        "session_id": ctx.session_id,
+        "idempotency_key": job.idempotency_key,
+        "inputs": [
+            {
+                "name": source.name,
+                "mime": source.mime,
+                "size": source.size,
+                "cache_key": f"{oss.bucket}:{source.oss_key}:{source.size}",
+                "url": oss.presign_get(source.oss_key, expires_sec=ttl, internal=internal),
+            }
+        ],
+        "output": {
+            "name": output.name,
+            "mime": "audio/mpeg",
+            "put_url": oss.presign_put(
+                output.oss_key, "audio/mpeg", expires_sec=ttl, internal=internal
+            ),
+        },
+    }
+
+
+async def _dispatch_transcription(job, ctx: ToolContext, video_settings, oss) -> tuple[Any, dict[str, Any]]:
+    payload = await _transcription_payload(job, ctx, video_settings, oss)
+    remote = await ctx.sandbox.submit_media_job(payload)
+    await _update_job(
+        job.id,
+        sandbox_job_id=remote["job_id"],
+        status=remote["status"],
+        error=None,
+        started_at=datetime.now(timezone.utc) if remote["status"] == "in_progress" else None,
+    )
+    return await _owned_job(job.id, ctx, "stt"), remote
+
+
+async def _finalize_transcription(job, ctx: ToolContext, target, oss, extraction_result: dict[str, Any]) -> Any:
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool.video_workflow import record_segment_transcript
+
+    audio = await _job_asset(job)
+    head = await oss.head(audio.oss_key) if audio else None
+    if not audio or not head:
+        await _update_job(
+            job.id,
+            status="failed",
+            error="sandbox reported audio extraction complete but the OSS audio is missing",
+            completed_at=datetime.now(timezone.utc),
+        )
+        return await _owned_job(job.id, ctx, "stt")
+    await _mark_asset(audio.id, status="ready", size=head["size"] or 0)
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        claimed = await db.execute(
+            update(VideoJob)
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.status.in_(["queued", "in_progress", "extraction_completed"]),
+            )
+            .values(status="transcribing", error=None, updated_at=now)
+        )
+        if claimed.rowcount != 1:
+            return await _owned_job(job.id, ctx, "stt")
+    try:
+        await ctx.update_output("Audio extracted; running segment speech-to-text QA…")
+        transcript = await _provider_transcribe(
+            target,
+            oss.presign_get(audio.oss_key, expires_sec=1800),
+        )
+        comparison = await record_segment_transcript(
+            job.segment_id or "",
+            transcript["text"],
+            transcript,
+            threshold=target.similarity_threshold,
+        )
+        await _update_job(
+            job.id,
+            status="completed",
+            result_data={
+                "extraction": extraction_result,
+                "transcript": transcript,
+                "comparison": comparison,
+            },
+            error=None,
+            completed_at=datetime.now(timezone.utc),
+        )
+    except Exception:
+        log.warning("segment transcription provider failed", exc_info=True)
+        await _update_job(
+            job.id,
+            status="failed",
+            result_data={"extraction": extraction_result},
+            error="STT provider request failed; the extracted audio is retained for an explicit retry.",
+            completed_at=datetime.now(timezone.utc),
+        )
+    return await _owned_job(job.id, ctx, "stt")
+
+
+def _transcription_lines(job, asset=None, *, remote: dict[str, Any] | None = None) -> list[str]:
+    lines = [f"job_id={job.id}", f"status={job.status}"]
+    if job.production_id:
+        lines.append(f"production_id={job.production_id}")
+    if job.segment_id:
+        lines.append(f"segment_id={job.segment_id}")
+    if remote is not None:
+        lines.append(f"version={int(remote.get('version') or 0)}")
+        lines.append(f"queue_position={int(remote.get('queue_position') or 0)}")
+    result = job.result_data or {}
+    transcript = result.get("transcript") if isinstance(result.get("transcript"), dict) else {}
+    comparison = result.get("comparison") if isinstance(result.get("comparison"), dict) else {}
+    if transcript:
+        lines.append(f"transcript={transcript.get('text') or ''}")
+    if comparison:
+        lines.append(f"similarity={comparison.get('similarity')}")
+        lines.append(f"verdict={comparison.get('verdict')}")
+        if comparison.get("notes"):
+            lines.append("notes=" + json.dumps(comparison["notes"], ensure_ascii=False))
+    if asset and asset.status == "ready":
+        lines.append(f"audio_asset_id={asset.id}")
+    if job.error:
+        lines.append(f"error={job.error}")
+    if job.status not in {"completed", "failed", "cancelled"}:
+        lines.append("retry_after_seconds=5")
+    return lines
+
+
+async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
+    if not ctx.sandbox:
+        return ToolResult(title="Sandbox unavailable", output="Video transcription requires the user's WUYING sandbox.")
+    try:
+        target = _configured_transcription_target()
+        _, video_settings = _configured_target()
+        from core.oss import get_oss
+
+        oss = get_oss()
+    except Exception as exc:
+        return ToolResult(title="Video transcription is not configured", output=_public_error(exc))
+
+    if args.action == "submit":
+        try:
+            from tool.video_workflow import content_hash, prepare_transcription
+
+            approved = await prepare_transcription(
+                ctx, args.production_id or "", args.segment_id or ""
+            )
+            expected_key = f"{args.production_id}:{args.segment_id}:stt"
+            if args.idempotency_key != expected_key:
+                raise RuntimeError(f"idempotency_key must be the segment STT key: {expected_key}")
+            source = approved["asset"]
+            request_data = {
+                "production_id": args.production_id,
+                "segment_id": args.segment_id,
+                "source_asset_id": source.id,
+                "source_bytes": source.size,
+                "model": target.model,
+            }
+            request_hash = content_hash({"kind": "stt", "request_data": request_data})
+            job, audio, created = await _create_pending_job(
+                ctx=ctx,
+                kind="stt",
+                idempotency_key=args.idempotency_key or "",
+                model=target.model,
+                prompt=None,
+                request_data=request_data,
+                filename=f"segment-{approved['segment'].ordinal}-speech.mp3",
+                request_hash=request_hash,
+                production_id=args.production_id,
+                segment_id=args.segment_id,
+                output_mime="audio/mpeg",
+                transient=True,
+            )
+            if not created:
+                return ToolResult(
+                    title="Existing transcription job",
+                    output="\n".join(_transcription_lines(job, audio)),
+                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
+                )
+            await ctx.update_output("Queueing FFmpeg audio extraction on WUYING…")
+            job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
+            return ToolResult(
+                title="Segment transcription queued",
+                output="\n".join(_transcription_lines(job, audio, remote=remote)),
+                metadata={
+                    "job_id": job.id,
+                    "status": job.status,
+                    "version": int(remote.get("version") or 0),
+                    "retry_after_seconds": remote.get("retry_after_seconds", 5),
+                },
+            )
+        except Exception as exc:
+            if "job" in locals() and created:
+                await _update_job(job.id, status="dispatch_unknown", error=_public_error(exc))
+            return ToolResult(title="Segment transcription submit failed", output=_public_error(exc))
+
+    job = await _owned_job(args.job_id or "", ctx, "stt")
+    if not job:
+        return ToolResult(title="Transcription job not found", output="No owned STT job has that job_id.")
+    audio = await _job_asset(job)
+    if job.status == "completed":
+        return ToolResult(
+            title="Segment transcription ready",
+            output="\n".join(_transcription_lines(job, audio)),
+            metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
+        )
+    if job.status in {"failed", "cancelled"} and args.action not in {"retry", "cancel"}:
+        return ToolResult(
+            title="Segment transcription status",
+            output="\n".join(_transcription_lines(job, audio)),
+            metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
+        )
+    if args.action == "cancel":
+        if job.status == "transcribing":
+            return ToolResult(
+                title="Transcription finalization in progress",
+                output="Audio extraction is complete and STT is already running; it can no longer be cancelled.",
+            )
+        if job.sandbox_job_id and job.status not in {"failed", "cancelled"}:
+            try:
+                remote = await ctx.sandbox.cancel_media_job(job.sandbox_job_id, ctx.user_id)
+            except Exception as exc:
+                return ToolResult(title="Transcription cancellation failed", output=_public_error(exc))
+        await _update_job(job.id, status="cancelled", error="cancelled", completed_at=datetime.now(timezone.utc))
+        await _mark_asset(job.output_asset_id, status="failed")
+        job = await _owned_job(job.id, ctx, "stt")
+        return ToolResult(title="Transcription cancelled", output="\n".join(_transcription_lines(job)))
+
+    remote: dict[str, Any] | None = None
+    try:
+        if args.action == "retry":
+            if job.status != "failed":
+                return ToolResult(title="Retry not available", output="Only a failed transcription can be retried.")
+            if audio and audio.status == "ready":
+                await _update_job(job.id, status="extraction_completed", error=None, completed_at=None)
+                job = await _owned_job(job.id, ctx, "stt")
+                job = await _finalize_transcription(
+                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
+                )
+            else:
+                replacement = await _transcription_payload(job, ctx, video_settings, oss)
+                remote = await ctx.sandbox.retry_media_job(
+                    job.sandbox_job_id or job.id,
+                    ctx.user_id,
+                    replacement_payload=replacement,
+                )
+                await _mark_asset(job.output_asset_id, status="pending", size=0)
+                await _update_job(job.id, status=remote["status"], error=None, completed_at=None)
+                job = await _owned_job(job.id, ctx, "stt")
+        elif job.status == "transcribing":
+            updated = job.updated_at
+            if updated and updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated and (datetime.now(timezone.utc) - updated).total_seconds() > 300:
+                await _update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
+                job = await _owned_job(job.id, ctx, "stt")
+                job = await _finalize_transcription(
+                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
+                )
+        elif job.status == "extraction_completed":
+            job = await _finalize_transcription(
+                job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
+            )
+        else:
+            if job.status in {"dispatch_unknown", "dispatching"} and not job.sandbox_job_id:
+                try:
+                    job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
+                except Exception:
+                    remote = await ctx.sandbox.get_media_job(job.id, ctx.user_id)
+            elif args.action == "wait":
+                await ctx.update_output("Waiting for WUYING to extract the segment audio…")
+                remote = await ctx.sandbox.wait_media_job(
+                    job.sandbox_job_id or job.id,
+                    ctx.user_id,
+                    after_version=args.after_version,
+                    timeout=args.wait_seconds,
+                )
+            else:
+                remote = await ctx.sandbox.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+            state = str(remote.get("status") or "failed")
+            if state == "completed":
+                await _update_job(
+                    job.id,
+                    status="extraction_completed",
+                    result_data={"extraction": remote.get("result") or {}},
+                    error=None,
+                )
+                job = await _owned_job(job.id, ctx, "stt")
+                job = await _finalize_transcription(
+                    job, ctx, target, oss, remote.get("result") or {}
+                )
+            elif state in {"failed", "cancelled"}:
+                await _mark_asset(job.output_asset_id, status="failed")
+                await _update_job(
+                    job.id,
+                    status=state,
+                    error=str(remote.get("error") or state)[:1200],
+                    completed_at=datetime.now(timezone.utc),
+                )
+                job = await _owned_job(job.id, ctx, "stt")
+            else:
+                await _update_job(job.id, status=state, error=None)
+                job = await _owned_job(job.id, ctx, "stt")
+    except Exception as exc:
+        return ToolResult(title="Transcription status check failed", output=_public_error(exc))
+
+    audio = await _job_asset(job)
+    title = "Segment transcription ready" if job.status == "completed" else "Segment transcription status"
+    return ToolResult(
+        title=title,
+        output="\n".join(_transcription_lines(job, audio, remote=remote)),
+        metadata={
+            "job_id": job.id,
+            "status": job.status,
+            "segment_id": job.segment_id,
+            "version": int((remote or {}).get("version") or 0),
+            "retry_after_seconds": int((remote or {}).get("retry_after_seconds") or 5),
         },
     )
 
@@ -982,6 +1629,10 @@ async def _sync_render(job, remote: dict[str, Any], ctx: ToolContext, oss) -> An
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
+            if getattr(job, "production_id", None) and job.output_asset_id:
+                from tool.video_workflow import mark_render_complete
+
+                await mark_render_complete(job.production_id, job.output_asset_id)
             return await _owned_job(job.id, ctx, "render")
     if status in {"failed", "cancelled"}:
         await _mark_asset(job.output_asset_id, status="failed")
@@ -1010,19 +1661,32 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
     if args.action == "submit":
         try:
-            rows = await _resolve_inputs(args.segment_assets, ctx)
+            from tool.video_workflow import content_hash, prepare_render_submission
+
+            approved = await prepare_render_submission(ctx, args.production_id or "")
+            expected_key = f"{approved['production_id']}:render:{approved['scope_hash'][:16]}"
+            if args.idempotency_key != expected_key:
+                raise RuntimeError(f"idempotency_key must be the approved render key: {expected_key}")
+            if args.segment_assets and args.segment_assets != approved["segment_assets"]:
+                raise RuntimeError("render inputs differ from the approved production snapshot")
+            if args.captions and args.captions != approved["captions"]:
+                raise RuntimeError("render captions must come from the accepted STT transcript")
+            rows = await _resolve_inputs(approved["segment_assets"], ctx)
             for row in rows:
                 if row.mime not in _VIDEO_MIMES:
                     raise RuntimeError(f"asset {row.id} is {row.mime}; render inputs must be videos")
             request_data = {
+                "production_id": approved["production_id"],
+                "render_scope_hash": approved["scope_hash"],
                 "segment_asset_ids": [row.id for row in rows],
-                "captions": args.captions,
-                "subtitles": args.subtitles,
-                "channel_name": args.channel_name,
+                "captions": approved["captions"],
+                "subtitles": approved["subtitles"],
+                "channel_name": approved["channel_name"],
                 "render_engine": args.render_engine,
-                "width": args.width,
-                "height": args.height,
+                "width": approved["width"],
+                "height": approved["height"],
             }
+            request_hash = content_hash({"kind": "render", "request_data": request_data})
             job, asset, created = await _create_pending_job(
                 ctx=ctx,
                 kind="render",
@@ -1031,6 +1695,8 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
                 prompt=None,
                 request_data=request_data,
                 filename=args.filename,
+                request_hash=request_hash,
+                production_id=approved["production_id"],
             )
             if not created:
                 if job.status == "completed":
@@ -1142,12 +1808,17 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
 VIDEO_GENERATE_DESCRIPTION = """\
 Submit, inspect, wait for, or cancel an asynchronous Seedance video generation. \
-Use character_reference_asset for the one shared OSS portrait that must remain \
-the same across spoken segments; input_assets are optional additional image/video \
-references. Completed output is copied to OSS, \
+Paid submit requires production_id and segment_id and consumes the exact prompt, \
+references, content hash, and spend approval stored by video_project. Completed output is copied to OSS, \
 indexed in the resource centre, and attached to chat. Billable submit requires \
 an idempotency_key; never automatically create a replacement task after an \
 ambiguous provider error. Load the video-production skill before use."""
+
+VIDEO_TRANSCRIBE_DESCRIPTION = """\
+Queue FFmpeg audio extraction on the durable WUYING media queue, transcribe the \
+stable OSS MP3 through the configured STT gateway, compare actual spoken words \
+against the active segment script, and persist similarity, phrase-level diffs, \
+and a quality verdict. Provider retry is explicit and never happens on status."""
 
 VIDEO_RENDER_DESCRIPTION = """\
 Queue, inspect, wait for, cancel, or retry a durable WUYING HyperFrames/FFmpeg \
@@ -1162,6 +1833,17 @@ video_generate_tool = define_tool(
     parameters=VideoGenerateArgs,
     execute=execute_generate,
     sandbox_required=False,
+    parallel_safe=False,
+    skill_only=True,
+)
+
+
+video_transcribe_tool = define_tool(
+    "video_transcribe",
+    description=VIDEO_TRANSCRIBE_DESCRIPTION,
+    parameters=VideoTranscribeArgs,
+    execute=execute_transcribe,
+    sandbox_required=True,
     parallel_safe=False,
     skill_only=True,
 )

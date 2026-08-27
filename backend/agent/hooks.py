@@ -3,7 +3,7 @@ import json
 import time
 from typing import Any
 
-from agent.doom_loop import DOOM_LOOP_THRESHOLD
+from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeatable_poll
 from bus import bus
 from bus.events import TOOL_RUNNING, TOOL_COMPLETED, TOOL_ERROR
 from permission import permission as perm_mod
@@ -245,6 +245,8 @@ class ToolHooks:
 
     def _check_doom_loop(self, tool_id: str, args: dict) -> bool:
         """Check if we're in a doom loop (same call repeated N times)."""
+        if is_repeatable_poll(tool_id, args):
+            return False
         if len(self.call_history) < DOOM_LOOP_THRESHOLD:
             return False
 

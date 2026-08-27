@@ -70,7 +70,14 @@ def _host_files(base: str, limit: int = 20) -> list[str]:
 
 
 async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
-    """Load a skill and inject its content. Tries container first, then local."""
+    """Load a skill and inject its content.
+
+    A project skill on the backend host is the checked-out application's
+    authoritative workflow and therefore overrides a stale copy baked into a
+    remote sandbox. User/global skills keep the original container-first
+    behaviour because the sandbox copy is the one whose bundled files the
+    agent can reach.
+    """
     content = None
     base_dir = ""
     files: list[str] = []
@@ -78,8 +85,24 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     container_error: str | None = None
     activated_tools: tuple[str, ...] = ()
 
-    # Try loading from container sandbox first
-    if ctx.sandbox:
+    from skill.skill import get_skill
+    local_skill = await get_skill(args.skill)
+
+    # The project checkout is what local development and browser testing are
+    # validating. Letting an older /opt/openbox copy win made edits appear to
+    # have no effect until somebody redeployed the cloud desktop.
+    if local_skill and local_skill.source == "project":
+        content = local_skill.content
+        host_only = True
+        files = _host_files(local_skill.path) if local_skill.path else []
+        activated_tools = local_skill.allowed_tools
+        log.info(
+            f"Using project host copy of skill {args.skill!r}; it overrides any "
+            "sandbox copy"
+        )
+
+    # Try loading from the container when no project-local override exists.
+    if not content and ctx.sandbox:
         try:
             skill_data = await ctx.sandbox.get_skill(args.skill)
             content = skill_data.get("content", "")
@@ -103,8 +126,7 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
 
     # Fall back to local skills
     if not content:
-        from skill.skill import get_skill
-        skill = await get_skill(args.skill)
+        skill = local_skill
         if not skill:
             if container_error:
                 return ToolResult(
@@ -342,17 +364,31 @@ async def build_skill_tool_with_listing(sandbox=None, ruleset: list | None = Non
     try:
         from skill.skill import list_skills as list_local_skills
         local = await list_local_skills()
-        container_names = {cs.get("name") for cs in skills}
+        container_positions = {
+            cs.get("name"): index for index, cs in enumerate(skills) if cs.get("name")
+        }
         for s in local:
-            # Container skills win: they are the ones the agent's tools can
-            # actually reach. Say so, though — a host skill being shadowed by a
-            # different container skill of the same name is worth knowing about
-            # when the loaded instructions are not the ones that were edited.
-            if s.name in container_names:
-                log.info(f"Skill {s.name!r} exists in both the container and on "
-                         f"the host; using the container's copy")
+            entry = {
+                "name": s.name,
+                "description": s.description,
+                "source": s.source,
+            }
+            position = container_positions.get(s.name)
+            if position is not None:
+                if s.source == "project":
+                    skills[position] = entry
+                    log.info(
+                        f"Skill {s.name!r} exists in both the sandbox and project; "
+                        "using the project host copy"
+                    )
+                else:
+                    log.info(
+                        f"Skill {s.name!r} exists in both the sandbox and on the "
+                        "host; using the sandbox copy"
+                    )
                 continue
-            skills.append({"name": s.name, "description": s.description})
+            container_positions[s.name] = len(skills)
+            skills.append(entry)
     except Exception:
         pass
 

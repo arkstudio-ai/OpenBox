@@ -1,0 +1,1105 @@
+"""Skill-only spoken-video production state, approvals, lint, and gates.
+
+The model can propose scripts and prompts, but the backend owns the mutable
+state machine.  Every approval is bound to a content hash, so editing a script,
+segment, reference, transcript, or output automatically makes downstream
+evidence stale without deleting its audit record.
+"""
+from __future__ import annotations
+
+import difflib
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import func, select, update
+
+from core.log import create_logger
+from tool.tool import ToolContext, ToolResult, define_tool
+
+log = create_logger("tool.video_workflow")
+
+_PUNCT = re.compile(r"[\s。！？；：，、,.!?;:…·~—\-\"'“”‘’（）()《》<>【】\[\]]+")
+_FILLERS = "嗯呃唔诶哦噢喔呀啊吧呢啦嘛"
+_VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
+
+
+class SegmentSpec(BaseModel):
+    ordinal: int = Field(ge=1, le=100)
+    role: Literal["hook", "body", "transition", "closing"] = "body"
+    script_text: str = Field(min_length=1, max_length=2000)
+    prompt: str = Field(min_length=1, max_length=32_000)
+    input_assets: list[str] = Field(default_factory=list, max_length=7)
+
+
+class VideoProjectArgs(BaseModel):
+    action: Literal[
+        "create",
+        "set_script",
+        "set_segments",
+        "request_approval",
+        "revise_segment",
+        "status",
+    ]
+    production_id: str | None = Field(default=None, max_length=96)
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    brief: str | None = Field(default=None, min_length=1, max_length=10_000)
+    mode: Literal["standard", "delegated"] = "standard"
+    target_duration_seconds: int = Field(default=60, ge=15, le=180)
+    ratio: Literal["9:16"] = "9:16"
+    resolution: Literal["720p", "1080p"] = "720p"
+    quality_policy: Literal["required", "advisory"] = "required"
+    channel_name: str = Field(default="", max_length=100)
+    script_text: str | None = Field(default=None, min_length=1, max_length=20_000)
+    segment_prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
+    visual_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
+    character_reference_asset: str | None = Field(default=None, max_length=512)
+    segments: list[SegmentSpec] = Field(default_factory=list, max_length=100)
+    approval_kind: Literal["script", "segments", "spend", "quality", "render"] | None = None
+    segment_id: str | None = Field(default=None, max_length=96)
+    revision_reason: str | None = Field(default=None, min_length=2, max_length=1000)
+
+    @model_validator(mode="after")
+    def _required_by_action(self):
+        if self.action == "create":
+            if not self.title or not self.brief:
+                raise ValueError("create requires title and brief")
+        elif not self.production_id:
+            raise ValueError(f"{self.action} requires production_id")
+        if self.action == "set_script" and not self.script_text:
+            raise ValueError("set_script requires script_text")
+        if self.action == "set_segments":
+            if not self.visual_anchor:
+                raise ValueError("set_segments requires visual_anchor")
+            if not self.segments:
+                raise ValueError("set_segments requires segments")
+        if self.action == "request_approval" and not self.approval_kind:
+            raise ValueError("request_approval requires approval_kind")
+        if self.action == "revise_segment" and (not self.segment_id or not self.revision_reason):
+            raise ValueError("revise_segment requires segment_id and revision_reason")
+        return self
+
+
+def content_hash(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def normalize_spoken_text(value: str) -> str:
+    compact = _PUNCT.sub("", value or "")
+    return compact.translate({ord(char): None for char in _FILLERS})
+
+
+def replace_segment_dialogue(
+    script_text: str,
+    segments: list[Any],
+    source_segment_id: str,
+    replacement_text: str,
+) -> str:
+    """Replace one segment in the full script without disturbing its separators."""
+    cursor = 0
+    ordered = sorted(segments, key=lambda row: row.ordinal)
+    for row in ordered:
+        start = script_text.find(row.script_text, cursor)
+        if start < 0:
+            break
+        end = start + len(row.script_text)
+        if row.id == source_segment_id:
+            return script_text[:start] + replacement_text + script_text[end:]
+        cursor = end
+    return "\n".join(
+        replacement_text if row.id == source_segment_id else row.script_text
+        for row in ordered
+    )
+
+
+def compare_transcript(script_text: str, transcript_text: str, threshold: float = 0.90) -> dict:
+    expected = normalize_spoken_text(script_text)
+    heard = normalize_spoken_text(transcript_text)
+    matcher = difflib.SequenceMatcher(None, expected, heard)
+    similarity = matcher.ratio()
+    notes: list[str] = []
+    for operation, i1, i2, j1, j2 in matcher.get_opcodes():
+        if operation == "delete" and i2 - i1 >= 2:
+            notes.append(f"疑似漏念「{expected[i1:i2]}」")
+        elif operation == "insert" and j2 - j1 >= 2:
+            notes.append(f"疑似多念「{heard[j1:j2]}」")
+        elif operation == "replace" and max(i2 - i1, j2 - j1) >= 1:
+            notes.append(f"疑似念错「{expected[i1:i2]}→{heard[j1:j2]}」")
+    return {
+        "similarity": round(similarity, 3),
+        "verdict": "ok" if similarity >= threshold and not notes else "suspect",
+        "normalized_script": expected,
+        "normalized_transcript": heard,
+        "notes": notes,
+        "threshold": threshold,
+    }
+
+
+def lint_segment_prompt(
+    *,
+    script_text: str,
+    prompt: str,
+    visual_anchor: str,
+    image_count: int,
+    video_count: int,
+) -> dict:
+    failures: list[str] = []
+    warnings: list[str] = []
+    spoken_length = len(normalize_spoken_text(script_text))
+    if spoken_length > 48:
+        failures.append(f"台词 {spoken_length} 字，超过 48 字硬上限")
+    elif spoken_length > 40:
+        warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
+    if f"@{script_text.strip()}" not in prompt:
+        failures.append("prompt 必须用 @ 紧接本段逐字台词")
+    if visual_anchor.strip() not in prompt:
+        failures.append("prompt 缺少全片一致的画面基底")
+    if "固定镜头" not in prompt:
+        failures.append("prompt 必须显式声明固定镜头")
+    if not any(token in prompt for token in ("中景", "半身", "近景")):
+        failures.append("prompt 缺少中景/半身/近景构图")
+    if not any(token in prompt for token in ("手势", "姿态", "微笑", "点头", "前倾")):
+        failures.append("prompt 缺少自然肢体动作")
+    if "语气" not in prompt:
+        failures.append("prompt 缺少语气描述")
+    if "无字幕" not in prompt:
+        failures.append("prompt 必须写明无字幕，字幕只能后期合成")
+    if re.search(r"https?://|asset://|asset[_-][A-Za-z0-9]", prompt, re.IGNORECASE):
+        failures.append("prompt 正文不得包含 URL 或素材 ID，只能用参考图片N/参考视频N")
+    for value in re.findall(r"参考图片(\d+)", prompt):
+        if int(value) < 1 or int(value) > image_count:
+            failures.append(f"prompt 引用了不存在的参考图片{value}（实际 {image_count} 张）")
+    for value in re.findall(r"参考视频(\d+)", prompt):
+        if int(value) < 1 or int(value) > video_count:
+            failures.append(f"prompt 引用了不存在的参考视频{value}（实际 {video_count} 个）")
+    return {"ok": not failures, "failures": failures, "warnings": warnings}
+
+
+async def _owned_production(db, production_id: str, user_id: str):
+    from db.models.video_production import VideoProduction
+
+    return (
+        await db.execute(
+            select(VideoProduction).where(
+                VideoProduction.id == production_id,
+                VideoProduction.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _active_segments(db, production_id: str):
+    from db.models.video_production import VideoSegment
+
+    return list(
+        (
+            await db.execute(
+                select(VideoSegment)
+                .where(
+                    VideoSegment.production_id == production_id,
+                    VideoSegment.is_active.is_(True),
+                )
+                .order_by(VideoSegment.ordinal)
+            )
+        ).scalars()
+    )
+
+
+async def _matching_approval(db, production_id: str, kind: str, scope_hash: str):
+    from db.models.video_production import VideoApproval
+
+    return (
+        await db.execute(
+            select(VideoApproval)
+            .where(
+                VideoApproval.production_id == production_id,
+                VideoApproval.kind == kind,
+                VideoApproval.scope_hash == scope_hash,
+                VideoApproval.decision.in_(["approved", "override"]),
+            )
+            .order_by(VideoApproval.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def spend_scope(production, segments: list[Any]) -> str:
+    return content_hash(
+        {
+            "plan_hash": production.plan_hash,
+            "segment_ids": [row.id for row in segments],
+            "resolution": production.resolution,
+            "ratio": production.ratio,
+            "generate_audio": True,
+        }
+    )
+
+
+def quality_scope(production, segments: list[Any]) -> str:
+    return content_hash(
+        {
+            "plan_hash": production.plan_hash,
+            "segments": [
+                {
+                    "id": row.id,
+                    "output_asset_id": row.output_asset_id,
+                    "transcript": row.transcript_text,
+                    "similarity": row.stt_similarity,
+                    "verdict": row.stt_verdict,
+                }
+                for row in segments
+            ],
+        }
+    )
+
+
+def render_scope(production, segments: list[Any]) -> str:
+    return content_hash(
+        {
+            "quality_scope": quality_scope(production, segments),
+            "channel_name": production.channel_name,
+            "ratio": production.ratio,
+            "resolution": production.resolution,
+        }
+    )
+
+
+async def _derive_status(db, production, segments: list[Any] | None = None) -> str:
+    segments = segments if segments is not None else await _active_segments(db, production.id)
+    if not production.script_hash:
+        return "init"
+    if not await _matching_approval(db, production.id, "script", production.script_hash):
+        return "needs_script_approval"
+    if not production.plan_hash or not segments:
+        return "script_ok"
+    if not await _matching_approval(db, production.id, "segments", production.plan_hash):
+        return "needs_segments_approval"
+    if any(row.status in {"failed", "cancelled"} for row in segments):
+        return "needs_segment_revision"
+    if any(row.status in {"submitting", "queued", "in_progress", "generating", "finalizing", "transfer_failed"} for row in segments):
+        return "generating"
+    spend = await _matching_approval(db, production.id, "spend", spend_scope(production, segments))
+    if not spend:
+        return "needs_spend_approval"
+    pending = [row for row in segments if row.status == "planned"]
+    if pending:
+        if spend.max_calls is None or spend.used_calls >= spend.max_calls:
+            return "needs_spend_approval"
+        return "spend_ok"
+    if not all(row.status == "generated" and row.output_asset_id for row in segments):
+        return "needs_segment_revision"
+    if not all(row.stt_verdict for row in segments):
+        return "generated"
+    if production.quality_policy == "required" and not await _matching_approval(
+        db, production.id, "quality", quality_scope(production, segments)
+    ):
+        return "needs_quality_approval"
+    if not await _matching_approval(db, production.id, "render", render_scope(production, segments)):
+        return "needs_render_approval"
+    if production.render_asset_id:
+        return "delivered"
+    return "ready_to_render"
+
+
+async def _refresh_status(db, production, segments: list[Any] | None = None) -> str:
+    status = await _derive_status(db, production, segments)
+    production.status = status
+    production.updated_at = datetime.now(timezone.utc)
+    return status
+
+
+async def _owned_ready_asset(db, ref: str, user_id: str):
+    from db.models.file_asset import FileAsset
+
+    value = ref[6:] if ref.startswith("asset:") else ref
+    return (
+        await db.execute(
+            select(FileAsset).where(
+                FileAsset.id == value,
+                FileAsset.user_id == user_id,
+                FileAsset.status == "ready",
+                FileAsset.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _plan_hash(production, segments: list[Any]) -> str:
+    return content_hash(
+        {
+            "script_hash": production.script_hash,
+            "visual_anchor": production.visual_anchor,
+            "character_asset_id": production.character_asset_id,
+            "segments": [
+                {
+                    "id": row.id,
+                    "ordinal": row.ordinal,
+                    "revision": row.revision,
+                    "role": row.role,
+                    "content_hash": row.content_hash,
+                    "input_asset_ids": list(row.input_asset_ids or []),
+                }
+                for row in segments
+            ],
+        }
+    )
+
+
+async def _snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
+    from db.base import get_db_session
+
+    async with get_db_session() as db:
+        production = await _owned_production(db, production_id, user_id)
+        if not production:
+            return None
+        segments = await _active_segments(db, production.id)
+        status = await _refresh_status(db, production, segments)
+        scopes = {
+            "script": production.script_hash,
+            "segments": production.plan_hash,
+            "spend": spend_scope(production, segments) if segments else "",
+            "quality": quality_scope(production, segments) if segments else "",
+            "render": render_scope(production, segments) if segments else "",
+        }
+        approvals = {
+            kind: bool(scope and await _matching_approval(db, production.id, kind, scope))
+            for kind, scope in scopes.items()
+        }
+        return {
+            "production_id": production.id,
+            "title": production.title,
+            "brief": production.brief,
+            "status": status,
+            "mode": production.mode,
+            "target_duration_seconds": production.target_duration_seconds,
+            "ratio": production.ratio,
+            "resolution": production.resolution,
+            "quality_policy": production.quality_policy,
+            "subtitles": production.subtitles,
+            "channel_name": production.channel_name,
+            "script_text": production.script_text,
+            "script_hash": production.script_hash,
+            "visual_anchor": production.visual_anchor,
+            "character_asset_id": production.character_asset_id,
+            "plan_hash": production.plan_hash,
+            "render_asset_id": production.render_asset_id,
+            "render_idempotency_key": (
+                f"{production.id}:render:{scopes['render'][:16]}"
+                if scopes["render"] and approvals.get("render")
+                else ""
+            ),
+            "approvals": approvals,
+            "segments": [
+                {
+                    "segment_id": row.id,
+                    "ordinal": row.ordinal,
+                    "revision": row.revision,
+                    "role": row.role,
+                    "script_text": row.script_text,
+                    "prompt": row.prompt,
+                    "input_asset_ids": list(row.input_asset_ids or []),
+                    "content_hash": row.content_hash,
+                    "lint": row.lint_data,
+                    "status": row.status,
+                    "generation_job_id": row.generation_job_id,
+                    "output_asset_id": row.output_asset_id,
+                    "transcript_text": row.transcript_text,
+                    "stt_similarity": row.stt_similarity,
+                    "stt_verdict": row.stt_verdict,
+                    "stt_notes": list(row.stt_notes or []),
+                    "review_status": row.review_status,
+                    "generation_idempotency_key": f"{production.id}:{row.id}:generate",
+                    "transcription_idempotency_key": f"{production.id}:{row.id}:stt",
+                }
+                for row in segments
+            ],
+        }
+
+
+def _snapshot_output(value: dict[str, Any]) -> str:
+    lines = [
+        f"production_id={value['production_id']}",
+        f"status={value['status']}",
+        f"title={value['title']}",
+        f"script_hash={value['script_hash']}",
+        f"plan_hash={value['plan_hash']}",
+        f"visual_anchor={value.get('visual_anchor', '')}",
+        f"character_asset_id={value.get('character_asset_id') or ''}",
+        f"render_idempotency_key={value.get('render_idempotency_key', '')}",
+        "approvals=" + json.dumps(value["approvals"], ensure_ascii=False, separators=(",", ":")),
+    ]
+    for row in value["segments"]:
+        lines.extend(
+            [
+                f"segment_{row['ordinal']}_id={row['segment_id']}",
+                f"segment_{row['ordinal']}_revision={row['revision']}",
+                f"segment_{row['ordinal']}_status={row['status']}",
+                f"segment_{row['ordinal']}_generation_job_id={row['generation_job_id'] or ''}",
+                f"segment_{row['ordinal']}_script={row['script_text']}",
+                f"segment_{row['ordinal']}_prompt={row['prompt']}",
+                f"segment_{row['ordinal']}_output_asset_id={row['output_asset_id'] or ''}",
+                f"segment_{row['ordinal']}_stt={row['stt_verdict'] or ''}:{row['stt_similarity'] if row['stt_similarity'] is not None else ''}",
+                f"segment_{row['ordinal']}_transcript={row['transcript_text'] or ''}",
+                "segment_{}_stt_notes={}".format(
+                    row["ordinal"],
+                    json.dumps(row["stt_notes"], ensure_ascii=False, separators=(",", ":")),
+                ),
+                f"segment_{row['ordinal']}_review_status={row['review_status'] or ''}",
+                f"segment_{row['ordinal']}_generation_key={row['generation_idempotency_key']}",
+                f"segment_{row['ordinal']}_stt_key={row['transcription_idempotency_key']}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResult:
+    from core.identifier import ascending
+    from db.base import get_db_session
+    from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
+
+    now = datetime.now(timezone.utc)
+    if args.action == "create":
+        production_id = ascending("production")
+        async with get_db_session() as db:
+            row = VideoProduction(
+                id=production_id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id or None,
+                project_id=ctx.project_id or None,
+                title=(args.title or "").strip(),
+                brief=(args.brief or "").strip(),
+                mode=args.mode,
+                status="init",
+                target_duration_seconds=args.target_duration_seconds,
+                ratio=args.ratio,
+                resolution=args.resolution,
+                quality_policy=args.quality_policy,
+                channel_name=args.channel_name.strip(),
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(row)
+        snapshot = await _snapshot(production_id, ctx.user_id)
+        return ToolResult(
+            title="Video production created",
+            output=_snapshot_output(snapshot or {}),
+            metadata=snapshot or {},
+        )
+
+    async with get_db_session() as db:
+        production = await _owned_production(db, args.production_id or "", ctx.user_id)
+        if not production:
+            return ToolResult(title="Video production not found", output="No owned production has that production_id.")
+
+        if args.action == "set_script":
+            script = (args.script_text or "").strip()
+            new_hash = content_hash({"script_text": script})
+            if new_hash != production.script_hash:
+                await db.execute(
+                    update(VideoSegment)
+                    .where(VideoSegment.production_id == production.id, VideoSegment.is_active.is_(True))
+                    .values(is_active=False, updated_at=now)
+                )
+                production.plan_hash = ""
+                production.visual_anchor = ""
+                production.character_asset_id = None
+                production.render_asset_id = None
+                production.subtitles = None
+            production.script_text = script
+            production.script_hash = new_hash
+            production.error = None
+            segments = await _active_segments(db, production.id)
+            await _refresh_status(db, production, segments)
+
+        elif args.action == "set_segments":
+            if not await _matching_approval(db, production.id, "script", production.script_hash):
+                return ToolResult(
+                    title="Script approval required",
+                    output="The current script hash has no user approval. Request script approval before planning segments.",
+                )
+            ordinals = [item.ordinal for item in args.segments]
+            if len(set(ordinals)) != len(ordinals) or sorted(ordinals) != list(range(1, len(ordinals) + 1)):
+                return ToolResult(title="Invalid segment plan", output="Segment ordinals must be unique and contiguous from 1.")
+            if normalize_spoken_text("".join(item.script_text for item in args.segments)) != normalize_spoken_text(
+                production.script_text
+            ):
+                return ToolResult(
+                    title="Invalid segment plan",
+                    output="Concatenated segment dialogue does not exactly match the approved script.",
+                )
+            character = None
+            if args.character_reference_asset:
+                character = await _owned_ready_asset(db, args.character_reference_asset, ctx.user_id)
+                if not character or not character.mime.startswith("image/"):
+                    return ToolResult(
+                        title="Invalid character reference",
+                        output="character_reference_asset must be a ready owned image asset.",
+                    )
+            validated: list[tuple[SegmentSpec, list[Any], dict[str, Any], str]] = []
+            all_failures: list[str] = []
+            for item in args.segments:
+                assets: list[Any] = []
+                seen: set[str] = set()
+                for ref in item.input_assets:
+                    asset = await _owned_ready_asset(db, ref, ctx.user_id)
+                    if not asset or not (asset.mime.startswith("image/") or asset.mime in _VIDEO_MIMES):
+                        all_failures.append(f"段{item.ordinal}: 素材 {ref} 不是可用的自有图片/视频")
+                        continue
+                    if asset.id not in seen and (not character or asset.id != character.id):
+                        assets.append(asset)
+                        seen.add(asset.id)
+                image_count = int(bool(character)) + sum(row.mime.startswith("image/") for row in assets)
+                video_count = sum(row.mime in _VIDEO_MIMES for row in assets)
+                lint = lint_segment_prompt(
+                    script_text=item.script_text.strip(),
+                    prompt=item.prompt.strip(),
+                    visual_anchor=(args.visual_anchor or "").strip(),
+                    image_count=image_count,
+                    video_count=video_count,
+                )
+                all_failures.extend(f"段{item.ordinal}: {message}" for message in lint["failures"])
+                item_hash = content_hash(
+                    {
+                        "role": item.role,
+                        "script_text": item.script_text.strip(),
+                        "prompt": item.prompt.strip(),
+                        "character_asset_id": character.id if character else None,
+                        "input_asset_ids": [row.id for row in assets],
+                        "visual_anchor": (args.visual_anchor or "").strip(),
+                    }
+                )
+                validated.append((item, assets, lint, item_hash))
+            if all_failures:
+                return ToolResult(title="Prompt lint failed", output="\n".join(all_failures))
+
+            current = {row.ordinal: row for row in await _active_segments(db, production.id)}
+            for row in current.values():
+                if row.ordinal not in ordinals:
+                    row.is_active = False
+                    row.updated_at = now
+            active: list[Any] = []
+            for item, assets, lint, item_hash in validated:
+                existing = current.get(item.ordinal)
+                if existing and existing.content_hash == item_hash:
+                    active.append(existing)
+                    continue
+                if existing:
+                    existing.is_active = False
+                    existing.updated_at = now
+                latest_revision = (
+                    await db.execute(
+                        select(func.max(VideoSegment.revision)).where(
+                            VideoSegment.production_id == production.id,
+                            VideoSegment.ordinal == item.ordinal,
+                        )
+                    )
+                ).scalar_one_or_none() or 0
+                segment = VideoSegment(
+                    id=ascending("segment"),
+                    production_id=production.id,
+                    ordinal=item.ordinal,
+                    revision=latest_revision + 1,
+                    is_active=True,
+                    role=item.role,
+                    script_text=item.script_text.strip(),
+                    prompt=item.prompt.strip(),
+                    content_hash=item_hash,
+                    input_asset_ids=[row.id for row in assets],
+                    lint_data=lint,
+                    status="planned",
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(segment)
+                active.append(segment)
+            await db.flush()
+            active.sort(key=lambda row: row.ordinal)
+            production.visual_anchor = (args.visual_anchor or "").strip()
+            production.character_asset_id = character.id if character else None
+            production.plan_hash = _plan_hash(production, active)
+            production.render_asset_id = None
+            production.subtitles = None
+            production.error = None
+            await _refresh_status(db, production, active)
+
+        elif args.action == "revise_segment":
+            segments = await _active_segments(db, production.id)
+            source = next((row for row in segments if row.id == args.segment_id), None)
+            if not source:
+                return ToolResult(title="Active segment not found", output="segment_id is not active in this production.")
+
+            revised_script = (args.script_text or source.script_text).strip()
+            revised_prompt = (args.segment_prompt or source.prompt).strip()
+            if revised_script != source.script_text and not args.segment_prompt:
+                old_spoken_token = f"@{source.script_text.strip()}"
+                if old_spoken_token not in source.prompt:
+                    return ToolResult(
+                        title="Replacement prompt required",
+                        output=(
+                            "The existing prompt does not contain the old word-for-word dialogue. "
+                            "Provide segment_prompt together with script_text."
+                        ),
+                    )
+                revised_prompt = source.prompt.replace(
+                    old_spoken_token,
+                    f"@{revised_script}",
+                    1,
+                )
+
+            character = None
+            if production.character_asset_id:
+                character = await _owned_ready_asset(db, production.character_asset_id, ctx.user_id)
+                if not character or not character.mime.startswith("image/"):
+                    return ToolResult(
+                        title="Invalid character reference",
+                        output="The production character reference is no longer a ready owned image asset.",
+                    )
+            assets: list[Any] = []
+            for ref in source.input_asset_ids or []:
+                asset = await _owned_ready_asset(db, ref, ctx.user_id)
+                if not asset or not (asset.mime.startswith("image/") or asset.mime in _VIDEO_MIMES):
+                    return ToolResult(
+                        title="Invalid segment reference",
+                        output=f"Segment reference {ref} is no longer a ready owned image/video asset.",
+                    )
+                assets.append(asset)
+            lint = lint_segment_prompt(
+                script_text=revised_script,
+                prompt=revised_prompt,
+                visual_anchor=production.visual_anchor,
+                image_count=int(bool(character)) + sum(row.mime.startswith("image/") for row in assets),
+                video_count=sum(row.mime in _VIDEO_MIMES for row in assets),
+            )
+            if lint["failures"]:
+                return ToolResult(
+                    title="Prompt lint failed",
+                    output=(
+                        "\n".join(lint["failures"])
+                        + f"\nrequired_visual_anchor={production.visual_anchor}"
+                    ),
+                )
+
+            if revised_script != source.script_text:
+                production.script_text = replace_segment_dialogue(
+                    production.script_text,
+                    segments,
+                    source.id,
+                    revised_script,
+                )
+                production.script_hash = content_hash({"script_text": production.script_text})
+
+            item_hash = content_hash(
+                {
+                    "role": source.role,
+                    "script_text": revised_script,
+                    "prompt": revised_prompt,
+                    "character_asset_id": character.id if character else None,
+                    "input_asset_ids": [row.id for row in assets],
+                    "visual_anchor": production.visual_anchor,
+                }
+            )
+            source.is_active = False
+            source.updated_at = now
+            latest_revision = (
+                await db.execute(
+                    select(func.max(VideoSegment.revision)).where(
+                        VideoSegment.production_id == production.id,
+                        VideoSegment.ordinal == source.ordinal,
+                    )
+                )
+            ).scalar_one_or_none() or 0
+            replacement = VideoSegment(
+                id=ascending("segment"),
+                production_id=production.id,
+                ordinal=source.ordinal,
+                revision=latest_revision + 1,
+                is_active=True,
+                role=source.role,
+                script_text=revised_script,
+                prompt=revised_prompt,
+                content_hash=item_hash,
+                input_asset_ids=list(source.input_asset_ids or []),
+                lint_data={**lint, "revision_reason": args.revision_reason},
+                status="planned",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(replacement)
+            await db.flush()
+            active = [replacement if row.id == source.id else row for row in segments]
+            active.sort(key=lambda row: row.ordinal)
+            production.plan_hash = _plan_hash(production, active)
+            production.render_asset_id = None
+            production.subtitles = None
+            production.error = None
+            await _refresh_status(db, production, active)
+
+        elif args.action == "request_approval":
+            segments = await _active_segments(db, production.id)
+            kind = args.approval_kind or ""
+            scope = ""
+            question = ""
+            options: list[tuple[str, str]] = []
+            metadata: dict[str, Any] = {}
+            if kind == "script":
+                if not production.script_hash:
+                    return ToolResult(title="Nothing to approve", output="Set the script first.")
+                scope = production.script_hash
+                question = f"完整讲稿共 {len(normalize_spoken_text(production.script_text))} 字，确认按这版进入分段吗？"
+                options = [("可以，按这版分段", "确认当前讲稿内容哈希"), ("需要修改", "不确认，先修改讲稿")]
+            elif kind == "segments":
+                if not segments or not production.plan_hash:
+                    return ToolResult(title="Nothing to approve", output="Set and lint the segment plan first.")
+                scope = production.plan_hash
+                question = f"以上 {len(segments)} 段完整台词、提示词和素材已通过 lint，确认按这版生成吗？"
+                options = [("分段可以", "确认当前分段与素材快照"), ("需要调整", "不确认，先调整分段或画面")]
+            elif kind == "spend":
+                if not await _matching_approval(db, production.id, "segments", production.plan_hash):
+                    return ToolResult(title="Segment approval required", output="Approve the current segment plan before spend approval.")
+                blocked = [row for row in segments if row.status not in {"planned", "generated"}]
+                if blocked:
+                    detail = ", ".join(f"segment {row.ordinal}={row.status}" for row in blocked)
+                    return ToolResult(
+                        title="Resolve active segment jobs first",
+                        output=(
+                            "Spend approval only covers newly planned revisions. Resolve, cancel, or revise "
+                            f"the following active segments before requesting more paid calls: {detail}."
+                        ),
+                    )
+                pending = [row for row in segments if row.status == "planned"]
+                if not pending:
+                    return ToolResult(title="No generation spend needed", output="Every active segment is already generated.")
+                scope = spend_scope(production, segments)
+                estimated_seconds = sum(max(4, min(15, round(len(normalize_spoken_text(row.script_text)) / 3.2))) for row in pending)
+                metadata = {"segment_ids": [row.id for row in pending], "estimated_seconds": estimated_seconds}
+                question = f"将提交 {len(pending)} 段 Seedance，预计约 {estimated_seconds} 秒并消耗视频额度。确认吗？"
+                options = [(f"确认，生成 {len(pending)} 段（消耗额度）", "最多允许本快照提交同样数量的新任务"), ("先不生成", "不调用收费的视频生成接口")]
+            elif kind == "quality":
+                if not segments or not all(row.status == "generated" and row.stt_verdict for row in segments):
+                    return ToolResult(title="Quality evidence incomplete", output="Every active segment must be generated and transcribed first.")
+                scope = quality_scope(production, segments)
+                suspects = [row for row in segments if row.stt_verdict == "suspect"]
+                metadata = {"suspect_segment_ids": [row.id for row in suspects]}
+                question = (
+                    f"逐段 STT 已完成：{len(segments) - len(suspects)} 段正常，{len(suspects)} 段疑似有差异。接受当前结果吗？"
+                )
+                options = [("接受当前全部段", "疑似段会记为人工豁免并可进入成片"), ("只重生疑似段", "不通过质检，先建立疑似段的新修订")]
+            elif kind == "render":
+                if production.quality_policy == "required" and not await _matching_approval(
+                    db, production.id, "quality", quality_scope(production, segments)
+                ):
+                    return ToolResult(title="Quality approval required", output="Approve the current STT evidence before choosing the render form.")
+                scope = render_scope(production, segments)
+                question = "请选择最终成片形式。带字幕时只使用已确认的 STT 实际念词。"
+                options = [("带字幕成片", "按每段实际转写文本烧录字幕"), ("无字幕成片", "只拼接画面和原音轨")]
+
+            from question.question import Question, QuestionOption, QuestionRejectedError, ask
+
+            try:
+                answers = await ask(
+                    session_id=ctx.session_id,
+                    user_id=ctx.user_id or "default",
+                    questions=[
+                        Question(
+                            question=question,
+                            header={
+                                "script": "讲稿确认",
+                                "segments": "分段确认",
+                                "spend": "生成费用确认",
+                                "quality": "念词质检",
+                                "render": "成片形式",
+                            }[kind],
+                            options=[QuestionOption(label=label, description=description) for label, description in options],
+                            multiple=False,
+                            custom=False,
+                        )
+                    ],
+                    tool={"messageID": ctx.message_id, "callID": ctx.part_id} if ctx.part_id else None,
+                )
+            except QuestionRejectedError:
+                return ToolResult(title="Approval dismissed", output="The user dismissed the approval card; no approval was recorded.")
+            answer = answers[0][0] if answers and answers[0] else ""
+            positive = answer == options[0][0] or (kind == "render" and answer in {options[0][0], options[1][0]})
+            decision = "rejected"
+            max_calls = None
+            if positive:
+                decision = "approved"
+                if kind == "spend":
+                    max_calls = len(metadata["segment_ids"])
+                if kind == "quality" and metadata.get("suspect_segment_ids"):
+                    decision = "override"
+                    await db.execute(
+                        update(VideoSegment)
+                        .where(VideoSegment.id.in_(metadata["suspect_segment_ids"]))
+                        .values(review_status="override", review_note=answer, updated_at=now)
+                    )
+                if kind == "render":
+                    production.subtitles = answer == options[0][0]
+                    metadata["subtitles"] = production.subtitles
+            approval = VideoApproval(
+                id=ascending("approval"),
+                production_id=production.id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id or None,
+                kind=kind,
+                scope_hash=scope,
+                decision=decision,
+                answer=answer or "未回答",
+                max_calls=max_calls,
+                used_calls=0,
+                evidence_message_id=ctx.message_id or None,
+                evidence_part_id=ctx.part_id or None,
+                metadata_data=metadata,
+                created_at=now,
+            )
+            db.add(approval)
+            await db.flush()
+            await _refresh_status(db, production, segments)
+            if not positive:
+                return ToolResult(
+                    title="Approval not granted",
+                    output=f"decision={decision}\nanswer={answer}\nNo downstream gate was opened.",
+                    metadata={"production_id": production.id, "kind": kind, "decision": decision},
+                )
+
+        elif args.action == "status":
+            pass
+
+    snapshot = await _snapshot(args.production_id or "", ctx.user_id)
+    return ToolResult(
+        title="Video production status",
+        output=_snapshot_output(snapshot or {}),
+        metadata=snapshot or {},
+    )
+
+
+async def prepare_segment_submission(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:
+    """Return the immutable approved segment snapshot consumed by a paid submit."""
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        production = await _owned_production(db, production_id, ctx.user_id)
+        if not production:
+            raise RuntimeError("production is not owned by this user")
+        segments = await _active_segments(db, production.id)
+        segment = next((row for row in segments if row.id == segment_id), None)
+        if not segment:
+            raise RuntimeError("segment is not active in this production")
+        expected_key = f"{production.id}:{segment.id}:generate"
+        existing_job = (
+            await db.get(VideoJob, segment.generation_job_id)
+            if segment.generation_job_id
+            else None
+        )
+        reconciling_existing = bool(
+            existing_job
+            and existing_job.user_id == ctx.user_id
+            and existing_job.kind == "segment"
+            and existing_job.production_id == production.id
+            and existing_job.segment_id == segment.id
+            and existing_job.idempotency_key == expected_key
+        )
+        if segment.status != "planned" and not reconciling_existing:
+            raise RuntimeError(
+                f"segment must be a newly planned revision before submission; current status is {segment.status}"
+            )
+        if not await _matching_approval(db, production.id, "script", production.script_hash):
+            raise RuntimeError("current script is not approved")
+        if not await _matching_approval(db, production.id, "segments", production.plan_hash):
+            raise RuntimeError("current segment plan is not approved")
+        spend = await _matching_approval(db, production.id, "spend", spend_scope(production, segments))
+        if not spend:
+            raise RuntimeError("current generation spend is not approved")
+        if (
+            not reconciling_existing
+            and (spend.max_calls is None or spend.used_calls >= spend.max_calls)
+        ):
+            raise RuntimeError("approved generation call limit is exhausted")
+        return {
+            "production_id": production.id,
+            "segment_id": segment.id,
+            "prompt": segment.prompt,
+            "character_reference_asset": production.character_asset_id,
+            "input_assets": list(segment.input_asset_ids or []),
+            "resolution": production.resolution,
+            "ratio": production.ratio,
+            "duration": -1,
+            "generate_audio": True,
+            "watermark": False,
+            "content_hash": segment.content_hash,
+            "plan_hash": production.plan_hash,
+            "spend_approval_id": spend.id,
+            "reconciling_existing": reconciling_existing,
+        }
+
+
+async def consume_spend_approval(approval_id: str) -> None:
+    from db.base import get_db_session
+    from db.models.video_production import VideoApproval
+
+    async with get_db_session() as db:
+        result = await db.execute(
+            update(VideoApproval)
+            .where(
+                VideoApproval.id == approval_id,
+                VideoApproval.decision.in_(["approved", "override"]),
+                VideoApproval.used_calls < VideoApproval.max_calls,
+            )
+            .values(used_calls=VideoApproval.used_calls + 1)
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("approved generation call limit was consumed concurrently")
+
+
+async def mark_segment_job(segment_id: str, job_id: str, *, status: str, output_asset_id: str | None = None) -> None:
+    from db.base import get_db_session
+    from db.models.video_production import VideoProduction, VideoSegment
+
+    values: dict[str, Any] = {"generation_job_id": job_id, "updated_at": datetime.now(timezone.utc)}
+    if status == "completed" and output_asset_id:
+        values.update(
+            {
+                "status": "generated",
+                "output_asset_id": output_asset_id,
+                "transcript_text": None,
+                "transcript_data": {},
+                "stt_similarity": None,
+                "stt_verdict": None,
+                "stt_notes": [],
+                "stt_checked_at": None,
+                "review_status": None,
+                "review_note": None,
+            }
+        )
+    elif status in {"failed", "cancelled"}:
+        values["status"] = status
+    else:
+        values["status"] = "generating"
+    async with get_db_session() as db:
+        segment = await db.get(VideoSegment, segment_id)
+        if not segment:
+            return
+        await db.execute(update(VideoSegment).where(VideoSegment.id == segment_id).values(**values))
+        production = await db.get(VideoProduction, segment.production_id)
+        if production:
+            segments = await _active_segments(db, production.id)
+            await _refresh_status(db, production, segments)
+
+
+async def record_segment_transcript(
+    segment_id: str,
+    transcript_text: str,
+    transcript_data: dict[str, Any],
+    *,
+    threshold: float,
+) -> dict[str, Any]:
+    from db.base import get_db_session
+    from db.models.video_production import VideoProduction, VideoSegment
+
+    async with get_db_session() as db:
+        segment = await db.get(VideoSegment, segment_id)
+        if not segment or not segment.is_active:
+            raise RuntimeError("transcription target is no longer an active segment")
+        comparison = compare_transcript(segment.script_text, transcript_text, threshold)
+        segment.transcript_text = transcript_text.strip()
+        segment.transcript_data = transcript_data
+        segment.stt_similarity = comparison["similarity"]
+        segment.stt_verdict = comparison["verdict"]
+        segment.stt_notes = comparison["notes"]
+        segment.stt_checked_at = datetime.now(timezone.utc)
+        segment.review_status = "accepted" if comparison["verdict"] == "ok" else None
+        segment.review_note = None
+        segment.updated_at = datetime.now(timezone.utc)
+        production = await db.get(VideoProduction, segment.production_id)
+        if production:
+            segments = await _active_segments(db, production.id)
+            await _refresh_status(db, production, segments)
+        return comparison
+
+
+async def prepare_transcription(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+
+    async with get_db_session() as db:
+        production = await _owned_production(db, production_id, ctx.user_id)
+        if not production:
+            raise RuntimeError("production is not owned by this user")
+        segments = await _active_segments(db, production.id)
+        segment = next((row for row in segments if row.id == segment_id), None)
+        if not segment or segment.status != "generated" or not segment.output_asset_id:
+            raise RuntimeError("segment must be generated before transcription")
+        asset = await db.get(FileAsset, segment.output_asset_id)
+        if not asset or asset.user_id != ctx.user_id or asset.status != "ready":
+            raise RuntimeError("generated segment asset is not ready")
+        return {"production": production, "segment": segment, "asset": asset}
+
+
+async def prepare_render_submission(ctx: ToolContext, production_id: str) -> dict[str, Any]:
+    from db.base import get_db_session
+
+    async with get_db_session() as db:
+        production = await _owned_production(db, production_id, ctx.user_id)
+        if not production:
+            raise RuntimeError("production is not owned by this user")
+        segments = await _active_segments(db, production.id)
+        if not segments or not all(row.status == "generated" and row.output_asset_id for row in segments):
+            raise RuntimeError("every active segment must be generated before rendering")
+        if production.quality_policy == "required" and not await _matching_approval(
+            db, production.id, "quality", quality_scope(production, segments)
+        ):
+            raise RuntimeError("current STT evidence is not approved")
+        render = await _matching_approval(db, production.id, "render", render_scope(production, segments))
+        if not render:
+            raise RuntimeError("current render form is not approved")
+        subtitles = bool((render.metadata_data or {}).get("subtitles"))
+        if subtitles and any(not (row.transcript_text or "").strip() for row in segments):
+            raise RuntimeError("subtitled render requires accepted transcript text for every segment")
+        return {
+            "production_id": production.id,
+            "segment_assets": [row.output_asset_id for row in segments],
+            "captions": [row.transcript_text or "" for row in segments],
+            "subtitles": subtitles,
+            "channel_name": production.channel_name,
+            "width": 720 if production.ratio == "9:16" else 1280,
+            "height": 1280 if production.ratio == "9:16" else 720,
+            "scope_hash": render.scope_hash,
+        }
+
+
+async def mark_render_complete(production_id: str, asset_id: str) -> None:
+    from db.base import get_db_session
+    from db.models.video_production import VideoProduction
+
+    async with get_db_session() as db:
+        production = await db.get(VideoProduction, production_id)
+        if not production:
+            return
+        production.render_asset_id = asset_id
+        production.completed_at = datetime.now(timezone.utc)
+        segments = await _active_segments(db, production.id)
+        await _refresh_status(db, production, segments)
+
+
+VIDEO_PROJECT_DESCRIPTION = """\
+Create or resume a persistent spoken-video production, store an exact script and
+linted segment plan, request hash-bound user approvals, create selective segment
+revisions, or inspect recovery status. This is the control plane: video_generate,
+video_transcribe, and video_render consume its approved snapshots. Load the
+video-production skill before use."""
+
+
+video_project_tool = define_tool(
+    "video_project",
+    description=VIDEO_PROJECT_DESCRIPTION,
+    parameters=VideoProjectArgs,
+    execute=execute_project,
+    sandbox_required=False,
+    parallel_safe=False,
+    skill_only=True,
+)

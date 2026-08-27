@@ -13,6 +13,7 @@ from tool.skill_tool import (
     MAX_DESCRIPTION_CHARS,
     _clip,
     _permitted,
+    build_skill_tool_with_listing,
     render_listing,
 )
 
@@ -176,3 +177,27 @@ async def test_no_skill_tool_means_nothing_to_do(monkeypatch):
     from agent.tool_resolution import attach_skill_listing
     tools = await attach_skill_listing({"bash": object()}, sandbox=None)
     assert list(tools) == ["bash"]
+
+
+@pytest.mark.asyncio
+async def test_project_skill_listing_overrides_stale_sandbox_description(monkeypatch):
+    import skill.skill as sk
+    from skill.skill import SkillInfo
+
+    class Sandbox:
+        async def list_skills(self):
+            return [{"name": "video-production", "description": "stale sandbox copy"}]
+
+    import time as _time
+    monkeypatch.setattr(sk, "_skills", {
+        "video-production": SkillInfo(
+            "video-production", "current project workflow", "project", "body"
+        )
+    })
+    monkeypatch.setattr(sk, "_loaded", True)
+    monkeypatch.setattr(sk, "_last_check", _time.monotonic())
+    monkeypatch.setattr(sk, "_fingerprint", sk._current_fingerprint())
+
+    tool = await build_skill_tool_with_listing(Sandbox())
+    assert "current project workflow" in tool.description
+    assert "stale sandbox copy" not in tool.description

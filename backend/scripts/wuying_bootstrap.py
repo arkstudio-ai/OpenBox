@@ -32,8 +32,8 @@ import time
 REPO = pathlib.Path(__file__).resolve().parents[2]
 MAX_CHUNK = 11_000          # run-command caps command-content at 16KB base64
 TUNNEL_PORT = 18_000        # loopback port on the relay host
-VIDEO_PRODUCTION_SKILL = (
-    REPO / "backend" / ".openbox" / "skills" / "video-production" / "SKILL.md"
+VIDEO_PRODUCTION_SKILL_DIR = (
+    REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
 
 
@@ -158,7 +158,9 @@ def install_action_server(d: Desktop) -> None:
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
     d.put(REPO / "container" / "media_jobs.py", "/opt/action_server/media_jobs.py")
     d.put(REPO / "container" / "media-jobs.json", "/opt/openbox/media/media-jobs.json")
-    d.put(VIDEO_PRODUCTION_SKILL, "/opt/openbox/skills/video-production/SKILL.md")
+    for local_path in sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file()):
+        relative = local_path.relative_to(VIDEO_PRODUCTION_SKILL_DIR)
+        d.put(local_path, str(pathlib.PurePosixPath("/opt/openbox/skills/video-production") / relative))
     d.put(REPO / "container" / "media-runtime" / "package.json", "/opt/openbox/media/package.json")
     package_lock = REPO / "container" / "media-runtime" / "package-lock.json"
     if package_lock.exists():

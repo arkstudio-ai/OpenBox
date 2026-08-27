@@ -124,7 +124,7 @@
   "attachNeedSandbox": "Attachments need a running sandbox",
   "attachUploading": "Uploading…",
   "attachFailed": "Upload failed",
-  "attachTooLarge": "File exceeds 8 MB",
+  "attachTooLarge": "File exceeds 1 GB",
   "trace": {
     "process": {
       "titleActive": "Processing",

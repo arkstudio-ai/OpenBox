@@ -31,7 +31,8 @@ log = create_logger("api.assets")
 
 router = APIRouter(prefix="/api/assets", tags=["assets"], dependencies=[Depends(get_current_user)])
 
-_MAX_SIZE = 512 * 1024 * 1024  # 512 MB; OSS handles it, the tunnel never sees it
+_MAX_SIZE = 1024 * 1024 * 1024  # 1 GB; OSS handles it, the tunnel never sees it
+_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
 #: Rows one listing request will classify in Python. A personal workspace does
 #: not come near it; beyond it the tail is dropped rather than the request.
 _SCAN_CAP = 3000
@@ -81,7 +82,9 @@ async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_c
     """Open an upload: record it and hand the browser a presigned PUT URL."""
     oss = _oss_or_503()
     if body.size > _MAX_SIZE:
-        raise HTTPException(413, detail="File too large (max 512 MB)")
+        raise HTTPException(413, detail="File too large (max 1 GB)")
+    if body.size < 0:
+        raise HTTPException(422, detail="File size cannot be negative")
     user_id = current_user["user_id"]
     name = _clean_name(body.name)
     asset_id = ascending("asset")
@@ -111,7 +114,8 @@ async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_c
         "id": asset_id,
         "name": name,
         "sandboxPath": f"/workspace/uploads/{name}",
-        "putUrl": oss.presign_put(key, mime),
+        # A 1 GB upload can exceed the old 30-minute URL on a slow connection.
+        "putUrl": oss.presign_put(key, mime, expires_sec=_UPLOAD_URL_TTL_SECONDS),
         # The PUT must send exactly what was signed (bossip's hard-won rule).
         "headers": {"Content-Type": mime},
     }
@@ -240,7 +244,20 @@ async def complete_asset(asset_id: str, current_user: dict = Depends(get_current
         head = await oss.head(row.oss_key)
         if not head:
             raise HTTPException(409, detail="Object not found in OSS — upload did not complete")
-        row.size = head["size"] or row.size
+        actual_size = int(head["size"] or 0)
+        # Never trust the size declared when the ticket was opened: a caller
+        # can PUT a larger object to the same signed key. Enforce the ceiling
+        # against the object OSS actually received.
+        if actual_size > _MAX_SIZE:
+            row.is_deleted = True
+            row.deleted_at = datetime.now(timezone.utc)
+            await db.commit()
+            try:
+                await oss.delete(row.oss_key)
+            except Exception as e:
+                log.warning(f"Oversized OSS object cleanup failed for {row.oss_key}: {e}")
+            raise HTTPException(413, detail="File too large (max 1 GB)")
+        row.size = actual_size or row.size
         row.status = "ready"
         await db.commit()
         return _to_item(row, oss)

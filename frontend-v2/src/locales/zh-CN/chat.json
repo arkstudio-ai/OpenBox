@@ -124,7 +124,7 @@
   "attachNeedSandbox": "需要运行中的沙箱才能上传附件",
   "attachUploading": "上传中…",
   "attachFailed": "上传失败",
-  "attachTooLarge": "文件超过 8 MB",
+  "attachTooLarge": "文件超过 1 GB",
   "trace": {
     "process": {
       "titleActive": "处理中",

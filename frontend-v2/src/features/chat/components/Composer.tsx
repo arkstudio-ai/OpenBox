@@ -65,7 +65,10 @@ interface Props {
 }
 
 const EMPTY_AGENTS: ChatAgent[] = []
-const MAX_UPLOAD = 8 * 1024 * 1024
+// Attachments upload straight from the browser to OSS, so they do not consume
+// backend memory or WUYING tunnel bandwidth. Keep this in sync with the
+// server-side asset ceiling in backend/api/assets.py.
+const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */

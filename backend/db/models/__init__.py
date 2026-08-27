@@ -14,9 +14,12 @@ from db.models.audit_log import AuditLog
 from db.models.cron import CronJob, CronRun
 from db.models.video_job import VideoJob
 from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
+from db.models.user_skill import UserSkill
+from db.models.skill_install import SkillInstall
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
     "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
+    "UserSkill", "SkillInstall",
 ]

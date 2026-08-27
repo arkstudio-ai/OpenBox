@@ -1,14 +1,17 @@
 """HTTP client for communicating with the Action Server inside a sandbox container."""
 import asyncio
+import base64
 import contextvars
 import json
 import os
+import re
 import secrets
 import shlex
 import socket
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+from urllib.parse import quote
 
 import httpx
 
@@ -22,6 +25,124 @@ log = create_logger("sandbox.client")
 #: can say so. An outer budget equal to the inner one just races it and
 #: replaces a useful message with a timeout.
 MCP_CALL_TIMEOUT_SECONDS = 180.0
+
+
+# Older long-lived WUYING desktops expose the generic file/execute API and the
+# existing Skill install routes, but not the newer dedicated create/export
+# endpoints. This self-contained helper is sent only when that endpoint is
+# absent. It creates a deterministic, symlink-free snapshot on the desktop;
+# no user content is interpolated into the command itself.
+_LEGACY_SKILL_EXPORT_SCRIPT = r'''
+import json
+import os
+import re
+import secrets
+import stat
+import sys
+import zipfile
+from pathlib import Path, PurePosixPath
+
+ROOT = Path("/data/skills")
+EXPORTS = Path("/workspace/exports")
+MAX_FILES = 1000
+MAX_BYTES = 50 * 1024 * 1024
+SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".cache"}
+SECRET_NAMES = {"credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa", "password", "passwords", "secret", "secrets", "token", "tokens"}
+SECRET_DIRS = {"credentials", "keys", "private-keys", "secrets"}
+SECRET_SUFFIXES = (".jks", ".key", ".keystore", ".p12", ".pem", ".pfx", ".secret")
+SECRET_STEMS = {"access-key", "api-key", "api_key", "apikey", "credential", "credentials", "password", "passwords", "private-key", "secret", "secrets", "service-account", "token", "tokens"}
+
+def secret_path(path):
+    parts = PurePosixPath(path.as_posix()).parts
+    if any(part.casefold() in SECRET_DIRS for part in parts[:-1]):
+        return True
+    name = parts[-1].casefold()
+    if name == ".env" or name.startswith(".env."):
+        return True
+    if name in SECRET_NAMES or name.endswith(SECRET_SUFFIXES):
+        return True
+    return name.split(".", 1)[0] in SECRET_STEMS
+
+def skipped(path):
+    if any(part.startswith(".") or part in SKIP_DIRS for part in path.parts):
+        return True
+    if path.name.casefold() == "install.sh":
+        return True
+    return secret_path(path)
+
+name = sys.argv[1]
+if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) or len(name) > 64:
+    raise SystemExit("invalid skill slug")
+target = ROOT / name
+if target.is_symlink() or not target.is_dir():
+    raise SystemExit("personal skill not found")
+skill_md = target / "SKILL.md"
+if skill_md.is_symlink() or not skill_md.is_file():
+    raise SystemExit("root SKILL.md not found")
+target_root = target.resolve()
+files = []
+total = 0
+for current, dirs, names in os.walk(target, topdown=True, followlinks=False):
+    current_path = Path(current)
+    kept = []
+    for dirname in sorted(dirs):
+        child = current_path / dirname
+        relative = child.relative_to(target)
+        if not child.is_symlink() and not skipped(relative):
+            kept.append(dirname)
+    dirs[:] = kept
+    for filename in sorted(names):
+        source = current_path / filename
+        relative = source.relative_to(target)
+        if skipped(relative):
+            continue
+        descriptor = None
+        try:
+            if not stat.S_ISREG(source.lstat().st_mode):
+                continue
+            if not source.resolve(strict=True).is_relative_to(target_root):
+                continue
+            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(source, flags)
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                continue
+            size = opened.st_size
+            if len(files) + 1 > MAX_FILES or total + size > MAX_BYTES:
+                raise SystemExit("skill archive exceeds safety limits")
+            with os.fdopen(descriptor, "rb", closefd=True) as stream:
+                descriptor = None
+                content = stream.read(size + 1)
+            if len(content) != size:
+                raise SystemExit("skill changed during archive")
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        files.append((relative, content))
+        total += size
+
+EXPORTS.mkdir(parents=True, exist_ok=True)
+if EXPORTS.is_symlink():
+    raise SystemExit("export directory cannot be a symlink")
+destination = EXPORTS / (name + ".zip")
+temporary = EXPORTS / ("." + name + "." + secrets.token_hex(6) + ".tmp")
+try:
+    with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+        for relative, content in files:
+            archive_name = (PurePosixPath(name) / PurePosixPath(relative.as_posix())).as_posix()
+            entry = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            bundle.writestr(entry, content, compresslevel=6)
+    os.replace(temporary, destination)
+finally:
+    try:
+        temporary.unlink()
+    except FileNotFoundError:
+        pass
+print(json.dumps({"path": str(destination), "filename": destination.name, "size": destination.stat().st_size}))
+'''
 
 _PROCESS_INSTANCE_ID = (
     os.environ.get("OPENBOX_INSTANCE_ID", "").strip()
@@ -488,6 +609,133 @@ class SandboxClient:
     async def get_skill(self, name: str) -> dict:
         """Get a specific skill by name."""
         return await self._get(f"/skills/{name}")
+
+    async def create_skill(
+        self,
+        name: str,
+        skill_md: str,
+        files: list[dict[str, str]] | None = None,
+    ) -> dict:
+        """Atomically create a validated user skill package.
+
+        New action servers own the strict validation endpoint. Long-lived
+        WUYING desktops are upgraded independently, so a 404/405 falls back to
+        their existing generic file API while preserving new-only semantics.
+        """
+        payload_files = files or []
+        try:
+            return await self._post(
+                "/skills/create",
+                timeout=30.0,
+                json={"name": name, "skill_md": skill_md, "files": payload_files},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {404, 405}:
+                raise
+
+        if len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+            raise ValueError("invalid skill slug")
+        validated: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for item in payload_files:
+            path = item.get("path", "") if isinstance(item, dict) else ""
+            content = item.get("content", "") if isinstance(item, dict) else ""
+            parts = path.split("/")
+            if (
+                not path
+                or path != path.strip()
+                or path.startswith("/")
+                or "\\" in path
+                or any(part in {"", ".", ".."} or part.startswith(".") for part in parts)
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)
+                or len(path.encode("utf-8")) > 240
+            ):
+                raise ValueError(f"unsafe skill file path: {path!r}")
+            lowered = parts[-1].casefold()
+            if lowered in {"skill.md", "install.sh"} or path in seen:
+                raise ValueError(f"reserved or duplicate skill file path: {path!r}")
+            if not isinstance(content, str) or len(content.encode("utf-8")) > 512 * 1024:
+                raise ValueError(f"invalid skill file content: {path!r}")
+            seen.add(path)
+            validated.append((path, content))
+
+        token = secrets.token_hex(6)
+        target = f"/data/skills/{name}"
+        staging = f"/data/skills/.{name}.{token}.incoming"
+        prepare = await self.execute(
+            f"umask 077; test ! -e {shlex.quote(target)} && mkdir -p {shlex.quote(staging)}",
+            timeout=10,
+            workdir="/data/skills",
+        )
+        if prepare.exit_code != 0:
+            raise FileExistsError(f"Skill '{name}' already exists")
+
+        try:
+            await self.write_file(f"{staging}/SKILL.md", skill_md)
+            for relative, content in validated:
+                await self.write_file(f"{staging}/{relative}", content)
+            publish = await self.execute(
+                f"test ! -e {shlex.quote(target)} && mv -- {shlex.quote(staging)} {shlex.quote(target)}",
+                timeout=10,
+                workdir="/data/skills",
+            )
+            if publish.exit_code != 0:
+                raise FileExistsError(f"Skill '{name}' already exists")
+        except Exception:
+            await self.execute(
+                f"rm -rf -- {shlex.quote(staging)}",
+                timeout=10,
+                workdir="/data/skills",
+            )
+            raise
+
+        created = await self.get_skill(name)
+        return {**created, "created": True}
+
+    async def _legacy_export_skill_archive(self, name: str) -> dict:
+        encoded_script = base64.b64encode(
+            _LEGACY_SKILL_EXPORT_SCRIPT.encode("utf-8")
+        ).decode("ascii")
+        launcher = f"import base64;exec(base64.b64decode({encoded_script!r}))"
+        result = await self.execute(
+            f"python3 -c {shlex.quote(launcher)} {shlex.quote(name)}",
+            timeout=60,
+            workdir="/workspace",
+        )
+        if result.exit_code != 0:
+            raise RuntimeError((result.stderr or result.stdout or "Skill export failed")[:500])
+        try:
+            return json.loads(result.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as exc:
+            raise RuntimeError("WUYING skill export returned an invalid response") from exc
+
+    async def download_skill_archive(self, name: str) -> bytes:
+        """Download a user skill as a ZIP archive."""
+        encoded_name = quote(name, safe="")
+        try:
+            async with self._client(timeout=60.0) as client:
+                resp = await client.get(f"/skills/{encoded_name}/archive")
+                resp.raise_for_status()
+                return resp.content
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {404, 405}:
+                raise
+
+        exported = await self._legacy_export_skill_archive(name)
+        async with self._client(timeout=60.0) as client:
+            resp = await client.get("/download", params={"path": exported["path"]})
+            resp.raise_for_status()
+            return resp.content
+
+    async def export_skill_archive(self, name: str) -> dict:
+        """Export a user skill ZIP into the sandbox workspace."""
+        encoded_name = quote(name, safe="")
+        try:
+            return await self._post(f"/skills/{encoded_name}/export", timeout=60.0)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {404, 405}:
+                raise
+        return await self._legacy_export_skill_archive(name)
 
     async def install_skill(
         self,

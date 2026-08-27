@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Film, ImageIcon, MonitorCheck } from "lucide-react"
+import { CheckCircle2, CircleAlert, FileArchive, Film, ImageIcon, MonitorCheck } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { ArtifactGroup } from "../lib/content-view"
@@ -72,6 +72,8 @@ function ArtifactCard({
         <span className="bg-n200 flex size-7 shrink-0 items-center justify-center rounded-full">
           {group.artifactKind === "generated_image" ? (
             <ImageIcon className="text-n700 size-3.5" />
+          ) : group.artifactKind === "shared_file" ? (
+            <FileArchive className="text-n700 size-3.5" />
           ) : (
             <Film className="text-n700 size-3.5" />
           )}

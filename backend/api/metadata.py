@@ -1,5 +1,9 @@
 """Config and metadata routes."""
+from io import BytesIO
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from auth.middleware import get_current_user, require_admin
 from pydantic import BaseModel
 
@@ -90,16 +94,91 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
 
     The same union the agent's skill tool advertises: showing only the
     container's list hid host-side skills that the loop could in fact load.
+    Personal skills also have a durable owner snapshot.  Restore missing live
+    copies when possible, but keep the library row visible when the sandbox is
+    offline or restoration fails so downloads do not disappear with compute.
     """
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
 
+    library_available = False
+    owned_skills: list[dict] = []
+    try:
+        from skill.user_library import (
+            annotate_installed_skills,
+            get_owned_skill,
+            list_owned_skills,
+        )
+
+        owned_skills = await list_owned_skills(user_id)
+        library_available = True
+    except (ImportError, RuntimeError):
+        # Single-user mode deliberately runs without the central database.
+        pass
+
     merged: list[dict] = []
+    client = None
     try:
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if client:
             container = await client.list_skills()
             if isinstance(container, list):
+                # A durable snapshot is the source of truth for a personal
+                # package after its per-user sandbox is recreated.  Fetch ZIP
+                # bytes only for rows that are actually missing and restorable.
+                restored = False
+                for owned in owned_skills:
+                    owned_dir = owned.get("install_dir")
+                    owned_name = owned.get("name")
+                    already_live = any(
+                        (
+                            owned_dir
+                            and item.get("install_dir") == owned_dir
+                        )
+                        or (
+                            owned_name
+                            and item.get("name") == owned_name
+                        )
+                        for item in container
+                    )
+                    if already_live or not owned.get("restore_available"):
+                        continue
+                    try:
+                        snapshot = await get_owned_skill(
+                            user_id,
+                            owned["id"],
+                            include_archive=True,
+                        )
+                        archive = snapshot.get("archive_data") if snapshot else None
+                        install_dir = (snapshot or owned).get("install_dir")
+                        if not isinstance(archive, bytes) or not install_dir:
+                            continue
+                        result = await client.upload_skill_archive(
+                            archive,
+                            f"{install_dir}.zip",
+                            install_dir,
+                        )
+                        # Keep a truthful fallback if the post-restore rescan
+                        # below is temporarily unavailable.
+                        container.append({
+                            **owned,
+                            **(result if isinstance(result, dict) else {}),
+                            "name": owned_name or install_dir,
+                            "install_dir": install_dir,
+                            "source": "container",
+                        })
+                        restored = True
+                    except Exception:
+                        # Listing remains useful and the durable row is merged
+                        # below; the next refresh gets another recovery chance.
+                        continue
+                if restored:
+                    try:
+                        refreshed = await client.list_skills()
+                        if isinstance(refreshed, list):
+                            container = refreshed
+                    except Exception:
+                        pass
                 merged.extend(container)
     except Exception:
         pass
@@ -114,7 +193,38 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
     except ImportError:
         pass
 
-    return merged
+    if not library_available:
+        return merged
+
+    try:
+        annotated = await annotate_installed_skills(user_id, merged)
+    except RuntimeError:
+        return merged
+
+    live_library_ids = {
+        item.get("library_id")
+        for item in annotated
+        if item.get("category") == "personal" and item.get("library_id")
+    }
+    occupied_keys = {
+        item.get("install_dir") or item.get("name")
+        for item in annotated
+        if item.get("install_dir") or item.get("name")
+    }
+    library_only: list[dict] = []
+    for owned in owned_skills:
+        if owned.get("id") in live_library_ids:
+            continue
+        item = {**owned, "source": "library"}
+        # The frontend groups by install_dir. If another live package owns the
+        # author's old path (for example a store copy with the same slug), use
+        # the durable id as this non-live row's action key so both stay visible.
+        key = item.get("install_dir") or item.get("name")
+        if key in occupied_keys:
+            item["install_dir"] = item["id"]
+        library_only.append(item)
+
+    return library_only + annotated
 
 
 @router.get("/skill/{name}")
@@ -129,6 +239,95 @@ async def get_skill(name: str, current_user: dict = Depends(get_current_user)):
     except Exception:
         pass
     raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+
+
+@router.post("/skill/{name}/publish")
+async def publish_skill(name: str, current_user: dict = Depends(get_current_user)):
+    """Publish the owner's current personal-skill snapshot to the shared store."""
+    from sandbox.manager import sandbox_manager
+    from skill.user_library import (
+        annotate_installed_skills,
+        get_owned_skill,
+        publish_personal_skill,
+        upsert_personal_snapshot,
+    )
+
+    user_id = current_user["user_id"]
+    owned = await get_owned_skill(user_id, name)
+    if not owned:
+        # A filesystem copy is not proof of authorship.  In particular, store
+        # installs and manually uploaded archives must never become publishable
+        # merely because somebody guessed this endpoint.
+        raise HTTPException(status_code=404, detail="Personal skill not found")
+    client = await sandbox_manager.get_client_any(user_id=user_id)
+    if not client:
+        raise HTTPException(status_code=503, detail="No sandbox available")
+    try:
+        install_dir = owned["install_dir"]
+        info = await client.get_skill(install_dir)
+        annotated = await annotate_installed_skills(user_id, [info])
+        if not annotated or annotated[0].get("category") != "personal":
+            raise HTTPException(
+                status_code=409,
+                detail="The live package is not this user's personal skill",
+            )
+        archive = await client.download_skill_archive(install_dir)
+        await upsert_personal_snapshot(user_id, info, archive)
+        return await publish_personal_skill(user_id, install_dir)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/skill/{name}/download")
+async def download_skill(name: str, current_user: dict = Depends(get_current_user)):
+    """Download a user-owned personal skill as a portable ZIP archive."""
+    from sandbox.manager import sandbox_manager
+    from skill.user_library import (
+        annotate_installed_skills,
+        get_owned_skill,
+        upsert_personal_snapshot,
+    )
+
+    user_id = current_user["user_id"]
+    owned = await get_owned_skill(user_id, name)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Personal skill not found")
+    # Prefer a fresh snapshot so edits made after creation are included. The
+    # durable snapshot remains a fallback when the user's sandbox is offline.
+    # Refresh only when the live directory is still registered as personal;
+    # a store install reusing the same slug must not overwrite the author's
+    # durable package.
+    try:
+        client = await sandbox_manager.get_client_any(user_id=user_id)
+        if client:
+            info = await client.get_skill(owned["install_dir"])
+            annotated = await annotate_installed_skills(user_id, [info])
+            if annotated and annotated[0].get("category") == "personal":
+                archive = await client.download_skill_archive(owned["install_dir"])
+                await upsert_personal_snapshot(user_id, info, archive)
+    except Exception:
+        pass
+
+    row = await get_owned_skill(user_id, owned["id"], include_archive=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Personal skill not found")
+    filename = f"{row['name']}.zip"
+    disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+    return StreamingResponse(
+        BytesIO(row["archive_data"]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(row["archive_size"]),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/skill/install")
@@ -160,7 +359,37 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
-        return await client.uninstall_skill(name)
+
+        category = None
+        target = name
+        try:
+            from skill.user_library import annotate_installed_skills
+
+            live = await client.get_skill(name)
+            if isinstance(live, dict):
+                target = live.get("install_dir") or name
+                annotated = await annotate_installed_skills(
+                    user_id,
+                    [{**live, "source": live.get("source") or "container"}],
+                )
+                if annotated:
+                    category = annotated[0].get("category")
+        except RuntimeError:
+            pass
+
+        result = await client.uninstall_skill(target)
+        try:
+            if category == "personal":
+                from skill.user_library import delete_owned_skill
+
+                await delete_owned_skill(user_id, target)
+            elif category == "store":
+                from skill.user_library import remove_community_installation
+
+                await remove_community_installation(user_id, target)
+        except RuntimeError:
+            pass
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -200,6 +429,12 @@ async def get_catalog(current_user: dict = Depends(get_current_user)):
 
     user_id = current_user["user_id"]
     catalog = await load_catalog()
+    try:
+        from skill.user_library import list_published_catalog_entries
+
+        catalog["skills"].extend(await list_published_catalog_entries())
+    except RuntimeError:
+        pass
 
     installed_skills: set[str] = set()
     installed_mcp: set[str] = set()
@@ -260,9 +495,21 @@ async def install_from_catalog(
     user_id = current_user["user_id"]
     index = catalog_index()
 
-    entry = index.get(f"{body.kind}:{body.id}")
-    if not entry:
-        raise HTTPException(status_code=404, detail=f"Unknown catalog entry: {body.kind}:{body.id}")
+    community_row: dict | None = None
+    entry: dict | None = None
+    if body.kind == "skill" and body.id.startswith("community:"):
+        from skill.user_library import get_published_skill
+
+        community_row = await get_published_skill(body.id, include_archive=True)
+        if not community_row:
+            raise HTTPException(status_code=404, detail="Published skill not found")
+    else:
+        entry = index.get(f"{body.kind}:{body.id}")
+        if not entry:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown catalog entry: {body.kind}:{body.id}",
+            )
 
     client = await sandbox_manager.get_client_any(user_id=user_id)
     if not client:
@@ -288,10 +535,107 @@ async def install_from_catalog(
         return {"kind": "mcp", "id": mcp_entry["id"], "name": mcp_entry["name"],
                 "status": status, "error": error}
 
+    # Dependencies install before either a built-in or community skill.  The
+    # V2 install dialog submits catalogue MCP ids in ``with_mcp`` for both.
     for dep_id in body.with_mcp:
         dep = index.get(f"mcp:{dep_id}")
         if dep:
             installed.append(await install_mcp(dep))
+
+    # Community entries are immutable database snapshots, not URLs supplied by
+    # their authors. Resolve by opaque id and install the reviewed ZIP directly
+    # into this user's sandbox.
+    if body.kind == "skill" and body.id.startswith("community:"):
+        from skill.user_library import (
+            annotate_installed_skills,
+            record_community_installation,
+        )
+
+        row = community_row
+        assert row is not None
+
+        existing = await client.list_skills() or []
+        conflict = next(
+            (
+                item
+                for item in existing
+                if (
+                    item.get("install_dir") == row["install_dir"]
+                    or item.get("name") == row["name"]
+                )
+            ),
+            None,
+        )
+        if conflict:
+            # list_skills is already scoped to the sandbox. Older scanners did
+            # not emit source, so normalize that omission before provenance
+            # annotation instead of turning an exact retry into a false 409.
+            annotated = await annotate_installed_skills(
+                user_id,
+                [{**conflict, "source": conflict.get("source") or "container"}],
+            )
+            provenance = annotated[0] if annotated else {}
+            if (
+                provenance.get("category") == "store"
+                and provenance.get("catalog_id") == body.id
+            ):
+                installed.append({
+                    "kind": "skill",
+                    "id": body.id,
+                    "name": row["name"],
+                    "status": "installed",
+                })
+                return {"ok": True, "installed": installed}
+            raise HTTPException(
+                status_code=409,
+                detail=f"A skill named '{row['name']}' is already installed; remove it before installing this store copy.",
+            )
+
+        result = await client.upload_skill_archive(
+            row["archive_data"],
+            f"{row['install_dir']}.zip",
+            row["install_dir"],
+        )
+        reported_dir = result.get("install_dir") if isinstance(result, dict) else None
+        installed_dir = (
+            reported_dir
+            if isinstance(reported_dir, str) and reported_dir
+            else row["install_dir"]
+        )
+        try:
+            await record_community_installation(
+                user_id=user_id,
+                user_skill_id=row["id"],
+                name=row["name"],
+                install_dir=installed_dir,
+            )
+        except Exception as exc:
+            rollback_error = None
+            try:
+                await client.uninstall_skill(installed_dir)
+            except Exception as rollback_exc:
+                rollback_error = str(rollback_exc)
+            if rollback_error:
+                detail = (
+                    "The skill archive was uploaded, but store provenance could not be "
+                    f"recorded ({exc}). Rollback of '{installed_dir}' also failed: "
+                    f"{rollback_error}"
+                )
+            else:
+                detail = (
+                    "The skill archive was uploaded, but store provenance could not be "
+                    f"recorded ({exc}). The uploaded package '{installed_dir}' was rolled back."
+                )
+            raise HTTPException(status_code=500, detail=detail) from exc
+        installed.append({
+            "kind": "skill",
+            "id": body.id,
+            "name": row["name"],
+            "status": "installed",
+        })
+        return {"ok": True, "installed": installed}
+
+    assert entry is not None
 
     if body.kind == "mcp":
         installed.append(await install_mcp(entry))

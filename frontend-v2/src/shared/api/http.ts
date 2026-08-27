@@ -73,12 +73,47 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   return (await res.json()) as T
 }
 
+export interface BlobResponse {
+  blob: Blob
+  /** Suggested download filename parsed from Content-Disposition, when present. */
+  filename: string | null
+}
+
+function dispositionFilename(value: string | null): string | null {
+  if (!value) return null
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(value)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      return encoded
+    }
+  }
+  return /filename="([^"]+)"/i.exec(value)?.[1] ?? /filename=([^;]+)/i.exec(value)?.[1]?.trim() ?? null
+}
+
+/** Authenticated binary download with the same refresh-once behaviour as JSON requests. */
+export async function requestBlob(path: string, options: RequestInit = {}): Promise<BlobResponse> {
+  const token = useAuthStore.getState().accessToken
+  let res = await doFetch(path, options, token)
+
+  if (res.status === 401 && token) {
+    const newToken = await refreshAccessToken()
+    if (newToken) res = await doFetch(path, options, newToken)
+  }
+
+  if (!res.ok) throw await toApiError(res)
+  return {
+    blob: await res.blob(),
+    filename: dispositionFilename(res.headers.get("content-disposition")),
+  }
+}
+
 export const http = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
-  put: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
+  put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

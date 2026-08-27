@@ -20,4 +20,4 @@ RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirement
 COPY . .
 
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/bin/sh", "-ec", "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"]

@@ -23,6 +23,19 @@ async def test_image_gen_schema_is_absent_until_a_skill_activates_it():
 
 
 @pytest.mark.asyncio
+async def test_skill_manage_schema_is_absent_until_skill_creator_activates_it():
+    register_builtin_tools()
+
+    ordinary = await resolve_step_tools(AGENTS["build"], None, [])
+    assert "skill_manage" not in ordinary
+
+    loaded = await resolve_step_tools(
+        AGENTS["build"], None, [], activated_tools={"skill_manage"}
+    )
+    assert loaded["skill_manage"].skill_only is True
+
+
+@pytest.mark.asyncio
 async def test_a_skill_cannot_activate_an_ordinary_tool_outside_the_agent_whitelist():
     register_builtin_tools()
 

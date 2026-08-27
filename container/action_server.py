@@ -11,6 +11,7 @@ import select
 import shutil
 import signal
 import secrets
+import stat
 import struct
 import sys
 import termios
@@ -19,7 +20,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
 import subprocess
@@ -27,8 +28,8 @@ import subprocess
 import psutil
 import yaml
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, WebSocket, Query
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field as PydanticField, StringConstraints
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field as PydanticField, StringConstraints
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
@@ -1324,6 +1325,7 @@ async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
 
 SKILLS_DIR = Path("/data/skills")            # User-installed skills (bind-mounted, persistent)
 BUILTIN_SKILLS_DIR = Path("/opt/openbox/skills")  # System built-in skills (baked into image)
+SKILL_EXPORTS_DIR = Path("/workspace/exports")
 
 
 #: URL schemes accepted for skill installation.
@@ -1406,6 +1408,185 @@ class InstallSkillRequest(BaseModel):
     url: str | None = None
     name: str | None = None
     content: str | None = None
+
+
+class CreateSkillFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = PydanticField(min_length=1, max_length=240)
+    content: str = PydanticField(max_length=512 * 1024)
+
+
+class CreateSkillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = PydanticField(min_length=1, max_length=64)
+    skill_md: str = PydanticField(min_length=1, max_length=512 * 1024)
+    files: list[CreateSkillFile] = PydanticField(default_factory=list, max_length=64)
+
+
+# Chat-created skills are intentionally small, text-only packages. Keeping the
+# limits here (rather than only in the caller) protects every future API client
+# and prevents one request from filling the persistent per-user data volume.
+_CREATED_SKILL_MAX_FILES = 64
+_CREATED_SKILL_MAX_FILE_BYTES = 512 * 1024
+_CREATED_SKILL_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+_CREATED_SKILL_MAX_PATH_BYTES = 240
+_SKILL_ARCHIVE_MAX_FILES = 1_000
+_SKILL_ARCHIVE_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+_STRICT_SKILL_SLUG = _re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+_SECRET_SKILL_FILENAMES = {
+    "credentials",
+    "credentials.json",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
+    "password",
+    "passwords",
+    "secret",
+    "secrets",
+    "token",
+    "tokens",
+}
+_SECRET_SKILL_SUFFIXES = (
+    ".jks", ".key", ".keystore", ".p12", ".pem", ".pfx", ".secret",
+)
+_SECRET_SKILL_STEMS = {
+    "access-key", "api-key", "api_key", "apikey", "credential", "credentials",
+    "password", "passwords", "private-key", "secret", "secrets",
+    "service-account", "token", "tokens",
+}
+_SECRET_SKILL_DIRNAMES = {"credentials", "keys", "private-keys", "secrets"}
+
+
+def _strict_skill_slug(name: str) -> str:
+    """Validate the stable directory/store id used by a created skill."""
+    candidate = (name or "").strip()
+    if (
+        candidate != name
+        or len(candidate) > 64
+        or not _STRICT_SKILL_SLUG.fullmatch(candidate)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Skill name must be a lowercase slug of 1-64 letters and numbers "
+                "separated by single hyphens"
+            ),
+        )
+    # Keep the existing containment check as defence in depth. A future change
+    # to the slug expression must not silently weaken the filesystem boundary.
+    if _safe_skill_name(candidate) != candidate:
+        raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
+    return candidate
+
+
+def _is_secret_skill_path(path: PurePosixPath) -> bool:
+    """Return whether a package path looks like credentials or key material."""
+    if any(part.casefold() in _SECRET_SKILL_DIRNAMES for part in path.parts[:-1]):
+        return True
+    name = path.name.casefold()
+    if name == ".env" or name.startswith(".env."):
+        return True
+    if name in _SECRET_SKILL_FILENAMES or name.endswith(_SECRET_SKILL_SUFFIXES):
+        return True
+    # Covers secrets.yaml, credentials.toml, token.json, and similar common
+    # variants without rejecting ordinary documentation that merely mentions
+    # authentication in its filename.
+    stem = name.split(".", 1)[0]
+    return stem in _SECRET_SKILL_STEMS
+
+
+def _validated_created_skill_path(raw_path: str) -> PurePosixPath:
+    """Validate one caller-supplied relative path without normalising it."""
+    if not isinstance(raw_path, str) or raw_path != raw_path.strip():
+        raise HTTPException(status_code=400, detail=f"Invalid skill file path: {raw_path!r}")
+    if not raw_path or "\\" in raw_path or "\x00" in raw_path:
+        raise HTTPException(status_code=400, detail=f"Invalid skill file path: {raw_path!r}")
+    if len(raw_path.encode("utf-8")) > _CREATED_SKILL_MAX_PATH_BYTES:
+        raise HTTPException(status_code=400, detail=f"Skill file path is too long: {raw_path!r}")
+
+    # Inspect the raw components before PurePosixPath can collapse `.` or
+    # duplicate separators. Rejecting rather than cleaning makes the API
+    # unambiguous and closes both traversal and archive-name tricks.
+    parts = raw_path.split("/")
+    if raw_path.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise HTTPException(status_code=400, detail=f"Unsafe skill file path: {raw_path!r}")
+    if any(part.startswith(".") for part in parts):
+        raise HTTPException(status_code=400, detail=f"Hidden skill paths are not allowed: {raw_path!r}")
+    if any(any(ord(ch) < 32 or ord(ch) == 127 for ch in part) for part in parts):
+        raise HTTPException(status_code=400, detail=f"Invalid skill file path: {raw_path!r}")
+
+    path = PurePosixPath(raw_path)
+    lowered_name = path.name.casefold()
+    if lowered_name == "skill.md":
+        raise HTTPException(status_code=400, detail="SKILL.md must be supplied via skill_md")
+    if lowered_name == "install.sh":
+        raise HTTPException(status_code=400, detail="install.sh is not allowed in created skills")
+    if _is_secret_skill_path(path):
+        raise HTTPException(status_code=400, detail=f"Secret files are not allowed: {raw_path!r}")
+    return path
+
+
+def _validate_created_skill_markdown(skill_name: str, content: str) -> None:
+    """Require a well-formed SKILL.md whose identity matches its directory."""
+    if not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="skill_md must be text")
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise HTTPException(status_code=400, detail="SKILL.md must start with YAML frontmatter")
+    try:
+        closing = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        raise HTTPException(status_code=400, detail="SKILL.md frontmatter is not closed")
+    try:
+        metadata = yaml.safe_load("\n".join(lines[1:closing])) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SKILL.md frontmatter: {exc}")
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="SKILL.md frontmatter must be a mapping")
+    if metadata.get("name") != skill_name:
+        raise HTTPException(
+            status_code=400,
+            detail="SKILL.md frontmatter name must exactly match the skill directory name",
+        )
+    description = metadata.get("description")
+    if not isinstance(description, str) or not description.strip() or len(description) > 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="SKILL.md frontmatter requires a non-empty description of at most 1024 characters",
+        )
+    if not "\n".join(lines[closing + 1:]).strip():
+        raise HTTPException(status_code=400, detail="SKILL.md must contain instructions after frontmatter")
+
+
+def _validate_created_skill_files(files: list[CreateSkillFile]) -> list[tuple[PurePosixPath, str]]:
+    if len(files) > _CREATED_SKILL_MAX_FILES:
+        raise HTTPException(status_code=400, detail="Too many skill files")
+
+    validated: list[tuple[PurePosixPath, str]] = []
+    seen: set[str] = set()
+    for item in files:
+        path = _validated_created_skill_path(item.path)
+        key = path.as_posix()
+        if key in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate skill file path: {key!r}")
+        size = len(item.content.encode("utf-8"))
+        if size > _CREATED_SKILL_MAX_FILE_BYTES:
+            raise HTTPException(status_code=400, detail=f"Skill file is too large: {key!r}")
+        seen.add(key)
+        validated.append((path, item.content))
+
+    # A file cannot also be another file's parent. Catch this before any write
+    # so malformed packages never leave a partial staging tree behind.
+    for key in seen:
+        parts = PurePosixPath(key).parts
+        for index in range(1, len(parts)):
+            if PurePosixPath(*parts[:index]).as_posix() in seen:
+                raise HTTPException(status_code=400, detail=f"Conflicting skill file path: {key!r}")
+    return validated
 
 
 def _normalize_requires_mcp(value) -> list[str]:
@@ -1627,10 +1808,171 @@ def _scan_skills() -> list[dict]:
     return merged
 
 
+def _user_skill_directory(name: str) -> tuple[str, Path]:
+    """Resolve a chat-created user skill, never a builtin or alias."""
+    skill_name = _strict_skill_slug(name)
+    target = SKILLS_DIR / skill_name
+    skill_md = target / "SKILL.md"
+    if (
+        target.is_symlink()
+        or not target.is_dir()
+        or skill_md.is_symlink()
+        or not skill_md.is_file()
+    ):
+        raise HTTPException(status_code=404, detail=f"User skill '{skill_name}' not found")
+    return skill_name, target
+
+
+def _skip_skill_archive_path(relative: Path) -> bool:
+    parts = relative.parts
+    if any(part.startswith(".") for part in parts):
+        return True
+    if any(part in _SKILL_FILE_SKIP_DIRS for part in parts):
+        return True
+    # Uploaded archives execute a root install.sh for legacy compatibility.
+    # A user-published snapshot must therefore never carry that filename, even
+    # if the source skill predates the safe chat-creation endpoint.
+    if relative.name.casefold() == "install.sh":
+        return True
+    return _is_secret_skill_path(PurePosixPath(relative.as_posix()))
+
+
+def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
+    """Build a bounded, symlink-free ZIP with one top-level skill directory."""
+    skill_name, target = _user_skill_directory(name)
+    target_root = target.resolve()
+    files: list[tuple[Path, bytes]] = []
+    total_size = 0
+
+    for current, dirnames, filenames in os.walk(target, topdown=True, followlinks=False):
+        current_path = Path(current)
+        kept_dirs = []
+        for dirname in sorted(dirnames):
+            child = current_path / dirname
+            relative = child.relative_to(target)
+            if child.is_symlink() or _skip_skill_archive_path(relative):
+                continue
+            kept_dirs.append(dirname)
+        dirnames[:] = kept_dirs
+
+        for filename in sorted(filenames):
+            source = current_path / filename
+            relative = source.relative_to(target)
+            if _skip_skill_archive_path(relative):
+                continue
+            descriptor = None
+            try:
+                entry_stat = source.lstat()
+                if not stat.S_ISREG(entry_stat.st_mode):
+                    continue
+                resolved = source.resolve(strict=True)
+                if not resolved.is_relative_to(target_root):
+                    continue
+                # O_NONBLOCK prevents a malicious FIFO swapped into place from
+                # hanging the whole action server; fstat below still requires
+                # the opened object itself to be a regular file.
+                flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                if hasattr(os, "O_NOFOLLOW"):
+                    flags |= os.O_NOFOLLOW
+                descriptor = os.open(source, flags)
+                file_stat = os.fstat(descriptor)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    continue
+                size = file_stat.st_size
+                if len(files) + 1 > _SKILL_ARCHIVE_MAX_FILES:
+                    raise HTTPException(status_code=413, detail="Skill contains too many files to archive")
+                if total_size + size > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
+                    raise HTTPException(status_code=413, detail="Skill is too large to archive")
+                with os.fdopen(descriptor, "rb", closefd=True) as input_file:
+                    descriptor = None
+                    content = input_file.read(size + 1)
+                if len(content) > size:
+                    raise HTTPException(status_code=409, detail="Skill changed while it was being archived")
+            except OSError:
+                continue
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+            files.append((relative, content))
+            total_size += size
+
+    archive = BytesIO()
+    with zipfile.ZipFile(
+        archive,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+    ) as bundle:
+        for relative, content in files:
+            archive_name = (PurePosixPath(skill_name) / PurePosixPath(relative.as_posix())).as_posix()
+            # Fixed metadata makes the package a content snapshot: exporting
+            # unchanged files twice must yield the same checksum, otherwise a
+            # harmless download looks like a new unpublished version.
+            entry = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            bundle.writestr(entry, content, compresslevel=6)
+    return skill_name, archive.getvalue()
+
+
 @app.get("/skills")
 async def list_skills():
     """List all installed skills (builtin + user)."""
     return _scan_skills()
+
+
+@app.post("/skills/create")
+async def create_skill(req: CreateSkillRequest):
+    """Atomically create one validated, text-only user skill package."""
+    skill_name = _strict_skill_slug(req.name)
+    _validate_created_skill_markdown(skill_name, req.skill_md)
+    validated_files = _validate_created_skill_files(req.files)
+
+    skill_md_size = len(req.skill_md.encode("utf-8"))
+    if skill_md_size > _CREATED_SKILL_MAX_FILE_BYTES:
+        raise HTTPException(status_code=400, detail="SKILL.md is too large")
+    total_size = skill_md_size + sum(len(content.encode("utf-8")) for _, content in validated_files)
+    if total_size > _CREATED_SKILL_MAX_TOTAL_BYTES:
+        raise HTTPException(status_code=400, detail="Skill package is too large")
+
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    target = SKILLS_DIR / skill_name
+    if target.exists() or target.is_symlink():
+        raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+
+    staging = SKILLS_DIR / f".{skill_name}.{secrets.token_hex(6)}.incoming"
+    try:
+        staging.mkdir(mode=0o700)
+        (staging / "SKILL.md").write_text(req.skill_md, encoding="utf-8")
+        for relative, content in validated_files:
+            destination = staging.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(content, encoding="utf-8")
+
+        # The staging directory lives beside the destination, so rename is an
+        # atomic publication of a completely validated package. Creation never
+        # overwrites an existing install.
+        staging.replace(target)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+    created = next(
+        (
+            skill for skill in _scan_skills_in_dir(SKILLS_DIR, source="container")
+            if skill.get("install_dir") == skill_name and skill.get("name") == skill_name
+        ),
+        None,
+    )
+    if not created:
+        # This should be unreachable because the request was validated before
+        # publication, but do not report success for an undiscoverable skill.
+        shutil.rmtree(target, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="Created skill could not be discovered")
+    return {**created, "created": True}
 
 
 @app.get("/skills/{name}")
@@ -1641,6 +1983,47 @@ async def get_skill(name: str):
         if skill["name"] == name or skill.get("install_dir") == name:
             return skill
     raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+
+
+@app.get("/skills/{name}/archive")
+async def download_skill_archive(name: str):
+    """Download a clean ZIP snapshot of a user-created skill."""
+    skill_name, content = _skill_archive_bytes(name)
+    filename = f"{skill_name}.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(content)),
+        },
+    )
+
+
+@app.post("/skills/{name}/export")
+async def export_skill_archive(name: str):
+    """Write a clean ZIP snapshot into the user's workspace exports folder."""
+    skill_name, content = _skill_archive_bytes(name)
+    if SKILL_EXPORTS_DIR.is_symlink():
+        raise HTTPException(status_code=400, detail="Skill export directory cannot be a symlink")
+    SKILL_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    if not SKILL_EXPORTS_DIR.is_dir():
+        raise HTTPException(status_code=500, detail="Skill export directory is unavailable")
+
+    filename = f"{skill_name}.zip"
+    destination = SKILL_EXPORTS_DIR / filename
+    staging = SKILL_EXPORTS_DIR / f".{filename}.{secrets.token_hex(6)}.tmp"
+    try:
+        with staging.open("xb") as output:
+            output.write(content)
+        staging.replace(destination)
+    finally:
+        staging.unlink(missing_ok=True)
+    return {
+        "path": str(destination),
+        "filename": filename,
+        "size": len(content),
+    }
 
 
 @app.post("/skills/install")

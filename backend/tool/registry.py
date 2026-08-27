@@ -62,6 +62,7 @@ def register_builtin_tools() -> None:
     from tool.video_production import video_generate_tool, video_transcribe_tool, video_render_tool
     from tool.computer import computer_tool
     from tool.browser_mode import browser_mode_tool
+    from tool.skill_manage import skill_manage_tool
 
     for tool in [
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
@@ -70,7 +71,7 @@ def register_builtin_tools() -> None:
         skill_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
         video_project_tool, video_generate_tool, video_transcribe_tool, video_render_tool,
-        computer_tool, browser_mode_tool,
+        computer_tool, browser_mode_tool, skill_manage_tool,
     ]:
         register(tool)
 

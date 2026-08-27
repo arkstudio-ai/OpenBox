@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest"
 import { groupSkills } from "./group-skills"
 import type { InstalledSkill } from "@/features/skills-center/types"
 
-function skill(name: string, install_dir?: string, source = "container"): InstalledSkill {
-  return { name, install_dir, source, description: `${name} desc` }
+function skill(
+  name: string,
+  install_dir?: string,
+  source = "container",
+  extra: Partial<InstalledSkill> = {},
+): InstalledSkill {
+  return { name, install_dir, source, description: `${name} desc`, ...extra }
 }
 
 // Cloning anthropic/skills lands 19 SKILL.md files under one directory. The
@@ -77,5 +82,46 @@ describe("groupSkills", () => {
     const [group] = groupSkills([skill("dev-browser", "dev-browser", "builtin")])
     expect(group.removable).toBe(false)
     expect(group.members).toHaveLength(1)
+  })
+
+  it("keeps personal publication state on the install group", () => {
+    const [group] = groupSkills([
+      skill("my-writer", "my-writer", "container", {
+        category: "personal",
+        publication_status: "unpublished",
+        library_id: "library-1",
+      }),
+    ])
+    expect(group.category).toBe("personal")
+    expect(group.publicationStatus).toBe("unpublished")
+    expect(group.libraryId).toBe("library-1")
+  })
+
+  it("does not mistake a store install for a personal skill", () => {
+    const [group] = groupSkills([
+      skill("shared-writer", "shared-writer", "container", {
+        category: "store",
+        publication_status: null,
+        catalog_id: "community-1",
+      }),
+    ])
+    expect(group.category).toBe("store")
+    expect(group.publicationStatus).toBeNull()
+    expect(group.catalogId).toBe("community-1")
+  })
+
+  it("publishes a multi-skill archive as one personal install", () => {
+    const members = ["writer", "reviewer"].map((name) =>
+      skill(name, "my-pack", "container", {
+        category: "personal",
+        publication_status: "published",
+        catalog_id: "community-pack",
+      }),
+    )
+    const [group] = groupSkills(members)
+    expect(group.id).toBe("my-pack")
+    expect(group.category).toBe("personal")
+    expect(group.publicationStatus).toBe("published")
+    expect(group.catalogId).toBe("community-pack")
   })
 })

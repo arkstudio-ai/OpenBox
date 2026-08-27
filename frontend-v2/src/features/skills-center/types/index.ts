@@ -40,6 +40,16 @@ export interface InstalledSkill {
   source?: string
   install_dir?: string
   files?: string[]
+  /** Product-facing origin. Unlike `source`, this distinguishes a user's own
+   *  work from something they installed from the public store. */
+  category?: "personal" | "store" | "installed" | "builtin" | "host"
+  /** Only personal skills can be published. Built-in/store installs return null. */
+  publication_status?: "unpublished" | "published" | null
+  /** Durable library record backing a personal install. */
+  library_id?: string | null
+  /** Public catalogue record after publication, or the source catalogue entry for a store install. */
+  catalog_id?: string | null
+  published_at?: string | null
 }
 
 export interface CatalogEnvField {
@@ -68,6 +78,8 @@ export interface CatalogMcp extends CatalogBase {
 
 export interface CatalogSkill extends CatalogBase {
   kind: "skill"
+  /** Published by a user rather than maintained in the operator catalogue. */
+  community?: boolean
   requires_mcp: string[]
   /** Dependencies not yet installed — resolved server-side so both tabs agree. */
   missing_mcp: string[]

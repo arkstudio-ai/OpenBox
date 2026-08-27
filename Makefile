@@ -1,5 +1,9 @@
 .PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy
 
+BACKEND_ENTRYPOINT := uv run python scripts/backend_entrypoint.py
+FRONTEND_DIR := frontend-v2
+FRONTEND_PORT := 3000
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
@@ -7,58 +11,56 @@ sandbox-image: ## Build sandbox container image
 	docker build -t openbox-sandbox:latest ./container
 
 backend: ## Start backend dev server (foreground, with reload)
-	cd backend && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8080
+	cd backend && $(BACKEND_ENTRYPOINT) --reload --host 0.0.0.0 --port 8080
 
 frontend: ## Start frontend dev server (foreground)
-	cd frontend && npm run dev -- --host 0.0.0.0
+	cd $(FRONTEND_DIR) && npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT)
 
-dev: sandbox-image ## Start all dev servers (foreground)
+dev: ## Start backend + V2 frontend for development (foreground)
+	@echo "Applying database migrations..."
+	cd backend && $(BACKEND_ENTRYPOINT) --migrate-only
 	@echo "Starting backend..."
-	cd backend && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8080 &
+	cd backend && $(BACKEND_ENTRYPOINT) --skip-migrate --reload --host 0.0.0.0 --port 8080 &
 	@echo "Starting frontend..."
-	cd frontend && npm run dev -- --host 0.0.0.0
+	cd $(FRONTEND_DIR) && npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT)
 
-start: ## One-click start: rebuild image, clean containers, start backend + frontend (background)
+start: ## Start backend + V2 frontend (background)
 	@echo "=== Stopping old processes ==="
 	@-pkill -f "uvicorn main:app" 2>/dev/null || true
 	@-pkill -f "vite" 2>/dev/null || true
 	@sleep 1
 	@-kill -9 $$(lsof -ti :8080) 2>/dev/null || true
-	@-kill -9 $$(lsof -ti :5173) 2>/dev/null || true
+	@-kill -9 $$(lsof -ti :$(FRONTEND_PORT)) 2>/dev/null || true
 	@sleep 1
-	@echo "=== Removing old sandbox containers ==="
-	@-docker ps -a --filter "name=openbox-sandbox-" -q | xargs docker rm -f 2>/dev/null || true
-	@echo "=== Building sandbox image ==="
-	docker build -t openbox-sandbox:latest ./container
 	@echo "=== Installing dependencies ==="
 	cd backend && uv sync
-	cd frontend && npm install --silent
+	cd $(FRONTEND_DIR) && npm install --silent
+	@echo "=== Applying database migrations ==="
+	cd backend && $(BACKEND_ENTRYPOINT) --migrate-only
 	@echo "=== Starting backend (port 8080) ==="
-	cd backend && nohup uv run uvicorn main:app --host 0.0.0.0 --port 8080 > /tmp/openbox-backend.log 2>&1 &
-	@echo "=== Starting frontend (port 5173) ==="
-	cd frontend && nohup npm run dev -- --host 0.0.0.0 > /tmp/openbox-frontend.log 2>&1 &
+	cd backend && nohup $(BACKEND_ENTRYPOINT) --skip-migrate --host 0.0.0.0 --port 8080 > /tmp/openbox-backend.log 2>&1 &
+	@echo "=== Starting frontend (port $(FRONTEND_PORT)) ==="
+	cd $(FRONTEND_DIR) && nohup npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT) > /tmp/openbox-frontend.log 2>&1 &
 	@sleep 5
 	@echo "=== Health Check ==="
-	@curl -s -o /dev/null -w "Backend:  HTTP %{http_code}\n" http://localhost:8080/ 2>/dev/null || echo "Backend:  not ready"
-	@curl -s -o /dev/null -w "Frontend: HTTP %{http_code}\n" http://localhost:5173/ 2>/dev/null || echo "Frontend: not ready"
+	@curl -s -o /dev/null -w "Backend:  HTTP %{http_code}\n" http://localhost:8080/health 2>/dev/null || echo "Backend:  not ready"
+	@curl -s -o /dev/null -w "Frontend: HTTP %{http_code}\n" http://localhost:$(FRONTEND_PORT)/ 2>/dev/null || echo "Frontend: not ready"
 	@echo "=== Logs ==="
 	@echo "  tail -f /tmp/openbox-backend.log"
 	@echo "  tail -f /tmp/openbox-frontend.log"
 
-stop: ## Stop all services and clean up
+stop: ## Stop backend + V2 frontend
 	@echo "=== Stopping backend & frontend ==="
 	@-pkill -f "uvicorn main:app" 2>/dev/null || true
 	@-pkill -f "vite" 2>/dev/null || true
 	@sleep 1
 	@-kill -9 $$(lsof -ti :8080) 2>/dev/null || true
-	@-kill -9 $$(lsof -ti :5173) 2>/dev/null || true
-	@echo "=== Removing sandbox containers ==="
-	@-docker ps -a --filter "name=openbox-sandbox-" -q | xargs docker rm -f 2>/dev/null || true
+	@-kill -9 $$(lsof -ti :$(FRONTEND_PORT)) 2>/dev/null || true
 	@echo "=== All stopped ==="
 
-restart: stop start ## Restart everything (rebuild image + clean containers)
+restart: stop start ## Restart backend + V2 frontend
 
-deploy: ## Full deploy: git pull + rebuild + restart
+deploy: ## Pull latest code and restart backend + V2 frontend
 	git pull
 	$(MAKE) start
 
@@ -80,7 +82,7 @@ clean-containers: ## Force remove ALL sandbox containers (Docker + DB)
 
 install: ## Install all dependencies
 	cd backend && uv sync --extra test
-	cd frontend && npm install
+	cd $(FRONTEND_DIR) && npm install
 
 deps: ## Start dev dependencies (PG + Redis + Azurite)
 	docker compose -f docker-compose.dev.yml up -d
@@ -89,7 +91,7 @@ deps-down: ## Stop dev dependencies
 	docker compose -f docker-compose.dev.yml down
 
 migrate: ## Run database migrations
-	cd backend && DATABASE_URL=$${DATABASE_URL:-postgresql+asyncpg://openbox:openbox_dev@localhost:5432/openbox} uv run alembic upgrade head
+	cd backend && $(BACKEND_ENTRYPOINT) --migrate-only
 
 test: ## Run backend tests
 	cd backend && uv run pytest tests/ -v

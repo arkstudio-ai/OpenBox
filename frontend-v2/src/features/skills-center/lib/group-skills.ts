@@ -20,8 +20,20 @@ export interface SkillGroup {
   removable: boolean
   /** Where it came from — decides which badge the row wears. */
   origin: "container" | "builtin" | "host"
+  /** Product grouping supplied by the backend's durable install registry. */
+  category: "personal" | "store" | "installed" | "builtin" | "host"
+  publicationStatus: "unpublished" | "published" | null
+  libraryId?: string
+  catalogId?: string
+  publishedAt?: string
   icon?: string
   description?: string
+}
+
+function legacyCategory(skill: InstalledSkill): SkillGroup["category"] {
+  if (skill.source === "builtin") return "builtin"
+  if (skill.source === "container") return "installed"
+  return "host"
 }
 
 export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
@@ -39,6 +51,7 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
   for (const [id, members] of byDir) {
     const isPack = members.length > 1
     const first = members[0]
+    const category = first.category ?? legacyCategory(first)
     groups.push({
       id,
       // A pack is named by its directory, since no single member's name
@@ -52,6 +65,11 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
         : members.some((m) => m.source === "builtin")
           ? "builtin"
           : "host",
+      category,
+      publicationStatus: category === "personal" ? (first.publication_status ?? "unpublished") : null,
+      libraryId: first.library_id ?? undefined,
+      catalogId: first.catalog_id ?? undefined,
+      publishedAt: first.published_at ?? undefined,
       icon: isPack ? undefined : first.icon,
       description: isPack ? undefined : first.description,
     })

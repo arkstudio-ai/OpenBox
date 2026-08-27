@@ -11,7 +11,9 @@ rebound into tmp_path, because it ships as a standalone script rather than an
 importable package.
 """
 import io
+import os
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -33,10 +35,14 @@ def server(tmp_path):
     src = src.replace('Path("/opt/openbox/skills")', f'Path(r"{builtin}")')
     src = src.replace('Path("/data/mcp/config.json")', f'Path(r"{tmp_path}/data/mcp/config.json")')
     src = src.replace('Path("/workspace/skills")', f'Path(r"{tmp_path}/workspace/skills")')
+    src = src.replace('Path("/workspace/exports")', f'Path(r"{tmp_path}/workspace/exports")')
     src = src.replace('Path("/data/.manifest.json")', f'Path(r"{tmp_path}/data/.manifest.json")')
     src = src.replace('if __name__ == "__main__":', "if False:")
 
-    ns = {"__name__": "action_server_under_test"}
+    # Supply the real source location so action_server can import its sibling
+    # media_jobs module regardless of whether pytest was launched from the
+    # repository root or from backend/ (the documented test command).
+    ns = {"__name__": "action_server_under_test", "__file__": str(ACTION_SERVER)}
     exec(compile(src, str(ACTION_SERVER), "exec"), ns)
     ns["_test_skills_dir"] = skills
     ns["_test_builtin_dir"] = builtin
@@ -159,6 +165,215 @@ def test_real_skill_directory_is_listed(server):
 
     found = server["_scan_skills_in_dir"](skills, source="container")
     assert [s["name"] for s in found] == ["genuine"]
+
+
+# --- atomic chat-created skill packages -------------------------------------
+
+def _skill_md(name="greeting-helper"):
+    return (
+        "---\n"
+        f"name: {name}\n"
+        "description: Replies with a stable greeting.\n"
+        "---\n\n"
+        "# Instructions\n\nAlways use the greeting from references/greeting.txt.\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_skill_publishes_a_complete_package_atomically(server):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[
+            {"path": "references/greeting.txt", "content": "Hello, OpenBox!\n"},
+            {"path": "scripts/render.py", "content": "print('hello')\n"},
+        ],
+    )
+
+    result = await server["create_skill"](request)
+    target = server["_test_skills_dir"] / "greeting-helper"
+
+    assert result["created"] is True
+    assert result["name"] == "greeting-helper"
+    assert (target / "SKILL.md").read_text() == _skill_md()
+    assert (target / "references/greeting.txt").read_text() == "Hello, OpenBox!\n"
+    assert not list(server["_test_skills_dir"].glob(".*.incoming"))
+
+
+@pytest.mark.parametrize("path", [
+    "../escape.txt",
+    "references/../../escape.txt",
+    "/absolute.txt",
+    "nested\\windows.txt",
+    "hidden/.private.txt",
+    ".hidden/file.txt",
+    "install.sh",
+    "scripts/INSTALL.SH",
+    ".env",
+    "keys/server.pem",
+    "config/credentials.json",
+    "secrets/value.txt",
+])
+@pytest.mark.asyncio
+async def test_create_skill_rejects_unsafe_secret_and_executable_paths(server, path):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[{"path": path, "content": "not allowed"}],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await server["create_skill"](request)
+
+    assert exc.value.status_code == 400
+    assert not (server["_test_skills_dir"] / "greeting-helper").exists()
+    assert not list(server["_test_skills_dir"].glob(".*.incoming"))
+
+
+@pytest.mark.parametrize("name", [
+    "Greeting-Helper",
+    "greeting_helper",
+    "greeting helper",
+    "-greeting",
+    "greeting-",
+    "greeting--helper",
+    "a" * 65,
+    "../greeting",
+])
+@pytest.mark.asyncio
+async def test_create_skill_requires_a_strict_slug(server, name):
+    # model_construct lets the endpoint's filesystem boundary be exercised for
+    # overlong input too; HTTP requests also have a Pydantic length guard.
+    request = server["CreateSkillRequest"].model_construct(
+        name=name, skill_md=_skill_md(name), files=[]
+    )
+    with pytest.raises(HTTPException) as exc:
+        await server["create_skill"](request)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_skill_requires_matching_valid_frontmatter(server):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md("different-name"),
+        files=[],
+    )
+    with pytest.raises(HTTPException) as exc:
+        await server["create_skill"](request)
+    assert exc.value.status_code == 400
+    assert "exactly match" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_skill_enforces_total_package_size_before_writing(server):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[
+            {"path": f"references/{index}.txt", "content": "x" * (450 * 1024)}
+            for index in range(5)
+        ],
+    )
+    with pytest.raises(HTTPException) as exc:
+        await server["create_skill"](request)
+    assert exc.value.status_code == 400
+    assert "package is too large" in exc.value.detail
+    assert not (server["_test_skills_dir"] / "greeting-helper").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_skill_never_overwrites_an_existing_install(server):
+    target = server["_test_skills_dir"] / "greeting-helper"
+    target.mkdir()
+    original = _skill_md()
+    (target / "SKILL.md").write_text(original)
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=original.replace("stable greeting", "changed greeting"),
+        files=[],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await server["create_skill"](request)
+
+    assert exc.value.status_code == 409
+    assert (target / "SKILL.md").read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_download_archive_has_one_top_level_dir_and_skips_unsafe_files(server, tmp_path):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[{"path": "references/greeting.txt", "content": "hello"}],
+    )
+    await server["create_skill"](request)
+    target = server["_test_skills_dir"] / "greeting-helper"
+    (target / ".cache").mkdir()
+    (target / ".cache/junk.txt").write_text("junk")
+    (target / ".env").write_text("TOKEN=secret")
+    (target / "private.key").write_text("secret")
+    (target / "install.sh").write_text("touch /tmp/should-not-run")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+    (target / "linked.txt").symlink_to(outside)
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (outside_dir / "nested.txt").write_text("outside")
+    (target / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
+    os.mkfifo(target / "named-pipe")
+
+    response = await server["download_skill_archive"]("greeting-helper")
+    assert response.media_type == "application/zip"
+    assert response.headers["content-disposition"] == 'attachment; filename="greeting-helper.zip"'
+
+    with zipfile.ZipFile(io.BytesIO(response.body)) as archive:
+        names = archive.namelist()
+        assert names == [
+            "greeting-helper/SKILL.md",
+            "greeting-helper/references/greeting.txt",
+        ]
+        assert archive.read("greeting-helper/references/greeting.txt") == b"hello"
+        assert all(name.startswith("greeting-helper/") for name in names)
+        assert "greeting-helper/install.sh" not in names
+
+
+@pytest.mark.asyncio
+async def test_export_writes_the_same_clean_archive_to_workspace(server):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[{"path": "references/greeting.txt", "content": "hello"}],
+    )
+    await server["create_skill"](request)
+
+    result = await server["export_skill_archive"]("greeting-helper")
+    archive_path = Path(result["path"])
+
+    assert result["filename"] == "greeting-helper.zip"
+    assert archive_path == server["SKILL_EXPORTS_DIR"] / result["filename"]
+    assert result["size"] == archive_path.stat().st_size
+    with zipfile.ZipFile(archive_path) as archive:
+        assert archive.namelist() == [
+            "greeting-helper/SKILL.md",
+            "greeting-helper/references/greeting.txt",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_unchanged_skill_archive_is_byte_for_byte_deterministic(server):
+    request = server["CreateSkillRequest"](
+        name="greeting-helper",
+        skill_md=_skill_md(),
+        files=[{"path": "references/greeting.txt", "content": "hello"}],
+    )
+    await server["create_skill"](request)
+
+    first = await server["download_skill_archive"]("greeting-helper")
+    second = await server["download_skill_archive"]("greeting-helper")
+
+    assert first.body == second.body
 
 
 # --- MCP subprocess environment ---------------------------------------------

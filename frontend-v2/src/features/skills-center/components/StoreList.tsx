@@ -12,7 +12,7 @@ function Homepage({ href, label }: { href: string; label: string }) {
       rel="noreferrer"
       title={label}
       aria-label={label}
-      className="flex size-7 items-center justify-center rounded-lg text-n600 hover:bg-card hover:text-ink"
+      className="text-n600 hover:bg-card hover:text-ink flex size-7 items-center justify-center rounded-lg"
     >
       <ExternalLink size={14} />
     </a>
@@ -35,7 +35,7 @@ function InstallButton({
       type="button"
       disabled={installed}
       onClick={onInstall}
-      className="rounded-full bg-ink px-3 py-1 text-xs text-bg hover:opacity-90 disabled:bg-n200 disabled:text-n700"
+      className="bg-ink text-bg disabled:bg-n200 disabled:text-n700 rounded-full px-3 py-1 text-xs hover:opacity-90"
     >
       {installed ? installedLabel : installLabel}
     </button>
@@ -60,14 +60,14 @@ export function StoreList({
   const { t } = useTranslation("skills")
 
   if (skills.length === 0 && mcp.length === 0) {
-    return <p className="py-12 text-center text-sm text-n600">{t("store.noMatch")}</p>
+    return <p className="text-n600 py-12 text-center text-sm">{t("store.noMatch")}</p>
   }
 
   return (
     <div className="flex flex-col gap-5">
       {showSkills && skills.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-medium text-n600">{t("section.storeSkills")}</h2>
+          <h2 className="text-n600 mb-2 text-xs font-medium">{t("section.storeSkills")}</h2>
           <div className="flex flex-col gap-1.5">
             {skills.map((s) => (
               <EntryRow
@@ -78,13 +78,12 @@ export function StoreList({
                 badges={
                   <>
                     {s.publisher && <Badge>{s.publisher}</Badge>}
+                    {s.community ? <Badge tone="ok">{t("badge.community")}</Badge> : null}
                     {/* Stated on the card, not just in the dialog: whether a
                         skill drags a server along changes whether someone
                         wants it at all. */}
                     {s.requires_mcp.length > 0 && (
-                      <Badge tone="warn">
-                        {t("badge.needsMcp", { names: s.requires_mcp.join(", ") })}
-                      </Badge>
+                      <Badge tone="warn">{t("badge.needsMcp", { names: s.requires_mcp.join(", ") })}</Badge>
                     )}
                   </>
                 }
@@ -107,7 +106,7 @@ export function StoreList({
 
       {showMcp && mcp.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-medium text-n600">{t("section.storeMcp")}</h2>
+          <h2 className="text-n600 mb-2 text-xs font-medium">{t("section.storeMcp")}</h2>
           <div className="flex flex-col gap-1.5">
             {mcp.map((s) => (
               <EntryRow
@@ -119,9 +118,7 @@ export function StoreList({
                   <>
                     {s.publisher && <Badge>{s.publisher}</Badge>}
                     <Badge>{t(`upload.transport.${s.config.type}`)}</Badge>
-                    {s.required_env?.length ? (
-                      <Badge tone="warn">{t("badge.needsKey")}</Badge>
-                    ) : null}
+                    {s.required_env?.length ? <Badge tone="warn">{t("badge.needsKey")}</Badge> : null}
                   </>
                 }
                 actions={

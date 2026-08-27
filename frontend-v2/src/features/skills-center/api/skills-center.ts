@@ -1,7 +1,8 @@
 // Skill centre data hooks. Components never fetch directly (ENGINEERING_SPEC §7).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { http, request } from "@/shared/api/http"
+import { http, request, requestBlob } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
+import type { Project, Session } from "@/shared/types/api"
 import type {
   Catalog,
   CatalogInstallResult,
@@ -21,6 +22,8 @@ export function useInstalledSkills() {
   return useQuery({
     queryKey: skillCenterKeys.skills(userId),
     queryFn: () => http.get<InstalledSkill[]>("/api/agent/skill"),
+    // A skill can be created by an agent while this route is unmounted.
+    refetchOnMount: "always",
   })
 }
 
@@ -37,6 +40,17 @@ export function useCatalog() {
   return useQuery({
     queryKey: skillCenterKeys.catalog(userId),
     queryFn: () => http.get<Catalog>("/api/agent/catalog"),
+  })
+}
+
+/** Projects offered by the chat-creation dialog. Kept in this feature so it
+ *  does not reach sideways into workspace's private API layer. */
+export function useSkillProjects(enabled = true) {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: skillCenterKeys.projects(userId),
+    queryFn: () => http.get<Project[]>("/api/agent/project"),
+    enabled,
   })
 }
 
@@ -95,8 +109,7 @@ export function useRemoveMcpServer() {
 export function useConnectMcpServer() {
   const refresh = useRefreshAll()
   return useMutation({
-    mutationFn: (name: string) =>
-      http.post(`/api/agent/mcp/${encodeURIComponent(name)}/connect`, undefined),
+    mutationFn: (name: string) => http.post(`/api/agent/mcp/${encodeURIComponent(name)}/connect`, undefined),
     onSuccess: refresh,
   })
 }
@@ -115,6 +128,71 @@ export function useUninstallSkill() {
   return useMutation({
     mutationFn: (name: string) => http.delete(`/api/agent/skill/${encodeURIComponent(name)}`),
     onSuccess: refresh,
+  })
+}
+
+export function usePublishSkill() {
+  const refresh = useRefreshAll()
+  return useMutation({
+    mutationFn: (installDir: string) =>
+      http.post<InstalledSkill>(`/api/agent/skill/${encodeURIComponent(installDir)}/publish`, undefined),
+    onSuccess: refresh,
+  })
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  anchor.rel = "noopener"
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+/** Download the whole install directory, not one member of a skill pack. */
+export function useDownloadSkillArchive() {
+  return useMutation({
+    mutationFn: async (installDir: string) => {
+      const result = await requestBlob(`/api/agent/skill/${encodeURIComponent(installDir)}/download`)
+      saveBlob(result.blob, result.filename || `${installDir}.zip`)
+    },
+  })
+}
+
+export interface CreateSkillChatVars {
+  projectId: string
+  brief: string
+  prompt: string
+}
+
+/** Create a real chat, seed it with the person's natural-language request,
+ *  then hand the session id to the caller for navigation. */
+export function useCreateSkillChat() {
+  const userId = useUserId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ projectId, brief, prompt }: CreateSkillChatVars) => {
+      const session = await http.post<Session>("/api/agent/session", {
+        project_id: projectId,
+        agent: "build",
+        title: brief.length > 32 ? `${brief.slice(0, 32)}…` : brief,
+      })
+      const clientMessageId = `skill-create-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`
+      await http.post<{ ok: boolean }>(`/api/agent/session/${session.id}/prompt_async`, {
+        text: prompt,
+        agent: "build",
+        client_message_id: clientMessageId,
+      })
+      return session
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: skillCenterKeys.sessions(userId) })
+    },
   })
 }
 

@@ -74,9 +74,22 @@ const TOOL_TABLE: Record<string, ToolGlyph> = {
 }
 
 /** Structural layout for a tool's detail column — how its output is composed. */
-export type ToolLayout = "search" | "fetch" | "shell" | "file" | "find" | "agent" | "skill" | "question" | "generic"
+export type ToolLayout =
+  "search" | "fetch" | "shell" | "file" | "find" | "agent" | "skill" | "question" | "generic"
 
-const FILE_TOOLS = ["read", "write", "edit", "multiedit", "apply_patch", "str_replace", "readfile", "writefile", "view", "create", "new_file"]
+const FILE_TOOLS = [
+  "read",
+  "write",
+  "edit",
+  "multiedit",
+  "apply_patch",
+  "str_replace",
+  "readfile",
+  "writefile",
+  "view",
+  "create",
+  "new_file",
+]
 const FIND_TOOLS = ["glob", "grep", "find", "search", "ls", "ripgrep"]
 
 /** Pick the detail-column layout for a raw tool name (mcp_* → generic). */
@@ -90,7 +103,7 @@ export function resolveToolLayout(tool: string): ToolLayout {
   // A skill load injects a whole instruction document; rendering it in the
   // transcript buries the conversation under the manual. The name is the only
   // part a reader needs.
-  if (t === "skill" || t.startsWith("skill")) return "skill"
+  if (t === "skill") return "skill"
   if (t === "task" || t === "agent") return "agent"
   // A question is worth reading back as the exchange it was.
   if (t === "question") return "question"
@@ -102,7 +115,7 @@ export function describeTool(tool: string): ToolGlyph {
   const t = tool.toLowerCase()
   const hit = TOOL_TABLE[t]
   if (hit) return hit
-  if (t.startsWith("skill")) return SKILL
+  if (t === "skill") return SKILL
   // mcp_* and everything else
   return MCP
 }

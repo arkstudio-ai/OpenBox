@@ -6,35 +6,37 @@
 // that breaks when it goes unnoticed.
 import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Plus, Search } from "lucide-react"
+import { useNavigate } from "react-router"
+import { paths } from "@/shared/router/paths"
 import {
   useAddMcpServer,
   useCatalog,
   useConnectMcpServer,
+  useCreateSkillChat,
   useDisconnectMcpServer,
+  useDownloadSkillArchive,
   useInstallFromCatalog,
   useInstallSkill,
   useInstalledSkills,
   useMcpServers,
+  usePublishSkill,
   useRemoveMcpServer,
+  useSkillProjects,
   useUninstallSkill,
   useUploadSkillArchive,
 } from "@/features/skills-center/api/skills-center"
 import type { CenterTab, InstalledSkill, KindFilter } from "@/features/skills-center/types"
+import type { SkillGroup } from "@/features/skills-center/lib/group-skills"
 import type { ParsedMcpEntry } from "@/features/skills-center/lib/parse-mcp-config"
 import { useDependencyResolver } from "@/features/skills-center/hooks/useDependencies"
-import {
-  DependencyDialog,
-  type Dependency,
-  type DependencyTarget,
-} from "./DependencyDialog"
+import { DependencyDialog, type Dependency, type DependencyTarget } from "./DependencyDialog"
 import { InstallDialog, type InstallTarget } from "./InstallDialog"
 import { MineList } from "./MineList"
+import { CreateSkillDialog } from "./CreateSkillDialog"
+import { PublishSkillDialog } from "./PublishSkillDialog"
+import { SkillCenterToolbar } from "./SkillCenterToolbar"
 import { StoreList } from "./StoreList"
 import { UploadDialog } from "./UploadDialog"
-
-const CENTER_TABS: CenterTab[] = ["mine", "store"]
-const KIND_FILTERS: KindFilter[] = ["all", "skill", "mcp"]
 
 function matches(query: string, ...fields: (string | undefined)[]): boolean {
   const q = query.trim().toLowerCase()
@@ -48,17 +50,21 @@ function errorText(e: unknown): string {
 
 export function SkillCenter() {
   const { t } = useTranslation("skills")
+  const navigate = useNavigate()
   const [tab, setTab] = useState<CenterTab>("mine")
   const [kind, setKind] = useState<KindFilter>("all")
   const [query, setQuery] = useState("")
   const [installTarget, setInstallTarget] = useState<InstallTarget | null>(null)
   const [depTarget, setDepTarget] = useState<DependencyTarget | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [publishTarget, setPublishTarget] = useState<SkillGroup | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const skills = useInstalledSkills()
   const servers = useMcpServers()
   const catalog = useCatalog()
+  const projects = useSkillProjects(createOpen)
 
   const installFromCatalog = useInstallFromCatalog()
   const addMcp = useAddMcpServer()
@@ -68,8 +74,11 @@ export function SkillCenter() {
   const uninstallSkill = useUninstallSkill()
   const installSkill = useInstallSkill()
   const uploadArchive = useUploadSkillArchive()
+  const publishSkill = usePublishSkill()
+  const downloadSkill = useDownloadSkillArchive()
+  const createSkillChat = useCreateSkillChat()
 
-  const mcpServers = servers.data ?? []
+  const mcpServers = useMemo(() => servers.data ?? [], [servers.data])
   const unmetFor = useDependencyResolver(mcpServers, catalog.data?.mcp ?? [])
 
   // Every skill the agent can reach is listed, including the ones baked into
@@ -100,22 +109,27 @@ export function SkillCenter() {
     [catalog.data, query],
   )
 
-  const mutating =
-    installFromCatalog.isPending ||
-    addMcp.isPending ||
-    installSkill.isPending ||
-    uploadArchive.isPending
-  const rowBusy =
-    uninstallSkill.isPending ||
-    removeMcp.isPending ||
-    connectMcp.isPending ||
-    disconnectMcp.isPending
+  const mutating = [
+    installFromCatalog.isPending,
+    addMcp.isPending,
+    installSkill.isPending,
+    uploadArchive.isPending,
+    createSkillChat.isPending,
+  ].some(Boolean)
+  const rowBusy = [
+    uninstallSkill.isPending,
+    removeMcp.isPending,
+    connectMcp.isPending,
+    disconnectMcp.isPending,
+    publishSkill.isPending,
+    downloadSkill.isPending,
+  ].some(Boolean)
   const loading = tab === "mine" ? skills.isLoading || servers.isLoading : catalog.isLoading
 
-  function run<T>(promise: Promise<T>, onDone?: () => void) {
+  function run<T>(promise: Promise<T>, onDone?: (value: T) => void) {
     setActionError(null)
     promise.then(
-      () => onDone?.(),
+      (value) => onDone?.(value),
       (e: unknown) => setActionError(errorText(e)),
     )
   }
@@ -135,10 +149,7 @@ export function SkillCenter() {
   }
 
   /** Install what is missing, reconnect what is merely disconnected. */
-  async function resolveDependencies(
-    deps: Dependency[],
-    env: Record<string, Record<string, string>>,
-  ) {
+  async function resolveDependencies(deps: Dependency[], env: Record<string, Record<string, string>>) {
     setActionError(null)
     try {
       for (const dep of deps) {
@@ -201,70 +212,27 @@ export function SkillCenter() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex gap-1">
-          {CENTER_TABS.map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={`rounded-full px-3.5 py-1.5 text-sm transition-colors ${
-                tab === key ? "bg-ink text-bg" : "text-n700 hover:bg-hairsoft"
-              }`}
-            >
-              {t(`tab.${key}`)}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setActionError(null)
-            setUploadOpen(true)
-          }}
-          className="flex items-center gap-1.5 rounded-full border border-hair px-3 py-1.5 text-sm text-ink hover:bg-hairsoft"
-        >
-          <Plus size={15} />
-          {t("action.add")}
-        </button>
-      </div>
+      <SkillCenterToolbar
+        filters={{ tab, kind, query }}
+        onChange={{ tab: setTab, kind: setKind, query: setQuery }}
+        onCreateChat={() => {
+          setActionError(null)
+          setCreateOpen(true)
+        }}
+        onAdd={() => {
+          setActionError(null)
+          setUploadOpen(true)
+        }}
+      />
 
-      <div className="flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-2 rounded-xl border border-hair bg-canvas px-3 py-2">
-          <Search size={15} className="flex-none text-n600" aria-hidden />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("searchPlaceholder")}
-            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-n600"
-          />
-        </div>
-        <div className="flex flex-none gap-1">
-          {KIND_FILTERS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              className={`rounded-full px-2.5 py-1.5 text-xs transition-colors ${
-                kind === k ? "bg-hairsoft text-ink" : "text-n600 hover:bg-hairsoft/60"
-              }`}
-            >
-              {t(`filter.${k}`)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {actionError && !installTarget && !uploadOpen && (
-        <p className="rounded-lg bg-dangersoft px-3 py-2 text-xs leading-5 text-danger">
-          {actionError}
-        </p>
+      {actionError && !installTarget && !uploadOpen && !createOpen && !publishTarget && (
+        <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">{actionError}</p>
       )}
 
       {loading ? (
         <div className="flex flex-col gap-1.5">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-16 animate-pulse rounded-xl bg-hairsoft/50" />
+            <div key={i} className="bg-hairsoft/50 h-16 animate-pulse rounded-xl" />
           ))}
         </div>
       ) : tab === "mine" ? (
@@ -297,6 +265,11 @@ export function SkillCenter() {
             connect: (name) => run(connectMcp.mutateAsync(name)),
             disconnect: (name) => run(disconnectMcp.mutateAsync(name)),
             removeMcp: (name) => run(removeMcp.mutateAsync(name)),
+            publishSkill: (group) => {
+              setActionError(null)
+              setPublishTarget(group)
+            },
+            downloadSkill: (dir) => run(downloadSkill.mutateAsync(dir)),
           }}
         />
       ) : (
@@ -368,6 +341,45 @@ export function SkillCenter() {
           onAddMcp={(entries) => void handleAddMcp(entries)}
         />
       )}
+
+      {publishTarget ? (
+        <PublishSkillDialog
+          target={publishTarget}
+          busy={publishSkill.isPending}
+          error={actionError}
+          onCancel={() => {
+            setPublishTarget(null)
+            setActionError(null)
+          }}
+          onConfirm={() => run(publishSkill.mutateAsync(publishTarget.id), () => setPublishTarget(null))}
+        />
+      ) : null}
+
+      {createOpen ? (
+        <CreateSkillDialog
+          projects={projects.data ?? []}
+          loading={projects.isLoading}
+          busy={createSkillChat.isPending}
+          error={actionError ?? (projects.error ? errorText(projects.error) : null)}
+          onCancel={() => {
+            setCreateOpen(false)
+            setActionError(null)
+          }}
+          onConfirm={(projectId, brief) =>
+            run(
+              createSkillChat.mutateAsync({
+                projectId,
+                brief,
+                prompt: t("create.prompt", { brief }),
+              }),
+              (session) => {
+                setCreateOpen(false)
+                navigate(paths.chat(session.id))
+              },
+            )
+          }
+        />
+      ) : null}
     </div>
   )
 }

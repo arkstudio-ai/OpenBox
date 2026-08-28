@@ -13,7 +13,6 @@ class ThinkingTrace extends ConsumerWidget {
     super.key,
     required this.turn,
     required this.active,
-    required this.autoCollapseReady,
   });
 
   final AssistantTurnData turn;
@@ -22,7 +21,6 @@ class ThinkingTrace extends ConsumerWidget {
   /// `thinkingStreaming` flips every time a tool part lands after reasoning,
   /// which made the title flicker between 正在思考 and 思考完成.
   final bool active;
-  final bool autoCollapseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -35,7 +33,6 @@ class ThinkingTrace extends ConsumerWidget {
           ? i18n.t('chat:trace.think.subtitleActive')
           : i18n.t('chat:trace.think.subtitleDone'),
       active: active,
-      autoCollapseReady: autoCollapseReady,
       child: MarkdownView(
         turn.thinkingText,
         variant: MarkdownVariant.thinking,

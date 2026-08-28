@@ -11,6 +11,7 @@ import 'cards/inline_error_card.dart';
 import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
 import 'cards/todo_card.dart';
+import 'cards/video_identity_card.dart';
 import 'markdown_view.dart';
 import 'result_artifacts.dart';
 import 'step_divider.dart';
@@ -77,9 +78,6 @@ class AssistantTurn extends ConsumerWidget {
         turn.hasThinking ||
         turn.hasTools;
 
-    // Process narration must not collapse the traces or masquerade as an
-    // answer. Only an actual final response closes the live work rows.
-    final autoCollapseReady = content.hasFinal;
     // Hold each trace live for its whole phase rather than deriving it from
     // per-part activity flags, which flip many times within one turn.
     final preAnswer = streaming && !content.hasFinal;
@@ -100,13 +98,11 @@ class AssistantTurn extends ConsumerWidget {
           ProcessTrace(
             turn: turn,
             active: preAnswer,
-            autoCollapseReady: autoCollapseReady,
           ),
         if (turn.hasThinking)
           ThinkingTrace(
             turn: turn,
             active: thinkingLive,
-            autoCollapseReady: autoCollapseReady,
           ),
         // Web order: the task card sits between thinking and the (loose)
         // tool chain, above the prose.
@@ -122,13 +118,15 @@ class AssistantTurn extends ConsumerWidget {
           ToolChainTrace(
             turn: turn,
             active: toolsLive,
-            autoCollapseReady: autoCollapseReady,
           ),
         WorkLogTrace(
           events: content.workEvents,
           active: preAnswer,
-          autoCollapseReady: autoCollapseReady,
           defaultOpen: content.incomplete,
+        ),
+        VideoIdentityCards(
+          parts: [for (final m in turn.messages) ...m.parts],
+          sessionId: sessionId,
         ),
         if (streaming && !hasActivity)
           Align(alignment: Alignment.centerLeft, child: ThinkingRow(retry: retry))

@@ -5,16 +5,24 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/widgets/fold.dart';
 import '../../../../shared/widgets/shimmer_text.dart';
 
-/// Latched accordion (web `TraceShell.tsx`): opens when its phase goes
-/// live, auto-closes ONCE when the turn starts producing prose, otherwise
-/// holds state including the user's manual toggle — no per-frame derivation
-/// (prevents flicker, web D.4.4).
+/// Collapsed trace row (web `TraceShell.tsx`).
+///
+/// Open/closed belongs to the reader, and to nobody else. This used to open
+/// itself whenever the phase went live and close itself when the turn started
+/// answering. Both flags flip repeatedly within one turn — reasoning
+/// alternates with tool calls, and a tool chain goes quiet between two calls
+/// — so every flip re-opened a row the reader had just collapsed, and a
+/// streaming turn kept several hundred pixels of trace open by default. Now
+/// nothing but the toggle moves it.
+///
+/// Collapsed is not silent: the title shimmers while the phase runs and the
+/// summary carries the live count or the call in flight, so the row still
+/// says what is happening — in one line instead of a column.
 class TraceShell extends StatefulWidget {
   const TraceShell({
     super.key,
     required this.title,
     required this.active,
-    required this.autoCollapseReady,
     required this.child,
     this.summary,
     this.defaultOpen = false,
@@ -23,13 +31,10 @@ class TraceShell extends StatefulWidget {
   final String title;
   final String? summary;
 
-  /// This phase is currently live (streams shimmer on the title).
+  /// This phase is currently live (shimmers the title).
   final bool active;
 
-  /// The turn has begun producing its answer → collapse once.
-  final bool autoCollapseReady;
-
-  /// Completed-but-incomplete work should reopen on transcript reload.
+  /// Start open. Only for a finished turn that owes an explanation.
   final bool defaultOpen;
 
   final Widget child;
@@ -39,20 +44,7 @@ class TraceShell extends StatefulWidget {
 }
 
 class _TraceShellState extends State<TraceShell> {
-  late bool _open = widget.active || widget.defaultOpen;
-  bool _autoCollapsed = false;
-
-  @override
-  void didUpdateWidget(TraceShell oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) {
-      _open = true;
-    }
-    if (widget.autoCollapseReady && !oldWidget.autoCollapseReady && !_autoCollapsed) {
-      _open = false;
-      _autoCollapsed = true;
-    }
-  }
+  late bool _open = widget.defaultOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +63,7 @@ class _TraceShellState extends State<TraceShell> {
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 ShimmerText(widget.title,
                     style: titleStyle, enabled: widget.active),
@@ -81,7 +74,7 @@ class _TraceShellState extends State<TraceShell> {
                       widget.summary!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+                      style: TextStyle(fontSize: FontSizes.xs2, color: t.n500),
                     ),
                   ),
                 ] else

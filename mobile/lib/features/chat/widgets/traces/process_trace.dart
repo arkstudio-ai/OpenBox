@@ -14,15 +14,10 @@ class ProcessTrace extends ConsumerWidget {
     super.key,
     required this.turn,
     required this.active,
-    required this.autoCollapseReady,
   });
 
   final AssistantTurnData turn;
   final bool active;
-
-  /// Only an actual final answer closes the live rows — process narration
-  /// must not collapse the trace or masquerade as an answer (web parity).
-  final bool autoCollapseReady;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,7 +34,6 @@ class ProcessTrace extends ConsumerWidget {
         count: turn.stepCount,
       ),
       active: active,
-      autoCollapseReady: autoCollapseReady,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

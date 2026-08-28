@@ -27,6 +27,7 @@
     "task": "子任务",
     "todo": "计划",
     "question": "提问",
+    "videoIdentity": "真人授权",
     "tool": "工具"
   },
   "toolMeta": {
@@ -227,6 +228,24 @@
     "running": "调用中",
     "completed": "已完成",
     "failed": "失败"
+  },
+  "videoIdentity": {
+    "title": "真人形象授权",
+    "status": {
+      "awaiting_user": "请由本人打开认证页面，完成实名与活体授权。完成前不会提交视频生成。",
+      "active": "真人认证已完成，专属真人素材组可以使用。",
+      "expired": "认证链接已过期，请在对话中让助手重新发起认证。",
+      "failed": "真人认证失败，请检查提示后重新发起。"
+    },
+    "expires": "认证链接预计 {{time}} 前有效",
+    "open": "打开认证页面",
+    "completed": "我已完成，检查状态",
+    "checking": "正在检查",
+    "continueMessage": "我已完成真人授权，请检查状态并继续制作视频。",
+    "refreshFailed": "状态检查失败",
+    "readyHint": "下一步会把你确认的参考图放入此真人素材组。",
+    "assetReady": "参考人物素材已通过审核并入库。",
+    "qrAlt": "真人认证二维码"
   },
   "markdown": {
     "expandCode": "展开代码",

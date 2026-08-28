@@ -20,7 +20,6 @@ class ToolChainTrace extends ConsumerWidget {
     super.key,
     required this.turn,
     required this.active,
-    required this.autoCollapseReady,
   });
 
   final AssistantTurnData turn;
@@ -28,7 +27,30 @@ class ToolChainTrace extends ConsumerWidget {
   /// Held live for the whole tool phase — `toolsStreaming` drops in the gap
   /// between two calls, which made the row title flicker (web parity).
   final bool active;
-  final bool autoCollapseReady;
+
+  /// The call in flight, else the last one that finished.
+  MessagePart? get _current {
+    final running = turn.toolChain.where((p) =>
+        p is ToolPart &&
+        (p.status == ToolStatus.running || p.status == ToolStatus.pending));
+    if (running.isNotEmpty) return running.last;
+    return turn.toolChain.isEmpty ? null : turn.toolChain.last;
+  }
+
+  String _summary(I18nState i18n) {
+    if (active) {
+      final current = _current;
+      if (current is ToolPart) {
+        return '${i18n.t('chat:kind.${toolKindKey(current.tool)}')} '
+            '${toolTarget(current)}';
+      }
+      if (current is SubtaskPart) {
+        return '${i18n.t('chat:kind.task')} ${current.description}';
+      }
+    }
+    return i18n.t('chat:trace.tool.summaryCount',
+        count: turn.toolChain.length);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,10 +59,11 @@ class ToolChainTrace extends ConsumerWidget {
       title: active
           ? i18n.t('chat:trace.tool.titleActive')
           : i18n.t('chat:trace.tool.titleDone'),
-      summary: i18n
-          .t('chat:trace.tool.summaryCount', count: turn.toolChain.length),
+      // Collapsed, this row is all the reader has, so while the chain runs
+      // it names the call rather than counting them: "执行命令 npm test"
+      // says more than "3 次工具调用" about a turn that is still going.
+      summary: _summary(i18n),
       active: active,
-      autoCollapseReady: autoCollapseReady,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

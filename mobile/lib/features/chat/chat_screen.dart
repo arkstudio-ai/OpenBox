@@ -99,6 +99,13 @@ class ChatScreen extends ConsumerWidget {
         TypingRow(retry: retry),
       for (final permission in permissions)
         PermissionCard(request: permission),
+      // At the end of the transcript, inside the scroller, because it reads as
+      // the next turn in the conversation. It used to sit below the list as a
+      // sibling of it, and a tall one — a segment approval carries three
+      // scripts and their prompts — took the whole column: the list is an
+      // Expanded, so it was free to shrink to nothing and the conversation
+      // could not be scrolled at all while the run waited.
+      for (final question in questions) QuestionDock(request: question),
     ];
 
     return Column(
@@ -110,10 +117,8 @@ class ChatScreen extends ConsumerWidget {
                   ? _ErrorState(sessionId: sessionId)
                   : ChatFlow(rows: widgets, forceScrollToken: lastUserId),
         ),
-        for (final question in questions) QuestionDock(request: question),
-        // Above the composer, outside the scroll area: a failed run must not
-        // be scrollable away, or it leaves a screen that looks like a
-        // working one.
+        // One line, and it must survive until the next send, so it stays
+        // above the composer rather than scrolling away with the transcript.
         if (runError != null)
           RunErrorNotice(
             message: runError,

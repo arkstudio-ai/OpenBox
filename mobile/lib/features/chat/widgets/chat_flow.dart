@@ -125,21 +125,27 @@ class _ChatFlowState extends State<ChatFlow> {
             ),
           ),
         ),
+        // Right rail, vertically centred — where the thumb and the eye
+        // already are on a long scroll. Pinned to the bottom it sat directly
+        // over the newest message and the composer's own controls.
         if (!_atBottom)
           Positioned(
+            top: 0,
+            bottom: 0,
             right: 14,
-            bottom: 14,
-            child: Material(
-              color: t.card,
-              shape: CircleBorder(side: BorderSide(color: t.hair)),
-              elevation: 2,
-              shadowColor: Colors.black26,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _jumpToBottom,
-                child: Padding(
-                  padding: const EdgeInsets.all(9),
-                  child: Icon(Icons.arrow_downward, size: 17, color: t.n700),
+            child: Center(
+              child: Material(
+                color: t.card,
+                shape: CircleBorder(side: BorderSide(color: t.hair)),
+                elevation: 2,
+                shadowColor: Colors.black26,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _jumpToBottom,
+                  child: Padding(
+                    padding: const EdgeInsets.all(9),
+                    child: Icon(Icons.arrow_downward, size: 17, color: t.n700),
+                  ),
                 ),
               ),
             ),

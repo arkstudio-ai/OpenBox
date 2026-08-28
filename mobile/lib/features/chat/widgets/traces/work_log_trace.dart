@@ -20,13 +20,11 @@ class WorkLogTrace extends ConsumerWidget {
     super.key,
     required this.events,
     required this.active,
-    required this.autoCollapseReady,
     this.defaultOpen = false,
   });
 
   final List<WorkEvent> events;
   final bool active;
-  final bool autoCollapseReady;
 
   /// A turn that ended without an answer opens its log, because the log is
   /// then the only account of what happened.
@@ -75,7 +73,6 @@ class WorkLogTrace extends ConsumerWidget {
         'screenshots': evidenceCount,
       }),
       active: active,
-      autoCollapseReady: autoCollapseReady,
       defaultOpen: defaultOpen,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

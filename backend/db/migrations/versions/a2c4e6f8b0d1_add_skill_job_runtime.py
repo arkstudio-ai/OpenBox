@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("handler_version", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("image_digest", sa.String(length=128), server_default=sa.text("''"), nullable=False),
+        sa.Column("last_event_seq", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),

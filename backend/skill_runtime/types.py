@@ -128,3 +128,110 @@ class InputKind(str, Enum):
     PROVIDER_CALLBACK = "provider_callback"
     AGENT_RESULT = "agent_result"
     OPERATOR_RESUME = "operator_resume"
+
+
+# ---------------------------------------------------------------------------
+# Handler invocation outcomes (§5.2)
+#
+# Every invocation is one bounded, resumable step. Waiting outcomes must carry
+# a checkpoint sufficient to resume from a different worker; checkpoints never
+# contain plaintext secrets, long-lived signed URLs or large payloads.
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field  # noqa: E402
+from datetime import datetime  # noqa: E402
+from typing import Any, Union  # noqa: E402
+
+
+@dataclass(frozen=True)
+class Succeeded:
+    result: dict = field(default_factory=dict)
+    #: file_assets ids to link as skill_job_artifacts, in order.
+    artifacts: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WaitExternal:
+    checkpoint: dict
+    wake_at: datetime
+    external_handle: str | None = None
+    progress: dict | None = None
+
+
+@dataclass(frozen=True)
+class WaitUser:
+    checkpoint: dict
+    prompt: str
+    input_schema: dict = field(default_factory=dict)
+    expires_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class NeedsAgent:
+    checkpoint: dict
+    reason: str
+    payload: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Retry:
+    checkpoint: dict
+    error_code: str
+    retry_at: datetime
+    error_message: str = ""
+
+
+@dataclass(frozen=True)
+class Failed:
+    error_code: str
+    message: str
+    retryable: bool = False
+
+
+@dataclass(frozen=True)
+class Cancelled:
+    result: dict | None = None
+
+
+Outcome = Union[Succeeded, WaitExternal, WaitUser, NeedsAgent, Retry, Failed, Cancelled]
+
+#: Attempt-row outcome labels per outcome type.
+ATTEMPT_OUTCOMES: dict[type, str] = {
+    Succeeded: "succeeded",
+    WaitExternal: "wait_external",
+    WaitUser: "wait_user",
+    NeedsAgent: "needs_agent",
+    Retry: "retry",
+    Failed: "failed",
+    Cancelled: "cancelled",
+}
+
+
+def attempt_outcome_label(outcome: "Outcome") -> str:
+    return ATTEMPT_OUTCOMES[type(outcome)]
+
+
+def outcome_payload_summary(outcome: "Outcome") -> dict[str, Any]:
+    """Small, secret-free event payload describing an outcome."""
+    if isinstance(outcome, Succeeded):
+        return {"artifacts": len(outcome.artifacts)}
+    if isinstance(outcome, WaitExternal):
+        return {
+            "wake_at": outcome.wake_at.isoformat(),
+            "external_handle": outcome.external_handle,
+        }
+    if isinstance(outcome, WaitUser):
+        return {
+            "prompt": outcome.prompt,
+            "input_schema": outcome.input_schema,
+            "expires_at": outcome.expires_at.isoformat() if outcome.expires_at else None,
+        }
+    if isinstance(outcome, NeedsAgent):
+        return {"reason": outcome.reason, "payload": outcome.payload}
+    if isinstance(outcome, Retry):
+        return {"error_code": outcome.error_code, "retry_at": outcome.retry_at.isoformat()}
+    if isinstance(outcome, Failed):
+        return {"error_code": outcome.error_code, "message": outcome.message}
+    if isinstance(outcome, Cancelled):
+        return {}
+    raise TypeError(f"unknown outcome type: {type(outcome)!r}")

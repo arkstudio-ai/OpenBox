@@ -63,6 +63,10 @@ class SkillJob(Base):
     handler_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     image_digest: Mapped[str] = mapped_column(String(128), nullable=False, server_default=text("''"))
 
+    #: Event sequence allocator: bumped in the same guarded UPDATE that changes
+    #: state, so seq assignment rides the row lock instead of racing MAX(seq).
+    last_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)

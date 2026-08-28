@@ -178,7 +178,7 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
     if checkpoint.get("video_job_id"):
         return await _advance_existing(ctx, checkpoint)
 
-    if await ctx.is_cancel_requested():
+    if ctx.cancel_requested:
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")
@@ -534,7 +534,7 @@ async def _segment_transcribe(ctx, payload: dict, checkpoint: dict):
     if checkpoint.get("video_job_id"):
         return await _advance_transcription(ctx, checkpoint, target, video_settings, oss)
 
-    if await ctx.is_cancel_requested():
+    if ctx.cancel_requested:
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")
@@ -748,7 +748,7 @@ async def _production_render(ctx, payload: dict, checkpoint: dict):
     if checkpoint.get("video_job_id"):
         return await _advance_render(ctx, checkpoint, settings, oss)
 
-    if await ctx.is_cancel_requested():
+    if ctx.cancel_requested:
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")

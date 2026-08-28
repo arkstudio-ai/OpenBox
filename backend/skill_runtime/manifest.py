@@ -45,6 +45,13 @@ class OperationSpec(BaseModel):
     #: must be true for this operation to admit new jobs (greyed rollouts,
     #: e.g. skill_jobs_video_write). Unknown names fail closed.
     enabledConfigFlag: str | None = None
+    #: Does a cancellation have to reach the handler? True for operations that
+    #: create external state (a paid provider task, a remote media job): the
+    #: handler must run to cancel it provider-side and settle against facts.
+    #: False (default) means the operation owns nothing outside the ledger, so
+    #: the runtime settles the cancel itself and never starts more work — the
+    #: safe default for a skill that never declared otherwise.
+    cancelRequiresHandler: bool = False
 
 
 class CapabilitiesSpec(BaseModel):

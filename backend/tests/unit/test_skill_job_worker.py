@@ -35,6 +35,23 @@ def _worker(job, **kw):
     return SkillJobWorker(**kwargs)
 
 
+class _ExternalStateOp:
+    """Operation spec for tests whose handler owns external state and must
+    therefore be invoked to unwind a cancellation."""
+
+    invocationTimeoutSeconds = 30
+    maxExternalWaitSeconds = 86400
+    cancelRequiresHandler = True
+
+
+def _declare_external_state(monkeypatch):
+    from skill_runtime.worker import SkillJobWorker
+
+    monkeypatch.setattr(
+        SkillJobWorker, "_operation_spec", staticmethod(lambda job: _ExternalStateOp())
+    )
+
+
 async def _run_to_idle(worker):
     await worker.run_once()
     await worker.drain()
@@ -360,9 +377,79 @@ async def test_deadline_settles_unclaimed_and_cancels_running():
     assert still_running.desired_state == "cancel"
 
 
-async def test_cancel_waiting_job_reaches_handler():
+async def test_cancel_never_starts_another_attempt_for_plain_operations(monkeypatch):
+    """A cancel must not become one more attempt at the work the user just
+    stopped: an operation that declares no external state is settled by the
+    runtime, and its handler is never invoked again."""
+    from skill_runtime.worker import SkillJobWorker
+
+    skill = _skill_key()
+    calls = []
+
+    async def handler(ctx, operation, payload, checkpoint):
+        calls.append(dict(checkpoint))
+        if not checkpoint:
+            return Retry(checkpoint={"n": 1}, error_code="x", retry_at=NOW() + timedelta(minutes=10))
+        return Succeeded(result={"did_work_anyway": True})  # naive: ignores the flag
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+
+    class _PlainOp:  # cancelRequiresHandler defaults to False
+        invocationTimeoutSeconds = 30
+        maxExternalWaitSeconds = 3600
+        cancelRequiresHandler = False
+
+    monkeypatch.setattr(SkillJobWorker, "_operation_spec", staticmethod(lambda j: _PlainOp()))
+    await _run_to_idle(worker)
+    assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.RETRY_SCHEDULED.value
+
+    await repo.request_cancel(job.id, job.user_id)
+    await _run_to_idle(worker)
+
+    final = await repo.get_job(job.id, job.user_id)
+    assert final.status == JobStatus.CANCELLED.value
+    assert calls == [{}], "the handler must not run again after the cancel"
+
+
+async def test_cancel_reaches_handler_when_operation_declares_it(monkeypatch):
+    """An operation holding external state gets its handler invoked to unwind."""
+    from skill_runtime.worker import SkillJobWorker
+
+    skill = _skill_key()
+    saw = []
+
+    async def handler(ctx, operation, payload, checkpoint):
+        if not checkpoint:
+            return WaitExternal(checkpoint={"task": "t1"}, wake_at=NOW() + timedelta(hours=1))
+        saw.append(ctx.cancel_requested)
+        return Cancelled(result={"provider_cancelled": True})
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+
+    class _ExternalOp:
+        invocationTimeoutSeconds = 30
+        maxExternalWaitSeconds = 3600
+        cancelRequiresHandler = True
+
+    monkeypatch.setattr(SkillJobWorker, "_operation_spec", staticmethod(lambda j: _ExternalOp()))
+    await _run_to_idle(worker)
+    await repo.request_cancel(job.id, job.user_id)
+    await _run_to_idle(worker)
+
+    final = await repo.get_job(job.id, job.user_id)
+    assert final.status == JobStatus.CANCELLED.value
+    assert saw == [True], "the handler must see the cancel through ctx.cancel_requested"
+    assert final.result_data == {"provider_cancelled": True}
+
+
+async def test_cancel_waiting_job_reaches_handler(monkeypatch):
     """§7.4: waiting states are not settled directly — the cancel wakes the
     job so the handler can unwind external side effects."""
+    _declare_external_state(monkeypatch)
     skill = _skill_key()
     saw_cancel = []
 
@@ -389,9 +476,10 @@ async def test_cancel_waiting_job_reaches_handler():
     assert final.result_data == {"provider_cancelled": True}
 
 
-async def test_naive_handler_waiting_outcome_overridden_on_cancel():
+async def test_naive_handler_waiting_outcome_overridden_on_cancel(monkeypatch):
     """A handler that ignores the flag must still converge: the worker turns
     its waiting outcome into Cancelled."""
+    _declare_external_state(monkeypatch)
     skill = _skill_key()
 
     async def handler(ctx, operation, payload, checkpoint):
@@ -406,11 +494,12 @@ async def test_naive_handler_waiting_outcome_overridden_on_cancel():
     assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.CANCELLED.value
 
 
-async def test_mid_invocation_cancel_preserves_checkpoint_then_converges():
+async def test_mid_invocation_cancel_preserves_checkpoint_then_converges(monkeypatch):
     """A cancel that lands DURING an invocation must not discard the waiting
     outcome — the checkpoint links external side effects. The wait settles,
     the job wakes immediately, and the next invocation runs the handler's own
     cancel semantics with the checkpoint in hand."""
+    _declare_external_state(monkeypatch)
     skill = _skill_key()
     submitted = asyncio.Event()
     cancelled_now = asyncio.Event()
@@ -513,8 +602,9 @@ async def test_deadline_wakes_executed_jobs_with_cancel():
     assert woken.checkpoint_data == {"t": 1}
 
 
-async def test_acknowledged_wait_survives_cancel():
+async def test_acknowledged_wait_survives_cancel(monkeypatch):
     """acknowledges_cancel keeps a must-finish wait alive (paid output mid-copy)."""
+    _declare_external_state(monkeypatch)
     skill = _skill_key()
 
     async def handler(ctx, operation, payload, checkpoint):

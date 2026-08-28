@@ -29,6 +29,12 @@ class JobContext:
     #: Unconsumed inputs admitted since the last invocation (user answers,
     #: provider callbacks, agent results), oldest first.
     inputs: list = field(default_factory=list)
+    #: The job was already cancel-requested when this invocation was claimed.
+    #: Handlers reaching this point were invoked to UNWIND external state, not
+    #: to make progress — check it before starting any new work. (A cancel
+    #: that arrives mid-invocation is not reflected here; use
+    #: is_cancel_requested() for the live read.)
+    cancel_requested: bool = False
 
     async def progress(self, progress_data: dict | None = None, *, phase: str | None = None) -> None:
         await repo.update_progress(

@@ -37,6 +37,34 @@ spec:
       userInputTimeoutSeconds: 86400
       maxTotalSeconds: 172800
       maxAttempts: 3
+    # The three below exist so the failure paths can be exercised by hand in
+    # the UI, not only in tests: a retry backoff to cancel out of, an
+    # invocation that must be killed by the operation's own timeout (not the
+    # global default), and a prompt-only park that must not offer an answer box.
+    fail_then_succeed:
+      inputSchema:
+        type: object
+      queue: default
+      invocationTimeoutSeconds: 30
+      maxTotalSeconds: 3600
+      maxAttempts: 4
+    slow_step:
+      inputSchema:
+        type: object
+      queue: default
+      #: Deliberately far below the global default (120s): a job killed at 5s
+      #: proves the per-operation bound is the one being enforced.
+      invocationTimeoutSeconds: 5
+      maxTotalSeconds: 600
+      maxAttempts: 1
+    park_notice:
+      inputSchema:
+        type: object
+      queue: default
+      invocationTimeoutSeconds: 30
+      userInputTimeoutSeconds: 86400
+      maxTotalSeconds: 3600
+      maxAttempts: 2
   phases:
     waiting_provider: skill.demo-echo.phase.waiting_provider
     waiting_answer: skill.demo-echo.phase.waiting_answer

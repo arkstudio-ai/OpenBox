@@ -45,8 +45,12 @@ def test_builtin_catalog_contains_demo_echo():
     demo = manifests.get("builtin:demo-echo")
     assert demo is not None
     assert demo.runtime.kind == "internal"
-    assert set(demo.operations) == {"echo", "slow_echo", "ask_then_echo"}
+    # The happy paths plus the failure paths the UI must be able to exercise
+    # by hand (retry backoff, per-operation timeout, prompt-only park).
+    assert {"echo", "slow_echo", "ask_then_echo"} <= set(demo.operations)
+    assert {"fail_then_succeed", "slow_step", "park_notice"} <= set(demo.operations)
     assert demo.operations["echo"].maxAttempts == 3
+    assert demo.operations["slow_step"].invocationTimeoutSeconds == 5
     assert demo.phases["waiting_answer"] == "skill.demo-echo.phase.waiting_answer"
 
 

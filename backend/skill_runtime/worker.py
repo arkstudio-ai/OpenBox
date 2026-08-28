@@ -135,12 +135,17 @@ class SkillJobWorker:
 
     async def _execute(self, claim: ClaimedJob) -> None:
         job = claim.job
-        if job.desired_state == "cancel" and job.attempt_count <= 1 and not job.checkpoint_data:
-            # Never persisted a step: nothing external to unwind. (A crash
-            # exactly between an external submit and its first checkpoint is
-            # covered by the domain's own reconciliation, e.g. video's sweep.)
-            await self._settle(claim, Cancelled())
-            return
+        op = self._operation_spec(job)
+
+        if job.desired_state == "cancel":
+            # Whether the handler must run is declared, not guessed: an
+            # operation that owns no external state is settled here, so a
+            # cancel can never turn into one more attempt at the work the
+            # user just stopped. Operations holding provider tasks declare
+            # cancelRequiresHandler and get invoked to unwind them.
+            if op is None or not op.cancelRequiresHandler:
+                await self._settle(claim, Cancelled())
+                return
 
         builtin = registry.resolve(job.skill_key)
         if builtin is None:
@@ -178,12 +183,12 @@ class SkillJobWorker:
             lease_token=claim.lease_token,
             lease_seconds=self.lease_seconds,
             inputs=inputs,
+            cancel_requested=cancel_known_at_claim,
         )
 
         # The operation's own bound wins: an inline STT pass declares 600s
         # precisely because the global default (120s) would kill it mid-run
         # and loop the retry forever.
-        op = self._operation_spec(job)
         invocation_timeout = op.invocationTimeoutSeconds if op else self.invocation_timeout
 
         lease_lost = asyncio.Event()

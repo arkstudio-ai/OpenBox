@@ -30,6 +30,9 @@ spec:
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
+      # Holds a paid provider task / remote media job: cancellation must
+      # reach the handler so it can settle against provider facts (§7.4).
+      cancelRequiresHandler: true
     segment.transcribe:
       inputSchema:
         type: object
@@ -40,6 +43,9 @@ spec:
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
+      # Holds a paid provider task / remote media job: cancellation must
+      # reach the handler so it can settle against provider facts (§7.4).
+      cancelRequiresHandler: true
     production.render:
       inputSchema:
         type: object
@@ -50,6 +56,9 @@ spec:
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
+      # Holds a paid provider task / remote media job: cancellation must
+      # reach the handler so it can settle against provider facts (§7.4).
+      cancelRequiresHandler: true
   phases:
     preparing: skill.video-production.phase.preparing
     provider_generate: skill.video-production.phase.provider_generate

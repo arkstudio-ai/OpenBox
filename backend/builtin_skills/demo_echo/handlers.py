@@ -6,10 +6,11 @@ on a user answer — all through bounded, checkpointed invocations.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from skill_runtime.registry import register_builtin
-from skill_runtime.types import Failed, Succeeded, WaitExternal, WaitUser
+from skill_runtime.types import Failed, Retry, Succeeded, WaitExternal, WaitUser
 
 SKILL_KEY = "builtin:demo-echo"
 
@@ -43,6 +44,31 @@ async def run(ctx, operation: str, payload: dict, checkpoint: dict):
             checkpoint={"asked": True},
             prompt="What should I echo?",
             input_schema={"type": "object", "required": ["text"]},
+        )
+
+    if operation == "fail_then_succeed":
+        attempts = int(checkpoint.get("attempts") or 0) + 1
+        if attempts <= int(payload.get("failures", 1)):
+            # Checkpointed so the retry is observable as progress, not a loop.
+            return Retry(
+                checkpoint={"attempts": attempts},
+                error_code="demo_transient",
+                retry_at=datetime.now(timezone.utc) + timedelta(seconds=int(payload.get("backoff_seconds", 120))),
+                error_message=f"demo failure #{attempts}",
+            )
+        return Succeeded(result={"attempts": attempts, "recovered": True})
+
+    if operation == "slow_step":
+        await asyncio.sleep(int(payload.get("sleep_seconds", 30)))
+        return Succeeded(result={"slept": True})
+
+    if operation == "park_notice":
+        # Prompt-only park: no input schema, so the card must show the notice
+        # without an answer box (the handler would ignore free text anyway).
+        return WaitUser(
+            checkpoint={"parked": True},
+            prompt=str(payload.get("notice") or "需要人工核实后再决定继续或取消。"),
+            input_schema={},
         )
 
     return Failed(error_code="unknown_operation", message=f"demo-echo has no operation {operation!r}")

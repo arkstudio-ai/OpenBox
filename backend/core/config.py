@@ -273,6 +273,9 @@ class OpenBoxConfig(BaseModel):
     #: generic runtime). Off = the legacy video_generate tool stays the only
     #: paid submit path; never run both write paths at once (§11.5).
     skill_jobs_video_write: bool = False
+    #: Terminal jobs leave a structured receipt message in their session's
+    #: timeline (zero LLM tokens, §8.3).
+    skill_job_chat_receipt: bool = True
     cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
 
     # -- Agent --
@@ -478,6 +481,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "skill_worker_per_user_concurrency": "SKILL_WORKER_PER_USER_CONCURRENCY",
         "skill_worker_invocation_timeout": "SKILL_WORKER_INVOCATION_TIMEOUT",
         "skill_jobs_video_write": "SKILL_JOBS_VIDEO_WRITE",
+        "skill_job_chat_receipt": "SKILL_JOB_CHAT_RECEIPT",
     }
     for field_name, env_var in env_map.items():
         value = os.environ.get(env_var)
@@ -495,7 +499,8 @@ def _apply_env_overrides(data: dict) -> dict:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)
-            elif field_name in {"debug", "skill_jobs_enabled", "skill_jobs_video_write"}:
+            elif field_name in {"debug", "skill_jobs_enabled", "skill_jobs_video_write",
+                                "skill_job_chat_receipt"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

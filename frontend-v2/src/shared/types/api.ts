@@ -170,6 +170,19 @@ export interface TodoPart {
   source?: "model" | "user"
 }
 
+/** Platform-written receipt for a finished background skill job (§8.3 of the
+ *  skill runtime plan). Zero-token: the backend inserts it, no model runs. */
+export interface SkillJobPart {
+  type: "skill_job"
+  id: string
+  jobId: string
+  skillKey: string
+  operation: string
+  status: string
+  errorCode?: string | null
+  summary?: string
+}
+
 export type MessagePart =
   | TextPart
   | ReasoningPart
@@ -184,6 +197,7 @@ export type MessagePart =
   | RetryPart
   | PlanPart
   | TodoPart
+  | SkillJobPart
 
 export type MessageRole = "user" | "assistant" | "system"
 

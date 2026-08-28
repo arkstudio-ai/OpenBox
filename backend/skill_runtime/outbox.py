@@ -74,6 +74,18 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
                 .values(published_at=now)
             )
         published += 1
+
+        if event.event_type in ("job.succeeded", "job.failed", "job.cancelled"):
+            try:
+                from db.models.skill_job import SkillJob
+                from skill_runtime.receipt import write_receipt
+
+                async with get_db_session() as db:
+                    job = await db.get(SkillJob, event.job_id)
+                if job is not None:
+                    await write_receipt(job)
+            except Exception as e:
+                log.warning(f"Chat receipt for {event.job_id} failed: {e}")
     return published
 
 

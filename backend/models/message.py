@@ -304,6 +304,26 @@ class TodoPart(BaseModel):
     message_id: str = ""
 
 
+class SkillJobPart(BaseModel):
+    """Platform-written receipt for a finished background skill job.
+
+    Zero-token: skill_runtime/receipt.py inserts it when a job reaches a
+    terminal state, so the transcript keeps the outcome after the live job
+    card rotates out of the dock. camelCase fields match the job snapshot
+    wire format the jobs feature already speaks.
+    """
+    type: Literal["skill_job"] = "skill_job"
+    id: str = Field(default_factory=lambda: ascending("part"))
+    jobId: str = ""
+    skillKey: str = ""
+    operation: str = ""
+    status: str = ""
+    errorCode: str | None = None
+    summary: str = ""
+    session_id: str = ""
+    message_id: str = ""
+
+
 # Union of all part types
 MessagePart = Union[
     TextPart,
@@ -319,6 +339,7 @@ MessagePart = Union[
     RetryPart,
     PlanPart,
     TodoPart,
+    SkillJobPart,
 ]
 
 

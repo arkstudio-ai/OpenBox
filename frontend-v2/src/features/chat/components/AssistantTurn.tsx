@@ -10,6 +10,7 @@ import { buildAssistantContentView } from "../lib/content-view"
 import { buildTurnView, type AssistantTurnMeta } from "../lib/turn-view"
 import { AssistantMeta } from "./meta/AssistantMeta"
 import { InlineErrorCard } from "./meta/InlineErrorCard"
+import { SkillJobReceipts } from "@/features/jobs/components/SkillJobReceipt"
 import { PatchChip } from "./PatchChip"
 import { PlanPartCard } from "./PlanPartCard"
 import { ProcessTrace } from "./ProcessTrace"
@@ -114,6 +115,7 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
         defaultOpen={content.incomplete}
       />
       <VideoIdentityCards parts={parts} sessionId={sessionId} />
+      <SkillJobReceipts parts={parts} />
 
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
         {streaming && !hasActivity ? (

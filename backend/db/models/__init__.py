@@ -16,10 +16,11 @@ from db.models.video_job import VideoJob
 from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
+from db.models.memory import UserMemory
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
     "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
-    "UserSkill", "SkillInstall",
+    "UserSkill", "SkillInstall", "UserMemory",
 ]

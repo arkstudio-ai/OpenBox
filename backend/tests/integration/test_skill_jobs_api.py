@@ -27,6 +27,11 @@ async def app():
 
     from core.config import reload_config
 
+    # This module forces multi-user mode process-wide; restore the previous
+    # config on teardown so later single-user tests are not order-dependent.
+    import core.config as config_module
+
+    previous_config = getattr(config_module, "_config", None)
     config = reload_config()
 
     from db.base import Base, close_engine, init_engine
@@ -47,6 +52,8 @@ async def app():
     yield application
 
     await close_engine()
+    if previous_config is not None:
+        config_module._config = previous_config
 
 
 @pytest.fixture

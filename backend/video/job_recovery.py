@@ -98,6 +98,11 @@ async def sweep() -> int:
 
     advanced = 0
     for job in rows:
+        # A job created by the video skill handler has a live owner in the
+        # skill runtime (its retry backoff makes the row look stale here);
+        # two drivers finalizing one paid task is not worth the risk.
+        if (job.request_data or {}).get("skill_job_id"):
+            continue
         try:
             if await _recover_job(job):
                 advanced += 1

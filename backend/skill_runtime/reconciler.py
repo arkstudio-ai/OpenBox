@@ -33,8 +33,82 @@ def _utcnow() -> datetime:
 async def reconcile_once() -> dict[str, int]:
     lost = await expire_stale_running()
     requeued = await requeue_due_external()
+    expired_asks = await expire_user_waits()
     deadlined = await enforce_deadlines()
-    return {"lost_leases": lost, "requeued_external": requeued, "deadline_settled": deadlined}
+    return {
+        "lost_leases": lost,
+        "requeued_external": requeued,
+        "expired_user_waits": expired_asks,
+        "deadline_settled": deadlined,
+    }
+
+
+async def expire_user_waits() -> int:
+    """A question nobody answers must not park a job forever: past the
+    operation's userInputTimeoutSeconds the job gets a cancel request and is
+    woken, so the handler settles it (§7.3 — a wait for a person is never a
+    failure to retry, only one to time out)."""
+    from skill_runtime.manifest import get_manifest
+
+    now = _utcnow()
+    async with get_db_session() as db:
+        waiting = (
+            await db.execute(
+                select(
+                    SkillJob.id, SkillJob.skill_key, SkillJob.operation, SkillJob.updated_at
+                ).where(
+                    SkillJob.status == JobStatus.WAITING_USER.value,
+                    SkillJob.desired_state == DesiredState.RUN.value,
+                )
+            )
+        ).all()
+
+    expired = 0
+    for job_id, skill_key, operation, updated_at in waiting:
+        manifest = get_manifest(skill_key)
+        op = manifest.operation(operation) if manifest else None
+        ttl = op.userInputTimeoutSeconds if op else None
+        if not ttl:
+            continue
+        parked_since = updated_at
+        if parked_since is not None and parked_since.tzinfo is None:
+            parked_since = parked_since.replace(tzinfo=timezone.utc)
+        if parked_since is None or (now - parked_since).total_seconds() < ttl:
+            continue
+
+        async with get_db_session() as db:
+            result = await db.execute(
+                update(SkillJob)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.WAITING_USER.value,
+                    SkillJob.desired_state == DesiredState.RUN.value,
+                )
+                .values(
+                    status=JobStatus.QUEUED.value,
+                    desired_state=DesiredState.CANCEL.value,
+                    next_run_at=now,
+                    last_event_seq=SkillJob.last_event_seq + 1,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                continue
+            job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
+            db.add(
+                SkillJobEvent(
+                    id=repo.new_id("sjev"),
+                    job_id=job.id,
+                    user_id=job.user_id,
+                    seq=job.last_event_seq,
+                    event_type=JobEventType.CANCEL_REQUESTED.value,
+                    payload={"reason": "user_input_timeout"},
+                    created_at=now,
+                )
+            )
+        expired += 1
+        log.info(f"Job {job_id} passed its user-input TTL; cancellation requested")
+    return expired
 
 
 async def expire_stale_running() -> int:

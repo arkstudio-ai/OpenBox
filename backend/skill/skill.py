@@ -40,6 +40,17 @@ _CHECK_INTERVAL_SECONDS = 2.0
 _last_check = 0.0
 
 
+def _builtin_skill_dir() -> Path:
+    """Skill packages shipped inside the backend image (backend/builtin_skills).
+
+    Scanned first and therefore lowest precedence: a same-named skill from a
+    user or project directory shadows it. That is what keeps a builtin package
+    installable ahead of its rollout — the live skill wins until the operator
+    removes it.
+    """
+    return Path(__file__).resolve().parent.parent / "builtin_skills"
+
+
 def _skill_dirs() -> list[Path]:
     """Every directory scanned for SKILL.md files."""
     config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
@@ -59,7 +70,7 @@ def _current_fingerprint() -> tuple:
     additions, since a new skill directory bumps its parent's mtime.
     """
     entries = []
-    for base in _skill_dirs():
+    for base in [_builtin_skill_dir(), *_skill_dirs()]:
         try:
             if not base.exists():
                 continue
@@ -152,6 +163,9 @@ async def load_skills() -> None:
     """Load all available skills."""
     global _skills, _loaded, _fingerprint, _last_check
     _skills.clear()
+
+    for skill in _scan_directory(_builtin_skill_dir(), "builtin"):
+        _skills[skill.name] = skill
 
     globals_, projects = _skill_dirs()[:2], _skill_dirs()[2:]
     for global_dir in globals_:

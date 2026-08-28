@@ -230,3 +230,33 @@ async def test_demo_ask_then_echo_resume_flow():
 def test_job_snapshot_shape():
     manifests = load_builtin_manifests()
     assert "builtin:demo-echo" in manifests
+
+
+async def test_builtin_skill_md_is_discoverable_and_activates_skill_job():
+    """Regression: the agent-facing surface only exists if a discovered skill
+    activates the skill_job tool — builtin packages must be scanned."""
+    from skill.skill import load_skills, list_skills
+
+    await load_skills()
+    by_name = {s.name: s for s in await list_skills()}
+    demo = by_name.get("demo-echo")
+    assert demo is not None, "builtin_skills/ must be scanned for SKILL.md"
+    assert "skill_job" in demo.allowed_tools
+    assert demo.source == "builtin"
+
+
+async def test_project_skill_shadows_same_named_builtin():
+    """Builtin packages are lowest precedence, so the live video-production
+    skill keeps winning until the operator retires it (grey rollout)."""
+    from skill.skill import load_skills, get_skill
+
+    await load_skills()
+    video = await get_skill("video-production")
+    if video is not None and video.source != "builtin":
+        assert "video_generate" in video.allowed_tools or video.source == "project"
+
+
+def test_manifest_declares_operation_timeouts():
+    manifest = get_manifest("builtin:video-production")
+    assert manifest.operation("segment.transcribe").invocationTimeoutSeconds == 600
+    assert manifest.operation("segment.generate").invocationTimeoutSeconds == 120

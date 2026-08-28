@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
@@ -179,11 +180,17 @@ class SkillJobWorker:
             inputs=inputs,
         )
 
+        # The operation's own bound wins: an inline STT pass declares 600s
+        # precisely because the global default (120s) would kill it mid-run
+        # and loop the retry forever.
+        op = self._operation_spec(job)
+        invocation_timeout = op.invocationTimeoutSeconds if op else self.invocation_timeout
+
         lease_lost = asyncio.Event()
         invocation = asyncio.create_task(
             asyncio.wait_for(
                 builtin.handler(ctx, job.operation, job.input_data, job.checkpoint_data),
-                timeout=self.invocation_timeout,
+                timeout=invocation_timeout,
             )
         )
         keeper = asyncio.create_task(self._keep_lease(claim, invocation, lease_lost))
@@ -196,7 +203,7 @@ class SkillJobWorker:
                 checkpoint=job.checkpoint_data,
                 error_code="invocation_timeout",
                 retry_at=_retry_at(job.attempt_count),
-                error_message=f"invocation exceeded {self.invocation_timeout}s",
+                error_message=f"invocation exceeded {invocation_timeout}s",
             )
         except asyncio.CancelledError:
             if lease_lost.is_set():
@@ -240,9 +247,31 @@ class SkillJobWorker:
             except Exception:
                 pass
 
+        outcome = self._clamp_external_wait(outcome, op)
         await self._settle(claim, outcome, consumed_inputs=inputs, wake_reason=(
             "cancel_pending" if wake_for_cancel else None
         ))
+
+    @staticmethod
+    def _operation_spec(job):
+        from skill_runtime.manifest import get_manifest
+
+        manifest = get_manifest(job.skill_key)
+        return manifest.operation(job.operation) if manifest else None
+
+    @staticmethod
+    def _clamp_external_wait(outcome: Outcome, op) -> Outcome:
+        """A handler may not park past the operation's declared maximum
+        external wait — otherwise the bound is documentation, not a limit."""
+        if op is None or not isinstance(outcome, WaitExternal):
+            return outcome
+        latest = datetime.now(timezone.utc) + timedelta(seconds=op.maxExternalWaitSeconds)
+        wake_at = outcome.wake_at
+        if wake_at.tzinfo is None:
+            wake_at = wake_at.replace(tzinfo=timezone.utc)
+        if wake_at <= latest:
+            return outcome
+        return replace(outcome, wake_at=latest)
 
     async def _settle(
         self,

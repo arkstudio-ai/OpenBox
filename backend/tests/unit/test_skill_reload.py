@@ -41,17 +41,23 @@ def skills_dir(monkeypatch):
     shutil.rmtree(root, ignore_errors=True)
 
 
+async def project_skills():
+    """Only what this test wrote: image-shipped builtin packages are always
+    discovered (lowest precedence) and are not what these tests exercise."""
+    return [s for s in await sk.list_skills() if s.source != "builtin"]
+
+
 async def names():
-    return sorted(s.name for s in await sk.list_skills())
+    return sorted(s.name for s in await project_skills())
 
 
 @pytest.mark.asyncio
 async def test_an_edited_description_is_picked_up(skills_dir):
     write_skill(skills_dir, "demo", "first")
-    assert [s.description for s in await sk.list_skills()] == ["first"]
+    assert [s.description for s in await project_skills()] == ["first"]
 
     write_skill(skills_dir, "demo", "second")
-    assert [s.description for s in await sk.list_skills()] == ["second"]
+    assert [s.description for s in await project_skills()] == ["second"]
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,8 @@ services:
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     depends_on:
       - redis
+      - postgres
+    restart: unless-stopped
 
   # Skill job worker role: same image and code as the web role, different
   # process (rebuild plan §4.3). Claims and executes durable skill jobs so a

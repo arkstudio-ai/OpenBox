@@ -103,6 +103,101 @@ async def test_retry_exhaustion_via_worker_path():
     assert "retry budget exhausted" in after.error_message
 
 
+async def test_manifest_operation_timeout_overrides_worker_default(monkeypatch):
+    """A per-operation invocationTimeoutSeconds must win over the global
+    default, or a long inline step (STT) loops forever on timeout."""
+    from skill_runtime.worker import SkillJobWorker
+
+    seen = {}
+
+    async def handler(ctx, operation, payload, checkpoint):
+        return Succeeded()
+
+    skill = _skill_key()
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = SkillJobWorker(queues=(job.queue_name,), per_user_limit=0, invocation_timeout=1)
+
+    class _Op:
+        invocationTimeoutSeconds = 600
+        maxExternalWaitSeconds = 86400
+
+    monkeypatch.setattr(SkillJobWorker, "_operation_spec", staticmethod(lambda j: _Op()))
+    real_wait_for = asyncio.wait_for
+
+    async def capture(awaitable, timeout=None):
+        seen["timeout"] = timeout
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", capture)
+    await worker.run_once()
+    await worker.drain()
+    assert seen["timeout"] == 600
+
+
+async def test_external_wait_is_clamped_to_manifest_max(monkeypatch):
+    """A handler cannot park past the operation's declared external-wait cap."""
+    from skill_runtime.worker import SkillJobWorker
+
+    async def handler(ctx, operation, payload, checkpoint):
+        return WaitExternal(checkpoint={}, wake_at=NOW() + timedelta(days=30))
+
+    skill = _skill_key()
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+
+    class _Op:
+        invocationTimeoutSeconds = 120
+        maxExternalWaitSeconds = 3600
+
+    monkeypatch.setattr(SkillJobWorker, "_operation_spec", staticmethod(lambda j: _Op()))
+    await _run_to_idle(worker)
+
+    parked = await repo.get_job(job.id, job.user_id)
+    next_run = parked.next_run_at
+    if next_run.tzinfo is None:
+        next_run = next_run.replace(tzinfo=timezone.utc)
+    assert next_run <= NOW() + timedelta(seconds=3700)
+
+
+async def test_user_wait_ttl_requests_cancel(monkeypatch):
+    """An unanswered question times out into a cancel request, never a retry."""
+
+    async def handler(ctx, operation, payload, checkpoint):
+        return WaitUser(checkpoint={}, prompt="anyone there?")
+
+    skill = _skill_key()
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await _run_to_idle(worker)
+    assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.WAITING_USER.value
+
+    class _Op:
+        userInputTimeoutSeconds = 1
+
+    class _Manifest:
+        def operation(self, name):
+            return _Op()
+
+    monkeypatch.setattr("skill_runtime.manifest.get_manifest", lambda key: _Manifest())
+
+    from db.base import get_db_session
+    from db.models.skill_job import SkillJob
+    from sqlalchemy import update as sa_update
+
+    async with get_db_session() as db:
+        await db.execute(
+            sa_update(SkillJob).where(SkillJob.id == job.id)
+            .values(updated_at=NOW() - timedelta(hours=1))
+        )
+    assert await reconciler.expire_user_waits() >= 1
+    after = await repo.get_job(job.id, job.user_id)
+    assert after.desired_state == "cancel"
+    assert after.status == JobStatus.QUEUED.value
+
+
 async def test_invocation_timeout_becomes_retry():
     skill = _skill_key()
 

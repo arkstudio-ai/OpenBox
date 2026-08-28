@@ -10,6 +10,7 @@ import '../utils/turn_view.dart';
 import 'cards/inline_error_card.dart';
 import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
+import 'cards/skill_job_receipt.dart';
 import 'cards/todo_card.dart';
 import 'cards/video_identity_card.dart';
 import 'markdown_view.dart';
@@ -124,6 +125,7 @@ class AssistantTurn extends ConsumerWidget {
           active: preAnswer,
           defaultOpen: content.incomplete,
         ),
+        SkillJobReceipts(parts: [for (final m in turn.messages) ...m.parts]),
         VideoIdentityCards(
           parts: [for (final m in turn.messages) ...m.parts],
           sessionId: sessionId,

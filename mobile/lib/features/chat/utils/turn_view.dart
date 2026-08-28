@@ -263,7 +263,7 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
           files.add(part);
         case PlanPart():
           plans.add(part);
-        case TodoPart() || UnknownPart():
+        case TodoPart() || SkillJobPart() || UnknownPart():
           break;
       }
     }

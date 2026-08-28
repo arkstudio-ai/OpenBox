@@ -7,6 +7,7 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/message.dart';
 import '../../shared/router/paths.dart';
+import '../jobs/widgets/skill_jobs_dock.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
 import 'state/stream_store.dart';
@@ -106,6 +107,9 @@ class ChatScreen extends ConsumerWidget {
       // Expanded, so it was free to shrink to nothing and the conversation
       // could not be scrolled at all while the run waited.
       for (final question in questions) QuestionDock(request: question),
+      // Background skill jobs outlive the agent turn; the dock keeps their
+      // cards updating from the job ledger after the session goes idle.
+      SkillJobsDock(sessionId: sessionId),
     ];
 
     return Column(

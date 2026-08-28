@@ -34,6 +34,8 @@ cd mobile && flutter run
 | `ResultArtifacts` / `AudioPreview` | `widgets/result_artifacts.dart` / `widgets/audio_preview.dart`(音频用 `video_player`,平台自带 AVPlayer/ExoPlayer 就能放,不多引一个播放依赖) |
 | `ToolOutput` + `ToolPrimitives`(9 种工具详情布局) | `widgets/traces/tool_output.dart` + `tool_primitives.dart`;web 详情列常驻展开,手机一行放不下,所以保留"点一下展开" |
 | `VideoIdentityCards` + `lib/video-identity-card.ts`(真人授权) | `widgets/cards/video_identity_card.dart` + `utils/video_identity_card.dart` + `shared/models/video_identity.dart`;状态由 tool part 的 metadata 重建,不额外拉接口 |
+| `features/jobs`(SkillJobCard/SkillJobsDock:后台技能作业卡,快照为准,`skill.job.event` 失效 + 30s 轮询兜底) | `lib/features/jobs/`(`jobs_api.dart` Riverpod provider + `skill_job_card.dart`/`skill_jobs_dock.dart`;web 卡片的 artifacts 文件行移动端暂缺) |
+| `SkillJobReceipts`(终态作业留在会话流里的回执 chip) | `widgets/cards/skill_job_receipt.dart` + `shared/models/message_part.dart` 的 `SkillJobPart` 分支 |
 | `SubagentLine`(子 agent 实时进度) | `widgets/traces/subagent_line.dart` + `state/subagent_progress.dart`(同样读子会话在 stream store 里的 part,只在为空时补一次 REST) |
 | `ThinkingRow`(等待/重试行) | `widgets/typing_row.dart`(三点脉冲 + `status.thinking`/`status.retrying`) |
 | `RunErrorNotice`(失败原因常驻在输入框上方) | `widgets/run_error_notice.dart` |

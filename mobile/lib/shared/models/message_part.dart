@@ -102,6 +102,16 @@ sealed class MessagePart {
               .toList(),
           source: asString(json['source']),
         );
+      case 'skill_job':
+        return SkillJobPart(
+          id: id,
+          jobId: asString(json['jobId']) ?? '',
+          skillKey: asString(json['skillKey']) ?? '',
+          operation: asString(json['operation']) ?? '',
+          status: asString(json['status']) ?? '',
+          errorCode: asString(json['errorCode']),
+          summary: asString(json['summary']) ?? '',
+        );
       default:
         return UnknownPart(id: id, rawType: asString(json['type']) ?? '', raw: json);
     }
@@ -392,6 +402,30 @@ class TodoPart extends MessagePart {
 
   @override
   String get type => 'todo';
+}
+
+/// Platform-written receipt for a finished background skill job (web
+/// `SkillJobPart`, backend `models/message.py`).
+class SkillJobPart extends MessagePart {
+  const SkillJobPart({
+    required super.id,
+    required this.jobId,
+    required this.skillKey,
+    required this.operation,
+    required this.status,
+    this.errorCode,
+    this.summary = '',
+  });
+
+  final String jobId;
+  final String skillKey;
+  final String operation;
+  final String status;
+  final String? errorCode;
+  final String summary;
+
+  @override
+  String get type => 'skill_job';
 }
 
 class UnknownPart extends MessagePart {

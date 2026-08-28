@@ -21,6 +21,7 @@ const _namespaces = [
   'common',
   'cron',
   'errors',
+  'jobs',
   'landing',
   'resources',
   'settings',

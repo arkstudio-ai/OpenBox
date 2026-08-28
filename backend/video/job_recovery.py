@@ -31,6 +31,7 @@ MAX_JOBS_PER_SWEEP = 10
 
 _last_sweep_at_ms: int = 0
 _startup_task: asyncio.Task | None = None
+_failed_once: set[str] = set()
 
 
 def schedule_startup_recovery() -> None:
@@ -100,8 +101,18 @@ async def sweep() -> int:
         try:
             if await _recover_job(job):
                 advanced += 1
+                _failed_once.discard(job.id)
         except Exception as e:
-            log.warning(f"Video job recovery for {job.id} failed: {e}")
+            # A job whose provider lookup keeps failing (expired relay task,
+            # revoked key) would otherwise warn every sweep; warn once, then
+            # drop to debug until something changes.
+            if job.id in _failed_once:
+                log.debug(f"Video job recovery for {job.id} still failing: {e}")
+            else:
+                log.warning(f"Video job recovery for {job.id} failed: {e}")
+                _failed_once.add(job.id)
+                if len(_failed_once) > 500:
+                    _failed_once.clear()
     return advanced
 
 

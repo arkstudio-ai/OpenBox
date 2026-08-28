@@ -31,7 +31,10 @@
       "phase": {
         "preparing": "准备提交",
         "provider_generate": "供应商生成中",
-        "asset_publish": "结果入库"
+        "asset_publish": "结果入库",
+        "extract_audio": "无影提取音频",
+        "speech_to_text": "语音转写质检",
+        "rendering": "无影渲染中"
       }
     }
   }

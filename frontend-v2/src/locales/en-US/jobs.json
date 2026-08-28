@@ -31,7 +31,10 @@
       "phase": {
         "preparing": "Preparing submission",
         "provider_generate": "Provider generating",
-        "asset_publish": "Publishing output"
+        "asset_publish": "Publishing output",
+        "extract_audio": "Extracting audio on WUYING",
+        "speech_to_text": "Speech-to-text QA",
+        "rendering": "Rendering on WUYING"
       }
     }
   }

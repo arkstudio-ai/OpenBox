@@ -30,10 +30,33 @@ spec:
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
+    segment.transcribe:
+      inputSchema:
+        type: object
+        required: [production_id, segment_id]
+      queue: default
+      invocationTimeoutSeconds: 600
+      maxExternalWaitSeconds: 7200
+      maxTotalSeconds: 86400
+      maxAttempts: 8
+      enabledConfigFlag: skill_jobs_video_write
+    production.render:
+      inputSchema:
+        type: object
+        required: [production_id]
+      queue: default
+      invocationTimeoutSeconds: 120
+      maxExternalWaitSeconds: 7200
+      maxTotalSeconds: 86400
+      maxAttempts: 8
+      enabledConfigFlag: skill_jobs_video_write
   phases:
     preparing: skill.video-production.phase.preparing
     provider_generate: skill.video-production.phase.provider_generate
     asset_publish: skill.video-production.phase.asset_publish
+    extract_audio: skill.video-production.phase.extract_audio
+    speech_to_text: skill.video-production.phase.speech_to_text
+    rendering: skill.video-production.phase.rendering
   capabilities:
     network: [seedance-provider]
     objectStorage: [write-user-artifacts]

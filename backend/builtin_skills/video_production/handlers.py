@@ -66,10 +66,28 @@ async def run(ctx, operation: str, payload: dict, checkpoint: dict):
         return await _production_status(ctx, payload)
     if operation == "segment.generate":
         return await _segment_generate(ctx, payload, checkpoint)
+    if operation == "segment.transcribe":
+        return await _segment_transcribe(ctx, payload, checkpoint)
+    if operation == "production.render":
+        return await _production_render(ctx, payload, checkpoint)
     return Failed(
         error_code="unknown_operation",
         message=f"video-production has no operation {operation!r}",
     )
+
+
+async def _sandbox_client(ctx):
+    """The user's WUYING sandbox — the media queue's execution node. Acquires
+    (cold-starts) the desktop when needed; media dispatch is idempotent per
+    (owner, idempotency_key) so re-dispatch after a crash is safe."""
+    from sandbox.manager import sandbox_manager
+
+    if ctx.session_id:
+        return await sandbox_manager.get_client(ctx.session_id, user_id=ctx.user_id)
+    client = await sandbox_manager.get_client_any(user_id=ctx.user_id)
+    if client is None:
+        raise RuntimeError("no WUYING sandbox available for this user")
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +488,361 @@ async def _success(job, *, cancel_race: bool = False):
     return Succeeded(result=result, artifacts=artifacts)
 
 
-async def _owned_video_job(video_job_id: str, user_id: str):
+# ---------------------------------------------------------------------------
+# segment.transcribe — WUYING audio extraction + STT QA (PR#16)
+# ---------------------------------------------------------------------------
+
+async def _segment_transcribe(ctx, payload: dict, checkpoint: dict):
+    from core.oss import get_oss
+    from tool import video_production as vp
+    from tool import video_workflow as vw
+
+    target = vp._configured_transcription_target()
+    _, video_settings = vp._configured_target()
+    oss = get_oss()
+
+    if checkpoint.get("video_job_id"):
+        return await _advance_transcription(ctx, checkpoint, target, video_settings, oss)
+
+    if await ctx.is_cancel_requested():
+        return Cancelled()
+
+    production_id = str(payload.get("production_id") or "")
+    segment_id = str(payload.get("segment_id") or "")
+    tctx = _tool_ctx(ctx)
+    await ctx.progress(phase="preparing")
+    approved = await vw.prepare_transcription(tctx, production_id, segment_id)
+    domain_key = f"{production_id}:{segment_id}:stt"
+    source = approved["asset"]
+    request_data = {
+        "production_id": production_id,
+        "segment_id": segment_id,
+        "source_asset_id": source.id,
+        "source_bytes": source.size,
+        "model": target.model,
+        "skill_job_id": ctx.job_id,
+    }
+    request_hash = vw.content_hash(
+        {"kind": "stt", "request_data": {k: v for k, v in request_data.items() if k != "skill_job_id"}}
+    )
+    job, audio, created = await vp._create_pending_job(
+        ctx=tctx,
+        kind="stt",
+        idempotency_key=domain_key,
+        model=target.model,
+        prompt=None,
+        request_data=request_data,
+        filename=f"segment-{approved['segment'].ordinal}-speech.mp3",
+        request_hash=request_hash,
+        production_id=production_id,
+        segment_id=segment_id,
+        output_mime="audio/mpeg",
+        transient=True,
+    )
+    checkpoint = {"video_job_id": job.id}
+    if not created:
+        if job.status == "completed":
+            return _transcription_success(job)
+        if job.status in ("failed", "cancelled"):
+            return Failed(
+                error_code=f"existing_{job.status}",
+                message=job.error or f"the segment's STT job already ended {job.status}",
+            )
+        return await _advance_transcription(ctx, checkpoint, target, video_settings, oss)
+
+    return await _dispatch_stt(ctx, job, checkpoint, video_settings, oss)
+
+
+async def _dispatch_stt(ctx, job, checkpoint: dict, video_settings, oss):
+    from tool import video_production as vp
+
+    tctx = _tool_ctx(ctx)
+    try:
+        tctx.sandbox = await _sandbox_client(ctx)
+        job, remote = await vp._dispatch_transcription(job, tctx, video_settings, oss)
+    except Exception as exc:
+        # Media dispatch is idempotent per (owner, idempotency_key) on the
+        # node's queue, so unlike a paid provider submit this can retry.
+        await vp._update_job(job.id, status="dispatch_unknown", error=str(exc)[:500])
+        return WaitExternal(
+            checkpoint=checkpoint,
+            wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+            progress={"dispatch": "retrying"},
+        )
+    await ctx.progress(
+        {"sandbox_job_id": remote.get("job_id"), "queue_position": remote.get("queue_position")},
+        phase="extract_audio",
+    )
+    return WaitExternal(
+        checkpoint=checkpoint,
+        wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+        external_handle=remote.get("job_id"),
+    )
+
+
+async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, oss):
+    from tool import video_production as vp
+
+    job = await _owned_video_job(checkpoint["video_job_id"], ctx.user_id, kind="stt")
+    if job is None:
+        return Failed(error_code="video_job_missing", message="STT job vanished")
+    if job.status == "completed":
+        return _transcription_success(job)
+    if job.status in ("failed", "cancelled"):
+        return Failed(
+            error_code="stt_failed" if job.status == "failed" else "stt_cancelled",
+            message=job.error or f"STT job ended {job.status}",
+        )
+
+    tctx = _tool_ctx(ctx)
+
+    if job.status == "transcribing":
+        # STT finalization runs inside one invocation; seeing it from outside
+        # means a crash mid-finalize. Reclaim past the staleness window.
+        from video.job_recovery import _age_seconds
+
+        if _age_seconds(job.updated_at) < 300:
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+                acknowledges_cancel=True,
+            )
+        await vp._update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
+        job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
+
+    if job.status == "extraction_completed":
+        await ctx.progress(phase="speech_to_text")
+        job = await vp._finalize_transcription(
+            job, tctx, target, oss, (job.result_data or {}).get("extraction") or {}
+        )
+        if job.status == "completed":
+            return _transcription_success(job)
+        return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
+
+    cancel_requested = await ctx.is_cancel_requested()
+    client = await _sandbox_client(ctx)
+
+    if cancel_requested:
+        try:
+            await client.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+        except Exception as exc:
+            log.warning(f"media cancel for {job.id} failed: {exc}")
+        await vp._update_job(job.id, status="cancelled", error="cancelled", completed_at=_now())
+        await vp._mark_asset(job.output_asset_id, status="failed")
+        return Cancelled(result={"video_job_id": job.id})
+
+    if job.status in ("dispatch_unknown", "dispatching") and not job.sandbox_job_id:
+        tctx.sandbox = client
+        return await _dispatch_stt(ctx, job, checkpoint, video_settings, oss)
+
+    remote = await client.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+    state = str(remote.get("status") or "failed")
+    if state == "completed":
+        await vp._update_job(
+            job.id,
+            status="extraction_completed",
+            result_data={"extraction": remote.get("result") or {}},
+            error=None,
+        )
+        job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
+        await ctx.progress(phase="speech_to_text")
+        job = await vp._finalize_transcription(job, tctx, target, oss, remote.get("result") or {})
+        if job.status == "completed":
+            return _transcription_success(job)
+        return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
+    if state in ("failed", "cancelled"):
+        await vp._mark_asset(job.output_asset_id, status="failed")
+        await vp._update_job(
+            job.id, status=state, error=str(remote.get("error") or state)[:1200], completed_at=_now()
+        )
+        if state == "cancelled":
+            return Cancelled(result={"video_job_id": job.id})
+        return Failed(error_code="extraction_failed", message=str(remote.get("error") or state)[:500])
+
+    await vp._update_job(job.id, status=state, error=None)
+    await ctx.progress(
+        {"queue_position": remote.get("queue_position"), "sandbox_state": state},
+        phase="extract_audio",
+    )
+    return WaitExternal(
+        checkpoint=checkpoint,
+        wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+        external_handle=job.sandbox_job_id,
+    )
+
+
+def _transcription_success(job):
+    result_data = job.result_data or {}
+    transcript = result_data.get("transcript") or {}
+    comparison = result_data.get("comparison") or {}
+    return Succeeded(
+        result={
+            "video_job_id": job.id,
+            "segment_id": job.segment_id,
+            "transcript": transcript.get("text"),
+            "similarity": comparison.get("similarity"),
+            "verdict": comparison.get("verdict"),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# production.render — WUYING media queue render + OSS publish (PR#17)
+# ---------------------------------------------------------------------------
+
+async def _production_render(ctx, payload: dict, checkpoint: dict):
+    from core.oss import get_oss
+    from tool import video_production as vp
+    from tool import video_workflow as vw
+
+    _, settings = vp._configured_target()
+    oss = get_oss()
+
+    if checkpoint.get("video_job_id"):
+        return await _advance_render(ctx, checkpoint, settings, oss)
+
+    if await ctx.is_cancel_requested():
+        return Cancelled()
+
+    production_id = str(payload.get("production_id") or "")
+    tctx = _tool_ctx(ctx)
+    await ctx.progress(phase="preparing")
+    approved = await vw.prepare_render_submission(tctx, production_id)
+    domain_key = f"{approved['production_id']}:render:{approved['scope_hash'][:16]}"
+    rows = await vp._resolve_inputs(approved["segment_assets"], tctx)
+    request_data = {
+        "production_id": approved["production_id"],
+        "render_scope_hash": approved["scope_hash"],
+        "segment_asset_ids": [row.id for row in rows],
+        "captions": approved["captions"],
+        "subtitles": approved["subtitles"],
+        "channel_name": approved["channel_name"],
+        "render_engine": str(payload.get("render_engine") or "auto"),
+        "width": approved["width"],
+        "height": approved["height"],
+        "skill_job_id": ctx.job_id,
+    }
+    request_hash = vw.content_hash(
+        {"kind": "render", "request_data": {k: v for k, v in request_data.items() if k != "skill_job_id"}}
+    )
+    job, asset, created = await vp._create_pending_job(
+        ctx=tctx,
+        kind="render",
+        idempotency_key=domain_key,
+        model="wuying-media@1",
+        prompt=None,
+        request_data=request_data,
+        filename=str(payload.get("filename") or "") or None,
+        request_hash=request_hash,
+        production_id=approved["production_id"],
+    )
+    checkpoint = {"video_job_id": job.id}
+    if not created:
+        if job.status == "completed":
+            return _render_success(job)
+        if job.status in ("failed", "cancelled"):
+            return Failed(
+                error_code=f"existing_{job.status}",
+                message=job.error or f"the production's render already ended {job.status}",
+            )
+        return await _advance_render(ctx, checkpoint, settings, oss)
+
+    return await _dispatch_render_step(ctx, job, checkpoint, settings, oss)
+
+
+async def _dispatch_render_step(ctx, job, checkpoint: dict, settings, oss):
+    from tool import video_production as vp
+
+    tctx = _tool_ctx(ctx)
+    try:
+        tctx.sandbox = await _sandbox_client(ctx)
+        job, remote = await vp._dispatch_render(job, tctx, settings, oss)
+    except Exception as exc:
+        await vp._update_job(job.id, status="dispatch_unknown", error=str(exc)[:500])
+        return WaitExternal(
+            checkpoint=checkpoint,
+            wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+            progress={"dispatch": "retrying"},
+        )
+    await ctx.progress(
+        {"sandbox_job_id": remote.get("job_id"), "queue_position": remote.get("queue_position")},
+        phase="rendering",
+    )
+    return WaitExternal(
+        checkpoint=checkpoint,
+        wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+        external_handle=remote.get("job_id"),
+    )
+
+
+async def _advance_render(ctx, checkpoint: dict, settings, oss):
+    from tool import video_production as vp
+
+    job = await _owned_video_job(checkpoint["video_job_id"], ctx.user_id, kind="render")
+    if job is None:
+        return Failed(error_code="video_job_missing", message="render job vanished")
+    if job.status == "completed":
+        return _render_success(job)
+    if job.status in ("failed", "cancelled"):
+        if job.status == "cancelled":
+            return Cancelled(result={"video_job_id": job.id})
+        return Failed(error_code="render_failed", message=job.error or "render failed")
+
+    tctx = _tool_ctx(ctx)
+    cancel_requested = await ctx.is_cancel_requested()
+    client = await _sandbox_client(ctx)
+
+    if job.status in ("dispatch_unknown", "dispatching") and not job.sandbox_job_id:
+        if cancel_requested:
+            await vp._update_job(job.id, status="cancelled", error="cancelled", completed_at=_now())
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            return Cancelled(result={"video_job_id": job.id})
+        return await _dispatch_render_step(ctx, job, checkpoint, settings, oss)
+
+    if cancel_requested:
+        try:
+            remote = await client.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+        except Exception as exc:
+            log.warning(f"render cancel for {job.id} failed: {exc}")
+            remote = {"status": "cancelled", "error": "cancelled"}
+        job = await vp._sync_render(job, remote, tctx, oss)
+        if job.status == "completed":
+            # The node finished before the cancel landed; keep the output.
+            return _render_success(job, cancel_race=True)
+        return Cancelled(result={"video_job_id": job.id})
+
+    remote = await client.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+    await ctx.progress(
+        {"queue_position": remote.get("queue_position"), "sandbox_state": remote.get("status")},
+        phase="rendering",
+    )
+    job = await vp._sync_render(job, remote, tctx, oss)
+    if job.status == "completed":
+        return _render_success(job)
+    if job.status == "failed":
+        return Failed(error_code="render_failed", message=job.error or "render failed")
+    if job.status == "cancelled":
+        return Cancelled(result={"video_job_id": job.id})
+    return WaitExternal(
+        checkpoint=checkpoint,
+        wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+        external_handle=job.sandbox_job_id,
+    )
+
+
+def _render_success(job, *, cancel_race: bool = False):
+    result = {
+        "video_job_id": job.id,
+        "production_id": job.production_id,
+        "asset_id": job.output_asset_id,
+    }
+    if cancel_race:
+        result["cancel_race"] = True
+    artifacts = [job.output_asset_id] if job.output_asset_id else []
+    return Succeeded(result=result, artifacts=artifacts)
+
+
+async def _owned_video_job(video_job_id: str, user_id: str, kind: str = "segment"):
     from sqlalchemy import select
 
     from db.base import get_db_session
@@ -479,7 +851,11 @@ async def _owned_video_job(video_job_id: str, user_id: str):
     async with get_db_session() as db:
         return (
             await db.execute(
-                select(VideoJob).where(VideoJob.id == video_job_id, VideoJob.user_id == user_id)
+                select(VideoJob).where(
+                    VideoJob.id == video_job_id,
+                    VideoJob.user_id == user_id,
+                    VideoJob.kind == kind,
+                )
             )
         ).scalar_one_or_none()
 

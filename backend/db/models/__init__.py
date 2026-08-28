@@ -17,10 +17,11 @@ from db.models.video_production import VideoApproval, VideoProduction, VideoSegm
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
 from db.models.memory import UserMemory
+from db.models.image_gen_cache import ImageGenCache
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
     "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
-    "UserSkill", "SkillInstall", "UserMemory",
+    "UserSkill", "SkillInstall", "UserMemory", "ImageGenCache",
 ]

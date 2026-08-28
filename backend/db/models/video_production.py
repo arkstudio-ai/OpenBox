@@ -71,6 +71,8 @@ class VideoSegment(Base):
     script_text: Mapped[str] = mapped_column(Text, nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Per-segment model override; NULL = the configured default model.
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     input_asset_ids: Mapped[list] = mapped_column(JSONType, default=list)
     lint_data: Mapped[dict] = mapped_column(JSONType, default=dict)
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'planned'"))

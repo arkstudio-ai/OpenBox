@@ -506,6 +506,202 @@ async def _store_output(
     return StoredImage(asset_id, name, mime, size, path, attached, materialized)
 
 
+def _fingerprint(
+    *,
+    op: str,
+    model: str,
+    prompt: str,
+    size: str,
+    quality: str,
+    output_format: str,
+    background: str | None,
+    output_compression: int | None,
+    n: int,
+    source_digests: list[str],
+    mask_digest: str | None,
+) -> str:
+    """Content identity of one image request.
+
+    Sources are hashed by BYTES (already in memory from _load_inputs), not by
+    URL or asset id — a re-signed URL of the same image must still hit, and a
+    different image behind the same name must never hit.
+    """
+    import hashlib
+    import json
+
+    payload = {
+        "op": op,
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+        "background": background,
+        "output_compression": output_compression,
+        "n": n,
+        "source_digests": source_digests,
+        "mask_digest": mask_digest,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+async def _find_reusable_image(fingerprint: str):
+    """Newest cached generation with a live, ready asset — any user."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.image_gen_cache import ImageGenCache
+
+    async with get_db_session() as db:
+        row = (
+            await db.execute(
+                select(ImageGenCache, FileAsset)
+                .join(FileAsset, FileAsset.id == ImageGenCache.asset_id)
+                .where(
+                    ImageGenCache.fingerprint == fingerprint,
+                    FileAsset.status == "ready",
+                    FileAsset.is_deleted.is_(False),
+                )
+                .order_by(ImageGenCache.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+    return (row[0], row[1]) if row else None
+
+
+async def _store_reused(
+    ctx: ToolContext,
+    oss,
+    cached_asset,
+    requested_name: str | None,
+    prompt: str,
+    mode: str,
+) -> StoredImage | None:
+    """Fulfil a request by OSS server-side copy of a cached identical output.
+
+    The caller gets their own FileAsset row and OSS key; None means the copy
+    failed and the caller should fall through to a normal paid generation.
+    """
+    from datetime import datetime, timezone
+
+    from core.identifier import ascending
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from models.message import FilePart, FileRelation
+    from sandbox.assets import _session_project, _use_internal_oss, ensure_cli
+    from session.session import save_part
+
+    asset_id = ascending("asset")
+    ext = cached_asset.name.rsplit(".", 1)[-1] if "." in cached_asset.name else "png"
+    name = _safe_filename(requested_name, asset_id, 1, 1, ext)
+    key = f"assets/{ctx.user_id}/{asset_id}/{name}"
+    try:
+        head = await oss.copy(cached_asset.oss_key, key)
+    except Exception:
+        head = None
+    if not head or not head.get("size"):
+        return None
+    size = head["size"]
+    mime = cached_asset.mime
+
+    async with get_db_session() as db:
+        project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
+        db.add(
+            FileAsset(
+                id=asset_id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id,
+                project_id=project_id or None,
+                name=name,
+                oss_key=key,
+                mime=mime,
+                size=size,
+                status="ready",
+                source="agent",
+                transient=False,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
+
+    path = f"/workspace/generated_images/{name}"
+    materialized = False
+    if ctx.sandbox:
+        try:
+            await ensure_cli(ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id)
+            get_url = oss.presign_get(key, expires_sec=600, internal=_use_internal_oss(oss))
+            pull = await ctx.sandbox.execute(
+                f'PATH="$HOME/.local/bin:$PATH" obx-file get {shlex.quote(get_url)} {shlex.quote(path)}',
+                timeout=120,
+            )
+            materialized = pull.exit_code == 0
+        except Exception:
+            log.warning("reused image stayed in OSS but could not reach workspace", exc_info=True)
+
+    attached = True
+    try:
+        await save_part(
+            FilePart(
+                path=path,
+                mime_type=mime,
+                asset_id=asset_id,
+                oss_key=key,
+                size=size,
+                transient=False,
+                relation=FileRelation(
+                    source_part_id=ctx.part_id or None,
+                    group_id=f"tool:{ctx.part_id}" if ctx.part_id else asset_id,
+                    role="result",
+                    kind="generated_image",
+                    label="Edited image" if mode == "edit" else "Generated image",
+                    caption=prompt[:4000],
+                    ordinal=1,
+                    metadata={"mode": mode, "variant_count": 1, "reused": True},
+                ),
+                session_id=ctx.session_id,
+                message_id=ctx.message_id,
+            ),
+            is_new=True,
+            user_id=ctx.user_id,
+        )
+    except Exception:
+        attached = False
+        log.warning("reused image saved to OSS but could not be attached to chat", exc_info=True)
+
+    return StoredImage(asset_id, name, mime, size, path, attached, materialized)
+
+
+async def _record_cache(
+    fingerprint: str, op: str, model: str, request_data: dict, stored: list[StoredImage], ctx: ToolContext
+) -> None:
+    """Best-effort: a cache-write failure must never fail a paid generation."""
+    from datetime import datetime, timezone
+
+    from core.identifier import ascending
+    from db.base import get_db_session
+    from db.models.image_gen_cache import ImageGenCache
+
+    try:
+        async with get_db_session() as db:
+            for item in stored:
+                db.add(
+                    ImageGenCache(
+                        id=ascending("imgc"),
+                        user_id=ctx.user_id,
+                        fingerprint=fingerprint,
+                        op=op,
+                        model=model,
+                        request_data=request_data,
+                        asset_id=item.asset_id,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
+    except Exception as exc:
+        log.debug("image_gen cache insert failed: %s", exc)
+
+
 def _public_error(exc: Exception) -> str:
     status = getattr(exc, "status_code", None)
     message = getattr(exc, "message", None) or str(exc) or exc.__class__.__name__
@@ -557,6 +753,49 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         if args.input_images:
             await ctx.update_output("Loading source images from OSS…")
         images, mask = await _load_inputs(args.input_images, args.mask_image, ctx, oss)
+        fingerprint = None
+        if getattr(settings, "dedupe", False) and args.n == 1:
+            import hashlib as _hashlib
+
+            fingerprint = _fingerprint(
+                op=mode,
+                model=target.model,
+                prompt=args.prompt,
+                size=size,
+                quality=quality,
+                output_format=output_format,
+                background=args.background,
+                output_compression=args.output_compression,
+                n=args.n,
+                source_digests=[_hashlib.sha256(img.data).hexdigest() for img in images],
+                mask_digest=_hashlib.sha256(mask.data).hexdigest() if mask else None,
+            )
+            cached = await _find_reusable_image(fingerprint)
+            if cached:
+                reused = await _store_reused(
+                    ctx, oss, cached[1], args.filename, args.prompt, mode
+                )
+                if reused:
+                    verb = "Edited" if mode == "edit" else "Generated"
+                    return ToolResult(
+                        title=f"{verb} 1 image (reused identical result)",
+                        output=(
+                            f"An identical earlier {mode} result was reused without a new provider call.\n"
+                            f"- asset_id={reused.asset_id}; name={reused.name}; path={reused.path}; "
+                            f"{reused.mime}; {reused.size} bytes\n"
+                            "Use the asset_id (preferred) or displayed path as input_images for a follow-up edit."
+                        ),
+                        metadata={
+                            "mode": mode,
+                            "model": target.model,
+                            "asset_id": reused.asset_id,
+                            "asset_ids": [reused.asset_id],
+                            "names": [reused.name],
+                            "size": size,
+                            "quality": quality,
+                            "reused": True,
+                        },
+                    )
         await ctx.update_output(
             "Editing image with the configured provider…"
             if images
@@ -590,6 +829,16 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     except Exception as exc:
         log.warning("image_gen %s failed: %s", mode, _public_error(exc))
         return ToolResult(title=f"Image {mode} failed", output=_public_error(exc))
+
+    if fingerprint:
+        await _record_cache(
+            fingerprint,
+            mode,
+            target.model,
+            {"size": size, "quality": quality, "output_format": output_format},
+            stored,
+            ctx,
+        )
 
     verb = "Edited" if mode == "edit" else "Generated"
     lines = [

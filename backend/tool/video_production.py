@@ -114,14 +114,9 @@ class VideoTranscribeArgs(BaseModel):
         return self
 
 
-@dataclass(frozen=True)
-class VideoProviderTarget:
-    provider: str
-    model: str
-    api_key: str
-    base_url: str
-    submit_timeout_seconds: int
-    status_timeout_seconds: int
+# The provider target is now the multi-channel route object; the old name is
+# kept for the existing call sites and tests.
+from tool.video_providers import VideoRoute as VideoProviderTarget  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -136,40 +131,16 @@ class VideoTranscriptionTarget:
 
 
 def _configured_target(model_override: str | None = None) -> tuple[VideoProviderTarget, object]:
-    import os
+    """Resolve the submission route (channel + credentials) for a model.
 
+    Routing lives in tool/video_providers.py; the legacy doubao/ark
+    configuration resolves exactly as before.
+    """
     from core.config import get_config
+    from tool.video_providers import resolve_route
 
     config = get_config()
-    settings = config.video_generation
-    provider = config.provider.get(settings.provider)
-    api_key = (provider.api_key if provider else None) or (
-        os.environ.get("DOUBAO_API_KEY", "") if settings.provider == "doubao" else ""
-    )
-    configured_base = (provider.base_url if provider else None) or (
-        os.environ.get("DOUBAO_BASE_URL", "") if settings.provider == "doubao" else ""
-    )
-    if not api_key:
-        raise RuntimeError("DOUBAO_API_KEY is empty")
-    base_url = configured_base.rstrip("/")
-    if not base_url.startswith("https://") or base_url.endswith(".html"):
-        raise RuntimeError(
-            "DOUBAO_BASE_URL must be the API origin (for example https://api.tokenspace.net.cn), not the documentation page"
-        )
-    model = (model_override or settings.model).strip()
-    if not model:
-        raise RuntimeError("video_generation.model is empty")
-    return (
-        VideoProviderTarget(
-            provider=settings.provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            submit_timeout_seconds=settings.submit_timeout_seconds,
-            status_timeout_seconds=settings.status_timeout_seconds,
-        ),
-        settings,
-    )
+    return resolve_route(model_override, config), config.video_generation
 
 
 def _configured_transcription_target() -> VideoTranscriptionTarget:
@@ -327,6 +298,7 @@ async def _create_pending_job(
     segment_id: str | None = None,
     output_mime: str = "video/mp4",
     transient: bool = False,
+    prompt_hash: str | None = None,
 ) -> tuple[Any, Any, bool]:
     """Reserve job+asset before a paid/remote call; return existing on a race."""
     from core.identifier import ascending
@@ -388,6 +360,7 @@ async def _create_pending_job(
             segment_id=segment_id,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
+            prompt_hash=prompt_hash,
             status="submitting" if kind == "segment" else "dispatching",
             model=model,
             prompt=prompt,
@@ -585,6 +558,10 @@ async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any])
 async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[str, Any]:
     import httpx
 
+    if getattr(target, "channel", "ark") != "ark":
+        from tool import video_providers
+
+        return await video_providers.status(target, task_id)
     async with httpx.AsyncClient(timeout=target.status_timeout_seconds, follow_redirects=True) as client:
         response = await client.get(
             f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
@@ -597,6 +574,10 @@ async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[st
 async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
     import httpx
 
+    if getattr(target, "channel", "ark") != "ark":
+        # The gateway channels expose no upstream cancel API; the caller marks
+        # the local job cancelled and the provider task may still complete.
+        return
     async with httpx.AsyncClient(timeout=target.status_timeout_seconds) as client:
         response = await client.delete(
             f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
@@ -717,7 +698,11 @@ async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str)
     }
 
 
-def _provider_state(data: dict[str, Any]) -> str:
+def _provider_state(data: dict[str, Any], route: Any = None) -> str:
+    if route is not None and getattr(route, "channel", "ark") != "ark":
+        from tool import video_providers
+
+        return video_providers.normalize_state(route, data)
     value = str(data.get("status") or "").lower()
     return {
         "queued": "queued",
@@ -734,7 +719,11 @@ def _provider_state(data: dict[str, Any]) -> str:
     }.get(value, "in_progress")
 
 
-def _provider_video_url(data: dict[str, Any]) -> str:
+def _provider_video_url(data: dict[str, Any], route: Any = None) -> str:
+    if route is not None and getattr(route, "channel", "ark") != "ark":
+        from tool import video_providers
+
+        return video_providers.result_video_url(route, data)
     content = data.get("content") or {}
     if not isinstance(content, dict):
         return ""
@@ -776,8 +765,8 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
     return head["size"] or total
 
 
-async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, settings) -> Any:
-    source_url = _provider_video_url(data)
+async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, settings, route: Any = None) -> Any:
+    source_url = _provider_video_url(data, route)
     if not source_url.startswith("https://"):
         raise RuntimeError("provider marked the task completed without a video URL")
     from core.oss import get_oss
@@ -897,6 +886,97 @@ async def _job_asset(job):
         return await db.get(FileAsset, job.output_asset_id)
 
 
+async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]] | None:
+    """Content identity ("etag:size") per input, or None to skip dedupe.
+
+    Any input without an ETag disables dedupe for the whole request: a miss
+    only costs a paid call we would have made anyway, a false hit ships the
+    wrong video.
+    """
+    digests: list[dict[str, Any]] = []
+    for row in inputs:
+        try:
+            head = await oss.head(row.oss_key)
+        except Exception:
+            return None
+        etag = (head or {}).get("etag") or ""
+        if not etag:
+            return None
+        digests.append(
+            {
+                "digest": f"{etag}:{(head or {}).get('size') or 0}",
+                "kind": "image" if row.mime.startswith(_IMAGE_PREFIX) else "video",
+            }
+        )
+    return digests
+
+
+async def _find_reusable_segment(prompt_hash: str) -> tuple[Any, Any] | None:
+    """Newest completed job with identical content, any user (cross-user reuse)."""
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        row = (
+            await db.execute(
+                select(VideoJob, FileAsset)
+                .join(FileAsset, FileAsset.id == VideoJob.output_asset_id)
+                .where(
+                    VideoJob.prompt_hash == prompt_hash,
+                    VideoJob.kind == "segment",
+                    VideoJob.status == "completed",
+                    VideoJob.output_asset_id.is_not(None),
+                    FileAsset.status == "ready",
+                    FileAsset.is_deleted.is_(False),
+                )
+                .order_by(VideoJob.completed_at.desc())
+                .limit(1)
+            )
+        ).first()
+    return (row[0], row[1]) if row else None
+
+
+async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) -> Any | None:
+    """Fulfil a reserved job by OSS server-side copy instead of a paid call.
+
+    The new user gets their own FileAsset row and OSS key — asset rows and
+    keys are never shared across users (a later soft-delete removes the OSS
+    object). Returns the completed job, or None so the caller falls back to
+    the normal paid path.
+    """
+    from core.oss import get_oss
+    from tool.video_workflow import mark_segment_job
+
+    asset = await _job_asset(job)
+    if not asset:
+        return None
+    try:
+        head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
+    except Exception:
+        head = None
+    if not head or not head.get("size"):
+        return None
+    now = datetime.now(timezone.utc)
+    await _mark_asset(job.output_asset_id, status="ready", size=head["size"])
+    await _update_job(
+        job.id,
+        status="completed",
+        # Audit only: the source identifiers stay in result_data and are never
+        # printed in tool output (they can belong to another user).
+        result_data={"reuse": True, "reused_from_job": source_job.id, "bytes": head["size"]},
+        attempt=1,
+        started_at=now,
+        completed_at=now,
+        error=None,
+    )
+    if job.segment_id:
+        await mark_segment_job(
+            job.segment_id, job.id, status="completed", output_asset_id=job.output_asset_id
+        )
+    return await _owned_job(job.id, ctx, "segment")
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     try:
         target, settings = _configured_target(None)
@@ -929,13 +1009,25 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             duration = approved["duration"]
             generate_audio = approved["generate_audio"]
             watermark = approved["watermark"]
-            _validate_generation(target.model, resolution, duration, generate_audio)
+            if approved.get("model"):
+                # Per-segment model override routes to its own channel.
+                target, settings = _configured_target(approved["model"])
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
             inputs, character_reference = await _resolve_generation_inputs(
                 approved["character_reference_asset"],
                 approved["input_assets"],
                 ctx,
+            )
+            from tool import video_providers
+
+            video_providers.validate_request(
+                target,
+                resolution=resolution,
+                ratio=ratio,
+                duration=duration,
+                generate_audio=generate_audio,
+                input_mimes=[row.mime for row in inputs],
             )
             request_data = {
                 "production_id": approved["production_id"],
@@ -960,6 +1052,23 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "request_data": request_data,
                 }
             )
+            prompt_hash = None
+            if getattr(settings, "dedupe", False):
+                input_digests = await _input_content_digests(inputs, oss)
+                if input_digests is not None:
+                    prompt_hash = video_providers.compute_prompt_hash(
+                        prompt=prompt,
+                        model_type=getattr(target, "model_type", "seedance"),
+                        model_name=target.model,
+                        duration=duration,
+                        ratio=ratio,
+                        resolution=resolution,
+                        inputs=input_digests,
+                        extra_params={
+                            "generate_audio": generate_audio,
+                            "watermark": watermark,
+                        },
+                    )
             job, asset, created = await _create_pending_job(
                 ctx=ctx,
                 kind="segment",
@@ -971,6 +1080,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 request_hash=request_hash,
                 production_id=approved["production_id"],
                 segment_id=approved["segment_id"],
+                prompt_hash=prompt_hash,
             )
             if not created:
                 if job.status == "completed":
@@ -1005,26 +1115,79 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     },
                 )
 
-            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-            for row in inputs:
-                url = oss.presign_get(row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds)
-                if row.mime.startswith(_IMAGE_PREFIX):
-                    content.append(
-                        {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
-                    )
-                else:
-                    content.append(
-                        {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
-                    )
-            payload: dict[str, Any] = {
-                "model": target.model,
-                "content": content,
-                "resolution": resolution,
-                "ratio": ratio,
-                "duration": duration,
-                "generate_audio": generate_audio,
-                "watermark": watermark,
-            }
+            if prompt_hash:
+                reusable = await _find_reusable_segment(prompt_hash)
+                if reusable:
+                    source_job, source_asset = reusable
+                    reused_job = await _complete_from_reuse(job, source_job, source_asset, ctx)
+                    if reused_job is not None:
+                        # No paid call happened, so the spend approval is NOT
+                        # consumed. Source identifiers stay out of the output.
+                        await _attach_completed(reused_job, ctx)
+                        reused_asset = await _job_asset(reused_job)
+                        return ToolResult(
+                            title="Video segment ready (reused identical generation)",
+                            output="\n".join(_job_lines(reused_job, reused_asset)),
+                            metadata={
+                                "job_id": reused_job.id,
+                                "status": reused_job.status,
+                                "asset_id": (
+                                    reused_asset.id
+                                    if reused_asset and reused_asset.status == "ready"
+                                    else None
+                                ),
+                                "reused": True,
+                            },
+                        )
+
+            channel = getattr(target, "channel", "ark")
+            if channel == "ark":
+                content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+                for row in inputs:
+                    url = oss.presign_get(row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds)
+                    if row.mime.startswith(_IMAGE_PREFIX):
+                        content.append(
+                            {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
+                        )
+                    else:
+                        content.append(
+                            {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
+                        )
+                payload: dict[str, Any] = {
+                    "model": target.model,
+                    "content": content,
+                    "resolution": resolution,
+                    "ratio": ratio,
+                    "duration": duration,
+                    "generate_audio": generate_audio,
+                    "watermark": watermark,
+                }
+                submit_path = None
+            else:
+                refs = [
+                    {
+                        "kind": "image" if row.mime.startswith(_IMAGE_PREFIX) else "video",
+                        "url": oss.presign_get(
+                            row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds
+                        ),
+                        "role": (
+                            "reference_image"
+                            if row.mime.startswith(_IMAGE_PREFIX)
+                            else "reference_video"
+                        ),
+                    }
+                    for row in inputs
+                ]
+                submit_path, payload = video_providers.build_payload(
+                    target,
+                    prompt=prompt,
+                    refs=refs,
+                    resolution=resolution,
+                    ratio=ratio,
+                    duration=duration,
+                    generate_audio=generate_audio,
+                    watermark=watermark,
+                )
             async def submit_and_persist_provider_identity():
                 try:
                     await consume_spend_approval(approved["spend_approval_id"])
@@ -1038,8 +1201,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     await _mark_asset(job.output_asset_id, status="failed")
                     raise
                 await mark_segment_job(approved["segment_id"], job.id, status="submitting")
-                submitted = await _provider_submit(target, payload)
-                submitted_state = _provider_state(submitted)
+                if submit_path is None:
+                    submitted = await _provider_submit(target, payload)
+                else:
+                    submitted = await video_providers.submit(target, submit_path, payload)
+                    if getattr(target, "channel", "ark") == "task":
+                        submitted = {
+                            **submitted,
+                            **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
+                        }
+                submitted_state = _provider_state(submitted, target)
                 # A provider may return a terminal state from the initial POST. In
                 # our state machine, "completed" means the output is already safe
                 # in OSS, so retain an in-progress state until finalization wins
@@ -1047,7 +1218,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 stored_state = "in_progress" if submitted_state == "completed" else submitted_state
                 await _update_job(
                     job.id,
-                    provider_task_id=submitted["id"],
+                    provider_task_id=video_providers.extract_task_id(target, submitted),
                     status=stored_state,
                     attempt=1,
                     started_at=datetime.now(timezone.utc),
@@ -1070,7 +1241,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             job = await _owned_job(job.id, ctx, "segment")
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
-                job = await _finalize_segment(job, response, ctx, settings)
+                job = await _finalize_segment(job, response, ctx, settings, target)
                 asset = await _job_asset(job)
                 await _attach_completed(job, ctx)
             elif state in {"failed", "cancelled"}:
@@ -1149,6 +1320,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     job = await _owned_job(args.job_id or "", ctx, "segment")
     if not job:
         return ToolResult(title="Video job not found", output="No owned segment job has that job_id.")
+    if job.model and job.model != target.model:
+        # Poll/cancel with the channel the job was actually submitted on.
+        try:
+            target, settings = _configured_target(job.model)
+        except Exception as exc:
+            return ToolResult(title="Video provider is not configured", output=_public_error(exc))
     if args.action == "cancel":
         if job.status in _SEGMENT_TERMINAL:
             asset = await _job_asset(job)
@@ -1168,8 +1345,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 await _provider_cancel(target, job.provider_task_id)
             except Exception as exc:
                 return ToolResult(title="Video cancellation failed", output=_public_error(exc))
+        cancel_note = (
+            "cancelled locally; the gateway channel has no upstream cancel and the provider task may still complete"
+            if getattr(target, "channel", "ark") != "ark"
+            else "cancelled"
+        )
         await _update_job(
-            job.id, status="cancelled", completed_at=datetime.now(timezone.utc), error="cancelled"
+            job.id, status="cancelled", completed_at=datetime.now(timezone.utc), error=cancel_note
         )
         await _mark_asset(job.output_asset_id, status="failed")
         if job.segment_id:
@@ -1198,13 +1380,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             break
         try:
             data = await _provider_status(target, job.provider_task_id)
-            state = _provider_state(data)
+            state = _provider_state(data, target)
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
-                job = await _finalize_segment(job, data, ctx, settings)
+                job = await _finalize_segment(job, data, ctx, settings, target)
             elif state in {"failed", "cancelled"}:
+                from tool.video_providers import failure_detail
+
                 detail = data.get("error")
-                message = detail.get("message") if isinstance(detail, dict) else str(detail or state)
+                message = (
+                    detail.get("message")
+                    if isinstance(detail, dict)
+                    else (failure_detail(target, data) or str(detail or state))
+                )
                 await _update_job(
                     job.id,
                     status=state,

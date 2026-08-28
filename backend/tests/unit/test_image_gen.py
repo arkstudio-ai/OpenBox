@@ -190,6 +190,8 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
         b"\x89PNG\r\n\x1a\nbody",
         "png",
         "hero.png",
+        "a studio hero shot",
+        "generate",
         1,
         1,
     )
@@ -241,3 +243,20 @@ async def test_execute_returns_oss_asset_ids_for_generation(monkeypatch):
     assert result.metadata["asset_ids"] == ["asset_generated"]
     assert observed["images"] == []
     assert "resource centre" in result.output
+
+
+def test_fingerprint_is_content_addressed():
+    from tool.image_gen import _fingerprint
+
+    base = dict(
+        op="edit", model="gpt-image-2", prompt="p", size="auto", quality="medium",
+        output_format="png", background=None, output_compression=None, n=1,
+        source_digests=["digest-a"], mask_digest=None,
+    )
+    a = _fingerprint(**base)
+    assert len(a) == 64
+    # Same request, same fingerprint — but different source BYTES never hit.
+    assert _fingerprint(**base) == a
+    assert _fingerprint(**{**base, "source_digests": ["digest-b"]}) != a
+    # n participates, so n>1 entries can never collide with n==1 lookups.
+    assert _fingerprint(**{**base, "n": 2}) != a

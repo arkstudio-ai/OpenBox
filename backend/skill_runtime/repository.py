@@ -256,12 +256,13 @@ async def claim_next(
     """
     now = _utcnow()
     async with get_db_session() as db:
+        # desired_state=cancel jobs are still claimed: the handler owns
+        # provider-side cancellation, so cancellation MUST reach an invocation.
         candidates = (
             await db.execute(
                 select(SkillJob.id, SkillJob.user_id)
                 .where(
                     SkillJob.status.in_(_CLAIMABLE),
-                    SkillJob.desired_state == DesiredState.RUN.value,
                     SkillJob.queue_name.in_(queues),
                     SkillJob.next_run_at.isnot(None),
                     SkillJob.next_run_at <= now,
@@ -302,7 +303,6 @@ async def _claim_one(job_id: str, *, worker_id: str, lease_seconds: int) -> Clai
             .where(
                 SkillJob.id == job_id,
                 SkillJob.status.in_(_CLAIMABLE),
-                SkillJob.desired_state == DesiredState.RUN.value,
                 SkillJob.next_run_at <= now,
             )
             .values(
@@ -580,6 +580,40 @@ async def settle_invocation(
             raise StaleLeaseError(f"job {job_id}: settle with stale lease")
 
         job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
+
+        if isinstance(outcome, Succeeded) and outcome.artifacts:
+            from db.models.file_asset import FileAsset
+            from db.models.skill_job_artifact import SkillJobArtifact
+
+            owned_assets = set(
+                (
+                    await db.execute(
+                        select(FileAsset.id).where(
+                            FileAsset.id.in_(outcome.artifacts),
+                            FileAsset.user_id == job.user_id,
+                        )
+                    )
+                ).scalars().all()
+            )
+            for ordinal, asset_id in enumerate(outcome.artifacts):
+                if asset_id not in owned_assets:
+                    log.warning(
+                        f"job {job_id}: dropping artifact {asset_id} not owned by {job.user_id}"
+                    )
+                    continue
+                db.add(
+                    SkillJobArtifact(
+                        id=new_id("sjar"),
+                        job_id=job.id,
+                        user_id=job.user_id,
+                        asset_id=asset_id,
+                        role="output",
+                        ordinal=ordinal,
+                        meta={},
+                        created_at=now,
+                    )
+                )
+
         payload = outcome_payload_summary(outcome)
         if target is JobStatus.FAILED and isinstance(outcome, Retry):
             payload = {"error_code": outcome.error_code, "retry_budget_exhausted": True}
@@ -638,8 +672,13 @@ async def settle_invocation(
 # ---------------------------------------------------------------------------
 
 async def request_cancel(job_id: str, user_id: str) -> SkillJob:
-    """§7.4: cancel is a desired state. Unclaimed states settle immediately;
-    a running invocation keeps its lease and observes the flag."""
+    """§7.4: cancel is a desired state, not a task kill.
+
+    Only a job that never executed (queued, attempt 0) settles directly —
+    anything that ran may hold external side effects, so it gets
+    desired_state=cancel and, if waiting, an immediate wake: the handler owns
+    provider-side cancellation and the final settlement.
+    """
     now = _utcnow()
     async with get_db_session() as db:
         owned = (
@@ -654,7 +693,8 @@ async def request_cancel(job_id: str, user_id: str) -> SkillJob:
             update(SkillJob)
             .where(
                 SkillJob.id == job_id,
-                SkillJob.status.in_(_CLAIMABLE + _WAITING),
+                SkillJob.status == JobStatus.QUEUED.value,
+                SkillJob.attempt_count == 0,
             )
             .values(
                 status=JobStatus.CANCELLED.value,
@@ -674,27 +714,52 @@ async def request_cancel(job_id: str, user_id: str) -> SkillJob:
                     user_id=job.user_id,
                     seq=job.last_event_seq,
                     event_type=JobEventType.CANCELLED.value,
-                    payload={"before_claim": True},
+                    payload={"before_first_run": True},
                     created_at=now,
                 )
             )
             return job
 
-        result = await db.execute(
+        # Waiting states wake immediately so a worker claims the job and its
+        # handler can run the cancel semantics (provider cancel, race policy).
+        wake = await db.execute(
             update(SkillJob)
             .where(
                 SkillJob.id == job_id,
-                SkillJob.status == JobStatus.RUNNING.value,
+                SkillJob.status.in_(_WAITING),
                 SkillJob.desired_state == DesiredState.RUN.value,
             )
             .values(
+                status=JobStatus.QUEUED.value,
                 desired_state=DesiredState.CANCEL.value,
+                next_run_at=now,
                 last_event_seq=SkillJob.last_event_seq + 1,
                 updated_at=now,
             )
         )
+        flagged = wake.rowcount == 1
+        if not flagged:
+            result = await db.execute(
+                update(SkillJob)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status.in_(
+                        (JobStatus.RUNNING.value, JobStatus.QUEUED.value,
+                         JobStatus.RETRY_SCHEDULED.value)
+                    ),
+                    SkillJob.desired_state == DesiredState.RUN.value,
+                )
+                .values(
+                    desired_state=DesiredState.CANCEL.value,
+                    next_run_at=func.coalesce(SkillJob.next_run_at, now),
+                    last_event_seq=SkillJob.last_event_seq + 1,
+                    updated_at=now,
+                )
+            )
+            flagged = result.rowcount == 1
+
         job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
-        if result.rowcount == 1:
+        if flagged:
             db.add(
                 SkillJobEvent(
                     id=new_id("sjev"),

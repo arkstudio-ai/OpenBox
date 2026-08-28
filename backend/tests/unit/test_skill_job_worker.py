@@ -265,6 +265,74 @@ async def test_deadline_settles_unclaimed_and_cancels_running():
     assert still_running.desired_state == "cancel"
 
 
+async def test_cancel_waiting_job_reaches_handler():
+    """§7.4: waiting states are not settled directly — the cancel wakes the
+    job so the handler can unwind external side effects."""
+    skill = _skill_key()
+    saw_cancel = []
+
+    async def handler(ctx, operation, payload, checkpoint):
+        if not checkpoint:
+            return WaitExternal(checkpoint={"step": 1}, wake_at=NOW() + timedelta(hours=1))
+        saw_cancel.append(await ctx.is_cancel_requested())
+        return Cancelled(result={"provider_cancelled": True})
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await _run_to_idle(worker)
+    assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.WAITING_EXTERNAL.value
+
+    cancelled = await repo.request_cancel(job.id, job.user_id)
+    assert cancelled.status == JobStatus.QUEUED.value  # woken, not settled
+    assert cancelled.desired_state == "cancel"
+
+    await _run_to_idle(worker)
+    final = await repo.get_job(job.id, job.user_id)
+    assert final.status == JobStatus.CANCELLED.value
+    assert saw_cancel == [True]
+    assert final.result_data == {"provider_cancelled": True}
+
+
+async def test_naive_handler_waiting_outcome_overridden_on_cancel():
+    """A handler that ignores the flag must still converge: the worker turns
+    its waiting outcome into Cancelled."""
+    skill = _skill_key()
+
+    async def handler(ctx, operation, payload, checkpoint):
+        return WaitExternal(checkpoint={"step": 1}, wake_at=NOW() + timedelta(hours=1))
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await _run_to_idle(worker)
+    await repo.request_cancel(job.id, job.user_id)
+    await _run_to_idle(worker)
+    assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.CANCELLED.value
+
+
+async def test_acknowledged_wait_survives_cancel():
+    """acknowledges_cancel keeps a must-finish wait alive (paid output mid-copy)."""
+    skill = _skill_key()
+
+    async def handler(ctx, operation, payload, checkpoint):
+        return WaitExternal(
+            checkpoint={"step": 1},
+            wake_at=NOW() + timedelta(hours=1),
+            acknowledges_cancel=True,
+        )
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await _run_to_idle(worker)
+    await repo.request_cancel(job.id, job.user_id)
+    await _run_to_idle(worker)
+    after = await repo.get_job(job.id, job.user_id)
+    assert after.status == JobStatus.WAITING_EXTERNAL.value
+    assert after.desired_state == "cancel"
+
+
 async def test_waiting_user_is_never_deadline_free_but_not_retried():
     """waiting_user only falls to the deadline, never to retry machinery."""
     job = await _admit(_skill_key())

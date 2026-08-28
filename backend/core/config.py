@@ -269,6 +269,10 @@ class OpenBoxConfig(BaseModel):
     skill_worker_lease_seconds: int = 60
     skill_worker_per_user_concurrency: int = 2
     skill_worker_invocation_timeout: int = 120     # default per-invocation bound (manifest can lower)
+    #: Greyed rollout gate for the video write path (segment.generate via the
+    #: generic runtime). Off = the legacy video_generate tool stays the only
+    #: paid submit path; never run both write paths at once (§11.5).
+    skill_jobs_video_write: bool = False
     cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
 
     # -- Agent --
@@ -473,6 +477,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "skill_worker_lease_seconds": "SKILL_WORKER_LEASE_SECONDS",
         "skill_worker_per_user_concurrency": "SKILL_WORKER_PER_USER_CONCURRENCY",
         "skill_worker_invocation_timeout": "SKILL_WORKER_INVOCATION_TIMEOUT",
+        "skill_jobs_video_write": "SKILL_JOBS_VIDEO_WRITE",
     }
     for field_name, env_var in env_map.items():
         value = os.environ.get(env_var)
@@ -490,7 +495,7 @@ def _apply_env_overrides(data: dict) -> dict:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)
-            elif field_name in {"debug", "skill_jobs_enabled"}:
+            elif field_name in {"debug", "skill_jobs_enabled", "skill_jobs_video_write"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

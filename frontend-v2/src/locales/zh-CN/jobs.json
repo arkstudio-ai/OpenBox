@@ -26,6 +26,13 @@
         "waiting_answer": "等待回答",
         "delivering": "交付结果"
       }
+    },
+    "video-production": {
+      "phase": {
+        "preparing": "准备提交",
+        "provider_generate": "供应商生成中",
+        "asset_publish": "结果入库"
+      }
     }
   }
 }

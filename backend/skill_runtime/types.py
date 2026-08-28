@@ -156,6 +156,12 @@ class WaitExternal:
     wake_at: datetime
     external_handle: str | None = None
     progress: dict | None = None
+    #: A cancel-requested job normally has its waiting outcome overridden to
+    #: Cancelled by the worker (naive handlers must still converge). A handler
+    #: that has SEEN the cancel but must finish first — e.g. a paid provider
+    #: output mid-copy to OSS — sets this to keep its wait honored (§7.4:
+    #: provider success outranks the cancel).
+    acknowledges_cancel: bool = False
 
 
 @dataclass(frozen=True)

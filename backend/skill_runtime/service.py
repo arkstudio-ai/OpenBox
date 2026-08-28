@@ -99,6 +99,10 @@ async def start_job(
     op = manifest.operation(operation)
     if op is None:
         raise UnknownOperation(f"{skill_key} has no operation {operation!r}")
+    if op.enabledConfigFlag and not bool(getattr(get_config(), op.enabledConfigFlag, False)):
+        raise SkillDisabled(
+            f"operation {operation} is not enabled on this deployment ({op.enabledConfigFlag})"
+        )
     validate_input(op, input_data)
 
     now = datetime.now(timezone.utc)

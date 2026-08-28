@@ -30,6 +30,7 @@ _handlers: dict[str, BuiltinHandler] = {}
 #: phases (video-production lands here); never fed from user data.
 _BUILTIN_MODULES: tuple[str, ...] = (
     "builtin_skills.demo_echo.handlers",
+    "builtin_skills.video_production.handlers",
 )
 
 _loaded = False

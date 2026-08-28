@@ -26,6 +26,13 @@
         "waiting_answer": "Waiting for answer",
         "delivering": "Delivering result"
       }
+    },
+    "video-production": {
+      "phase": {
+        "preparing": "Preparing submission",
+        "provider_generate": "Provider generating",
+        "asset_publish": "Publishing output"
+      }
     }
   }
 }

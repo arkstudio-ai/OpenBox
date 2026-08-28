@@ -41,6 +41,10 @@ class OperationSpec(BaseModel):
     maxTotalSeconds: int = Field(default=172800, ge=1)
     userInputTimeoutSeconds: int | None = Field(default=None, ge=1)
     maxAttempts: int = Field(default=8, ge=1, le=100)
+    #: Optional deployment gate: name of a boolean OpenBoxConfig field that
+    #: must be true for this operation to admit new jobs (greyed rollouts,
+    #: e.g. skill_jobs_video_write). Unknown names fail closed.
+    enabledConfigFlag: str | None = None
 
 
 class CapabilitiesSpec(BaseModel):

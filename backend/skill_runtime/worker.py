@@ -15,7 +15,15 @@ from core.log import create_logger
 from skill_runtime import registry, repository as repo
 from skill_runtime.context import JobContext
 from skill_runtime.repository import ClaimedJob, StaleLeaseError
-from skill_runtime.types import Cancelled, Failed, Outcome, Retry
+from skill_runtime.types import (
+    Cancelled,
+    Failed,
+    NeedsAgent,
+    Outcome,
+    Retry,
+    WaitExternal,
+    WaitUser,
+)
 
 log = create_logger("skill_runtime.worker")
 
@@ -126,8 +134,10 @@ class SkillJobWorker:
 
     async def _execute(self, claim: ClaimedJob) -> None:
         job = claim.job
-        if job.desired_state == "cancel":
-            # The cancel raced the claim; honor it without running the handler.
+        if job.desired_state == "cancel" and job.attempt_count <= 1 and not job.checkpoint_data:
+            # Never persisted a step: nothing external to unwind. (A crash
+            # exactly between an external submit and its first checkpoint is
+            # covered by the domain's own reconciliation, e.g. video's sweep.)
             await self._settle(claim, Cancelled())
             return
 
@@ -195,6 +205,18 @@ class SkillJobWorker:
             )
         finally:
             keeper.cancel()
+
+        # A naive handler may ignore the cancel flag; its waiting outcome must
+        # not keep the job alive forever. Handlers that saw the cancel but must
+        # finish (paid output mid-transfer) set acknowledges_cancel.
+        if isinstance(outcome, (WaitExternal, WaitUser, NeedsAgent)) and not getattr(
+            outcome, "acknowledges_cancel", False
+        ):
+            try:
+                if await repo.is_cancel_requested(job.id):
+                    outcome = Cancelled()
+            except Exception:
+                pass
 
         await self._settle(claim, outcome, consumed_inputs=inputs)
 

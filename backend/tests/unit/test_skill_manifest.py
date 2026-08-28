@@ -159,10 +159,12 @@ def _demo_worker():
     from skill_runtime.worker import SkillJobWorker
 
     registry.load_builtin_handlers()
-    return SkillJobWorker(queues=("default",), concurrency=8, per_user_limit=0)
+    # concurrency=1: the in-memory test DB shares one StaticPool connection,
+    # so parallel invocations would interleave inside a single transaction.
+    return SkillJobWorker(queues=("default",), concurrency=1, per_user_limit=0)
 
 
-async def _drive_until(worker, job, statuses, ticks=10):
+async def _drive_until(worker, job, statuses, ticks=40):
     """The shared default queue may hold older tests' leftovers; keep ticking
     until this job reaches one of the expected statuses."""
     fresh = await repo.get_job(job.id, job.user_id)

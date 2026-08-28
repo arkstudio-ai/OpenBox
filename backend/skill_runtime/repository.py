@@ -781,6 +781,39 @@ async def add_input(
     return row, True
 
 
+async def list_artifacts(job_id: str, user_id: str) -> list[dict]:
+    """Artifact rows joined with their asset's display fields, user-scoped."""
+    from db.models.file_asset import FileAsset
+    from db.models.skill_job_artifact import SkillJobArtifact
+
+    async with get_db_session() as db:
+        rows = (
+            await db.execute(
+                select(SkillJobArtifact, FileAsset)
+                .join(FileAsset, FileAsset.id == SkillJobArtifact.asset_id)
+                .where(
+                    SkillJobArtifact.job_id == job_id,
+                    SkillJobArtifact.user_id == user_id,
+                )
+                .order_by(SkillJobArtifact.ordinal.asc())
+            )
+        ).all()
+    return [
+        {
+            "artifactId": artifact.id,
+            "assetId": asset.id,
+            "role": artifact.role,
+            "ordinal": artifact.ordinal,
+            "name": asset.name,
+            "mime": asset.mime,
+            "size": asset.size,
+            "status": asset.status,
+            "metadata": artifact.meta or {},
+        }
+        for artifact, asset in rows
+    ]
+
+
 async def unconsumed_inputs(job_id: str) -> list[SkillJobInput]:
     async with get_db_session() as db:
         return list(

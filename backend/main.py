@@ -247,6 +247,11 @@ def create_app() -> FastAPI:
     from api.video_materials import router as video_materials_router
     application.include_router(video_materials_router)
 
+    from api.skill_jobs import router as skill_jobs_router
+    from api.skill_settings import router as skill_settings_router
+    application.include_router(skill_jobs_router)
+    application.include_router(skill_settings_router)
+
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])
 

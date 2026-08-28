@@ -17,6 +17,13 @@ from db.models.video_production import VideoApproval, VideoProduction, VideoSegm
 from db.models.video_material import VideoMaterialAsset, VideoMaterialGroup
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
+from db.models.skill_job import SkillJob
+from db.models.skill_job_attempt import SkillJobAttempt
+from db.models.skill_job_event import SkillJobEvent
+from db.models.skill_job_input import SkillJobInput
+from db.models.skill_job_artifact import SkillJobArtifact
+from db.models.user_skill_setting import UserSkillSetting
+from db.models.session_inbox import SessionInbox
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
@@ -24,4 +31,6 @@ __all__ = [
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "VideoMaterialGroup", "VideoMaterialAsset",
     "UserSkill", "SkillInstall",
+    "SkillJob", "SkillJobAttempt", "SkillJobEvent", "SkillJobInput",
+    "SkillJobArtifact", "UserSkillSetting", "SessionInbox",
 ]

@@ -487,6 +487,13 @@ async def settle_invocation(
             status=target.value,
             checkpoint_data=outcome.checkpoint,
             next_run_at=None,
+            # The card renders from the snapshot alone (§12.2), so the ask
+            # must live on the row, not only in the event log.
+            progress_data={
+                "prompt": outcome.prompt,
+                "input_schema": outcome.input_schema or {},
+                "expires_at": outcome.expires_at.isoformat() if outcome.expires_at else None,
+            },
         )
         event_type = JobEventType.WAITING_USER
     elif isinstance(outcome, NeedsAgent):

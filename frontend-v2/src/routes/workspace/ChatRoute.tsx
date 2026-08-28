@@ -24,6 +24,7 @@ import {
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
+import { SkillJobsDock } from "@/features/jobs"
 
 const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
@@ -129,6 +130,9 @@ export default function ChatRoute() {
       {questions.map((q) => (
         <QuestionDock key={q.id} request={q} />
       ))}
+      {/* Background skill jobs outlive the agent turn; the dock keeps their
+          cards updating from the job ledger after the session goes idle. */}
+      <SkillJobsDock sessionId={sessionId} />
     </>
   )
 

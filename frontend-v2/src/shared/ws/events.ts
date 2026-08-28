@@ -58,6 +58,20 @@ export interface WsEventMap {
   "cron.job.failed": CronJobEvent & { error?: string }
   "cron.job.injected": CronJobEvent & { runId?: string }
   "cron.job.auto_disabled": CronJobEvent & { consecutiveErrors?: number; error?: string }
+
+  // Skill job outbox (backend skill_runtime/outbox.py). At-least-once with a
+  // per-job seq; clients treat it as an invalidation signal and refetch the
+  // snapshot — the event payload is never the source of truth.
+  "skill.job.event": SkillJobWsEvent
+}
+
+export interface SkillJobWsEvent {
+  userId?: string
+  jobId: string
+  seq: number
+  eventType: string
+  payload?: Record<string, unknown>
+  createdAt?: string | null
 }
 
 export interface CronJobEvent {

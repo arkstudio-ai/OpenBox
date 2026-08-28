@@ -118,6 +118,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning(f"Failed to schedule video job recovery: {e}")
 
+    # Embedded skill job worker (development only; production runs the
+    # standalone worker role from skill_runtime.worker_main).
+    if config.skill_worker_mode == "embedded":
+        try:
+            from skill_runtime.embedded import start_embedded
+            await start_embedded(config)
+        except Exception as e:
+            log.warning(f"Failed to start embedded skill worker: {e}")
+
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
@@ -128,6 +137,13 @@ async def lifespan(app: FastAPI):
         await cron_service.stop()
     except Exception as e:
         log.warning(f"Error stopping cron scheduler: {e}")
+
+    # Drain the embedded skill worker (no-op unless it was started)
+    try:
+        from skill_runtime.embedded import stop_embedded
+        await stop_embedded()
+    except Exception as e:
+        log.warning(f"Error stopping embedded skill worker: {e}")
 
     # Abort active agent loops
     from session.status import abort_all, active_session_ids

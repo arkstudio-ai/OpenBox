@@ -258,6 +258,17 @@ class OpenBoxConfig(BaseModel):
     cron_missed_run_max_age_seconds: int = 6 * 3600  # older missed runs reschedule instead of replay
     cron_summary_model: str = ""                   # "" = job model > session model > default model
     cron_transcript_keep_per_job: int = 20         # newest run transcripts kept per job (30d cap on top)
+
+    # -- Skill job runtime (docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md) --
+    skill_jobs_enabled: bool = True                # admission gate for new skill jobs
+    #: off = no worker in this process; embedded = dev-only worker inside the
+    #: web lifespan. Production runs the standalone worker_main role instead.
+    skill_worker_mode: str = "off"
+    skill_worker_queues: str = "default"           # comma-separated resource pools
+    skill_worker_concurrency: int = 4
+    skill_worker_lease_seconds: int = 60
+    skill_worker_per_user_concurrency: int = 2
+    skill_worker_invocation_timeout: int = 120     # default per-invocation bound (manifest can lower)
     cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
 
     # -- Agent --
@@ -455,6 +466,13 @@ def _apply_env_overrides(data: dict) -> dict:
         "logto_jwks_uri": "LOGTO_JWKS_URI",
         "logto_redirect_uri": "LOGTO_REDIRECT_URI",
         "logto_post_logout_redirect_uri": "LOGTO_POST_LOGOUT_REDIRECT_URI",
+        "skill_jobs_enabled": "SKILL_JOBS_ENABLED",
+        "skill_worker_mode": "SKILL_WORKER_MODE",
+        "skill_worker_queues": "SKILL_WORKER_QUEUES",
+        "skill_worker_concurrency": "SKILL_WORKER_CONCURRENCY",
+        "skill_worker_lease_seconds": "SKILL_WORKER_LEASE_SECONDS",
+        "skill_worker_per_user_concurrency": "SKILL_WORKER_PER_USER_CONCURRENCY",
+        "skill_worker_invocation_timeout": "SKILL_WORKER_INVOCATION_TIMEOUT",
     }
     for field_name, env_var in env_map.items():
         value = os.environ.get(env_var)
@@ -466,11 +484,13 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
-                                "oss_user_quota_bytes"}:
+                                "oss_user_quota_bytes", "skill_worker_concurrency",
+                                "skill_worker_lease_seconds", "skill_worker_per_user_concurrency",
+                                "skill_worker_invocation_timeout"}:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)
-            elif field_name == "debug":
+            elif field_name in {"debug", "skill_jobs_enabled"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

@@ -28,7 +28,9 @@ _handlers: dict[str, BuiltinHandler] = {}
 
 #: Builtin skill packages shipped in the image. Extended in place by later
 #: phases (video-production lands here); never fed from user data.
-_BUILTIN_MODULES: tuple[str, ...] = ()
+_BUILTIN_MODULES: tuple[str, ...] = (
+    "builtin_skills.demo_echo.handlers",
+)
 
 _loaded = False
 

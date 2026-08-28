@@ -1,0 +1,43 @@
+apiVersion: openbox.ai/v1
+kind: Skill
+metadata:
+  name: demo-echo
+  version: 1.0.0
+  displayName: Demo Echo
+spec:
+  distribution: builtin
+  defaultEnabled: true
+  runtime:
+    kind: internal
+    handler: builtin.demo_echo
+    handlerVersion: 1
+  operations:
+    echo:
+      inputSchema:
+        type: object
+        required: [text]
+      queue: default
+      invocationTimeoutSeconds: 30
+      maxTotalSeconds: 600
+      maxAttempts: 3
+    slow_echo:
+      inputSchema:
+        type: object
+        required: [text]
+      queue: default
+      invocationTimeoutSeconds: 30
+      maxExternalWaitSeconds: 3600
+      maxTotalSeconds: 7200
+      maxAttempts: 5
+    ask_then_echo:
+      inputSchema:
+        type: object
+      queue: default
+      invocationTimeoutSeconds: 30
+      userInputTimeoutSeconds: 86400
+      maxTotalSeconds: 172800
+      maxAttempts: 3
+  phases:
+    waiting_provider: skill.demo-echo.phase.waiting_provider
+    waiting_answer: skill.demo-echo.phase.waiting_answer
+    delivering: skill.demo-echo.phase.delivering

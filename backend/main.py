@@ -108,6 +108,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"Failed to start cron scheduler: {e}")
 
+    # Stopgap (rebuild plan Phase 0.5): re-drive video finalizations stranded
+    # by a previous process exit. The periodic sweep piggybacks on the cron
+    # timer tick; this only schedules the startup pass.
+    if config.jwt_secret:
+        try:
+            from video.job_recovery import schedule_startup_recovery
+            schedule_startup_recovery()
+        except Exception as e:
+            log.warning(f"Failed to schedule video job recovery: {e}")
+
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")

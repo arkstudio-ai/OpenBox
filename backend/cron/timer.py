@@ -140,6 +140,12 @@ async def on_timer(state: TimerState) -> None:
         except Exception as e:
             log.debug(f"Warmup check error: {e}")
 
+        try:
+            from video.job_recovery import sweep_if_due as video_sweep_if_due
+            await video_sweep_if_due()
+        except Exception as e:
+            log.debug(f"Video job recovery sweep error: {e}")
+
         state.running = False
         arm_timer(state)
 

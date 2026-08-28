@@ -301,7 +301,7 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         return WaitUser(
             checkpoint={"video_job_id": job.id},
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={"type": "object"},
+            input_schema={},
         )
 
     state = vp._provider_state(submitted)
@@ -365,12 +365,27 @@ async def _advance_existing(ctx, checkpoint: dict):
             )
         await _reclaim_stale_finalizing(job.id)
         job = await _owned_video_job(video_job_id, ctx.user_id)
+        if job is None:
+            return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
 
     if not job.provider_task_id:
+        if cancel_requested:
+            # Ambiguous submit + explicit user cancel: same policy as the
+            # legacy tool — settle cancelled, keep the do-not-resubmit trail.
+            await vp._update_job(
+                job.id, status="cancelled", completed_at=_now(),
+                error="cancelled during operator review (ambiguous submit; do not resubmit)",
+            )
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            if job.segment_id:
+                from tool.video_workflow import mark_segment_job
+
+                await mark_segment_job(job.segment_id, job.id, status="cancelled")
+            return Cancelled(result={"video_job_id": job.id, "ambiguous_submit": True})
         return WaitUser(
             checkpoint=checkpoint,
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={"type": "object"},
+            input_schema={},
         )
 
     # Even under a cancel request, settle against provider FACTS (§7.4): a
@@ -380,7 +395,11 @@ async def _advance_existing(ctx, checkpoint: dict):
     state = vp._provider_state(data)
 
     if state == "completed":
-        return await _finalize(ctx, job.id, data, settings, cancel_race=cancel_requested)
+        return await _finalize(
+            ctx, job.id, data, settings,
+            cancel_race=cancel_requested,
+            transfer_retries=int(checkpoint.get("transfer_retries") or 0),
+        )
     if state in ("failed", "cancelled"):
         return await _settle_provider_terminal(job.id, state, data)
 
@@ -409,7 +428,7 @@ async def _adopt_existing(ctx, job, settings):
         return WaitUser(
             checkpoint={"video_job_id": job.id},
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={"type": "object"},
+            input_schema={},
         )
     await ctx.progress({"adopted_video_job": job.id}, phase="provider_generate")
     return WaitExternal(
@@ -419,23 +438,34 @@ async def _adopt_existing(ctx, job, settings):
     )
 
 
-async def _finalize(ctx, video_job_id: str, data: dict, settings, *, cancel_race: bool = False):
+#: Provider success outranks a cancel (§7.4) — but not forever: a permanently
+#: broken OSS leg must not make the cancel button inert. After this many
+#: transfer attempts under a pending cancel, the skill job honors the cancel
+#: and the video_job stays `transfer_failed` for the recovery sweep to finish.
+TRANSFER_RETRY_CANCEL_GRACE = 3
+
+
+async def _finalize(ctx, video_job_id: str, data: dict, settings, *,
+                    cancel_race: bool = False, transfer_retries: int = 0):
     from tool import video_production as vp
 
     await ctx.progress(phase="asset_publish")
     job = await _owned_video_job(video_job_id, ctx.user_id)
+    if job is None:
+        return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
     refreshed = await vp._finalize_segment(job, data, _tool_ctx(ctx), settings)
     if refreshed is not None and refreshed.status == "completed":
         return await _success(refreshed, cancel_race=cancel_race)
-    # transfer_failed keeps the paid provider output recoverable; retry only
-    # the OSS leg on the next wake. Provider success outranks a cancel (§7.4),
-    # so this wait survives a cancel request.
+    retries = transfer_retries + 1
+    poll = _poll_seconds(settings)
+    retry_delay = max(poll, 30.0) if poll else 0.0
     return WaitExternal(
-        checkpoint={"video_job_id": video_job_id},
-        wake_at=_now() + timedelta(seconds=30),
-        external_handle=job.provider_task_id if job else None,
-        progress={"provider_state": "succeeded", "finalize": "transfer_failed"},
-        acknowledges_cancel=True,
+        checkpoint={"video_job_id": video_job_id, "transfer_retries": retries},
+        wake_at=_now() + timedelta(seconds=retry_delay),
+        external_handle=job.provider_task_id,
+        progress={"provider_state": "succeeded", "finalize": "transfer_failed",
+                  "transfer_retries": retries},
+        acknowledges_cancel=retries < TRANSFER_RETRY_CANCEL_GRACE,
     )
 
 
@@ -609,15 +639,15 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
             )
         await vp._update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
         job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
+        if job is None:
+            return Failed(error_code="video_job_missing", message="STT job vanished")
 
     if job.status == "extraction_completed":
         await ctx.progress(phase="speech_to_text")
         job = await vp._finalize_transcription(
             job, tctx, target, oss, (job.result_data or {}).get("extraction") or {}
         )
-        if job.status == "completed":
-            return _transcription_success(job)
-        return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
+        return _map_transcription_finalize(job, checkpoint, video_settings)
 
     cancel_requested = await ctx.is_cancel_requested()
     client = await _sandbox_client(ctx)
@@ -645,11 +675,11 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
             error=None,
         )
         job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
+        if job is None:
+            return Failed(error_code="video_job_missing", message="STT job vanished")
         await ctx.progress(phase="speech_to_text")
         job = await vp._finalize_transcription(job, tctx, target, oss, remote.get("result") or {})
-        if job.status == "completed":
-            return _transcription_success(job)
-        return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
+        return _map_transcription_finalize(job, checkpoint, video_settings)
     if state in ("failed", "cancelled"):
         await vp._mark_asset(job.output_asset_id, status="failed")
         await vp._update_job(
@@ -669,6 +699,23 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
         wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
         external_handle=job.sandbox_job_id,
     )
+
+
+def _map_transcription_finalize(job, checkpoint: dict, video_settings):
+    """`_finalize_transcription` returns the job unchanged (still
+    `transcribing`) when it loses the finalize claim to a concurrent owner —
+    that is a wait, not a failure."""
+    if job is None:
+        return Failed(error_code="video_job_missing", message="STT job vanished")
+    if job.status == "completed":
+        return _transcription_success(job)
+    if job.status == "transcribing":
+        return WaitExternal(
+            checkpoint=checkpoint,
+            wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+            acknowledges_cancel=True,
+        )
+    return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
 
 
 def _transcription_success(job):

@@ -152,7 +152,19 @@ class SkillJobWorker:
             )
             return
 
-        inputs = await repo.unconsumed_inputs(job.id)
+        # Whether the handler had a chance to see this cancel: only then may
+        # its waiting outcome be overridden below. A cancel that lands
+        # mid-invocation must not discard the outcome's checkpoint — the next
+        # invocation needs it to unwind external side effects (§7.4).
+        cancel_known_at_claim = job.desired_state == "cancel"
+
+        # Inputs only exist for jobs that already ran a step (wait → resume);
+        # fresh first attempts skip the query.
+        inputs = (
+            await repo.unconsumed_inputs(job.id)
+            if (job.checkpoint_data or job.attempt_count > 1)
+            else []
+        )
         ctx = JobContext(
             job_id=job.id,
             user_id=job.user_id,
@@ -206,22 +218,39 @@ class SkillJobWorker:
         finally:
             keeper.cancel()
 
-        # A naive handler may ignore the cancel flag; its waiting outcome must
-        # not keep the job alive forever. Handlers that saw the cancel but must
-        # finish (paid output mid-transfer) set acknowledges_cancel.
+        # Cancellation vs a waiting outcome, in two distinct cases:
+        # - The handler KNEW about the cancel (flag set at claim) and still
+        #   returned an unacknowledged wait: naive handler — override to
+        #   Cancelled so the job converges.
+        # - The cancel arrived MID-invocation: the handler never saw it, and
+        #   discarding its outcome would lose the checkpoint that links any
+        #   just-created external side effect (a paid submit). Settle the wait
+        #   as returned, then wake immediately so the next invocation runs the
+        #   handler's own cancel semantics with the checkpoint in hand.
+        wake_for_cancel = False
         if isinstance(outcome, (WaitExternal, WaitUser, NeedsAgent)) and not getattr(
             outcome, "acknowledges_cancel", False
         ):
             try:
                 if await repo.is_cancel_requested(job.id):
-                    outcome = Cancelled()
+                    if cancel_known_at_claim:
+                        outcome = Cancelled()
+                    else:
+                        wake_for_cancel = True
             except Exception:
                 pass
 
-        await self._settle(claim, outcome, consumed_inputs=inputs)
+        await self._settle(claim, outcome, consumed_inputs=inputs, wake_reason=(
+            "cancel_pending" if wake_for_cancel else None
+        ))
 
     async def _settle(
-        self, claim: ClaimedJob, outcome: Outcome, *, consumed_inputs: list | None = None
+        self,
+        claim: ClaimedJob,
+        outcome: Outcome,
+        *,
+        consumed_inputs: list | None = None,
+        wake_reason: str | None = None,
     ) -> None:
         try:
             await repo.settle_invocation(
@@ -237,6 +266,17 @@ class SkillJobWorker:
         # other outcome consumed what the handler saw.
         if consumed_inputs and not isinstance(outcome, Retry):
             await repo.mark_inputs_consumed([i.id for i in consumed_inputs])
+
+        if isinstance(outcome, (WaitExternal, WaitUser, NeedsAgent)):
+            try:
+                if wake_reason is None and await repo.unconsumed_inputs(claim.job.id):
+                    # An input landed while this invocation ran; without a wake
+                    # it would sit unconsumed until a second input arrives.
+                    wake_reason = "input_pending"
+                if wake_reason is not None:
+                    await repo.wake_job(claim.job.id, reason=wake_reason)
+            except Exception as e:
+                log.warning(f"Post-settle wake for {claim.job.id} failed: {e}")
 
     async def _keep_lease(
         self, claim: ClaimedJob, invocation: asyncio.Task, lease_lost: asyncio.Event

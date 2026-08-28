@@ -87,9 +87,13 @@ async def stop_embedded() -> None:
 
 
 def notify_worker() -> None:
-    """Poke the embedded worker after a local admission (wake may be lost —
-    the due scan is the correctness backstop)."""
-    if _worker is not None:
-        _worker.notify()
-    if _outbox is not None:
-        _outbox.notify()
+    """Poke the embedded worker after a local admission. Best-effort by
+    contract: a no-op under the standalone worker role, and never raises —
+    the due scan is the correctness backstop."""
+    try:
+        if _worker is not None:
+            _worker.notify()
+        if _outbox is not None:
+            _outbox.notify()
+    except Exception:
+        pass

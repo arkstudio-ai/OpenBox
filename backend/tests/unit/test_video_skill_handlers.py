@@ -318,6 +318,67 @@ async def test_cancel_during_wait_cancels_provider(monkeypatch, enable_write, fa
     assert video_job.status == "cancelled"
 
 
+async def test_cancel_during_operator_review_settles_video_job(monkeypatch, enable_write, fast_poll):
+    """An ambiguous submit parked for operator review must still be
+    cancellable — legacy tool policy: settle cancelled, never resubmit."""
+    user = "u_" + uuid.uuid4().hex[:8]
+    production_id, segment_id = await _make_domain(user)
+    providers = Providers().install(monkeypatch, production_id, segment_id)
+
+    from tool import video_production as vp
+
+    async def exploding_submit(target, payload):
+        providers.submits.append(payload)
+        raise RuntimeError("socket dropped mid-flight")
+
+    monkeypatch.setattr(vp, "_provider_submit", exploding_submit)
+    worker = _worker()
+
+    job = await _start(user, production_id, segment_id)
+    parked = await _drive_until(worker, job, {JobStatus.WAITING_USER.value})
+    assert parked.status == JobStatus.WAITING_USER.value
+    # Prompt-only park: no free-text schema.
+    assert parked.progress_data["input_schema"] == {}
+
+    await repo.request_cancel(job.id, user)
+    done = await _drive_until(worker, job, {JobStatus.CANCELLED.value})
+    assert done.status == JobStatus.CANCELLED.value
+    assert done.result_data.get("ambiguous_submit") is True
+    assert len(providers.submits) == 1  # never resubmitted
+
+    video_job = await _video_job_for(segment_id)
+    assert video_job.status == "cancelled"
+
+
+async def test_transfer_retry_grace_yields_to_cancel(monkeypatch, enable_write, fast_poll):
+    """Provider success outranks a cancel, but a permanently broken OSS leg
+    must not make cancel inert forever: after the grace attempts the cancel
+    wins and the video_job stays transfer_failed for the recovery sweep."""
+    user = "u_" + uuid.uuid4().hex[:8]
+    production_id, segment_id = await _make_domain(user)
+    providers = Providers().install(monkeypatch, production_id, segment_id)
+
+    from tool import video_production as vp
+
+    async def broken_copy(url, oss, key, max_bytes):
+        raise RuntimeError("OSS bucket gone")
+
+    monkeypatch.setattr(vp, "_copy_provider_video_to_oss", broken_copy)
+    worker = _worker()
+
+    job = await _start(user, production_id, segment_id)
+    await _drive_until(worker, job, {JobStatus.WAITING_EXTERNAL.value})
+    providers.status_payload = {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"}
+    await repo.request_cancel(job.id, user)
+
+    done = await _drive_until(worker, job, {JobStatus.CANCELLED.value}, ticks=60)
+    assert done.status == JobStatus.CANCELLED.value
+
+    video_job = await _video_job_for(segment_id)
+    assert video_job.status == "transfer_failed"  # sweep can still recover the paid output
+    assert providers.cancels == []  # provider succeeded; nothing to cancel there
+
+
 async def test_cancel_race_with_provider_success_keeps_output(monkeypatch, enable_write, fast_poll):
     user = "u_" + uuid.uuid4().hex[:8]
     production_id, segment_id = await _make_domain(user)

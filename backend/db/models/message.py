@@ -1,7 +1,7 @@
 """Messages table ORM model."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Numeric, Index, ForeignKey
+from sqlalchemy import String, Boolean, Numeric, Index, ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -36,4 +36,16 @@ class Message(Base):
         Index("ix_messages_session_created", "session_id", "created_at"),
         Index("ix_messages_user", "user_id"),
         Index("ix_messages_user_created", "user_id", "created_at"),
+        # Skill-job chat receipts dedup at the database, not check-then-insert:
+        # two outbox publishers racing the same terminal event must not write
+        # two receipts. Scoped to the receipt marker prefix so ordinary
+        # client-supplied ids stay unconstrained.
+        Index(
+            "uq_messages_receipt_marker",
+            "session_id",
+            "client_message_id",
+            unique=True,
+            postgresql_where=text("client_message_id LIKE 'sjr:%'"),
+            sqlite_where=text("client_message_id LIKE 'sjr:%'"),
+        ),
     )

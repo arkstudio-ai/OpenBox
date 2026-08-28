@@ -25,6 +25,19 @@ SKILL_JOB_EVENT = "skill.job.event"
 PUBLISH_INTERVAL_SECONDS = 1.0
 BATCH_LIMIT = 200
 
+#: A poisoned receipt (schema drift, FK oddity) must not block the wire event
+#: forever; after this many attempts the receipt is abandoned with an error.
+RECEIPT_RETRY_LIMIT = 3
+_receipt_failures: dict[str, int] = {}
+
+
+def _iso_utc(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
 
 async def publish_pending(limit: int = BATCH_LIMIT) -> int:
     """Publish unpublished events in per-job seq order. Returns the count."""
@@ -49,32 +62,13 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
         return 0
 
     published = 0
+    stamped_ids: list[str] = []
     for event in events:
-        try:
-            bus.publish(
-                SKILL_JOB_EVENT,
-                {
-                    "userId": event.user_id,
-                    "jobId": event.job_id,
-                    "seq": event.seq,
-                    "eventType": event.event_type,
-                    "payload": event.payload or {},
-                    "createdAt": event.created_at.isoformat() if event.created_at else None,
-                },
-            )
-        except Exception as e:
-            # Leave unstamped; the next pass retries delivery.
-            log.warning(f"Outbox publish failed for event {event.id}: {e}")
-            continue
-        now = datetime.now(timezone.utc)
-        async with get_db_session() as db:
-            await db.execute(
-                update(SkillJobEvent)
-                .where(SkillJobEvent.id == event.id, SkillJobEvent.published_at.is_(None))
-                .values(published_at=now)
-            )
-        published += 1
-
+        # Receipt FIRST: it is durable state, the wire event is not. Once
+        # published_at is stamped the event is never revisited, so a receipt
+        # written after the stamp would be lost to any crash or DB blip in
+        # between. Order receipt → publish → stamp keeps everything
+        # at-least-once (the DB unique marker absorbs the replays).
         if event.event_type in ("job.succeeded", "job.failed", "job.cancelled"):
             try:
                 from db.models.skill_job import SkillJob
@@ -85,7 +79,41 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
                 if job is not None:
                     await write_receipt(job)
             except Exception as e:
-                log.warning(f"Chat receipt for {event.job_id} failed: {e}")
+                if _receipt_failures.get(event.id, 0) < RECEIPT_RETRY_LIMIT:
+                    # Leave the event unstamped so the whole step retries.
+                    _receipt_failures[event.id] = _receipt_failures.get(event.id, 0) + 1
+                    log.warning(f"Chat receipt for {event.job_id} failed, will retry: {e}")
+                    continue
+                log.error(f"Chat receipt for {event.job_id} abandoned after retries: {e}")
+
+        try:
+            bus.publish(
+                SKILL_JOB_EVENT,
+                {
+                    "userId": event.user_id,
+                    "jobId": event.job_id,
+                    "seq": event.seq,
+                    "eventType": event.event_type,
+                    "payload": event.payload or {},
+                    "createdAt": _iso_utc(event.created_at),
+                },
+            )
+        except Exception as e:
+            # Leave unstamped; the next pass retries delivery.
+            log.warning(f"Outbox publish failed for event {event.id}: {e}")
+            continue
+        stamped_ids.append(event.id)
+        _receipt_failures.pop(event.id, None)
+        published += 1
+
+    if stamped_ids:
+        now = datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            await db.execute(
+                update(SkillJobEvent)
+                .where(SkillJobEvent.id.in_(stamped_ids), SkillJobEvent.published_at.is_(None))
+                .values(published_at=now)
+            )
     return published
 
 

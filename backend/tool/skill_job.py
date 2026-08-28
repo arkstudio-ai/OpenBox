@@ -71,19 +71,26 @@ def _job_lines(snapshot: dict, *, background: bool = False) -> list[str]:
 
 
 def _notify_local_worker() -> None:
-    try:
-        from skill_runtime.embedded import notify_worker
+    from skill_runtime.embedded import notify_worker
 
-        notify_worker()
-    except Exception:
-        pass
+    notify_worker()
+
+
+#: String-level terminal check: a rolling deploy may surface a status value
+#: this process's enum does not know yet; treat it as non-terminal instead of
+#: crashing the tool with a ValueError.
+_TERMINAL_VALUES = frozenset({"succeeded", "failed", "cancelled"})
+
+
+def _is_terminal(status: str) -> bool:
+    return status in _TERMINAL_VALUES
 
 
 async def _execute(args: SkillJobParams, ctx: ToolContext) -> ToolResult:
     from skill_runtime import repository as repo, service
     from skill_runtime.manifest import ManifestError
-    from skill_runtime.repository import IdempotencyConflict, JobNotFound
-    from skill_runtime.types import TERMINAL_STATUSES, JobStatus
+    from skill_runtime.repository import IdempotencyConflict, InputNotAllowed, JobNotFound
+    from skill_runtime.types import JobStatus
 
     user_id = ctx.user_id or "default"
     call_key = ctx.part_id or uuid.uuid4().hex
@@ -142,6 +149,8 @@ async def _execute(args: SkillJobParams, ctx: ToolContext) -> ToolResult:
             )
         except JobNotFound:
             return ToolResult(title="Job not found", output="No owned job has that job_id.")
+        except InputNotAllowed as e:
+            return ToolResult(title="Job already finished", output=str(e))
         _notify_local_worker()
         job = await repo.get_job(args.job_id, user_id)
         snapshot = service.job_snapshot(job)
@@ -175,7 +184,7 @@ async def _execute(args: SkillJobParams, ctx: ToolContext) -> ToolResult:
 
         deadline = asyncio.get_running_loop().time() + min(max(args.wait_seconds, 1), WAIT_MAX_SECONDS)
         while (
-            JobStatus(job.status) not in TERMINAL_STATUSES
+            not _is_terminal(job.status)
             and job.status != JobStatus.WAITING_USER.value
             and asyncio.get_running_loop().time() < deadline
             and not ctx.abort.is_set()
@@ -184,9 +193,12 @@ async def _execute(args: SkillJobParams, ctx: ToolContext) -> ToolResult:
             job = await repo.get_job(args.job_id, user_id)
 
     snapshot = service.job_snapshot(job)
-    lines = _job_lines(snapshot, background=JobStatus(job.status) not in TERMINAL_STATUSES)
+    lines = _job_lines(snapshot, background=not _is_terminal(job.status))
 
-    if args.action == "result" or JobStatus(job.status) in TERMINAL_STATUSES:
+    if args.action == "result" or _is_terminal(job.status):
+        if args.action == "result" and not _is_terminal(job.status):
+            lines.append("result_pending=true")
+            lines.append("The job has not finished; this is a progress snapshot, not the result.")
         result = snapshot.get("result") or {}
         if result:
             lines.append(f"result={json.dumps(result, ensure_ascii=False)}")

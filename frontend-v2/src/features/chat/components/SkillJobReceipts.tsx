@@ -1,25 +1,40 @@
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { MessagePart, SkillJobPart } from "@/shared/types/api"
-import { skillDisplayName, statusTone } from "./SkillJobCard"
-import type { SkillJobStatus } from "@/features/jobs/types"
 
 /** Exported for tests. */
 export function receiptParts(parts: MessagePart[]): SkillJobPart[] {
   return parts.filter((part): part is SkillJobPart => part.type === "skill_job")
 }
 
+// Local status→tone map: chat renders the receipt from part data alone and
+// features must not import each other (ENGINEERING_SPEC §4.1); the jobs
+// feature keeps its own richer map for live cards.
+function receiptTone(status: string): { dot: string; labelKey: string } {
+  switch (status) {
+    case "succeeded":
+      return { dot: "bg-sage", labelKey: "status.succeeded" }
+    case "failed":
+      return { dot: "bg-danger", labelKey: "status.failed" }
+    case "cancelled":
+      return { dot: "bg-n400", labelKey: "status.cancelled" }
+    default:
+      return { dot: "bg-n400", labelKey: `status.${status}` }
+  }
+}
+
 function ReceiptChip({ part }: { part: SkillJobPart }) {
   const { t } = useTranslation("jobs")
-  const tone = statusTone(part.status as SkillJobStatus)
+  const tone = receiptTone(part.status)
+  const name = part.skillKey.replace(/^(builtin|user):/, "")
   return (
     <div className="border-hair bg-n100/50 flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2">
-      <span className={cn("size-2 shrink-0 rounded-full", tone?.dot ?? "bg-n400")} />
+      <span className={cn("size-2 shrink-0 rounded-full", tone.dot)} />
       <span className="text-n800 shrink-0 text-sm font-medium">
-        {skillDisplayName(part.skillKey)} · {part.operation}
+        {name} · {part.operation}
       </span>
       <span className="text-n500 shrink-0 text-xs">
-        {tone ? t(tone.labelKey) : part.status}
+        {t(tone.labelKey, { defaultValue: part.status })}
       </span>
       {part.summary ? (
         <span className="text-n600 min-w-0 truncate text-xs">{part.summary}</span>
@@ -28,8 +43,8 @@ function ReceiptChip({ part }: { part: SkillJobPart }) {
   )
 }
 
-/** Durable transcript record of finished background jobs. The dock shows live
- *  cards; this is what remains after they rotate out. */
+/** Durable transcript record of finished background jobs. The jobs dock shows
+ *  live cards; this is what remains after they rotate out. */
 export function SkillJobReceipts({ parts }: { parts: MessagePart[] }) {
   const receipts = receiptParts(parts)
   if (receipts.length === 0) return null

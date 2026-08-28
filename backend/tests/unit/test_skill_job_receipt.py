@@ -141,6 +141,69 @@ async def test_sessionless_job_writes_no_receipt(monkeypatch):
     assert parts == []
 
 
+async def test_receipt_written_before_stamp_survives_bus_failure(monkeypatch):
+    """Order is receipt → publish → stamp: a wire failure leaves the event
+    unstamped for retry, and the already-written receipt is not duplicated."""
+    from bus import bus
+
+    user = "u_" + uuid.uuid4().hex[:8]
+    session_id = await _make_session(user)
+    await _finished_job(session_id=session_id, user_id=user)
+
+    def boom(event_type, data=None):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(bus, "publish", boom)
+    assert await outbox.publish_pending() == 0
+    messages, parts = await _receipts_for(session_id)
+    assert len(messages) == 1  # receipt is durable even though the wire failed
+
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.skill_job_event import SkillJobEvent
+
+    async with get_db_session() as db:
+        unstamped = (
+            await db.execute(
+                select(SkillJobEvent).where(SkillJobEvent.published_at.is_(None))
+            )
+        ).scalars().all()
+    assert len(unstamped) >= 1
+
+    monkeypatch.setattr(bus, "publish", lambda t, d=None: None)
+    assert await outbox.publish_pending() >= 1
+    messages, parts = await _receipts_for(session_id)
+    assert len(messages) == 1 and len(parts) == 1  # replay did not duplicate
+
+
+async def test_receipt_marker_unique_is_db_enforced():
+    """Two racing publishers must collide on the partial unique index, not on
+    a check-then-insert."""
+    import pytest
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    from db.base import get_db_session
+    from db.models.message import Message
+
+    user = "u_" + uuid.uuid4().hex[:8]
+    session_id = await _make_session(user)
+    marker = "sjr:sjob_race"
+    async with get_db_session() as db:
+        db.add(Message(
+            id="message_race1_" + uuid.uuid4().hex[:8], session_id=session_id,
+            user_id=user, role="assistant", client_message_id=marker,
+            created_at=NOW(),
+        ))
+    with pytest.raises(SAIntegrityError):
+        async with get_db_session() as db:
+            db.add(Message(
+                id="message_race2_" + uuid.uuid4().hex[:8], session_id=session_id,
+                user_id=user, role="assistant", client_message_id=marker,
+                created_at=NOW(),
+            ))
+
+
 async def test_receipt_flag_off(monkeypatch):
     from bus import bus
     from core.config import get_config

@@ -107,20 +107,6 @@ class JobEventType(str, Enum):
     CANCELLED = "job.cancelled"
 
 
-#: Event emitted when a job enters a given status. PROGRESSED/CLAIMED and
-#: CANCEL_REQUESTED are not status entries and are emitted explicitly.
-STATUS_EVENTS: dict[JobStatus, JobEventType] = {
-    JobStatus.QUEUED: JobEventType.CREATED,
-    JobStatus.WAITING_EXTERNAL: JobEventType.WAITING_EXTERNAL,
-    JobStatus.WAITING_USER: JobEventType.WAITING_USER,
-    JobStatus.WAITING_AGENT: JobEventType.NEEDS_AGENT,
-    JobStatus.RETRY_SCHEDULED: JobEventType.RETRY_SCHEDULED,
-    JobStatus.SUCCEEDED: JobEventType.SUCCEEDED,
-    JobStatus.FAILED: JobEventType.FAILED,
-    JobStatus.CANCELLED: JobEventType.CANCELLED,
-}
-
-
 class InputKind(str, Enum):
     """skill_job_inputs.kind — what woke the job or fed its next invocation."""
 
@@ -170,6 +156,9 @@ class WaitUser:
     prompt: str
     input_schema: dict = field(default_factory=dict)
     expires_at: datetime | None = None
+    #: Same contract as WaitExternal.acknowledges_cancel: the handler has seen
+    #: the cancel and this park must survive it (rare; prefer settling).
+    acknowledges_cancel: bool = False
 
 
 @dataclass(frozen=True)

@@ -123,6 +123,17 @@ async def start_job(
     )
 
 
+def iso_utc(dt: datetime | None) -> str | None:
+    """ISO-8601 with an explicit offset. SQLite hands back naive datetimes for
+    tz-aware columns; serializing them bare makes every client parse them as
+    local time (hours of drift on a non-UTC host)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
 def job_snapshot(job) -> dict:
     """The authoritative card payload shared by the API, tool and WS."""
     manifest = get_manifest(job.skill_key)
@@ -144,9 +155,9 @@ def job_snapshot(job) -> dict:
         "sessionId": job.session_id,
         "queue": job.queue_name,
         "lastEventSeq": job.last_event_seq,
-        "nextRunAt": job.next_run_at.isoformat() if job.next_run_at else None,
-        "deadlineAt": job.deadline_at.isoformat() if job.deadline_at else None,
-        "createdAt": job.created_at.isoformat() if job.created_at else None,
-        "updatedAt": job.updated_at.isoformat() if job.updated_at else None,
-        "completedAt": job.completed_at.isoformat() if job.completed_at else None,
+        "nextRunAt": iso_utc(job.next_run_at),
+        "deadlineAt": iso_utc(job.deadline_at),
+        "createdAt": iso_utc(job.created_at),
+        "updatedAt": iso_utc(job.updated_at),
+        "completedAt": iso_utc(job.completed_at),
     }

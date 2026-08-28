@@ -311,6 +311,113 @@ async def test_naive_handler_waiting_outcome_overridden_on_cancel():
     assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.CANCELLED.value
 
 
+async def test_mid_invocation_cancel_preserves_checkpoint_then_converges():
+    """A cancel that lands DURING an invocation must not discard the waiting
+    outcome — the checkpoint links external side effects. The wait settles,
+    the job wakes immediately, and the next invocation runs the handler's own
+    cancel semantics with the checkpoint in hand."""
+    skill = _skill_key()
+    submitted = asyncio.Event()
+    cancelled_now = asyncio.Event()
+    cancel_seen_with_checkpoint = []
+
+    async def handler(ctx, operation, payload, checkpoint):
+        if not checkpoint:
+            submitted.set()
+            await cancelled_now.wait()  # the cancel lands while we work
+            return WaitExternal(
+                checkpoint={"provider_task": "paid-1"},
+                wake_at=NOW() + timedelta(hours=1),
+            )
+        cancel_seen_with_checkpoint.append(
+            (await ctx.is_cancel_requested(), dict(checkpoint))
+        )
+        return Cancelled(result={"provider_cancelled": True})
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await worker.run_once()
+    await asyncio.wait_for(submitted.wait(), timeout=5)
+    await repo.request_cancel(job.id, job.user_id)  # running → flag only
+    cancelled_now.set()
+    await worker.drain()
+
+    # The wait was settled (checkpoint persisted), then woken for cancel.
+    mid = await repo.get_job(job.id, job.user_id)
+    assert mid.checkpoint_data == {"provider_task": "paid-1"}
+    assert mid.status == JobStatus.QUEUED.value
+    assert mid.desired_state == "cancel"
+
+    await _run_to_idle(worker)
+    final = await repo.get_job(job.id, job.user_id)
+    assert final.status == JobStatus.CANCELLED.value
+    assert cancel_seen_with_checkpoint == [(True, {"provider_task": "paid-1"})]
+
+
+async def test_input_arriving_mid_invocation_wakes_job():
+    """An answer admitted while the invocation runs must not strand until a
+    second input arrives."""
+    skill = _skill_key()
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+    seen = []
+
+    async def handler(ctx, operation, payload, checkpoint):
+        if not checkpoint:
+            started.set()
+            await proceed.wait()
+            return WaitUser(checkpoint={"asked": True}, prompt="answer?")
+        seen.extend([i.payload for i in ctx.inputs])
+        return Succeeded(result={"done": True})
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    worker = _worker(job)
+    await worker.run_once()
+    await asyncio.wait_for(started.wait(), timeout=5)
+    # Lands mid-invocation: job is RUNNING, so wake_job inside add_input no-ops.
+    await repo.add_input(
+        job.id, job.user_id, kind="user_answer", payload={"a": 1}, idempotency_key="mid-1"
+    )
+    proceed.set()
+    await worker.drain()
+
+    woken = await repo.get_job(job.id, job.user_id)
+    assert woken.status == JobStatus.QUEUED.value  # post-settle wake caught it
+
+    await _run_to_idle(worker)
+    final = await repo.get_job(job.id, job.user_id)
+    assert final.status == JobStatus.SUCCEEDED.value
+    assert seen == [{"a": 1}]
+
+
+async def test_deadline_wakes_executed_jobs_with_cancel():
+    """Past-deadline jobs that ever ran must reach their handler (§7.4), not
+    be settled to failed behind its back."""
+    job = await _admit(_skill_key())
+    claimed = (await repo.claim_next(queues=(job.queue_name,), worker_id="w1"))[0]
+    await repo.settle_invocation(
+        job.id, claimed.lease_token,
+        WaitExternal(checkpoint={"t": 1}, wake_at=NOW() + timedelta(hours=1)),
+        attempt_id=claimed.attempt_id,
+    )
+    from db.base import get_db_session
+    from db.models.skill_job import SkillJob
+    from sqlalchemy import update as sa_update
+
+    async with get_db_session() as db:
+        await db.execute(
+            sa_update(SkillJob).where(SkillJob.id == job.id)
+            .values(deadline_at=NOW() - timedelta(minutes=1))
+        )
+    assert await reconciler.enforce_deadlines() == 1
+    woken = await repo.get_job(job.id, job.user_id)
+    assert woken.status == JobStatus.QUEUED.value
+    assert woken.desired_state == "cancel"
+    assert woken.checkpoint_data == {"t": 1}
+
+
 async def test_acknowledged_wait_survives_cancel():
     """acknowledges_cancel keeps a must-finish wait alive (paid output mid-copy)."""
     skill = _skill_key()

@@ -9,19 +9,11 @@ from pydantic import BaseModel
 
 from auth.middleware import get_current_user
 from skill_runtime import repository as repo, service
+from skill_runtime.embedded import notify_worker as _notify_local_worker
 from skill_runtime.manifest import ManifestError
-from skill_runtime.repository import IdempotencyConflict, JobNotFound
+from skill_runtime.repository import IdempotencyConflict, InputNotAllowed, JobNotFound
 
 router = APIRouter(prefix="/api/skill-jobs", tags=["SkillJobs"])
-
-
-def _notify_local_worker() -> None:
-    try:
-        from skill_runtime.embedded import notify_worker
-
-        notify_worker()
-    except Exception:
-        pass
 
 
 class StartJobRequest(BaseModel):
@@ -97,7 +89,7 @@ async def get_events(
                 "seq": e.seq,
                 "eventType": e.event_type,
                 "payload": e.payload or {},
-                "createdAt": e.created_at.isoformat() if e.created_at else None,
+                "createdAt": service.iso_utc(e.created_at),
             }
             for e in events
         ],
@@ -139,6 +131,8 @@ async def add_input(
         )
     except JobNotFound:
         raise HTTPException(status_code=404, detail="job not found")
+    except InputNotAllowed as e:
+        raise HTTPException(status_code=409, detail=str(e))
     _notify_local_worker()
     return {"inputId": row.id, "created": created}
 

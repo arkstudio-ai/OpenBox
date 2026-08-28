@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from core.identifier import ascending
 from core.log import create_logger
@@ -112,10 +113,13 @@ async def write_receipt(job) -> bool:
                     created_at=now,
                 )
             )
-    except Exception as e:
-        # A racing publisher or a deleted session must not fail the outbox.
-        log.warning(f"Receipt for job {job.id} not written: {e}")
+    except IntegrityError:
+        # A racing publisher already wrote this receipt; the partial unique
+        # index on the marker is the real guard, the pre-check is a fast path.
         return False
+    except Exception as e:
+        log.warning(f"Receipt for job {job.id} not written: {e}")
+        raise
 
     from bus import bus
     from bus.events import MESSAGE_CREATED

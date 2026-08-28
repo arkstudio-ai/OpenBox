@@ -152,6 +152,10 @@ class _SkillJobCardState extends ConsumerState<SkillJobCard> {
   }
 
   Widget _answerBox(BossipTokens t, I18nState i18n, Object? prompt) {
+    // An empty input_schema marks a prompt-only park (operator review): the
+    // handler will not consume free text, so offering a box would be a lie.
+    final schema = widget.job.progress['input_schema'];
+    final acceptsInput = schema is Map && schema.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -161,6 +165,7 @@ class _SkillJobCardState extends ConsumerState<SkillJobCard> {
             child: Text(prompt,
                 style: TextStyle(color: t.n700, fontSize: FontSizes.md)),
           ),
+        if (acceptsInput)
         Row(children: [
           Expanded(
             child: TextField(

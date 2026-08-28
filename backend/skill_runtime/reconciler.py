@@ -137,13 +137,16 @@ async def requeue_due_external() -> int:
 
 
 async def enforce_deadlines() -> int:
-    """Past deadline_at: settle unclaimed states as failed; a running job gets
-    a cancel request so its lease holder can stop cleanly."""
+    """Past deadline_at, a job that ever executed may hold external side
+    effects (a paid provider task, a media job), so its termination MUST reach
+    the handler: it gets a cancel request — woken immediately when waiting —
+    and the handler settles against provider facts (§7.4, §10.2). Only a job
+    that never ran (queued, attempt 0) fails directly."""
     now = _utcnow()
     async with get_db_session() as db:
         overdue = (
             await db.execute(
-                select(SkillJob.id, SkillJob.status).where(
+                select(SkillJob.id, SkillJob.status, SkillJob.attempt_count).where(
                     SkillJob.deadline_at.isnot(None),
                     SkillJob.deadline_at < now,
                     SkillJob.status.notin_([s.value for s in
@@ -153,64 +156,66 @@ async def enforce_deadlines() -> int:
         ).all()
 
     settled = 0
-    for job_id, status in overdue:
-        if status == JobStatus.RUNNING.value:
+    for job_id, status, attempt_count in overdue:
+        if status == JobStatus.QUEUED.value and attempt_count == 0:
             async with get_db_session() as db:
                 result = await db.execute(
                     update(SkillJob)
                     .where(
                         SkillJob.id == job_id,
-                        SkillJob.status == JobStatus.RUNNING.value,
-                        SkillJob.desired_state == DesiredState.RUN.value,
+                        SkillJob.status == JobStatus.QUEUED.value,
+                        SkillJob.attempt_count == 0,
                     )
                     .values(
-                        desired_state=DesiredState.CANCEL.value,
+                        status=JobStatus.FAILED.value,
+                        error_code="deadline_exceeded",
+                        error_message="job passed its total deadline before ever running",
+                        completed_at=now,
+                        next_run_at=None,
                         last_event_seq=SkillJob.last_event_seq + 1,
                         updated_at=now,
                     )
                 )
-                if result.rowcount == 1:
-                    job = (
-                        await db.execute(select(SkillJob).where(SkillJob.id == job_id))
-                    ).scalar_one()
-                    db.add(
-                        SkillJobEvent(
-                            id=repo.new_id("sjev"),
-                            job_id=job.id,
-                            user_id=job.user_id,
-                            seq=job.last_event_seq,
-                            event_type=JobEventType.CANCEL_REQUESTED.value,
-                            payload={"reason": "deadline_exceeded"},
-                            created_at=now,
-                        )
+                if result.rowcount != 1:
+                    continue
+                job = (
+                    await db.execute(select(SkillJob).where(SkillJob.id == job_id))
+                ).scalar_one()
+                db.add(
+                    SkillJobEvent(
+                        id=repo.new_id("sjev"),
+                        job_id=job.id,
+                        user_id=job.user_id,
+                        seq=job.last_event_seq,
+                        event_type=JobEventType.FAILED.value,
+                        payload={"error_code": "deadline_exceeded"},
+                        created_at=now,
                     )
-                    settled += 1
+                )
+            settled += 1
             continue
 
+        # Executed at least once (or currently running): request cancellation.
+        # Waiting states also wake so the handler converges promptly.
         async with get_db_session() as db:
+            values: dict = {
+                "desired_state": DesiredState.CANCEL.value,
+                "last_event_seq": SkillJob.last_event_seq + 1,
+                "updated_at": now,
+            }
+            if status in (JobStatus.QUEUED.value, JobStatus.RETRY_SCHEDULED.value):
+                values["next_run_at"] = now
+            elif status != JobStatus.RUNNING.value:  # waiting states
+                values["status"] = JobStatus.QUEUED.value
+                values["next_run_at"] = now
             result = await db.execute(
                 update(SkillJob)
                 .where(
                     SkillJob.id == job_id,
-                    SkillJob.status.in_(
-                        [
-                            JobStatus.QUEUED.value,
-                            JobStatus.RETRY_SCHEDULED.value,
-                            JobStatus.WAITING_EXTERNAL.value,
-                            JobStatus.WAITING_USER.value,
-                            JobStatus.WAITING_AGENT.value,
-                        ]
-                    ),
+                    SkillJob.status == status,
+                    SkillJob.desired_state == DesiredState.RUN.value,
                 )
-                .values(
-                    status=JobStatus.FAILED.value,
-                    error_code="deadline_exceeded",
-                    error_message="job passed its total deadline",
-                    completed_at=now,
-                    next_run_at=None,
-                    last_event_seq=SkillJob.last_event_seq + 1,
-                    updated_at=now,
-                )
+                .values(**values)
             )
             if result.rowcount != 1:
                 continue
@@ -221,8 +226,8 @@ async def enforce_deadlines() -> int:
                     job_id=job.id,
                     user_id=job.user_id,
                     seq=job.last_event_seq,
-                    event_type=JobEventType.FAILED.value,
-                    payload={"error_code": "deadline_exceeded"},
+                    event_type=JobEventType.CANCEL_REQUESTED.value,
+                    payload={"reason": "deadline_exceeded"},
                     created_at=now,
                 )
             )

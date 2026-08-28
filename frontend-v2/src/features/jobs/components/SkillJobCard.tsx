@@ -36,6 +36,10 @@ export function statusTone(status: SkillJobSnapshot["status"]): {
       return { dot: "bg-danger", labelKey: "status.failed", pulse: false }
     case "cancelled":
       return { dot: "bg-n400", labelKey: "status.cancelled", pulse: false }
+    default:
+      // A rolling deploy can surface a status this bundle does not know yet;
+      // degrade instead of crashing the card render.
+      return { dot: "bg-n400", labelKey: `status.${status}`, pulse: false }
   }
 }
 
@@ -75,6 +79,11 @@ function AnswerForm({ job }: { job: SkillJobSnapshot }) {
   const answer = useAnswerSkillJob()
   const errorMessage = useApiErrorMessage()
   const prompt = typeof job.progress["prompt"] === "string" ? (job.progress["prompt"] as string) : null
+  // An empty input_schema marks a prompt-only park (e.g. operator review):
+  // the handler will not consume free text, so offering a box would be a lie.
+  const schema = job.progress["input_schema"]
+  const acceptsInput =
+    !!schema && typeof schema === "object" && Object.keys(schema as object).length > 0
 
   const submit = () => {
     const value = text.trim()
@@ -97,6 +106,7 @@ function AnswerForm({ job }: { job: SkillJobSnapshot }) {
   return (
     <div className="mt-2 space-y-1.5">
       {prompt && <div className="text-sm text-n700">{prompt}</div>}
+      {acceptsInput && (
       <div className="flex gap-1.5">
         <input
           value={text}
@@ -111,11 +121,12 @@ function AnswerForm({ job }: { job: SkillJobSnapshot }) {
           type="button"
           onClick={submit}
           disabled={answer.isPending || !text.trim()}
-          className="rounded-md bg-accent px-2.5 py-1 text-sm text-white disabled:opacity-50"
+          className="bg-ink text-bg rounded-md px-2.5 py-1 text-sm disabled:opacity-50"
         >
           {t("card.answerSend")}
         </button>
       </div>
+      )}
     </div>
   )
 }
@@ -139,7 +150,7 @@ export function SkillJobCard({ job }: { job: SkillJobSnapshot }) {
         <span className="truncate text-sm font-medium text-n800">
           {skillDisplayName(job.skillKey)} · {job.operation}
         </span>
-        <span className="ml-auto shrink-0 text-xs text-n500">{t(tone.labelKey)}</span>
+        <span className="ms-auto shrink-0 text-xs text-n500">{t(tone.labelKey)}</span>
       </div>
 
       {/* Phase and progress describe work in flight; a settled card shows its
@@ -167,7 +178,7 @@ export function SkillJobCard({ job }: { job: SkillJobSnapshot }) {
         {!terminal && job.desiredState !== "cancel" && (
           <button
             type="button"
-            className="ml-auto text-n500 hover:text-danger"
+            className="ms-auto text-n500 hover:text-danger"
             onClick={() =>
               cancel.mutate(job.jobId, {
                 onError: (err) => toast("error", errorMessage(err)),
@@ -179,7 +190,7 @@ export function SkillJobCard({ job }: { job: SkillJobSnapshot }) {
           </button>
         )}
         {!terminal && job.desiredState === "cancel" && (
-          <span className="ml-auto">{t("card.cancelling")}</span>
+          <span className="ms-auto">{t("card.cancelling")}</span>
         )}
       </div>
     </div>

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import secrets
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -62,9 +60,15 @@ class JobNotFound(Exception):
     pass
 
 
+class InputNotAllowed(Exception):
+    """The job is terminal and can never consume the input."""
+
+
 def new_id(prefix: str) -> str:
-    """Time-ordered id: millisecond hex prefix keeps inserts roughly ascending."""
-    return f"{prefix}_{int(time.time() * 1000):013x}{secrets.token_hex(5)}"
+    """Time-ordered id, same ULID scheme as the rest of the codebase."""
+    from core.identifier import ascending
+
+    return ascending(prefix)
 
 
 def request_hash_of(input_data: dict) -> str:
@@ -394,19 +398,22 @@ async def update_progress(
     an event (§6.3 keeps polling out of the event table)."""
     now = _utcnow()
     async with get_db_session() as db:
-        current_phase = (
-            await db.execute(
-                select(SkillJob.phase).where(
-                    SkillJob.id == job_id,
-                    SkillJob.status == JobStatus.RUNNING.value,
-                    SkillJob.lease_token == lease_token,
+        # The guarded UPDATE below already enforces the lease; the phase read
+        # is only needed to decide whether a phase-change event is due.
+        phase_changed = False
+        if phase is not None:
+            current_phase = (
+                await db.execute(
+                    select(SkillJob.phase).where(
+                        SkillJob.id == job_id,
+                        SkillJob.status == JobStatus.RUNNING.value,
+                        SkillJob.lease_token == lease_token,
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if current_phase is None:
-            raise StaleLeaseError(f"job {job_id}: progress write with stale lease")
-
-        phase_changed = phase is not None and phase != current_phase
+            ).scalar_one_or_none()
+            if current_phase is None:
+                raise StaleLeaseError(f"job {job_id}: progress write with stale lease")
+            phase_changed = phase != current_phase
         values: dict = {"updated_at": now}
         if progress_data is not None:
             values["progress_data"] = progress_data
@@ -739,19 +746,35 @@ async def request_cancel(job_id: str, user_id: str) -> SkillJob:
         )
         flagged = wake.rowcount == 1
         if not flagged:
+            # A queued/retry-scheduled job must become claimable NOW — a
+            # cancel that waits out a 10-minute backoff reads as a dead button.
             result = await db.execute(
                 update(SkillJob)
                 .where(
                     SkillJob.id == job_id,
                     SkillJob.status.in_(
-                        (JobStatus.RUNNING.value, JobStatus.QUEUED.value,
-                         JobStatus.RETRY_SCHEDULED.value)
+                        (JobStatus.QUEUED.value, JobStatus.RETRY_SCHEDULED.value)
                     ),
                     SkillJob.desired_state == DesiredState.RUN.value,
                 )
                 .values(
                     desired_state=DesiredState.CANCEL.value,
-                    next_run_at=func.coalesce(SkillJob.next_run_at, now),
+                    next_run_at=now,
+                    last_event_seq=SkillJob.last_event_seq + 1,
+                    updated_at=now,
+                )
+            )
+            flagged = result.rowcount == 1
+        if not flagged:
+            result = await db.execute(
+                update(SkillJob)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.RUNNING.value,
+                    SkillJob.desired_state == DesiredState.RUN.value,
+                )
+                .values(
+                    desired_state=DesiredState.CANCEL.value,
                     last_event_seq=SkillJob.last_event_seq + 1,
                     updated_at=now,
                 )
@@ -829,13 +852,19 @@ async def add_input(
     )
     try:
         async with get_db_session() as db:
-            owned = (
+            status = (
                 await db.execute(
-                    select(SkillJob.id).where(SkillJob.id == job_id, SkillJob.user_id == user_id)
+                    select(SkillJob.status).where(
+                        SkillJob.id == job_id, SkillJob.user_id == user_id
+                    )
                 )
             ).scalar_one_or_none()
-            if owned is None:
+            if status is None:
                 raise JobNotFound(job_id)
+            if status in _TERMINAL:
+                # Accepting it would strand an orphan row no invocation can
+                # ever consume, while the caller believes it was delivered.
+                raise InputNotAllowed(f"job {job_id} already ended {status}")
             db.add(row)
     except IntegrityError:
         async with get_db_session() as db:

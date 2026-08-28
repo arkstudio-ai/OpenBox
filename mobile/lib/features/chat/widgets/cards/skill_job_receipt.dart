@@ -5,7 +5,15 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
-import '../../../jobs/widgets/skill_job_card.dart' show skillJobTone;
+
+/// Local terminal-status tone: chat renders receipts from part data alone and
+/// features must not import each other (README 分层); the jobs feature keeps
+/// its own richer map for live cards.
+(Color, String) _receiptTone(BossipTokens t, String status) => switch (status) {
+      'succeeded' => (t.sage, 'jobs:status.succeeded'),
+      'failed' => (t.danger, 'jobs:status.failed'),
+      _ => (t.n400, 'jobs:status.cancelled'),
+    };
 
 /// Durable transcript record of finished background jobs (web
 /// `SkillJobReceipts`): the dock shows live cards, this is what remains.
@@ -38,7 +46,7 @@ class SkillJobReceipts extends ConsumerWidget {
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: skillJobTone(t, part.status).$1,
+                  color: _receiptTone(t, part.status).$1,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -51,7 +59,7 @@ class SkillJobReceipts extends ConsumerWidget {
                     fontWeight: FontWeight.w500),
               ),
               const SizedBox(width: 8),
-              Text(i18n.t(skillJobTone(t, part.status).$2),
+              Text(i18n.t(_receiptTone(t, part.status).$2),
                   style: TextStyle(color: t.n500, fontSize: FontSizes.xs)),
               if (part.summary.isNotEmpty) ...[
                 const SizedBox(width: 8),

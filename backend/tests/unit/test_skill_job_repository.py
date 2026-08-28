@@ -394,6 +394,38 @@ async def test_cancel_running_sets_desired_state_only():
     assert settled.status == JobStatus.CANCELLED.value
 
 
+async def test_cancel_retry_scheduled_is_immediately_claimable():
+    """A cancel must not wait out the retry backoff (dead-button regression)."""
+    job, _ = await _admit()
+    claimed = await _claim(job)
+    await repo.settle_invocation(
+        job.id, claimed.lease_token,
+        Retry(checkpoint={}, error_code="x", retry_at=NOW() + timedelta(minutes=10)),
+        attempt_id=claimed.attempt_id,
+    )
+    result = await repo.request_cancel(job.id, job.user_id)
+    assert result.desired_state == "cancel"
+    next_run = result.next_run_at
+    if next_run.tzinfo is None:  # SQLite hands back naive
+        next_run = next_run.replace(tzinfo=timezone.utc)
+    assert next_run <= NOW() + timedelta(seconds=1)
+    reclaimed = await _claim(job, worker_id="w2")
+    assert reclaimed.job.desired_state == "cancel"
+
+
+async def test_add_input_rejected_on_terminal_job():
+    job, _ = await _admit()
+    claimed = await _claim(job)
+    await repo.settle_invocation(
+        job.id, claimed.lease_token, Succeeded(), attempt_id=claimed.attempt_id
+    )
+    with pytest.raises(repo.InputNotAllowed):
+        await repo.add_input(
+            job.id, job.user_id, kind="user_answer", payload={}, idempotency_key="late"
+        )
+    assert await repo.unconsumed_inputs(job.id) == []
+
+
 async def test_cancel_wrong_user_raises():
     job, _ = await _admit()
     with pytest.raises(repo.JobNotFound):

@@ -7,7 +7,6 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/message.dart';
 import '../../shared/router/paths.dart';
-import '../jobs/widgets/skill_jobs_dock.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
 import 'state/stream_store.dart';
@@ -26,13 +25,17 @@ import 'widgets/user_bubble.dart';
 /// Live chat pane for one session (web `ChatRoute`): flow + pending prompts
 /// + composer. The screen chrome (app bar/drawer) lives in the app shell.
 class ChatScreen extends ConsumerWidget {
-  const ChatScreen({super.key, required this.sessionId, this.resources});
+  const ChatScreen({super.key, required this.sessionId, this.resources, this.jobsDock});
 
   final String sessionId;
 
   /// Resource centre, handed down by the app layer (§分层: features never
   /// import each other, the composition layer wires them together).
   final ComposerResourceSlot? resources;
+
+  /// Background-jobs dock (features/jobs), injected by the app layer for the
+  /// same reason as [resources].
+  final Widget? jobsDock;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -109,7 +112,7 @@ class ChatScreen extends ConsumerWidget {
       for (final question in questions) QuestionDock(request: question),
       // Background skill jobs outlive the agent turn; the dock keeps their
       // cards updating from the job ledger after the session goes idle.
-      SkillJobsDock(sessionId: sessionId),
+      ?jobsDock,
     ];
 
     return Column(

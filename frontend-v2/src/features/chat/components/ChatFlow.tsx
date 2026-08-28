@@ -181,12 +181,17 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
           atBottom ? "opacity-0" : "opacity-100",
         )}
       />
+      {/* Right rail, vertically centred — where the thumb and the eye already
+          are on a long scroll, and clear of the prose column, which is capped
+          and centred. Pinned to the bottom it sat directly over the newest
+          message and the composer's own controls. `end-` rather than `right-`
+          so it follows the writing direction. */}
       {!atBottom && (
         <button
           type="button"
           onClick={scrollToBottom}
           aria-label={t("scrollBottom")}
-          className="border-hair bg-card shadow-pop absolute start-1/2 bottom-4 -translate-x-1/2 rounded-full border p-2"
+          className="border-hair bg-card shadow-pop hover:bg-hairsoft absolute end-4 top-1/2 -translate-y-1/2 rounded-full border p-2 transition-colors"
         >
           <ArrowDown className="text-n700 size-4" />
         </button>

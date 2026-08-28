@@ -113,10 +113,21 @@ export default function ChatRoute() {
   // The task list used to live here, as a card pinned under the last turn,
   // fed by a REST query and thrown away when the run ended. It renders inside
   // the turn now (TodoCard), where the calls it organises actually are.
+  //
+  // The question dock sits here too, at the end of the transcript, because it
+  // reads as the next turn in the conversation. It used to hang below the
+  // scroll area as a sibling of the message list, and a tall one — a segment
+  // approval carries three scripts and their prompts — took the whole column:
+  // the list is `flex-1 min-h-0`, so it was free to shrink to 0px and the
+  // conversation could not be scrolled at all while the run waited. Inside the
+  // scroller a card of any height costs nothing but scrolling.
   const footer = (
     <>
       {permissions.map((p) => (
         <PermissionCard key={p.id} request={p} />
+      ))}
+      {questions.map((q) => (
+        <QuestionDock key={q.id} request={q} />
       ))}
     </>
   )
@@ -130,11 +141,8 @@ export default function ChatRoute() {
       ) : (
         <ChatFlow turns={turns} sessionId={sessionId} busy={busy} footer={footer} onStop={stop} retry={retry} />
       )}
-      {/* Above the composer, outside the scroll area: the run is blocked on
-          this, so it must not be scrollable away while the agent waits. */}
-      {questions.map((q) => (
-        <QuestionDock key={q.id} request={q} />
-      ))}
+      {/* One line, and it must survive until the next send, so it stays
+          above the composer rather than scrolling away with the transcript. */}
       {runError && (
         <RunErrorNotice
           message={runError}

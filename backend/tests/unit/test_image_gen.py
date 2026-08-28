@@ -190,6 +190,8 @@ async def test_storing_output_creates_agent_resource_and_chat_file_part(monkeypa
         b"\x89PNG\r\n\x1a\nbody",
         "png",
         "hero.png",
+        "A friendly travel host",
+        "generate",
         1,
         1,
     )

@@ -66,6 +66,8 @@
   // Async Seedance generation. The associated tools remain invisible until
   // the video-production skill is loaded. FFmpeg/HyperFrames run in WUYING;
   // this section controls only provider polling and signed-OSS lifetimes.
+  // The BossIP origin selects its `/v1/videos` format automatically; the
+  // official TokenSpace origin keeps the native contents/tasks format.
   "video_generation": {
     "provider": "doubao",
     "model": "doubao-seedance-2-0-260128",
@@ -79,6 +81,9 @@
     "poll_interval_seconds": 5,
     "wait_timeout_seconds": 25,
     "provider_input_url_ttl_seconds": 3600,
+    "material_timeout_seconds": 180,
+    "material_poll_interval_seconds": 1,
+    "liveness_session_ttl_seconds": 300,
     "render_url_ttl_seconds": 86400,
     "max_provider_output_bytes": 1073741824
   },

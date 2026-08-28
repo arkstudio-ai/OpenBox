@@ -24,11 +24,10 @@ function keyComputerIds(events: WorkEvent[]): Set<string> {
 interface Props {
   events: WorkEvent[]
   streaming: boolean
-  autoCollapseReady: boolean
   defaultOpen?: boolean
 }
 
-export function WorkLogTrace({ events, streaming, autoCollapseReady, defaultOpen }: Props) {
+export function WorkLogTrace({ events, streaming, defaultOpen }: Props) {
   const { t } = useTranslation("chat")
   const keyIds = useMemo(() => keyComputerIds(events), [events])
   const narrationCount = events.filter((event) => event.kind === "narration").length
@@ -48,7 +47,6 @@ export function WorkLogTrace({ events, streaming, autoCollapseReady, defaultOpen
         screenshots: evidence.length,
       })}
       streaming={streaming}
-      autoCollapseReady={autoCollapseReady}
       defaultOpen={defaultOpen}
     >
       <ol className="space-y-2">

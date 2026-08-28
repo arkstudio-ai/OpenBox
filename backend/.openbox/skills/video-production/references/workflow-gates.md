@@ -7,7 +7,7 @@ approval stores its user/session evidence and the SHA-256 scope it approved.
 |---|---|
 | `init` | set the complete script |
 | `needs_script_approval` | show full script; request `script` approval |
-| `script_ok` | create/reuse the host reference and set all segments |
+| `script_ok` | create/reuse the host; real people must complete `video_identity` authorization and material upload before setting segments |
 | `needs_segments_approval` | show all assets, dialogue, and full prompts; request `segments` |
 | `needs_spend_approval` | request the bounded paid-call ceiling |
 | `spend_ok` / `generating` | submit or wait only the active segment IDs |

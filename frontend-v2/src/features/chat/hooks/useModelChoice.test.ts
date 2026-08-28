@@ -17,6 +17,14 @@ describe("useModelChoice", () => {
     expect(result.current.activeId).toBe("openai/gpt-5.6-luna")
   })
 
+  it("keeps a model picked before a new conversation has a session id", () => {
+    const { result } = renderHook(() => useModelChoice({ fallback: "openai/gpt-5.6-luna" }))
+
+    act(() => result.current.pick("openai/qwen3.8-max"))
+
+    expect(result.current.activeId).toBe("openai/qwen3.8-max")
+  })
+
   it("a pick wins over the stored model for the rest of this conversation", () => {
     const { result } = renderHook(() =>
       useModelChoice({ sessionModel: "openai/claude-opus-5", sessionKey: "a", fallback: "x" }),

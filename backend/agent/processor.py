@@ -54,6 +54,11 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "questions", "answers",
+    # ``video_identity`` returns only its deliberately public projection here:
+    # the short-lived H5 link/QR may be rendered by the chat UI, while the
+    # provider polling token remains private in the database and never enters
+    # ToolResult metadata.
+    "action", "identity", "identities", "material_asset",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",

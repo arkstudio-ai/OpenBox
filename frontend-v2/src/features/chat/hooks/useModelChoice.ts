@@ -19,8 +19,15 @@ interface Options {
   fallback?: string
 }
 
+// The empty composer exists before the backend has assigned a session id, but
+// it is still a real model-selection scope. Using an explicit, truthy key is
+// important: the store selector intentionally treats `undefined` as "there is
+// no conversation", and the old empty-string fallback made every pick on the
+// new-chat screen unreadable immediately after it was written.
+const NEW_SESSION_KEY = "__new_session__"
+
 export function useModelChoice({ sessionModel, sessionKey, fallback }: Options) {
-  const key = sessionKey ?? ""
+  const key = sessionKey ?? NEW_SESSION_KEY
   const picked = usePickedModel(key)
   const pickInStore = useModelChoiceStore((s) => s.pick)
   const clear = useModelChoiceStore((s) => s.clear)

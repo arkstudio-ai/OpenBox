@@ -34,6 +34,8 @@
       }
     },
     "render_idempotency_key": {"type": "string"},
-    "render_asset_id": {"type": ["string", "null"]}
+    "render_asset_id": {"type": ["string", "null"]},
+    "character_reference_type": {"enum": ["virtual", "real_person"]},
+    "character_identity_id": {"type": ["string", "null"]}
   }
 }

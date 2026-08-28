@@ -57,6 +57,8 @@ class VideoProjectArgs(BaseModel):
     segment_prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
     visual_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
     character_reference_asset: str | None = Field(default=None, max_length=512)
+    character_reference_type: Literal["virtual", "real_person"] = "virtual"
+    character_identity_id: str | None = Field(default=None, max_length=96)
     segments: list[SegmentSpec] = Field(default_factory=list, max_length=100)
     approval_kind: Literal["script", "segments", "spend", "quality", "render"] | None = None
     segment_id: str | None = Field(default=None, max_length=96)
@@ -76,6 +78,13 @@ class VideoProjectArgs(BaseModel):
                 raise ValueError("set_segments requires visual_anchor")
             if not self.segments:
                 raise ValueError("set_segments requires segments")
+            if self.character_reference_type == "real_person":
+                if not self.character_reference_asset:
+                    raise ValueError("real_person requires character_reference_asset")
+                if not self.character_identity_id:
+                    raise ValueError("real_person requires an active character_identity_id")
+            elif self.character_identity_id:
+                raise ValueError("character_identity_id is only valid for real_person")
         if self.action == "request_approval" and not self.approval_kind:
             raise ValueError("request_approval requires approval_kind")
         if self.action == "revise_segment" and (not self.segment_id or not self.revision_reason):
@@ -589,6 +598,8 @@ def _plan_hash(production, segments: list[Any]) -> str:
             "script_hash": production.script_hash,
             "visual_anchor": production.visual_anchor,
             "character_asset_id": production.character_asset_id,
+            "character_reference_type": production.character_reference_type,
+            "character_identity_id": production.character_identity_id,
             "segments": [
                 {
                     "id": row.id,
@@ -640,6 +651,8 @@ async def _snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
             "script_hash": production.script_hash,
             "visual_anchor": production.visual_anchor,
             "character_asset_id": production.character_asset_id,
+            "character_reference_type": production.character_reference_type,
+            "character_identity_id": production.character_identity_id,
             "plan_hash": production.plan_hash,
             "render_asset_id": production.render_asset_id,
             "render_idempotency_key": (
@@ -684,6 +697,8 @@ def _snapshot_output(value: dict[str, Any]) -> str:
         f"plan_hash={value['plan_hash']}",
         f"visual_anchor={value.get('visual_anchor', '')}",
         f"character_asset_id={value.get('character_asset_id') or ''}",
+        f"character_reference_type={value.get('character_reference_type') or 'virtual'}",
+        f"character_identity_id={value.get('character_identity_id') or ''}",
         f"render_idempotency_key={value.get('render_idempotency_key', '')}",
         "approvals=" + json.dumps(value["approvals"], ensure_ascii=False, separators=(",", ":")),
     ]
@@ -762,6 +777,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 production.plan_hash = ""
                 production.visual_anchor = ""
                 production.character_asset_id = None
+                production.character_reference_type = "virtual"
+                production.character_identity_id = None
                 production.render_asset_id = None
                 production.subtitles = None
             production.script_text = script
@@ -793,6 +810,46 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     return ToolResult(
                         title="Invalid character reference",
                         output="character_reference_asset must be a ready owned image asset.",
+                    )
+            identity = None
+            if args.character_reference_type == "real_person":
+                from db.models.video_material import VideoMaterialAsset, VideoMaterialGroup
+
+                identity = (
+                    await db.execute(
+                        select(VideoMaterialGroup).where(
+                            VideoMaterialGroup.id == args.character_identity_id,
+                            VideoMaterialGroup.user_id == ctx.user_id,
+                            VideoMaterialGroup.group_type == "LivenessFace",
+                            VideoMaterialGroup.status == "active",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if not identity or not identity.provider_group_id:
+                    return ToolResult(
+                        title="真人授权尚未完成",
+                        output=(
+                            "character_identity_id must be an active, user-owned LivenessFace identity. "
+                            "Call video_identity.create/status and wait for the person to finish authorization."
+                        ),
+                    )
+                binding = (
+                    await db.execute(
+                        select(VideoMaterialAsset).where(
+                            VideoMaterialAsset.user_id == ctx.user_id,
+                            VideoMaterialAsset.group_id == identity.id,
+                            VideoMaterialAsset.source_asset_id == character.id,
+                            VideoMaterialAsset.status == "active",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if not binding or not binding.provider_asset_id:
+                    return ToolResult(
+                        title="真人参考素材尚未入库",
+                        output=(
+                            "The selected portrait is not active in this LivenessFace identity. "
+                            "Call video_identity.add_asset with this identity_id and character asset_id first."
+                        ),
                     )
             validated: list[tuple[SegmentSpec, list[Any], dict[str, Any], str]] = []
             issues_by_ordinal: dict[int, list[dict[str, str]]] = {}
@@ -827,6 +884,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                         "script_text": item.script_text.strip(),
                         "prompt": item.prompt.strip(),
                         "character_asset_id": character.id if character else None,
+                        "character_reference_type": args.character_reference_type,
+                        "character_identity_id": identity.id if identity else None,
                         "input_asset_ids": [row.id for row in assets],
                         "visual_anchor": (args.visual_anchor or "").strip(),
                     }
@@ -891,6 +950,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
             active.sort(key=lambda row: row.ordinal)
             production.visual_anchor = (args.visual_anchor or "").strip()
             production.character_asset_id = character.id if character else None
+            production.character_reference_type = args.character_reference_type
+            production.character_identity_id = identity.id if identity else None
             production.plan_hash = _plan_hash(production, active)
             production.render_asset_id = None
             production.subtitles = None
@@ -967,6 +1028,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     "script_text": revised_script,
                     "prompt": revised_prompt,
                     "character_asset_id": character.id if character else None,
+                    "character_reference_type": production.character_reference_type,
+                    "character_identity_id": production.character_identity_id,
                     "input_asset_ids": [row.id for row in assets],
                     "visual_anchor": production.visual_anchor,
                 }
@@ -1212,6 +1275,8 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             "segment_id": segment.id,
             "prompt": segment.prompt,
             "character_reference_asset": production.character_asset_id,
+            "character_reference_type": production.character_reference_type,
+            "character_identity_id": production.character_identity_id,
             "input_assets": list(segment.input_asset_ids or []),
             "resolution": production.resolution,
             "ratio": production.ratio,

@@ -16,6 +16,8 @@ spec:
       inputSchema:
         type: object
         required: [production_id]
+        properties:
+          production_id: {type: string, minLength: 1, maxLength: 64}
       queue: default
       invocationTimeoutSeconds: 30
       maxTotalSeconds: 300
@@ -24,39 +26,49 @@ spec:
       inputSchema:
         type: object
         required: [production_id, segment_id]
+        properties:
+          production_id: {type: string, minLength: 1, maxLength: 64}
+          segment_id: {type: string, minLength: 1, maxLength: 64}
       queue: default
       invocationTimeoutSeconds: 120
       maxExternalWaitSeconds: 7200
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
-      # Holds a paid provider task / remote media job: cancellation must
+      # May hold an external provider/media job: cancellation must
       # reach the handler so it can settle against provider facts (§7.4).
       cancelRequiresHandler: true
     segment.transcribe:
       inputSchema:
         type: object
         required: [production_id, segment_id]
+        properties:
+          production_id: {type: string, minLength: 1, maxLength: 64}
+          segment_id: {type: string, minLength: 1, maxLength: 64}
       queue: default
       invocationTimeoutSeconds: 600
       maxExternalWaitSeconds: 7200
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
-      # Holds a paid provider task / remote media job: cancellation must
+      # May hold an external provider/media job: cancellation must
       # reach the handler so it can settle against provider facts (§7.4).
       cancelRequiresHandler: true
     production.render:
       inputSchema:
         type: object
         required: [production_id]
+        properties:
+          production_id: {type: string, minLength: 1, maxLength: 64}
+          render_engine: {type: string, minLength: 1, maxLength: 64}
+          filename: {type: string, minLength: 1, maxLength: 255}
       queue: default
       invocationTimeoutSeconds: 120
       maxExternalWaitSeconds: 7200
       maxTotalSeconds: 86400
       maxAttempts: 8
       enabledConfigFlag: skill_jobs_video_write
-      # Holds a paid provider task / remote media job: cancellation must
+      # May hold an external provider/media job: cancellation must
       # reach the handler so it can settle against provider facts (§7.4).
       cancelRequiresHandler: true
   phases:

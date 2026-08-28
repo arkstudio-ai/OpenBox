@@ -45,7 +45,24 @@ class Message(Base):
             "session_id",
             "client_message_id",
             unique=True,
-            postgresql_where=text("client_message_id LIKE 'sjr:%'"),
-            sqlite_where=text("client_message_id LIKE 'sjr:%'"),
+            postgresql_where=text(
+                "client_message_id LIKE 'sjr:%' "
+                "AND role = 'assistant' AND finish = 'skill_job_receipt'"
+            ),
+            sqlite_where=text(
+                "client_message_id LIKE 'sjr:%' "
+                "AND role = 'assistant' AND finish = 'skill_job_receipt'"
+            ),
+        ),
+        # NeedsAgent continuation prompts use the same insert-if-absent rule.
+        # A dispatcher restart or replica race may retry the marker, but must
+        # never create a second synthetic user turn.
+        Index(
+            "uq_messages_inbox_marker",
+            "session_id",
+            "client_message_id",
+            unique=True,
+            postgresql_where=text("client_message_id LIKE 'sji:%'"),
+            sqlite_where=text("client_message_id LIKE 'sji:%'"),
         ),
     )

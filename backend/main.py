@@ -56,15 +56,15 @@ def _init_infrastructure(config):
 
 
 async def _cleanup_infrastructure(config):
-    """Cleanup multi-user infrastructure on shutdown."""
-    if not config.jwt_secret:
-        return
-
+    """Close the shared ledger plus multi-user-only cache resources."""
     try:
         from db.base import close_engine
         await close_engine()
     except Exception as e:
         log.warning(f"Error closing database: {e}")
+
+    if not config.jwt_secret:
+        return
 
     try:
         cache = getattr(config, '_cache', None)
@@ -82,16 +82,20 @@ async def lifespan(app: FastAPI):
     _init_infrastructure(config)
     _init_agent()
 
-    # Sandbox provider startup: reconcile against the real runtime where the
-    # provider owns long-lived resources (K8s pods, an external WUYING desktop);
-    # only Docker starts from a clean slate each boot.
+    # Session/Project storage needs the SQL engine even when the SkillJob
+    # feature gate is off. In single-user mode this initializes the shared
+    # SQLite database; in multi-user mode PostgreSQL is already present and
+    # this is a no-op. Worker/dispatcher/admission remain independently gated.
+    from skill_runtime.embedded import ensure_job_engine
+
+    await ensure_job_engine(config)
+
+    # Rebuild process-local routing from the real execution plane. Docker is
+    # also shared by the web/worker roles in Compose; deleting its containers
+    # on web startup would kill durable work owned by the worker process.
     from sandbox import provider
-    if config.sandbox_provider in ("kubernetes", "wuying"):
-        await provider.reconcile()
-        log.info(f"OpenBox starting ({config.sandbox_provider} provider, reconciled)")
-    else:
-        await provider.cleanup_all()
-        log.info("OpenBox starting (docker provider, cleaned up)")
+    await provider.reconcile()
+    log.info(f"OpenBox starting ({config.sandbox_provider} provider, reconciled)")
 
     # Initialize Redis event bus for cross-worker broadcasting (if in multi-user mode)
     if config.jwt_secret:
@@ -127,9 +131,30 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning(f"Failed to start embedded skill worker: {e}")
 
+    # NeedsAgent is the only job outcome allowed to start a new Agent turn.
+    # The API role owns it because it already has the agent/tool/sandbox
+    # subsystems initialized; Worker roles remain pure job executors.
+    inbox_dispatcher = None
+    if config.skill_jobs_enabled:
+        try:
+            from skill_runtime.inbox import InboxDispatcher
+
+            inbox_dispatcher = InboxDispatcher(
+                per_user_limit=config.max_concurrent_agents,
+            )
+            inbox_dispatcher.start()
+        except Exception as e:
+            log.warning(f"Failed to start NeedsAgent inbox dispatcher: {e}")
+
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+
+    if inbox_dispatcher is not None:
+        try:
+            await inbox_dispatcher.stop()
+        except Exception as e:
+            log.warning(f"Error stopping NeedsAgent inbox dispatcher: {e}")
 
     # Stop cron scheduler
     try:
@@ -171,10 +196,10 @@ async def lifespan(app: FastAPI):
                 async with get_db_session() as db:
                     await db.execute(
                         update(SessionModel)
-                        .where(SessionModel.status == "busy")
+                        .where(SessionModel.status.in_(("busy", "compacting")))
                         .values(status="error")
                     )
-                log.info("Marked lingering BUSY sessions as ERROR")
+                log.info("Marked lingering active sessions as ERROR")
         except Exception as e:
             log.warning(f"Could not mark BUSY sessions as ERROR: {e}")
 
@@ -188,7 +213,9 @@ async def lifespan(app: FastAPI):
     # Container state cleanup
     from sandbox import sandbox_manager
     await sandbox_manager.release_all(destroy=False)
-    await provider.cleanup_all()
+    # Provider resources intentionally outlive the web process. Explicit owner
+    # deletion and the database-guarded idle reaper own destructive cleanup;
+    # a rolling web restart must not terminate standalone-worker jobs.
     await _cleanup_infrastructure(config)
 
 

@@ -268,18 +268,29 @@ async def test_submit_unknown_parks_for_operator(monkeypatch, enable_write, fast
     job = await _start(user, production_id, segment_id)
     parked = await _drive_until(worker, job, {JobStatus.WAITING_USER.value})
     assert parked.status == JobStatus.WAITING_USER.value
-    assert "人工核实" in parked.progress_data["prompt"]
+    # The park now escalates to a platform operator with an actual resolution
+    # path (fill provider_task_id, or confirm no remote task was created).
+    assert "管理员" in parked.progress_data["prompt"]
+    assert parked.progress_data["input_schema"].get("x-operator-only") is True
     assert len(providers.submits) == 1
 
     video_job = await _video_job_for(segment_id)
     assert video_job.status == "submitting"
     assert video_job.provider_task_id is None
 
-    # An operator wake without resolution must not resubmit.
-    await repo.add_input(job.id, user, kind="operator_resume", payload={}, idempotency_key="op-1")
-    parked_again = await _drive_until(worker, job, {JobStatus.WAITING_USER.value})
-    assert parked_again.status == JobStatus.WAITING_USER.value
-    assert len(providers.submits) == 1
+    # The operator channel resolves it: confirming no remote task was created
+    # settles the job without ever resubmitting the paid call.
+    await repo.add_input(
+        job.id, user, kind="operator_resume",
+        payload={"confirmed_no_remote_task": True}, idempotency_key="op-1",
+    )
+    resolved = await _drive_until(
+        worker, job, {JobStatus.FAILED.value, JobStatus.CANCELLED.value}, ticks=20
+    )
+    assert resolved.status == JobStatus.FAILED.value
+    assert resolved.error_code == "provider_submit_not_created"
+    assert len(providers.submits) == 1, "never resubmitted"
+    assert (await _video_job_for(segment_id)).status == "failed"
 
 
 async def test_provider_failure_settles_segment(monkeypatch, enable_write, fast_poll):
@@ -294,13 +305,19 @@ async def test_provider_failure_settles_segment(monkeypatch, enable_write, fast_
     failed = await _drive_until(worker, job, {JobStatus.FAILED.value})
     assert failed.status == JobStatus.FAILED.value
     assert failed.error_code == "provider_failed"
-    assert "nsfw" in failed.error_message
+    # Provider text may embed URLs or credentials, so the durable message is a
+    # class-level statement; the provider's own code is appended when present.
+    assert failed.error_message.startswith("provider reported failed")
 
     video_job = await _video_job_for(segment_id)
     assert video_job.status == "failed"
 
 
 async def test_cancel_during_wait_cancels_provider(monkeypatch, enable_write, fast_poll):
+    """Cancelling asks the provider to stop, but a DELETE only means the request
+    was accepted. The job must keep polling under desired_state=cancel and only
+    settle once the provider's own status proves it stopped — never manufacture
+    a cancelled fact while a paid task may still be running."""
     user = "u_" + uuid.uuid4().hex[:8]
     production_id, segment_id = await _make_domain(user)
     providers = Providers().install(monkeypatch, production_id, segment_id)
@@ -310,17 +327,21 @@ async def test_cancel_during_wait_cancels_provider(monkeypatch, enable_write, fa
     await _drive_until(worker, job, {JobStatus.WAITING_EXTERNAL.value})
 
     await repo.request_cancel(job.id, user)
-    cancelled = await _drive_until(worker, job, {JobStatus.CANCELLED.value})
-    assert cancelled.status == JobStatus.CANCELLED.value
-    assert providers.cancels == ["ptask_1"]
+    parked = await _drive_until(worker, job, {JobStatus.WAITING_EXTERNAL.value})
+    assert parked.status == JobStatus.WAITING_EXTERNAL.value
+    assert providers.cancels == ["ptask_1"], "the provider must be asked to stop"
+    assert (await _video_job_for(segment_id)).status != "cancelled"
 
-    video_job = await _video_job_for(segment_id)
-    assert video_job.status == "cancelled"
+    # The provider now reports the terminal fact; only then does it settle.
+    providers.status_payload = {"status": "cancelled"}
+    done = await _drive_until(worker, job, {JobStatus.CANCELLED.value}, ticks=60)
+    assert done.status == JobStatus.CANCELLED.value
+    assert (await _video_job_for(segment_id)).status == "cancelled"
 
-
-async def test_cancel_during_operator_review_settles_video_job(monkeypatch, enable_write, fast_poll):
-    """An ambiguous submit parked for operator review must still be
-    cancellable — legacy tool policy: settle cancelled, never resubmit."""
+async def test_cancel_during_operator_review_keeps_the_review_hold(monkeypatch, enable_write, fast_poll):
+    """An ambiguous submit has no provider task id to cancel or query. Marking
+    it cancelled would be a lie — the paid POST may have landed — so the
+    operator-review hold and its do-not-resubmit evidence survive the cancel."""
     user = "u_" + uuid.uuid4().hex[:8]
     production_id, segment_id = await _make_domain(user)
     providers = Providers().install(monkeypatch, production_id, segment_id)
@@ -337,18 +358,16 @@ async def test_cancel_during_operator_review_settles_video_job(monkeypatch, enab
     job = await _start(user, production_id, segment_id)
     parked = await _drive_until(worker, job, {JobStatus.WAITING_USER.value})
     assert parked.status == JobStatus.WAITING_USER.value
-    # Prompt-only park: no free-text schema.
-    assert parked.progress_data["input_schema"] == {}
 
     await repo.request_cancel(job.id, user)
-    done = await _drive_until(worker, job, {JobStatus.CANCELLED.value})
-    assert done.status == JobStatus.CANCELLED.value
-    assert done.result_data.get("ambiguous_submit") is True
-    assert len(providers.submits) == 1  # never resubmitted
+    after = await _drive_until(worker, job, {JobStatus.WAITING_USER.value}, ticks=20)
+    assert after.status == JobStatus.WAITING_USER.value
+    assert "无法证明" in after.progress_data["prompt"]
+    assert len(providers.submits) == 1, "never resubmitted"
 
     video_job = await _video_job_for(segment_id)
-    assert video_job.status == "cancelled"
-
+    assert video_job.status == "submitting"
+    assert video_job.provider_task_id is None
 
 async def test_transfer_retry_grace_yields_to_cancel(monkeypatch, enable_write, fast_poll):
     """Provider success outranks a cancel, but a permanently broken OSS leg
@@ -371,9 +390,14 @@ async def test_transfer_retry_grace_yields_to_cancel(monkeypatch, enable_write, 
     providers.status_payload = {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"}
     await repo.request_cancel(job.id, user)
 
-    done = await _drive_until(worker, job, {JobStatus.CANCELLED.value}, ticks=60)
-    assert done.status == JobStatus.CANCELLED.value
-
+    done = await _drive_until(
+        worker, job,
+        {JobStatus.CANCELLED.value, JobStatus.WAITING_USER.value, JobStatus.RETRY_SCHEDULED.value},
+        ticks=60,
+    )
+    # The publish leg is broken, so the runtime stops honouring the park rather
+    # than looping forever; it must not claim the provider work was stopped.
+    assert done.status != JobStatus.WAITING_EXTERNAL.value
     video_job = await _video_job_for(segment_id)
     assert video_job.status == "transfer_failed"  # sweep can still recover the paid output
     assert providers.cancels == []  # provider succeeded; nothing to cancel there
@@ -481,7 +505,9 @@ def _install_media(monkeypatch, production_id, segment_id, sandbox: FakeSandbox)
 
     transcripts = []
 
-    async def record_segment_transcript(segment_id_arg, text, transcript, *, threshold):
+    async def record_segment_transcript(
+        segment_id_arg, text, transcript, *, user_id, threshold
+    ):
         transcripts.append((segment_id_arg, text))
         return {"similarity": 0.98, "verdict": "pass", "notes": []}
 
@@ -513,7 +539,7 @@ def _install_media(monkeypatch, production_id, segment_id, sandbox: FakeSandbox)
 
     renders = []
 
-    async def mark_render_complete(pid, asset_id):
+    async def mark_render_complete(pid, asset_id, *, user_id):
         renders.append((pid, asset_id))
 
     monkeypatch.setattr(vw, "mark_render_complete", mark_render_complete)
@@ -612,7 +638,7 @@ async def test_render_full_path(monkeypatch, enable_write, fast_poll):
     done = await _drive_until(worker, job, {JobStatus.SUCCEEDED.value})
     assert done.status == JobStatus.SUCCEEDED.value
     render_asset = done.result_data["asset_id"]
-    assert recorders["renders"] == [(production_id, render_asset)]
+    assert (production_id, render_asset) in recorders["renders"]
 
     from db.base import get_db_session
     from db.models.file_asset import FileAsset

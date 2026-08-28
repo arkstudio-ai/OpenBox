@@ -2,6 +2,7 @@
 name: demo-echo
 description: Demonstration skill for the durable skill job runtime. Echoes text immediately, after a simulated external wait, or after asking the user.
 allowed-tools: skill_job
+job-skill-keys: builtin:demo-echo
 ---
 
 # Demo Echo

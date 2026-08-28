@@ -48,8 +48,10 @@ async def _startup_sweep() -> None:
         advanced = await sweep()
         if advanced:
             log.info(f"Startup video job recovery advanced {advanced} job(s)")
-    except Exception as e:
-        log.warning(f"Startup video job recovery failed: {e}")
+    except Exception as exc:
+        log.warning(
+            f"Startup video job recovery failed: {type(exc).__name__}"
+        )
 
 
 async def sweep_if_due() -> None:
@@ -66,7 +68,7 @@ async def sweep() -> int:
     """Run one recovery pass; returns how many jobs reached a new settled state."""
     from db import base as db_base
 
-    if db_base._engine is None:  # single-user mode: no database, nothing to recover
+    if db_base._engine is None:  # startup/shutdown edge: no ledger is available
         return 0
 
     from sqlalchemy import select
@@ -98,27 +100,53 @@ async def sweep() -> int:
 
     advanced = 0
     for job in rows:
-        # A job created by the video skill handler has a live owner in the
-        # skill runtime (its retry backoff makes the row look stale here);
-        # two drivers finalizing one paid task is not worth the risk.
-        if (job.request_data or {}).get("skill_job_id"):
+        # A domain row linked to the generic ledger belongs to that state
+        # machine for its entire lifetime, including after a terminal result.
+        # Letting this legacy sweep mutate it later would create split truth
+        # (for example SkillJob=failed while VideoJob=completed). Only genuine
+        # pre-migration/orphan rows with no ledger owner use this stopgap.
+        skill_job_id = (job.request_data or {}).get("skill_job_id")
+        if skill_job_id and await _skill_owner_exists(str(skill_job_id), job.user_id):
             continue
         try:
             if await _recover_job(job):
                 advanced += 1
                 _failed_once.discard(job.id)
-        except Exception as e:
+        except Exception as exc:
             # A job whose provider lookup keeps failing (expired relay task,
             # revoked key) would otherwise warn every sweep; warn once, then
             # drop to debug until something changes.
             if job.id in _failed_once:
-                log.debug(f"Video job recovery for {job.id} still failing: {e}")
+                log.debug(
+                    f"Video job recovery for {job.id} still failing: "
+                    f"{type(exc).__name__}"
+                )
             else:
-                log.warning(f"Video job recovery for {job.id} failed: {e}")
+                log.warning(
+                    f"Video job recovery for {job.id} failed: "
+                    f"{type(exc).__name__}"
+                )
                 _failed_once.add(job.id)
                 if len(_failed_once) > 500:
                     _failed_once.clear()
     return advanced
+
+
+async def _skill_owner_exists(skill_job_id: str, user_id: str) -> bool:
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.skill_job import SkillJob
+    async with get_db_session() as db:
+        owner_id = (
+            await db.execute(
+                select(SkillJob.id).where(
+                    SkillJob.id == skill_job_id,
+                    SkillJob.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+    return owner_id is not None
 
 
 async def _recover_job(job) -> bool:
@@ -160,7 +188,12 @@ async def _recover_job(job) -> bool:
         if job.segment_id:
             from tool.video_workflow import mark_segment_job
 
-            await mark_segment_job(job.segment_id, job.id, status=state)
+            await mark_segment_job(
+                job.segment_id,
+                job.id,
+                user_id=job.user_id,
+                status=state,
+            )
         log.info(f"Settled stranded video job {job.id} as {state}")
         return True
 

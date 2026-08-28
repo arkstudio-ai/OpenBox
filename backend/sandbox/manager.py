@@ -45,6 +45,10 @@ class SandboxManager:
         self._session_project: dict[str, str] = {}        # session_id -> user_id
         self._clients: dict[str, SandboxClient] = {}      # user_id -> client
         self._lock = asyncio.Lock()
+        # Provider cold starts run outside the short global map lock. Serialize
+        # them per user so two sessions cannot both observe "no sandbox" and
+        # create duplicate containers; different tenants still start in parallel.
+        self._acquire_locks: dict[str, asyncio.Lock] = {}
 
     async def _verify_sandbox_alive(self, sandbox: SandboxInfo, key: str) -> bool:
         """Return True when the tracked sandbox still responds to /alive."""
@@ -72,13 +76,21 @@ class SandboxManager:
         """Clear stale sandbox state from both manager and provider caches."""
         from sandbox import provider
 
-        self._project_map.pop(key, None)
-        self._clients.pop(key, None)
-        stale_sessions = [sid for sid, mapped_key in self._session_project.items() if mapped_key == key]
-        for sid in stale_sessions:
-            self._session_project.pop(sid, None)
-        if session_id:
-            self._session_project.pop(session_id, None)
+        async with self._lock:
+            # The health probe ran without the map lock. Another coroutine may
+            # already have replaced this entry; never let an old failed probe
+            # evict the replacement.
+            if self._project_map.get(key) is not sandbox:
+                return
+            self._project_map.pop(key, None)
+            self._clients.pop(key, None)
+            stale_sessions = [
+                sid for sid, mapped_key in self._session_project.items() if mapped_key == key
+            ]
+            for sid in stale_sessions:
+                self._session_project.pop(sid, None)
+            if session_id:
+                self._session_project.pop(session_id, None)
 
         # Only forget containers this provider can make again. A shared,
         # pre-provisioned box (the WUYING desktop) is not OpenBox's to evict:
@@ -97,16 +109,20 @@ class SandboxManager:
     async def check_health(self, project_id: str = "default", user_id: str = "default") -> dict:
         """Check if a sandbox is available and healthy for the given user."""
         key = _map_key(user_id)
-        sandbox = self._project_map.get(key)
-        if sandbox:
-            if await self._verify_sandbox_alive(sandbox, key):
-                return {
-                    "available": True,
-                    "container_id": sandbox.container_id,
-                    "container_name": build_sandbox_name(user_id),
-                    "status": "running",
-                }
-            await self._cleanup_stale_sandbox(sandbox, key)
+        async with self._lock:
+            acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
+        async with acquire_lock:
+            async with self._lock:
+                sandbox = self._project_map.get(key)
+            if sandbox:
+                if await self._verify_sandbox_alive(sandbox, key):
+                    return {
+                        "available": True,
+                        "container_id": sandbox.container_id,
+                        "container_name": build_sandbox_name(user_id),
+                        "status": "running",
+                    }
+                await self._cleanup_stale_sandbox(sandbox, key)
 
         from sandbox import provider
         containers = provider.get_containers_for_user(user_id)
@@ -124,29 +140,67 @@ class SandboxManager:
             ],
         }
 
-    async def acquire(self, session_id: str, project_id: str = "default", *, user_id: str) -> SandboxInfo:
+    async def acquire(
+        self,
+        session_id: str,
+        project_id: str = "default",
+        *,
+        user_id: str,
+    ) -> SandboxInfo:
+        key = _map_key(user_id)
+        async with self._lock:
+            acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
+        async with acquire_lock:
+            return await self._acquire_for_user(
+                session_id,
+                project_id,
+                user_id=user_id,
+            )
+
+    async def _acquire_for_user(
+        self,
+        session_id: str,
+        project_id: str = "default",
+        *,
+        user_id: str,
+    ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
         key = _map_key(user_id)
 
         async with self._lock:
             existing_key = self._session_project.get(session_id)
-            if existing_key:
-                sandbox = self._project_map.get(existing_key)
-                if sandbox and existing_key == key:
-                    if await self._verify_sandbox_alive(sandbox, key):
-                        sandbox.session_ids.add(session_id)
-                        return sandbox
-                    await self._cleanup_stale_sandbox(sandbox, key, session_id)
-
+            if existing_key is not None and existing_key != key:
+                raise RuntimeError(f"Sandbox session ownership mismatch for {session_id}")
             sandbox = self._project_map.get(key)
-            if sandbox:
-                if await self._verify_sandbox_alive(sandbox, key):
-                    sandbox.session_ids.add(session_id)
-                    self._session_project[session_id] = key
-                    client = self._clients[key]
-                    log.info(f"Reusing sandbox {sandbox.container_id} for session {session_id} (user {user_id})")
+            client = self._clients.get(key)
+
+        # Provider probes and filesystem setup are network operations. The
+        # per-user acquire lock already serializes this tenant; holding the
+        # global map lock here would make one slow desktop block every user.
+        if sandbox:
+            if await self._verify_sandbox_alive(sandbox, key):
+                if client is None:
+                    client = SandboxClient(
+                        host=sandbox.host,
+                        port=sandbox.port,
+                        api_key=sandbox.api_key,
+                        base_url=sandbox.base_url,
+                    )
+                async with self._lock:
+                    if self._project_map.get(key) is not sandbox:
+                        sandbox = None
+                    else:
+                        self._clients[key] = client
+                        sandbox.session_ids.add(session_id)
+                        self._session_project[session_id] = key
+                if sandbox is not None:
+                    log.info(
+                        f"Reusing sandbox {sandbox.container_id} for session {session_id} "
+                        f"(user {user_id})"
+                    )
                     await self._ensure_session_dir(client, session_id)
                     return sandbox
+            else:
                 await self._cleanup_stale_sandbox(sandbox, key, session_id)
 
         from sandbox import provider
@@ -193,8 +247,11 @@ class SandboxManager:
             log.info(f"Created sandbox {info.id} for user {user_id}, session {session_id}")
             return sandbox
 
-        except Exception as e:
-            log.error(f"Failed to acquire sandbox for session {session_id}: {e}")
+        except Exception as exc:
+            log.error(
+                f"Failed to acquire sandbox for session {session_id}: "
+                f"{type(exc).__name__}"
+            )
             raise
 
     async def _ensure_session_dir(self, client: SandboxClient, session_id: str) -> None:
@@ -212,8 +269,11 @@ class SandboxManager:
         try:
             from session.session import project_id_for
             slug = await slug_for(await project_id_for(session_id))
-        except Exception as e:
-            log.debug(f"Could not resolve project for session {session_id}: {e}")
+        except Exception as exc:
+            log.debug(
+                f"Could not resolve project for session {session_id}: "
+                f"{type(exc).__name__}"
+            )
 
         workdir = project_directory(slug)
         try:
@@ -222,8 +282,10 @@ class SandboxManager:
                 timeout=10,
                 workdir=WORKSPACE_ROOT,
             )
-        except Exception as e:
-            log.warning(f"Failed to create project dir {workdir}: {e}")
+        except Exception as exc:
+            log.warning(
+                f"Failed to create project dir {workdir}: {type(exc).__name__}"
+            )
 
     async def get_session_workdir(self, session_id: str) -> str:
         """The directory a session's tools run in — its project's directory."""
@@ -231,57 +293,76 @@ class SandboxManager:
         try:
             from session.session import project_id_for
             return project_directory(await slug_for(await project_id_for(session_id)))
-        except Exception as e:
-            log.debug(f"Could not resolve workdir for {session_id}: {e}")
+        except Exception as exc:
+            log.debug(
+                f"Could not resolve workdir for {session_id}: "
+                f"{type(exc).__name__}"
+            )
         return project_directory("default")
 
-    async def release(self, session_id: str) -> None:
-        """Release a session from its sandbox. Only destroys container when no sessions remain."""
+    async def release(self, session_id: str, *, user_id: str) -> None:
+        """Detach one session without deciding the sandbox's global lifetime.
+
+        ``session_ids`` is process-local. In a web/worker or multi-replica
+        deployment it cannot prove that no other process or durable SkillJob
+        still uses the execution environment. Destruction belongs to the
+        database-guarded idle reaper or an explicit owner action, never this
+        local reference release.
+        """
+        expected_key = _map_key(user_id)
         async with self._lock:
-            key = self._session_project.pop(session_id, None)
+            key = self._session_project.get(session_id)
             if not key:
                 log.warning(f"No sandbox found for session {session_id}")
                 return
+            if key != expected_key:
+                raise PermissionError(
+                    f"Sandbox session ownership mismatch for {session_id}"
+                )
+            acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
 
-            sandbox = self._project_map.get(key)
-            if not sandbox:
-                return
+        # Serialize provider deletion with this user's health check/cold start.
+        # Otherwise an acquire can rediscover a container while release is
+        # deleting it and cache an endpoint that is already going away.
+        async with acquire_lock:
+            async with self._lock:
+                if self._session_project.get(session_id) != key:
+                    return
+                self._session_project.pop(session_id, None)
+                sandbox = self._project_map.get(key)
+                if not sandbox:
+                    return
 
-            sandbox.session_ids.discard(session_id)
+                sandbox.session_ids.discard(session_id)
 
-            if sandbox.session_ids:
-                log.info(f"Session {session_id} released, {len(sandbox.session_ids)} sessions still using sandbox")
-                return
+                if sandbox.session_ids:
+                    log.info(
+                        f"Session {session_id} released, {len(sandbox.session_ids)} "
+                        "local sessions still using sandbox"
+                    )
+                    return
 
-            self._project_map.pop(key, None)
-            self._clients.pop(key, None)
-
-        from sandbox import provider
-
-        try:
-            await provider.delete_container(sandbox.container_id, user_id=sandbox.user_id)
-            log.info(
-                f"Destroyed sandbox {sandbox.container_id} "
-                f"(user {sandbox.user_id}, project {sandbox.project_id}, last session released)"
-            )
-        except Exception as e:
-            log.warning(f"Failed to destroy sandbox {sandbox.container_id}: {e}")
+                self._project_map.pop(key, None)
+                self._clients.pop(key, None)
+                log.info(
+                    f"Session {session_id} released; retained sandbox "
+                    f"{sandbox.container_id} for durable/background work"
+                )
 
     async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
-        key = self._session_project.get(session_id)
-        if not key:
-            await self.acquire(session_id, user_id=user_id)
+        expected_key = _map_key(user_id)
+        # Acquire is also the health-checked, per-user serialized fast path.
+        # Using it unconditionally keeps map reads and provider lifecycle in one
+        # ownership protocol instead of racing a separate probe here.
+        await self.acquire(session_id, user_id=user_id)
+        async with self._lock:
             key = self._session_project.get(session_id)
-
-        if key and key in self._clients:
-            sandbox = self._project_map.get(key)
-            if sandbox and not await self._verify_sandbox_alive(sandbox, key):
-                await self._cleanup_stale_sandbox(sandbox, key, session_id)
-                await self.acquire(session_id, user_id=user_id)
-                key = self._session_project.get(session_id)
-            if key and key in self._clients:
-                return self._clients[key]
+            if key is not None and key != expected_key:
+                raise RuntimeError(f"Sandbox session ownership mismatch for {session_id}")
+            client = self._clients.get(key) if key else None
+        if client is not None:
+            return client
 
         raise RuntimeError(f"No sandbox client for session {session_id}")
 
@@ -293,9 +374,10 @@ class SandboxManager:
         more than one live sandbox there is no defensible answer, so it
         returns None rather than choosing.
         """
-        if len(self._clients) != 1:
-            return None
-        return next(iter(self._clients.values()))
+        async with self._lock:
+            if len(self._clients) != 1:
+                return None
+            return next(iter(self._clients.values()))
 
     async def get_client_any(self, *, user_id: str) -> SandboxClient | None:
         """Get any available SandboxClient (not session-specific).
@@ -303,19 +385,24 @@ class SandboxManager:
         Used by management endpoints (skills, MCP) that operate at the container level.
         Returns the first available client. If none exists, auto-acquires a default sandbox.
         """
-        for key, client in self._clients.items():
-            sandbox = self._project_map.get(key)
-            if sandbox and sandbox.user_id == user_id:
-                if await self._verify_sandbox_alive(sandbox, key):
-                    return client
-                await self._cleanup_stale_sandbox(sandbox, key)
         try:
-            await self.acquire("__management__", "default", user_id=user_id)
-            key = self._session_project.get("__management__")
-            if key:
-                return self._clients.get(key)
-        except Exception as e:
-            log.warning(f"Failed to auto-acquire sandbox: {e}")
+            # A global synthetic session id lets user B evict user A's manager
+            # mapping on the shared WUYING desktop. Namespace it without
+            # exposing the raw owner in filesystem/log identifiers.
+            import hashlib
+
+            management_session = (
+                "__management__:" + hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+            )
+            await self.acquire(management_session, "default", user_id=user_id)
+            async with self._lock:
+                key = self._session_project.get(management_session)
+                if key:
+                    return self._clients.get(key)
+        except Exception as exc:
+            log.warning(
+                f"Failed to auto-acquire sandbox: {type(exc).__name__}"
+            )
         return None
 
     def get_info(self, session_id: str) -> SandboxInfo | None:
@@ -335,11 +422,15 @@ class SandboxManager:
                     from sandbox import provider
                     try:
                         await provider.delete_container(sandbox.container_id, user_id=sandbox.user_id)
-                    except Exception as e:
-                        log.warning(f"Error releasing sandbox for {key}: {e}")
+                    except Exception as exc:
+                        log.warning(
+                            f"Error releasing sandbox for {key}: "
+                            f"{type(exc).__name__}"
+                        )
         self._project_map.clear()
         self._session_project.clear()
         self._clients.clear()
+        self._acquire_locks.clear()
 
 
 sandbox_manager = SandboxManager()

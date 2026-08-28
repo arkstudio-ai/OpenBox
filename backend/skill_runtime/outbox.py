@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from core.log import create_logger
 from db.base import get_db_session
@@ -25,9 +25,6 @@ SKILL_JOB_EVENT = "skill.job.event"
 PUBLISH_INTERVAL_SECONDS = 1.0
 BATCH_LIMIT = 200
 
-#: A poisoned receipt (schema drift, FK oddity) must not block the wire event
-#: forever; after this many attempts the receipt is abandoned with an error.
-RECEIPT_RETRY_LIMIT = 3
 _receipt_failures: dict[str, int] = {}
 
 
@@ -44,15 +41,55 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
     from bus import bus
 
     async with get_db_session() as db:
+        # Pull a bounded stripe from every job, then interleave that stripe by
+        # tenant. One user's thousands of jobs cannot fill the whole batch;
+        # within each tenant, rank 1 for all jobs precedes rank 2 so per-job
+        # sequence order is retained. A poisoned terminal receipt blocks only
+        # its own job's later events.
+        per_job = (
+            select(
+                SkillJobEvent.id.label("event_id"),
+                SkillJobEvent.user_id.label("user_id"),
+                SkillJobEvent.created_at.label("created_at"),
+                func.row_number()
+                .over(
+                    partition_by=SkillJobEvent.job_id,
+                    order_by=SkillJobEvent.seq.asc(),
+                )
+                .label("job_rank"),
+            )
+            .where(SkillJobEvent.published_at.is_(None))
+            .subquery()
+        )
+        fair = (
+            select(
+                per_job.c.event_id,
+                per_job.c.created_at,
+                per_job.c.job_rank,
+                func.row_number()
+                .over(
+                    partition_by=per_job.c.user_id,
+                    order_by=(
+                        per_job.c.job_rank.asc(),
+                        per_job.c.created_at.asc(),
+                        per_job.c.event_id.asc(),
+                    ),
+                )
+                .label("tenant_rank"),
+            )
+            .where(per_job.c.job_rank <= 10)
+            .subquery()
+        )
         events = list(
             (
                 await db.execute(
                     select(SkillJobEvent)
-                    .where(SkillJobEvent.published_at.is_(None))
+                    .join(fair, fair.c.event_id == SkillJobEvent.id)
                     .order_by(
-                        SkillJobEvent.created_at.asc(),
-                        SkillJobEvent.job_id.asc(),
-                        SkillJobEvent.seq.asc(),
+                        fair.c.tenant_rank.asc(),
+                        fair.c.job_rank.asc(),
+                        fair.c.created_at.asc(),
+                        fair.c.event_id.asc(),
                     )
                     .limit(limit)
                 )
@@ -63,7 +100,10 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
 
     published = 0
     stamped_ids: list[str] = []
+    blocked_jobs: set[str] = set()
     for event in events:
+        if event.job_id in blocked_jobs:
+            continue
         # Receipt FIRST: it is durable state, the wire event is not. Once
         # published_at is stamped the event is never revisited, so a receipt
         # written after the stamp would be lost to any crash or DB blip in
@@ -78,16 +118,32 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
                     job = await db.get(SkillJob, event.job_id)
                 if job is not None:
                     await write_receipt(job)
-            except Exception as e:
-                if _receipt_failures.get(event.id, 0) < RECEIPT_RETRY_LIMIT:
-                    # Leave the event unstamped so the whole step retries.
-                    _receipt_failures[event.id] = _receipt_failures.get(event.id, 0) + 1
-                    log.warning(f"Chat receipt for {event.job_id} failed, will retry: {e}")
-                    continue
-                log.error(f"Chat receipt for {event.job_id} abandoned after retries: {e}")
+            except Exception as exc:
+                # Receipt delivery is part of the durable terminal contract. An
+                # in-memory retry counter must never silently downgrade it after
+                # a process restart; keep the event unstamped until the database
+                # problem is repaired. Throttle repetitive logs only.
+                attempts = _receipt_failures.get(event.id, 0) + 1
+                _receipt_failures[event.id] = attempts
+                if attempts == 1 or attempts % 60 == 0:
+                    # A receipt that stays poisoned blocks this job's whole
+                    # event stream, so the operator needs the actual cause —
+                    # the class name alone cannot be acted on.
+                    log.warning(
+                        f"Chat receipt for {event.job_id} failed, will retry "
+                        f"(attempt {attempts})",
+                        exc_info=True,
+                    )
+                else:
+                    log.debug(
+                        f"Chat receipt for {event.job_id} still blocked: "
+                        f"{type(exc).__name__}"
+                    )
+                blocked_jobs.add(event.job_id)
+                continue
 
         try:
-            bus.publish(
+            await bus.publish_confirmed(
                 SKILL_JOB_EVENT,
                 {
                     "userId": event.user_id,
@@ -98,9 +154,13 @@ async def publish_pending(limit: int = BATCH_LIMIT) -> int:
                     "createdAt": _iso_utc(event.created_at),
                 },
             )
-        except Exception as e:
+        except Exception as exc:
             # Leave unstamped; the next pass retries delivery.
-            log.warning(f"Outbox publish failed for event {event.id}: {e}")
+            log.warning(
+                f"Outbox publish failed for event {event.id}: "
+                f"{type(exc).__name__}"
+            )
+            blocked_jobs.add(event.job_id)
             continue
         stamped_ids.append(event.id)
         _receipt_failures.pop(event.id, None)
@@ -154,8 +214,8 @@ class OutboxPublisher:
                 drained = await publish_pending()
                 if drained:
                     log.debug(f"Outbox published {drained} event(s)")
-            except Exception as e:
-                log.error(f"Outbox pass failed: {e}")
+            except Exception as exc:
+                log.error(f"Outbox pass failed: {type(exc).__name__}")
             self._poke.clear()
             try:
                 await asyncio.wait_for(self._poke.wait(), timeout=self.interval_seconds)

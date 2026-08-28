@@ -1,4 +1,5 @@
 """SandboxProvider abstract interface — unifies Docker and Kubernetes sandbox backends."""
+import hashlib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
@@ -14,14 +15,25 @@ def _slug(value: str, *, max_length: int = 24) -> str:
     return (safe[:max_length] or "default").strip("-") or "default"
 
 
+def stable_resource_alias(value: str, *, max_length: int = 63) -> str:
+    """Return a DNS-safe alias without collapsing distinct tenant ids.
+
+    Character replacement and truncation alone are not an identity function:
+    ``alice@example.com`` and ``alice-example-com`` (or two long ids sharing a
+    prefix) otherwise select the same container/PVC. Keep a readable stem, but
+    bind every infrastructure name to the exact raw id with a hash suffix.
+    """
+    if max_length < 14:
+        raise ValueError("stable resource aliases require at least 14 characters")
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    stem_limit = max(1, max_length - len(digest) - 1)
+    stem = _slug(value, max_length=stem_limit)
+    return f"{stem}-{digest}"
+
+
 def build_sandbox_name(user_id: str, project_id: str = "default") -> str:
     """Build a stable sandbox name for a user-level sandbox."""
-    return f"user-{_slug(user_id)}"
-
-
-def _safe_user_alias(user_id: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9-]+", "-", user_id).strip("-").lower()
-    return safe[:63] or "default"
+    return f"user-{stable_resource_alias(user_id, max_length=58)}"
 
 
 class SandboxProvider(ABC):
@@ -88,9 +100,12 @@ class SandboxProvider(ABC):
         yield {"step": "error", "message": "Image build not supported in this provider"}
 
     def _user_matches(self, owner: str | None, user_id: str) -> bool:
-        if not owner:
-            return False
-        return owner == user_id or owner == _safe_user_alias(user_id)
+        # Ownership registries must contain the raw tenant id. Treating a
+        # lossy infrastructure label as an alternate identity lets distinct
+        # users such as ``alice@example.com`` and ``alice-example-com`` select
+        # the same sandbox. Providers may read legacy labels while discovering
+        # resources, but must verify/adopt them before registering raw owners.
+        return owner == user_id
 
     def get_user_container(self, user_id: str, project_id: str | None = None) -> ContainerInfo | None:
         owners = getattr(self, "_container_owners", {})

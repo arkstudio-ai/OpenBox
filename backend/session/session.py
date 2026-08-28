@@ -102,9 +102,8 @@ async def create_session(
 
     # A session always belongs to a project; an unrecognised one (or none at
     # all) lands in the user's default rather than failing the request.
-    if user_id != "default":
-        from project.workspace import resolve_for_session
-        project_id = await resolve_for_session(project_id, user_id)
+    from project.workspace import resolve_for_session
+    project_id = await resolve_for_session(project_id, user_id)
 
     async with get_db_session() as db:
         row = SessionORM(
@@ -207,12 +206,99 @@ async def list_sessions(project_id: str | None = None, user_id: str = "default")
         return [_orm_to_session(r) for r in result.scalars().all()]
 
 
-async def delete_session(session_id: str, user_id: str = "default") -> None:
+async def delete_session(session_id: str, user_id: str = "default") -> bool:
     """Soft-delete a session (messages/parts are kept for history).
 
     Also cascade-disables associated cron jobs.
     """
     now = datetime.now(timezone.utc)
+
+    # Establish ownership before *any* side effect. Previously a caller that
+    # guessed another tenant's session id could detach its cron notifications
+    # and release its in-memory sandbox binding even though the scoped session
+    # update itself matched no row.
+    continuation_jobs: list[str] = []
+    async with get_db_session() as db:
+        from db.models.session_inbox import SessionInbox
+
+        owned = (
+            await db.execute(
+                select(SessionORM.id).where(
+                    SessionORM.id == session_id,
+                    SessionORM.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if owned is None:
+            return False
+        await db.execute(
+            update(SessionORM)
+            .where(
+                SessionORM.id == session_id,
+                SessionORM.user_id == user_id,
+            )
+            .values(is_deleted=True, deleted_at=now)
+        )
+        continuation_jobs = list(
+            (
+                await db.execute(
+                    select(SessionInbox.source_job_id)
+                    .where(
+                        SessionInbox.session_id == session_id,
+                        SessionInbox.user_id == user_id,
+                        SessionInbox.status.in_(("pending", "processing")),
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+        )
+        if continuation_jobs:
+            await db.execute(
+                update(SessionInbox)
+                .where(
+                    SessionInbox.session_id == session_id,
+                    SessionInbox.user_id == user_id,
+                    SessionInbox.status.in_(("pending", "processing")),
+                )
+                # Revoke a live dispatcher claim. Keep the row pending until
+                # request_cancel commits; on a transient failure, the periodic
+                # unroutable scan can retry from this durable marker.
+                .values(status="pending", consumed_at=None, claim_token=None)
+            )
+
+    # A Session is only the continuation route, not the Job's fact source.
+    # Submit cancellation through the normal state machine after invalidating
+    # every dispatcher claim; handlers that own external work still reconcile
+    # provider facts instead of being killed locally.
+    if continuation_jobs:
+        from skill_runtime import repository as skill_job_repo
+
+        for job_id in continuation_jobs:
+            try:
+                await skill_job_repo.request_cancel(
+                    job_id,
+                    user_id,
+                    reason="continuation_session_deleted",
+                )
+            except skill_job_repo.JobNotFound:
+                pass
+            except Exception as exc:
+                log.warning(
+                    f"Could not cancel continuation job {job_id}: "
+                    f"{type(exc).__name__}"
+                )
+                continue
+            async with get_db_session() as db:
+                await db.execute(
+                    update(SessionInbox)
+                    .where(
+                        SessionInbox.session_id == session_id,
+                        SessionInbox.user_id == user_id,
+                        SessionInbox.source_job_id == job_id,
+                        SessionInbox.status == "pending",
+                    )
+                    .values(status="expired", consumed_at=now, claim_token=None)
+                )
 
     # Cascade: cron jobs are project-scoped and outlive conversations. The
     # deleted session merely stops being their notify target.
@@ -223,26 +309,20 @@ async def delete_session(session_id: str, user_id: str = "default") -> None:
                 update(CronJob)
                 .where(
                     CronJob.session_id == session_id,
+                    CronJob.user_id == user_id,
                     CronJob.is_deleted == False,
                 )
                 .values(session_id=None, updated_at=now)
             )
-    except Exception as e:
-        log.debug(f"Cron cascade cleanup: {e}")
-
-    async with get_db_session() as db:
-        await db.execute(
-            update(SessionORM).where(
-                SessionORM.id == session_id,
-                SessionORM.user_id == user_id,
-            ).values(is_deleted=True, deleted_at=now)
-        )
+    except Exception as exc:
+        log.debug(f"Cron cascade cleanup: {type(exc).__name__}")
 
     # Release sandbox
     from sandbox import sandbox_manager
-    await sandbox_manager.release(session_id)
+    await sandbox_manager.release(session_id, user_id=user_id)
 
     log.info(f"Deleted session {session_id}")
+    return True
 
 
 async def update_session(session_id: str, user_id: str = "default", **kwargs) -> Session | None:
@@ -344,6 +424,13 @@ async def create_user_message(
             Synthetic messages are not wrapped with "The user sent the following
             message..." in _insert_reminders, matching opencode's behavior.
     """
+    if (
+        client_message_id
+        and client_message_id.startswith(("sjr:", "sji:"))
+        and not synthetic
+    ):
+        raise ValueError("client_message_id uses a platform-reserved prefix")
+
     msg_id = ascending("message")
     text_part_id = ascending("part")
     now = datetime.now(timezone.utc)

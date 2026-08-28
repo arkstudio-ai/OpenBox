@@ -33,9 +33,44 @@ async def _has_active_agent_sessions(user_id: str) -> bool:
             (s.status.value if hasattr(s.status, "value") else str(s.status)) in ACTIVE_SESSION_STATUSES
             for s in sessions
         )
-    except Exception as e:
+    except Exception as exc:
         # Losing a sandbox under a live run is worse than retaining it longer.
-        log.warning(f"Could not check active sessions for user={user_id}; deferring cleanup: {e}")
+        log.warning(
+            f"Could not check active sessions for user={user_id}; "
+            f"deferring cleanup: {type(exc).__name__}"
+        )
+        return True
+
+
+async def _has_active_skill_jobs(user_id: str) -> bool:
+    """Fail-closed guard for sandbox cleanup after the browser disconnects."""
+    try:
+        from sqlalchemy import select
+
+        from db.base import get_db_session
+        from db.models.skill_job import SkillJob
+        from skill_runtime.types import TERMINAL_STATUSES
+
+        terminal = tuple(status.value for status in TERMINAL_STATUSES)
+        async with get_db_session() as db:
+            active = (
+                await db.execute(
+                    select(SkillJob.id)
+                    .where(
+                        SkillJob.user_id == user_id,
+                        SkillJob.status.not_in(terminal),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return active is not None
+    except Exception as exc:
+        # Resource retention is recoverable; deleting a live execution node is
+        # not. A database/schema outage therefore defers cleanup.
+        log.warning(
+            f"Could not check active SkillJobs for user={user_id}; "
+            f"deferring cleanup: {type(exc).__name__}"
+        )
         return True
 
 
@@ -60,8 +95,11 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
                     "status": status,
                 },
             })
-    except Exception as e:
-        log.warning(f"Could not enqueue WS recovery snapshot for user={user_id}: {e}")
+    except Exception as exc:
+        log.warning(
+            f"Could not enqueue WS recovery snapshot for user={user_id}: "
+            f"{type(exc).__name__}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +148,12 @@ class WSConnectionManager:
                     outcome = await self._cleanup_user_if_inactive(user_id)
                     if outcome != "active":
                         return
-                    # A closed page is not a stopped Agent. Keep the sandbox
-                    # alive and reconsider after another idle window.
-                    log.info(f"User {user_id} has active agent work; deferring container cleanup")
+                    # A closed page is not a stopped Agent or SkillJob. Keep
+                    # the sandbox alive and reconsider after another window.
+                    log.info(
+                        f"User {user_id} has active background work; "
+                        "deferring container cleanup"
+                    )
             finally:
                 current = asyncio.current_task()
                 if self._cleanup_timers.get(user_id) is current:
@@ -136,6 +177,8 @@ class WSConnectionManager:
             return "connected"
         if await _has_active_agent_sessions(user_id):
             return "active"
+        if await _has_active_skill_jobs(user_id):
+            return "active"
 
         log.info(f"User {user_id} inactive for 30min, cleaning up containers")
         from sandbox import provider
@@ -148,11 +191,19 @@ class WSConnectionManager:
             if await _has_active_agent_sessions(user_id):
                 log.info(f"Agent work started for user {user_id} during cleanup, aborting")
                 return "active"
+            if await _has_active_skill_jobs(user_id):
+                log.info(
+                    f"SkillJob work started for user {user_id} during cleanup, aborting"
+                )
+                return "active"
             try:
                 await provider.delete_container(info.id, user_id=user_id)
                 log.info(f"Cleaned up container {info.name} ({info.id}) for inactive user {user_id}")
-            except Exception as e:
-                log.warning(f"Failed to cleanup container {info.id} for user {user_id}: {e}")
+            except Exception as exc:
+                log.warning(
+                    f"Failed to cleanup container {info.id} for user {user_id}: "
+                    f"{type(exc).__name__}"
+                )
 
         # Also clean up sandbox manager state
         from sandbox import sandbox_manager

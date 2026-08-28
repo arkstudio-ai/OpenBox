@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.log import create_logger
 
@@ -16,7 +16,7 @@ class ToolResult(BaseModel):
     """Result returned by a tool execution."""
     title: str = ""
     output: str = ""
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass
@@ -31,10 +31,16 @@ class ToolContext:
     abort: asyncio.Event = field(default_factory=asyncio.Event)
     message_id: str = ""
     part_id: str = ""  # The tool call's part ID
+    # Stable for the complete Agent run, including all tool-result steps and
+    # compaction. In-memory budgets must not reset with every assistant message.
+    run_id: str = ""
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
     available_tools: frozenset[str] | None = None
+    # Durable skill identities explicitly activated by a successful skill load
+    # in this user-initiated run.
+    active_skills: frozenset[str] = field(default_factory=frozenset)
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None
@@ -88,11 +94,16 @@ def define_tool(
         # Validate input
         try:
             validated = parameters.model_validate(args)
-        except Exception as e:
-            log.warning(f"Tool {tool_id} validation failed. Args received: {args!r}. Error: {e}")
+        except Exception as exc:
+            # Tool arguments routinely contain prompts, credentials and signed
+            # URLs. Keep the useful tool/schema identity without copying the
+            # rejected payload into shared service logs.
+            log.warning(
+                f"Tool {tool_id} validation failed: {type(exc).__name__}"
+            )
             return ToolResult(
                 title=f"Invalid input for {tool_id}",
-                output=f"Parameter validation error: {e}",
+                output=f"Parameter validation error: {exc}",
             )
 
         # Execute

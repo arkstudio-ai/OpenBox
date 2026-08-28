@@ -16,6 +16,8 @@ spec:
       inputSchema:
         type: object
         required: [text]
+        properties:
+          text: {type: string}
       queue: default
       invocationTimeoutSeconds: 30
       maxTotalSeconds: 600
@@ -24,6 +26,9 @@ spec:
       inputSchema:
         type: object
         required: [text]
+        properties:
+          text: {type: string}
+          delay_seconds: {type: integer}
       queue: default
       invocationTimeoutSeconds: 30
       maxExternalWaitSeconds: 3600
@@ -32,6 +37,8 @@ spec:
     ask_then_echo:
       inputSchema:
         type: object
+        properties:
+          question: {type: string}
       queue: default
       invocationTimeoutSeconds: 30
       userInputTimeoutSeconds: 86400
@@ -44,6 +51,9 @@ spec:
     fail_then_succeed:
       inputSchema:
         type: object
+        properties:
+          failures: {type: integer}
+          backoff_seconds: {type: integer}
       queue: default
       invocationTimeoutSeconds: 30
       maxTotalSeconds: 3600
@@ -51,6 +61,8 @@ spec:
     slow_step:
       inputSchema:
         type: object
+        properties:
+          sleep_seconds: {type: integer}
       queue: default
       #: Deliberately far below the global default (120s): a job killed at 5s
       #: proves the per-operation bound is the one being enforced.
@@ -60,6 +72,8 @@ spec:
     park_notice:
       inputSchema:
         type: object
+        properties:
+          notice: {type: string}
       queue: default
       invocationTimeoutSeconds: 30
       userInputTimeoutSeconds: 86400

@@ -1,6 +1,7 @@
 """Agent loop: the core orchestration engine."""
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass
 
 _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
@@ -352,6 +353,8 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         # its declared skill-only tools on subsequent steps without making
         # those schemas a permanent cost for the session or agent.
         active_skill_tools: set[str] = set()
+        active_skills: set[str] = set()
+        run_id = uuid.uuid4().hex
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
         last_step_info = None  # Persists an explicit aborted boundary between steps.
@@ -493,12 +496,14 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             session_workdir = await workdir_for_session(session)
             ctx = ToolContext(
                 session_id=session_id,
+                run_id=run_id,
                 user_id=user_id,
                 sandbox=sandbox,
                 bus=bus,
                 abort=abort,
                 workdir=session_workdir,
                 available_tools=frozenset(tools),
+                active_skills=frozenset(active_skills),
             )
 
             # Create hooks with config permission rules + agent permission rules
@@ -689,6 +694,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
             active_skill_tools.update(result.activated_tools)
+            active_skills.update(result.activated_skills)
 
             # Step finish with snapshot
             end_snapshot = await snapshot.track(session_id, sandbox)

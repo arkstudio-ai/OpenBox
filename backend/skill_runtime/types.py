@@ -113,6 +113,8 @@ class InputKind(str, Enum):
     USER_ANSWER = "user_answer"
     PROVIDER_CALLBACK = "provider_callback"
     AGENT_RESULT = "agent_result"
+    #: Privileged platform-operator decision, never accepted from the ordinary
+    #: job-owner input route.
     OPERATOR_RESUME = "operator_resume"
 
 
@@ -142,11 +144,10 @@ class WaitExternal:
     wake_at: datetime
     external_handle: str | None = None
     progress: dict | None = None
-    #: A cancel-requested job normally has its waiting outcome overridden to
-    #: Cancelled by the worker (naive handlers must still converge). A handler
-    #: that has SEEN the cancel but must finish first — e.g. a paid provider
-    #: output mid-copy to OSS — sets this to keep its wait honored (§7.4:
-    #: provider success outranks the cancel).
+    #: A handler that has SEEN a cancel but must remain parked — e.g. while an
+    #: external provider confirms cancellation or an output finishes copying to
+    #: OSS — must set this. Omitting it is a retryable handler-contract fault;
+    #: the runtime never fabricates a remote ``cancelled`` fact.
     acknowledges_cancel: bool = False
 
 
@@ -154,11 +155,51 @@ class WaitExternal:
 class WaitUser:
     checkpoint: dict
     prompt: str
+    #: What an answer must look like — and whether one is accepted at all.
+    #: An empty schema declares a NOTIFICATION: the card shows the prompt with
+    #: no answer box and the runtime refuses `user_answer` inputs, because a
+    #: handler that declared no shape cannot validate what it would receive.
+    #: To ask an answerable question, declare the shape (even
+    #: ``{"type": "object"}`` to accept any object).
     input_schema: dict = field(default_factory=dict)
     expires_at: datetime | None = None
     #: Same contract as WaitExternal.acknowledges_cancel: the handler has seen
     #: the cancel and this park must survive it (rare; prefer settling).
     acknowledges_cancel: bool = False
+
+
+def operator_reconciliation_wait(
+    checkpoint: dict,
+    *,
+    detail: str = "",
+) -> WaitUser:
+    """Build the platform-owned hold for ambiguous external state.
+
+    Automatic retries may stop, but an operation that can own remote state must
+    not become terminal merely because its local retry budget ran out. Only an
+    administrator can release this hold, and the only generic action is to
+    authorize another bounded reconciliation attempt.
+    """
+    suffix = f"（最近错误：{detail[:300]}）" if detail else ""
+    return WaitUser(
+        checkpoint=checkpoint,
+        prompt=(
+            "外部状态尚未可靠收敛，平台已停止自动推进并转入运维审计。"
+            "请先检查远端任务、凭据与执行节点；确认可以再次查询或清理后，"
+            f"再授权一次有界 reconciliation。{suffix}"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "retry_reconciliation": {"type": "boolean", "const": True},
+            },
+            "required": ["retry_reconciliation"],
+            "additionalProperties": False,
+            "x-operator-only": True,
+            "x-openbox-review": "external-reconciliation",
+        },
+        acknowledges_cancel=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -174,6 +215,10 @@ class Retry:
     error_code: str
     retry_at: datetime
     error_message: str = ""
+    #: Infrastructure deferrals such as "this image does not carry the pinned
+    #: handler version" must retry after a rolling deploy without consuming a
+    #: skill's fault budget. Handler errors and lost leases keep the default.
+    consume_budget: bool = True
 
 
 @dataclass(frozen=True)

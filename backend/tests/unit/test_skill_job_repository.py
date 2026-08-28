@@ -460,7 +460,11 @@ async def test_add_input_idempotent_and_wakes():
     await repo.settle_invocation(
         job.id,
         claimed.lease_token,
-        WaitUser(checkpoint={}, prompt="answer me"),
+        WaitUser(
+            checkpoint={},
+            prompt="answer me",
+            input_schema={"type": "object", "required": ["a"]},
+        ),
         attempt_id=claimed.attempt_id,
     )
     row, created = await repo.add_input(

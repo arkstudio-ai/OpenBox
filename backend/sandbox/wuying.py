@@ -61,6 +61,13 @@ class WuyingProvider(SandboxProvider):
 
         if not api_key:
             log.warning("WUYING_API_KEY is empty — the action server will reject every request")
+        if config.jwt_secret:
+            log.error(
+                "WUYING maps every authenticated user to one physical desktop; "
+                "owner/workspace labels are routing metadata, not a tenant security "
+                "boundary. Use this provider only for trusted development or place "
+                "each tenant behind an independently isolated desktop/container."
+            )
         log.info(f"WUYING sandbox provider -> {self.endpoint} (desktop {self.desktop_id})")
 
     def _build_desktop(self) -> ContainerInfo:
@@ -154,9 +161,10 @@ class WuyingProvider(SandboxProvider):
                 log.info(f"WUYING sandbox reachable: {resp.json()}")
                 return
             log.error(f"WUYING sandbox returned HTTP {resp.status_code} from {self.endpoint}/alive")
-        except Exception as e:
+        except Exception as exc:
             log.error(
-                f"WUYING sandbox unreachable at {self.endpoint} ({e}). "
+                f"WUYING sandbox unreachable at {self.endpoint} "
+                f"({type(exc).__name__}). "
                 "Is the SSH tunnel up? See scripts/wuying_tunnel.sh"
             )
 

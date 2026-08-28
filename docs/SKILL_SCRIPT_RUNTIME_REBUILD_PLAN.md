@@ -6,6 +6,10 @@
 > 聊天回执（PR#11/§8.3）、视频四操作迁移（PR#14–17，灰度闸 `SKILL_JOBS_VIDEO_WRITE`
 > 默认关）。待办：PR#18 sandbox runtime（里程碑 C）、PR#19 旧工具删除（灰度完成且
 > 旧 Job 清零后）、PR#20 生产加固；无影链路已对 dev 桌面实测线协议。<br>
+> 2026-08-28 补充源码审计已收紧：operator-only hold、Turn 内 wait 预算、Session
+> 删除副作用的租户归属、视频领域 helper 的属主检查、sandbox 资源名/PVC/Service
+> 归属、备份前缀及 K8s adoption RBAC、Redis 订阅断线自恢复，以及 Session 删除后
+> continuation 取消的持久重试入口；这些改动尚未替代 Phase 6/7 的验收与演练。<br>
 > 编写日期：2026-08-28<br>
 > 适用范围：OpenBox Agent、Skill、Script、异步作业、多用户运行与无影执行节点<br>
 > 首个迁移样例：`video-production`，但视频不是平台核心抽象<br>
@@ -32,7 +36,7 @@ OpenBox 当前最根本的问题不是“视频状态写错了”，而是把三
 - 多用户共享 Worker 池，但代码、作业、密钥、配额、日志、产物和事件全部按租户隔离。
 - Agent 停止、Session 变为 `idle`、浏览器断线或 API 进程重启，都不应取消一个已被可靠接纳的 Skill Job。
 - Todo / Plan 只用于展示和推理规划，永远不作为调度器或完成判据。
-- 单用户模式（无 `JWT_SECRET`）当前完全不初始化 SQL 引擎；启用 Skill Job 后该模式必须初始化本地 SQLite 引擎作为同语义事实源，而不是被排除在该能力之外。
+- 单用户模式（无 `JWT_SECRET`）现在也无条件初始化本地 SQLite 事实源；关闭 Skill Job 灰度开关不能顺带关闭 Session / Project 所依赖的 SQL 引擎。
 - 新 Runtime 建成之前，先对现有视频 finalize 中断丢失做最小止血（Phase 0.5），线上问题不等整个改建完成。
 
 不建议先造一个包揽所有概念的 `WorkItem`。本期先把 `Agent Turn`、`SkillJob` 和业务对象分开；未来确实需要“跨多个 Turn 持续推理”时，再独立增加 `AgentGoal`，由它观察一个或多个 Skill Job，而不是让 Skill Job 伪装成 Agent Goal。
@@ -383,9 +387,13 @@ openbox-worker  -> python -m skill_runtime.worker_main --queues default,media-co
 
 `--queues` 列的是调度资源池（`queue_name`），不是 runtime 名：queue 决定"哪个 Worker、多大并发额度来跑"，`runtime_kind` 决定"以什么方式执行"，二者正交，不能混用同一套命名。
 
-本地开发可以设置 `SKILL_WORKER_MODE=embedded`，在 Web lifespan 中启动一个单 Worker，但必须复用完全相同的 Repository、claim、lease 和 handler 协议。生产环境禁止 embedded，避免滚动发布杀死全部作业执行者。
+本地单用户开发设置 `SKILL_WORKER_MODE=embedded`，在 Web lifespan 中启动一个 Worker，
+并复用完全相同的 Repository、claim、lease 和 handler 协议。单用户 SQLite 是 Web
+进程工作目录中的本地文件，独立 `worker_main` 会拒绝这种拓扑，避免两个容器各建一份
+互不可见的总账。生产环境使用 PostgreSQL + standalone Worker，禁止 embedded，避免
+滚动发布杀死全部作业执行者。
 
-**单用户模式必须补上事实源**：当前无 `JWT_SECRET` 时 [`backend/main.py`](../backend/main.py) 完全不初始化 SQL 引擎，连 SQLite 都没有。启用 Skill Job 后，单用户模式必须初始化一个本地 SQLite 引擎（仅承载 Job 相关表也可），跑 embedded worker + 条件 UPDATE claim，Job 语义与多用户模式完全一致；否则本地开发无法自测这条链路，"开发 SQLite 兼容"就是一句空话。
+**单用户模式必须有同语义事实源**：原实现无 `JWT_SECRET` 时 [`backend/main.py`](../backend/main.py) 完全不初始化 SQL 引擎。当前实现由 API 启动路径无条件初始化本地 SQLite（不受 Skill Job 功能开关影响）；需要执行作业时再启用 embedded worker，并继续复用同一套条件 UPDATE claim、lease 和 Repository 语义。
 
 ### 4.4 两类 Runtime 与 remote adapter
 
@@ -465,6 +473,12 @@ spec:
 
 Manifest 安装时必须完成：Schema 校验、版本固定、入口 allowlist、权限上限合并、包 hash 记录和不兼容字段拒绝。
 
+当前 internal rollout 只接收内联 `inputSchema` / `outputSchema`，并在 admission 时
+固定输出契约；上例的包内相对引用由 Phase 6 package resolver 解析。在 resolver
+落地前，字符串 `$ref` 必须 fail closed，不能把“尚未解析”误当成“无需校验”。Job
+入参、后续 input、progress、checkpoint、result 和内联 Schema 都有独立 JSON 大小
+上限，非法 JSON / NaN 不得进入总账。
+
 超时是三层而不是一层：invocation 超时约束单次执行，`maxExternalWaitSeconds` 约束外部等待累计时长，`maxTotalSeconds` 是 Job 总期限（`waiting_user` 另有独立 TTL）。三者都由 Reconciler 强制执行，到期动作（failed / cancelled / operator review）由 policy 声明，不能只出现在告警清单里而 Schema 中没有对应字段。
 
 `phases` 必须在 Manifest 中枚举并给出 i18n 标签键：web（frontend-v2）和 Flutter 移动端都要渲染 phase，且移动端 locale 与 web 逐字节同步，自由字符串无法本地化；前端遇到未知 phase 统一走 fallback 展示。
@@ -497,7 +511,7 @@ Cancelled(result=None)
 - Handler 在返回 `WaitExternal`、`WaitUser` 或 `NeedsAgent` 前必须给出足以恢复的 checkpoint。
 - checkpoint 不允许包含明文 Secret、长期签名 URL 或大文件；只保存稳定 ID、阶段、hash 和 provider handle。
 - 外部等待必须释放 Worker lease。到达 `wake_at`、收到 callback 或用户 signal 后重新入队。
-- 任何 billable 或不可逆外部调用前必须 `ctx.assert_lease()`：lease fencing 只保护数据库写入，不保护外部副作用；僵尸 Worker 的 provider 调用要靠这一步加上复用同一 provider 幂等键来拦截（见 10.2 故障矩阵）。
+- 状态读取、清理和既有任务 finalize 前使用 `ctx.assert_lease()`；创建新的 billable、远端或不可逆外部状态前必须使用 `ctx.may_start_external()`。后者在同一个 Job 行锁内同时校验 lease 与 `desired_state`，建立“取消已提交”与“允许启动副作用”的确定顺序；它仍须配合稳定 provider 幂等键处理门禁之后发生的晚到取消（见 7.4、10.2）。
 - 大文件下载/上传必须切成多个 checkpoint 步骤，单次 invocation 不得依赖超过 `invocationTimeoutSeconds` 的连续传输。
 - 简单短脚本可以一次返回 `Succeeded`；长任务必须使用 SDK Outcome 协议。
 
@@ -551,14 +565,14 @@ Cancelled(result=None)
 | `runtime_kind` / `queue_name` | internal / sandbox；queue 是资源池名，与 runtime 正交 |
 | `status` | 通用状态机状态 |
 | `phase` | Skill 定义的当前阶段，如 `provider_generate`、`asset_finalize` |
-| `input_data` | 已验证、去除 Secret 的输入 |
+| `input_data` / `output_schema` | 已验证、去除 Secret 的输入；接纳时固定的成功输出契约 |
 | `checkpoint_data` | 可恢复状态 |
 | `progress_data` | 面向 UI 的结构化进度快照 |
 | `result_data` | 终态结果 |
 | `error_code` / `error_message` | 机器码与脱敏信息 |
 | `idempotency_key` / `request_hash` | 幂等接纳与冲突判断；默认由服务端从 tool_call 派生（见 8.1），不信任模型自造 |
 | `desired_state` | `run` 或 `cancel`，避免取消竞态 |
-| `attempt_count` / `max_attempts` | 尝试计数与上限 |
+| `attempt_count` / `retry_count` / `max_attempts` | invocation 审计次数；消耗故障预算的失败次数；故障预算上限。正常外部轮询只增加 attempt，不消耗 retry |
 | `next_run_at` / `deadline_at` | 下次可被 claim 的时间；Job 总期限（由 Manifest `maxTotalSeconds` 推导，Reconciler 强制执行） |
 | `lease_owner` / `lease_token` / `lease_expires_at` | 分布式所有权与 fencing |
 | `handler_version` / `image_digest` | 恢复和部署兼容证据 |
@@ -617,6 +631,9 @@ Publisher 的归属和竞争要写死：Publisher 随 Worker 角色运行（embe
 高频进度不进事件表：轮询型 progress 只更新 `skill_jobs.progress_data`，事件只在 `status` 或 `phase` 变化时插入，防止轮询把事件表灌爆。终态 Job 的事件与 Attempt 设保留期（建议 90 天）后归档清理，migration 附带对应索引。
 
 前端重连后先 GET 当前 Job snapshot，再以 `(job_id, seq)` 订阅增量。WebSocket 丢包只影响延迟，不影响正确性。
+Redis Pub/Sub listener 必须在启动时 Redis 暂不可用、或运行中连接中断后自行重订阅；
+不能让一次瞬时故障永久终止 API 副本的增量转发。Outbox 的 Redis 发布仍失败关闭并
+保留未发布事件，snapshot 始终是恢复后的权威状态。
 
 ### 6.4 `skill_job_inputs`
 
@@ -631,7 +648,7 @@ Publisher 的归属和竞争要写死：Publisher 随 Worker 角色运行（embe
 
 ### 6.5 `skill_job_artifacts`
 
-只保存 Job 与现有 `file_assets` 的关系：role、ordinal、metadata、created_at。所有 Artifact 同时校验 `user_id`，对象存储 key 使用不可猜测的用户/Job 前缀，下载继续走短期签名 URL。
+只保存 Job 与现有 `file_assets` 的关系：role、ordinal、metadata、created_at。`Succeeded` 结算必须在同一事务中确认每个声明的 FileAsset 都属于当前用户、未删除且已 `ready`；任一项不满足就以 handler 契约错误失败，不能丢弃坏引用后仍标成功。关系按 handler 声明顺序写入。对象存储 key 使用不可猜测的用户/Job 前缀，下载继续走短期签名 URL。
 
 ### 6.6 `user_skill_settings`
 
@@ -661,14 +678,17 @@ id / session_id / user_id
 kind                          # 首期只有 job_needs_agent
 source_job_id / source_event_seq
 payload                       # handler 给 Agent 的结构化上下文
-status                        # pending / consumed / expired
+status                        # pending / processing / consumed / expired
+claim_token                   # dispatcher lease fencing；恢复后的旧进程不能结算新 claim
 created_at / consumed_at
 UNIQUE(source_job_id, source_event_seq)
 ```
 
 - Session idle 时消费 pending 项启动下一 Turn；Session busy 时排队。
-- Session 被删除或归档时，其 pending 项标记 `expired`，对应 Job 按 policy 进入 `waiting_user` 或终态，不能永远悬空。
+- Session 被删除或归档时，先撤销 processing claim；pending 行保留为取消重试标记，
+  对应 Job 的取消意图提交成功或确认 Job 不存在后才标记 `expired`，不能永远悬空。
 - 消费必须幂等：同一 `(source_job_id, source_event_seq)` 只触发一次 Turn。
+- 每次 synthetic Turn 使用数据库唯一 marker；只接受该 marker 之后、下一条真实用户消息之前的 terminal assistant 文本。若用户中途打断，dispatcher 生成下一代 marker 重新排队，绝不能把用户后续会话的回答误写成 `agent_result`。自动 compaction 消息属于同一 Turn，但 summary 文本不算 continuation 结果。
 
 ---
 
@@ -739,7 +759,7 @@ WHERE id = :job_id
   AND lease_token = :claim_token
 ```
 
-过期 Worker 即使恢复网络，也不能覆盖新 Worker 的结果。注意 fencing 只保护数据库写入：lease 时长必须远大于单个 invocation 步骤的最坏耗时，且 billable 调用前必须 `ctx.assert_lease()`（5.2 节），否则僵尸 Worker 仍可能产生外部副作用。
+过期 Worker 即使恢复网络，也不能覆盖新 Worker 的结果。注意 fencing 只保护数据库写入：lease 时长必须远大于单个 invocation 步骤的最坏耗时；创建新外部状态前还必须调用 `ctx.may_start_external()`（5.2 节），原子检查 lease 和取消意图，否则僵尸 Worker 仍可能产生外部副作用。
 
 单用户 / 开发 SQLite 跑单 Worker + 同一条件 UPDATE 路径；生产多副本只保证 PostgreSQL 路径。
 
@@ -748,6 +768,7 @@ WHERE id = :job_id
 - 只有正在执行一个有界 invocation 时才持有 lease 并心跳。
 - `waiting_external`、`waiting_user`、`waiting_agent` 不持有 Worker。
 - Reconciler 扫描过期 `running`：Attempt 标记 `lost`，Job 根据 policy 进入 `retry_scheduled` 或 `failed`。
+- 对声明 `cancelRequiresHandler=true` 的 operation，重试预算耗尽、lease 丢失或总期限到达都不能直接伪造终态：Job 保留外部句柄，设置 `desired_state=cancel`，进入带 `x-operator-only` 的 reconciliation hold。只有管理员通过受限入口提交 `retry_reconciliation=true` 才再进行一次有界核对；普通用户输入不能解除该 hold。
 - `waiting_user` 永远不被当作故障重试（参考 Symphony 的 blocked 分类，3.3 节）；它只受 Manifest `userInputTimeoutSeconds` 约束，到期按 policy 进入终态或 operator review。
 - `waiting_external` 到期只重新排队做一次状态推进，不启动 Agent。
 - provider callback 先幂等写 `skill_job_inputs`，再把 Job 唤醒为 `queued`。
@@ -762,6 +783,8 @@ WHERE id = :job_id
 - waiting external：handler 尝试 provider cancel，再按 provider 事实结算；
 - remote：转发 cancel，仍由平台 Job 跟踪最终结果；
 - 供应商已经不可逆成功时，保留 Artifact，并以明确 policy 决定 `succeeded` 或 `cancelled_with_output`。首期建议成功事实优先，同时记录 cancel race 事件。
+
+取消与新外部调用的排序以 `ctx.may_start_external()` 为边界：若取消事务先提交，门禁返回 false，handler 不得启动新任务；若门禁先完成而取消随后到达，则属于晚到取消，handler 必须凭已持久化的 intent、稳定幂等键和 provider/remote 事实继续收敛，不能把它伪装成“从未提交”。
 
 停止 Agent 不自动取消 Job。前端必须提供“停止回答”和“取消作业”两个不同动作。
 
@@ -807,7 +830,7 @@ result  获取终态结果和 Artifact
 
 `get` / `wait` / `cancel` / `result` / `resume` 只校验属主与可见性，**不要求该 Skill 在当前 Turn 已激活**——否则用户隔天回来问"我的视频怎么样了"，Agent 连查询都做不了。
 
-`wait` 必须有服务端预算：每个 Turn 最多 2 次，超限直接返回终止性提示（"作业已后台化，请结束本轮回答"），而不是指望提示词约束模型不循环。
+`wait` 必须有服务端预算：每个 Turn 最多 2 次，超限直接返回终止性提示（"作业已后台化，请结束本轮回答"），而不是指望提示词约束模型不循环。当前 Agent Loop 在一轮开始时生成 `ToolContext.run_id`，同一轮跨多个 assistant step / compaction 复用它作为预算键，避免每个模型 step 都重新获得两次等待额度；该 run id 仍是进程内 Turn 身份，不等同于 8.3 节尚待 Phase 7 补齐的持久 Agent run token。
 
 ### 8.2 Tool Call 不再等完整作业
 
@@ -835,7 +858,26 @@ Agent 可以立即结束 Turn。前端继续通过 Job Card 展示进度。只�
 4. Agent 处理后以结构化结果写 `skill_job_inputs`；
 5. Job 重新入队。
 
-`WaitUser` 的回答通道也要定一条正道：结构化输入默认走 Job Card 直写 `skill_job_inputs`（不经过 LLM）；用户在聊天里回答、由 Agent 调 `resume` 的路径只用于需要上下文理解的场景。两条路都以 `source_event_id` 去重，先到者生效。
+`processing` claim 必须有心跳和 fencing token；恢复扫描只把超时 token 置换为新
+claim，旧 dispatcher 即使稍后恢复也不能 heartbeat、消费 inbox 或覆盖新结果。
+synthetic marker 同时承担 Turn 边界：已完整结束的旧 Turn 可复用，未完成且被真人
+新消息打断的 Turn 必须换新 marker，结果提取不能跨越真人消息。
+恢复 abandoned claim 时，只有原 reservation 时间戳仍有效，或 durable synthetic
+marker 仍是最新用户消息边界，才允许把 Session 从 `busy/error` 释放为 `idle`；优雅
+停机则主动归还 claim，避免每次发布留下一个完整的 stale timeout 窗口。
+如果 Session 被删除或归属失配，`processing` claim 要先撤销 fencing token 并回到
+不可路由的 `pending`；这个 pending 行在 `request_cancel` 成功前充当持久重试标记，
+成功或确认 Job 不存在后才置为 `expired`。这样瞬时数据库故障不会留下永久卡在
+`waiting_agent`、却再也没有 Session 可以接续的 Job。
+
+这套 fencing 目前只覆盖 `NeedsAgent` dispatcher。普通用户触发的 Agent Turn 仍沿用
+Session status + 进程内 abort，尚无持久 `run_token`；多 API 副本下的“最新 Turn
+获胜”必须在 Phase 7 另行补齐，不能把 inbox 的 claim token 泛化成整个 Agent Loop
+已经具备跨副本互斥。
+
+`WaitUser` 的回答通道也要定一条正道：结构化输入默认走 Job Card 直写 `skill_job_inputs`（不经过 LLM）；用户在聊天里回答、由 Agent 调 `resume` 的路径只用于需要上下文理解的场景。两条路都以 `source_event_id` 去重，先到者生效。`operator_resume` 不属于用户回答：它只能经管理员鉴权的独立入口写入；共享 provider 账号下的远端任务 ID 是平台 capability，普通作业所有者不得注入或接管。
+
+`x-operator-only` 还是持久状态机门禁，而不只是 API/UI 提示：普通 `wake_job`、lost-wake repair 和 provider callback 可以保存审计输入，但都不能把该 hold 自动改回 `queued`；只有验证通过的 `operator_resume` 能解除。否则一个晚到 callback 就可能绕过人工确认，重新进入具有外部副作用的 handler。
 
 这借鉴 Codex Queue 和 OpenCode durable admission，但它只是连接两套状态机，不能把 Job 状态直接设成 Session 状态。
 
@@ -868,6 +910,31 @@ Agent 可以立即结束 Turn。前端继续通过 Job Card 展示进度。只�
 - 临时目录使用 `/tmp/openbox-jobs/<user-hash>/<job-id>/<attempt>`，终态清理；
 - OSS key 使用用户和 Job 范围，返回短期签名 URL；
 - 缓存键必须包含 user、skill、version、operation。
+- 删除、归档等入口必须先确认对象属主，再执行 Cron 解绑、sandbox release、通知等
+  旁路副作用；旁路函数本身也要再次校验 user，不能依赖调用者“应该已经查过”。
+- 内置领域 helper 同样必须接收并校验来自 `JobContext` 的 user：视频的 segment、
+  transcript、render 和输出 FileAsset 更新不能只凭 checkpoint 中的业务 ID。
+
+执行环境的资源名本身也不能被当成租户身份：Docker 名称使用“可读前缀 + 原始
+`user_id` 哈希”；Kubernetes 为兼容平台既有的规范 ULID PVC 保留旧名称，其他身份
+使用带哈希的有界名称。Pod、PVC、Service 每次复用都核验原始 owner/selector，旧
+PVC 只有在现存 Pod 或规范 ULID 能证明归属时才补写 owner，名称碰撞一律 fail closed。
+Pod/PVC legacy adoption 需要部署 Role 对 `pods` 与 `persistentvolumeclaims` 的 `patch`
+权限；Service 的 409 复用必须验证 selector，不能把同名 Service 视作成功。
+
+sandbox 的全局寿命不能由某个 API/Worker 进程内的 `session_ids` 引用计数决定：会话
+释放只清本地绑定，不删除执行环境。WebSocket 空闲回收至少要从数据库确认该用户既无
+活跃 Agent Session、也无非终态 SkillJob，并在每次破坏性操作前复核；生产 Phase 7
+还应把“检查—删除”升级成跨副本的用户级资源 lease，彻底关闭新 Job admission 的
+竞态窗口。Docker 与 K8s 一样在 API/Worker 启动时只做 reconcile；容器用原始 owner
+标签和持久 `SESSION_API_KEY` 恢复路由，同名创建竞态复用胜者，禁止把另一个进程的
+容器当作 orphan 强删。Web 进程滚动退出也不得调用 provider 全量 cleanup。
+
+无影 `WuyingProvider` 当前把所有用户映射到同一台物理桌面。工作目录、队列
+`owner`、请求头和 user hash 都只能防止误路由，无法阻止能执行任意代码的租户读取
+同机其他目录或进程。因此该模式只允许用于单用户开发或互相信任的内部执行；生产
+多用户必须为每个租户提供独立容器/虚拟机（或等价的强隔离执行环境），再由 remote
+adapter 路由。平台 Job 的数据库租户过滤不能替代执行面的 OS 隔离。
 
 ### 9.2 JobContext 能力模型
 
@@ -896,6 +963,12 @@ Handler 不允许读取 Web 进程全局用户状态，也不允许自己从 pay
 
 claim 不能简单按全局 created_at 永远取最早任务，否则大用户可饿死其他用户。首期（Phase 2）只做两层硬上限：全局 queue 并发 + 每用户并发（cron 已有同款实现，直接复用模式）；用户分片公平轮转或 `tenant_virtual_finish` 加权调度是后续项，等真实负载出现倾斜再上。优先级只能由服务器 policy 决定，不能信任用户 payload。
 
+当前 PostgreSQL claim 对每个 queue 使用事务级 advisory lock，把 `running` 计数与
+条件 claim 串行化；因此 `SKILL_WORKER_CONCURRENCY` 是同 queue 多副本共享的上限，
+不是“每个 Pod 各自这么多”。所有消费同一 queue 的 Worker 必须部署相同上限；SQLite
+仍只支持单 Worker。每用户上限在同一事务中使用用户级 lock，且 lock 顺序固定为
+queue 后 user，避免副本间死锁。
+
 ### 9.4 Skill 禁用、卸载和版本升级
 
 - 禁用：阻止新 Job、从可用列表隐藏；默认让已接纳 Job继续，用户可取消。
@@ -919,9 +992,10 @@ claim 不能简单按全局 created_at 永远取最早任务，否则大用户�
 
 1. 事务内保存 `phase=submit_intent`、请求 hash 和 provider idempotency key；
 2. 提交事务；
-3. 调用 provider；
-4. 持久化 provider task ID；
-5. 返回 `WaitExternal`。
+3. 立即调用 `ctx.may_start_external()`，在 Job 行锁内确认当前 lease 有效且取消尚未提交；
+4. 调用 provider；
+5. 持久化 provider task ID；
+6. 返回 `WaitExternal`。
 
 如果第 3 步超时且不知道 provider 是否接收：
 
@@ -940,7 +1014,8 @@ claim 不能简单按全局 created_at 永远取最早任务，否则大用户�
 | provider 接收后、task ID 落库前 | `submit_unknown` + provider lookup / 人工审计 | 盲目重提 |
 | provider 成功后、下载前 | checkpoint task ID，重新进入 finalize | 重新生成内容 |
 | OSS 上传后、业务表更新前 | 按 object key / checksum 幂等 finalize | 创建重复 Artifact |
-| lease 过期但旧 Worker 仍存活并继续执行 | billable 调用前 `ctx.assert_lease()`；新旧 Worker 复用同一 provider 幂等键；provider 无幂等能力则该 operation 禁自动重试、只走 `submit_unknown` | 用新键重复提交外部任务 |
+| lease 过期但旧 Worker 仍存活并继续执行 | 创建新外部状态前 `ctx.may_start_external()`；新旧 Worker 复用同一 provider 幂等键；provider 无幂等能力则该 operation 禁自动重试、只走 `submit_unknown` | 用新键重复提交外部任务 |
+| 外部任务仍可能存在但本地重试预算耗尽 | `cancelRequiresHandler` operation 进入 operator-only reconciliation hold，保留 handle 与 cancel intent；管理员核实后显式再推进 | 仅因本地预算耗尽就标记 failed/cancelled |
 | Job 终态提交后、WS 发布前 | Outbox 重放 | 依靠前端旧状态回写 DB |
 | cancel 与 provider success 竞态 | 以 provider 事实 + policy 原子结算并记录 race | 静默丢弃已付费结果 |
 
@@ -993,7 +1068,15 @@ backend/builtin_skills/video_production/
 8. 未完成则带退避再次 `WaitExternal`；
 9. 全部后置条件完成后 `Succeeded`。
 
-`segments.transcribe` 和 `production.render` 由 internal handler 经 `ctx.remote.submit` 委托无影 Action Server（4.4 节：remote 是 capability，不是第三种 runtime）。平台 SkillJob 是总账；[`container/media_jobs.py`](../container/media_jobs.py) 的 SQLite Job 是执行节点局部队列，remote job ID 只作为 checkpoint。无影节点重启后重新排队，平台 Reconciler 持续查询并最终收敛。注意 media_jobs 的 `owner` 语义是"桌面内队列所有者"，共享桌面阶段必须显式映射平台 `user_id`，不能拿桌面局部 owner 当租户边界。
+`segments.transcribe` 和 `production.render` 由 internal handler 经 `ctx.remote.submit` 委托无影 Action Server（4.4 节：remote 是 capability，不是第三种 runtime）。平台 SkillJob 是总账；[`container/media_jobs.py`](../container/media_jobs.py) 的 SQLite Job 是执行节点局部队列，remote job ID 只作为 checkpoint。无影节点重启后重新排队，平台 Reconciler 持续查询并最终收敛。注意 media_jobs 的 `owner` 语义是"桌面内队列所有者"，共享桌面阶段必须显式映射平台 `user_id`，但这仍然只是路由和账务归属，不是安全隔离；生产多用户执行必须遵守 9.1 节的每租户强隔离约束。
+
+若转写 adapter 在“已发起请求但尚未持久化 provider handle”的窗口崩溃，平台不能根据时间阈值把 `transcribing` 重置并重新提交。该状态必须进入 operator review，由运维先核实远端确实没有任务，再用受限的 `operator_resume` 输入恢复；普通用户回答不能解除这类不确定性。
+
+同步 STT 返回后必须先把 transcript 以 `transcript_ready` checkpoint 持久化，再做
+相似度计算和业务表提交。后半段失败返回 `Retry`，只消耗本地故障预算并重试幂等
+domain commit，不再计入 `waiting_external`，也绝不再次调用 STT；而 provider
+超时且没有 handle 时继续保留 `transcribing` 并进入上述 operator review，不能把一次
+不明确的收费调用降级成普通 `failed` 后允许盲目重提。
 
 三条链路现状并不同构（1.3 节）：generate 目前在后端进程直连供应商，对应"internal handler 直连 provider"；transcribe / render 已走沙箱/无影，对应"internal handler + remote adapter"。迁移时不要假设三者可以套同一份实现，风险评估和灰度也应分开。
 

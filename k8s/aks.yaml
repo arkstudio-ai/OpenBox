@@ -33,13 +33,13 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["create", "delete", "get", "list", "watch"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "delete", "get", "list"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["create", "delete", "get", "list"]
+    verbs: ["create", "delete", "get", "list", "patch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -149,6 +149,47 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbox-backend-worker
+  namespace: openbox
+  labels:
+    app: openbox-backend-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openbox-backend-worker
+  template:
+    metadata:
+      labels:
+        app: openbox-backend-worker
+    spec:
+      serviceAccountName: openbox-backend
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: YOUR_ACR_NAME.azurecr.io/openbox-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "skill_runtime.worker_main"]
+          envFrom:
+            - configMapRef:
+                name: openbox-config
+            - secretRef:
+                name: openbox-secrets
+          env:
+            - name: SKILL_WORKER_QUEUES
+              value: "default"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 
 ---
 apiVersion: apps/v1

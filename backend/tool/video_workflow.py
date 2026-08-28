@@ -1308,8 +1308,16 @@ async def consume_spend_approval(approval_id: str) -> None:
             raise RuntimeError("approved generation call limit was consumed concurrently")
 
 
-async def mark_segment_job(segment_id: str, job_id: str, *, status: str, output_asset_id: str | None = None) -> None:
+async def mark_segment_job(
+    segment_id: str,
+    job_id: str,
+    *,
+    user_id: str,
+    status: str,
+    output_asset_id: str | None = None,
+) -> None:
     from db.base import get_db_session
+    from db.models.file_asset import FileAsset
     from db.models.video_production import VideoProduction, VideoSegment
 
     values: dict[str, Any] = {"generation_job_id": job_id, "updated_at": datetime.now(timezone.utc)}
@@ -1333,14 +1341,39 @@ async def mark_segment_job(segment_id: str, job_id: str, *, status: str, output_
     else:
         values["status"] = "generating"
     async with get_db_session() as db:
-        segment = await db.get(VideoSegment, segment_id)
+        segment = (
+            await db.execute(
+                select(VideoSegment)
+                .join(VideoProduction, VideoProduction.id == VideoSegment.production_id)
+                .where(
+                    VideoSegment.id == segment_id,
+                    VideoProduction.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
         if not segment:
-            return
+            raise RuntimeError("segment job target is not owned by this user")
+        if status == "completed" and output_asset_id:
+            owned_asset = (
+                await db.execute(
+                    select(FileAsset.id).where(
+                        FileAsset.id == output_asset_id,
+                        FileAsset.user_id == user_id,
+                        FileAsset.status == "ready",
+                        FileAsset.is_deleted.is_(False),
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_asset is None:
+                raise RuntimeError(
+                    "completed segment output is not a ready asset owned by this user"
+                )
         await db.execute(update(VideoSegment).where(VideoSegment.id == segment_id).values(**values))
         production = await db.get(VideoProduction, segment.production_id)
-        if production:
-            segments = await _active_segments(db, production.id)
-            await _refresh_status(db, production, segments)
+        if production is None:
+            raise RuntimeError("segment job target production is missing")
+        segments = await _active_segments(db, production.id)
+        await _refresh_status(db, production, segments)
 
 
 async def record_segment_transcript(
@@ -1348,6 +1381,7 @@ async def record_segment_transcript(
     transcript_text: str,
     transcript_data: dict[str, Any],
     *,
+    user_id: str,
     threshold: float,
 ) -> dict[str, Any]:
     from db.base import get_db_session
@@ -1357,9 +1391,20 @@ async def record_segment_transcript(
     updated_parts: list[dict[str, Any]] = []
     owner_id = ""
     async with get_db_session() as db:
-        segment = await db.get(VideoSegment, segment_id)
+        segment = (
+            await db.execute(
+                select(VideoSegment)
+                .join(VideoProduction, VideoProduction.id == VideoSegment.production_id)
+                .where(
+                    VideoSegment.id == segment_id,
+                    VideoProduction.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
         if not segment or not segment.is_active:
-            raise RuntimeError("transcription target is no longer an active segment")
+            raise RuntimeError(
+                "transcription target is not an active segment owned by this user"
+            )
         comparison = compare_transcript(segment.script_text, transcript_text, threshold)
         segment.transcript_text = transcript_text.strip()
         segment.transcript_data = transcript_data
@@ -1371,54 +1416,56 @@ async def record_segment_transcript(
         segment.review_note = None
         segment.updated_at = datetime.now(timezone.utc)
         production = await db.get(VideoProduction, segment.production_id)
-        if production:
-            owner_id = production.user_id
-            segments = await _active_segments(db, production.id)
-            await _refresh_status(db, production, segments)
-            # The video file is attached before STT runs.  Refresh its semantic
-            # envelope now so an older turn's segment card gains transcript and
-            # QA state without depending on a later message being merged into
-            # the same visual turn.
-            if production.session_id and segment.output_asset_id:
-                rows = (
-                    await db.execute(
-                        select(PartORM).where(
-                            PartORM.session_id == production.session_id,
-                            PartORM.type == "file",
-                        )
+        if production is None or production.user_id != user_id:
+            raise RuntimeError("transcription target production is not owned by this user")
+        owner_id = production.user_id
+        segments = await _active_segments(db, production.id)
+        await _refresh_status(db, production, segments)
+        # The video file is attached before STT runs.  Refresh its semantic
+        # envelope now so an older turn's segment card gains transcript and
+        # QA state without depending on a later message being merged into
+        # the same visual turn.
+        if production.session_id and segment.output_asset_id:
+            rows = (
+                await db.execute(
+                    select(PartORM).where(
+                        PartORM.session_id == production.session_id,
+                        PartORM.user_id == user_id,
+                        PartORM.type == "file",
                     )
-                ).scalars().all()
-                for row in rows:
-                    data = dict(row.data or {})
-                    if data.get("asset_id") != segment.output_asset_id:
-                        continue
-                    relation = dict(data.get("relation") or {})
-                    metadata = dict(relation.get("metadata") or {})
-                    metadata.update(
-                        {
-                            "production_id": production.id,
-                            "segment_id": segment.id,
-                            "transcript": segment.transcript_text,
-                            "stt_verdict": segment.stt_verdict,
-                            "stt_similarity": segment.stt_similarity,
-                        }
-                    )
-                    relation.update(
-                        {
-                            "source_part_id": relation.get("source_part_id"),
-                            "group_id": f"video:{production.id}:segment:{segment.id}",
-                            "role": "intermediate",
-                            "kind": "video_segment",
-                            "label": production.title,
-                            "caption": segment.script_text,
-                            "ordinal": segment.ordinal,
-                            "revision": segment.revision,
-                            "metadata": metadata,
-                        }
-                    )
-                    data["relation"] = relation
-                    row.data = data
-                    updated_parts.append(data)
+                )
+            ).scalars().all()
+            for row in rows:
+                data = dict(row.data or {})
+                if data.get("asset_id") != segment.output_asset_id:
+                    continue
+                relation = dict(data.get("relation") or {})
+                metadata = dict(relation.get("metadata") or {})
+                metadata.update(
+                    {
+                        "production_id": production.id,
+                        "segment_id": segment.id,
+                        "transcript": segment.transcript_text,
+                        "stt_verdict": segment.stt_verdict,
+                        "stt_similarity": segment.stt_similarity,
+                    }
+                )
+                relation.update(
+                    {
+                        "source_part_id": relation.get("source_part_id"),
+                        "group_id": f"video:{production.id}:segment:{segment.id}",
+                        "role": "intermediate",
+                        "kind": "video_segment",
+                        "label": production.title,
+                        "caption": segment.script_text,
+                        "ordinal": segment.ordinal,
+                        "revision": segment.revision,
+                        "metadata": metadata,
+                    }
+                )
+                data["relation"] = relation
+                row.data = data
+                updated_parts.append(data)
 
     if updated_parts and owner_id:
         from bus import bus
@@ -1491,14 +1538,41 @@ async def prepare_render_submission(ctx: ToolContext, production_id: str) -> dic
         }
 
 
-async def mark_render_complete(production_id: str, asset_id: str) -> None:
+async def mark_render_complete(
+    production_id: str,
+    asset_id: str,
+    *,
+    user_id: str,
+) -> None:
     from db.base import get_db_session
+    from db.models.file_asset import FileAsset
     from db.models.video_production import VideoProduction
 
     async with get_db_session() as db:
-        production = await db.get(VideoProduction, production_id)
+        production = (
+            await db.execute(
+                select(VideoProduction).where(
+                    VideoProduction.id == production_id,
+                    VideoProduction.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
         if not production:
-            return
+            raise RuntimeError("render target is not owned by this user")
+        owned_asset = (
+            await db.execute(
+                select(FileAsset.id).where(
+                    FileAsset.id == asset_id,
+                    FileAsset.user_id == user_id,
+                    FileAsset.status == "ready",
+                    FileAsset.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if owned_asset is None:
+            raise RuntimeError(
+                "completed render output is not a ready asset owned by this user"
+            )
         production.render_asset_id = asset_id
         production.completed_at = datetime.now(timezone.utc)
         segments = await _active_segments(db, production.id)

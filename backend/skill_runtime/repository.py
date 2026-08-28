@@ -29,6 +29,7 @@ from skill_runtime.types import (
     Cancelled,
     DesiredState,
     Failed,
+    InputKind,
     JobEventType,
     JobStatus,
     NeedsAgent,
@@ -38,13 +39,18 @@ from skill_runtime.types import (
     WaitExternal,
     WaitUser,
     attempt_outcome_label,
+    operator_reconciliation_wait,
     outcome_payload_summary,
 )
 
 log = create_logger("skill_runtime.repository")
 
+MAX_PROGRESS_BYTES = 64 * 1024
+MAX_JOB_INPUT_BYTES = 256 * 1024
+
 _CLAIMABLE = tuple(s.value for s in CLAIMABLE_STATUSES)
 _WAITING = tuple(s.value for s in WAITING_STATUSES)
+_WAKEABLE = (*_WAITING, JobStatus.RETRY_SCHEDULED.value)
 _TERMINAL = tuple(s.value for s in TERMINAL_STATUSES)
 
 
@@ -61,7 +67,7 @@ class JobNotFound(Exception):
 
 
 class InputNotAllowed(Exception):
-    """The job is terminal and can never consume the input."""
+    """The input kind/content is invalid for the job's current state."""
 
 
 def new_id(prefix: str) -> str:
@@ -80,6 +86,14 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _lease_is_live(expires_at: datetime | None, now: datetime) -> bool:
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at >= now
+
+
 # ---------------------------------------------------------------------------
 # Admission
 # ---------------------------------------------------------------------------
@@ -91,6 +105,7 @@ async def admit_job(
     operation: str,
     idempotency_key: str,
     input_data: dict,
+    output_schema: dict | None = None,
     runtime_kind: str,
     queue_name: str = "default",
     session_id: str | None = None,
@@ -101,6 +116,10 @@ async def admit_job(
     deadline_at: datetime | None = None,
     handler_version: int = 1,
     image_digest: str = "",
+    invocation_timeout_seconds: int = 120,
+    max_external_wait_seconds: int = 86400,
+    user_input_timeout_seconds: int | None = None,
+    cancel_requires_handler: bool = False,
 ) -> tuple[SkillJob, bool]:
     """Durably admit a job before anything wakes a worker (§0: DB before wake).
 
@@ -124,6 +143,7 @@ async def admit_job(
         status=JobStatus.QUEUED.value,
         phase="",
         input_data=input_data or {},
+        output_schema=output_schema or {},
         checkpoint_data={},
         progress_data={},
         result_data={},
@@ -131,12 +151,18 @@ async def admit_job(
         request_hash=req_hash,
         desired_state=DesiredState.RUN.value,
         attempt_count=0,
+        retry_count=0,
         max_attempts=max_attempts,
         next_run_at=now,
         deadline_at=deadline_at,
         lease_token=0,
         handler_version=handler_version,
         image_digest=image_digest,
+        invocation_timeout_seconds=invocation_timeout_seconds,
+        max_external_wait_seconds=max_external_wait_seconds,
+        user_input_timeout_seconds=user_input_timeout_seconds,
+        cancel_requires_handler=cancel_requires_handler,
+        external_wait_seconds=0,
         last_event_seq=1,
         created_at=now,
         updated_at=now,
@@ -173,6 +199,11 @@ async def admit_job(
     if existing is None:
         # The IntegrityError came from something else (e.g. FK); surface it.
         raise integrity_error
+    if existing.session_id != session_id or existing.project_id != project_id:
+        raise IdempotencyConflict(
+            f"job {existing.id} holds idempotency key {idempotency_key!r} "
+            "for a different session/project scope"
+        )
     if existing.request_hash and existing.request_hash != req_hash:
         raise IdempotencyConflict(
             f"job {existing.id} holds idempotency key {idempotency_key!r} with a different request"
@@ -209,7 +240,7 @@ async def list_jobs(
             stmt = stmt.where(SkillJob.status.in_(statuses))
         if before_created_at:
             stmt = stmt.where(SkillJob.created_at < before_created_at)
-        stmt = stmt.order_by(SkillJob.created_at.desc()).limit(min(limit, 200))
+        stmt = stmt.order_by(SkillJob.created_at.desc()).limit(max(1, min(limit, 200)))
         return list((await db.execute(stmt)).scalars().all())
 
 
@@ -225,7 +256,7 @@ async def get_events(job_id: str, user_id: str, after_seq: int = 0, limit: int =
                         SkillJobEvent.seq > after_seq,
                     )
                     .order_by(SkillJobEvent.seq.asc())
-                    .limit(limit)
+                    .limit(max(1, min(limit, 500)))
                 )
             ).scalars().all()
         )
@@ -250,6 +281,7 @@ async def claim_next(
     queues: tuple[str, ...],
     worker_id: str,
     lease_seconds: int = 60,
+    queue_limit: int = 0,
     per_user_limit: int = 0,
     limit: int = 1,
 ) -> list[ClaimedJob]:
@@ -260,54 +292,170 @@ async def claim_next(
     """
     now = _utcnow()
     async with get_db_session() as db:
-        # desired_state=cancel jobs are still claimed: the handler owns
-        # provider-side cancellation, so cancellation MUST reach an invocation.
+        # Filter already-saturated tenants in SQL, then interleave the due
+        # rows by per-tenant rank. A global LIMIT over next_run_at alone lets
+        # one saturated tenant fill the whole candidate window forever.
+        running = (
+            select(
+                SkillJob.user_id.label("running_user_id"),
+                func.count().label("running_count"),
+            )
+            .where(SkillJob.status == JobStatus.RUNNING.value)
+            .group_by(SkillJob.user_id)
+            .subquery()
+        )
+        due = (
+            select(
+                SkillJob.id.label("job_id"),
+                SkillJob.user_id.label("user_id"),
+                SkillJob.next_run_at.label("next_run_at"),
+                SkillJob.queue_name.label("queue_name"),
+                func.row_number()
+                .over(
+                    partition_by=(SkillJob.queue_name, SkillJob.user_id),
+                    order_by=(SkillJob.next_run_at.asc(), SkillJob.created_at.asc()),
+                )
+                .label("tenant_rank"),
+            )
+            .outerjoin(running, running.c.running_user_id == SkillJob.user_id)
+            .where(
+                SkillJob.status.in_(_CLAIMABLE),
+                SkillJob.queue_name.in_(queues),
+                SkillJob.next_run_at.isnot(None),
+                SkillJob.next_run_at <= now,
+                (
+                    SkillJob.deadline_at.is_(None)
+                    | (SkillJob.deadline_at > now)
+                    | (SkillJob.desired_state == DesiredState.CANCEL.value)
+                ),
+            )
+        )
+        if per_user_limit > 0:
+            due = due.where(func.coalesce(running.c.running_count, 0) < per_user_limit)
+        ranked = due.subquery()
+        queue_fair = (
+            select(
+                ranked.c.job_id,
+                ranked.c.user_id,
+                ranked.c.next_run_at,
+                ranked.c.queue_name,
+                ranked.c.tenant_rank,
+                func.row_number()
+                .over(
+                    partition_by=ranked.c.queue_name,
+                    order_by=(
+                        ranked.c.tenant_rank.asc(),
+                        ranked.c.next_run_at.asc(),
+                        ranked.c.job_id.asc(),
+                    ),
+                )
+                .label("queue_rank"),
+            )
+            .subquery()
+        )
         candidates = (
             await db.execute(
-                select(SkillJob.id, SkillJob.user_id)
-                .where(
-                    SkillJob.status.in_(_CLAIMABLE),
-                    SkillJob.queue_name.in_(queues),
-                    SkillJob.next_run_at.isnot(None),
-                    SkillJob.next_run_at <= now,
+                select(
+                    queue_fair.c.job_id,
+                    queue_fair.c.user_id,
+                    queue_fair.c.queue_name,
                 )
-                .order_by(SkillJob.next_run_at.asc())
-                .limit(max(limit * 4, 16))
+                .order_by(
+                    queue_fair.c.queue_rank.asc(),
+                    queue_fair.c.tenant_rank.asc(),
+                    queue_fair.c.next_run_at.asc(),
+                )
+                .limit(max(limit * 16, 64))
             )
         ).all()
-        running_counts: dict[str, int] = {}
-        if per_user_limit > 0:
-            rows = (
-                await db.execute(
-                    select(SkillJob.user_id, func.count())
-                    .where(SkillJob.status == JobStatus.RUNNING.value)
-                    .group_by(SkillJob.user_id)
-                )
-            ).all()
-            running_counts = {user: count for user, count in rows}
 
     claimed: list[ClaimedJob] = []
-    for candidate_id, candidate_user in candidates:
+    for candidate_id, candidate_user, candidate_queue in candidates:
         if len(claimed) >= limit:
             break
-        if per_user_limit > 0 and running_counts.get(candidate_user, 0) >= per_user_limit:
-            continue
-        got = await _claim_one(candidate_id, worker_id=worker_id, lease_seconds=lease_seconds)
+        got = await _claim_one(
+            candidate_id,
+            candidate_user=candidate_user,
+            candidate_queue=candidate_queue,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            queue_limit=queue_limit,
+            per_user_limit=per_user_limit,
+        )
         if got is not None:
             claimed.append(got)
-            running_counts[candidate_user] = running_counts.get(candidate_user, 0) + 1
     return claimed
 
 
-async def _claim_one(job_id: str, *, worker_id: str, lease_seconds: int) -> ClaimedJob | None:
+async def _claim_one(
+    job_id: str,
+    *,
+    candidate_user: str,
+    candidate_queue: str,
+    worker_id: str,
+    lease_seconds: int,
+    queue_limit: int = 0,
+    per_user_limit: int = 0,
+) -> ClaimedJob | None:
     now = _utcnow()
     async with get_db_session() as db:
+        if queue_limit > 0 and db.get_bind().dialect.name == "postgresql":
+            # Worker concurrency is a resource-pool policy, not a per-process
+            # suggestion. Serialize count+claim for this queue so adding API
+            # replicas does not multiply provider/remote-node concurrency.
+            await db.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        func.hashtextextended(
+                            f"skill-job-queue:{candidate_queue}", 0
+                        )
+                    )
+                )
+            )
+            queue_running = (
+                await db.execute(
+                    select(func.count()).select_from(SkillJob).where(
+                        SkillJob.queue_name == candidate_queue,
+                        SkillJob.status == JobStatus.RUNNING.value,
+                    )
+                )
+            ).scalar_one()
+            if queue_running >= queue_limit:
+                return None
+
+        if per_user_limit > 0:
+            # PostgreSQL production replicas serialize the count+claim pair per
+            # tenant. Fencing protects a job row, but without this tenant lock
+            # two workers can both observe one free user slot and overbook it.
+            # SQLite is the documented single-worker development path.
+            if db.get_bind().dialect.name == "postgresql":
+                await db.execute(
+                    select(func.pg_advisory_xact_lock(func.hashtextextended(candidate_user, 0)))
+                )
+            running_count = (
+                await db.execute(
+                    select(func.count()).select_from(SkillJob).where(
+                        SkillJob.user_id == candidate_user,
+                        SkillJob.status == JobStatus.RUNNING.value,
+                    )
+                )
+            ).scalar_one()
+            if running_count >= per_user_limit:
+                return None
+
         result = await db.execute(
             update(SkillJob)
             .where(
                 SkillJob.id == job_id,
+                SkillJob.user_id == candidate_user,
+                SkillJob.queue_name == candidate_queue,
                 SkillJob.status.in_(_CLAIMABLE),
                 SkillJob.next_run_at <= now,
+                (
+                    SkillJob.deadline_at.is_(None)
+                    | (SkillJob.deadline_at > now)
+                    | (SkillJob.desired_state == DesiredState.CANCEL.value)
+                ),
             )
             .values(
                 status=JobStatus.RUNNING.value,
@@ -354,8 +502,21 @@ async def _claim_one(job_id: str, *, worker_id: str, lease_seconds: int) -> Clai
 
 async def heartbeat(job_id: str, lease_token: int, *, extend_seconds: int = 60, attempt_id: str | None = None) -> bool:
     """Extend a live lease. False means the lease is gone — stop working."""
-    now = _utcnow()
     async with get_db_session() as db:
+        expires_at = (
+            await db.execute(
+                select(SkillJob.lease_expires_at)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.RUNNING.value,
+                    SkillJob.lease_token == lease_token,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        now = _utcnow()
+        if not _lease_is_live(expires_at, now):
+            return False
         result = await db.execute(
             update(SkillJob)
             .where(
@@ -373,6 +534,54 @@ async def heartbeat(job_id: str, lease_token: int, *, extend_seconds: int = 60, 
                 .values(heartbeat_at=now)
             )
     return alive
+
+
+async def allow_external_start(
+    job_id: str,
+    lease_token: int,
+    *,
+    extend_seconds: int = 60,
+    attempt_id: str | None = None,
+) -> bool:
+    """Fence the boundary immediately before a new external side effect.
+
+    Returns False when cancellation won the row lock first. A True result means
+    this invocation won the ordering point and may start one idempotent/audited
+    external call; cancellation that commits afterwards is an ordinary race the
+    handler must reconcile. A dead lease raises instead of being confused with
+    a user cancellation.
+    """
+    async with get_db_session() as db:
+        current = (
+            await db.execute(
+                select(SkillJob.lease_expires_at, SkillJob.desired_state)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.RUNNING.value,
+                    SkillJob.lease_token == lease_token,
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        now = _utcnow()
+        if current is None or not _lease_is_live(current.lease_expires_at, now):
+            raise StaleLeaseError(f"job {job_id}: external start with stale lease")
+        await db.execute(
+            update(SkillJob)
+            .where(
+                SkillJob.id == job_id,
+                SkillJob.status == JobStatus.RUNNING.value,
+                SkillJob.lease_token == lease_token,
+            )
+            .values(lease_expires_at=now + timedelta(seconds=extend_seconds), updated_at=now)
+        )
+        if attempt_id:
+            await db.execute(
+                update(SkillJobAttempt)
+                .where(SkillJobAttempt.id == attempt_id)
+                .values(heartbeat_at=now)
+            )
+        return current.desired_state == DesiredState.RUN.value
 
 
 async def is_cancel_requested(job_id: str) -> bool:
@@ -396,24 +605,42 @@ async def update_progress(
 ) -> None:
     """High-frequency progress updates touch the row; only a phase change emits
     an event (§6.3 keeps polling out of the event table)."""
-    now = _utcnow()
+    if progress_data is not None:
+        if not isinstance(progress_data, dict):
+            raise ValueError("progress_data must be an object")
+        try:
+            encoded = json.dumps(
+                progress_data,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("progress_data must be JSON-serializable") from exc
+        if len(encoded) > MAX_PROGRESS_BYTES:
+            raise ValueError(
+                f"progress_data exceeds the {MAX_PROGRESS_BYTES}-byte limit"
+            )
+    if phase is not None and (
+        not isinstance(phase, str) or not phase or len(phase) > 64
+    ):
+        raise ValueError("phase must contain 1 to 64 characters")
     async with get_db_session() as db:
-        # The guarded UPDATE below already enforces the lease; the phase read
-        # is only needed to decide whether a phase-change event is due.
-        phase_changed = False
-        if phase is not None:
-            current_phase = (
-                await db.execute(
-                    select(SkillJob.phase).where(
-                        SkillJob.id == job_id,
-                        SkillJob.status == JobStatus.RUNNING.value,
-                        SkillJob.lease_token == lease_token,
-                    )
+        current = (
+            await db.execute(
+                select(SkillJob.phase, SkillJob.lease_expires_at)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.RUNNING.value,
+                    SkillJob.lease_token == lease_token,
                 )
-            ).scalar_one_or_none()
-            if current_phase is None:
-                raise StaleLeaseError(f"job {job_id}: progress write with stale lease")
-            phase_changed = phase != current_phase
+                .with_for_update()
+            )
+        ).one_or_none()
+        now = _utcnow()
+        if current is None or not _lease_is_live(current.lease_expires_at, now):
+            raise StaleLeaseError(f"job {job_id}: progress write with stale lease")
+        phase_changed = phase is not None and phase != current.phase
         values: dict = {"updated_at": now}
         if progress_data is not None:
             values["progress_data"] = progress_data
@@ -454,111 +681,224 @@ async def settle_invocation(
     *,
     attempt_id: str | None = None,
     phase: str | None = None,
+    consumed_input_ids: list[str] | None = None,
+    observed_input_ids: list[str] | None = None,
+    cancel_known_at_claim: bool = False,
 ) -> SkillJob:
-    """Apply one invocation's outcome: exactly one guarded transition, its
-    event, and the attempt closure, in a single transaction."""
-    now = _utcnow()
-    values: dict = {
-        "updated_at": now,
-        "lease_owner": None,
-        "lease_expires_at": None,
-        "last_event_seq": SkillJob.last_event_seq + 1,
-    }
-    if phase is not None:
-        values["phase"] = phase
+    """Apply an invocation outcome and every related side effect atomically.
 
-    if isinstance(outcome, Succeeded):
-        target = JobStatus.SUCCEEDED
-        values.update(
-            status=target.value,
-            result_data=outcome.result or {},
-            error_code=None,
-            error_message=None,
-            completed_at=now,
-            next_run_at=None,
-        )
-        event_type = JobEventType.SUCCEEDED
-    elif isinstance(outcome, WaitExternal):
-        target = JobStatus.WAITING_EXTERNAL
-        values.update(
-            status=target.value,
-            checkpoint_data=outcome.checkpoint,
-            next_run_at=outcome.wake_at,
-        )
-        if outcome.progress is not None:
-            values["progress_data"] = outcome.progress
-        event_type = JobEventType.WAITING_EXTERNAL
-    elif isinstance(outcome, WaitUser):
-        target = JobStatus.WAITING_USER
-        values.update(
-            status=target.value,
-            checkpoint_data=outcome.checkpoint,
-            next_run_at=None,
-            # The card renders from the snapshot alone (§12.2), so the ask
-            # must live on the row, not only in the event log.
-            progress_data={
-                "prompt": outcome.prompt,
-                "input_schema": outcome.input_schema or {},
-                "expires_at": outcome.expires_at.isoformat() if outcome.expires_at else None,
-            },
-        )
-        event_type = JobEventType.WAITING_USER
-    elif isinstance(outcome, NeedsAgent):
-        target = JobStatus.WAITING_AGENT
-        values.update(
-            status=target.value,
-            checkpoint_data=outcome.checkpoint,
-            next_run_at=None,
-        )
-        event_type = JobEventType.NEEDS_AGENT
-    elif isinstance(outcome, Retry):
-        # Budget check happens against the row inside the transaction below.
-        target = JobStatus.RETRY_SCHEDULED
-        event_type = JobEventType.RETRY_SCHEDULED
-    elif isinstance(outcome, Failed):
-        target = JobStatus.FAILED
-        values.update(
-            status=target.value,
-            error_code=outcome.error_code,
-            error_message=outcome.message,
-            completed_at=now,
-            next_run_at=None,
-        )
-        event_type = JobEventType.FAILED
-    elif isinstance(outcome, Cancelled):
-        target = JobStatus.CANCELLED
-        values.update(
-            status=target.value,
-            result_data=outcome.result or {},
-            completed_at=now,
-            next_run_at=None,
-        )
-        event_type = JobEventType.CANCELLED
-    else:
-        raise TypeError(f"unknown outcome: {outcome!r}")
+    The job row is locked before cancellation arbitration. That closes the
+    classic gap where cancel/input lands after a worker checked but before it
+    parks: whichever transaction wins, the loser observes the new state and
+    performs the wake in the same commit. Input consumption is part of this
+    transaction as well, so a process crash cannot strand an admitted answer.
+    """
+    consumed_input_ids = list(dict.fromkeys(consumed_input_ids or []))
+    observed_input_ids = list(dict.fromkeys(observed_input_ids or []))
 
     async with get_db_session() as db:
-        if isinstance(outcome, Retry):
-            row = (
-                await db.execute(
-                    select(SkillJob.attempt_count, SkillJob.max_attempts).where(
-                        SkillJob.id == job_id,
-                        SkillJob.status == JobStatus.RUNNING.value,
-                        SkillJob.lease_token == lease_token,
-                    )
+        current = (
+            await db.execute(
+                select(SkillJob)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.status == JobStatus.RUNNING.value,
+                    SkillJob.lease_token == lease_token,
                 )
-            ).one_or_none()
-            if row is None:
-                raise StaleLeaseError(f"job {job_id}: settle with stale lease")
-            attempt_count, max_attempts = row
-            if attempt_count >= max_attempts:
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        now = _utcnow()
+        if current is None or not _lease_is_live(current.lease_expires_at, now):
+            raise StaleLeaseError(f"job {job_id}: settle with stale lease")
+
+        if isinstance(outcome, NeedsAgent) and not current.session_id:
+            # NeedsAgent is a typed continuation, not a generic human question.
+            # Without a source session there is no legal producer for the
+            # required agent_result input; an empty waiting card would park
+            # forever while pretending the job was recoverable.
+            outcome = Failed(
+                error_code="agent_session_required",
+                message="handler requested Agent continuation for a job with no session",
+            )
+
+        if (
+            current.desired_state == DesiredState.CANCEL.value
+            and not current.cancel_requires_handler
+            and isinstance(outcome, (WaitExternal, WaitUser, NeedsAgent, Retry, Failed))
+        ):
+            # This operation declared that it owns no external state. Once a
+            # cancellation wins the row lock there is nothing for another
+            # invocation to unwind, so do not park or honour a retry backoff.
+            # A result that already reached Succeeded still wins the race; a
+            # failure from work the user stopped does not override cancellation.
+            outcome = Cancelled()
+
+        validated_artifact_ids: list[str] = []
+        if isinstance(outcome, Succeeded) and outcome.artifacts:
+            from db.models.file_asset import FileAsset
+
+            requested_artifact_ids = list(dict.fromkeys(outcome.artifacts))
+            owned_ready_artifact_ids = set(
+                (
+                    await db.execute(
+                        select(FileAsset.id)
+                        .where(
+                            FileAsset.id.in_(requested_artifact_ids),
+                            FileAsset.user_id == current.user_id,
+                            FileAsset.status == "ready",
+                            FileAsset.is_deleted.is_(False),
+                        )
+                        # Keep the output postcondition true until this job,
+                        # its terminal event and artifact relations commit.
+                        .with_for_update()
+                    )
+                ).scalars().all()
+            )
+            if owned_ready_artifact_ids != set(requested_artifact_ids):
+                invalid = sorted(set(requested_artifact_ids) - owned_ready_artifact_ids)
+                log.error(
+                    f"job {job_id}: handler returned invalid/unowned artifacts {invalid}"
+                )
+                outcome = Failed(
+                    error_code="artifact_contract_violation",
+                    message="handler returned an output artifact that is not ready and owned",
+                )
+                validated_artifact_ids = []
+            else:
+                # Validation is a set-membership question, but artifact order is
+                # part of the handler's result contract. SQL does not guarantee
+                # an IN-query's row order, so retain the declaration order.
+                validated_artifact_ids = requested_artifact_ids
+
+        waiting_outcome = isinstance(outcome, (WaitExternal, WaitUser, NeedsAgent))
+        wake_after_settle = False
+        wake_reason: str | None = None
+        if current.desired_state == DesiredState.CANCEL.value and waiting_outcome:
+            acknowledges = bool(getattr(outcome, "acknowledges_cancel", False))
+            if not acknowledges:
+                if cancel_known_at_claim:
+                    # The handler was explicitly invoked to unwind external
+                    # state but returned an ordinary park. Never manufacture a
+                    # cancelled fact: treat this as a contract fault, preserve
+                    # its checkpoint, and retry with a bounded failure budget.
+                    outcome = Retry(
+                        checkpoint=outcome.checkpoint,
+                        error_code="cancel_unacknowledged",
+                        error_message=(
+                            "handler returned a waiting outcome without acknowledging "
+                            "an already-visible cancel request"
+                        ),
+                        retry_at=now + timedelta(seconds=30),
+                    )
+                    waiting_outcome = False
+                else:
+                    # Cancel landed during the invocation. Preserve the new
+                    # checkpoint, but queue it immediately so the next handler
+                    # invocation sees cancel before doing any more work.
+                    wake_after_settle = True
+                    wake_reason = "cancel_pending"
+
+        external_review_retry_count: int | None = None
+        external_review_error_code: str | None = None
+        if isinstance(outcome, Retry) and outcome.consume_budget:
+            proposed_retry_count = current.retry_count + 1
+            if proposed_retry_count >= current.max_attempts and current.cancel_requires_handler:
+                # A handler that may own remote state cannot be made terminal by
+                # a local fault budget: that would stop all reconciliation while
+                # the side effect could still be live. Freeze forward progress
+                # and require a privileged, audited retry instead.
+                external_review_retry_count = proposed_retry_count
+                external_review_error_code = outcome.error_code
+                outcome = operator_reconciliation_wait(
+                    outcome.checkpoint,
+                    # Error codes are safe card metadata; arbitrary exception
+                    # text may contain provider details or secrets.
+                    detail=outcome.error_code,
+                )
+                waiting_outcome = True
+
+        values: dict = {
+            "updated_at": now,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "external_wait_started_at": None,
+            "last_event_seq": SkillJob.last_event_seq + 1,
+            # A later healthy step supersedes a prior transient retry error.
+            # Error outcomes below write their own fields back explicitly;
+            # normal waits/continuations/cancellation must not render as
+            # "processing" while carrying a stale failure banner.
+            "error_code": None,
+            "error_message": None,
+        }
+        if external_review_retry_count is not None:
+            values.update(
+                retry_count=external_review_retry_count,
+                desired_state=DesiredState.CANCEL.value,
+                error_code=external_review_error_code,
+                error_message=(
+                    "automatic retries exhausted while external state may still exist"
+                ),
+            )
+        if phase is not None:
+            values["phase"] = phase
+
+        if isinstance(outcome, Succeeded):
+            target = JobStatus.SUCCEEDED
+            values.update(
+                status=target.value,
+                result_data=outcome.result or {},
+                error_code=None,
+                error_message=None,
+                completed_at=now,
+                next_run_at=None,
+            )
+            event_type = JobEventType.SUCCEEDED
+        elif isinstance(outcome, WaitExternal):
+            target = JobStatus.WAITING_EXTERNAL
+            values.update(
+                status=target.value,
+                checkpoint_data=outcome.checkpoint,
+                next_run_at=outcome.wake_at,
+                external_wait_started_at=now,
+            )
+            if outcome.progress is not None:
+                values["progress_data"] = outcome.progress
+            event_type = JobEventType.WAITING_EXTERNAL
+        elif isinstance(outcome, WaitUser):
+            target = JobStatus.WAITING_USER
+            values.update(
+                status=target.value,
+                checkpoint_data=outcome.checkpoint,
+                next_run_at=None,
+                # The card renders from the snapshot alone (§12.2), so the ask
+                # must live on the row, not only in the event log.
+                progress_data={
+                    "prompt": outcome.prompt,
+                    "input_schema": outcome.input_schema or {},
+                    "expires_at": outcome.expires_at.isoformat() if outcome.expires_at else None,
+                },
+            )
+            event_type = JobEventType.WAITING_USER
+        elif isinstance(outcome, NeedsAgent):
+            target = JobStatus.WAITING_AGENT
+            values.update(
+                status=target.value,
+                checkpoint_data=outcome.checkpoint,
+                next_run_at=None,
+            )
+            event_type = JobEventType.NEEDS_AGENT
+        elif isinstance(outcome, Retry):
+            next_retry_count = current.retry_count + (1 if outcome.consume_budget else 0)
+            values["retry_count"] = next_retry_count
+            if outcome.consume_budget and next_retry_count >= current.max_attempts:
                 target = JobStatus.FAILED
                 event_type = JobEventType.FAILED
                 values.update(
                     status=target.value,
                     error_code=outcome.error_code,
                     error_message=(
-                        f"retry budget exhausted after {attempt_count} attempts: "
+                        f"retry budget exhausted after {next_retry_count} failures: "
                         f"{outcome.error_message or outcome.error_code}"
                     ),
                     checkpoint_data=outcome.checkpoint,
@@ -566,13 +906,92 @@ async def settle_invocation(
                     next_run_at=None,
                 )
             else:
+                target = JobStatus.RETRY_SCHEDULED
+                event_type = JobEventType.RETRY_SCHEDULED
                 values.update(
                     status=target.value,
                     checkpoint_data=outcome.checkpoint,
                     error_code=outcome.error_code,
                     error_message=outcome.error_message or None,
+                    # A cancel request already wakes the first cleanup attempt.
+                    # If that attempt faults (or its pinned handler is absent),
+                    # honour the requested backoff instead of hot-looping every
+                    # worker poll until the deployment recovers.
                     next_run_at=outcome.retry_at,
                 )
+        elif isinstance(outcome, Failed):
+            target = JobStatus.FAILED
+            values.update(
+                status=target.value,
+                error_code=outcome.error_code,
+                error_message=outcome.message,
+                completed_at=now,
+                next_run_at=None,
+            )
+            event_type = JobEventType.FAILED
+        elif isinstance(outcome, Cancelled):
+            target = JobStatus.CANCELLED
+            values.update(
+                status=target.value,
+                result_data=outcome.result or {},
+                completed_at=now,
+                next_run_at=None,
+            )
+            event_type = JobEventType.CANCELLED
+        else:
+            raise TypeError(f"unknown outcome: {outcome!r}")
+
+        if target in TERMINAL_STATUSES:
+            # No later invocation can consume anything. Because the job row is
+            # locked, this also closes the race with add_input: an earlier input
+            # is consumed here; a later transaction observes the terminal job
+            # and is rejected instead of creating an orphan row.
+            await db.execute(
+                update(SkillJobInput)
+                .where(
+                    SkillJobInput.job_id == job_id,
+                    SkillJobInput.consumed_at.is_(None),
+                )
+                .values(consumed_at=now)
+            )
+        elif consumed_input_ids:
+            # Consumption is an explicit handler acknowledgement, independent
+            # of whether its next durable state is another wait or a retry. If
+            # the handler applied an input before a transient downstream fault,
+            # replaying that input on the retry would duplicate the application.
+            await db.execute(
+                update(SkillJobInput)
+                .where(
+                    SkillJobInput.job_id == job_id,
+                    SkillJobInput.id.in_(consumed_input_ids),
+                    SkillJobInput.consumed_at.is_(None),
+                )
+                .values(consumed_at=now)
+            )
+
+        operator_only_hold = (
+            isinstance(outcome, WaitUser)
+            and (outcome.input_schema or {}).get("x-operator-only") is True
+        )
+        if waiting_outcome and not wake_after_settle and not operator_only_hold:
+            # Only an input admitted *after* the worker took its immutable
+            # snapshot closes the park race. An observed-but-unhandled input is
+            # deliberately left for a corrected/operator answer; treating it as
+            # new here would immediately requeue the same invocation forever.
+            pending_query = select(SkillJobInput.id).where(
+                SkillJobInput.job_id == job_id,
+                SkillJobInput.consumed_at.is_(None),
+            )
+            if observed_input_ids:
+                pending_query = pending_query.where(
+                    SkillJobInput.id.not_in(observed_input_ids)
+                )
+            pending_input = (
+                await db.execute(pending_query.limit(1))
+            ).scalar_one_or_none()
+            if pending_input is not None:
+                wake_after_settle = True
+                wake_reason = "input_pending"
 
         result = await db.execute(
             update(SkillJob)
@@ -588,26 +1007,10 @@ async def settle_invocation(
 
         job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
 
-        if isinstance(outcome, Succeeded) and outcome.artifacts:
-            from db.models.file_asset import FileAsset
+        if isinstance(outcome, Succeeded) and validated_artifact_ids:
             from db.models.skill_job_artifact import SkillJobArtifact
 
-            owned_assets = set(
-                (
-                    await db.execute(
-                        select(FileAsset.id).where(
-                            FileAsset.id.in_(outcome.artifacts),
-                            FileAsset.user_id == job.user_id,
-                        )
-                    )
-                ).scalars().all()
-            )
-            for ordinal, asset_id in enumerate(outcome.artifacts):
-                if asset_id not in owned_assets:
-                    log.warning(
-                        f"job {job_id}: dropping artifact {asset_id} not owned by {job.user_id}"
-                    )
-                    continue
+            for ordinal, asset_id in enumerate(validated_artifact_ids):
                 db.add(
                     SkillJobArtifact(
                         id=new_id("sjar"),
@@ -622,7 +1025,13 @@ async def settle_invocation(
                 )
 
         payload = outcome_payload_summary(outcome)
-        if target is JobStatus.FAILED and isinstance(outcome, Retry):
+        if external_review_error_code is not None:
+            payload = {
+                **payload,
+                "error_code": external_review_error_code,
+                "retry_budget_exhausted": True,
+            }
+        elif target is JobStatus.FAILED and isinstance(outcome, Retry):
             payload = {"error_code": outcome.error_code, "retry_budget_exhausted": True}
         db.add(
             SkillJobEvent(
@@ -635,7 +1044,12 @@ async def settle_invocation(
                 created_at=now,
             )
         )
-        if isinstance(outcome, NeedsAgent) and job.session_id:
+        if isinstance(outcome, NeedsAgent) and job.session_id and not wake_after_settle:
+            continuation_payload = {
+                key: value
+                for key, value in (outcome.payload or {}).items()
+                if key != "reason" and not str(key).startswith("_dispatch_")
+            }
             db.add(
                 SessionInbox(
                     id=new_id("sinb"),
@@ -644,8 +1058,37 @@ async def settle_invocation(
                     kind="job_needs_agent",
                     source_job_id=job.id,
                     source_event_seq=job.last_event_seq,
-                    payload={"reason": outcome.reason, **(outcome.payload or {})},
+                    payload={**continuation_payload, "reason": outcome.reason},
                     status="pending",
+                    created_at=now,
+                )
+            )
+
+        if wake_after_settle and target in WAITING_STATUSES:
+            wake_values: dict = {
+                "status": JobStatus.QUEUED.value,
+                "next_run_at": now,
+                "last_event_seq": SkillJob.last_event_seq + 1,
+                "updated_at": now,
+            }
+            if target is JobStatus.WAITING_EXTERNAL:
+                # This park and wake share one transaction, so its elapsed
+                # contribution is zero; clear the marker explicitly.
+                wake_values["external_wait_started_at"] = None
+            await db.execute(
+                update(SkillJob)
+                .where(SkillJob.id == job_id, SkillJob.status == target.value)
+                .values(**wake_values)
+            )
+            job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
+            db.add(
+                SkillJobEvent(
+                    id=new_id("sjev"),
+                    job_id=job.id,
+                    user_id=job.user_id,
+                    seq=job.last_event_seq,
+                    event_type=JobEventType.PROGRESSED.value,
+                    payload={"woke": wake_reason or "pending", "status": JobStatus.QUEUED.value},
                     created_at=now,
                 )
             )
@@ -665,12 +1108,22 @@ async def settle_invocation(
                 .values(
                     ended_at=now,
                     outcome=attempt_outcome_label(outcome),
-                    error_code=getattr(outcome, "error_code", None),
-                    error_message=getattr(outcome, "message", None)
-                    or getattr(outcome, "error_message", None),
+                    error_code=(
+                        external_review_error_code
+                        or getattr(outcome, "error_code", None)
+                    ),
+                    error_message=(
+                        "automatic retries exhausted; operator review required"
+                        if external_review_error_code is not None
+                        else getattr(outcome, "message", None)
+                        or getattr(outcome, "error_message", None)
+                    ),
                     duration_ms=duration_ms,
                 )
             )
+        # Refresh after an optional same-transaction wake so callers never
+        # render the intermediate waiting state as authoritative.
+        job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
     return job
 
 
@@ -678,41 +1131,79 @@ async def settle_invocation(
 # Cancel / wake / inputs
 # ---------------------------------------------------------------------------
 
-async def request_cancel(job_id: str, user_id: str) -> SkillJob:
+def _external_wait_total(job: SkillJob, now: datetime) -> int:
+    """Fold the current waiting_external interval into its cumulative total."""
+    total = int(job.external_wait_seconds or 0)
+    started = job.external_wait_started_at
+    if started is None:
+        return total
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return total + max(0, int((now - started).total_seconds()))
+
+
+async def request_cancel(
+    job_id: str,
+    user_id: str,
+    *,
+    reason: str = "user_requested",
+) -> SkillJob:
     """§7.4: cancel is a desired state, not a task kill.
 
-    Only a job that never executed (queued, attempt 0) settles directly —
-    anything that ran may hold external side effects, so it gets
-    desired_state=cancel and, if waiting, an immediate wake: the handler owns
-    provider-side cancellation and the final settlement.
+    A job that never executed (queued, attempt 0) settles directly. Otherwise
+    cancellation is durably requested and waiting jobs are woken atomically.
+    On the next claim the admission-time ``cancel_requires_handler`` snapshot
+    decides whether the generic runtime may settle it or its handler must first
+    reconcile external state.
     """
     now = _utcnow()
     async with get_db_session() as db:
-        owned = (
+        job = (
             await db.execute(
-                select(SkillJob.id).where(SkillJob.id == job_id, SkillJob.user_id == user_id)
+                select(SkillJob)
+                .where(SkillJob.id == job_id, SkillJob.user_id == user_id)
+                .with_for_update()
             )
         ).scalar_one_or_none()
-        if owned is None:
+        if job is None:
             raise JobNotFound(job_id)
+        if job.status in _TERMINAL:
+            return job
 
-        result = await db.execute(
-            update(SkillJob)
-            .where(
-                SkillJob.id == job_id,
-                SkillJob.status == JobStatus.QUEUED.value,
-                SkillJob.attempt_count == 0,
+        if job.status == JobStatus.QUEUED.value and job.attempt_count == 0:
+            await db.execute(
+                update(SkillJob)
+                .where(
+                    SkillJob.id == job_id,
+                    SkillJob.user_id == user_id,
+                    SkillJob.status == JobStatus.QUEUED.value,
+                    SkillJob.attempt_count == 0,
+                )
+                .values(
+                    status=JobStatus.CANCELLED.value,
+                    desired_state=DesiredState.CANCEL.value,
+                    completed_at=now,
+                    next_run_at=None,
+                    last_event_seq=SkillJob.last_event_seq + 1,
+                    updated_at=now,
+                )
             )
-            .values(
-                status=JobStatus.CANCELLED.value,
-                desired_state=DesiredState.CANCEL.value,
-                completed_at=now,
-                next_run_at=None,
-                last_event_seq=SkillJob.last_event_seq + 1,
-                updated_at=now,
+            await db.execute(
+                update(SessionInbox)
+                .where(
+                    SessionInbox.source_job_id == job_id,
+                    SessionInbox.status == "pending",
+                )
+                .values(status="expired", consumed_at=now)
             )
-        )
-        if result.rowcount == 1:
+            await db.execute(
+                update(SkillJobInput)
+                .where(
+                    SkillJobInput.job_id == job_id,
+                    SkillJobInput.consumed_at.is_(None),
+                )
+                .values(consumed_at=now)
+            )
             job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
             db.add(
                 SkillJobEvent(
@@ -721,95 +1212,110 @@ async def request_cancel(job_id: str, user_id: str) -> SkillJob:
                     user_id=job.user_id,
                     seq=job.last_event_seq,
                     event_type=JobEventType.CANCELLED.value,
-                    payload={"before_first_run": True},
+                    payload={"before_first_run": True, "reason": reason},
                     created_at=now,
                 )
             )
             return job
 
-        # Waiting states wake immediately so a worker claims the job and its
-        # handler can run the cancel semantics (provider cancel, race policy).
-        wake = await db.execute(
+        newly_flagged = job.desired_state != DesiredState.CANCEL.value
+        if not newly_flagged:
+            # Cancellation is idempotent. In particular, do not let repeated
+            # clicks bypass a handler's retry backoff or wake an operator-only
+            # reconciliation hold that intentionally requires privileged
+            # input before another external-state check.
+            return job
+        values: dict = {
+            "desired_state": DesiredState.CANCEL.value,
+            "updated_at": now,
+        }
+        values["last_event_seq"] = SkillJob.last_event_seq + 1
+        if job.status in _WAITING:
+            # Waiting states hold no lease. Wake in the same transaction that
+            # records the desired state so cancellation can never be stranded.
+            values.update(status=JobStatus.QUEUED.value, next_run_at=now)
+            if job.status == JobStatus.WAITING_EXTERNAL.value:
+                values.update(
+                    external_wait_seconds=_external_wait_total(job, now),
+                    external_wait_started_at=None,
+                )
+        elif job.status in (JobStatus.QUEUED.value, JobStatus.RETRY_SCHEDULED.value):
+            values["next_run_at"] = now
+
+        # A continuation that has not started must not launch after the source
+        # job has entered cancellation. A processing continuation may already
+        # own an Agent turn; its eventual input is rejected/consumed by the
+        # terminal-state checks instead of being force-killed here.
+        await db.execute(
+            update(SessionInbox)
+            .where(
+                SessionInbox.source_job_id == job_id,
+                SessionInbox.status == "pending",
+            )
+            .values(status="expired", consumed_at=now)
+        )
+
+        await db.execute(
             update(SkillJob)
             .where(
                 SkillJob.id == job_id,
-                SkillJob.status.in_(_WAITING),
-                SkillJob.desired_state == DesiredState.RUN.value,
+                SkillJob.user_id == user_id,
+                SkillJob.status == job.status,
             )
-            .values(
-                status=JobStatus.QUEUED.value,
-                desired_state=DesiredState.CANCEL.value,
-                next_run_at=now,
-                last_event_seq=SkillJob.last_event_seq + 1,
-                updated_at=now,
+            .values(**values)
+        )
+        job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
+        db.add(
+            SkillJobEvent(
+                id=new_id("sjev"),
+                job_id=job.id,
+                user_id=job.user_id,
+                seq=job.last_event_seq,
+                event_type=JobEventType.CANCEL_REQUESTED.value,
+                payload={"reason": reason},
+                created_at=now,
             )
         )
-        flagged = wake.rowcount == 1
-        if not flagged:
-            # A queued/retry-scheduled job must become claimable NOW — a
-            # cancel that waits out a 10-minute backoff reads as a dead button.
-            result = await db.execute(
-                update(SkillJob)
-                .where(
-                    SkillJob.id == job_id,
-                    SkillJob.status.in_(
-                        (JobStatus.QUEUED.value, JobStatus.RETRY_SCHEDULED.value)
-                    ),
-                    SkillJob.desired_state == DesiredState.RUN.value,
-                )
-                .values(
-                    desired_state=DesiredState.CANCEL.value,
-                    next_run_at=now,
-                    last_event_seq=SkillJob.last_event_seq + 1,
-                    updated_at=now,
-                )
-            )
-            flagged = result.rowcount == 1
-        if not flagged:
-            result = await db.execute(
-                update(SkillJob)
-                .where(
-                    SkillJob.id == job_id,
-                    SkillJob.status == JobStatus.RUNNING.value,
-                    SkillJob.desired_state == DesiredState.RUN.value,
-                )
-                .values(
-                    desired_state=DesiredState.CANCEL.value,
-                    last_event_seq=SkillJob.last_event_seq + 1,
-                    updated_at=now,
-                )
-            )
-            flagged = result.rowcount == 1
-
-        job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
-        if flagged:
-            db.add(
-                SkillJobEvent(
-                    id=new_id("sjev"),
-                    job_id=job.id,
-                    user_id=job.user_id,
-                    seq=job.last_event_seq,
-                    event_type=JobEventType.CANCEL_REQUESTED.value,
-                    payload={},
-                    created_at=now,
-                )
-            )
         return job
 
 
 async def wake_job(job_id: str, *, reason: str) -> bool:
-    """Move a waiting job back to queued so a worker can claim it."""
+    """Move a parked/backoff job to queued so a worker can claim it."""
     now = _utcnow()
     async with get_db_session() as db:
+        current = (
+            await db.execute(
+                select(SkillJob)
+                .where(SkillJob.id == job_id, SkillJob.status.in_(_WAKEABLE))
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            return False
+        input_schema = (current.progress_data or {}).get("input_schema") or {}
+        if (
+            current.status == JobStatus.WAITING_USER.value
+            and input_schema.get("x-operator-only") is True
+        ):
+            # Operator review is a privileged hold, not an ordinary parked
+            # state. Lost-wake repair, callback replay, or a generic wake must
+            # not authorize another external reconciliation attempt.
+            return False
+        values: dict = {
+            "status": JobStatus.QUEUED.value,
+            "next_run_at": now,
+            "last_event_seq": SkillJob.last_event_seq + 1,
+            "updated_at": now,
+        }
+        if current.status == JobStatus.WAITING_EXTERNAL.value:
+            values.update(
+                external_wait_seconds=_external_wait_total(current, now),
+                external_wait_started_at=None,
+            )
         result = await db.execute(
             update(SkillJob)
-            .where(SkillJob.id == job_id, SkillJob.status.in_(_WAITING))
-            .values(
-                status=JobStatus.QUEUED.value,
-                next_run_at=now,
-                last_event_seq=SkillJob.last_event_seq + 1,
-                updated_at=now,
-            )
+            .where(SkillJob.id == job_id, SkillJob.status == current.status)
+            .values(**values)
         )
         if result.rowcount != 1:
             return False
@@ -837,9 +1343,54 @@ async def add_input(
     idempotency_key: str,
     source_event_id: str = "",
 ) -> tuple[SkillJobInput, bool]:
-    """Idempotently admit an input, then wake the job. A duplicate key returns
-    the original row and wakes nothing."""
+    """Idempotently admit an input and wake the job in one transaction.
+
+    Duplicate delivery also repairs a missed wake. This matters after a crash:
+    an idempotent callback replay is often the only signal the caller can send.
+    """
     now = _utcnow()
+    if kind not in {item.value for item in InputKind}:
+        raise InputNotAllowed(f"unsupported input kind {kind!r}")
+    if not isinstance(payload, dict):
+        raise InputNotAllowed("input payload must be an object")
+    try:
+        encoded_payload = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise InputNotAllowed("input payload must be JSON-serializable") from exc
+    if len(encoded_payload) > MAX_JOB_INPUT_BYTES:
+        raise InputNotAllowed(
+            f"input payload exceeds the {MAX_JOB_INPUT_BYTES}-byte limit"
+        )
+    if not idempotency_key or len(idempotency_key) > 180:
+        raise InputNotAllowed("input idempotency_key must contain 1 to 180 characters")
+
+    # A replay is successful even after its first delivery already woke or
+    # completed the job. Check it before state admission so idempotency never
+    # degenerates into a misleading "wrong state" error.
+    async with get_db_session() as db:
+        existing = (
+            await db.execute(
+                select(SkillJobInput).where(
+                    SkillJobInput.job_id == job_id,
+                    SkillJobInput.user_id == user_id,
+                    SkillJobInput.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+    if existing is not None:
+        if existing.kind != kind or (existing.payload or {}) != payload:
+            raise InputNotAllowed(
+                f"input idempotency key {idempotency_key!r} was already used "
+                "with different content"
+            )
+        await _repair_replayed_input_wake(existing)
+        return existing, False
+
     row = SkillJobInput(
         id=new_id("sjin"),
         job_id=job_id,
@@ -847,39 +1398,201 @@ async def add_input(
         kind=kind,
         source_event_id=source_event_id,
         idempotency_key=idempotency_key,
-        payload=payload or {},
+        payload=payload,
         created_at=now,
     )
     try:
         async with get_db_session() as db:
-            status = (
+            job = (
                 await db.execute(
-                    select(SkillJob.status).where(
+                    select(SkillJob).where(
                         SkillJob.id == job_id, SkillJob.user_id == user_id
+                    ).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if job is None:
+                raise JobNotFound(job_id)
+            # Close the race between the optimistic replay lookup above and
+            # this row lock. A concurrent first delivery may have committed
+            # while we waited for the job; the same key must still replay as
+            # success even though that delivery already changed job.status.
+            concurrent_existing = (
+                await db.execute(
+                    select(SkillJobInput).where(
+                        SkillJobInput.job_id == job_id,
+                        SkillJobInput.user_id == user_id,
+                        SkillJobInput.idempotency_key == idempotency_key,
                     )
                 )
             ).scalar_one_or_none()
-            if status is None:
-                raise JobNotFound(job_id)
-            if status in _TERMINAL:
+            if concurrent_existing is not None:
+                if (
+                    concurrent_existing.kind != kind
+                    or (concurrent_existing.payload or {}) != payload
+                ):
+                    raise InputNotAllowed(
+                        f"input idempotency key {idempotency_key!r} was already used "
+                        "with different content"
+                    )
+                return concurrent_existing, False
+            if job.status in _TERMINAL:
                 # Accepting it would strand an orphan row no invocation can
                 # ever consume, while the caller believes it was delivered.
-                raise InputNotAllowed(f"job {job_id} already ended {status}")
+                raise InputNotAllowed(f"job {job_id} already ended {job.status}")
+            input_schema = (job.progress_data or {}).get("input_schema") or {}
+            if kind == InputKind.USER_ANSWER.value:
+                if job.status != JobStatus.WAITING_USER.value:
+                    raise InputNotAllowed(
+                        f"job {job_id} is {job.status}, not waiting for a user answer"
+                    )
+                if input_schema.get("x-operator-only") is True:
+                    raise InputNotAllowed(
+                        f"job {job_id} is waiting for a privileged platform operator decision"
+                    )
+                if not input_schema:
+                    raise InputNotAllowed(f"job {job_id} is a notification and accepts no answer")
+                if input_schema:
+                    from skill_runtime.manifest import ManifestError, validate_schema_value
+
+                    try:
+                        validate_schema_value(input_schema, payload or {}, label="answer")
+                    except ManifestError as exc:
+                        raise InputNotAllowed(str(exc)) from exc
+            elif kind == InputKind.OPERATOR_RESUME.value:
+                if job.status != JobStatus.WAITING_USER.value:
+                    raise InputNotAllowed(
+                        f"job {job_id} is {job.status}, not waiting for operator review"
+                    )
+                if input_schema.get("x-operator-only") is not True:
+                    raise InputNotAllowed(f"job {job_id} did not request operator review")
+                from skill_runtime.manifest import ManifestError, validate_schema_value
+
+                try:
+                    validate_schema_value(input_schema, payload, label="operator input")
+                except ManifestError as exc:
+                    raise InputNotAllowed(str(exc)) from exc
+            elif kind == InputKind.AGENT_RESULT.value:
+                if job.status != JobStatus.WAITING_AGENT.value:
+                    raise InputNotAllowed(
+                        f"job {job_id} is {job.status}, not waiting for an Agent result"
+                    )
             db.add(row)
-    except IntegrityError:
+            await db.flush()
+            operator_only_hold = (
+                job.status == JobStatus.WAITING_USER.value
+                and input_schema.get("x-operator-only") is True
+            )
+            if kind == InputKind.PROVIDER_CALLBACK.value:
+                # A callback may only wake the wait it can actually advance.
+                # Waking a job that is asking a person (or awaiting an Agent
+                # continuation) would discard that pending question: the human
+                # answer then arrives to a job that is no longer asking and is
+                # refused above.
+                wakeable = job.status in (
+                    JobStatus.WAITING_EXTERNAL.value,
+                    JobStatus.RETRY_SCHEDULED.value,
+                )
+            else:
+                # Every other kind already validated the exact state it answers.
+                wakeable = job.status in _WAITING
+            should_wake = wakeable and not (
+                operator_only_hold and kind != InputKind.OPERATOR_RESUME.value
+            )
+            if should_wake:
+                values: dict = {
+                    "status": JobStatus.QUEUED.value,
+                    "next_run_at": now,
+                    "last_event_seq": SkillJob.last_event_seq + 1,
+                    "updated_at": now,
+                }
+                if job.status == JobStatus.WAITING_EXTERNAL.value:
+                    values.update(
+                        external_wait_seconds=_external_wait_total(job, now),
+                        external_wait_started_at=None,
+                    )
+                if job.status == JobStatus.WAITING_AGENT.value:
+                    # The admitted Agent result wins over any duplicate pending
+                    # continuation for the same wait. User/operator inputs are
+                    # rejected above unless the job is WAITING_USER.
+                    await db.execute(
+                        update(SessionInbox)
+                        .where(
+                            SessionInbox.source_job_id == job_id,
+                            SessionInbox.status == "pending",
+                        )
+                        .values(status="expired", consumed_at=now)
+                    )
+                await db.execute(
+                    update(SkillJob)
+                    .where(SkillJob.id == job_id, SkillJob.status == job.status)
+                    .values(**values)
+                )
+                refreshed = (
+                    await db.execute(select(SkillJob).where(SkillJob.id == job_id))
+                ).scalar_one()
+                db.add(
+                    SkillJobEvent(
+                        id=new_id("sjev"),
+                        job_id=refreshed.id,
+                        user_id=refreshed.user_id,
+                        seq=refreshed.last_event_seq,
+                        event_type=JobEventType.PROGRESSED.value,
+                        payload={"woke": kind, "status": JobStatus.QUEUED.value},
+                        created_at=now,
+                    )
+                )
+    except IntegrityError as integrity_error:
         async with get_db_session() as db:
             existing = (
                 await db.execute(
                     select(SkillJobInput).where(
                         SkillJobInput.job_id == job_id,
+                        SkillJobInput.user_id == user_id,
                         SkillJobInput.idempotency_key == idempotency_key,
                     )
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
+        if existing is None:
+            raise integrity_error
+        if existing.kind != kind or (existing.payload or {}) != payload:
+            raise InputNotAllowed(
+                f"input idempotency key {idempotency_key!r} was already used "
+                "with different content"
+            )
+        await _repair_replayed_input_wake(existing)
         return existing, False
 
-    await wake_job(job_id, reason=kind)
     return row, True
+
+
+async def _repair_replayed_input_wake(existing: SkillJobInput) -> None:
+    """Wake only when this delivery is newer than the current park.
+
+    An older unconsumed input may have been observed and deliberately left
+    unacknowledged by the handler. Replaying it must not hot-loop that wait or
+    release a later operator hold. The timestamp relation is the same durable
+    evidence used by the Reconciler for rows written by pre-atomic binaries.
+    """
+    if existing.consumed_at is not None:
+        return
+    repairable_statuses = (
+        _WAKEABLE
+        if existing.kind == InputKind.PROVIDER_CALLBACK.value
+        else _WAITING
+    )
+    async with get_db_session() as db:
+        stranded = (
+            await db.execute(
+                select(SkillJob.id).where(
+                    SkillJob.id == existing.job_id,
+                    SkillJob.user_id == existing.user_id,
+                    SkillJob.status.in_(repairable_statuses),
+                    SkillJob.updated_at < existing.created_at,
+                )
+            )
+        ).scalar_one_or_none()
+    if stranded is not None:
+        await wake_job(existing.job_id, reason=f"{existing.kind}_replay")
 
 
 async def list_artifacts(job_id: str, user_id: str) -> list[dict]:
@@ -895,6 +1608,9 @@ async def list_artifacts(job_id: str, user_id: str) -> list[dict]:
                 .where(
                     SkillJobArtifact.job_id == job_id,
                     SkillJobArtifact.user_id == user_id,
+                    FileAsset.user_id == user_id,
+                    FileAsset.status == "ready",
+                    FileAsset.is_deleted.is_(False),
                 )
                 .order_by(SkillJobArtifact.ordinal.asc())
             )

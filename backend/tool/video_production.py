@@ -756,14 +756,18 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
 
 
 def _public_error(exc: Exception) -> str:
+    """Return a stable user-visible diagnostic without provider bodies/URLs.
+
+    HTTP response bodies can echo prompts, signed object URLs or credentials;
+    request exception strings commonly include the full URL. Detailed failures
+    stay in provider-side correlation logs, while persisted job state carries
+    only the class/status needed for recovery and support.
+    """
     response = getattr(exc, "response", None)
     if response is not None:
-        try:
-            detail = response.text[:800]
-        except Exception:
-            detail = ""
-        return f"HTTP {response.status_code}: {detail or response.reason_phrase}"[:1000]
-    return (str(exc) or exc.__class__.__name__)[:1000]
+        reason = str(getattr(response, "reason_phrase", "") or "request failed")
+        return f"HTTP {response.status_code}: {reason}"[:200]
+    return f"{exc.__class__.__name__}: operation failed"
 
 
 async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
@@ -999,7 +1003,14 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
     return head["size"] or total
 
 
-async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, settings) -> Any:
+async def _finalize_segment(
+    job,
+    data: dict[str, Any],
+    ctx: ToolContext,
+    settings,
+    *,
+    persist_guard=None,
+) -> Any:
     source_url = _provider_video_url(data)
     if not source_url.startswith("https://"):
         raise RuntimeError("provider marked the task completed without a video URL")
@@ -1008,6 +1019,8 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
     from db.models.file_asset import FileAsset
     from db.models.video_job import VideoJob
 
+    if persist_guard is not None:
+        await persist_guard()
     claimed = False
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
@@ -1036,6 +1049,8 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
     except Exception as exc:
         # The paid provider task already succeeded. Keep this recoverable so a
         # later wait can fetch a fresh result URL and retry only OSS transfer.
+        if persist_guard is not None:
+            await persist_guard()
         await _update_job(
             job.id,
             status="transfer_failed",
@@ -1044,6 +1059,8 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
         )
         await _mark_asset(job.output_asset_id, status="pending")
         return await _owned_job(job.id, ctx, "segment")
+    if persist_guard is not None:
+        await persist_guard()
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     await _mark_asset(job.output_asset_id, status="ready", size=size)
     await _update_job(
@@ -1059,6 +1076,7 @@ async def _finalize_segment(job, data: dict[str, Any], ctx: ToolContext, setting
         await mark_segment_job(
             job.segment_id,
             job.id,
+            user_id=ctx.user_id,
             status="completed",
             output_asset_id=job.output_asset_id,
         )
@@ -1117,7 +1135,14 @@ async def _job_asset(job):
     from db.models.file_asset import FileAsset
 
     async with get_db_session() as db:
-        return await db.get(FileAsset, job.output_asset_id)
+        return (
+            await db.execute(
+                select(FileAsset).where(
+                    FileAsset.id == job.output_asset_id,
+                    FileAsset.user_id == job.user_id,
+                )
+            )
+        ).scalar_one_or_none()
 
 
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
@@ -1219,6 +1244,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     await mark_segment_job(
                         approved["segment_id"],
                         job.id,
+                        user_id=ctx.user_id,
                         status="completed",
                         output_asset_id=job.output_asset_id,
                     )
@@ -1272,7 +1298,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     )
                     await _mark_asset(job.output_asset_id, status="failed")
                     raise
-                await mark_segment_job(approved["segment_id"], job.id, status="submitting")
+                await mark_segment_job(
+                    approved["segment_id"],
+                    job.id,
+                    user_id=ctx.user_id,
+                    status="submitting",
+                )
                 submitted = await _provider_submit(target, payload)
                 submitted_state = _provider_state(submitted)
                 # A provider may return a terminal state from the initial POST. In
@@ -1317,7 +1348,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
-                await mark_segment_job(approved["segment_id"], job.id, status=state)
+                await mark_segment_job(
+                    approved["segment_id"],
+                    job.id,
+                    user_id=ctx.user_id,
+                    status=state,
+                )
                 job = await _owned_job(job.id, ctx, "segment")
             return ToolResult(
                 title=("Video segment ready" if job.status == "completed" else "Video generation submitted"),
@@ -1386,7 +1422,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 if job.segment_id:
                     from tool.video_workflow import mark_segment_job
 
-                    await mark_segment_job(job.segment_id, job.id, status="failed")
+                    await mark_segment_job(
+                        job.segment_id,
+                        job.id,
+                        user_id=ctx.user_id,
+                        status="failed",
+                    )
             return ToolResult(title="Video generation submit failed", output=_public_error(exc))
 
     job = await _owned_job(args.job_id or "", ctx, "segment")
@@ -1418,7 +1459,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         if job.segment_id:
             from tool.video_workflow import mark_segment_job
 
-            await mark_segment_job(job.segment_id, job.id, status="cancelled")
+            await mark_segment_job(
+                job.segment_id,
+                job.id,
+                user_id=ctx.user_id,
+                status="cancelled",
+            )
         job = await _owned_job(job.id, ctx, "segment")
         return ToolResult(title="Video generation cancelled", output="\n".join(_job_lines(job)))
 
@@ -1458,7 +1504,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 if job.segment_id:
                     from tool.video_workflow import mark_segment_job
 
-                    await mark_segment_job(job.segment_id, job.id, status=state)
+                    await mark_segment_job(
+                        job.segment_id,
+                        job.id,
+                        user_id=ctx.user_id,
+                        status=state,
+                    )
                 job = await _owned_job(job.id, ctx, "segment")
             else:
                 await _update_job(job.id, status=state, error=None)
@@ -1546,9 +1597,18 @@ async def _transcription_payload(job, ctx: ToolContext, video_settings, oss) -> 
     }
 
 
-async def _dispatch_transcription(job, ctx: ToolContext, video_settings, oss) -> tuple[Any, dict[str, Any]]:
+async def _dispatch_transcription(
+    job,
+    ctx: ToolContext,
+    video_settings,
+    oss,
+    *,
+    persist_guard=None,
+) -> tuple[Any, dict[str, Any]]:
     payload = await _transcription_payload(job, ctx, video_settings, oss)
     remote = await ctx.sandbox.submit_media_job(payload)
+    if persist_guard is not None:
+        await persist_guard()
     await _update_job(
         job.id,
         sandbox_job_id=remote["job_id"],
@@ -1559,13 +1619,24 @@ async def _dispatch_transcription(job, ctx: ToolContext, video_settings, oss) ->
     return await _owned_job(job.id, ctx, "stt"), remote
 
 
-async def _finalize_transcription(job, ctx: ToolContext, target, oss, extraction_result: dict[str, Any]) -> Any:
+async def _finalize_transcription(
+    job,
+    ctx: ToolContext,
+    target,
+    oss,
+    extraction_result: dict[str, Any],
+    *,
+    persist_guard=None,
+    durable_recovery: bool = False,
+) -> Any:
     from db.base import get_db_session
     from db.models.video_job import VideoJob
     from tool.video_workflow import record_segment_transcript
 
     audio = await _job_asset(job)
     head = await oss.head(audio.oss_key) if audio else None
+    if persist_guard is not None:
+        await persist_guard()
     if not audio or not head:
         await _update_job(
             job.id,
@@ -1575,30 +1646,84 @@ async def _finalize_transcription(job, ctx: ToolContext, target, oss, extraction
         )
         return await _owned_job(job.id, ctx, "stt")
     await _mark_asset(audio.id, status="ready", size=head["size"] or 0)
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        claimed = await db.execute(
-            update(VideoJob)
-            .where(
-                VideoJob.id == job.id,
-                VideoJob.status.in_(["queued", "in_progress", "extraction_completed"]),
+    existing_result = job.result_data if isinstance(job.result_data, dict) else {}
+    transcript = (
+        existing_result.get("transcript")
+        if isinstance(existing_result.get("transcript"), dict)
+        else None
+    )
+    if transcript is None:
+        now = datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            claimed = await db.execute(
+                update(VideoJob)
+                .where(
+                    VideoJob.id == job.id,
+                    VideoJob.status.in_(["queued", "in_progress", "extraction_completed"]),
+                )
+                .values(status="transcribing", error=None, updated_at=now)
             )
-            .values(status="transcribing", error=None, updated_at=now)
-        )
-        if claimed.rowcount != 1:
+            if claimed.rowcount != 1:
+                return await _owned_job(job.id, ctx, "stt")
+        try:
+            await ctx.update_output("Audio extracted; running segment speech-to-text QA…")
+            transcript = await _provider_transcribe(
+                target,
+                oss.presign_get(audio.oss_key, expires_sec=1800),
+            )
+        except Exception as exc:
+            if persist_guard is not None:
+                await persist_guard()
+            # Provider exceptions may embed the presigned audio URL. Keep the
+            # correlation at job level without copying credentials into logs.
+            log.warning(
+                "segment transcription provider failed: %s",
+                type(exc).__name__,
+            )
+            if durable_recovery:
+                # The synchronous adapter exposes no provider handle. A
+                # timeout therefore has an unknown external outcome; preserve
+                # `transcribing` so the Skill handler enters operator review
+                # instead of making a later call look like a safe retry.
+                await _update_job(
+                    job.id,
+                    status="transcribing",
+                    result_data={"extraction": extraction_result},
+                    error="STT provider outcome is ambiguous; operator reconciliation required.",
+                )
+            else:
+                await _update_job(
+                    job.id,
+                    status="failed",
+                    result_data={"extraction": extraction_result},
+                    error="STT provider request failed; the extracted audio is retained for an explicit retry.",
+                    completed_at=datetime.now(timezone.utc),
+                )
             return await _owned_job(job.id, ctx, "stt")
+
+        # Persist the provider output before the domain comparison. If the
+        # process dies after this point, reconciliation resumes from the
+        # transcript instead of making another provider call.
+        if persist_guard is not None:
+            await persist_guard()
+        if durable_recovery:
+            await _update_job(
+                job.id,
+                status="transcript_ready",
+                result_data={"extraction": extraction_result, "transcript": transcript},
+                error=None,
+            )
+
     try:
-        await ctx.update_output("Audio extracted; running segment speech-to-text QA…")
-        transcript = await _provider_transcribe(
-            target,
-            oss.presign_get(audio.oss_key, expires_sec=1800),
-        )
         comparison = await record_segment_transcript(
             job.segment_id or "",
             transcript["text"],
             transcript,
+            user_id=ctx.user_id,
             threshold=target.similarity_threshold,
         )
+        if persist_guard is not None:
+            await persist_guard()
         await _update_job(
             job.id,
             status="completed",
@@ -1610,15 +1735,28 @@ async def _finalize_transcription(job, ctx: ToolContext, target, oss, extraction
             error=None,
             completed_at=datetime.now(timezone.utc),
         )
-    except Exception:
-        log.warning("segment transcription provider failed", exc_info=True)
-        await _update_job(
-            job.id,
-            status="failed",
-            result_data={"extraction": extraction_result},
-            error="STT provider request failed; the extracted audio is retained for an explicit retry.",
-            completed_at=datetime.now(timezone.utc),
+    except Exception as exc:
+        if persist_guard is not None:
+            await persist_guard()
+        log.warning(
+            "segment transcription domain commit failed: %s",
+            type(exc).__name__,
         )
+        if durable_recovery:
+            await _update_job(
+                job.id,
+                status="transcript_ready",
+                result_data={"extraction": extraction_result, "transcript": transcript},
+                error="Transcript is durable; retrying the local QA/domain commit only.",
+            )
+        else:
+            await _update_job(
+                job.id,
+                status="failed",
+                result_data={"extraction": extraction_result},
+                error="STT provider request failed; the extracted audio is retained for an explicit retry.",
+                completed_at=datetime.now(timezone.utc),
+            )
     return await _owned_job(job.id, ctx, "stt")
 
 
@@ -1888,9 +2026,18 @@ async def _render_payload(job, ctx: ToolContext, settings, oss) -> dict[str, Any
     }
 
 
-async def _dispatch_render(job, ctx: ToolContext, settings, oss) -> tuple[Any, dict[str, Any]]:
+async def _dispatch_render(
+    job,
+    ctx: ToolContext,
+    settings,
+    oss,
+    *,
+    persist_guard=None,
+) -> tuple[Any, dict[str, Any]]:
     payload = await _render_payload(job, ctx, settings, oss)
     remote = await ctx.sandbox.submit_media_job(payload)
+    if persist_guard is not None:
+        await persist_guard()
     await _update_job(
         job.id,
         sandbox_job_id=remote["job_id"],
@@ -1901,12 +2048,21 @@ async def _dispatch_render(job, ctx: ToolContext, settings, oss) -> tuple[Any, d
     return await _owned_job(job.id, ctx, "render"), remote
 
 
-async def _sync_render(job, remote: dict[str, Any], ctx: ToolContext, oss) -> Any:
+async def _sync_render(
+    job,
+    remote: dict[str, Any],
+    ctx: ToolContext,
+    oss,
+    *,
+    persist_guard=None,
+) -> Any:
     status = remote.get("status") or "failed"
     result = remote.get("result") if isinstance(remote.get("result"), dict) else {}
     if status == "completed":
         asset = await _job_asset(job)
         head = await oss.head(asset.oss_key) if asset else None
+        if persist_guard is not None:
+            await persist_guard()
         if not head:
             status = "failed"
             remote["error"] = "sandbox reported completion but the OSS output is missing"
@@ -1922,8 +2078,14 @@ async def _sync_render(job, remote: dict[str, Any], ctx: ToolContext, oss) -> An
             if getattr(job, "production_id", None) and job.output_asset_id:
                 from tool.video_workflow import mark_render_complete
 
-                await mark_render_complete(job.production_id, job.output_asset_id)
+                await mark_render_complete(
+                    job.production_id,
+                    job.output_asset_id,
+                    user_id=ctx.user_id,
+                )
             return await _owned_job(job.id, ctx, "render")
+    if persist_guard is not None:
+        await persist_guard()
     if status in {"failed", "cancelled"}:
         await _mark_asset(job.output_asset_id, status="failed")
         await _update_job(

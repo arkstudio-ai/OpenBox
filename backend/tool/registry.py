@@ -59,12 +59,35 @@ def register_builtin_tools() -> None:
     from tool.share_file import share_file_tool
     from tool.image_gen import image_gen_tool
     from tool.video_workflow import video_project_tool
-    from tool.video_production import video_generate_tool, video_transcribe_tool, video_render_tool
     from tool.video_identity import video_identity_tool
     from tool.computer import computer_tool
     from tool.browser_mode import browser_mode_tool
     from tool.skill_manage import skill_manage_tool
     from tool.skill_job import skill_job_tool
+
+    # During the rollout only one video write control plane may exist. When
+    # durable SkillJobs are authoritative, do not even register the legacy
+    # paid submit/poll tools: an editable project SKILL.md must not be able to
+    # re-unlock them by naming their schemas.
+    from core.config import get_config
+
+    config = get_config()
+    durable_video_authoritative = (
+        config.skill_jobs_enabled and config.skill_jobs_video_write
+    )
+    legacy_video_tools: list[ToolInfo] = []
+    if not durable_video_authoritative:
+        from tool.video_production import (
+            video_generate_tool,
+            video_render_tool,
+            video_transcribe_tool,
+        )
+
+        legacy_video_tools = [
+            video_generate_tool,
+            video_transcribe_tool,
+            video_render_tool,
+        ]
 
     for tool in [
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
@@ -72,7 +95,7 @@ def register_builtin_tools() -> None:
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
         skill_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
-        video_identity_tool, video_project_tool, video_generate_tool, video_transcribe_tool, video_render_tool,
+        video_identity_tool, video_project_tool, *legacy_video_tools,
         computer_tool, browser_mode_tool, skill_manage_tool, skill_job_tool,
     ]:
         register(tool)

@@ -10,15 +10,24 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, or_, select, update
 
 from core.log import create_logger
 from db.base import get_db_session
 from db.models.skill_job import SkillJob
 from db.models.skill_job_attempt import SkillJobAttempt
 from db.models.skill_job_event import SkillJobEvent
+from db.models.skill_job_input import SkillJobInput
 from skill_runtime import repository as repo
-from skill_runtime.types import DesiredState, JobEventType, JobStatus
+from skill_runtime.types import (
+    DesiredState,
+    InputKind,
+    JobEventType,
+    JobStatus,
+    WAITING_STATUSES,
+    operator_reconciliation_wait,
+    outcome_payload_summary,
+)
 from skill_runtime.worker import _retry_at
 
 log = create_logger("skill_runtime.reconciler")
@@ -32,12 +41,19 @@ def _utcnow() -> datetime:
 
 async def reconcile_once() -> dict[str, int]:
     lost = await expire_stale_running()
+    external_expired = await enforce_external_wait_limits()
+    # Enforce the cumulative bound while the row still carries its active
+    # waiting interval. A normal due wake would otherwise turn it into queued
+    # first and postpone cancellation until a worker happens to claim it.
     requeued = await requeue_due_external()
+    repaired_wakes = await repair_stranded_wakes()
     expired_asks = await expire_user_waits()
     deadlined = await enforce_deadlines()
     return {
         "lost_leases": lost,
         "requeued_external": requeued,
+        "external_wait_expired": external_expired,
+        "repaired_wakes": repaired_wakes,
         "expired_user_waits": expired_asks,
         "deadline_settled": deadlined,
     }
@@ -48,14 +64,15 @@ async def expire_user_waits() -> int:
     operation's userInputTimeoutSeconds the job gets a cancel request and is
     woken, so the handler settles it (§7.3 — a wait for a person is never a
     failure to retry, only one to time out)."""
-    from skill_runtime.manifest import get_manifest
-
     now = _utcnow()
     async with get_db_session() as db:
         waiting = (
             await db.execute(
                 select(
-                    SkillJob.id, SkillJob.skill_key, SkillJob.operation, SkillJob.updated_at
+                    SkillJob.id,
+                    SkillJob.updated_at,
+                    SkillJob.user_input_timeout_seconds,
+                    SkillJob.progress_data,
                 ).where(
                     SkillJob.status == JobStatus.WAITING_USER.value,
                     SkillJob.desired_state == DesiredState.RUN.value,
@@ -64,16 +81,28 @@ async def expire_user_waits() -> int:
         ).all()
 
     expired = 0
-    for job_id, skill_key, operation, updated_at in waiting:
-        manifest = get_manifest(skill_key)
-        op = manifest.operation(operation) if manifest else None
-        ttl = op.userInputTimeoutSeconds if op else None
-        if not ttl:
+    for job_id, updated_at, ttl, progress_data in waiting:
+        input_schema = (progress_data or {}).get("input_schema") or {}
+        if input_schema.get("x-operator-only") is True:
+            # An operator audit is not an unanswered user question. It remains
+            # blocked until a privileged decision arrives.
             continue
         parked_since = updated_at
         if parked_since is not None and parked_since.tzinfo is None:
             parked_since = parked_since.replace(tzinfo=timezone.utc)
-        if parked_since is None or (now - parked_since).total_seconds() < ttl:
+        expires_at = None
+        explicit = (progress_data or {}).get("expires_at")
+        if explicit:
+            try:
+                expires_at = datetime.fromisoformat(str(explicit).replace("Z", "+00:00"))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                log.warning(f"Job {job_id} has invalid waiting-user expires_at={explicit!r}")
+        if ttl and parked_since is not None:
+            ttl_deadline = parked_since + timedelta(seconds=ttl)
+            expires_at = min(expires_at, ttl_deadline) if expires_at else ttl_deadline
+        if expires_at is None or now < expires_at:
             continue
 
         async with get_db_session() as db:
@@ -113,13 +142,20 @@ async def expire_user_waits() -> int:
 
 async def expire_stale_running() -> int:
     """A running job whose lease expired has no live owner: close the attempt
-    as lost and reschedule (or fail once the attempt budget is spent)."""
+    as lost and reschedule. On budget exhaustion, operations that may own remote
+    state enter operator review instead of becoming an orphaning terminal."""
     now = _utcnow()
     async with get_db_session() as db:
         expired = (
             await db.execute(
                 select(
-                    SkillJob.id, SkillJob.attempt_count, SkillJob.max_attempts
+                    SkillJob.id,
+                    SkillJob.attempt_count,
+                    SkillJob.retry_count,
+                    SkillJob.max_attempts,
+                    SkillJob.cancel_requires_handler,
+                    SkillJob.checkpoint_data,
+                    SkillJob.desired_state,
                 ).where(
                     SkillJob.status == JobStatus.RUNNING.value,
                     SkillJob.lease_expires_at.isnot(None),
@@ -129,25 +165,81 @@ async def expire_stale_running() -> int:
         ).all()
 
     handled = 0
-    for job_id, attempt_count, max_attempts in expired:
-        exhausted = attempt_count >= max_attempts
-        target = JobStatus.FAILED if exhausted else JobStatus.RETRY_SCHEDULED
+    for (
+        job_id,
+        attempt_count,
+        retry_count,
+        max_attempts,
+        cancel_requires_handler,
+        checkpoint_data,
+        desired_state,
+    ) in expired:
+        next_retry_count = retry_count + 1
+        exhausted = next_retry_count >= max_attempts
+        cancel_without_external = (
+            desired_state == DesiredState.CANCEL.value and not cancel_requires_handler
+        )
+        operator_review = exhausted and cancel_requires_handler
+        target = (
+            JobStatus.CANCELLED
+            if cancel_without_external
+            else JobStatus.WAITING_USER
+            if operator_review
+            else JobStatus.FAILED if exhausted else JobStatus.RETRY_SCHEDULED
+        )
         values: dict = {
             "status": target.value,
             "lease_owner": None,
             "lease_expires_at": None,
             "last_event_seq": SkillJob.last_event_seq + 1,
+            "retry_count": next_retry_count,
             "updated_at": now,
         }
-        if exhausted:
+        review_outcome = None
+        if cancel_without_external:
+            values.update(
+                error_code=None,
+                error_message=None,
+                completed_at=now,
+                next_run_at=None,
+            )
+        elif operator_review:
+            review_outcome = operator_reconciliation_wait(
+                checkpoint_data or {},
+                detail=f"worker lease expired; retry budget spent ({next_retry_count})",
+            )
+            values.update(
+                desired_state=DesiredState.CANCEL.value,
+                progress_data={
+                    "prompt": review_outcome.prompt,
+                    "input_schema": review_outcome.input_schema,
+                    "expires_at": None,
+                },
+                error_code="worker_lost",
+                error_message=(
+                    "automatic attempts exhausted while external state may still exist"
+                ),
+                next_run_at=None,
+            )
+        elif exhausted:
             values.update(
                 error_code="worker_lost",
-                error_message=f"lease expired with attempt budget spent ({attempt_count})",
+                error_message=f"lease expired with retry budget spent ({next_retry_count})",
                 completed_at=now,
                 next_run_at=None,
             )
         else:
-            values.update(error_code="worker_lost", next_run_at=_retry_at(attempt_count))
+            values.update(
+                error_code="worker_lost",
+                error_message="worker lease expired before the invocation settled",
+                # A cancel that races lease recovery must not be put back onto
+                # the ordinary failure backoff. Evaluate desired_state in the
+                # guarded UPDATE itself so a concurrent request cannot be lost.
+                next_run_at=case(
+                    (SkillJob.desired_state == DesiredState.CANCEL.value, now),
+                    else_=_retry_at(next_retry_count),
+                ),
+            )
 
         async with get_db_session() as db:
             result = await db.execute(
@@ -156,6 +248,9 @@ async def expire_stale_running() -> int:
                     SkillJob.id == job_id,
                     SkillJob.status == JobStatus.RUNNING.value,
                     SkillJob.lease_expires_at < now,
+                    # If cancellation races this scan, let its transaction win
+                    # and re-evaluate with the new desired state next pass.
+                    SkillJob.desired_state == desired_state,
                 )
                 .values(**values)
             )
@@ -169,9 +264,35 @@ async def expire_stale_running() -> int:
                     user_id=job.user_id,
                     seq=job.last_event_seq,
                     event_type=(
-                        JobEventType.FAILED.value if exhausted else JobEventType.RETRY_SCHEDULED.value
+                        JobEventType.CANCELLED.value
+                        if cancel_without_external
+                        else JobEventType.WAITING_USER.value
+                        if operator_review
+                        else JobEventType.FAILED.value
+                        if exhausted
+                        else JobEventType.RETRY_SCHEDULED.value
                     ),
-                    payload={"error_code": "worker_lost", "attempt": attempt_count},
+                    payload=(
+                        {
+                            **outcome_payload_summary(review_outcome),
+                            "error_code": "worker_lost",
+                            "attempt": attempt_count,
+                            "retry_count": next_retry_count,
+                        }
+                        if review_outcome is not None
+                        else {
+                            "reason": "cancel_requested",
+                            "recovered_from": "worker_lost",
+                            "attempt": attempt_count,
+                            "retry_count": next_retry_count,
+                        }
+                        if cancel_without_external
+                        else {
+                            "error_code": "worker_lost",
+                            "attempt": attempt_count,
+                            "retry_count": next_retry_count,
+                        }
+                    ),
                     created_at=now,
                 )
             )
@@ -184,6 +305,15 @@ async def expire_stale_running() -> int:
                 )
                 .values(ended_at=now, outcome="lost", error_code="worker_lost")
             )
+            if target in (JobStatus.FAILED, JobStatus.CANCELLED):
+                await db.execute(
+                    update(SkillJobInput)
+                    .where(
+                        SkillJobInput.job_id == job_id,
+                        SkillJobInput.consumed_at.is_(None),
+                    )
+                    .values(consumed_at=now)
+                )
         handled += 1
         log.warning(f"Reclaimed expired lease on job {job_id} -> {target.value}")
     return handled
@@ -210,9 +340,92 @@ async def requeue_due_external() -> int:
     return woken
 
 
+async def enforce_external_wait_limits() -> int:
+    """Cancel jobs whose cumulative waiting_external budget has elapsed.
+
+    This scan uses the admission snapshot on the job, not today's manifest.
+    The cancel request wakes the handler so a provider task is reconciled and
+    cancelled against remote facts instead of being abandoned locally.
+    """
+    now = _utcnow()
+    async with get_db_session() as db:
+        waiting = (
+            await db.execute(
+                select(
+                    SkillJob.id,
+                    SkillJob.user_id,
+                    SkillJob.external_wait_seconds,
+                    SkillJob.external_wait_started_at,
+                    SkillJob.max_external_wait_seconds,
+                ).where(
+                    SkillJob.status == JobStatus.WAITING_EXTERNAL.value,
+                    SkillJob.desired_state == DesiredState.RUN.value,
+                    SkillJob.external_wait_started_at.isnot(None),
+                )
+            )
+        ).all()
+
+    expired = 0
+    for job_id, user_id, accumulated, started_at, maximum in waiting:
+        if not maximum or started_at is None:
+            continue
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        total = int(accumulated or 0) + max(0, int((now - started_at).total_seconds()))
+        if total < maximum:
+            continue
+        try:
+            await repo.request_cancel(
+                job_id,
+                user_id,
+                reason="external_wait_timeout",
+            )
+        except repo.JobNotFound:
+            continue
+        expired += 1
+        log.warning(f"Job {job_id} exhausted cumulative external wait; cancellation requested")
+    return expired
+
+
+async def repair_stranded_wakes() -> int:
+    """Backstop historical input/settlement lost-wake windows.
+
+    New writes are transactionally coupled, but rows created by an older
+    binary can still be parked with an unconsumed input. Only an input newer
+    than the park transition is evidence of a lost wake; an older unconsumed
+    input may have been deliberately rejected by the handler and must not cause
+    a five-second hot loop.
+    """
+    async with get_db_session() as db:
+        pending_input_jobs = (
+            await db.execute(
+                select(SkillJob.id)
+                .join(SkillJobInput, SkillJobInput.job_id == SkillJob.id)
+                .where(
+                    or_(
+                        SkillJob.status.in_(tuple(s.value for s in WAITING_STATUSES)),
+                        and_(
+                            SkillJob.status == JobStatus.RETRY_SCHEDULED.value,
+                            SkillJobInput.kind == InputKind.PROVIDER_CALLBACK.value,
+                        ),
+                    ),
+                    SkillJobInput.consumed_at.is_(None),
+                    SkillJobInput.created_at > SkillJob.updated_at,
+                )
+                .distinct()
+            )
+        ).scalars().all()
+    repaired = 0
+    reasons = {job_id: "input_pending_repair" for job_id in pending_input_jobs}
+    for job_id, reason in reasons.items():
+        if await repo.wake_job(job_id, reason=reason):
+            repaired += 1
+    return repaired
+
+
 async def enforce_deadlines() -> int:
     """Past deadline_at, a job that ever executed may hold external side
-    effects (a paid provider task, a media job), so its termination MUST reach
+    effects (a provider task, a media job), so its termination MUST reach
     the handler: it gets a cancel request — woken immediately when waiting —
     and the handler settles against provider facts (§7.4, §10.2). Only a job
     that never ran (queued, attempt 0) fails directly."""
@@ -220,9 +433,15 @@ async def enforce_deadlines() -> int:
     async with get_db_session() as db:
         overdue = (
             await db.execute(
-                select(SkillJob.id, SkillJob.status, SkillJob.attempt_count).where(
+                select(
+                    SkillJob.id,
+                    SkillJob.user_id,
+                    SkillJob.status,
+                    SkillJob.attempt_count,
+                ).where(
                     SkillJob.deadline_at.isnot(None),
                     SkillJob.deadline_at < now,
+                    SkillJob.desired_state == DesiredState.RUN.value,
                     SkillJob.status.notin_([s.value for s in
                                             (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED)]),
                 )
@@ -230,7 +449,7 @@ async def enforce_deadlines() -> int:
         ).all()
 
     settled = 0
-    for job_id, status, attempt_count in overdue:
+    for job_id, user_id, status, attempt_count in overdue:
         if status == JobStatus.QUEUED.value and attempt_count == 0:
             async with get_db_session() as db:
                 result = await db.execute(
@@ -266,45 +485,24 @@ async def enforce_deadlines() -> int:
                         created_at=now,
                     )
                 )
+                await db.execute(
+                    update(SkillJobInput)
+                    .where(
+                        SkillJobInput.job_id == job_id,
+                        SkillJobInput.consumed_at.is_(None),
+                    )
+                    .values(consumed_at=now)
+                )
             settled += 1
             continue
 
-        # Executed at least once (or currently running): request cancellation.
-        # Waiting states also wake so the handler converges promptly.
-        async with get_db_session() as db:
-            values: dict = {
-                "desired_state": DesiredState.CANCEL.value,
-                "last_event_seq": SkillJob.last_event_seq + 1,
-                "updated_at": now,
-            }
-            if status in (JobStatus.QUEUED.value, JobStatus.RETRY_SCHEDULED.value):
-                values["next_run_at"] = now
-            elif status != JobStatus.RUNNING.value:  # waiting states
-                values["status"] = JobStatus.QUEUED.value
-                values["next_run_at"] = now
-            result = await db.execute(
-                update(SkillJob)
-                .where(
-                    SkillJob.id == job_id,
-                    SkillJob.status == status,
-                    SkillJob.desired_state == DesiredState.RUN.value,
-                )
-                .values(**values)
-            )
-            if result.rowcount != 1:
-                continue
-            job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
-            db.add(
-                SkillJobEvent(
-                    id=repo.new_id("sjev"),
-                    job_id=job.id,
-                    user_id=job.user_id,
-                    seq=job.last_event_seq,
-                    event_type=JobEventType.CANCEL_REQUESTED.value,
-                    payload={"reason": "deadline_exceeded"},
-                    created_at=now,
-                )
-            )
+        # Executed at least once (or currently running): use the same locked
+        # cancellation path as the API. It folds an active external-wait
+        # interval and wakes the job in the same transaction.
+        try:
+            await repo.request_cancel(job_id, user_id, reason="deadline_exceeded")
+        except repo.JobNotFound:
+            continue
         settled += 1
     return settled
 
@@ -335,8 +533,8 @@ class Reconciler:
         while not self._stop.is_set():
             try:
                 await reconcile_once()
-            except Exception as e:
-                log.error(f"Reconcile pass failed: {e}")
+            except Exception as exc:
+                log.error(f"Reconcile pass failed: {type(exc).__name__}")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:

@@ -2,7 +2,7 @@
 import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from auth.middleware import get_current_user
 from auth.quota import check_session_quota, check_concurrent_agents
@@ -14,6 +14,8 @@ from session.status import trigger_abort
 _background_tasks = set()  # prevent GC of background tasks
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+_ACTIVE_SESSION_STATUSES = {SessionStatus.BUSY, SessionStatus.COMPACTING}
 
 
 class CreateSessionBody(BaseModel):
@@ -36,6 +38,13 @@ class PromptBody(BaseModel):
     #: Ready file_assets ids — pulled from OSS into the sandbox before the
     #: agent loop starts, and attached to the user message as file parts.
     attachments: list[str] | None = None
+
+    @field_validator("client_message_id")
+    @classmethod
+    def _reserve_platform_message_ids(cls, value: str | None) -> str | None:
+        if value and value.startswith(("sjr:", "sji:")):
+            raise ValueError("client_message_id uses a platform-reserved prefix")
+        return value
 
 
 class UpdateSessionBody(BaseModel):
@@ -165,7 +174,9 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    await session_mod.delete_session(session_id, user_id=user_id)
+    deleted = await session_mod.delete_session(session_id, user_id=user_id)
+    if not deleted:
+        raise HTTPException(404, "Session not found")
     return {"ok": True}
 
 
@@ -200,7 +211,7 @@ async def send_message(
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.status == SessionStatus.BUSY:
+    if session.status in _ACTIVE_SESSION_STATUSES:
         from session.status import trigger_abort
         trigger_abort(session_id)
         await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
@@ -240,11 +251,10 @@ async def send_message_async(
     """Send a message asynchronously (returns immediately, updates via SSE)."""
     user_id = current_user["user_id"]
     config = get_config()
-    await check_concurrent_agents(user_id, config)
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.status == SessionStatus.BUSY:
+    if session.status in _ACTIVE_SESSION_STATUSES:
         # Force abort the running loop and reset status so user can send again.
         # This matches opencode's cancel() behavior: abort + set idle immediately.
         from session.status import trigger_abort
@@ -252,6 +262,10 @@ async def send_message_async(
         await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
         # Give the old loop a moment to detect the abort signal
         await asyncio.sleep(0.3)
+    else:
+        # Replacing this Session's own active turn reuses its existing quota
+        # slot. New work on an idle Session must acquire a fresh slot.
+        await check_concurrent_agents(user_id, config)
 
     # Sandbox preflight moved into run_loop — don't block the HTTP response.
     # The agent loop calls sandbox_manager.get_client() which auto-creates
@@ -446,12 +460,11 @@ async def regenerate_message(
     """
     user_id = current_user["user_id"]
     config = get_config()
-    await check_concurrent_agents(user_id, config)
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
 
-    if session.status == SessionStatus.BUSY:
+    if session.status in _ACTIVE_SESSION_STATUSES:
         # Same contract as prompt_async: the newest instruction wins, so cancel
         # the run in flight rather than refusing. Deleting messages out from
         # under a live loop is the one thing we must not do.
@@ -459,6 +472,8 @@ async def regenerate_message(
         trigger_abort(session_id)
         await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
         await asyncio.sleep(0.3)
+    else:
+        await check_concurrent_agents(user_id, config)
 
     # Let the caller switch models on the way, so "it failed on this model"
     # and "try it on another one" are a single action.
@@ -636,7 +651,7 @@ async def execute_command(
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.status == SessionStatus.BUSY:
+    if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 
     # Use command's agent if specified, otherwise fall back to session's agent

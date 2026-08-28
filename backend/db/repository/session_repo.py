@@ -71,7 +71,12 @@ class PgSessionRepo:
         async with get_db_session() as session:
             result = await session.execute(
                 select(func.count()).select_from(Session).where(
-                    Session.user_id == user_id, Session.status == "busy"
+                    Session.user_id == user_id,
+                    # Compaction is part of the same live Agent turn; treating
+                    # its brief status transition as a free slot can overbook a
+                    # tenant under concurrent admission.
+                    Session.status.in_(("busy", "compacting")),
+                    Session.is_deleted == False,  # noqa: E712
                 )
             )
             return result.scalar_one()

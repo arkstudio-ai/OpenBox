@@ -9,8 +9,9 @@ handlers reuse the tool module's proven helpers (`tool.video_production`,
 segment.generate runs one segment through bounded, checkpointed steps:
 
   invocation 1 (no checkpoint): validate approvals → reserve the idempotent
-    video_job row → consume the spend approval → assert lease → submit to the
-    provider → persist the provider task id → WaitExternal.
+    video_job row → consume the spend approval → pass the atomic external
+    start gate → submit to the provider → persist the provider task id →
+    WaitExternal.
   invocation 2+: one status pass — finalize on success (idempotent OSS copy +
     business-table commit), settle provider failure, otherwise WaitExternal
     with the provider's own pace. An ambiguous submit (no provider task id)
@@ -22,10 +23,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.log import create_logger
-from skill_runtime.registry import register_builtin
+from skill_runtime.registry import register_builtin, register_startup_validator
+from skill_runtime.repository import StaleLeaseError
 from skill_runtime.types import (
     Cancelled,
     Failed,
+    Retry,
     Succeeded,
     WaitExternal,
     WaitUser,
@@ -36,9 +39,54 @@ log = create_logger("builtin.video_production")
 SKILL_KEY = "builtin:video-production"
 
 OPERATOR_REVIEW_PROMPT = (
-    "视频提交结果不明确（没有拿到供应商任务 ID）。请人工核实供应商侧是否已产生付费任务："
-    "确认未产生后取消本作业并重新提交新的修订；切勿在未核实前重复提交。"
+    "视频提交结果不明确（没有拿到供应商任务 ID），已转交平台管理员核实供应商侧"
+    "是否产生付费任务。管理员若查到任务，将通过受限通道填写 provider_task_id；若"
+    "确认没有产生任务，将设置 confirmed_no_remote_task=true。核实前平台不会重复提交。"
 )
+
+OPERATOR_REVIEW_SCHEMA = {
+    "type": "object",
+    # Non-standard presentation hint enforced again by the REST endpoint. A
+    # provider task handle is a shared-account capability, never user input.
+    "x-operator-only": True,
+    "properties": {
+        "provider_task_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "人工查到的供应商任务 ID",
+        },
+        "confirmed_no_remote_task": {
+            "type": "boolean",
+            "const": True,
+            "description": "仅在供应商侧确认没有产生任务时设为 true",
+        },
+    },
+    "oneOf": [
+        {"required": ["provider_task_id"]},
+        {"required": ["confirmed_no_remote_task"]},
+    ],
+    "additionalProperties": False,
+}
+
+STT_OPERATOR_REVIEW_PROMPT = (
+    "语音转写调用在远端结果落库前中断，平台无法证明供应商是否已经创建或完成任务。"
+    "为避免重复提交，请平台管理员先核实供应商侧；仅在确认没有远端任务后，"
+    "通过受限通道设置 confirmed_no_remote_task=true，平台才会重新转写。"
+)
+
+STT_OPERATOR_REVIEW_SCHEMA = {
+    "type": "object",
+    "x-operator-only": True,
+    "properties": {
+        "confirmed_no_remote_task": {
+            "type": "boolean",
+            "const": True,
+            "description": "仅在供应商侧确认没有产生转写任务时设为 true",
+        },
+    },
+    "required": ["confirmed_no_remote_task"],
+    "additionalProperties": False,
+}
 
 
 def _now() -> datetime:
@@ -74,6 +122,20 @@ async def run(ctx, operation: str, payload: dict, checkpoint: dict):
         error_code="unknown_operation",
         message=f"video-production has no operation {operation!r}",
     )
+
+
+def validate_runtime_dependencies(config) -> None:
+    """Domain-owned fail-fast check, invoked through the generic registry."""
+    if not config.skill_jobs_video_write:
+        return
+    if config.sandbox_provider == "wuying" and not config.wuying_api_key:
+        raise RuntimeError("video skill runtime requires WUYING_API_KEY")
+    from core.oss import get_oss
+    from tool.video_production import _configured_target, _configured_transcription_target
+
+    get_oss()
+    _configured_target(None)
+    _configured_transcription_target()
 
 
 async def _sandbox_client(ctx):
@@ -179,6 +241,14 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         return await _advance_existing(ctx, checkpoint)
 
     if ctx.cancel_requested:
+        linked = await _linked_video_job(
+            ctx,
+            kind="segment",
+            production_id=str(payload.get("production_id") or ""),
+            segment_id=str(payload.get("segment_id") or ""),
+        )
+        if linked is not None:
+            return await _advance_existing(ctx, {"video_job_id": linked.id})
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")
@@ -266,20 +336,6 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         # The revision already has a paid identity: adopt it, never resubmit.
         return await _adopt_existing(ctx, job, settings)
 
-    try:
-        await vw.consume_spend_approval(approved["spend_approval_id"])
-    except Exception as exc:
-        await vp._update_job(
-            job.id,
-            status="failed",
-            error="approved generation call limit is unavailable",
-            completed_at=_now(),
-        )
-        await vp._mark_asset(job.output_asset_id, status="failed")
-        return Failed(error_code="spend_approval_unavailable", message=str(exc)[:500])
-
-    await vw.mark_segment_job(approved["segment_id"], job.id, status="submitting")
-
     provider_payload: dict[str, Any] = {
         "model": target.model,
         "content": [{"type": "text", "text": prompt}, *provider_content],
@@ -290,20 +346,65 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         "watermark": watermark,
     }
 
-    # Fencing only guards DB writes; the billable call needs a live lease.
-    await ctx.assert_lease()
+    # The row-lock gate orders cancellation against the *start* of the paid
+    # side effect. If cancel committed first, no approval is consumed and no
+    # provider request is made.
+    if not await ctx.may_start_external():
+        await vp._update_job(
+            job.id,
+            status="cancelled",
+            error="cancelled before provider submission",
+            completed_at=_now(),
+        )
+        await vp._mark_asset(job.output_asset_id, status="failed")
+        await vw.mark_segment_job(
+            approved["segment_id"],
+            job.id,
+            user_id=ctx.user_id,
+            status="cancelled",
+        )
+        return Cancelled(result={"video_job_id": job.id})
+
+    try:
+        await vw.consume_spend_approval(approved["spend_approval_id"])
+    except Exception as exc:
+        await ctx.assert_lease()
+        await vp._update_job(
+            job.id,
+            status="failed",
+            error="approved generation call limit is unavailable",
+            completed_at=_now(),
+        )
+        await vp._mark_asset(job.output_asset_id, status="failed")
+        return Failed(
+            error_code="spend_approval_unavailable",
+            message=vp._public_error(exc),
+        )
+
+    await vw.mark_segment_job(
+        approved["segment_id"],
+        job.id,
+        user_id=ctx.user_id,
+        status="submitting",
+    )
     try:
         submitted = await vp._provider_submit(target, provider_payload)
     except Exception as exc:
         # Unknown outcome: the POST may or may not have landed. Never resubmit
         # blindly — park for operator review (§10.1 submit_unknown).
-        log.warning(f"video submit outcome unknown for job {job.id}: {exc}")
+        log.warning(
+            f"video submit outcome unknown for job {job.id}: {type(exc).__name__}"
+        )
         return WaitUser(
             checkpoint={"video_job_id": job.id},
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={},
+            input_schema=OPERATOR_REVIEW_SCHEMA,
         )
 
+    # The provider call can outlive this invocation's lease. Fence the domain
+    # identity write; a replacement worker must reconcile an ambiguous submit
+    # instead of having a stale worker overwrite its decision.
+    await ctx.assert_lease()
     state = vp._provider_state(submitted)
     stored_state = "in_progress" if state == "completed" else state
     await vp._update_job(
@@ -323,7 +424,7 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
     if state == "completed":
         return await _finalize(ctx, job.id, submitted, settings)
     if state in ("failed", "cancelled"):
-        return await _settle_provider_terminal(job.id, state, submitted)
+        return await _settle_provider_terminal(ctx, job.id, state, submitted)
     return WaitExternal(
         checkpoint={"video_job_id": job.id},
         wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
@@ -342,8 +443,10 @@ async def _advance_existing(ctx, checkpoint: dict):
         return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
 
     if job.status == "completed":
-        return await _success(job)
-    if job.status in ("failed", "cancelled"):
+        return await _success(ctx, job)
+    if job.status == "cancelled":
+        return Cancelled(result={"video_job_id": job.id})
+    if job.status == "failed":
         return Failed(
             error_code=f"provider_{job.status}",
             message=job.error or f"video job ended {job.status}",
@@ -363,35 +466,115 @@ async def _advance_existing(ctx, checkpoint: dict):
                 external_handle=job.provider_task_id,
                 acknowledges_cancel=True,  # a paid output is mid-copy; finish it
             )
+        await ctx.assert_lease()
         await _reclaim_stale_finalizing(job.id)
         job = await _owned_video_job(video_job_id, ctx.user_id)
         if job is None:
             return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
 
     if not job.provider_task_id:
-        if cancel_requested:
-            # Ambiguous submit + explicit user cancel: same policy as the
-            # legacy tool — settle cancelled, keep the do-not-resubmit trail.
-            await vp._update_job(
-                job.id, status="cancelled", completed_at=_now(),
-                error="cancelled during operator review (ambiguous submit; do not resubmit)",
-            )
-            await vp._mark_asset(job.output_asset_id, status="failed")
-            if job.segment_id:
-                from tool.video_workflow import mark_segment_job
+        operator_inputs = [item for item in ctx.inputs if item.kind == "operator_resume"]
+        if operator_inputs:
+            decision = operator_inputs[-1].payload or {}
+            provider_task_id = str(decision.get("provider_task_id") or "").strip()
+            confirmed_absent = decision.get("confirmed_no_remote_task") is True
+            if provider_task_id:
+                await ctx.assert_lease()
+                await vp._update_job(
+                    job.id,
+                    provider_task_id=provider_task_id,
+                    status="in_progress",
+                    error=None,
+                )
+                job = await _owned_video_job(video_job_id, ctx.user_id)
+                if job is None:
+                    return Failed(
+                        error_code="video_job_missing",
+                        message=f"video job {video_job_id} vanished",
+                    )
+                # The latest valid answer supersedes older attempts. Acknowledge
+                # only after its provider identity is durably applied.
+                ctx.consume_inputs(operator_inputs)
+            elif confirmed_absent:
+                await ctx.assert_lease()
+                terminal = "cancelled" if cancel_requested else "failed"
+                message = "operator confirmed provider created no remote task"
+                await vp._update_job(
+                    job.id,
+                    status=terminal,
+                    completed_at=_now(),
+                    error=message,
+                )
+                await vp._mark_asset(job.output_asset_id, status="failed")
+                if job.segment_id:
+                    from tool.video_workflow import mark_segment_job
 
-                await mark_segment_job(job.segment_id, job.id, status="cancelled")
-            return Cancelled(result={"video_job_id": job.id, "ambiguous_submit": True})
+                    await mark_segment_job(
+                        job.segment_id,
+                        job.id,
+                        user_id=ctx.user_id,
+                        status=terminal,
+                    )
+                ctx.consume_inputs(operator_inputs)
+                if cancel_requested:
+                    return Cancelled(
+                        result={"video_job_id": job.id, "operator_confirmed_absent": True}
+                    )
+                return Failed(error_code="provider_submit_not_created", message=message)
+            else:
+                return WaitUser(
+                    checkpoint=checkpoint,
+                    prompt=(
+                        "人工核实输入无效：必须填写 provider_task_id，或在确认供应商侧"
+                        "没有任务后设置 confirmed_no_remote_task=true。"
+                    ),
+                    input_schema=OPERATOR_REVIEW_SCHEMA,
+                    acknowledges_cancel=cancel_requested,
+                )
+
+    if not job.provider_task_id:
+        if cancel_requested:
+            # There is no remote identity to cancel or query. Marking this
+            # cancelled would be a lie: the paid POST may have landed. Keep the
+            # durable operator-review state and the do-not-resubmit evidence.
+            return WaitUser(
+                checkpoint=checkpoint,
+                prompt=(
+                    "取消请求已收到，但提交结果不明确且没有供应商任务 ID，"
+                    "平台无法证明远端任务已停止。请人工核实供应商侧；在确认"
+                    "未产生任务前不要重新提交。"
+                ),
+                input_schema=OPERATOR_REVIEW_SCHEMA,
+                acknowledges_cancel=True,
+            )
         return WaitUser(
             checkpoint=checkpoint,
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={},
+            input_schema=OPERATOR_REVIEW_SCHEMA,
         )
 
     # Even under a cancel request, settle against provider FACTS (§7.4): a
     # task that already succeeded keeps its paid output; only a still-running
     # task gets a provider-side cancel.
-    data = await vp._provider_status(target, job.provider_task_id)
+    try:
+        data = await vp._provider_status(target, job.provider_task_id)
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        if (
+            cancel_requested
+            and checkpoint.get("cancel_pending")
+            and getattr(response, "status_code", None) == 404
+        ):
+            # A previously accepted DELETE followed by not-found is the
+            # provider's only terminal cancellation fact for this API.
+            return await _settle_provider_terminal(
+                ctx,
+                job.id,
+                "cancelled",
+                {"error": {"message": "provider task removed after cancellation"}},
+            )
+        raise
+    await ctx.assert_lease()
     state = vp._provider_state(data)
 
     if state == "completed":
@@ -401,10 +584,10 @@ async def _advance_existing(ctx, checkpoint: dict):
             transfer_retries=int(checkpoint.get("transfer_retries") or 0),
         )
     if state in ("failed", "cancelled"):
-        return await _settle_provider_terminal(job.id, state, data)
+        return await _settle_provider_terminal(ctx, job.id, state, data)
 
     if cancel_requested:
-        return await _cancel_video_job(ctx, job, target)
+        return await _cancel_video_job(ctx, job, target, settings)
 
     await vp._update_job(job.id, status=state, error=None)
     await ctx.progress({"provider_state": state}, phase="provider_generate")
@@ -418,7 +601,7 @@ async def _advance_existing(ctx, checkpoint: dict):
 async def _adopt_existing(ctx, job, settings):
     """The domain idempotency key already owns a video_job: converge on it."""
     if job.status == "completed":
-        return await _success(job)
+        return await _success(ctx, job)
     if job.status in ("failed", "cancelled"):
         return Failed(
             error_code=f"existing_{job.status}",
@@ -428,7 +611,7 @@ async def _adopt_existing(ctx, job, settings):
         return WaitUser(
             checkpoint={"video_job_id": job.id},
             prompt=OPERATOR_REVIEW_PROMPT,
-            input_schema={},
+            input_schema=OPERATOR_REVIEW_SCHEMA,
         )
     await ctx.progress({"adopted_video_job": job.id}, phase="provider_generate")
     return WaitExternal(
@@ -438,10 +621,10 @@ async def _adopt_existing(ctx, job, settings):
     )
 
 
-#: Provider success outranks a cancel (§7.4) — but not forever: a permanently
-#: broken OSS leg must not make the cancel button inert. After this many
-#: transfer attempts under a pending cancel, the skill job honors the cancel
-#: and the video_job stays `transfer_failed` for the recovery sweep to finish.
+#: Provider success outranks a cancel (§7.4), so a produced asset must still be
+#: reconciled. A persistently broken publish leg may acknowledge only this many
+#: cancel-time retries; afterwards the generic runtime parks the job for
+#: operator reconciliation instead of falsely claiming the remote work stopped.
 TRANSFER_RETRY_CANCEL_GRACE = 3
 
 
@@ -453,9 +636,16 @@ async def _finalize(ctx, video_job_id: str, data: dict, settings, *,
     job = await _owned_video_job(video_job_id, ctx.user_id)
     if job is None:
         return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
-    refreshed = await vp._finalize_segment(job, data, _tool_ctx(ctx), settings)
+    await ctx.assert_lease()
+    refreshed = await vp._finalize_segment(
+        job,
+        data,
+        _tool_ctx(ctx),
+        settings,
+        persist_guard=ctx.assert_lease,
+    )
     if refreshed is not None and refreshed.status == "completed":
-        return await _success(refreshed, cancel_race=cancel_race)
+        return await _success(ctx, refreshed, cancel_race=cancel_race)
     retries = transfer_retries + 1
     poll = _poll_seconds(settings)
     retry_delay = max(poll, 30.0) if poll else 0.0
@@ -469,42 +659,100 @@ async def _finalize(ctx, video_job_id: str, data: dict, settings, *,
     )
 
 
-async def _settle_provider_terminal(video_job_id: str, state: str, data: dict):
+async def _settle_provider_terminal(ctx, video_job_id: str, state: str, data: dict):
     from tool import video_production as vp
     from tool.video_workflow import mark_segment_job
 
     detail = data.get("error")
-    message = detail.get("message") if isinstance(detail, dict) else str(detail or state)
-    job = await _load_video_job(video_job_id)
+    provider_code = detail.get("code") if isinstance(detail, dict) else None
+    message = f"provider reported {state}"
+    if isinstance(provider_code, str) and provider_code:
+        message += f" ({provider_code[:80]})"
+    job = await _owned_video_job(video_job_id, ctx.user_id)
+    if job is None:
+        # A checkpoint is durable input, not an ownership capability. Never
+        # pass its raw id to the legacy unscoped helper after an ownership
+        # lookup failed, or a corrupt/stale checkpoint could mutate another
+        # tenant's VideoJob row.
+        return Failed(
+            error_code="video_job_missing",
+            message=f"video job {video_job_id} vanished",
+        )
+    # The provider read may outlive a lease. Fence domain-table writes too, not
+    # only the final SkillJob settlement, so a stale worker cannot overwrite a
+    # newer reconciliation result.
+    await ctx.assert_lease()
     await vp._update_job(
-        video_job_id, status=state, error=str(message)[:1000], completed_at=_now()
+        job.id, status=state, error=str(message)[:1000], completed_at=_now()
     )
-    if job is not None:
-        await vp._mark_asset(job.output_asset_id, status="failed")
-        if job.segment_id:
-            await mark_segment_job(job.segment_id, video_job_id, status=state)
+    await vp._mark_asset(job.output_asset_id, status="failed")
+    if job.segment_id:
+        await mark_segment_job(
+            job.segment_id,
+            job.id,
+            user_id=ctx.user_id,
+            status=state,
+        )
     if state == "cancelled":
-        return Cancelled(result={"video_job_id": video_job_id})
+        return Cancelled(result={"video_job_id": job.id})
     return Failed(error_code="provider_failed", message=str(message)[:500])
 
 
-async def _cancel_video_job(ctx, job, target):
+async def _cancel_video_job(ctx, job, target, settings):
     from tool import video_production as vp
-    from tool.video_workflow import mark_segment_job
 
     if job.provider_task_id and job.status != "transfer_failed":
         try:
+            await ctx.assert_lease()
             await vp._provider_cancel(target, job.provider_task_id)
+        except StaleLeaseError:
+            raise
         except Exception as exc:
-            log.warning(f"provider cancel for {job.id} failed: {exc}")
-    await vp._update_job(job.id, status="cancelled", completed_at=_now(), error="cancelled")
-    await vp._mark_asset(job.output_asset_id, status="failed")
+            log.warning(
+                f"provider cancel for {job.id} failed: {type(exc).__name__}"
+            )
+            # A transport error (and BossIP's lack of a cancel endpoint) says
+            # nothing about the provider task's terminal state. Keep polling
+            # under desired_state=cancel; never manufacture a local cancelled
+            # fact while a paid task may still be running or succeed.
+            return WaitExternal(
+                checkpoint={"video_job_id": job.id, "cancel_pending": True},
+                wake_at=_now() + timedelta(seconds=30),
+                external_handle=job.provider_task_id,
+                progress={"provider_state": job.status, "cancel": "pending"},
+                acknowledges_cancel=True,
+            )
+    # DELETE/Cancel normally means "request accepted", not "the remote task is
+    # terminal". Keep the local domain row non-terminal until the next status
+    # read proves cancelled, failed, or completed (success wins the race).
+    return WaitExternal(
+        checkpoint={"video_job_id": job.id, "cancel_pending": True},
+        wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+        external_handle=job.provider_task_id,
+        progress={"provider_state": job.status, "cancel": "requested"},
+        acknowledges_cancel=True,
+    )
+
+
+async def _success(ctx, job, *, cancel_race: bool = False):
+    """Repair and verify domain postconditions before generic success.
+
+    FileAsset, VideoJob and VideoSegment are separate legacy transactions. A
+    crash after marking VideoJob completed but before updating the segment must
+    not let the next invocation skip that final domain commit.
+    """
+    await ctx.assert_lease()
+    await _require_ready_output(job, ctx.user_id)
     if job.segment_id:
-        await mark_segment_job(job.segment_id, job.id, status="cancelled")
-    return Cancelled(result={"video_job_id": job.id})
+        from tool.video_workflow import mark_segment_job
 
-
-async def _success(job, *, cancel_race: bool = False):
+        await mark_segment_job(
+            job.segment_id,
+            job.id,
+            user_id=ctx.user_id,
+            status="completed",
+            output_asset_id=job.output_asset_id,
+        )
     result = {
         "video_job_id": job.id,
         "production_id": job.production_id,
@@ -535,6 +783,20 @@ async def _segment_transcribe(ctx, payload: dict, checkpoint: dict):
         return await _advance_transcription(ctx, checkpoint, target, video_settings, oss)
 
     if ctx.cancel_requested:
+        linked = await _linked_video_job(
+            ctx,
+            kind="stt",
+            production_id=str(payload.get("production_id") or ""),
+            segment_id=str(payload.get("segment_id") or ""),
+        )
+        if linked is not None:
+            return await _advance_transcription(
+                ctx,
+                {"video_job_id": linked.id},
+                target,
+                video_settings,
+                oss,
+            )
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")
@@ -580,20 +842,69 @@ async def _segment_transcribe(ctx, payload: dict, checkpoint: dict):
             )
         return await _advance_transcription(ctx, checkpoint, target, video_settings, oss)
 
-    return await _dispatch_stt(ctx, job, checkpoint, video_settings, oss)
+    return await _dispatch_stt(
+        ctx, job, checkpoint, video_settings, oss, known_unsubmitted=True
+    )
 
 
-async def _dispatch_stt(ctx, job, checkpoint: dict, video_settings, oss):
+async def _dispatch_stt(
+    ctx,
+    job,
+    checkpoint: dict,
+    video_settings,
+    oss,
+    *,
+    known_unsubmitted: bool = False,
+):
     from tool import video_production as vp
 
     tctx = _tool_ctx(ctx)
     try:
+        if not await ctx.may_start_external():
+            if known_unsubmitted:
+                await vp._mark_asset(job.output_asset_id, status="failed")
+                await vp._update_job(
+                    job.id,
+                    status="cancelled",
+                    error="cancelled before sandbox transcription startup",
+                    completed_at=_now(),
+                )
+                return Cancelled(result={"video_job_id": job.id})
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now(),
+                progress={"dispatch": "cancel_won_before_sandbox_start"},
+            )
         tctx.sandbox = await _sandbox_client(ctx)
-        job, remote = await vp._dispatch_transcription(job, tctx, video_settings, oss)
+        if not await ctx.may_start_external():
+            if known_unsubmitted:
+                await vp._mark_asset(job.output_asset_id, status="failed")
+                await vp._update_job(
+                    job.id,
+                    status="cancelled",
+                    error="cancelled before sandbox transcription dispatch",
+                    completed_at=_now(),
+                )
+                return Cancelled(result={"video_job_id": job.id})
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now(),
+                progress={"dispatch": "cancel_won_before_external_start"},
+            )
+        job, remote = await vp._dispatch_transcription(
+            job,
+            tctx,
+            video_settings,
+            oss,
+            persist_guard=ctx.assert_lease,
+        )
+    except StaleLeaseError:
+        raise
     except Exception as exc:
         # Media dispatch is idempotent per (owner, idempotency_key) on the
         # node's queue, so unlike a paid provider submit this can retry.
-        await vp._update_job(job.id, status="dispatch_unknown", error=str(exc)[:500])
+        await ctx.assert_lease()
+        await vp._update_job(job.id, status="dispatch_unknown", error=vp._public_error(exc))
         return WaitExternal(
             checkpoint=checkpoint,
             wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
@@ -618,54 +929,187 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
         return Failed(error_code="video_job_missing", message="STT job vanished")
     if job.status == "completed":
         return _transcription_success(job)
-    if job.status in ("failed", "cancelled"):
+    if job.status == "cancelled":
+        return Cancelled(result={"video_job_id": job.id})
+    if job.status == "failed":
         return Failed(
-            error_code="stt_failed" if job.status == "failed" else "stt_cancelled",
+            error_code="stt_failed",
             message=job.error or f"STT job ended {job.status}",
         )
 
     tctx = _tool_ctx(ctx)
+    cancel_requested = await ctx.is_cancel_requested()
+
+    if job.status == "transcript_ready":
+        # The provider output is already durable. Resume only the local
+        # comparison/domain commit; cancellation cannot erase that success or
+        # turn it into another provider submission.
+        await ctx.progress(phase="speech_to_text")
+        job = await vp._finalize_transcription(
+            job,
+            tctx,
+            target,
+            oss,
+            (job.result_data or {}).get("extraction") or {},
+            persist_guard=ctx.assert_lease,
+            durable_recovery=True,
+        )
+        return _map_transcription_finalize(job, checkpoint, video_settings)
 
     if job.status == "transcribing":
-        # STT finalization runs inside one invocation; seeing it from outside
-        # means a crash mid-finalize. Reclaim past the staleness window.
-        from video.job_recovery import _age_seconds
-
-        if _age_seconds(job.updated_at) < 300:
-            return WaitExternal(
+        # The current STT adapter submits and polls inside one invocation and
+        # does not durably expose a provider task id. Observing `transcribing`
+        # therefore means the prior process died in an ambiguous external-call
+        # window. Time passing does not prove absence: never auto-resubmit.
+        operator_inputs = [item for item in ctx.inputs if item.kind == "operator_resume"]
+        if not operator_inputs:
+            return WaitUser(
                 checkpoint=checkpoint,
-                wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
-                acknowledges_cancel=True,
+                prompt=STT_OPERATOR_REVIEW_PROMPT,
+                input_schema=STT_OPERATOR_REVIEW_SCHEMA,
+                acknowledges_cancel=cancel_requested,
             )
-        await vp._update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
+
+        decision = operator_inputs[-1].payload or {}
+        if decision.get("confirmed_no_remote_task") is not True:
+            return WaitUser(
+                checkpoint=checkpoint,
+                prompt=(
+                    "人工核实输入无效：只有在确认供应商侧没有产生转写任务后，"
+                    "才能设置 confirmed_no_remote_task=true。"
+                ),
+                input_schema=STT_OPERATOR_REVIEW_SCHEMA,
+                acknowledges_cancel=cancel_requested,
+            )
+
+        await ctx.assert_lease()
+        if cancel_requested:
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status="cancelled",
+                error="operator confirmed no remote transcription task was created",
+                completed_at=_now(),
+            )
+            ctx.consume_inputs(operator_inputs)
+            return Cancelled(
+                result={"video_job_id": job.id, "operator_confirmed_absent": True}
+            )
+
+        # An administrator has established the missing external fact. Return to
+        # the durable pre-submit checkpoint; the retry below is now explicit and
+        # auditable rather than time-based guesswork.
+        await vp._update_job(
+            job.id,
+            status="extraction_completed",
+            error="operator confirmed no remote transcription task was created",
+        )
+        ctx.consume_inputs(operator_inputs)
         job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
         if job is None:
             return Failed(error_code="video_job_missing", message="STT job vanished")
 
     if job.status == "extraction_completed":
+        if cancel_requested:
+            await ctx.assert_lease()
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status="cancelled",
+                error="cancelled after audio extraction and before transcription",
+                completed_at=_now(),
+            )
+            return Cancelled(result={"video_job_id": job.id})
         await ctx.progress(phase="speech_to_text")
+        if not await ctx.may_start_external():
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status="cancelled",
+                error="cancelled before transcription provider submission",
+                completed_at=_now(),
+            )
+            return Cancelled(result={"video_job_id": job.id})
         job = await vp._finalize_transcription(
-            job, tctx, target, oss, (job.result_data or {}).get("extraction") or {}
+            job,
+            tctx,
+            target,
+            oss,
+            (job.result_data or {}).get("extraction") or {},
+            persist_guard=ctx.assert_lease,
+            durable_recovery=True,
         )
         return _map_transcription_finalize(job, checkpoint, video_settings)
 
-    cancel_requested = await ctx.is_cancel_requested()
     client = await _sandbox_client(ctx)
 
     if cancel_requested:
         try:
-            await client.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+            await ctx.assert_lease()
+            remote = await client.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+        except StaleLeaseError:
+            raise
         except Exception as exc:
-            log.warning(f"media cancel for {job.id} failed: {exc}")
-        await vp._update_job(job.id, status="cancelled", error="cancelled", completed_at=_now())
-        await vp._mark_asset(job.output_asset_id, status="failed")
-        return Cancelled(result={"video_job_id": job.id})
+            log.warning(
+                f"media cancel for {job.id} failed: {type(exc).__name__}"
+            )
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+                external_handle=job.sandbox_job_id or job.id,
+                progress={"sandbox_state": job.status, "cancel": "pending"},
+                acknowledges_cancel=True,
+            )
+        await ctx.assert_lease()
+        state = str(remote.get("status") or "failed")
+        if state == "completed":
+            await vp._update_job(
+                job.id,
+                status="extraction_completed",
+                result_data={"extraction": remote.get("result") or {}},
+                error=None,
+            )
+            job = await _owned_video_job(job.id, ctx.user_id, kind="stt")
+            if job is None:
+                return Failed(error_code="video_job_missing", message="STT job vanished")
+            await ctx.assert_lease()
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status="cancelled",
+                error="cancelled after audio extraction and before transcription",
+                completed_at=_now(),
+            )
+            return Cancelled(result={"video_job_id": job.id})
+        if state in ("failed", "cancelled"):
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status=state,
+                error=str(remote.get("error") or state)[:1200],
+                completed_at=_now(),
+            )
+            if state == "cancelled":
+                return Cancelled(result={"video_job_id": job.id})
+            return Failed(
+                error_code="extraction_failed",
+                message=str(remote.get("error") or state)[:500],
+            )
+        await vp._update_job(job.id, status=state, error=None)
+        return WaitExternal(
+            checkpoint=checkpoint,
+            wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+            external_handle=job.sandbox_job_id or job.id,
+            progress={"sandbox_state": state, "cancel": "pending"},
+            acknowledges_cancel=True,
+        )
 
     if job.status in ("dispatch_unknown", "dispatching") and not job.sandbox_job_id:
         tctx.sandbox = client
         return await _dispatch_stt(ctx, job, checkpoint, video_settings, oss)
 
     remote = await client.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+    await ctx.assert_lease()
     state = str(remote.get("status") or "failed")
     if state == "completed":
         await vp._update_job(
@@ -678,7 +1122,24 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
         if job is None:
             return Failed(error_code="video_job_missing", message="STT job vanished")
         await ctx.progress(phase="speech_to_text")
-        job = await vp._finalize_transcription(job, tctx, target, oss, remote.get("result") or {})
+        if not await ctx.may_start_external():
+            await vp._mark_asset(job.output_asset_id, status="failed")
+            await vp._update_job(
+                job.id,
+                status="cancelled",
+                error="cancelled before transcription provider submission",
+                completed_at=_now(),
+            )
+            return Cancelled(result={"video_job_id": job.id})
+        job = await vp._finalize_transcription(
+            job,
+            tctx,
+            target,
+            oss,
+            remote.get("result") or {},
+            persist_guard=ctx.assert_lease,
+            durable_recovery=True,
+        )
         return _map_transcription_finalize(job, checkpoint, video_settings)
     if state in ("failed", "cancelled"):
         await vp._mark_asset(job.output_asset_id, status="failed")
@@ -702,18 +1163,28 @@ async def _advance_transcription(ctx, checkpoint: dict, target, video_settings, 
 
 
 def _map_transcription_finalize(job, checkpoint: dict, video_settings):
-    """`_finalize_transcription` returns the job unchanged (still
-    `transcribing`) when it loses the finalize claim to a concurrent owner —
-    that is a wait, not a failure."""
+    """Map a durable STT checkpoint without repeating provider work.
+
+    ``transcribing`` means the external outcome is still ambiguous and gets one
+    short wake before the next invocation enters operator review.
+    ``transcript_ready`` means only the idempotent local domain commit remains;
+    that is an ordinary retryable local fault, not external waiting.
+    """
     if job is None:
         return Failed(error_code="video_job_missing", message="STT job vanished")
     if job.status == "completed":
         return _transcription_success(job)
+    if job.status == "transcript_ready":
+        return Retry(
+            checkpoint=checkpoint,
+            error_code="stt_domain_commit_pending",
+            error_message=job.error or "transcript is durable; local QA commit is pending",
+            retry_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
+        )
     if job.status == "transcribing":
         return WaitExternal(
             checkpoint=checkpoint,
             wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
-            acknowledges_cancel=True,
         )
     return Failed(error_code="stt_failed", message=job.error or "STT finalization failed")
 
@@ -749,6 +1220,18 @@ async def _production_render(ctx, payload: dict, checkpoint: dict):
         return await _advance_render(ctx, checkpoint, settings, oss)
 
     if ctx.cancel_requested:
+        linked = await _linked_video_job(
+            ctx,
+            kind="render",
+            production_id=str(payload.get("production_id") or ""),
+        )
+        if linked is not None:
+            return await _advance_render(
+                ctx,
+                {"video_job_id": linked.id},
+                settings,
+                oss,
+            )
         return Cancelled()
 
     production_id = str(payload.get("production_id") or "")
@@ -786,7 +1269,7 @@ async def _production_render(ctx, payload: dict, checkpoint: dict):
     checkpoint = {"video_job_id": job.id}
     if not created:
         if job.status == "completed":
-            return _render_success(job)
+            return await _render_success(ctx, job)
         if job.status in ("failed", "cancelled"):
             return Failed(
                 error_code=f"existing_{job.status}",
@@ -794,18 +1277,67 @@ async def _production_render(ctx, payload: dict, checkpoint: dict):
             )
         return await _advance_render(ctx, checkpoint, settings, oss)
 
-    return await _dispatch_render_step(ctx, job, checkpoint, settings, oss)
+    return await _dispatch_render_step(
+        ctx, job, checkpoint, settings, oss, known_unsubmitted=True
+    )
 
 
-async def _dispatch_render_step(ctx, job, checkpoint: dict, settings, oss):
+async def _dispatch_render_step(
+    ctx,
+    job,
+    checkpoint: dict,
+    settings,
+    oss,
+    *,
+    known_unsubmitted: bool = False,
+):
     from tool import video_production as vp
 
     tctx = _tool_ctx(ctx)
     try:
+        if not await ctx.may_start_external():
+            if known_unsubmitted:
+                await vp._mark_asset(job.output_asset_id, status="failed")
+                await vp._update_job(
+                    job.id,
+                    status="cancelled",
+                    error="cancelled before sandbox render startup",
+                    completed_at=_now(),
+                )
+                return Cancelled(result={"video_job_id": job.id})
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now(),
+                progress={"dispatch": "cancel_won_before_sandbox_start"},
+            )
         tctx.sandbox = await _sandbox_client(ctx)
-        job, remote = await vp._dispatch_render(job, tctx, settings, oss)
+        if not await ctx.may_start_external():
+            if known_unsubmitted:
+                await vp._mark_asset(job.output_asset_id, status="failed")
+                await vp._update_job(
+                    job.id,
+                    status="cancelled",
+                    error="cancelled before sandbox render dispatch",
+                    completed_at=_now(),
+                )
+                return Cancelled(result={"video_job_id": job.id})
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now(),
+                progress={"dispatch": "cancel_won_before_external_start"},
+            )
+        job, remote = await vp._dispatch_render(
+            job,
+            tctx,
+            settings,
+            oss,
+            persist_guard=ctx.assert_lease,
+        )
+    except StaleLeaseError:
+        raise
     except Exception as exc:
-        await vp._update_job(job.id, status="dispatch_unknown", error=str(exc)[:500])
+        await ctx.assert_lease()
+        await vp._update_job(job.id, status="dispatch_unknown", error=vp._public_error(exc))
         return WaitExternal(
             checkpoint=checkpoint,
             wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
@@ -829,7 +1361,7 @@ async def _advance_render(ctx, checkpoint: dict, settings, oss):
     if job is None:
         return Failed(error_code="video_job_missing", message="render job vanished")
     if job.status == "completed":
-        return _render_success(job)
+        return await _render_success(ctx, job)
     if job.status in ("failed", "cancelled"):
         if job.status == "cancelled":
             return Cancelled(result={"video_job_id": job.id})
@@ -839,33 +1371,60 @@ async def _advance_render(ctx, checkpoint: dict, settings, oss):
     cancel_requested = await ctx.is_cancel_requested()
     client = await _sandbox_client(ctx)
 
-    if job.status in ("dispatch_unknown", "dispatching") and not job.sandbox_job_id:
-        if cancel_requested:
-            await vp._update_job(job.id, status="cancelled", error="cancelled", completed_at=_now())
-            await vp._mark_asset(job.output_asset_id, status="failed")
-            return Cancelled(result={"video_job_id": job.id})
+    if (
+        job.status in ("dispatch_unknown", "dispatching")
+        and not job.sandbox_job_id
+        and not cancel_requested
+    ):
         return await _dispatch_render_step(ctx, job, checkpoint, settings, oss)
 
     if cancel_requested:
         try:
+            await ctx.assert_lease()
             remote = await client.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
+        except StaleLeaseError:
+            raise
         except Exception as exc:
-            log.warning(f"render cancel for {job.id} failed: {exc}")
-            remote = {"status": "cancelled", "error": "cancelled"}
-        job = await vp._sync_render(job, remote, tctx, oss)
+            log.warning(
+                f"render cancel for {job.id} failed: {type(exc).__name__}"
+            )
+            return WaitExternal(
+                checkpoint=checkpoint,
+                wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+                external_handle=job.sandbox_job_id or job.id,
+                progress={"sandbox_state": job.status, "cancel": "pending"},
+                acknowledges_cancel=True,
+            )
+        await ctx.assert_lease()
+        job = await vp._sync_render(
+            job, remote, tctx, oss, persist_guard=ctx.assert_lease
+        )
         if job.status == "completed":
             # The node finished before the cancel landed; keep the output.
-            return _render_success(job, cancel_race=True)
-        return Cancelled(result={"video_job_id": job.id})
+            return await _render_success(ctx, job, cancel_race=True)
+        if job.status == "cancelled":
+            return Cancelled(result={"video_job_id": job.id})
+        if job.status == "failed":
+            return Failed(error_code="render_failed", message=job.error or "render failed")
+        return WaitExternal(
+            checkpoint=checkpoint,
+            wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
+            external_handle=job.sandbox_job_id or job.id,
+            progress={"sandbox_state": job.status, "cancel": "pending"},
+            acknowledges_cancel=True,
+        )
 
     remote = await client.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
     await ctx.progress(
         {"queue_position": remote.get("queue_position"), "sandbox_state": remote.get("status")},
         phase="rendering",
     )
-    job = await vp._sync_render(job, remote, tctx, oss)
+    await ctx.assert_lease()
+    job = await vp._sync_render(
+        job, remote, tctx, oss, persist_guard=ctx.assert_lease
+    )
     if job.status == "completed":
-        return _render_success(job)
+        return await _render_success(ctx, job)
     if job.status == "failed":
         return Failed(error_code="render_failed", message=job.error or "render failed")
     if job.status == "cancelled":
@@ -877,7 +1436,18 @@ async def _advance_render(ctx, checkpoint: dict, settings, oss):
     )
 
 
-def _render_success(job, *, cancel_race: bool = False):
+async def _render_success(ctx, job, *, cancel_race: bool = False):
+    """Make the legacy Production commit a recoverable success postcondition."""
+    await ctx.assert_lease()
+    await _require_ready_output(job, ctx.user_id)
+    if job.production_id and job.output_asset_id:
+        from tool.video_workflow import mark_render_complete
+
+        await mark_render_complete(
+            job.production_id,
+            job.output_asset_id,
+            user_id=ctx.user_id,
+        )
     result = {
         "video_job_id": job.id,
         "production_id": job.production_id,
@@ -907,12 +1477,64 @@ async def _owned_video_job(video_job_id: str, user_id: str, kind: str = "segment
         ).scalar_one_or_none()
 
 
-async def _load_video_job(video_job_id: str):
+async def _require_ready_output(job, user_id: str) -> None:
+    """Fail closed until the declared output is a ready, owned FileAsset."""
+    from sqlalchemy import select
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+
+    async with get_db_session() as db:
+        asset_id = (
+            await db.execute(
+                select(FileAsset.id).where(
+                    FileAsset.id == job.output_asset_id,
+                    FileAsset.user_id == user_id,
+                    FileAsset.status == "ready",
+                    FileAsset.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+    if asset_id is None:
+        raise RuntimeError("completed video job output asset is not ready and owned")
+
+
+async def _linked_video_job(
+    ctx,
+    *,
+    kind: str,
+    production_id: str,
+    segment_id: str | None = None,
+):
+    """Recover the domain row if a process died before checkpoint settlement.
+
+    The domain row is written before every external dispatch and carries the
+    generic job id. Looking it up lets a cancel invocation with an empty
+    checkpoint adopt and unwind the already-created remote work.
+    """
+    from sqlalchemy import select
+
     from db.base import get_db_session
     from db.models.video_job import VideoJob
 
     async with get_db_session() as db:
-        return await db.get(VideoJob, video_job_id)
+        stmt = select(VideoJob).where(
+            VideoJob.user_id == ctx.user_id,
+            VideoJob.kind == kind,
+            VideoJob.production_id == production_id,
+        )
+        if segment_id is not None:
+            stmt = stmt.where(VideoJob.segment_id == segment_id)
+        rows = (
+            await db.execute(stmt.order_by(VideoJob.created_at.desc()))
+        ).scalars().all()
+    for row in rows:
+        if str((row.request_data or {}).get("skill_job_id") or "") == ctx.job_id:
+            return row
+    return None
 
 
-register_builtin(SKILL_KEY, run, handler_version=2)
+# v2 only changed the runtime contract around this handler; its persisted
+# checkpoint shape remains compatible with jobs admitted by the v1 rollout.
+register_startup_validator(SKILL_KEY, validate_runtime_dependencies)
+register_builtin(SKILL_KEY, run, handler_version=2, compatible_versions=(1,))

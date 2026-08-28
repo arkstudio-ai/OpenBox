@@ -7,17 +7,15 @@ services:
       - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/openbox.json:/app/openbox.json:ro
+    env_file:
+      - ./backend/.env
     environment:
       - HOST=0.0.0.0
       - PORT=8080
       - DEBUG=true
-      - SANDBOX_IMAGE=openbox-sandbox:latest
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@postgres:5432/openbox}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - BLOB_AZURE_CONNECTION_STRING=${BLOB_AZURE_CONNECTION_STRING:-}
-      - BLOB_AZURE_CONTAINER=${BLOB_AZURE_CONTAINER:-ads-staging}
-      - JWT_SECRET=${JWT_SECRET:-}
-      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     depends_on:
       - redis
       - postgres
@@ -32,10 +30,18 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: ["python", "-m", "skill_runtime.worker_main"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/openbox.json:/app/openbox.json:ro
+    env_file:
+      - ./backend/.env
     environment:
+      # Only the Compose-internal service addresses override backend/.env.
+      # Provider, JWT, OSS and video credentials must stay identical to the API
+      # role; spelling them here with `${VAR:-}` would replace env_file values
+      # with empty/default strings during Compose interpolation.
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@postgres:5432/openbox}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - JWT_SECRET=${JWT_SECRET:-}
       - SKILL_WORKER_QUEUES=${SKILL_WORKER_QUEUES:-default}
     depends_on:
       - redis

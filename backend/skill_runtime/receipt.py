@@ -85,7 +85,10 @@ async def write_receipt(job) -> bool:
                 await db.execute(
                     select(MessageORM.id).where(
                         MessageORM.session_id == job.session_id,
+                        MessageORM.user_id == job.user_id,
                         MessageORM.client_message_id == marker,
+                        MessageORM.role == "assistant",
+                        MessageORM.finish == "skill_job_receipt",
                     )
                 )
             ).scalar_one_or_none()
@@ -113,12 +116,33 @@ async def write_receipt(job) -> bool:
                     created_at=now,
                 )
             )
-    except IntegrityError:
+    except IntegrityError as integrity_error:
         # A racing publisher already wrote this receipt; the partial unique
         # index on the marker is the real guard, the pre-check is a fast path.
+        async with get_db_session() as db:
+            duplicate = (
+                await db.execute(
+                    select(MessageORM.id).where(
+                        MessageORM.session_id == job.session_id,
+                        MessageORM.user_id == job.user_id,
+                        MessageORM.client_message_id == marker,
+                        MessageORM.role == "assistant",
+                        MessageORM.finish == "skill_job_receipt",
+                    )
+                )
+            ).scalar_one_or_none()
+        if duplicate is None:
+            # A broken FK or another constraint is not successful idempotency;
+            # keep the outbox event unstamped so the failure remains visible.
+            raise integrity_error
         return False
-    except Exception as e:
-        log.warning(f"Receipt for job {job.id} not written: {e}")
+    except Exception as exc:
+        # ORM/driver exceptions may embed SQL parameters, user input, or
+        # backend connection details.  The exception class is sufficient for
+        # the operator log; the original error still propagates with traceback.
+        log.warning(
+            f"Receipt for job {job.id} not written: {type(exc).__name__}"
+        )
         raise
 
     from bus import bus

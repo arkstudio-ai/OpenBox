@@ -141,45 +141,48 @@ async def test_sessionless_job_writes_no_receipt(monkeypatch):
     assert parts == []
 
 
-async def test_receipt_written_before_stamp_survives_bus_failure(monkeypatch):
-    """Order is receipt → publish → stamp: a wire failure leaves the event
-    unstamped for retry, and the already-written receipt is not duplicated."""
+async def test_bus_outage_delays_the_receipt_but_never_loses_it(monkeypatch):
+    """Per-job wire ordering means a bus outage holds the terminal event (and
+    with it the receipt) instead of skipping ahead. Nothing is lost: once the
+    bus recovers, the events publish in order and exactly one receipt lands."""
     from bus import bus
 
     user = "u_" + uuid.uuid4().hex[:8]
     session_id = await _make_session(user)
-    await _finished_job(session_id=session_id, user_id=user)
+    job = await _finished_job(session_id=session_id, user_id=user)
 
-    def boom(event_type, data=None):
+    async def boom(event_type, data=None, **kwargs):
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr(bus, "publish", boom)
+    monkeypatch.setattr(bus, "publish_confirmed", boom)
     assert await outbox.publish_pending() == 0
-    messages, parts = await _receipts_for(session_id)
-    assert len(messages) == 1  # receipt is durable even though the wire failed
+    messages, _ = await _receipts_for(session_id)
+    assert messages == []
 
-    from sqlalchemy import select
+    published = []
 
-    from db.base import get_db_session
-    from db.models.skill_job_event import SkillJobEvent
+    async def ok(event_type, data=None, **kwargs):
+        published.append((data or {}).get("seq"))
 
-    async with get_db_session() as db:
-        unstamped = (
-            await db.execute(
-                select(SkillJobEvent).where(SkillJobEvent.published_at.is_(None))
-            )
-        ).scalars().all()
-    assert len(unstamped) >= 1
-
+    monkeypatch.setattr(bus, "publish_confirmed", ok)
     monkeypatch.setattr(bus, "publish", lambda t, d=None: None)
-    assert await outbox.publish_pending() >= 1
+    assert await outbox.publish_pending() >= 3
+
     messages, parts = await _receipts_for(session_id)
-    assert len(messages) == 1 and len(parts) == 1  # replay did not duplicate
+    assert len(messages) == 1 and len(parts) == 1
+    assert parts[0].data["jobId"] == job.id
+    assert published == sorted(published), "wire events must keep per-job order"
+
+    # A replay publishes nothing new and never duplicates the receipt.
+    await outbox.publish_pending()
+    messages, parts = await _receipts_for(session_id)
+    assert len(messages) == 1 and len(parts) == 1
 
 
 async def test_receipt_marker_unique_is_db_enforced():
     """Two racing publishers must collide on the partial unique index, not on
-    a check-then-insert."""
+    a check-then-insert. The index is scoped to real receipt rows so a user
+    message can never squat the marker."""
     import pytest
     from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
@@ -193,14 +196,14 @@ async def test_receipt_marker_unique_is_db_enforced():
         db.add(Message(
             id="message_race1_" + uuid.uuid4().hex[:8], session_id=session_id,
             user_id=user, role="assistant", client_message_id=marker,
-            created_at=NOW(),
+            finish="skill_job_receipt", created_at=NOW(),
         ))
     with pytest.raises(SAIntegrityError):
         async with get_db_session() as db:
             db.add(Message(
                 id="message_race2_" + uuid.uuid4().hex[:8], session_id=session_id,
                 user_id=user, role="assistant", client_message_id=marker,
-                created_at=NOW(),
+                finish="skill_job_receipt", created_at=NOW(),
             ))
 
 

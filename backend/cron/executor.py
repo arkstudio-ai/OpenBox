@@ -186,13 +186,13 @@ async def execute_cron_job(job: dict) -> dict:
         return {"status": "error", "error": error_msg, "run_id": run_id}
 
     finally:
-        # Drop the temp session's sandbox binding. On Wuying the shared
-        # desktop survives (delete_container is a no-op there); on Docker the
-        # container is destroyed only if no live session still uses it.
+        # Drop only this process's temp-session binding. Global sandbox
+        # lifetime is decided by the database-guarded idle reaper, not a local
+        # session reference count that cannot see worker/API replicas.
         if temp_session_id:
             try:
                 from sandbox import sandbox_manager
-                await sandbox_manager.release(temp_session_id)
+                await sandbox_manager.release(temp_session_id, user_id=user_id)
             except Exception as e:
                 log.debug(f"Sandbox release for {temp_session_id} failed: {e}")
 

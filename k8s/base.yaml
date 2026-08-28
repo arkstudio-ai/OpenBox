@@ -37,13 +37,13 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["create", "delete", "get", "list", "watch"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "delete", "get", "list"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["create", "delete", "get", "list"]
+    verbs: ["create", "delete", "get", "list", "patch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -205,9 +205,38 @@ spec:
         - name: worker
           image: gcr.io/PROJECT_ID/openbox-backend:latest
           command: ["python", "-m", "skill_runtime.worker_main"]
+          envFrom:
+            # Worker handlers need the same provider/OSS/video configuration
+            # as the API role. Explicit entries below remain the documented
+            # defaults; secret keys supply deployment-specific credentials.
+            - secretRef:
+                name: openbox-secrets
           env:
             - name: SKILL_WORKER_QUEUES
               value: "default"
+            - name: SANDBOX_PROVIDER
+              value: "kubernetes"
+            - name: K8S_NAMESPACE
+              value: "openbox-sandbox"
+            - name: K8S_SANDBOX_SERVICE_ACCOUNT
+              value: "sandbox-pods"
+            - name: SANDBOX_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: SANDBOX_IMAGE
+            - name: BLOB_PROVIDER
+              value: "azure"
+            - name: BLOB_AZURE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: BLOB_AZURE_CONNECTION_STRING
+            - name: BLOB_AZURE_CONTAINER
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: BLOB_AZURE_CONTAINER
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

@@ -8,12 +8,45 @@ from tool.skill_job import WAIT_BUDGET_PER_TURN, skill_job_tool
 from tool.tool import ToolContext
 
 
+async def _make_session(user_id: str) -> str:
+    """A job may only be filed under a session and project its caller owns, so
+    the tool tests need real rows rather than made-up ids."""
+    from datetime import datetime, timezone
+
+    from db.base import get_db_session
+    from db.models.project import Project
+    from db.models.session import Session as SessionORM
+
+    session_id = "session_" + uuid.uuid4().hex[:10]
+    project_id = "project_" + uuid.uuid4().hex[:10]
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(Project(
+            id=project_id, user_id=user_id, name="tool test",
+            created_at=now, updated_at=now,
+        ))
+        db.add(SessionORM(
+            id=session_id, user_id=user_id, title="tool test",
+            project_id=project_id, created_at=now, updated_at=now,
+        ))
+    return session_id
+
+
+async def _owned_ctx(**overrides):
+    user_id = overrides.pop("user_id", "u_" + uuid.uuid4().hex[:8])
+    session_id = overrides.pop("session_id", None) or await _make_session(user_id)
+    return _ctx(user_id=user_id, session_id=session_id, **overrides)
+
+
 def _ctx(**overrides):
     fields = dict(
         session_id="sess_" + uuid.uuid4().hex[:8],
         user_id="u_" + uuid.uuid4().hex[:8],
         message_id="msg_" + uuid.uuid4().hex[:8],
         part_id="part_" + uuid.uuid4().hex[:8],
+        # A skill may only be started once this agent turn actually loaded it
+        # (§8.1); the loop fills this from the skills it activated.
+        active_skills=frozenset({"builtin:demo-echo"}),
     )
     fields.update(overrides)
     return ToolContext(**fields)
@@ -41,7 +74,7 @@ async def _drive_until(job_id, user_id, statuses, ticks=40):
 
 
 async def test_start_admits_and_replay_reuses():
-    ctx = _ctx()
+    ctx = await _owned_ctx()
     first = await _run(
         {"action": "start", "skill": "builtin:demo-echo", "operation": "echo",
          "input": {"text": "hi"}},
@@ -63,13 +96,24 @@ async def test_start_admits_and_replay_reuses():
 
 async def test_start_unknown_skill_is_friendly():
     result = await _run(
-        {"action": "start", "skill": "builtin:nope", "operation": "x", "input": {}}, _ctx()
+        {"action": "start", "skill": "builtin:nope", "operation": "x", "input": {}},
+        await _owned_ctx(active_skills=frozenset({"builtin:nope"})),
     )
     assert result.title == "Unknown skill"
 
 
+async def test_start_requires_the_skill_to_be_activated_this_turn():
+    """A model may not start a skill this turn never loaded, even a real one."""
+    result = await _run(
+        {"action": "start", "skill": "builtin:demo-echo", "operation": "echo",
+         "input": {"text": "hi"}},
+        await _owned_ctx(active_skills=frozenset()),
+    )
+    assert result.title == "Skill not activated"
+
+
 async def test_wait_budget_exhausts_per_turn():
-    ctx = _ctx()
+    ctx = await _owned_ctx()
     started = await _run(
         {"action": "start", "skill": "builtin:demo-echo", "operation": "ask_then_echo",
          "input": {}},
@@ -93,7 +137,7 @@ async def test_wait_budget_exhausts_per_turn():
 
 
 async def test_resume_flow_through_tool():
-    ctx = _ctx()
+    ctx = await _owned_ctx()
     started = await _run(
         {"action": "start", "skill": "builtin:demo-echo", "operation": "ask_then_echo",
          "input": {}},
@@ -117,7 +161,7 @@ async def test_resume_flow_through_tool():
 
 
 async def test_cancel_through_tool():
-    ctx = _ctx()
+    ctx = await _owned_ctx()
     started = await _run(
         {"action": "start", "skill": "builtin:demo-echo", "operation": "slow_echo",
          "input": {"text": "x", "delay_seconds": 300}},
@@ -129,17 +173,17 @@ async def test_cancel_through_tool():
 
 
 async def test_other_users_job_invisible():
-    ctx = _ctx()
+    ctx = await _owned_ctx()
     started = await _run(
         {"action": "start", "skill": "builtin:demo-echo", "operation": "echo",
          "input": {"text": "hi"}},
         ctx,
     )
-    stranger = _ctx()
+    stranger = await _owned_ctx()
     result = await _run({"action": "get", "job_id": started.metadata["job_id"]}, stranger)
     assert result.title == "Job not found"
 
 
 async def test_validation_errors_are_tool_results():
-    result = await _run({"action": "start"}, _ctx())
+    result = await _run({"action": "start"}, await _owned_ctx())
     assert "validation error" in result.output.lower() or "Invalid input" in result.title

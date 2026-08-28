@@ -267,11 +267,21 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
                 completed_at=None,
             )
         )
-    await mark_segment_job(segment_id, existing_job_id, status="submitting")
+    await mark_segment_job(
+        segment_id,
+        existing_job_id,
+        user_id=user_id,
+        status="submitting",
+    )
     reconciliation = await prepare_segment_submission(ctx, production_id, segment_id)
     assert reconciliation["reconciling_existing"] is True
 
-    await mark_segment_job(segment_id, "video_job_failed", status="failed")
+    await mark_segment_job(
+        segment_id,
+        "video_job_failed",
+        user_id=user_id,
+        status="failed",
+    )
     failed = await execute_project(
         VideoProjectArgs(action="status", production_id=production_id),
         ctx,
@@ -292,11 +302,18 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
     with pytest.raises(RuntimeError, match="newly planned revision"):
         await prepare_segment_submission(ctx, production_id, segment_id)
 
-    await mark_segment_job(segment_id, "video_job_test", status="completed", output_asset_id=output_id)
+    await mark_segment_job(
+        segment_id,
+        "video_job_test",
+        user_id=user_id,
+        status="completed",
+        output_asset_id=output_id,
+    )
     comparison = await record_segment_transcript(
         segment_id,
         script,
         {"text": script, "model": "seed-asr"},
+        user_id=user_id,
         threshold=0.90,
     )
     assert comparison["verdict"] == "ok"

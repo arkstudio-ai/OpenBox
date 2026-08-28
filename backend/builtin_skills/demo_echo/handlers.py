@@ -35,15 +35,30 @@ async def run(ctx, operation: str, payload: dict, checkpoint: dict):
         answers = [i for i in ctx.inputs if i.kind == "user_answer"]
         if answers:
             text = str((answers[-1].payload or {}).get("text", ""))
+            # All answers visible in this invocation are superseded by the
+            # newest one; acknowledge them only after the value is accepted.
+            ctx.consume_inputs(answers)
             return Succeeded(result={"echo": text, "answered": True})
         if checkpoint.get("asked"):
             # Woken without an answer (e.g. reconcile) — keep waiting.
-            return WaitUser(checkpoint=checkpoint, prompt="What should I echo?")
+            return WaitUser(
+                checkpoint=checkpoint,
+                prompt="What should I echo?",
+                input_schema={
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            )
         await ctx.progress(phase="waiting_answer")
         return WaitUser(
             checkpoint={"asked": True},
             prompt="What should I echo?",
-            input_schema={"type": "object", "required": ["text"]},
+            input_schema={
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
         )
 
     if operation == "fail_then_succeed":

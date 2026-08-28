@@ -12,6 +12,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import signal
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# The web entrypoint already loads this file. A standalone local worker must
+# read the same configuration before get_config() is first materialized.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from core.log import create_logger
 
@@ -22,6 +29,16 @@ async def run(queues: tuple[str, ...] | None = None) -> None:
     from core.config import get_config
 
     config = get_config()
+    if not config.jwt_secret:
+        # Single-user storage is a cwd-local SQLite file. A standalone worker
+        # usually runs in another container/process filesystem and would create
+        # a second, empty ledger while the Web process keeps the real jobs.
+        # Until a shared embedded-db path is an explicit supported topology,
+        # fail loudly instead of appearing healthy and claiming nothing.
+        raise RuntimeError(
+            "standalone skill worker requires multi-user PostgreSQL; "
+            "use SKILL_WORKER_MODE=embedded in single-user mode"
+        )
 
     from skill_runtime import registry
     from skill_runtime.embedded import ensure_job_engine
@@ -35,7 +52,15 @@ async def run(queues: tuple[str, ...] | None = None) -> None:
 
         await init_redis_bus(config.redis_url)
 
+    # This role has its own provider object/cache. Rebuild it from the shared
+    # execution plane before handlers ask SandboxManager for a client. Docker
+    # containers are self-describing too; reconcile never deletes them.
+    from sandbox import provider
+
+    await provider.reconcile()
+
     handler_count = registry.load_builtin_handlers()
+    registry.validate_runtime_dependencies(config)
     log.info(f"Loaded {handler_count} builtin handler(s)")
 
     worker = SkillJobWorker(

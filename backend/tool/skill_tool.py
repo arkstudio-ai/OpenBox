@@ -40,6 +40,13 @@ _SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv",
               "dist", "build", ".next", ".cache"}
 
 
+def _activatable_job_keys(keys: tuple[str, ...], *, trusted: bool) -> tuple[str, ...]:
+    """Untrusted SKILL.md metadata may never name an internal builtin."""
+    if trusted:
+        return keys
+    return tuple(key for key in keys if key.startswith("user:"))
+
+
 def _host_files(base: str, limit: int = 20) -> list[str]:
     """Files bundled beside a host skill's SKILL.md, sampled.
 
@@ -84,6 +91,7 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     host_only = False
     container_error: str | None = None
     activated_tools: tuple[str, ...] = ()
+    activated_skills: tuple[str, ...] = ()
 
     from skill.skill import get_skill
     local_skill = await get_skill(args.skill)
@@ -91,13 +99,20 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     # The project checkout is what local development and browser testing are
     # validating. Letting an older /opt/openbox copy win made edits appear to
     # have no effect until somebody redeployed the cloud desktop.
-    if local_skill and local_skill.source == "project":
+    if local_skill and local_skill.source in {"project", "builtin"}:
         content = local_skill.content
         host_only = True
         files = _host_files(local_skill.path) if local_skill.path else []
         activated_tools = local_skill.allowed_tools
+        activated_skills = _activatable_job_keys(
+            local_skill.job_skill_keys,
+            # Project SKILL.md files are editable by the tenant. They may
+            # unlock ordinary tool schemas but cannot grant themselves access
+            # to an image-shipped internal job handler.
+            trusted=local_skill.source == "builtin",
+        )
         log.info(
-            f"Using project host copy of skill {args.skill!r}; it overrides any "
+            f"Using authoritative {local_skill.source} host copy of skill {args.skill!r}; it overrides any "
             "sandbox copy"
         )
 
@@ -116,6 +131,12 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
                 or skill_data.get("tools")
                 or metadata.get("allowed-tools")
                 or metadata.get("allowed_tools")
+            )
+            activated_skills = _activatable_job_keys(
+                normalize_skill_tools(
+                    metadata.get("job-skill-keys") or metadata.get("job_skill_keys")
+                ),
+                trusted=False,
             )
         except Exception as e:
             # Kept, not swallowed: an unreachable container and a genuinely
@@ -152,6 +173,10 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         host_only = True
         files = _host_files(skill.path) if skill.path else []
         activated_tools = skill.allowed_tools
+        activated_skills = _activatable_job_keys(
+            skill.job_skill_keys,
+            trusted=skill.source == "builtin",
+        )
 
     if args.args:
         content = content.replace("$ARGUMENTS", args.args)
@@ -199,7 +224,10 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
         output="\n".join(output_parts),
-        metadata={"activated_tools": list(activated_tools)},
+        metadata={
+            "activated_tools": list(activated_tools),
+            "activated_skills": list(activated_skills),
+        },
     )
 
 

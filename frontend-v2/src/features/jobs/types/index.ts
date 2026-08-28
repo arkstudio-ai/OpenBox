@@ -30,8 +30,15 @@ export interface SkillJobSnapshot {
   result: Record<string, unknown>
   errorCode: string | null
   errorMessage: string | null
+  /** Every invocation, including ordinary external polling. This is NOT the
+   *  budget: compare `retryCount` against `maxAttempts`, never `attempt`. */
   attempt: number
+  /** Fault budget consumed so far (failures only). */
+  retryCount: number
   maxAttempts: number
+  /** Cumulative time parked on external work, against the declared cap. */
+  externalWaitSeconds: number
+  maxExternalWaitSeconds: number
   sessionId: string | null
   queue: string
   lastEventSeq: number

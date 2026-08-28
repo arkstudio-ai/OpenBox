@@ -31,6 +31,50 @@ class UnknownOperation(Exception):
     pass
 
 
+class InvalidScope(Exception):
+    """The requested session/project is absent, deleted, or not user-owned."""
+
+
+async def _validated_scope(
+    user_id: str,
+    session_id: str | None,
+    project_id: str | None,
+) -> tuple[str | None, str | None]:
+    from db.models.project import Project
+    from db.models.session import Session
+
+    resolved_project = project_id
+    async with get_db_session() as db:
+        if session_id:
+            session_project = (
+                await db.execute(
+                    select(Session.project_id).where(
+                        Session.id == session_id,
+                        Session.user_id == user_id,
+                        Session.is_deleted == False,  # noqa: E712
+                    )
+                )
+            ).scalar_one_or_none()
+            if session_project is None:
+                raise InvalidScope("session is not owned by the current user")
+            if resolved_project and resolved_project != session_project:
+                raise InvalidScope("session does not belong to the requested project")
+            resolved_project = session_project
+        if resolved_project:
+            owned_project = (
+                await db.execute(
+                    select(Project.id).where(
+                        Project.id == resolved_project,
+                        Project.user_id == user_id,
+                        Project.is_deleted == False,  # noqa: E712
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_project is None:
+                raise InvalidScope("project is not owned by the current user")
+    return session_id, resolved_project
+
+
 async def is_skill_enabled(user_id: str, manifest: SkillManifest) -> bool:
     async with get_db_session() as db:
         setting = (
@@ -48,31 +92,50 @@ async def is_skill_enabled(user_id: str, manifest: SkillManifest) -> bool:
 
 async def set_skill_enabled(user_id: str, skill_key: str, enabled: bool, settings_data: dict | None = None) -> None:
     now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        setting = (
-            await db.execute(
-                select(UserSkillSetting).where(
+    from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
+
+    values: dict = {"enabled": enabled, "updated_at": now}
+    if settings_data is not None:
+        values["settings_data"] = settings_data
+    try:
+        async with get_db_session() as db:
+            result = await db.execute(
+                update(UserSkillSetting)
+                .where(
                     UserSkillSetting.user_id == user_id,
                     UserSkillSetting.skill_key == skill_key,
                 )
+                .values(**values)
             )
-        ).scalar_one_or_none()
-        if setting is None:
-            db.add(
-                UserSkillSetting(
-                    user_id=user_id,
-                    skill_key=skill_key,
-                    enabled=enabled,
-                    settings_data=settings_data or {},
-                    created_at=now,
-                    updated_at=now,
+            if result.rowcount == 0:
+                db.add(
+                    UserSkillSetting(
+                        user_id=user_id,
+                        skill_key=skill_key,
+                        enabled=enabled,
+                        settings_data=settings_data or {},
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
+                await db.flush()
+    except IntegrityError as integrity_error:
+        # Concurrent first writes: the unique key chooses one insert, and the
+        # loser applies its requested final value as an ordinary update.
+        async with get_db_session() as db:
+            result = await db.execute(
+                update(UserSkillSetting)
+                .where(
+                    UserSkillSetting.user_id == user_id,
+                    UserSkillSetting.skill_key == skill_key,
+                )
+                .values(**values)
             )
-        else:
-            setting.enabled = enabled
-            if settings_data is not None:
-                setting.settings_data = settings_data
-            setting.updated_at = now
+            if result.rowcount == 0:
+                # Not a concurrent unique-key race (for example a broken FK):
+                # do not convert a real integrity failure into a silent no-op.
+                raise integrity_error
 
 
 async def start_job(
@@ -104,6 +167,13 @@ async def start_job(
             f"operation {operation} is not enabled on this deployment ({op.enabledConfigFlag})"
         )
     validate_input(op, input_data)
+    if op.outputSchema is not None and not isinstance(op.outputSchema, dict):
+        raise ManifestError(
+            "referenced outputSchema is not resolved by this runtime; use an inline schema"
+        )
+    if not idempotency_key or len(idempotency_key) > 180:
+        raise ManifestError("idempotency_key must contain 1 to 180 characters")
+    session_id, project_id = await _validated_scope(user_id, session_id, project_id)
 
     now = datetime.now(timezone.utc)
     return await repo.admit_job(
@@ -112,6 +182,7 @@ async def start_job(
         operation=operation,
         idempotency_key=idempotency_key,
         input_data=input_data,
+        output_schema=op.outputSchema or {},
         runtime_kind=manifest.runtime.kind,
         queue_name=op.queue,
         session_id=session_id,
@@ -120,6 +191,10 @@ async def start_job(
         max_attempts=op.maxAttempts,
         deadline_at=now + timedelta(seconds=op.maxTotalSeconds),
         handler_version=manifest.runtime.handlerVersion,
+        invocation_timeout_seconds=op.invocationTimeoutSeconds,
+        max_external_wait_seconds=op.maxExternalWaitSeconds,
+        user_input_timeout_seconds=op.userInputTimeoutSeconds,
+        cancel_requires_handler=op.cancelRequiresHandler,
     )
 
 
@@ -138,6 +213,15 @@ def job_snapshot(job) -> dict:
     """The authoritative card payload shared by the API, tool and WS."""
     manifest = get_manifest(job.skill_key)
     phase_label = (manifest.phases.get(job.phase) if manifest else None) or None
+    external_wait_seconds = int(job.external_wait_seconds or 0)
+    if job.status == "waiting_external" and job.external_wait_started_at is not None:
+        started = job.external_wait_started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        external_wait_seconds += max(
+            0,
+            int((datetime.now(timezone.utc) - started).total_seconds()),
+        )
     return {
         "jobId": job.id,
         "skillKey": job.skill_key,
@@ -151,7 +235,10 @@ def job_snapshot(job) -> dict:
         "errorCode": job.error_code,
         "errorMessage": job.error_message,
         "attempt": job.attempt_count,
+        "retryCount": job.retry_count,
         "maxAttempts": job.max_attempts,
+        "externalWaitSeconds": external_wait_seconds,
+        "maxExternalWaitSeconds": job.max_external_wait_seconds,
         "sessionId": job.session_id,
         "queue": job.queue_name,
         "lastEventSeq": job.last_event_seq,

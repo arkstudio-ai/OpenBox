@@ -2,6 +2,8 @@
 name: video-production
 description: 通过持久后台作业制作短视频：规划分段、审批后生成、转写质检、渲染成片。作业由平台 Worker 驱动，你只负责启动与解读。
 allowed-tools: video_identity, video_project, skill_job
+job-skill-keys: builtin:video-production
+enabled-config-flag: skill_jobs_video_write
 ---
 
 # 视频制作（v2 · 后台作业版）
@@ -28,8 +30,9 @@ allowed-tools: video_identity, video_project, skill_job
 ## 状态解读
 
 - `waiting_external`：供应商/无影仍在工作，平台会自己推进，无需你做任何事。
-- `waiting_user`：作业在等用户输入（如提交结果不明确需人工核实），
-  转述卡片里的问题即可；回答走 Job Card 或 action=resume。
+- `waiting_user`：普通问题由用户通过 Job Card 或 action=resume 回答；若卡片
+  标记为 operator review（例如远端提交结果不明确），只能由运维审计入口处理，
+  不要让用户猜测或要求 Agent 盲目重提。
 - `failed` + `error_code=provider_failed`：该段生成失败，引导用户创建
   新修订后重新审批提交；**绝不**对同一修订重复 start。
 - 取消用 action=cancel；供应商已成功的产物不会被销毁（cancel_race）。

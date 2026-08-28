@@ -1,6 +1,11 @@
 # OpenBox 通用 Skill Script 作业运行时整体改建规划
 
-> 文档状态：Architecture / Execution Plan v2（已吸收 2026-08-28 对 OpenBox / codex / opencode / symphony 的逐条源码核对与评审意见，待评审）<br>
+> 文档状态：Architecture / Execution Plan v2（已吸收 2026-08-28 对 OpenBox / codex / opencode / symphony 的逐条源码核对与评审意见）<br>
+> 实施进度（2026-08-28）：PR#0–17 已落地——止血（`e0bc0b0`）、通用 Runtime 底座与
+> Worker（PR#1–7）、Manifest/设置/API/工具/demo（PR#8–13）、web+mobile Job Card 与
+> 聊天回执（PR#11/§8.3）、视频四操作迁移（PR#14–17，灰度闸 `SKILL_JOBS_VIDEO_WRITE`
+> 默认关）。待办：PR#18 sandbox runtime（里程碑 C）、PR#19 旧工具删除（灰度完成且
+> 旧 Job 清零后）、PR#20 生产加固；无影链路已对 dev 桌面实测线协议。<br>
 > 编写日期：2026-08-28<br>
 > 适用范围：OpenBox Agent、Skill、Script、异步作业、多用户运行与无影执行节点<br>
 > 首个迁移样例：`video-production`，但视频不是平台核心抽象<br>

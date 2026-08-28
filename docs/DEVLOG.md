@@ -252,3 +252,18 @@ npm run dev
 2. **无用户认证** — 后端 API 无登录/权限控制
 3. **容器状态非持久化** — 后端重启后丢失容器映射（容器本身仍在 Docker 中）
 4. **单机部署** — 不支持多节点
+
+---
+
+## Skill Job Runtime 阶段（2026-08-28）
+
+按 `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`（v2）实施，一次性落地 PR#0–17：
+
+- **止血**（`video/job_recovery.py`）：滞留视频 finalize 的启动恢复 + cron piggyback 补扫；上线首日即在 dev 库发现并安全处理两个 8/27 遗留任务。
+- **通用 Runtime**（`backend/skill_runtime/`）：九态状态机、七张表（PG 实测 migration `a2c4e6f8b0d1`）、幂等接纳（服务端从 tool_call 派生默认键）、条件 UPDATE claim + fencing token、七种 Outcome 结算、transactional outbox、Reconciler（lease 回收/外部到期/deadline）、独立 worker 角色（compose + k8s 清单）与开发 embedded 模式（单用户模式初始化 `.openbox/skill_jobs.db`）。
+- **取消语义**：desired_state + handler 收敛；provider 事实优先（cancel_race 保留付费产物）；`WaitExternal.acknowledges_cancel` 保护转存中等待。
+- **接口面**：`/api/skill-jobs*` + `/api/skills/settings`、通用 `skill_job` 工具（wait 每回合 2 次预算）、web/mobile Job Card 与 dock、终态聊天回执（`SkillJobPart`，零 Token）。
+- **视频迁移**：`builtin_skills/video_production` 四操作（status/generate/transcribe/render），灰度闸 `SKILL_JOBS_VIDEO_WRITE` 默认关；submit_unknown 人工审计绝不自动重提；无影 media 队列线协议已对 dev 桌面实测（`wuying_dev.sh`）。
+- **测试**：新增 ~120 项（含 100 并发幂等、stale lease 拒写、demo/视频 E2E、双用户 IDOR、回执解析回归）；浏览器全链路验收通过。
+
+待办：PR#18 sandbox runtime（用户脚本，里程碑 C）、PR#19 旧视频工具删除（灰度完成后）、PR#20 生产加固；Phase 5 灰度开启为运维动作（开关 + 换用包内 v2 SKILL.md）。

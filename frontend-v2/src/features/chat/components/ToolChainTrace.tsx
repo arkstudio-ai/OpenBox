@@ -1,95 +1,47 @@
-// Tool-chain trace, ported from DEEIX-Chat's message-tool-trace.tsx: one
-// collapsed row ("工具调用 · N 次工具调用") over a timeline — a connector rail
-// with a dot per call, a fixed label column, and a detail column that renders
-// each call's structured output (ToolOutput) instead of a flat text blob.
+// Tool-chain trace: one collapsed row over the calls the turn made.
+//
+// The rows are the same ones the task card uses (ToolRows) — a call reads the
+// same way wherever it is listed, and its request/response detail stays behind
+// the row instead of under it.
 import { useTranslation } from "react-i18next"
-import { cn } from "@/shared/lib/cn"
-import type { SubtaskPart, ToolPart } from "@/shared/types/api"
 import type { ToolLike } from "../lib/turn-view"
-import { describeTool } from "../lib/tool-map"
-import { SubagentLine } from "./SubagentLine"
-import { ToolOutput } from "./tool/ToolOutput"
+import { describeTool, toolTarget } from "../lib/tool-map"
+import { ToolRows } from "./ToolRows"
 import { TraceShell } from "./TraceShell"
 
-interface Step {
-  key: string
-  label: string
-  failed: boolean
-  running: boolean
-  part: ToolPart | SubtaskPart
-}
-
-function stepOf(part: ToolLike, kindLabel: (k: string) => string): Step {
-  const label = part.type === "subtask" ? kindLabel("task") : kindLabel(describeTool(part.tool).kindKey)
-  return {
-    key: part.id,
-    label,
-    failed: part.status === "error",
-    running: part.status === "running" || part.status === "pending",
-    part,
-  }
-}
-
-function ToolChainRows({ steps }: { steps: Step[] }) {
-  return (
-    <ol className="space-y-0.5">
-      {steps.map((step, i) => (
-        <li
-          key={step.key}
-          className="group/row text-xs grid grid-cols-[0.875rem_8rem_minmax(0,1fr)] gap-x-5 gap-y-0.5 leading-5 max-sm:grid-cols-[0.875rem_minmax(0,1fr)] max-sm:gap-x-2"
-        >
-          <div className="relative flex justify-center">
-            {i > 0 && <span className="bg-hair absolute -top-0.5 bottom-1/2 w-px" />}
-            {i < steps.length - 1 && <span className="bg-hair absolute top-1/2 -bottom-0.5 w-px" />}
-            <span
-              className={cn(
-                "ring-bg group-hover/row:bg-ink relative z-10 mt-[0.45rem] size-1.5 rounded-full ring-4 transition-colors",
-                step.failed ? "bg-danger" : step.running ? "bg-accent animate-pulse-dot" : "bg-n500",
-              )}
-            />
-          </div>
-          <div className="min-w-0 max-sm:col-start-2">
-            <span
-              className={cn(
-                "group-hover/row:text-ink block truncate font-medium transition-colors",
-                step.failed ? "text-danger" : "text-n700",
-              )}
-            >
-              {step.label}
-            </span>
-          </div>
-          <div className="min-w-0 pb-2 max-sm:col-start-2">
-            <ToolOutput part={step.part} />
-            {/* A task row is silent for as long as its subagent works, which
-                is usually the longest thing in the chain. */}
-            {step.part.type === "tool" && step.part.tool === "task" && (
-              <SubagentLine part={step.part} inline />
-            )}
-          </div>
-        </li>
-      ))}
-    </ol>
-  )
+/** The call in flight, else the last one that finished. */
+function currentCall(tools: ToolLike[]): ToolLike | undefined {
+  const running = tools.filter((t) => t.status === "running" || t.status === "pending")
+  return running[running.length - 1] ?? tools[tools.length - 1]
 }
 
 interface Props {
-  tools: Array<ToolPart | SubtaskPart>
+  tools: ToolLike[]
   streaming: boolean
-  autoCollapseReady: boolean
 }
 
-export function ToolChainTrace({ tools, streaming, autoCollapseReady }: Props) {
+export function ToolChainTrace({ tools, streaming }: Props) {
   const { t } = useTranslation("chat")
   if (tools.length === 0) return null
-  const steps = tools.map((p) => stepOf(p, (k) => t(`kind.${k}`)))
+
+  // Collapsed, this row is all the reader has, so while the chain runs it
+  // names the call rather than counting them: "执行命令 npm test" says more
+  // than "3 次工具调用" about a turn that is still going.
+  const current = streaming ? currentCall(tools) : undefined
+  const subtitle =
+    current && current.type === "tool"
+      ? `${t(`kind.${describeTool(current.tool).kindKey}`)} ${toolTarget(current)}`
+      : current && current.type === "subtask"
+        ? `${t("kind.task")} ${current.description}`
+        : t("trace.tool.summaryCount", { count: tools.length })
+
   return (
     <TraceShell
       title={streaming ? t("trace.tool.titleActive") : t("trace.tool.titleDone")}
-      subtitle={t("trace.tool.summaryCount", { count: steps.length })}
+      subtitle={subtitle}
       streaming={streaming}
-      autoCollapseReady={autoCollapseReady}
     >
-      <ToolChainRows steps={steps} />
+      <ToolRows tools={tools} />
     </TraceShell>
   )
 }

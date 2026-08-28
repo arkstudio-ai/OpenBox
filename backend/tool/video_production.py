@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
+from urllib.parse import quote, urlsplit
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import select, update
@@ -30,6 +31,12 @@ _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
 _IMAGE_PREFIX = "image/"
 _RATIOS = {"16:9", "9:16", "3:4", "1:1", "4:3", "21:9", "adaptive"}
 _RESOLUTIONS = {"480p", "720p", "1080p"}
+_BOSSIP_RELAY_HOST = "openapi.bossipai.com.cn"
+_BOSSIP_RELAY_MODELS = {
+    "480p": "seedance-2.0-480-fastⅠ",
+    "720p": "video-sd-720p-proⅠ",
+    "1080p": "video-sd-1080p-pro",
+}
 
 
 class VideoGenerateArgs(BaseModel):
@@ -115,7 +122,8 @@ class VideoTranscribeArgs(BaseModel):
 
 
 # The provider target is now the multi-channel route object; the old name is
-# kept for the existing call sites and tests.
+# kept for the existing call sites and tests. The ark channel additionally
+# carries a wire_format (TokenSpace contents vs the BossIP public relay).
 from tool.video_providers import VideoRoute as VideoProviderTarget  # noqa: E402
 
 
@@ -170,6 +178,86 @@ def _configured_transcription_target() -> VideoTranscriptionTarget:
 
 def _auth_header(key: str) -> str:
     return key if key.lower().startswith("bearer ") else f"Bearer {key}"
+
+
+def _content_url(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return str(value.get("url") or "").strip()
+    return ""
+
+
+def _bossip_video_payload(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate TokenSpace contents format to BossIP's public `/v1/videos` shape.
+
+    The relay deliberately owns material-library upload under its own upstream
+    account. OpenBox therefore gives it short-lived OSS URLs instead of
+    account-scoped TokenSpace ``asset://`` identifiers.
+    """
+    resolution = str(payload.get("resolution") or "").lower()
+    if resolution not in _BOSSIP_RELAY_MODELS:
+        raise RuntimeError(f"BossIP relay does not support resolution: {resolution}")
+
+    configured_model = target.model.strip()
+    model = (
+        configured_model
+        if configured_model in _BOSSIP_RELAY_MODELS.values()
+        else _BOSSIP_RELAY_MODELS[resolution]
+    )
+    native_resolution = next(
+        key for key, candidate in _BOSSIP_RELAY_MODELS.items() if candidate == model
+    )
+    if native_resolution != resolution:
+        raise RuntimeError(
+            f"BossIP relay model {model} requires {native_resolution}, not {resolution}"
+        )
+    if resolution == "480p" and payload.get("generate_audio") is True:
+        raise RuntimeError(
+            "BossIP relay 480p compatibility model does not support generated audio; use 720p or 1080p"
+        )
+
+    prompt = ""
+    images: list[str] = []
+    videos: list[str] = []
+    for item in payload.get("content") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        if kind == "text" and not prompt:
+            prompt = str(item.get("text") or "").strip()
+        elif kind == "image_url":
+            url = _content_url(item.get("image_url"))
+            if url:
+                images.append(url)
+        elif kind == "video_url":
+            url = _content_url(item.get("video_url"))
+            if url:
+                videos.append(url)
+    if not prompt:
+        raise RuntimeError("BossIP relay video request requires a prompt")
+
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "resolution": resolution,
+    }
+    duration = payload.get("duration")
+    if isinstance(duration, int) and 4 <= duration <= 15:
+        body["duration"] = duration
+    ratio = str(payload.get("ratio") or "").strip()
+    if ratio and ratio != "adaptive":
+        body["ratio"] = ratio
+    for option in ("generate_audio", "watermark", "return_last_frame", "seed"):
+        if option in payload:
+            body[option] = payload[option]
+    if images:
+        body["image_url"] = images[0]
+        if len(images) > 1:
+            body["extra_images"] = images[1:]
+    if videos:
+        body["extra_videos"] = videos
+    return body
 
 
 def _safe_filename(requested: str | None, job_id: str, *, rendered: bool = False) -> str:
@@ -267,6 +355,111 @@ async def _resolve_generation_inputs(
     if len(ordered) > 8:
         raise RuntimeError("video generation accepts at most 8 distinct input assets")
     return ordered, character
+
+
+async def _materialize_provider_inputs(
+    rows: list[Any],
+    character: Any | None,
+    *,
+    character_reference_type: str,
+    character_identity_id: str | None,
+    ctx: ToolContext,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Convert owned OSS rows into stable provider ``asset://`` references.
+
+    An actual person's explicit character image is constrained to their active
+    LivenessFace group. Every other reference goes through the user's AIGC
+    material group, which removes expiring/cross-account URLs from paid tasks.
+    """
+    from video.materials import materialize_generation_asset
+
+    content: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    for row in rows:
+        real_character = bool(
+            character
+            and row.id == character.id
+            and character_reference_type == "real_person"
+        )
+        if real_character and not character_identity_id:
+            raise RuntimeError(
+                "real-person generation requires an active character identity before submission"
+            )
+        uri, binding = await materialize_generation_asset(
+            ctx.user_id,
+            row.id,
+            identity_id=character_identity_id if real_character else None,
+        )
+        if row.mime.startswith(_IMAGE_PREFIX):
+            content.append(
+                {"type": "image_url", "image_url": {"url": uri}, "role": "reference_image"}
+            )
+        else:
+            content.append(
+                {"type": "video_url", "video_url": {"url": uri}, "role": "reference_video"}
+            )
+        bindings.append(
+            {
+                "source_asset_id": row.id,
+                "material_asset_id": binding.get("material_asset_id"),
+                "provider_asset_id": binding.get("provider_asset_id"),
+                "group_id": binding.get("identity_id"),
+                "group_type": "LivenessFace" if real_character else "AIGC",
+            }
+        )
+    return content, bindings
+
+
+def _relay_provider_inputs(
+    rows: list[Any],
+    character: Any | None,
+    *,
+    character_reference_type: str,
+    input_url_ttl_seconds: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Give BossIP public source URLs and let its adapter own materialization.
+
+    TokenSpace asset ids are scoped to the upstream credential that created
+    them. Reusing OpenBox's direct-account ids through the relay would fail as
+    cross-account assets, so the relay receives signed OSS URLs and records its
+    own stable material bindings instead.
+    """
+    from core.oss import get_oss
+
+    oss = get_oss()
+    content: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    for row in rows:
+        url = oss.presign_get(row.oss_key, expires_sec=input_url_ttl_seconds)
+        if row.mime.startswith(_IMAGE_PREFIX):
+            content.append(
+                {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
+            )
+        else:
+            content.append(
+                {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
+            )
+        requested_reference_type = (
+            "real_person"
+            if (
+                character
+                and row.id == character.id
+                and character_reference_type == "real_person"
+            )
+            else "virtual"
+        )
+        bindings.append(
+            {
+                "source_asset_id": row.id,
+                "managed_by": "bossip_relay",
+                # The current BossIP adapter owns an AIGC material group. A
+                # prior LivenessFace approval on another TokenSpace account
+                # cannot be claimed or transferred by changing gateways.
+                "group_type": "AIGC",
+                "requested_reference_type": requested_reference_type,
+            }
+        )
+    return content, bindings
 
 
 def _validate_generation(model: str, resolution: str, duration: int, generate_audio: bool) -> None:
@@ -541,11 +734,14 @@ def _public_error(exc: Exception) -> str:
 async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
     import httpx
 
+    relay = target.wire_format == "bossip_videos"
+    path = "/v1/videos" if relay else "/api/v3/contents/generations/tasks"
+    request_payload = _bossip_video_payload(target, payload) if relay else payload
     async with httpx.AsyncClient(timeout=target.submit_timeout_seconds, follow_redirects=True) as client:
         response = await client.post(
-            f"{target.base_url}/api/v3/contents/generations/tasks",
+            f"{target.base_url}{path}",
             headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
-            json=payload,
+            json=request_payload,
         )
     if response.status_code not in (200, 201, 202):
         response.raise_for_status()
@@ -562,9 +758,15 @@ async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[st
         from tool import video_providers
 
         return await video_providers.status(target, task_id)
+    encoded_task_id = quote(task_id, safe="")
+    path = (
+        f"/v1/videos/{encoded_task_id}"
+        if target.wire_format == "bossip_videos"
+        else f"/api/v3/contents/generations/tasks/{encoded_task_id}"
+    )
     async with httpx.AsyncClient(timeout=target.status_timeout_seconds, follow_redirects=True) as client:
         response = await client.get(
-            f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
+            f"{target.base_url}{path}",
             headers={"Authorization": _auth_header(target.api_key)},
         )
     response.raise_for_status()
@@ -578,6 +780,10 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
         # The gateway channels expose no upstream cancel API; the caller marks
         # the local job cancelled and the provider task may still complete.
         return
+    if target.wire_format == "bossip_videos":
+        raise RuntimeError(
+            "BossIP public relay does not expose remote task cancellation; the provider task may continue"
+        )
     async with httpx.AsyncClient(timeout=target.status_timeout_seconds) as client:
         response = await client.delete(
             f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
@@ -708,12 +914,14 @@ def _provider_state(data: dict[str, Any], route: Any = None) -> str:
         "queued": "queued",
         "pending": "queued",
         "running": "in_progress",
+        "processing": "in_progress",
         "in_progress": "in_progress",
         "succeeded": "completed",
         "success": "completed",
         "completed": "completed",
         "failed": "failed",
         "failure": "failed",
+        "error": "failed",
         "cancelled": "cancelled",
         "canceled": "cancelled",
     }.get(value, "in_progress")
@@ -724,10 +932,17 @@ def _provider_video_url(data: dict[str, Any], route: Any = None) -> str:
         from tool import video_providers
 
         return video_providers.result_video_url(route, data)
-    content = data.get("content") or {}
-    if not isinstance(content, dict):
-        return ""
-    return str(content.get("video_url") or content.get("url") or "")
+    containers = [data]
+    for key in ("result", "data", "content"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        for key in ("video_url", "url", "download_url", "result_url"):
+            value = str(container.get(key) or "").strip()
+            if value:
+                return value
+    return ""
 
 
 async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -> int:
@@ -980,9 +1195,6 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     try:
         target, settings = _configured_target(None)
-        from core.oss import get_oss
-
-        oss = get_oss()
     except Exception as exc:
         return ToolResult(title="Video generation is not configured", output=_public_error(exc))
 
@@ -1019,6 +1231,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 approved["input_assets"],
                 ctx,
             )
+            from core.oss import get_oss
             from tool import video_providers
 
             video_providers.validate_request(
@@ -1029,6 +1242,31 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 generate_audio=generate_audio,
                 input_mimes=[row.mime for row in inputs],
             )
+            character_reference_type = (
+                approved.get("character_reference_type") or "virtual"
+            )
+            channel = getattr(target, "channel", "ark")
+            provider_content: list[dict[str, Any]] = []
+            material_bindings: list[dict[str, Any]] = []
+            if channel == "ark":
+                # The relay/material-library flows (verified real persons, AIGC
+                # groups) apply only to the ark wire; gateway channels receive
+                # short-lived OSS URLs directly in build_payload below.
+                if target.wire_format == "bossip_videos":
+                    provider_content, material_bindings = _relay_provider_inputs(
+                        inputs,
+                        character_reference,
+                        character_reference_type=character_reference_type,
+                        input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
+                    )
+                else:
+                    provider_content, material_bindings = await _materialize_provider_inputs(
+                        inputs,
+                        character_reference,
+                        character_reference_type=character_reference_type,
+                        character_identity_id=approved.get("character_identity_id"),
+                        ctx=ctx,
+                    )
             request_data = {
                 "production_id": approved["production_id"],
                 "segment_id": approved["segment_id"],
@@ -1038,6 +1276,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "character_reference_asset_id": (
                     character_reference.id if character_reference else None
                 ),
+                "character_reference_type": character_reference_type,
+                "character_identity_id": approved.get("character_identity_id"),
+                "provider_material_bindings": material_bindings,
+                "provider_wire_format": target.wire_format,
                 "resolution": resolution,
                 "ratio": ratio,
                 "duration": duration,
@@ -1054,7 +1296,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             )
             prompt_hash = None
             if getattr(settings, "dedupe", False):
-                input_digests = await _input_content_digests(inputs, oss)
+                input_digests = await _input_content_digests(inputs, get_oss())
                 if input_digests is not None:
                     prompt_hash = video_providers.compute_prompt_hash(
                         prompt=prompt,
@@ -1140,19 +1382,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             },
                         )
 
-            channel = getattr(target, "channel", "ark")
             if channel == "ark":
-                content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-                for row in inputs:
-                    url = oss.presign_get(row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds)
-                    if row.mime.startswith(_IMAGE_PREFIX):
-                        content.append(
-                            {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
-                        )
-                    else:
-                        content.append(
-                            {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
-                        )
+                content: list[dict[str, Any]] = [
+                    {"type": "text", "text": prompt},
+                    *provider_content,
+                ]
                 payload: dict[str, Any] = {
                     "model": target.model,
                     "content": content,
@@ -1164,6 +1398,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 }
                 submit_path = None
             else:
+                oss = get_oss()
                 refs = [
                     {
                         "kind": "image" if row.mime.startswith(_IMAGE_PREFIX) else "video",
@@ -1266,6 +1501,14 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 },
             )
         except Exception as exc:
+            from video.materials import RealPersonAuthorizationRequired
+
+            if isinstance(exc, RealPersonAuthorizationRequired):
+                return ToolResult(
+                    title="真人授权后才能继续",
+                    output=_public_error(exc),
+                    metadata={"error": True, "authorization_required": True},
+                )
             if "job" in locals() and created:
                 provider_task_id = (
                     str(response.get("id") or "")

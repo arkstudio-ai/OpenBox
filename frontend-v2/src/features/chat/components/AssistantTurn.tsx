@@ -19,6 +19,7 @@ import { ThinkingRow } from "./ThinkingRow"
 import { ThinkingTrace } from "./ThinkingTrace"
 import { TodoCard } from "./TodoCard"
 import { ToolChainTrace } from "./ToolChainTrace"
+import { VideoIdentityCards } from "./VideoIdentityCards"
 import { WorkLogTrace } from "./WorkLogTrace"
 
 const Markdown = lazy(() => import("./Markdown"))
@@ -37,6 +38,34 @@ interface Props {
    *  one that may be edited. */
   todoEditable?: boolean
 }
+
+type ContentView = ReturnType<typeof buildAssistantContentView>
+type TurnView = ReturnType<typeof buildTurnView>
+
+function hasTurnActivity(content: ContentView, view: TurnView): boolean {
+  return (
+    content.hasFinal ||
+    content.progress.length > 0 ||
+    content.workEvents.length > 0 ||
+    content.resultGroups.length > 0 ||
+    Boolean(content.verification) ||
+    Boolean(view.todo) ||
+    view.thinking.trim().length > 0 ||
+    view.tools.length > 0
+  )
+}
+
+function needsFinalLabel(content: ContentView, view: TurnView): boolean {
+  return (
+    content.progress.length > 0 ||
+    content.workEvents.length > 0 ||
+    view.tools.length > 0 ||
+    Boolean(view.todo) ||
+    view.thinking.trim().length > 0 ||
+    content.resultGroups.length > 0
+  )
+}
+
 export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
   const parts = useMemo(() => messages.flatMap((message) => message.parts), [messages])
@@ -47,18 +76,7 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
   // working, and each of those blocks carries its own live heading, so a
   // second "正在思考中" underneath is both redundant and wrong: it claims the
   // model has not responded when it plainly has.
-  const hasActivity =
-    content.hasFinal ||
-    content.progress.length > 0 ||
-    content.workEvents.length > 0 ||
-    content.resultGroups.length > 0 ||
-    Boolean(content.verification) ||
-    Boolean(view.todo) ||
-    view.thinking.trim().length > 0 ||
-    view.tools.length > 0
-  // Process narration must not collapse the trace or masquerade as an answer.
-  // Only an actual final response closes the live work rows.
-  const autoCollapseReady = content.hasFinal
+  const hasActivity = hasTurnActivity(content, view)
   // Per-part activity flags (`thinkingStreaming` flips every time a tool part
   // lands after reasoning; `toolsStreaming` drops in the gap between two
   // calls). Feeding those raw into the trace rows made titles flicker between
@@ -67,13 +85,7 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
   const preAnswer = streaming && !content.hasFinal
   const thinkingLive = preAnswer && (view.thinkingStreaming || view.thinking.length > 0)
   const toolsLive = streaming && (view.toolsStreaming || !content.hasFinal)
-  const showFinalLabel =
-    content.progress.length > 0 ||
-    content.workEvents.length > 0 ||
-    view.tools.length > 0 ||
-    Boolean(view.todo) ||
-    view.thinking.trim().length > 0 ||
-    content.resultGroups.length > 0
+  const showFinalLabel = needsFinalLabel(content, view)
 
   return (
     <div className="group/msg flex w-full min-w-0 flex-col">
@@ -81,9 +93,8 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
         contextTokens={view.contextTokens}
         durationSec={view.durationSec}
         streaming={preAnswer}
-        autoCollapseReady={autoCollapseReady}
       />
-      <ThinkingTrace text={view.thinking} streaming={thinkingLive} autoCollapseReady={autoCollapseReady} />
+      <ThinkingTrace text={view.thinking} streaming={thinkingLive} />
       {view.todo ? (
         <TodoCard
           todo={view.todo}
@@ -96,13 +107,13 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
       {/* Whatever the card did not account for: on a todo turn that is the
           calls made outside any task, and on every other turn it is the
           whole chain, exactly as before. */}
-      <ToolChainTrace tools={view.tools} streaming={toolsLive} autoCollapseReady={autoCollapseReady} />
+      <ToolChainTrace tools={view.tools} streaming={toolsLive} />
       <WorkLogTrace
         events={content.workEvents}
         streaming={preAnswer}
-        autoCollapseReady={autoCollapseReady}
         defaultOpen={content.incomplete}
       />
+      <VideoIdentityCards parts={parts} sessionId={sessionId} />
 
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
         {streaming && !hasActivity ? (

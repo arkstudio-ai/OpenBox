@@ -12,17 +12,24 @@ from core.markdown import parse_frontmatter
 import tool.video_production as video_mod
 from tool.registry import register_builtin_tools
 from tool.video_production import (
+    VideoProviderTarget,
     VideoTranscriptionTarget,
     VideoGenerateArgs,
     VideoRenderArgs,
     _auth_header,
+    _bossip_video_payload,
+    _provider_status,
+    _provider_submit,
+    _provider_video_url,
     _provider_transcribe,
+    _relay_provider_inputs,
     _resolve_generation_inputs,
     _validate_generation,
     video_generate_tool,
     video_transcribe_tool,
     video_render_tool,
 )
+from tool.video_identity import video_identity_tool
 
 
 @pytest.mark.asyncio
@@ -102,9 +109,11 @@ async def test_dashscope_transcription_submit_poll_and_result(monkeypatch):
 
 
 def test_video_tools_are_skill_only_and_not_parallel_safe():
+    assert video_identity_tool.skill_only is True
     assert video_generate_tool.skill_only is True
     assert video_transcribe_tool.skill_only is True
     assert video_render_tool.skill_only is True
+    assert video_identity_tool.parallel_safe is False
     assert video_generate_tool.parallel_safe is False
     assert video_transcribe_tool.parallel_safe is False
     assert video_render_tool.parallel_safe is False
@@ -116,6 +125,7 @@ async def test_video_schemas_are_absent_until_the_skill_activates_them():
 
     ordinary = await resolve_step_tools(AGENTS["build"], None, [])
     assert "image_gen" not in ordinary
+    assert "video_identity" not in ordinary
     assert "video_project" not in ordinary
     assert "video_generate" not in ordinary
     assert "video_transcribe" not in ordinary
@@ -125,8 +135,16 @@ async def test_video_schemas_are_absent_until_the_skill_activates_them():
         AGENTS["build"],
         None,
         [],
-        activated_tools={"image_gen", "video_project", "video_generate", "video_transcribe", "video_render"},
+        activated_tools={
+            "image_gen",
+            "video_identity",
+            "video_project",
+            "video_generate",
+            "video_transcribe",
+            "video_render",
+        },
     )
+    assert loaded["video_identity"].skill_only is True
     assert loaded["image_gen"].skill_only is True
     assert loaded["video_generate"].skill_only is True
     assert loaded["video_transcribe"].skill_only is True
@@ -235,11 +253,10 @@ async def test_character_reference_rejects_video_assets(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_submit_records_and_sends_character_reference_first(monkeypatch):
-    import core.oss
-
     target = SimpleNamespace(
         model="doubao-seedance-2-0-260128",
         provider="doubao",
+        wire_format="tokenspace_contents",
     )
     settings = SimpleNamespace(
         default_resolution="720p",
@@ -273,14 +290,34 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
     )
     observed = {}
 
-    class FakeOss:
-        def presign_get(self, key, expires_sec):
-            return f"https://oss.test/{key}?ttl={expires_sec}"
-
     async def fake_resolve(character, refs, _ctx):
         assert character == "asset_portrait"
         assert refs == ["asset_scene"]
         return [portrait, scene], portrait
+
+    async def fake_materialize(rows, character, **kwargs):
+        assert rows == [portrait, scene]
+        assert character is portrait
+        assert kwargs["character_reference_type"] == "virtual"
+        assert kwargs["character_identity_id"] is None
+        return (
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "asset://asset-provider-portrait"},
+                    "role": "reference_image",
+                },
+                {
+                    "type": "video_url",
+                    "video_url": {"url": "asset://asset-provider-scene"},
+                    "role": "reference_video",
+                },
+            ],
+            [
+                {"source_asset_id": portrait.id, "group_type": "AIGC"},
+                {"source_asset_id": scene.id, "group_type": "AIGC"},
+            ],
+        )
 
     async def fake_create(**kwargs):
         observed["request_data"] = kwargs["request_data"]
@@ -302,8 +339,8 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
         raise asyncio.CancelledError
 
     monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
-    monkeypatch.setattr(core.oss, "get_oss", lambda: FakeOss())
     monkeypatch.setattr(video_mod, "_resolve_generation_inputs", fake_resolve)
+    monkeypatch.setattr(video_mod, "_materialize_provider_inputs", fake_materialize)
     monkeypatch.setattr(video_mod, "_create_pending_job", fake_create)
     monkeypatch.setattr(video_mod, "_provider_submit", fake_submit)
     monkeypatch.setattr(video_mod, "_update_job", fake_update)
@@ -318,6 +355,8 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
             "segment_id": segment_id,
             "prompt": "主持人说一句话",
             "character_reference_asset": "asset_portrait",
+            "character_reference_type": "virtual",
+            "character_identity_id": None,
             "input_assets": ["asset_scene"],
             "resolution": "720p",
             "ratio": "9:16",
@@ -353,7 +392,7 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
     assert observed["request_data"]["input_asset_ids"] == ["asset_portrait", "asset_scene"]
     content = observed["payload"]["content"]
     assert content[1]["role"] == "reference_image"
-    assert "portrait.png" in content[1]["image_url"]["url"]
+    assert content[1]["image_url"]["url"] == "asset://asset-provider-portrait"
     assert content[2]["role"] == "reference_video"
     assert "character_reference_asset_id=asset_portrait" in result.output
 
@@ -373,6 +412,150 @@ def test_provider_auth_is_normalized_to_bearer():
     assert _auth_header("Bearer sk-secret") == "Bearer sk-secret"
 
 
+def _bossip_target() -> VideoProviderTarget:
+    return VideoProviderTarget(
+        provider="doubao",
+        model="doubao-seedance-2-0-260128",
+        api_key="sk-gateway",
+        base_url="https://openapi.bossipai.com.cn",
+        wire_format="bossip_videos",
+        submit_timeout_seconds=180,
+        status_timeout_seconds=60,
+    )
+
+
+def test_bossip_relay_payload_uses_public_video_contract():
+    body = _bossip_video_payload(
+        _bossip_target(),
+        {
+            "model": "doubao-seedance-2-0-260128",
+            "content": [
+                {"type": "text", "text": "主持人自然介绍产品"},
+                {"type": "image_url", "image_url": {"url": "https://oss.test/host.png"}},
+                {"type": "image_url", "image_url": {"url": "https://oss.test/room.png"}},
+                {"type": "video_url", "video_url": {"url": "https://oss.test/motion.mp4"}},
+            ],
+            "resolution": "720p",
+            "ratio": "9:16",
+            "duration": -1,
+            "generate_audio": True,
+            "watermark": False,
+        },
+    )
+
+    assert body == {
+        "model": "video-sd-720p-proⅠ",
+        "prompt": "主持人自然介绍产品",
+        "resolution": "720p",
+        "ratio": "9:16",
+        "generate_audio": True,
+        "watermark": False,
+        "image_url": "https://oss.test/host.png",
+        "extra_images": ["https://oss.test/room.png"],
+        "extra_videos": ["https://oss.test/motion.mp4"],
+    }
+
+
+def test_bossip_relay_rejects_480p_spoken_video_instead_of_silently_dropping_audio():
+    with pytest.raises(RuntimeError, match="does not support generated audio"):
+        _bossip_video_payload(
+            _bossip_target(),
+            {
+                "content": [{"type": "text", "text": "测试视频"}],
+                "resolution": "480p",
+                "generate_audio": True,
+            },
+        )
+
+
+def test_bossip_relay_inputs_are_signed_urls_not_cross_account_asset_ids(monkeypatch):
+    class FakeOss:
+        def presign_get(self, key, expires_sec):
+            return f"https://oss.test/{key}?ttl={expires_sec}"
+
+    monkeypatch.setattr("core.oss.get_oss", lambda: FakeOss())
+    portrait = SimpleNamespace(id="portrait", mime="image/png", oss_key="assets/portrait.png")
+    motion = SimpleNamespace(id="motion", mime="video/mp4", oss_key="assets/motion.mp4")
+
+    content, bindings = _relay_provider_inputs(
+        [portrait, motion],
+        portrait,
+        character_reference_type="real_person",
+        input_url_ttl_seconds=3600,
+    )
+
+    assert content[0]["image_url"]["url"] == "https://oss.test/assets/portrait.png?ttl=3600"
+    assert content[1]["video_url"]["url"] == "https://oss.test/assets/motion.mp4?ttl=3600"
+    assert bindings == [
+        {
+            "source_asset_id": "portrait",
+            "managed_by": "bossip_relay",
+            "group_type": "AIGC",
+            "requested_reference_type": "real_person",
+        },
+        {
+            "source_asset_id": "motion",
+            "managed_by": "bossip_relay",
+            "group_type": "AIGC",
+            "requested_reference_type": "virtual",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
+    import httpx
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        reason_phrase = "OK"
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, headers, json):
+            calls.append(("POST", url, headers, json))
+            return FakeResponse({"id": "task_public", "status": "processing"})
+
+        async def get(self, url, *, headers):
+            calls.append(("GET", url, headers, None))
+            return FakeResponse(
+                {"id": "task_public", "status": "completed", "video_url": "https://result.test/out.mp4"}
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    payload = {
+        "content": [{"type": "text", "text": "测试视频"}],
+        "resolution": "720p",
+        "ratio": "9:16",
+        "duration": 5,
+    }
+
+    submitted = await _provider_submit(_bossip_target(), payload)
+    status = await _provider_status(_bossip_target(), submitted["id"])
+
+    assert calls[0][0:2] == ("POST", "https://openapi.bossipai.com.cn/v1/videos")
+    assert calls[0][2]["Authorization"] == "Bearer sk-gateway"
+    assert calls[0][3]["model"] == "video-sd-720p-proⅠ"
+    assert calls[1][0:2] == ("GET", "https://openapi.bossipai.com.cn/v1/videos/task_public")
+    assert _provider_video_url(status) == "https://result.test/out.mp4"
+
+
 def test_video_skill_preserves_host_identity_and_source_resolution():
     skill_path = (
         Path(__file__).resolve().parents[2]
@@ -384,11 +567,16 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     metadata, skill = parse_frontmatter(skill_path.read_text(encoding="utf-8"))
 
     assert metadata["allowed-tools"] == [
-        "image_gen", "video_project", "video_generate", "video_transcribe", "video_render",
+        "image_gen",
+        "video_identity",
+        "video_project",
+        "video_generate",
+        "video_transcribe",
+        "video_render",
         "creator_context",
     ]
     assert "`image_gen` once" in skill
-    assert "Reuse that exact `asset_id` across every segment" in skill
+    assert "Reuse the exact same source `asset_id` across every segment" in skill
     assert "request `spend` approval" in skill
     assert "accepted STT text" in skill
     assert 'render_engine="auto"' in skill

@@ -123,6 +123,9 @@ class VideoGenerationConfig(BaseModel):
     poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     wait_timeout_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     provider_input_url_ttl_seconds: int = Field(default=3600, ge=600, le=86400)
+    material_timeout_seconds: int = Field(default=180, ge=30, le=600)
+    material_poll_interval_seconds: float = Field(default=1.0, ge=0.5, le=10.0)
+    liveness_session_ttl_seconds: int = Field(default=300, ge=120, le=1800)
     render_url_ttl_seconds: int = Field(default=86400, ge=3600, le=604800)
     max_provider_output_bytes: int = Field(
         default=1024 * 1024 * 1024, ge=1024 * 1024, le=4 * 1024 * 1024 * 1024

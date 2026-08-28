@@ -9,7 +9,6 @@ interface Props {
   contextTokens: number
   durationSec: number
   streaming: boolean
-  autoCollapseReady: boolean
 }
 
 function Stage({ label, value }: { label: string; value: string }) {
@@ -21,7 +20,7 @@ function Stage({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function ProcessTrace({ contextTokens, durationSec, streaming, autoCollapseReady }: Props) {
+export function ProcessTrace({ contextTokens, durationSec, streaming }: Props) {
   const { t } = useTranslation("chat")
   if (contextTokens <= 0 && durationSec <= 0) return null
   return (
@@ -33,7 +32,6 @@ export function ProcessTrace({ contextTokens, durationSec, streaming, autoCollap
           : undefined
       }
       streaming={streaming}
-      autoCollapseReady={autoCollapseReady}
     >
       <div className="space-y-0.5">
         {contextTokens > 0 && (

@@ -1,7 +1,7 @@
 """Add user_memories — user-scoped creator memory (ported from bossip).
 
 Revision ID: a5b6c7d8e9f0
-Revises: f4c5d6e7f8a9
+Revises: f5c6d7e8f9a0
 """
 from typing import Sequence, Union
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "a5b6c7d8e9f0"
-down_revision: Union[str, None] = "f4c5d6e7f8a9"
+down_revision: Union[str, None] = "f5c6d7e8f9a0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

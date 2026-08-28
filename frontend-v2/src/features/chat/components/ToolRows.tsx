@@ -1,9 +1,13 @@
-// The calls made while one task was running.
+// One call per row: what kind it was, what it was aimed at, how it ended.
 //
-// Same information as the flat tool chain, laid out as rows that read at a
-// glance: what kind of call, what it was aimed at, and how it ended. A row
-// opens to the same structured detail the chain shows, so nothing is lost by
-// being inside the card.
+// The detail — arguments, output, diffs — lives behind the row rather than
+// under it. A turn makes a dozen calls and each one's request/response block
+// runs to a screenful, so rendering them all inline buried the answer under
+// its own paperwork. Collapsed, a call costs one line; the reader opens the
+// two they care about.
+//
+// Shared by the flat tool chain and the task card, so a call reads the same
+// way wherever it is listed.
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronRight } from "lucide-react"
@@ -47,7 +51,7 @@ function Row({ part }: { part: ToolPart | SubtaskPart }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="group/row flex w-full items-center gap-3 rounded-lg py-1.5 text-start"
+        className="group/row hover:bg-hairsoft/50 -mx-2 flex w-full items-center gap-3 rounded-lg px-2 py-1 text-start transition-colors"
       >
         <span
           className={cn(
@@ -80,7 +84,7 @@ function Row({ part }: { part: ToolPart | SubtaskPart }) {
         </span>
         <ChevronRight
           className={cn(
-            "text-n500 size-3.5 shrink-0 transition-transform duration-200",
+            "text-n500/60 group-hover/row:text-n600 size-3.5 shrink-0 transition-transform duration-200",
             open && "rotate-90",
           )}
         />
@@ -91,7 +95,7 @@ function Row({ part }: { part: ToolPart | SubtaskPart }) {
       {part.type === "tool" && part.tool === "task" && <SubagentLine part={part} />}
       <div className="fold" data-open={open}>
         <div>
-          <div className="ps-9 pb-2">
+          <div className="ps-9 pt-0.5 pb-2">
             <ToolOutput part={part} />
           </div>
         </div>
@@ -100,7 +104,7 @@ function Row({ part }: { part: ToolPart | SubtaskPart }) {
   )
 }
 
-export function TaskToolRows({ tools }: { tools: ToolLike[] }) {
+export function ToolRows({ tools }: { tools: ToolLike[] }) {
   if (tools.length === 0) return null
   return (
     <ul className="flex flex-col">

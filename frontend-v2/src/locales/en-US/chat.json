@@ -27,6 +27,7 @@
     "task": "Subtask",
     "todo": "Plan",
     "question": "Ask",
+    "videoIdentity": "Verify person",
     "tool": "Tool"
   },
   "toolMeta": {
@@ -227,6 +228,24 @@
     "running": "Running",
     "completed": "Done",
     "failed": "Failed"
+  },
+  "videoIdentity": {
+    "title": "Real-person authorization",
+    "status": {
+      "awaiting_user": "The person must open the verification page and complete identity and liveness consent. No video generation is submitted before that.",
+      "active": "Authorization is complete and the dedicated real-person material group is ready.",
+      "expired": "The authorization link expired. Ask the assistant to start a new session.",
+      "failed": "Authorization failed. Review the error and start again."
+    },
+    "expires": "The link is expected to remain valid until {{time}}",
+    "open": "Open verification",
+    "completed": "I've finished — check status",
+    "checking": "Checking",
+    "continueMessage": "I completed the real-person authorization. Please verify it and continue making the video.",
+    "refreshFailed": "Could not refresh authorization status",
+    "readyHint": "Next, the selected portrait will be added to this verified-person group.",
+    "assetReady": "The selected person reference is approved and ready.",
+    "qrAlt": "Real-person verification QR code"
   },
   "markdown": {
     "expandCode": "Expand code",

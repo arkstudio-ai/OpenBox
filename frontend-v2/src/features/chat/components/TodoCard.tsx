@@ -13,7 +13,7 @@ import type { TodoItem } from "@/shared/types/api"
 import { useAddTodoItem, useRemoveTodoItem } from "../api/todo"
 import { progressPercent, taskProgress } from "../lib/todo-progress"
 import type { TodoTask, TodoView } from "../lib/turn-view"
-import { TaskToolRows } from "./TaskToolRows"
+import { ToolRows } from "./ToolRows"
 
 /** How often the running task's bar is recomputed. The value itself is a
  *  pure function of `started_at`, so this only decides how smooth it looks —
@@ -151,7 +151,7 @@ function TaskRow({ task, now, editable, onAdd, onRemove }: RowProps) {
         <div className="fold" data-open={open}>
           <div>
             <div className="border-hair ms-4.5 border-s ps-4 pb-1">
-              <TaskToolRows tools={tools} />
+              <ToolRows tools={tools} />
             </div>
           </div>
         </div>

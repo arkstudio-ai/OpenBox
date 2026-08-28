@@ -40,6 +40,12 @@ class VideoProduction(Base):
     character_asset_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("file_assets.id"), nullable=True
     )
+    character_reference_type: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default=text("'virtual'")
+    )
+    character_identity_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("video_material_groups.id"), nullable=True
+    )
     script_text: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     script_hash: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
     plan_hash: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))

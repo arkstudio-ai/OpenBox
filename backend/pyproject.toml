@@ -59,7 +59,7 @@ packages = [
     "agent", "api", "blob", "bus", "command", "core", "mcp",
     "models", "permission", "project", "question", "sandbox",
     "session", "skill", "snapshot", "storage", "tool",
-    "db", "cache", "auth",
+    "db", "cache", "auth", "video",
 ]
 
 [tool.pytest.ini_options]

@@ -3,6 +3,7 @@ name: video-production
 description: Create a complete vertical spoken-person short video from a topic or script, with a shared host, script and segment approvals, Seedance lip-synced speech, segment-level STT review, selective regeneration, and subtitled or clean composition.
 allowed-tools:
   - image_gen
+  - video_identity
   - video_project
   - video_generate
   - video_transcribe
@@ -13,13 +14,13 @@ allowed-tools:
 # OpenBox Spoken Video Production
 
 Turn a topic or supplied script into one real-person vertical spoken video. This
-skill is the only place the five media tool schemas are exposed; do not use shell
+skill is the only place the six media tool schemas are exposed; do not use shell
 commands for generation, FFmpeg, Chrome, HyperFrames, uploads, or provider calls.
 Credentials remain on the backend and must never appear in prompts or files.
 Call these skill-only tools directly after loading the skill. Do not wrap
-`video_project`, `video_generate`, `video_transcribe`, or `video_render` in a
-generic Batch/parallel tool: the wrapper does not inherit skill-only schemas or
-their sequential safety guarantees.
+`video_identity`, `video_project`, `video_generate`, `video_transcribe`, or
+`video_render` in a generic Batch/parallel tool: the wrapper does not inherit
+skill-only schemas or their sequential safety guarantees.
 
 Before planning segments, read [references/prompt-recipes.md](references/prompt-recipes.md).
 For gates and recovery read [references/workflow-gates.md](references/workflow-gates.md).
@@ -51,14 +52,26 @@ before reviewing or regenerating results. The machine contract is
    `video_project(action="set_script")`, then call
    `video_project(action="request_approval", approval_kind="script")`. Do not
    design segments before that card is approved.
-3. Establish one host reference. Reuse a suitable user-owned portrait, or call
-   `image_gen` once for a clean vertical host portrait and inspect its attached
-   result. Reuse that exact `asset_id` across every segment. Never claim identity
-   continuity from unrelated text-only generations.
+3. Establish one host reference and classify it before planning segments:
+   - For a recognizable real person, use the exact user-owned portrait and call
+     `video_identity(action="create")`. The provider H5/QR authorization card is
+     shown directly to the user. Stop until that person says authorization is
+     complete, call `video_identity(action="status")`, then
+     `video_identity(action="add_asset")` with the exact portrait. Only an
+     `active` LivenessFace identity and `active` material asset may continue.
+   - For an AI-generated, illustrated, or otherwise virtual host, call
+     `image_gen` once if needed and do not request real-person authorization. The backend places it
+     in the user's AIGC material group automatically at generation time.
+   Reuse the exact same source `asset_id` across every segment. Never call a
+   real person virtual to evade provider privacy checks, and never claim
+   identity continuity from unrelated text-only generations.
 4. Split the approved script at semantic boundaries. Use 5 segments as a useful
    30–60 second default, normally ≤40 Chinese characters each and never >48.
    Write every prompt with the five-part recipe and one identical `visual_anchor`.
-   Call `video_project(action="set_segments")`; its server-side lint is final.
+   Call `video_project(action="set_segments")`; pass
+   `character_reference_type="real_person"` plus the active
+   `character_identity_id` for a real host, otherwise pass `"virtual"`. Its
+   server-side lint and real-person material ownership checks are final.
 5. Show the user the full asset list and, for every segment, the exact dialogue
    and exact complete prompt that will be sent. Then request `segments` approval.
    After it passes, immediately request `spend` approval. The spend card records

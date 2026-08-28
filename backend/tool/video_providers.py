@@ -38,6 +38,9 @@ SD2_MODELS = ("seedance-2.0-480-fastⅠ", "video-sd-720p-proⅠ", "video-sd-1080
 
 _SD2_TRAILING_I = re.compile(r"[iIⅠ]$")
 
+# ── ark relay host ──────────────────────────────────────────────────────────
+BOSSIP_RELAY_HOST = "openapi.bossipai.com.cn"
+
 # ── wan3 (task channel via the gateway-side wan3-video-adapter) ─────────────
 WAN3_MODEL_TYPE = "wan3_video"
 WAN3_DEFAULT_MODEL = "wan3.0-video"
@@ -121,6 +124,9 @@ class VideoRoute:
     # "raw" = the new-api quirk: Authorization carries the sk-token verbatim,
     # WITHOUT a "Bearer " prefix.
     auth_scheme: Literal["bearer", "raw"] = "bearer"
+    # Only meaningful on the ark channel: TokenSpace contents API vs the
+    # BossIP public relay (`/v1/videos` with relay-managed material groups).
+    wire_format: Literal["tokenspace_contents", "bossip_videos"] = "tokenspace_contents"
 
 
 def auth_header(route: Any) -> str:
@@ -200,9 +206,17 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
     base_url = configured_base.rstrip("/")
     if not base_url.startswith("https://") or base_url.endswith(".html"):
         raise RuntimeError(
-            "DOUBAO_BASE_URL must be the API origin (for example "
-            "https://api.tokenspace.net.cn), not the documentation page"
+            "DOUBAO_BASE_URL must be an HTTPS API origin (for example "
+            "https://api.tokenspace.net.cn or https://openapi.bossipai.com.cn), "
+            "not the documentation page"
         )
+    from urllib.parse import urlsplit
+
+    wire_format = (
+        "bossip_videos"
+        if (urlsplit(base_url).hostname or "").lower() == BOSSIP_RELAY_HOST
+        else "tokenspace_contents"
+    )
     return VideoRoute(
         provider=settings.provider,
         model=model,
@@ -213,6 +227,7 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
         channel="ark",
         model_type="seedance",
         auth_scheme="bearer",
+        wire_format=wire_format,
     )
 
 

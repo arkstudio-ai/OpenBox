@@ -1,8 +1,7 @@
-// The collapsed trace row shared by the process / thinking / tool-chain traces.
-// Ported 1:1 from DEEIX-Chat (message-process-trace.tsx and siblings): a
-// borderless accordion whose trigger is a two-line block — medium 13px title
-// over an 11px muted summary — with the chevron pinned right and rotating on
-// open.
+// The collapsed trace row shared by the process / thinking / tool-chain /
+// work-log traces: a borderless accordion whose trigger is a two-line block —
+// medium 13px title over an 11px muted summary — with the chevron pinned right
+// and rotating on open.
 import { useState, type ReactNode } from "react"
 import { ChevronDown } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -10,62 +9,58 @@ import { cn } from "@/shared/lib/cn"
 interface Props {
   title: string
   subtitle?: string
-  /** This trace is currently producing output. */
+  /** This trace is currently producing output — shimmers the title. */
   streaming?: boolean
-  /** The turn has started answering — collapse a trace that opened itself. */
-  autoCollapseReady?: boolean
-  /** Completed-but-incomplete work should reopen on transcript reload. */
+  /** Start open. Only for a finished turn that owes an explanation. */
   defaultOpen?: boolean
   children: ReactNode
 }
 
-export function TraceShell({ title, subtitle, streaming, autoCollapseReady, defaultOpen, children }: Props) {
-  // Open/closed is LATCHED, never derived. A turn's activity flags flip many
-  // times (tool 1 ends before tool 2 starts; reasoning alternates with tool
-  // calls), and deriving `open` from them made the row pop open and shut on
-  // every flip — the whole column jumped while streaming. Only two events move
-  // the latch: activity starting opens it, and the turn becoming answerable
-  // closes it once. Anything else holds the current state, including the
-  // user's own toggle.
-  const live = Boolean(streaming)
-  const ready = Boolean(autoCollapseReady)
-  const [open, setOpen] = useState(live || Boolean(defaultOpen))
-  const [seen, setSeen] = useState({ live, ready })
-
-  if (seen.live !== live || seen.ready !== ready) {
-    setSeen({ live, ready })
-    if (live) setOpen(true)
-    else if (ready && !seen.ready) setOpen(false)
-  }
+export function TraceShell({ title, subtitle, streaming, defaultOpen, children }: Props) {
+  // Open/closed belongs to the reader, and to nobody else.
+  //
+  // This used to open itself whenever the trace went live and close itself
+  // when the turn started answering. Both flags flip repeatedly within one
+  // turn — reasoning alternates with tool calls, and a tool chain goes quiet
+  // between two calls — so every flip re-opened a row the reader had just
+  // collapsed, and a streaming turn kept several hundred pixels of trace
+  // open by default. Now nothing but the toggle moves it: what is on screen
+  // stays where it was put.
+  //
+  // Collapsed is not silent. The title shimmers while the phase runs and the
+  // subtitle carries the live count or the call in flight, so the row still
+  // says what is happening — in one line instead of a column.
+  const [open, setOpen] = useState(Boolean(defaultOpen))
 
   return (
-    <div className="mb-2 w-full pe-4 sm:pe-6">
+    <div className="mb-1.5 w-full pe-4 sm:pe-6">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="group flex w-full items-start justify-between gap-1.5 py-0.5 text-start"
+        className="group flex w-full items-center justify-between gap-2 py-0.5 text-start"
       >
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center">
-            <span
-              className={cn(
-                "text-md inline-flex min-h-0 w-auto font-medium transition-colors",
-                streaming ? "text-shimmer" : "group-hover:text-ink text-n600",
-              )}
-            >
-              {title}
-            </span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span
+            className={cn(
+              "text-md shrink-0 font-medium transition-colors",
+              streaming ? "text-shimmer" : "group-hover:text-ink text-n600",
+            )}
+          >
+            {title}
           </span>
           {subtitle ? (
-            <span className="text-2xs text-n600/62 mt-0.5 block truncate leading-4 font-normal">
+            // One line, beside the title rather than under it: a collapsed
+            // trace should cost one row, and four of them stack while a turn
+            // runs.
+            <span className="text-2xs text-n600/62 min-w-0 flex-1 truncate leading-4 font-normal">
               {subtitle}
             </span>
           ) : null}
         </span>
         <ChevronDown
           className={cn(
-            "text-n600 group-hover:text-ink mt-0.5 size-3.5 shrink-0 transition-transform duration-200",
+            "text-n600 group-hover:text-ink size-3.5 shrink-0 transition-transform duration-200",
             open && "rotate-180",
           )}
         />

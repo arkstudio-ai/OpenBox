@@ -1,10 +1,14 @@
-// The agent's clarifying questions, asked just above the composer.
+// The agent's clarifying questions, asked at the end of the transcript.
 //
-// This is a turn-taking moment, not a message: the run is blocked until the
-// user answers, and the answer is the next thing they will "say". Putting it
-// in the scroll area meant it could sit off-screen while the run waited, and
-// it read as history rather than as something wanting a reply. It rises from
-// the composer instead, where the user's attention already is.
+// This is a turn-taking moment, and it reads as one: the card sits where the
+// next message would, and scrolls with the conversation like everything else.
+//
+// It used to hang below the scroll area, pinned above the composer, so a
+// waiting run could never be scrolled away from. That cost more than it was
+// worth — as a sibling of a `flex-1 min-h-0` message list, a tall card (a
+// segment approval carries three scripts and their prompts) squeezed the list
+// to nothing and the conversation stopped scrolling entirely. In the flow, a
+// card of any height costs only its own scrolling.
 //
 // Once answered it disappears — the exchange lives on in the conversation as
 // the question tool's own row, so nothing is lost by dismissing it here.

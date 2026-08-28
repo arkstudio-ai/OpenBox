@@ -20,6 +20,24 @@ services:
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     depends_on:
       - redis
+
+  # Skill job worker role: same image and code as the web role, different
+  # process (rebuild plan §4.3). Claims and executes durable skill jobs so a
+  # web restart or rolling deploy never kills running work. No migrations
+  # here — the web role's CMD owns `alembic upgrade head`.
+  backend-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "skill_runtime.worker_main"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@postgres:5432/openbox}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - SKILL_WORKER_QUEUES=${SKILL_WORKER_QUEUES:-default}
+    depends_on:
+      - redis
+      - backend
       - postgres
     restart: unless-stopped
 

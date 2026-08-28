@@ -178,6 +178,75 @@ spec:
             periodSeconds: 30
 
 ---
+# Skill job worker role: same image as openbox-backend, different process
+# (rebuild plan §4.3). Owns claim/execute/reconcile/outbox for durable skill
+# jobs; a web rollout never kills running work — expired leases are simply
+# reclaimed by the surviving/new worker. Runs no migrations and serves no HTTP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbox-backend-worker
+  namespace: openbox
+  labels:
+    app: openbox-backend-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openbox-backend-worker
+  template:
+    metadata:
+      labels:
+        app: openbox-backend-worker
+    spec:
+      serviceAccountName: openbox-backend
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: gcr.io/PROJECT_ID/openbox-backend:latest
+          command: ["python", "-m", "skill_runtime.worker_main"]
+          env:
+            - name: SKILL_WORKER_QUEUES
+              value: "default"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: REDIS_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: JWT_SECRET
+            - name: OPENBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: OPENBOX_API_KEY
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: OPENAI_API_KEY
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: OPENAI_BASE_URL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
 apiVersion: v1
 kind: Service
 metadata:

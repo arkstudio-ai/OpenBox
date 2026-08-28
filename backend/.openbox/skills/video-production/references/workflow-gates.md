@@ -40,3 +40,11 @@ backend will not silently count it as another new paid call.
 Approval cards are hard boundaries. If a card is rejected or dismissed, stop
 that downstream action. In delegated tests, the tester may make the selections,
 but the tool still records the same evidence and budget ceiling.
+
+Per-segment user feedback (`set_segment_feedback`) is routing metadata, not a
+gate: it never opens paid calls. A `user_rejected` generated segment drives the
+production to `needs_segment_revision`; regenerate only rejected segments.
+`quality_scope` deliberately excludes `review_status`, so a granted quality
+approval stays valid until the plan itself changes — a user changing their mind
+after a quality override is recorded as feedback and routed to revision, not by
+invalidating the old approval evidence.

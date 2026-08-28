@@ -29,7 +29,10 @@
         ],
         "properties": {
           "stt_verdict": {"enum": ["ok", "suspect", null]},
-          "review_status": {"enum": ["accepted", "override", null]}
+          "review_status": {
+            "enum": ["accepted", "override", "user_approved", "user_rejected", null]
+          },
+          "review_note": {"type": ["string", "null"]}
         }
       }
     },

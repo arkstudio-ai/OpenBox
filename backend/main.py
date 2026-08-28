@@ -221,6 +221,9 @@ def create_app() -> FastAPI:
     from api.memories import router as memories_router
     application.include_router(memories_router)
 
+    from api.video_productions import router as video_productions_router
+    application.include_router(video_productions_router)
+
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])
 

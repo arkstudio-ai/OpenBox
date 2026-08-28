@@ -384,7 +384,8 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     metadata, skill = parse_frontmatter(skill_path.read_text(encoding="utf-8"))
 
     assert metadata["allowed-tools"] == [
-        "image_gen", "video_project", "video_generate", "video_transcribe", "video_render"
+        "image_gen", "video_project", "video_generate", "video_transcribe", "video_render",
+        "creator_context",
     ]
     assert "`image_gen` once" in skill
     assert "Reuse that exact `asset_id` across every segment" in skill

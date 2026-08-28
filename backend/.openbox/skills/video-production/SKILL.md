@@ -7,6 +7,7 @@ allowed-tools:
   - video_generate
   - video_transcribe
   - video_render
+  - creator_context
 ---
 
 # OpenBox Spoken Video Production
@@ -29,9 +30,22 @@ before reviewing or regenerating results. The machine contract is
 
 ## Required workflow
 
+0. Call `creator_context(action="get_user_context")` before drafting anything.
+   Use the persona (表达风格/受众/内容定位) to shape the script; treat every 边界
+   entry as a hard constraint. When the user states a stable fact or preference
+   about themselves or their brand, call
+   `creator_context(action="propose_memory", summary=...)` — one third-person
+   sentence; the card the user answers IS the confirmation. Never write a
+   USER_NOTE via `write_memory`. Session-scoped impressions may be written with
+   `write_memory(scope="SHORT_TERM", ttl_seconds=...)`. 宁可漏不可烦: when
+   unsure, don't propose, and never re-propose something already confirmed or
+   rejected.
 1. Call `video_project(action="create")` once. Use `mode="standard"` unless the
    user explicitly delegates a bounded end-to-end test. Delegation changes who
    evaluates the result, not the stored gates or paid-call ceiling.
+   After creation, non-create `video_project` actions may omit `production_id`;
+   the backend resolves the session's active production. On "not found" never
+   retry with a guessed id — call `status` with no id.
 2. Draft the complete word-for-word script. Default to 45–60 seconds and about
    3.2 Chinese characters per second. Show the entire script in chat, call
    `video_project(action="set_script")`, then call
@@ -65,7 +79,13 @@ before reviewing or regenerating results. The machine contract is
    and phrase-level omissions/replacements. Show all segment video attachments
    plus each script/transcript/verdict. Request `quality` approval only after all
    active segments have STT evidence.
-8. If the user chooses to rework suspect segments, call
+8. When the user gives per-segment verdicts in chat, first record each explicit
+   verdict with `video_project(action="set_segment_feedback", segment_id=...,
+   feedback="approved"|"rejected", feedback_note=...)` (`feedback_note` is
+   required on reject — it becomes the revision rationale). Then regenerate
+   ONLY segments the user rejected (`review_status=user_rejected`) or
+   STT-suspect segments the user chose to redo; never revise an approved
+   segment. If the user chooses to rework suspect segments, call
    `video_project(action="revise_segment")` only for those segments. This creates
    a new revision while preserving the paid old result. For another take with
    identical words, pass only `segment_id` and `revision_reason`. If the dialogue
@@ -103,5 +123,11 @@ before reviewing or regenerating results. The machine contract is
 - Never manually caption from the intended script. Captions use accepted STT
   actual speech. A clean master may omit captions but may not falsify QA.
 - Never discard old segment outputs. Selective regeneration creates a revision.
+- `allow_replan` and `replace_character_reference` are deliberate escalations:
+  pass them only after the user explicitly confirmed replanning generated
+  segments or changing the presenter. Old outputs stay archived as inactive
+  revisions; in-flight jobs can never be replanned over.
+- A segment's own generated output must never appear in `input_assets` — always
+  reference the originally uploaded material.
 - For a progress question, call `video_project(action="status")` and continue
   from its `status`, active segment IDs, approvals, and idempotency keys.

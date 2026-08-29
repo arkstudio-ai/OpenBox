@@ -62,6 +62,20 @@ function isSyntheticOnlyUserMessage(message: MessageWithParts): boolean {
 }
 
 /** Group the flat message list into user bubbles and merged assistant turns. */
+/** Reserved prefix the platform stamps on an interruption marker.
+ *
+ *  The marker is a real message — that is the point, the next turn's model
+ *  reads it in-band — but it is not something a person said, so it must not
+ *  wear a user's bubble. `create_user_message` refuses the prefix to clients,
+ *  so anything carrying it was written by the platform.
+ */
+export const INTERRUPTION_MARKER_PREFIX = "tabort:"
+
+export function isInterruptionMarker(message: { client_message_id?: string }): boolean {
+  return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
+}
+
+
 export function mergeTurns(messages: MessageWithParts[]): Turn[] {
   const turns: Turn[] = []
   for (const m of messages) {
@@ -70,7 +84,12 @@ export function mergeTurns(messages: MessageWithParts[]): Turn[] {
       // protocol, not to the user's transcript. Skipping the synthetic turn
       // also lets its following assistant message remain in the same visible
       // turn as the preceding real user request.
-      if (isSyntheticOnlyUserMessage(m)) continue
+      //
+      // The interruption marker is the exception: it is synthetic because the
+      // model must read it, but it is also the only record that a turn was cut
+      // short, and the transcript would otherwise jump from half-finished work
+      // to whatever came next with nothing explaining the gap.
+      if (isSyntheticOnlyUserMessage(m) && !isInterruptionMarker(m)) continue
       turns.push({ kind: "user", key: m.id, message: m })
       continue
     }
@@ -344,16 +363,3 @@ export function buildTurnView(parts: MessagePart[]): TurnView {
   return view
 }
 
-
-/** Reserved prefix the platform stamps on an interruption marker.
- *
- *  The marker is a real message — that is the point, the next turn's model
- *  reads it in-band — but it is not something a person said, so it must not
- *  wear a user's bubble. `create_user_message` refuses the prefix to clients,
- *  so anything carrying it was written by the platform.
- */
-export const INTERRUPTION_MARKER_PREFIX = "tabort:"
-
-export function isInterruptionMarker(message: { client_message_id?: string }): boolean {
-  return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
-}

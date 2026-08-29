@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { todoDisposition, type TodoView } from "./turn-view"
+import { isInterruptionMarker, mergeTurns, todoDisposition, type TodoView } from "./turn-view"
 import type { TodoItem } from "@/shared/types/api"
 
 function item(status: TodoItem["status"], subject = "步骤"): TodoItem {
@@ -77,5 +77,40 @@ describe("todoDisposition", () => {
     // nothing to show yet. Settled, it is unfinished rather than interrupted.
     expect(todoDisposition(view([]), true).kind).toBe("live")
     expect(todoDisposition(view([]), false).kind).toBe("unfinished")
+  })
+})
+
+describe("mergeTurns · the interruption marker", () => {
+  function msg(over: Record<string, unknown>) {
+    return {
+      id: "m1", session_id: "s", role: "user", parts: [], created_at: "",
+      ...over,
+    } as never
+  }
+  const syntheticText = [{ type: "text", text: "[已中断]", synthetic: true }]
+
+  it("keeps the marker even though it is synthetic", () => {
+    // It is synthetic because the model must read it, but it is also the only
+    // record that a turn was cut short — dropping it left the transcript
+    // jumping from half-finished work to whatever came next.
+    const turns = mergeTurns([
+      msg({ id: "u1", parts: [{ type: "text", text: "做事" }] }),
+      msg({ id: "mk", client_message_id: "tabort:s:1", parts: syntheticText }),
+    ])
+    expect(turns.map((t) => t.key)).toEqual(["u1", "mk"])
+  })
+
+  it("still drops the internal prompts it was written to hide", () => {
+    const turns = mergeTurns([
+      msg({ id: "u1", parts: [{ type: "text", text: "做事" }] }),
+      msg({ id: "sji", client_message_id: "sji:x", parts: syntheticText }),
+    ])
+    expect(turns.map((t) => t.key)).toEqual(["u1"])
+  })
+
+  it("recognises a marker only by its reserved prefix", () => {
+    expect(isInterruptionMarker({ client_message_id: "tabort:s:1" })).toBe(true)
+    expect(isInterruptionMarker({ client_message_id: "cmid-user-typed" })).toBe(false)
+    expect(isInterruptionMarker({})).toBe(false)
   })
 })

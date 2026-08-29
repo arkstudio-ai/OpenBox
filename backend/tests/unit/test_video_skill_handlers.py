@@ -88,6 +88,7 @@ class Providers:
             assert pid == production_id and sid == segment_id
             return dict(approved)
 
+        self.approved = approved
         monkeypatch.setattr(vw, "prepare_segment_submission", prepare)
 
         async def consume(approval_id):
@@ -705,3 +706,41 @@ async def test_production_status_foreign_user_denied():
     done = await _drive_until(worker, job, {JobStatus.FAILED.value})
     assert done.status == JobStatus.FAILED.value
     assert done.error_code == "not_found"
+
+
+async def test_the_segments_model_is_what_actually_gets_submitted(monkeypatch, enable_write, fast_poll):
+    """The composer's pick must reach the provider, not just the segment row.
+
+    The durable handler used to resolve `_configured_target(None)`, so every
+    generation billed against the deployment default no matter which model the
+    user picked — and once the rollout gate made this the only write path, the
+    video picker became decorative. Caught end-to-end in the browser, where a
+    segment frozen to wan3.0-video submitted a Seedance job.
+    """
+    from tool import video_production as vp
+    from tool import video_workflow as vw
+
+    user = "u_" + uuid.uuid4().hex[:8]
+    production_id, segment_id = await _make_domain(user)
+    providers = Providers().install(monkeypatch, production_id, segment_id)
+
+    # The segment carries an explicit pick; record what the route was built from.
+    async def prepare(ctx, pid, sid):
+        return {**providers.approved, "model": "wan3.0-video"}
+
+    monkeypatch.setattr(vw, "prepare_segment_submission", prepare)
+
+    seen: list[str | None] = []
+
+    def configured(model_override=None):
+        seen.append(model_override)
+        return (DUMMY_TARGET, DUMMY_SETTINGS)
+
+    monkeypatch.setattr(vp, "_configured_target", configured)
+
+    worker = _worker()
+    job = await _start(user, production_id, segment_id)
+    await _drive_until(worker, job, {JobStatus.WAITING_EXTERNAL.value})
+
+    assert len(providers.submits) == 1
+    assert "wan3.0-video" in seen, f"route was resolved from {seen}, not the segment's model"

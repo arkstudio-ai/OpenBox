@@ -254,12 +254,16 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
     production_id = str(payload.get("production_id") or "")
     segment_id = str(payload.get("segment_id") or "")
     tctx = _tool_ctx(ctx)
-    target, settings = vp._configured_target(None)
 
     from tool import video_workflow as vw
 
     await ctx.progress(phase="preparing")
     approved = await vw.prepare_segment_submission(tctx, production_id, segment_id)
+    # Route from the model frozen onto the segment, not the deployment default:
+    # the durable path is the only write path once the rollout gate is on, so
+    # resolving `None` here silently billed every pick against the default
+    # model and made the composer's video picker decorative.
+    target, settings = vp._configured_target(approved.get("model"))
     domain_key = f"{approved['production_id']}:{approved['segment_id']}:generate"
 
     prompt = approved["prompt"]
@@ -336,15 +340,50 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         # The revision already has a paid identity: adopt it, never resubmit.
         return await _adopt_existing(ctx, job, settings)
 
-    provider_payload: dict[str, Any] = {
-        "model": target.model,
-        "content": [{"type": "text", "text": prompt}, *provider_content],
-        "resolution": resolution,
-        "ratio": ratio,
-        "duration": duration,
-        "generate_audio": generate_audio,
-        "watermark": watermark,
-    }
+    # The gateway channels (sd2/task) speak a different wire shape than ark and
+    # take their references as presigned URLs rather than provider asset ids.
+    # Building the ark payload unconditionally would post a body the gateway
+    # ignores — and it bills for what it substitutes instead of erroring.
+    submit_path: str | None = None
+    if getattr(target, "channel", "ark") == "ark":
+        provider_payload: dict[str, Any] = {
+            "model": target.model,
+            "content": [{"type": "text", "text": prompt}, *provider_content],
+            "resolution": resolution,
+            "ratio": ratio,
+            "duration": duration,
+            "generate_audio": generate_audio,
+            "watermark": watermark,
+        }
+    else:
+        from core.oss import get_oss
+        from tool import video_providers
+
+        oss = get_oss()
+        refs = [
+            {
+                "kind": "image" if row.mime.startswith(vp._IMAGE_PREFIX) else "video",
+                "url": oss.presign_get(
+                    row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds
+                ),
+                "role": (
+                    "reference_image"
+                    if row.mime.startswith(vp._IMAGE_PREFIX)
+                    else "reference_video"
+                ),
+            }
+            for row in inputs
+        ]
+        submit_path, provider_payload = video_providers.build_payload(
+            target,
+            prompt=prompt,
+            refs=refs,
+            resolution=resolution,
+            ratio=ratio,
+            duration=duration,
+            generate_audio=generate_audio,
+            watermark=watermark,
+        )
 
     # The row-lock gate orders cancellation against the *start* of the paid
     # side effect. If cancel committed first, no approval is consumed and no
@@ -388,7 +427,17 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
         status="submitting",
     )
     try:
-        submitted = await vp._provider_submit(target, provider_payload)
+        if submit_path is None:
+            submitted = await vp._provider_submit(target, provider_payload)
+        else:
+            from tool import video_providers as _vpx
+
+            submitted = await _vpx.submit(target, submit_path, provider_payload)
+            if getattr(target, "channel", "ark") == "task":
+                submitted = {
+                    **submitted,
+                    **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
+                }
     except Exception as exc:
         # Unknown outcome: the POST may or may not have landed. Never resubmit
         # blindly — park for operator review (§10.1 submit_unknown).
@@ -405,11 +454,16 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
     # identity write; a replacement worker must reconcile an ambiguous submit
     # instead of having a stale worker overwrite its decision.
     await ctx.assert_lease()
-    state = vp._provider_state(submitted)
+    from tool import video_providers as _vps
+
+    state = vp._provider_state(submitted, target)
+    # Never `submitted["id"]` directly: on sd2 the upstream overwrites
+    # `task_id`, and polling that value returns task_not_exist.
+    provider_task_id = _vps.extract_task_id(target, submitted)
     stored_state = "in_progress" if state == "completed" else state
     await vp._update_job(
         job.id,
-        provider_task_id=submitted["id"],
+        provider_task_id=provider_task_id,
         status=stored_state,
         attempt=1,
         started_at=_now(),
@@ -417,30 +471,33 @@ async def _segment_generate(ctx, payload: dict, checkpoint: dict):
     )
 
     await ctx.progress(
-        {"provider_state": state, "provider_task_id": submitted["id"]},
+        {"provider_state": state, "provider_task_id": provider_task_id},
         phase="provider_generate",
     )
 
     if state == "completed":
-        return await _finalize(ctx, job.id, submitted, settings)
+        return await _finalize(ctx, job.id, submitted, settings, route=target)
     if state in ("failed", "cancelled"):
         return await _settle_provider_terminal(ctx, job.id, state, submitted)
     return WaitExternal(
         checkpoint={"video_job_id": job.id},
         wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
-        external_handle=submitted["id"],
-        progress={"provider_state": state, "provider_task_id": submitted["id"]},
+        external_handle=provider_task_id,
+        progress={"provider_state": state, "provider_task_id": provider_task_id},
     )
 
 
 async def _advance_existing(ctx, checkpoint: dict):
     from tool import video_production as vp
 
-    target, settings = vp._configured_target(None)
     video_job_id = checkpoint["video_job_id"]
     job = await _owned_video_job(video_job_id, ctx.user_id)
     if job is None:
         return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
+    # Poll on the channel that was actually submitted to. `job.model` is the
+    # durable record of that; re-resolving the default would poll the wrong
+    # endpoint for anything not on the default model.
+    target, settings = vp._configured_target(job.model or None)
 
     if job.status == "completed":
         return await _success(ctx, job)
@@ -575,11 +632,12 @@ async def _advance_existing(ctx, checkpoint: dict):
             )
         raise
     await ctx.assert_lease()
-    state = vp._provider_state(data)
+    state = vp._provider_state(data, target)
 
     if state == "completed":
         return await _finalize(
             ctx, job.id, data, settings,
+            route=target,
             cancel_race=cancel_requested,
             transfer_retries=int(checkpoint.get("transfer_retries") or 0),
         )
@@ -629,7 +687,7 @@ TRANSFER_RETRY_CANCEL_GRACE = 3
 
 
 async def _finalize(ctx, video_job_id: str, data: dict, settings, *,
-                    cancel_race: bool = False, transfer_retries: int = 0):
+                    route=None, cancel_race: bool = False, transfer_retries: int = 0):
     from tool import video_production as vp
 
     await ctx.progress(phase="asset_publish")
@@ -637,11 +695,15 @@ async def _finalize(ctx, video_job_id: str, data: dict, settings, *,
     if job is None:
         return Failed(error_code="video_job_missing", message=f"video job {video_job_id} vanished")
     await ctx.assert_lease()
+    # The route decides where the finished video URL lives: sd2 carries it in
+    # `metadata.url`, ark under `content`. Omitting it here finalizes a paid,
+    # completed task to "no video URL".
     refreshed = await vp._finalize_segment(
         job,
         data,
         _tool_ctx(ctx),
         settings,
+        route,
         persist_guard=ctx.assert_lease,
     )
     if refreshed is not None and refreshed.status == "completed":

@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +24,8 @@ from core.log import create_logger
 log = create_logger("video.materials")
 
 _MATERIAL_API_VERSION = "2024-01-01"
+#: Serves /v1/videos but not TokenSpace's /api/material (nginx 404, HTML body).
+_RELAY_HOST_WITHOUT_MATERIALS = "openapi.bossipai.com.cn"
 _IMAGE_LIMIT = 30 * 1024 * 1024
 _VIDEO_LIMIT = 50 * 1024 * 1024
 _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
@@ -88,7 +91,14 @@ def configured_material_target() -> MaterialTarget:
     api_key = (provider.api_key if provider else None) or (
         os.environ.get("DOUBAO_API_KEY", "") if settings.provider == "doubao" else ""
     )
-    configured_base = (provider.base_url if provider else None) or (
+    # Materials may live on a different origin than generation: the BossIP
+    # relay serves /v1/videos but returns an nginx 404 for /api/material, so a
+    # relay deployment must point the material APIs at TokenSpace explicitly.
+    material_base = (
+        settings.material_base_url
+        or os.environ.get("DOUBAO_MATERIAL_BASE_URL", "")
+    ).strip()
+    configured_base = material_base or (provider.base_url if provider else None) or (
         os.environ.get("DOUBAO_BASE_URL", "") if settings.provider == "doubao" else ""
     )
     base_url = configured_base.rstrip("/")
@@ -96,6 +106,17 @@ def configured_material_target() -> MaterialTarget:
         raise RuntimeError("DOUBAO_API_KEY is empty")
     if not base_url.startswith("https://") or base_url.endswith(".html"):
         raise RuntimeError("DOUBAO_BASE_URL must be an HTTPS API origin")
+    if (urlsplit(base_url).hostname or "").lower() == _RELAY_HOST_WITHOUT_MATERIALS:
+        # Failing here names the misconfiguration; letting the call through
+        # only produces "returned a non-JSON response" from an HTML 404.
+        raise MaterialProviderError(
+            "当前视频供应商指向 BossIP 中继，它只转发 /v1/videos，不提供 TokenSpace "
+            "素材库接口，因此真人实名/活体功能无法使用。请把 video_generation."
+            "material_base_url（或环境变量 DOUBAO_MATERIAL_BASE_URL）配置为 "
+            "TokenSpace origin 后重试。",
+            code="material_api_unavailable",
+            status=501,
+        )
     return MaterialTarget(
         provider=settings.provider,
         api_key=api_key,

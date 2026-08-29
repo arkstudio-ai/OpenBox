@@ -61,6 +61,17 @@ spec:
       invocationTimeoutSeconds: 30
       maxTotalSeconds: 3600
       maxAttempts: 4
+    permanent_fault:
+      inputSchema:
+        type: object
+        properties:
+          reason: {type: string}
+      queue: default
+      invocationTimeoutSeconds: 30
+      maxTotalSeconds: 300
+      # Deliberately generous: the point is that a permanent fault settles at
+      # once and never touches this budget.
+      maxAttempts: 8
     slow_step:
       inputSchema:
         type: object

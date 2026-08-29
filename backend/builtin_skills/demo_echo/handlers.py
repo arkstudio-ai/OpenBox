@@ -73,6 +73,17 @@ async def run(ctx, operation: str, payload: dict, checkpoint: dict):
             )
         return Succeeded(result={"attempts": attempts, "recovered": True})
 
+    if operation == "permanent_fault":
+        # The failure path needs a zero-cost way to be exercised too: the only
+        # other way to see it end to end is to provoke a real misconfiguration
+        # and wait out the retries it no longer spends.
+        from skill_runtime.types import HandlerError
+
+        raise HandlerError(
+            str(payload.get("reason") or "演示用的永久故障：等待不会让它变好，请改配置后重试"),
+            retryable=False,
+        )
+
     if operation == "slow_step":
         await asyncio.sleep(int(payload.get("sleep_seconds", 30)))
         return Succeeded(result={"slept": True})

@@ -195,3 +195,123 @@ def test_the_failure_prompt_does_not_invite_a_blind_retry():
     # The two instructions that keep a correction from becoming a loop.
     assert "不要用相同参数重新提交" in prompt
     assert "该走的审批照走" in prompt
+
+
+# ── every route to FAILED, not just the one the handler declares ────────────
+#
+# A job dies four different ways. A notice that only some of them write is
+# worse than none: it teaches people the card can be trusted, then stays quiet
+# on the common cases.
+
+@pytest.mark.asyncio
+async def test_a_spent_retry_budget_reports_too():
+    """The usual death. Keying on `isinstance(outcome, Failed)` missed it."""
+    from datetime import datetime, timedelta, timezone
+
+    from skill_runtime.types import Retry
+
+    session_id = "session_" + uuid.uuid4().hex[:10]
+    job, _ = await repo.admit_job(
+        user_id="u_" + uuid.uuid4().hex[:8],
+        skill_key="builtin:demo-echo",
+        operation="echo",
+        runtime_kind="internal",
+        input_data={"text": "x"},
+        idempotency_key="k-" + uuid.uuid4().hex[:8],
+        queue_name="q_" + uuid.uuid4().hex[:8],
+        session_id=session_id,
+        max_attempts=1,
+    )
+    claimed = await repo.claim_next(
+        queues=(job.queue_name,), worker_id="w1", lease_seconds=60, limit=1
+    )
+    await repo.settle_invocation(
+        job.id,
+        claimed[0].lease_token,
+        Retry(
+            checkpoint={},
+            error_code="upstream_5xx",
+            retry_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+            error_message="gateway said 503",
+        ),
+    )
+
+    settled = await repo.get_job(job.id, job.user_id)
+    assert settled.status == JobStatus.FAILED.value
+
+    notices = await _notices(job.id)
+    assert len(notices) == 1, "a budget that runs out is still a death"
+    assert notices[0].payload["error_code"] == "upstream_5xx"
+    # The message says the budget ran out, not merely what the last error was.
+    assert "retry budget exhausted" in notices[0].payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_lease_lost_past_the_budget_reports():
+    """No handler ran, so nothing else records what became of it."""
+    from datetime import datetime, timedelta, timezone
+
+    from db.models.skill_job import SkillJob
+    from skill_runtime import reconciler
+
+    session_id = "session_" + uuid.uuid4().hex[:10]
+    job, _ = await repo.admit_job(
+        user_id="u_" + uuid.uuid4().hex[:8],
+        skill_key="builtin:demo-echo",
+        operation="echo",
+        runtime_kind="internal",
+        input_data={"text": "x"},
+        idempotency_key="k-" + uuid.uuid4().hex[:8],
+        queue_name="q_" + uuid.uuid4().hex[:8],
+        session_id=session_id,
+        max_attempts=1,
+    )
+    await repo.claim_next(
+        queues=(job.queue_name,), worker_id="w1", lease_seconds=60, limit=1
+    )
+    # The worker vanished: its lease simply stops being renewed.
+    async with get_db_session() as db:
+        row = await db.get(SkillJob, job.id)
+        row.lease_expires_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db.commit()
+
+    assert await reconciler.expire_stale_running() >= 1
+    settled = await repo.get_job(job.id, job.user_id)
+    assert settled.status == JobStatus.FAILED.value
+
+    notices = await _notices(job.id)
+    assert len(notices) == 1
+    assert notices[0].payload["error_code"] == "worker_lost"
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_passed_before_running_reports():
+    """The least visible death: it never started, so nothing else says why."""
+    from datetime import datetime, timedelta, timezone
+
+    from db.models.skill_job import SkillJob
+    from skill_runtime import reconciler
+
+    session_id = "session_" + uuid.uuid4().hex[:10]
+    job, _ = await repo.admit_job(
+        user_id="u_" + uuid.uuid4().hex[:8],
+        skill_key="builtin:demo-echo",
+        operation="echo",
+        runtime_kind="internal",
+        input_data={"text": "x"},
+        idempotency_key="k-" + uuid.uuid4().hex[:8],
+        queue_name="q_" + uuid.uuid4().hex[:8],
+        session_id=session_id,
+    )
+    async with get_db_session() as db:
+        row = await db.get(SkillJob, job.id)
+        row.deadline_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        await db.commit()
+
+    await reconciler.enforce_deadlines()
+    settled = await repo.get_job(job.id, job.user_id)
+    assert settled.status == JobStatus.FAILED.value
+
+    notices = await _notices(job.id)
+    assert len(notices) == 1
+    assert notices[0].payload["error_code"] == "deadline_exceeded"

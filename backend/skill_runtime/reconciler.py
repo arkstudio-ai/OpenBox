@@ -257,6 +257,19 @@ async def expire_stale_running() -> int:
             if result.rowcount != 1:
                 continue  # the worker heartbeat won the race — lease is live again
             job = (await db.execute(select(SkillJob).where(SkillJob.id == job_id))).scalar_one()
+            if target is JobStatus.FAILED and job.session_id:
+                # Dying here is the least visible death of all: no handler ran,
+                # so nothing wrote an outcome and the only trace is a status
+                # flip in a table. The session has to be told the same way it
+                # is told about a handler's own failure.
+                db.add(
+                    repo.failure_notice(
+                        job,
+                        error_code=values.get("error_code"),
+                        message=values.get("error_message"),
+                        now=now,
+                    )
+                )
             db.add(
                 SkillJobEvent(
                     id=repo.new_id("sjev"),
@@ -474,6 +487,17 @@ async def enforce_deadlines() -> int:
                 job = (
                     await db.execute(select(SkillJob).where(SkillJob.id == job_id))
                 ).scalar_one()
+                if job.session_id:
+                    # It never ran, so there is nothing else anywhere that says
+                    # what happened to it.
+                    db.add(
+                        repo.failure_notice(
+                            job,
+                            error_code="deadline_exceeded",
+                            message="job passed its total deadline before ever running",
+                            now=now,
+                        )
+                    )
                 db.add(
                     SkillJobEvent(
                         id=repo.new_id("sjev"),

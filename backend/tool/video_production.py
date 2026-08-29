@@ -1500,7 +1500,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 return submitted, submitted_state
 
             try:
-                await ctx.update_output("Submitting the asynchronous Seedance video task…")
+                await ctx.update_output(f"Submitting the asynchronous {target.model} video task…")
             except asyncio.CancelledError:
                 # The paid operation below still needs an auditable terminal or
                 # provider-owned identity even when the chat turn is interrupted.

@@ -189,3 +189,34 @@ async def test_submission_freezes_the_pick_onto_the_segment(monkeypatch):
         production = await db.get(VideoProduction, production_id)
         segment = await db.get(VideoSegment, segment_id)
         assert await resolve_segment_model(db, production, segment, user_id) == "wan3.0-video"
+
+
+@pytest.mark.asyncio
+async def test_spend_card_names_the_model_that_will_be_billed(monkeypatch):
+    """The approval card must not say Seedance while Wan is what runs.
+
+    This is the moment the user authorises money. The text used to hard-code
+    "Seedance" regardless of the segment's frozen model, so a Wan 3.0 plan was
+    approved under the wrong name.
+    """
+    from tool.video_workflow import _pending_segment_models
+
+    user_id, production_id, segment_id = await _seed(session_video_model="wan3.0-video")
+    async with get_db_session() as db:
+        production = await db.get(VideoProduction, production_id)
+        pending = [await db.get(VideoSegment, segment_id)]
+        models = await _pending_segment_models(db, production, pending, user_id)
+    assert models == ["wan3.0-video"]
+
+
+@pytest.mark.asyncio
+async def test_spend_card_falls_back_to_the_deployment_default():
+    from core.config import get_config
+    from tool.video_workflow import _pending_segment_models
+
+    user_id, production_id, segment_id = await _seed(session_video_model=None)
+    async with get_db_session() as db:
+        production = await db.get(VideoProduction, production_id)
+        pending = [await db.get(VideoSegment, segment_id)]
+        models = await _pending_segment_models(db, production, pending, user_id)
+    assert models == [get_config().video_generation.model]

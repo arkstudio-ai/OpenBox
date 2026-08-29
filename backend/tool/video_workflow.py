@@ -1309,7 +1309,16 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 scope = spend_scope(production, segments)
                 estimated_seconds = sum(max(4, min(15, round(len(normalize_spoken_text(row.script_text)) / 3.2))) for row in pending)
                 metadata = {"segment_ids": [row.id for row in pending], "estimated_seconds": estimated_seconds}
-                question = f"将提交 {len(pending)} 段 Seedance，预计约 {estimated_seconds} 秒并消耗视频额度。确认吗？"
+                # Name the model that will actually be billed. Hard-coding
+                # "Seedance" here misreported the spend at the exact moment the
+                # user authorises it — the card said Seedance while the segments
+                # were frozen to whatever the composer had picked.
+                models = await _pending_segment_models(db, production, pending, ctx.user_id)
+                model_label = "/".join(models) if models else "默认模型"
+                question = (
+                    f"将提交 {len(pending)} 段 {model_label}，预计约 {estimated_seconds} 秒"
+                    "并消耗视频额度。确认吗？"
+                )
                 options = [(f"确认，生成 {len(pending)} 段（消耗额度）", "最多允许本快照提交同样数量的新任务"), ("先不生成", "不调用收费的视频生成接口")]
             elif kind == "quality":
                 if not segments or not all(row.status == "generated" and row.stt_verdict for row in segments):
@@ -1455,6 +1464,23 @@ async def resolve_segment_model(db, production, segment, user_id: str) -> str | 
     if not session or session.user_id != user_id:
         return None
     return session.video_model or None
+
+
+async def _pending_segment_models(db, production, pending: list, user_id: str) -> list[str]:
+    """Distinct models the pending segments will submit with, in plan order.
+
+    Resolved the same way submission resolves them, so the approval card and
+    the paid call can never disagree about what is being bought.
+    """
+    from core.config import get_config
+
+    default = get_config().video_generation.model
+    seen: list[str] = []
+    for row in pending:
+        model = await resolve_segment_model(db, production, row, user_id) or default
+        if model not in seen:
+            seen.append(model)
+    return seen
 
 
 async def prepare_segment_submission(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:

@@ -424,6 +424,11 @@ async def _claim_one(per_user_limit: int = 0) -> SessionInbox | None:
 
 
 COMPLETED_KIND = "job_completed"
+FAILED_KIND = "job_failed"
+#: Kinds that report a job which has already settled. Their source job is
+#: terminal by construction, so they are owed no agent_result and must not be
+#: judged by the "still parked in waiting_agent" rule.
+TERMINAL_NOTICE_KINDS = (COMPLETED_KIND, FAILED_KIND)
 
 
 def _source_job_still_justifies():
@@ -437,13 +442,17 @@ def _source_job_still_justifies():
     """
     return or_(
         and_(
-            SessionInbox.kind != COMPLETED_KIND,
+            SessionInbox.kind.notin_(TERMINAL_NOTICE_KINDS),
             SkillJob.status == JobStatus.WAITING_AGENT.value,
             SkillJob.desired_state == DesiredState.RUN.value,
         ),
         and_(
             SessionInbox.kind == COMPLETED_KIND,
             SkillJob.status == JobStatus.SUCCEEDED.value,
+        ),
+        and_(
+            SessionInbox.kind == FAILED_KIND,
+            SkillJob.status == JobStatus.FAILED.value,
         ),
     )
 
@@ -452,6 +461,8 @@ def _source_state_ok(kind: str | None, status: str | None, desired: str | None) 
     """The same rule in Python, for the pre-write-back recheck."""
     if (kind or "") == COMPLETED_KIND:
         return status == JobStatus.SUCCEEDED.value
+    if (kind or "") == FAILED_KIND:
+        return status == JobStatus.FAILED.value
     return status == JobStatus.WAITING_AGENT.value and desired == DesiredState.RUN.value
 
 
@@ -463,7 +474,50 @@ def _is_write_back_kind(item: SessionInbox) -> bool:
     writing an input into a settled job would be rejected — the turn exists
     only so the workflow carries on.
     """
-    return (item.kind or "") != "job_completed"
+    return (item.kind or "") not in TERMINAL_NOTICE_KINDS
+
+
+def _prompt_for(item: SessionInbox) -> str:
+    """The turn's opening text, by what the notice is reporting."""
+    kind = item.kind or ""
+    if kind == FAILED_KIND:
+        return _failure_prompt(item)
+    if kind == COMPLETED_KIND:
+        return _completion_prompt(item)
+    return _continuation_prompt(item)
+
+
+def _failure_prompt(item: SessionInbox) -> str:
+    """What the model reads when a background job died out of band.
+
+    Deliberately not "fix it and resubmit": the runtime already spent this
+    job's retry budget on the fault, so an error that survived that is either
+    a bad argument or something outside the job. Restarting with the same
+    arguments would only spend money to reach the same error again, which is
+    the failure mode a wake-up like this most easily creates.
+    """
+    payload = item.payload or {}
+    message = str(payload.get("message") or "").strip()
+    lines = [
+        "[后台作业失败，需要你判断下一步]",
+        f"job_id={item.source_job_id}",
+        f"skill={payload.get('skill')} operation={payload.get('operation')}",
+        f"error_code={payload.get('error_code')}",
+    ]
+    if message:
+        lines.append(f"error={message}")
+    lines.append(f"已重试 {payload.get('attempts', 0)} 次后仍失败。")
+    lines.append(
+        "输入参数：" + json.dumps(payload.get("input") or {}, ensure_ascii=False)[:800]
+    )
+    lines.append("")
+    lines.append(
+        "请判断原因：若是参数问题，改正后可以重新提交（那是一个新作业，"
+        "该走的审批照走）；若原因在作业之外——配置缺失、凭证无效、"
+        "外部服务不可用——不要原样重试，直接向用户说明卡在哪里、需要谁做什么。"
+        "不要用相同参数重新提交。"
+    )
+    return "\n".join(lines)
 
 
 def _completion_prompt(item: SessionInbox) -> str:
@@ -810,11 +864,7 @@ async def _run_claim(item: SessionInbox) -> None:
             if not marker_exists:
                 await create_user_message(
                     session_id=item.session_id,
-                    text=(
-                        _continuation_prompt(item)
-                        if _is_write_back_kind(item)
-                        else _completion_prompt(item)
-                    ),
+                    text=_prompt_for(item),
                     synthetic=True,
                     client_message_id=marker,
                     user_id=item.user_id,

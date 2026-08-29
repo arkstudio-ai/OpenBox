@@ -629,3 +629,48 @@ async def test_waiting_user_is_never_deadline_free_but_not_retried():
     result = await reconciler.reconcile_once()
     assert result["lost_leases"] == 0
     assert (await repo.get_job(job.id, job.user_id)).status == JobStatus.WAITING_USER.value
+
+
+async def test_a_permanent_handler_fault_fails_now_instead_of_retrying():
+    """Waiting cannot fix a misconfiguration.
+
+    Every handler exception used to become a Retry, so a relay that does not
+    serve an endpoint was asked eight more times across twenty minutes of
+    exponential backoff before anyone was told. A handler that knows its fault
+    is permanent says so, and the runtime stops.
+    """
+    from skill_runtime.types import HandlerError
+
+    skill = _skill_key()
+
+    async def handler(ctx, operation, payload, checkpoint):
+        raise HandlerError("relay does not serve /api/material", retryable=False)
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    await _run_to_idle(_worker(job))
+
+    settled = await repo.get_job(job.id, job.user_id)
+    assert settled.status == JobStatus.FAILED.value
+    assert settled.error_code == "handler_permanent"
+    # And the sentence naming what to change survives to the card.
+    assert "relay does not serve /api/material" in settled.error_message
+
+
+async def test_an_ordinary_handler_fault_still_gets_its_retries():
+    """Most faults are transient; the budget exists for them."""
+    skill = _skill_key()
+
+    async def handler(ctx, operation, payload, checkpoint):
+        raise RuntimeError("connection reset by peer")
+
+    registry.register_builtin(skill, handler)
+    job = await _admit(skill)
+    await _run_to_idle(_worker(job))
+
+    settled = await repo.get_job(job.id, job.user_id)
+    assert settled.status == JobStatus.RETRY_SCHEDULED.value
+    assert settled.error_code == "handler_exception"
+    # Its text stays server-side: provider bodies carry URLs and credentials.
+    assert "connection reset" not in (settled.error_message or "")
+    assert "RuntimeError" in settled.error_message

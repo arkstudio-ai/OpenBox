@@ -44,10 +44,38 @@ class MaterialTarget:
 
 
 class MaterialProviderError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "material_provider_error", status: int = 502):
+    """A material-API failure whose message we wrote ourselves.
+
+    Two very different messages arrive here, and only one may be shown.
+
+    Some are ours — "the configured relay does not serve the material API" —
+    and naming the thing to change is the whole value of them. Others are
+    lifted from the provider's own response body, which echoes prompts, signed
+    object URLs and occasionally credentials. So ``public`` is per-instance and
+    defaults to False: a message is server-side unless whoever wrote it says
+    otherwise. Defaulting the other way would have published every provider
+    body the first time this class was reused.
+
+    ``retryable=False`` marks the misconfiguration cases. Waiting cannot make a
+    relay start serving an endpoint it does not have, so spending the standard
+    budget on one only delays telling anyone by twenty minutes of backoff.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "material_provider_error",
+        status: int = 502,
+        retryable: bool = True,
+        public: bool = False,
+    ):
         super().__init__(message[:1000])
         self.code = code
         self.status = status
+        self.retryable = retryable
+        #: See skill_runtime.types.public_error_text.
+        self.public_message = public
 
 
 class RealPersonAuthorizationRequired(RuntimeError):
@@ -122,6 +150,10 @@ def configured_material_target() -> MaterialTarget:
             "TokenSpace 账号的密钥——中继密钥在 TokenSpace 上无效。",
             code="material_api_unavailable",
             status=501,
+            # A relay does not grow an endpoint by being asked again.
+            retryable=False,
+            # Our own words, naming the config key to change.
+            public=True,
         )
     return MaterialTarget(
         provider=settings.provider,

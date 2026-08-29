@@ -1091,6 +1091,37 @@ async def settle_invocation(
                     created_at=now,
                 )
             )
+        elif isinstance(outcome, Failed) and job.session_id:
+            # A job that dies out of band dies silently: the turn that started
+            # it ended long ago, so nothing reports the failure and nobody
+            # learns why the work stopped — the card just says "failed" next to
+            # an error code. Waking the session hands the model the error so it
+            # can correct the arguments and start again, which is what a person
+            # would otherwise have to notice and ask for by hand.
+            #
+            # Unconditional, unlike the success path: a failure always needs
+            # someone told. One notice per job (source_job_id is unique per
+            # settle), so a corrected retry is a new job that earns its own.
+            db.add(
+                SessionInbox(
+                    id=new_id("sinb"),
+                    session_id=job.session_id,
+                    user_id=job.user_id,
+                    kind="job_failed",
+                    source_job_id=job.id,
+                    source_event_seq=job.last_event_seq,
+                    payload={
+                        "operation": job.operation,
+                        "skill": job.skill_key,
+                        "error_code": outcome.error_code,
+                        "message": outcome.message,
+                        "attempts": job.retry_count,
+                        "input": job.input_data or {},
+                    },
+                    status="pending",
+                    created_at=now,
+                )
+            )
 
         if wake_after_settle and target in WAITING_STATUSES:
             wake_values: dict = {

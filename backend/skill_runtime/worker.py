@@ -20,8 +20,10 @@ from skill_runtime.repository import ClaimedJob, StaleLeaseError
 from skill_runtime.types import (
     Cancelled,
     Failed,
+    error_is_retryable,
     InputKind,
     NeedsAgent,
+    public_error_text,
     Outcome,
     Retry,
     Succeeded,
@@ -470,12 +472,25 @@ class SkillJobWorker:
             # exc_info there is nothing to correlate and a failing handler is
             # undiagnosable in production.
             log.warning(f"Handler for {job.id} raised {type(e).__name__}", exc_info=True)
-            outcome = Retry(
-                checkpoint=job.checkpoint_data,
-                error_code="handler_exception",
-                retry_at=_retry_at(job.retry_count + 1),
-                error_message=f"handler raised {type(e).__name__}",
+            # A handler may declare its message safe to show and its fault
+            # permanent (see HandlerError). Anything that has not said so keeps
+            # the conservative treatment: class name only, ordinary retries.
+            detail = public_error_text(e)
+            message = (
+                f"{type(e).__name__}: {detail}" if detail
+                else f"handler raised {type(e).__name__}"
             )
+            if error_is_retryable(e):
+                outcome = Retry(
+                    checkpoint=job.checkpoint_data,
+                    error_code="handler_exception",
+                    retry_at=_retry_at(job.retry_count + 1),
+                    error_message=message,
+                )
+            else:
+                # Waiting cannot fix a misconfiguration; spending the budget on
+                # one only delays telling anyone by twenty minutes.
+                outcome = Failed(error_code="handler_permanent", message=message)
         finally:
             keeper.cancel()
             with suppress(asyncio.CancelledError):

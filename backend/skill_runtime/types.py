@@ -275,3 +275,48 @@ def outcome_payload_summary(outcome: "Outcome") -> dict[str, Any]:
     if isinstance(outcome, Cancelled):
         return {}
     raise TypeError(f"unknown outcome type: {type(outcome)!r}")
+
+
+class HandlerError(Exception):
+    """An error a handler raises whose text is safe to persist and display.
+
+    The runtime's blanket rule is that exception text never leaves the server:
+    provider bodies echo prompts, signed object URLs and credentials, so an
+    uncaught exception is recorded by class name alone. That rule is right by
+    default and stays.
+
+    This is the opt-in for the other case — a message *we* wrote, describing
+    something the operator or the model has to know in order to act. Without a
+    way to say so, an error like "the configured relay does not serve the
+    material API; set material_base_url" reaches the user as
+    "handler raised MaterialProviderError", which names the failure without
+    saying anything about it.
+
+    ``retryable=False`` additionally says the fault is permanent. A
+    misconfiguration does not heal by waiting, and retrying one on the standard
+    budget burns twenty minutes of exponential backoff before anybody is told.
+    """
+
+    #: Whether the runtime should spend retries on this. False for faults that
+    #: cannot succeed until something outside the job changes.
+    retryable: bool = True
+
+    def __init__(self, message: str, *, retryable: bool | None = None):
+        super().__init__(message)
+        if retryable is not None:
+            self.retryable = retryable
+
+
+def public_error_text(exc: BaseException) -> str | None:
+    """The displayable text of an error, or None when it must stay server-side."""
+    if isinstance(exc, HandlerError) or getattr(exc, "public_message", False):
+        text = str(exc).strip()
+        return text[:500] or None
+    return None
+
+
+def error_is_retryable(exc: BaseException) -> bool:
+    """Handlers may declare a fault permanent; everything else gets retries."""
+    if isinstance(exc, HandlerError):
+        return exc.retryable
+    return bool(getattr(exc, "retryable", True))

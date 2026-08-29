@@ -237,9 +237,19 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
                 f"model '{model_override}' is not in video_generation.allowed_models"
             )
 
+    declared = list(getattr(settings, "models", None) or [])
     entry = declared_model(model, config)
     if entry is not None:
         return _declared_route(entry, config)
+    if declared:
+        # Declarations are the whole list, not a set of hints. Falling back to
+        # name inference here would let a near-miss id ("wan3.0" for a declared
+        # "wan3.0-video") silently contradict the deployment and bill against a
+        # channel it never enabled — observed in the browser, 2026-08-29.
+        raise RuntimeError(
+            f"model '{model}' is not declared in video_generation.models; "
+            f"available: {', '.join(m.id for m in declared)}"
+        )
 
     if is_wan3_model(model):
         return _gateway_route(

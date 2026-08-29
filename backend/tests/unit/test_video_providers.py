@@ -538,3 +538,28 @@ def test_sd2_result_url_reads_the_relays_metadata_shape():
     # The older top-level shapes still win when present.
     assert result_video_url(route, {"url": "https://cdn/top.mp4", **completed}) == "https://cdn/top.mp4"
     assert result_video_url(route, {"status": "completed"}) == ""
+
+
+def test_an_undeclared_id_is_refused_instead_of_inferred():
+    """A near-miss must not silently escape the deployment's declaration.
+
+    Observed in the browser: an agent passed "wan3.0" where the deployment
+    declared "wan3.0-video" on the sd2 channel. Exact-match then missed, name
+    inference took over, and it routed to the `task` channel this relay does
+    not even expose — a paid call aimed at the wrong endpoint.
+    """
+    cfg = _declared_config(
+        models=[{"id": "wan3.0-video", "channel": "sd2", "provider": "newapi"}],
+        channel_providers={"task": "newapi"},
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        resolve_route("wan3.0", cfg)
+    message = str(excinfo.value)
+    assert "not declared" in message
+    # Naming the valid ids is what lets the agent correct itself.
+    assert "wan3.0-video" in message
+
+
+def test_inference_still_applies_when_nothing_is_declared():
+    cfg = _declared_config(channel_providers={"task": "newapi"})
+    assert resolve_route("wan3.0-video", cfg).channel == "task"

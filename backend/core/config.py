@@ -100,6 +100,8 @@ class ImageGenerationConfig(BaseModel):
     default_quality: str = "medium"
     output_format: str = "png"
     timeout_seconds: int = Field(default=600, ge=30, le=1800)
+    # Content-addressed reuse of identical completed generations (n==1 only).
+    dedupe: bool = True
 
 
 class VideoGenerationConfig(BaseModel):
@@ -139,6 +141,16 @@ class VideoGenerationConfig(BaseModel):
     max_provider_output_bytes: int = Field(
         default=1024 * 1024 * 1024, ge=1024 * 1024, le=4 * 1024 * 1024 * 1024
     )
+    # Model → channel routing lives in code (tool/video_providers.py); this map
+    # only says which provider-credential entry serves each gateway channel,
+    # e.g. {"sd2": "newapi", "task": "newapi"}. A missing key disables the
+    # channel. The default "provider" above stays the ark-channel fallback.
+    channel_providers: dict[str, str] = {}
+    # Optional whitelist for per-segment model overrides; empty = any model the
+    # routing predicates accept.
+    allowed_models: list[str] = []
+    # Cross-user prompt-hash reuse of identical completed segments.
+    dedupe: bool = True
 
 
 class VideoTranscriptionConfig(BaseModel):

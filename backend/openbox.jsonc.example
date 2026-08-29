@@ -41,6 +41,15 @@
     "doubao": {
       "api_key": "{env:DOUBAO_API_KEY}",
       "base_url": "{env:DOUBAO_BASE_URL}"
+    },
+    // Self-hosted new-api media gateway (sd2 + wan3 video channels).
+    // AUTH QUIRK: new-api expects the token RAW in the Authorization header
+    // ("Authorization: sk-...", NO "Bearer " prefix) — that is what
+    // options.auth_scheme = "raw" declares.
+    "newapi": {
+      "api_key": "{env:NEWAPI_API_KEY}",
+      "base_url": "{env:NEWAPI_BASE_URL}",
+      "options": { "auth_scheme": "raw" }
     }
     // Custom / self-hosted example:
     // "custom": {
@@ -60,7 +69,9 @@
     "default_size": "auto",
     "default_quality": "medium",
     "output_format": "png",
-    "timeout_seconds": 600
+    "timeout_seconds": 600,
+    // Reuse identical completed generations (content-addressed, n==1 only).
+    "dedupe": true
   },
 
   // Async Seedance generation. The associated tools remain invisible until
@@ -85,7 +96,27 @@
     "material_poll_interval_seconds": 1,
     "liveness_session_ttl_seconds": 300,
     "render_url_ttl_seconds": 86400,
-    "max_provider_output_bytes": 1073741824
+    "max_provider_output_bytes": 1073741824,
+    // Multi-model routing through the new-api gateway. Model names select the
+    // channel in code (tool/video_providers.py):
+    //   sd2 channel:  "seedance-2.0-480-fastⅠ", "video-sd-720p-proⅠ",
+    //                 "video-sd-1080p-pro"
+    //                 (the trailing Ⅰ is ROMAN NUMERAL ONE U+2160; a plain
+    //                 I/i spelling is auto-corrected)
+    //   task channel: "wan3.0-video", "wan3.0-video-prime"
+    //                 (requires the wan3-video-adapter shim deployed with
+    //                 new-api; duration 2-30s or -1 smart duration)
+    // A missing channel key disables that channel; everything else stays on
+    // the default ark provider above.
+    "channel_providers": {
+      // "sd2": "newapi",
+      // "task": "newapi"
+    },
+    // Optional whitelist for per-segment model overrides; empty = any model
+    // the routing accepts.
+    "allowed_models": [],
+    // Cross-user reuse of identical completed segments (prompt-hash cache).
+    "dedupe": true
   },
 
   // Per-agent overrides

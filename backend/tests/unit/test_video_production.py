@@ -573,6 +573,7 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
         "video_generate",
         "video_transcribe",
         "video_render",
+        "creator_context",
     ]
     assert "`image_gen` once" in skill
     assert "Reuse the exact same source `asset_id` across every segment" in skill

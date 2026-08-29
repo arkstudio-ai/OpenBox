@@ -193,8 +193,9 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
     )
     rejected_payload = json.loads(rejected.output)
     assert rejected.title == "Prompt lint failed"
-    # A lint refusal is an actionable tool error. Its validation marker keeps
-    # the complete structured repair recipe when the next model step is built.
+    # A lint refusal is a real failed mutation (error=True), while
+    # validation_failed tells the history converter to replay the structured
+    # repair recipe in full instead of truncating it like an ordinary error.
     assert rejected.metadata["validation_failed"] is True
     assert rejected.metadata["error"] is True
     assert rejected.metadata["retry_requires_changed_args"] is True

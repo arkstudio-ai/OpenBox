@@ -23,6 +23,10 @@ class VideoJob(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(180), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
+    # Cross-user content key: hash of everything that shapes the generated
+    # output (prompt, model, params, input digests) and nothing that doesn't
+    # (user, session, time). NULL = dedupe not applicable for this job.
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     provider_task_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -46,6 +50,7 @@ class VideoJob(Base):
         Index("ix_video_jobs_user_created", "user_id", "created_at"),
         Index("ix_video_jobs_status_updated", "status", "updated_at"),
         Index("ix_video_jobs_provider_task", "provider_task_id"),
+        Index("ix_video_jobs_prompt_hash", "prompt_hash", "status", "completed_at"),
         Index("ix_video_jobs_production", "production_id", "created_at"),
         Index("ix_video_jobs_segment", "segment_id", "created_at"),
     )

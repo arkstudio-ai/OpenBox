@@ -24,13 +24,15 @@ from db.models.skill_job_input import SkillJobInput
 from db.models.skill_job_artifact import SkillJobArtifact
 from db.models.user_skill_setting import UserSkillSetting
 from db.models.session_inbox import SessionInbox
+from db.models.memory import UserMemory
+from db.models.image_gen_cache import ImageGenCache
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part",
     "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "VideoMaterialGroup", "VideoMaterialAsset",
-    "UserSkill", "SkillInstall",
+    "UserSkill", "SkillInstall", "UserMemory", "ImageGenCache",
     "SkillJob", "SkillJobAttempt", "SkillJobEvent", "SkillJobInput",
     "SkillJobArtifact", "UserSkillSetting", "SessionInbox",
 ]

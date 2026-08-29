@@ -516,7 +516,13 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             ctx._authorize_tool = hooks.authorize_tool
 
             # Build system prompt (with instruction files)
-            system = await _build_system_prompt(agent_def, model_id, workdir=session_workdir)
+            system = await _build_system_prompt(
+                agent_def,
+                model_id,
+                workdir=session_workdir,
+                user_id=user_id,
+                project_id=session.project_id or "",
+            )
             if output_schema:
                 system.append(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
 
@@ -863,7 +869,13 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         clear_abort(session_id, abort)
 
 
-async def _build_system_prompt(agent_def: AgentDef, model_id: str, workdir: str = "/workspace") -> list[str]:
+async def _build_system_prompt(
+    agent_def: AgentDef,
+    model_id: str,
+    workdir: str = "/workspace",
+    user_id: str = "",
+    project_id: str = "",
+) -> list[str]:
     """Build the system prompt for an LLM call.
 
     Includes agent prompt, environment info, and instruction files.
@@ -911,6 +923,19 @@ async def _build_system_prompt(agent_def: AgentDef, model_id: str, workdir: str 
         f"</env>"
     )
     parts.append(env_info)
+
+    # Creator memory (last part: it is the most volatile piece, so keeping it
+    # after the cached prefix preserves the prompt cache when a memory changes).
+    if user_id and agent_def.name in ("build", "plan"):
+        try:
+            from memory.context import assemble_user_context
+            assembled = await assemble_user_context(
+                user_id=user_id, project_id=project_id or None
+            )
+            if assembled["context"]:
+                parts.append("<user_memory>\n" + assembled["context"] + "\n</user_memory>")
+        except Exception as e:
+            log.debug(f"Could not assemble user memory context: {e}")
 
     return parts
 

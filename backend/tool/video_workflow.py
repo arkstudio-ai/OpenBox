@@ -33,6 +33,9 @@ class SegmentSpec(BaseModel):
     script_text: str = Field(min_length=1, max_length=2000)
     prompt: str = Field(min_length=1, max_length=32_000)
     input_assets: list[str] = Field(default_factory=list, max_length=7)
+    # Per-segment model override; None = the configured default. Validated and
+    # canonicalized against the provider routing table at set_segments time.
+    model: str | None = Field(default=None, max_length=160)
 
 
 class VideoProjectArgs(BaseModel):
@@ -42,8 +45,11 @@ class VideoProjectArgs(BaseModel):
         "set_segments",
         "request_approval",
         "revise_segment",
+        "set_segment_feedback",
         "status",
     ]
+    # Optional for non-create actions: omitted, the session's newest live
+    # production is used (25-char ids get miscopied; never guess one).
     production_id: str | None = Field(default=None, max_length=96)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     brief: str | None = Field(default=None, min_length=1, max_length=10_000)
@@ -63,14 +69,18 @@ class VideoProjectArgs(BaseModel):
     approval_kind: Literal["script", "segments", "spend", "quality", "render"] | None = None
     segment_id: str | None = Field(default=None, max_length=96)
     revision_reason: str | None = Field(default=None, min_length=2, max_length=1000)
+    feedback: Literal["approved", "rejected"] | None = None
+    feedback_note: str | None = Field(default=None, max_length=1000)
+    # Explicit, user-confirmed escalations: deactivating segments a paid call
+    # already touched, or swapping the bound character reference.
+    allow_replan: bool = False
+    replace_character_reference: bool = False
 
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "create":
             if not self.title or not self.brief:
                 raise ValueError("create requires title and brief")
-        elif not self.production_id:
-            raise ValueError(f"{self.action} requires production_id")
         if self.action == "set_script" and not self.script_text:
             raise ValueError("set_script requires script_text")
         if self.action == "set_segments":
@@ -89,6 +99,13 @@ class VideoProjectArgs(BaseModel):
             raise ValueError("request_approval requires approval_kind")
         if self.action == "revise_segment" and (not self.segment_id or not self.revision_reason):
             raise ValueError("revise_segment requires segment_id and revision_reason")
+        if self.action == "set_segment_feedback":
+            if not self.segment_id or not self.feedback:
+                raise ValueError("set_segment_feedback requires segment_id and feedback")
+            if self.feedback == "rejected" and not (self.feedback_note or "").strip():
+                raise ValueError(
+                    "rejected feedback requires feedback_note — it becomes the revision rationale"
+                )
         return self
 
 
@@ -226,6 +243,13 @@ _PROMPT_LINT_RULES: dict[str, dict[str, Any]] = {
     "dialogue_too_long": {
         "requirement": "A segment may contain at most 48 normalized spoken characters.",
         "accepted_examples": ["Split this dialogue into two contiguous segments"],
+    },
+    "generated_output_as_reference": {
+        "requirement": (
+            "Reference the originally uploaded material, not a previously generated "
+            "segment output of this production."
+        ),
+        "accepted_examples": ["Use the original upload's asset id as the reference"],
     },
 }
 
@@ -456,6 +480,42 @@ async def _owned_production(db, production_id: str, user_id: str):
     ).scalar_one_or_none()
 
 
+async def _resolve_production(db, args: VideoProjectArgs, ctx: ToolContext):
+    """Explicit production_id wins; otherwise the session's newest live
+    (non-delivered) production. Returns (production | None, error_message)."""
+    from db.models.video_production import VideoProduction
+
+    if args.production_id:
+        production = await _owned_production(db, args.production_id, ctx.user_id)
+        if not production:
+            return None, "No owned production has that production_id."
+        return production, ""
+    if not ctx.session_id:
+        return None, (
+            "No production_id given and no session to resolve one from. "
+            "Pass production_id explicitly."
+        )
+    production = (
+        await db.execute(
+            select(VideoProduction)
+            .where(
+                VideoProduction.user_id == ctx.user_id,
+                VideoProduction.session_id == ctx.session_id,
+                VideoProduction.status != "delivered",
+            )
+            .order_by(VideoProduction.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not production:
+        return None, (
+            "No active production in this session. Pass production_id explicitly "
+            "or create one. Never retry with a guessed id — call status with no id "
+            "to see what exists."
+        )
+    return production, ""
+
+
 async def _active_segments(db, production_id: str):
     from db.models.video_production import VideoSegment
 
@@ -471,6 +531,57 @@ async def _active_segments(db, production_id: str):
             )
         ).scalars()
     )
+
+
+_IN_FLIGHT_STATUSES = {"submitting", "queued", "in_progress", "generating", "finalizing", "transfer_failed"}
+
+
+def _replan_guard(rows: list[Any], *, allow_replan: bool, action: str) -> ToolResult | None:
+    """Refuse to deactivate segments a paid call already touched.
+
+    In-flight jobs are refused unconditionally (money in flight); settled
+    non-planned segments (generated/failed/cancelled) need an explicit,
+    user-confirmed allow_replan. Old outputs are never deleted either way —
+    deactivated rows survive as inactive revisions.
+    """
+    if not rows:
+        return None
+    in_flight = [row for row in rows if row.status in _IN_FLIGHT_STATUSES]
+    if in_flight:
+        detail = ", ".join(f"segment {row.ordinal}={row.status}" for row in in_flight)
+        return ToolResult(
+            title="Segments still running",
+            output=(
+                f"{action} would deactivate segments with jobs in flight: {detail}. "
+                "Wait for them to settle or cancel them first; allow_replan does not "
+                "override running jobs."
+            ),
+        )
+    touched = [row for row in rows if row.status != "planned"]
+    if touched and not allow_replan:
+        detail = ", ".join(f"segment {row.ordinal}={row.status}" for row in touched)
+        return ToolResult(
+            title="Replan confirmation required",
+            output=(
+                f"{action} would deactivate segments a paid call already produced: {detail}. "
+                "Use revise_segment for selective fixes. To replan anyway, tell the user "
+                "the old outputs stay archived as inactive revisions and resubmit with "
+                "allow_replan=true."
+            ),
+        )
+    return None
+
+
+async def _own_output_asset_ids(db, production_id: str) -> set[str]:
+    from db.models.video_production import VideoSegment
+
+    rows = await db.execute(
+        select(VideoSegment.output_asset_id).where(
+            VideoSegment.production_id == production_id,
+            VideoSegment.output_asset_id.is_not(None),
+        )
+    )
+    return {value for (value,) in rows if value}
 
 
 async def _matching_approval(db, production_id: str, kind: str, scope_hash: str):
@@ -544,6 +655,10 @@ async def _derive_status(db, production, segments: list[Any] | None = None) -> s
         return "needs_segments_approval"
     if any(row.status in {"failed", "cancelled"} for row in segments):
         return "needs_segment_revision"
+    # A user-rejected generated segment routes the workflow back to
+    # revise_segment (only rejected segments get regenerated).
+    if any(row.review_status == "user_rejected" for row in segments):
+        return "needs_segment_revision"
     if any(row.status in {"submitting", "queued", "in_progress", "generating", "finalizing", "transfer_failed"} for row in segments):
         return "generating"
     spend = await _matching_approval(db, production.id, "spend", spend_scope(production, segments))
@@ -615,7 +730,8 @@ def _plan_hash(production, segments: list[Any]) -> str:
     )
 
 
-async def _snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
+async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
+    """Full production snapshot; the public name is imported by the HTTP API."""
     from db.base import get_db_session
 
     async with get_db_session() as db:
@@ -671,6 +787,7 @@ async def _snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
                     "prompt": row.prompt,
                     "input_asset_ids": list(row.input_asset_ids or []),
                     "content_hash": row.content_hash,
+                    "model": row.model,
                     "lint": row.lint_data,
                     "status": row.status,
                     "generation_job_id": row.generation_job_id,
@@ -680,6 +797,7 @@ async def _snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
                     "stt_verdict": row.stt_verdict,
                     "stt_notes": list(row.stt_notes or []),
                     "review_status": row.review_status,
+                    "review_note": row.review_note,
                     "generation_idempotency_key": f"{production.id}:{row.id}:generate",
                     "transcription_idempotency_key": f"{production.id}:{row.id}:stt",
                 }
@@ -719,6 +837,7 @@ def _snapshot_output(value: dict[str, Any]) -> str:
                     json.dumps(row["stt_notes"], ensure_ascii=False, separators=(",", ":")),
                 ),
                 f"segment_{row['ordinal']}_review_status={row['review_status'] or ''}",
+                f"segment_{row['ordinal']}_review_note={row.get('review_note') or ''}",
                 f"segment_{row['ordinal']}_generation_key={row['generation_idempotency_key']}",
                 f"segment_{row['ordinal']}_stt_key={row['transcription_idempotency_key']}",
             ]
@@ -753,7 +872,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 updated_at=now,
             )
             db.add(row)
-        snapshot = await _snapshot(production_id, ctx.user_id)
+        snapshot = await production_snapshot(production_id, ctx.user_id)
         return ToolResult(
             title="Video production created",
             output=_snapshot_output(snapshot or {}),
@@ -761,14 +880,22 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
         )
 
     async with get_db_session() as db:
-        production = await _owned_production(db, args.production_id or "", ctx.user_id)
+        production, resolve_error = await _resolve_production(db, args, ctx)
         if not production:
-            return ToolResult(title="Video production not found", output="No owned production has that production_id.")
+            return ToolResult(title="Video production not found", output=resolve_error)
+        resolved_id = production.id
 
         if args.action == "set_script":
             script = (args.script_text or "").strip()
             new_hash = content_hash({"script_text": script})
             if new_hash != production.script_hash:
+                refusal = _replan_guard(
+                    await _active_segments(db, production.id),
+                    allow_replan=args.allow_replan,
+                    action="set_script",
+                )
+                if refusal:
+                    return refusal
                 await db.execute(
                     update(VideoSegment)
                     .where(VideoSegment.production_id == production.id, VideoSegment.is_active.is_(True))
@@ -811,6 +938,39 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                         title="Invalid character reference",
                         output="character_reference_asset must be a ready owned image asset.",
                     )
+            existing_active = await _active_segments(db, production.id)
+            new_character_id = character.id if character else None
+            if (
+                production.character_asset_id
+                and new_character_id != production.character_asset_id
+                and any(row.status != "planned" for row in existing_active)
+                and not args.replace_character_reference
+            ):
+                return ToolResult(
+                    title="Character reference locked",
+                    output=(
+                        "The production already has a character anchor bound to generated "
+                        "output. Pass replace_character_reference=true only when the user "
+                        "explicitly changes the presenter."
+                    ),
+                )
+            own_outputs = await _own_output_asset_ids(db, production.id)
+            model_by_ordinal: dict[int, str | None] = {}
+            for item in args.segments:
+                if not item.model:
+                    model_by_ordinal[item.ordinal] = None
+                    continue
+                from core.config import get_config
+                from tool.video_providers import resolve_route
+
+                try:
+                    route = resolve_route(item.model, get_config())
+                except Exception as exc:
+                    return ToolResult(
+                        title="Invalid segment model",
+                        output=f"segment {item.ordinal}: {exc}",
+                    )
+                model_by_ordinal[item.ordinal] = route.model
             identity = None
             if args.character_reference_type == "real_person":
                 from db.models.video_material import VideoMaterialAsset, VideoMaterialGroup
@@ -864,6 +1024,14 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                             _lint_issue("invalid_asset", message)
                         )
                         continue
+                    if asset.id in own_outputs:
+                        issues_by_ordinal.setdefault(item.ordinal, []).append(
+                            _lint_issue(
+                                "generated_output_as_reference",
+                                f"素材 {ref} 是本片自己生成的段产物，不能回流作参考素材",
+                            )
+                        )
+                        continue
                     if asset.id not in seen and (not character or asset.id != character.id):
                         assets.append(asset)
                         seen.add(asset.id)
@@ -878,18 +1046,22 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 )
                 if lint["issues"]:
                     issues_by_ordinal.setdefault(item.ordinal, []).extend(lint["issues"])
-                item_hash = content_hash(
-                    {
-                        "role": item.role,
-                        "script_text": item.script_text.strip(),
-                        "prompt": item.prompt.strip(),
-                        "character_asset_id": character.id if character else None,
-                        "character_reference_type": args.character_reference_type,
-                        "character_identity_id": identity.id if identity else None,
-                        "input_asset_ids": [row.id for row in assets],
-                        "visual_anchor": (args.visual_anchor or "").strip(),
-                    }
-                )
+                hash_payload = {
+                    "role": item.role,
+                    "script_text": item.script_text.strip(),
+                    "prompt": item.prompt.strip(),
+                    "character_asset_id": character.id if character else None,
+                    "character_reference_type": args.character_reference_type,
+                    "character_identity_id": identity.id if identity else None,
+                    "input_asset_ids": [row.id for row in assets],
+                    "visual_anchor": (args.visual_anchor or "").strip(),
+                }
+                # Conditional key: existing productions' stored hashes stay
+                # valid; setting a model forks the hash (and thus the plan and
+                # spend scopes — a different model is a different price).
+                if model_by_ordinal.get(item.ordinal):
+                    hash_payload["model"] = model_by_ordinal[item.ordinal]
+                item_hash = content_hash(hash_payload)
                 validated.append((item, assets, lint, item_hash))
             if issues_by_ordinal:
                 return _prompt_lint_failure_result(
@@ -906,7 +1078,16 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     ],
                 )
 
-            current = {row.ordinal: row for row in await _active_segments(db, production.id)}
+            current = {row.ordinal: row for row in existing_active}
+            hash_by_ordinal = {item.ordinal: item_hash for item, _assets, _lint, item_hash in validated}
+            displaced = [
+                row
+                for row in current.values()
+                if row.ordinal not in ordinals or row.content_hash != hash_by_ordinal.get(row.ordinal)
+            ]
+            refusal = _replan_guard(displaced, allow_replan=args.allow_replan, action="set_segments")
+            if refusal:
+                return refusal
             for row in current.values():
                 if row.ordinal not in ordinals:
                     row.is_active = False
@@ -938,6 +1119,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     script_text=item.script_text.strip(),
                     prompt=item.prompt.strip(),
                     content_hash=item_hash,
+                    model=model_by_ordinal.get(item.ordinal),
                     input_asset_ids=[row.id for row in assets],
                     lint_data=lint,
                     status="planned",
@@ -1022,18 +1204,19 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 )
                 production.script_hash = content_hash({"script_text": production.script_text})
 
-            item_hash = content_hash(
-                {
-                    "role": source.role,
-                    "script_text": revised_script,
-                    "prompt": revised_prompt,
-                    "character_asset_id": character.id if character else None,
-                    "character_reference_type": production.character_reference_type,
-                    "character_identity_id": production.character_identity_id,
-                    "input_asset_ids": [row.id for row in assets],
-                    "visual_anchor": production.visual_anchor,
-                }
-            )
+            revise_hash_payload = {
+                "role": source.role,
+                "script_text": revised_script,
+                "prompt": revised_prompt,
+                "character_asset_id": character.id if character else None,
+                "character_reference_type": production.character_reference_type,
+                "character_identity_id": production.character_identity_id,
+                "input_asset_ids": [row.id for row in assets],
+                "visual_anchor": production.visual_anchor,
+            }
+            if source.model:
+                revise_hash_payload["model"] = source.model
+            item_hash = content_hash(revise_hash_payload)
             source.is_active = False
             source.updated_at = now
             latest_revision = (
@@ -1054,6 +1237,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 script_text=revised_script,
                 prompt=revised_prompt,
                 content_hash=item_hash,
+                model=source.model,
                 input_asset_ids=list(source.input_asset_ids or []),
                 lint_data={**lint, "revision_reason": args.revision_reason},
                 status="planned",
@@ -1216,10 +1400,30 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     metadata={"production_id": production.id, "kind": kind, "decision": decision},
                 )
 
+        elif args.action == "set_segment_feedback":
+            segments = await _active_segments(db, production.id)
+            target = next((row for row in segments if row.id == args.segment_id), None)
+            if not target:
+                return ToolResult(
+                    title="Active segment not found",
+                    output="segment_id is not an active segment of this production; superseded revision ids do not accept feedback.",
+                )
+            if target.status != "generated" or not target.output_asset_id:
+                return ToolResult(
+                    title="Segment not reviewable",
+                    output="Only generated segments with an output accept user feedback.",
+                )
+            target.review_status = (
+                "user_approved" if args.feedback == "approved" else "user_rejected"
+            )
+            target.review_note = (args.feedback_note or "").strip() or None
+            target.updated_at = now
+            await _refresh_status(db, production, segments)
+
         elif args.action == "status":
             pass
 
-    snapshot = await _snapshot(args.production_id or "", ctx.user_id)
+    snapshot = await production_snapshot(resolved_id, ctx.user_id)
     return ToolResult(
         title="Video production status",
         output=_snapshot_output(snapshot or {}),
@@ -1274,6 +1478,7 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             "production_id": production.id,
             "segment_id": segment.id,
             "prompt": segment.prompt,
+            "model": segment.model,
             "character_reference_asset": production.character_asset_id,
             "character_reference_type": production.character_reference_type,
             "character_identity_id": production.character_identity_id,

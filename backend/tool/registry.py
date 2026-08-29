@@ -64,6 +64,7 @@ def register_builtin_tools() -> None:
     from tool.browser_mode import browser_mode_tool
     from tool.skill_manage import skill_manage_tool
     from tool.skill_job import skill_job_tool
+    from tool.creator_context import creator_context_tool
 
     # During the rollout only one video write control plane may exist. When
     # durable SkillJobs are authoritative, do not even register the legacy
@@ -97,6 +98,7 @@ def register_builtin_tools() -> None:
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
         video_identity_tool, video_project_tool, *legacy_video_tools,
         computer_tool, browser_mode_tool, skill_manage_tool, skill_job_tool,
+        creator_context_tool,
     ]:
         register(tool)
 

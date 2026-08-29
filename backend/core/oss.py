@@ -61,13 +61,18 @@ class OssClient:
         content_type: str = "",
         subresource: dict[str, str] | None = None,
         internal: bool = False,
+        canonical_headers: dict[str, str] | None = None,
     ) -> str:
         expires = int(time.time()) + expires_sec
         sub = subresource or {}
         canonical = f"/{self.bucket}/{key}"
         if sub:
             canonical += "?" + "&".join(f"{k}={sub[k]}" for k in sorted(sub))
-        string_to_sign = f"{method}\n\n{content_type}\n{expires}\n{canonical}"
+        # CanonicalizedOSSHeaders: sorted x-oss-* lines between the Expires
+        # line and the canonical resource; the request must send them verbatim.
+        headers = {k.lower(): v for k, v in (canonical_headers or {}).items()}
+        header_lines = "".join(f"{k}:{headers[k]}\n" for k in sorted(headers))
+        string_to_sign = f"{method}\n\n{content_type}\n{expires}\n{header_lines}{canonical}"
         signature = self._sign(string_to_sign)
         query = [f"{quote(k)}={quote(sub[k])}" for k in sorted(sub)]
         query += [
@@ -122,8 +127,34 @@ class OssClient:
             return {
                 "size": int(resp.headers.get("content-length", 0)),
                 "mime": resp.headers.get("content-type", ""),
+                # Content MD5 for single-PUT objects; multipart uploads get a
+                # multipart ETag (still stable per object, so usable as an
+                # identity token together with size).
+                "etag": resp.headers.get("etag", "").strip('"'),
             }
         return None
+
+    async def copy(self, src_key: str, dest_key: str) -> dict | None:
+        """Server-side object copy within the bucket; head(dest) or None.
+
+        Dedupe reuse path: bytes never leave OSS. Failure returns None so
+        callers can fall back to a normal paid/streamed path — copy is an
+        optimization, never a blocker.
+        """
+        import httpx
+
+        copy_source = f"/{self.bucket}/{quote(src_key, safe='/')}"
+        url = self._presign(
+            "PUT", dest_key, 120, canonical_headers={"x-oss-copy-source": copy_source}
+        )
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.put(url, headers={"x-oss-copy-source": copy_source})
+            if resp.status_code != 200:
+                return None
+        except Exception:
+            return None
+        return await self.head(dest_key)
 
     async def delete(self, key: str) -> bool:
         """Remove the object. OSS answers 204 whether or not it existed."""

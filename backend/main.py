@@ -271,6 +271,12 @@ def create_app() -> FastAPI:
     from api.assets import router as assets_router
     application.include_router(assets_router)
 
+    from api.memories import router as memories_router
+    application.include_router(memories_router)
+
+    from api.video_productions import router as video_productions_router
+    application.include_router(video_productions_router)
+
     from api.video_materials import router as video_materials_router
     application.include_router(video_materials_router)
 

@@ -63,6 +63,7 @@ def _upgrade_sqlite_skill_jobs(connection) -> None:
         "max_external_wait_seconds": "INTEGER NOT NULL DEFAULT 86400",
         "user_input_timeout_seconds": "INTEGER",
         "cancel_requires_handler": "BOOLEAN NOT NULL DEFAULT 0",
+        "continue_agent_on_success": "BOOLEAN NOT NULL DEFAULT 0",
         "external_wait_seconds": "INTEGER NOT NULL DEFAULT 0",
         "external_wait_started_at": "DATETIME",
     }

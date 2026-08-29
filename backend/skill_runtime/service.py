@@ -195,6 +195,7 @@ async def start_job(
         max_external_wait_seconds=op.maxExternalWaitSeconds,
         user_input_timeout_seconds=op.userInputTimeoutSeconds,
         cancel_requires_handler=op.cancelRequiresHandler,
+        continue_agent_on_success=op.continueAgentOnSuccess,
     )
 
 

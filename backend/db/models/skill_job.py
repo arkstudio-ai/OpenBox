@@ -83,6 +83,11 @@ class SkillJob(Base):
     cancel_requires_handler: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    #: Snapshotted with the rest of the policy, so a manifest edit mid-flight
+    #: cannot change whether a job already running will wake its session.
+    continue_agent_on_success: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     #: Cumulative wall time spent parked in waiting_external. The start marker
     #: is set on park and folded into external_wait_seconds by every wake path.

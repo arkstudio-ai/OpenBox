@@ -22,6 +22,9 @@ spec:
       invocationTimeoutSeconds: 30
       maxTotalSeconds: 600
       maxAttempts: 3
+      # The zero-side-effect reference skill also has to demonstrate the
+      # continuation path, or the only way to exercise it is a paid video run.
+      continueAgentOnSuccess: true
     slow_echo:
       inputSchema:
         type: object

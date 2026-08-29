@@ -13,7 +13,7 @@ import uuid
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from core.log import create_logger
 from db.base import get_db_session
@@ -177,8 +177,7 @@ async def _expire_obsolete() -> None:
                     (
                         SkillJob.id.is_(None)
                         | (SkillJob.user_id != SessionInbox.user_id)
-                        | (SkillJob.status != JobStatus.WAITING_AGENT.value)
-                        | (SkillJob.desired_state != DesiredState.RUN.value)
+                        | ~_source_job_still_justifies()
                     ),
                 )
                 .limit(50)
@@ -289,8 +288,7 @@ async def _claim_candidates(per_user_limit: int) -> list[tuple[str, str, str]]:
                 Session.status == "idle",
                 Session.is_deleted == False,  # noqa: E712
                 SkillJob.user_id == SessionInbox.user_id,
-                SkillJob.status == JobStatus.WAITING_AGENT.value,
-                SkillJob.desired_state == DesiredState.RUN.value,
+                _source_job_still_justifies(),
             )
         )
         if per_user_limit > 0:
@@ -357,8 +355,7 @@ async def _try_claim(
                     Session.status == "idle",
                     Session.is_deleted == False,  # noqa: E712
                     SkillJob.user_id == SessionInbox.user_id,
-                    SkillJob.status == JobStatus.WAITING_AGENT.value,
-                    SkillJob.desired_state == DesiredState.RUN.value,
+                    _source_job_still_justifies(),
                 )
                 .with_for_update()
             )
@@ -426,6 +423,63 @@ async def _claim_one(per_user_limit: int = 0) -> SessionInbox | None:
     return None
 
 
+COMPLETED_KIND = "job_completed"
+
+
+def _source_job_still_justifies():
+    """SQL predicate: does the source job still warrant this continuation?
+
+    The two kinds have opposite requirements, which is why this cannot be one
+    status check. A ``job_needs_agent`` row is only valid while its job is
+    parked in waiting_agent — if the job moved on, the answer is moot. A
+    ``job_completed`` row is only valid *because* its job finished; requiring
+    waiting_agent there expired every notice the instant it was written.
+    """
+    return or_(
+        and_(
+            SessionInbox.kind != COMPLETED_KIND,
+            SkillJob.status == JobStatus.WAITING_AGENT.value,
+            SkillJob.desired_state == DesiredState.RUN.value,
+        ),
+        and_(
+            SessionInbox.kind == COMPLETED_KIND,
+            SkillJob.status == JobStatus.SUCCEEDED.value,
+        ),
+    )
+
+
+def _source_state_ok(kind: str | None, status: str | None, desired: str | None) -> bool:
+    """The same rule in Python, for the pre-write-back recheck."""
+    if (kind or "") == COMPLETED_KIND:
+        return status == JobStatus.SUCCEEDED.value
+    return status == JobStatus.WAITING_AGENT.value and desired == DesiredState.RUN.value
+
+
+def _is_write_back_kind(item: SessionInbox) -> bool:
+    """Does this continuation owe its source job an ``agent_result``?
+
+    ``job_needs_agent`` does: the job is parked in waiting_agent and resumes on
+    the answer. ``job_completed`` does not: the job is already terminal, and
+    writing an input into a settled job would be rejected — the turn exists
+    only so the workflow carries on.
+    """
+    return (item.kind or "") != "job_completed"
+
+
+def _completion_prompt(item: SessionInbox) -> str:
+    payload = json.dumps(item.payload or {}, ensure_ascii=False, sort_keys=True)
+    return (
+        "[后台作业已完成，请继续推进流程]\n"
+        f"job_id={item.source_job_id}\n"
+        f"inbox_id={item.id}\n"
+        f"result={payload}\n\n"
+        "这是平台的完成通知，不是用户发言。请据此推进到下一步："
+        "该启动下一个作业就启动，该等用户确认就明确说明在等什么，"
+        "没有下一步就简短收尾。不要重复已完成的这一步，"
+        "也不要轮询后台作业。"
+    )
+
+
 def _continuation_prompt(item: SessionInbox) -> str:
     # Dispatcher bookkeeping is not handler context and must not leak into the
     # model prompt or become part of its domain answer.
@@ -443,6 +497,27 @@ def _continuation_prompt(item: SessionInbox) -> str:
         "请只完成这一次有界续作并给出可供后台 handler 继续执行的结论。"
         "不要轮询后台作业；你的最终文本会由平台作为 agent_result 原子写回。"
     )
+
+
+async def _consume_claim(item: SessionInbox, *, marker_is_present: bool, tail_user_id) -> None:
+    """Retire a processed claim and release the session it reserved."""
+    async with get_db_session() as db:
+        finished_claim = await db.execute(
+            update(SessionInbox)
+            .where(
+                SessionInbox.id == item.id,
+                SessionInbox.status == "processing",
+                SessionInbox.claim_token == item.claim_token,
+            )
+            .values(status="consumed", consumed_at=_utcnow(), claim_token=None)
+        )
+        if finished_claim.rowcount == 1:
+            await _release_reserved_session(
+                db,
+                item,
+                marker_is_present=marker_is_present,
+                tail_user_id=tail_user_id,
+            )
 
 
 async def _heartbeat_claim(item: SessionInbox, stop: asyncio.Event) -> None:
@@ -698,9 +773,8 @@ async def _run_claim(item: SessionInbox) -> None:
                     )
                 )
             ).one_or_none()
-            if source_state is None or tuple(source_state) != (
-                JobStatus.WAITING_AGENT.value,
-                DesiredState.RUN.value,
+            if source_state is None or not _source_state_ok(
+                item.kind, source_state[0], source_state[1]
             ):
                 expired_claim = await db.execute(
                     update(SessionInbox)
@@ -736,7 +810,11 @@ async def _run_claim(item: SessionInbox) -> None:
             if not marker_exists:
                 await create_user_message(
                     session_id=item.session_id,
-                    text=_continuation_prompt(item),
+                    text=(
+                        _continuation_prompt(item)
+                        if _is_write_back_kind(item)
+                        else _completion_prompt(item)
+                    ),
                     synthetic=True,
                     client_message_id=marker,
                     user_id=item.user_id,
@@ -775,6 +853,18 @@ async def _run_claim(item: SessionInbox) -> None:
         # If a prior process committed an assistant stop but died before the
         # agent_result input, the lookup above reuses that durable final answer;
         # re-running its tools would violate at-most-once intent.
+        if not _is_write_back_kind(item):
+            # Terminal job: nothing to resume, so nothing to verify. Requiring
+            # assistant text here is the NeedsAgent contract — the answer *is*
+            # the deliverable there. A completion notice only has to reach the
+            # session; whether the turn replied in prose or went straight to
+            # starting the next job, the notice has done its job.
+            if not await _claim_is_live(item):
+                return
+            await _consume_claim(
+                item, marker_is_present=marker_is_present, tail_user_id=tail_user_id
+            )
+            return
         if not result_text:
             raise RuntimeError("continuation agent turn produced no assistant text")
         if not await _claim_is_live(item):
@@ -787,23 +877,9 @@ async def _run_claim(item: SessionInbox) -> None:
             idempotency_key=f"inbox:{item.id}",
             source_event_id=str(item.source_event_seq),
         )
-        async with get_db_session() as db:
-            finished_claim = await db.execute(
-                update(SessionInbox)
-                .where(
-                    SessionInbox.id == item.id,
-                    SessionInbox.status == "processing",
-                    SessionInbox.claim_token == item.claim_token,
-                )
-                .values(status="consumed", consumed_at=_utcnow(), claim_token=None)
-            )
-            if finished_claim.rowcount == 1:
-                await _release_reserved_session(
-                    db,
-                    item,
-                    marker_is_present=marker_is_present,
-                    tail_user_id=tail_user_id,
-                )
+        await _consume_claim(
+            item, marker_is_present=marker_is_present, tail_user_id=tail_user_id
+        )
     except asyncio.CancelledError:
         # Graceful API shutdown must not strand a 30-minute processing lease.
         # The synthetic marker/final text are durable, so a new dispatcher can

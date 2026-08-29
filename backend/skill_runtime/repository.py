@@ -120,6 +120,7 @@ async def admit_job(
     max_external_wait_seconds: int = 86400,
     user_input_timeout_seconds: int | None = None,
     cancel_requires_handler: bool = False,
+    continue_agent_on_success: bool = False,
 ) -> tuple[SkillJob, bool]:
     """Durably admit a job before anything wakes a worker (§0: DB before wake).
 
@@ -162,6 +163,7 @@ async def admit_job(
         max_external_wait_seconds=max_external_wait_seconds,
         user_input_timeout_seconds=user_input_timeout_seconds,
         cancel_requires_handler=cancel_requires_handler,
+        continue_agent_on_success=continue_agent_on_success,
         external_wait_seconds=0,
         last_event_seq=1,
         created_at=now,
@@ -1059,6 +1061,32 @@ async def settle_invocation(
                     source_job_id=job.id,
                     source_event_seq=job.last_event_seq,
                     payload={**continuation_payload, "reason": outcome.reason},
+                    status="pending",
+                    created_at=now,
+                )
+            )
+        elif (
+            isinstance(outcome, Succeeded)
+            and job.session_id
+            and getattr(job, "continue_agent_on_success", False)
+        ):
+            # A pipeline stage finished and its operation declared that the
+            # workflow continues. Same queue as NeedsAgent, different contract:
+            # the job is terminal, so the dispatcher must not write an
+            # agent_result back into it — see inbox._is_write_back_kind.
+            db.add(
+                SessionInbox(
+                    id=new_id("sinb"),
+                    session_id=job.session_id,
+                    user_id=job.user_id,
+                    kind="job_completed",
+                    source_job_id=job.id,
+                    source_event_seq=job.last_event_seq,
+                    payload={
+                        "operation": job.operation,
+                        "skill": job.skill_key,
+                        "result": outcome.result or {},
+                    },
                     status="pending",
                     created_at=now,
                 )

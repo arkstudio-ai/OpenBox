@@ -197,6 +197,19 @@ class OperationSpec(_StrictModel):
     #: the runtime settles the cancel itself and never starts more work — the
     #: safe default for a skill that never declared otherwise.
     cancelRequiresHandler: bool = False
+    #: Should finishing this operation wake the agent to carry the workflow on?
+    #:
+    #: Ordinary completion writes a receipt and stops there, deliberately: an
+    #: unconditional wake manufactures fake user turns, burns tokens, and can
+    #: loop. But a *stage* of a pipeline — generate, then transcribe, then
+    #: render — stalls without one, and the user has to nudge it by hand at
+    #: every step, which defeats the point of a durable job.
+    #:
+    #: This is codex's `trigger_turn` flag, made per-operation: the queue takes
+    #: the item either way, and this only decides whether an idle session is
+    #: woken for it. Off by default, so a skill that never declared it keeps
+    #: the receipt-only behaviour.
+    continueAgentOnSuccess: bool = False
 
 
 class CapabilitiesSpec(_StrictModel):

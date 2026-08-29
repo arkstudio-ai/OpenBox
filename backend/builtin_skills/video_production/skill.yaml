@@ -38,6 +38,9 @@ spec:
       # May hold an external provider/media job: cancellation must
       # reach the handler so it can settle against provider facts (§7.4).
       cancelRequiresHandler: true
+      # A generated segment still needs transcription QA. Without a wake the
+      # pipeline stops here and the user has to nudge it by hand.
+      continueAgentOnSuccess: true
     segment.transcribe:
       inputSchema:
         type: object
@@ -54,6 +57,8 @@ spec:
       # May hold an external provider/media job: cancellation must
       # reach the handler so it can settle against provider facts (§7.4).
       cancelRequiresHandler: true
+      # QA evidence is in; the agent reports it and asks for the quality call.
+      continueAgentOnSuccess: true
     production.render:
       inputSchema:
         type: object

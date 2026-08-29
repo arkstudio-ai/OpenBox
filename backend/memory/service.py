@@ -285,13 +285,19 @@ async def delete_memory(*, user_id: str, memory_id: str) -> bool:
         return True
 
 
-async def record_hits(memory_ids: list[str]) -> None:
+async def record_hits(memory_ids: list[str], *, user_id: str) -> None:
+    """Bump hit counters, scoped to the owner.
+
+    Every other query here is user-scoped; this one took ids alone, so a caller
+    that ever passed unvalidated ids could touch another user's rows. Scoping
+    it costs nothing and removes the standing hazard.
+    """
     if not memory_ids:
         return
     now = _now()
     async with get_db_session() as db:
         await db.execute(
             update(UserMemory)
-            .where(UserMemory.id.in_(memory_ids))
+            .where(UserMemory.id.in_(memory_ids), UserMemory.user_id == user_id)
             .values(hit_count=UserMemory.hit_count + 1, last_hit_at=now)
         )

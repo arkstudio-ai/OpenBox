@@ -500,6 +500,8 @@ def compute_prompt_hash(
     resolution: str,
     inputs: list[dict[str, Any]] | None,
     extra_params: dict[str, Any] | None,
+    character_reference_type: str,
+    character_identity_id: str | None,
 ) -> str:
     """Cross-user content key over everything that shapes the output.
 
@@ -509,6 +511,14 @@ def compute_prompt_hash(
     never collide (both were real false-hit bugs in the reference system).
     Inputs are identified by content digest ("etag:size"), not per-user asset
     ids, so identical bytes match across users.
+
+    The character fields are separate required arguments rather than another
+    optional bag entry because omitting them is silent and unsafe: the same
+    portrait routes to a LivenessFace group under "real_person" and an AIGC
+    group under "virtual", so a hash blind to them serves a virtual render as
+    a verified real-person one — the one path where provenance is the product.
+    The identity id is included too, so a consented render never crosses to a
+    different identity.
     """
     payload = {
         "prompt": prompt,
@@ -519,6 +529,8 @@ def compute_prompt_hash(
         "resolution": resolution,
         "inputs": inputs or None,
         "extraParams": extra_params or None,
+        "characterReferenceType": character_reference_type,
+        "characterIdentityId": character_identity_id,
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

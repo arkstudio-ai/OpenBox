@@ -1337,6 +1337,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             "generate_audio": generate_audio,
                             "watermark": watermark,
                         },
+                        character_reference_type=character_reference_type,
+                        character_identity_id=approved.get("character_identity_id"),
                     )
             job, asset, created = await _create_pending_job(
                 ctx=ctx,

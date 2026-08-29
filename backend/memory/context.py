@@ -129,7 +129,7 @@ async def assemble_user_context(
 
     if context:
         try:
-            await record_hits([row.id for row in stable + volatile])
+            await record_hits([row.id for row in stable + volatile], user_id=user_id)
         except Exception as exc:  # pragma: no cover - metrics only
             log.debug(f"record_hits failed: {exc}")
 

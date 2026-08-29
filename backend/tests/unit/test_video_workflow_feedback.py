@@ -138,6 +138,9 @@ async def test_user_rejected_routes_to_needs_segment_revision(monkeypatch):
     segment = SimpleNamespace(
         id="seg", status="generated", output_asset_id="asset", review_status="user_rejected",
         stt_verdict="ok", transcript_text="t", stt_similarity=0.95,
+        # NOT NULL on the real row; the stub has to carry it now that the
+        # status machine distinguishes spoken segments from b-roll.
+        role="body",
     )
     status = await wf._derive_status(None, production, [segment])
     assert status == "needs_segment_revision"

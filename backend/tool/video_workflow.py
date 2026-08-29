@@ -29,7 +29,12 @@ _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
 
 class SegmentSpec(BaseModel):
     ordinal: int = Field(ge=1, le=100)
-    role: Literal["hook", "body", "transition", "closing"] = "body"
+    #: "broll" is a shot with no speaker — an establishing view, a cutaway.
+    #: It carries no dialogue, so the speech-performance lint and the
+    #: transcription gate do not apply to it. Every approval and spend gate
+    #: still does: nothing here is a way around paying or being approved.
+    role: Literal["hook", "body", "transition", "closing", "broll"] = "body"
+    #: Dialogue for a spoken segment; for "broll", a description of the shot.
     script_text: str = Field(min_length=1, max_length=2000)
     prompt: str = Field(min_length=1, max_length=32_000)
     input_assets: list[str] = Field(default_factory=list, max_length=7)
@@ -339,7 +344,15 @@ def lint_segment_prompt(
     visual_anchor: str,
     image_count: int,
     video_count: int,
+    speech: bool = True,
 ) -> dict:
+    """Lint one segment's prompt.
+
+    ``speech=False`` (a b-roll shot) drops the rules that only make sense for
+    a person delivering lines — exact dialogue, framing of that person, their
+    gestures and tone. What stays is what holds for any shot in the film:
+    visual continuity, no burned-in subtitles, and honest asset references.
+    """
     failures: list[str] = []
     issues: list[dict[str, str]] = []
     warnings: list[str] = []
@@ -348,13 +361,14 @@ def lint_segment_prompt(
         failures.append(message)
         issues.append(_lint_issue(code, message))
 
-    spoken_length = len(normalize_spoken_text(script_text))
-    if spoken_length > 48:
-        fail("dialogue_too_long", f"台词 {spoken_length} 字，超过 48 字硬上限")
-    elif spoken_length > 40:
-        warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
-    if f"@{script_text.strip()}" not in prompt:
-        fail("dialogue_exact", "prompt 必须用 @ 紧接本段逐字台词")
+    if speech:
+        spoken_length = len(normalize_spoken_text(script_text))
+        if spoken_length > 48:
+            fail("dialogue_too_long", f"台词 {spoken_length} 字，超过 48 字硬上限")
+        elif spoken_length > 40:
+            warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
+        if f"@{script_text.strip()}" not in prompt:
+            fail("dialogue_exact", "prompt 必须用 @ 紧接本段逐字台词")
 
     anchor = visual_anchor.strip()
     anchor_is_literal = bool(anchor) and anchor.casefold() in prompt.casefold()
@@ -372,7 +386,7 @@ def lint_segment_prompt(
     )
     if not (anchor_is_literal or anchor_is_declared):
         fail("visual_continuity", "prompt 缺少全片一致的画面基底")
-    if not _contains_any(
+    if speech and not _contains_any(
         prompt,
         (
             "固定镜头",
@@ -386,7 +400,7 @@ def lint_segment_prompt(
         ),
     ):
         fail("fixed_camera", "prompt 必须显式声明固定镜头")
-    if not _contains_any(
+    if speech and not _contains_any(
         prompt,
         (
             "中景",
@@ -402,7 +416,7 @@ def lint_segment_prompt(
         ),
     ):
         fail("framing", "prompt 缺少中景/半身/近景构图")
-    if not _contains_any(
+    if speech and not _contains_any(
         prompt,
         (
             "自然肢体动作",
@@ -429,7 +443,7 @@ def lint_segment_prompt(
         ),
     ):
         fail("natural_action", "prompt 缺少自然肢体动作")
-    if not _contains_any(
+    if speech and not _contains_any(
         prompt,
         ("语气", "口播语气", "tone", "delivery", "speaking style", "performance style"),
     ):
@@ -671,7 +685,11 @@ async def _derive_status(db, production, segments: list[Any] | None = None) -> s
         return "spend_ok"
     if not all(row.status == "generated" and row.output_asset_id for row in segments):
         return "needs_segment_revision"
-    if not all(row.stt_verdict for row in segments):
+    # Transcription QA verifies that what was spoken matches the script. A
+    # b-roll shot has no speech, so waiting for its verdict would park the
+    # production forever — and forcing one through produces a meaningless
+    # "suspect" at similarity 0.
+    if not all(row.stt_verdict for row in segments if row.role != "broll"):
         return "generated"
     if production.quality_policy == "required" and not await _matching_approval(
         db, production.id, "quality", quality_scope(production, segments)
@@ -923,9 +941,14 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
             ordinals = [item.ordinal for item in args.segments]
             if len(set(ordinals)) != len(ordinals) or sorted(ordinals) != list(range(1, len(ordinals) + 1)):
                 return ToolResult(title="Invalid segment plan", output="Segment ordinals must be unique and contiguous from 1.")
-            if normalize_spoken_text("".join(item.script_text for item in args.segments)) != normalize_spoken_text(
-                production.script_text
-            ):
+            # Only spoken segments constitute the script: a b-roll shot has no
+            # dialogue to match. With no spoken segment at all there is nothing
+            # to verify, and requiring the approved script to equal "" would
+            # make a pure b-roll production impossible to plan.
+            spoken = [item for item in args.segments if item.role != "broll"]
+            if spoken and normalize_spoken_text(
+                "".join(item.script_text for item in spoken)
+            ) != normalize_spoken_text(production.script_text):
                 return ToolResult(
                     title="Invalid segment plan",
                     output="Concatenated segment dialogue does not exactly match the approved script.",
@@ -1043,6 +1066,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     visual_anchor=(args.visual_anchor or "").strip(),
                     image_count=image_count,
                     video_count=video_count,
+                    speech=item.role != "broll",
                 )
                 if lint["issues"]:
                     issues_by_ordinal.setdefault(item.ordinal, []).extend(lint["issues"])
@@ -1187,6 +1211,9 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 visual_anchor=production.visual_anchor,
                 image_count=int(bool(character)) + sum(row.mime.startswith("image/") for row in assets),
                 video_count=sum(row.mime in _VIDEO_MIMES for row in assets),
+                # A revision keeps the segment's kind; a b-roll shot does not
+                # become a spoken one by being re-planned.
+                speech=source.role != "broll",
             )
             if lint["failures"]:
                 return _prompt_lint_failure_result(
@@ -1321,7 +1348,10 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 )
                 options = [(f"确认，生成 {len(pending)} 段（消耗额度）", "最多允许本快照提交同样数量的新任务"), ("先不生成", "不调用收费的视频生成接口")]
             elif kind == "quality":
-                if not segments or not all(row.status == "generated" and row.stt_verdict for row in segments):
+                if not segments or not all(
+                    row.status == "generated" and (row.stt_verdict or row.role == "broll")
+                    for row in segments
+                ):
                     return ToolResult(title="Quality evidence incomplete", output="Every active segment must be generated and transcribed first.")
                 scope = quality_scope(production, segments)
                 suspects = [row for row in segments if row.stt_verdict == "suspect"]

@@ -117,8 +117,9 @@ def configured_material_target() -> MaterialTarget:
         raise MaterialProviderError(
             "当前视频供应商指向 BossIP 中继，它只转发 /v1/videos，不提供 TokenSpace "
             "素材库接口，因此真人实名/活体功能无法使用。请把 video_generation."
-            "material_base_url（或环境变量 DOUBAO_MATERIAL_BASE_URL）配置为 "
-            "TokenSpace origin 后重试。",
+            "material_base_url（或 DOUBAO_MATERIAL_BASE_URL）配置为 TokenSpace "
+            "origin，并同时配置 material_api_key（或 DOUBAO_MATERIAL_API_KEY）为该 "
+            "TokenSpace 账号的密钥——中继密钥在 TokenSpace 上无效。",
             code="material_api_unavailable",
             status=501,
         )

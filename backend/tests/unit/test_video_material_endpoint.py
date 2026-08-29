@@ -30,8 +30,10 @@ def test_relay_without_material_api_fails_with_an_actionable_error(monkeypatch):
     with pytest.raises(MaterialProviderError) as excinfo:
         configured_material_target()
     assert excinfo.value.code == "material_api_unavailable"
-    # The message must name the knob; "non-JSON response" told nobody anything.
+    # The message must name both knobs; "non-JSON response" told nobody
+    # anything, and naming only the origin leads straight to a 401.
     assert "material_base_url" in str(excinfo.value)
+    assert "material_api_key" in str(excinfo.value)
 
 
 def test_material_base_url_overrides_the_generation_origin(monkeypatch):

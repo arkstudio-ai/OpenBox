@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { skillDisplayName, statusTone } from "./SkillJobCard"
+import { resultSummary, skillDisplayName, statusTone } from "./SkillJobCard"
 import { visibleJobs } from "./SkillJobsDock"
 import type { SkillJobSnapshot } from "@/features/jobs/types"
 
@@ -80,5 +80,51 @@ describe("visibleJobs", () => {
 
   it("empty when nothing is active or recent", () => {
     expect(visibleJobs([job({ jobId: "x", status: "cancelled", completedAt: null })], now)).toEqual([])
+  })
+})
+
+
+describe("resultSummary", () => {
+  it("hides identifiers — they address things, they do not inform", () => {
+    // A finished video job returns exactly this shape. Printing it made the
+    // card read as a debug dump while the video sat right underneath.
+    expect(
+      resultSummary({
+        asset_id: "asset_1",
+        segment_id: "segment_1",
+        video_job_id: "video_1",
+        production_id: "production_1",
+        provider_task_id: "task_1",
+      }),
+    ).toBeNull()
+  })
+
+  it("keeps values a reader can actually use", () => {
+    expect(resultSummary({ echo: "hello", asset_id: "asset_1" })).toBe("echo: hello")
+  })
+
+  it("catches camelCase ids too", () => {
+    expect(resultSummary({ jobId: "j1", assetId: "a1" })).toBeNull()
+  })
+})
+
+describe("visibleJobs · receipt de-duplication", () => {
+  const now = Date.parse("2026-08-28T12:00:00Z")
+
+  it("drops a finished job once the transcript shows its receipt", () => {
+    const jobs = [job({ jobId: "done", status: "succeeded", completedAt: "2026-08-28T11:59:00Z" })]
+    expect(visibleJobs(jobs, now, new Set(["done"]))).toEqual([])
+  })
+
+  it("keeps a finished job that has no receipt yet", () => {
+    // The receipt write is a moment behind the status flip, and it can be
+    // switched off entirely — a result must never be nowhere.
+    const jobs = [job({ jobId: "done", status: "succeeded", completedAt: "2026-08-28T11:59:00Z" })]
+    expect(visibleJobs(jobs, now, new Set()).map((j) => j.jobId)).toEqual(["done"])
+  })
+
+  it("never hides a job that is still running", () => {
+    const jobs = [job({ jobId: "live", status: "running" })]
+    expect(visibleJobs(jobs, now, new Set(["live"])).map((j) => j.jobId)).toEqual(["live"])
   })
 })

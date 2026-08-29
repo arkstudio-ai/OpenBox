@@ -6,10 +6,25 @@ import { SkillJobCard } from "./SkillJobCard"
 
 /** Active jobs first; only recently finished terminal jobs stay visible.
  *  Exported for tests. */
-export function visibleJobs(jobs: SkillJobSnapshot[], now = Date.now()): SkillJobSnapshot[] {
+/** What the dock should show, given what the transcript already shows.
+ *
+ *  A finished job writes a receipt into the transcript immediately, and that
+ *  receipt carries the same status and the same video. Keeping its live card
+ *  as well showed the identical result twice and read as two separate pieces
+ *  of work — so a job drops out of the dock the moment its receipt lands.
+ *
+ *  Terminal jobs with no receipt yet (the write is a moment behind, or chat
+ *  receipts are switched off) stay briefly, so a result is never nowhere.
+ */
+export function visibleJobs(
+  jobs: SkillJobSnapshot[],
+  now = Date.now(),
+  receiptedJobIds: ReadonlySet<string> = new Set(),
+): SkillJobSnapshot[] {
   const active = jobs.filter((j) => !TERMINAL_JOB_STATUSES.has(j.status))
   const recentTerminal = jobs
     .filter((j) => TERMINAL_JOB_STATUSES.has(j.status))
+    .filter((j) => !receiptedJobIds.has(j.jobId))
     .filter((j) => {
       const completed = j.completedAt ? Date.parse(j.completedAt) : NaN
       return Number.isFinite(completed) && now - completed < 10 * 60 * 1000
@@ -20,12 +35,22 @@ export function visibleJobs(jobs: SkillJobSnapshot[], now = Date.now()): SkillJo
 
 /** Session-scoped job cards, docked at the end of the transcript. The agent
  *  turn may be long over; these keep updating from the job ledger (§12.2). */
-export function SkillJobsDock({ sessionId }: { sessionId: string }) {
+export function SkillJobsDock({
+  sessionId,
+  receiptedJobIds,
+}: {
+  sessionId: string
+  /** Jobs the transcript already shows a receipt for; the route supplies them
+   *  because features do not reach across to each other (§4.2). */
+  receiptedJobIds?: ReadonlySet<string>
+}) {
   const { t } = useTranslation("jobs")
   useSkillJobLiveEvents()
   const jobs = useSessionSkillJobs(sessionId)
 
-  const visible = visibleJobs(jobs.data ?? [])
+  // `undefined` for `now` on purpose: letting the default parameter read the
+  // clock keeps Date.now() out of the render body, which is an impure call.
+  const visible = visibleJobs(jobs.data ?? [], undefined, receiptedJobIds)
   if (visible.length === 0) return null
 
   return (

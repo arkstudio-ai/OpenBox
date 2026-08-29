@@ -25,6 +25,7 @@ import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { SkillJobsDock } from "@/features/jobs"
+import { receiptParts } from "@/features/chat/components/SkillJobReceipts"
 
 const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
@@ -61,6 +62,16 @@ export default function ChatRoute() {
 
   const messages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
   const turns = useMemo(() => mergeTurns(messages), [messages])
+  // The transcript already shows a receipt (with the produced file) for these,
+  // so the dock must not repeat them as live cards. Wired here rather than
+  // inside either feature: the route is what knows about both (§4.2).
+  const receiptedJobIds = useMemo(
+    () =>
+      new Set(
+        messages.flatMap((m) => receiptParts(m.parts ?? []).map((p) => p.jobId)),
+      ),
+    [messages],
+  )
   // A tool part left as "running" is the fallback signal for busy, but only
   // while the session's real status is still unknown — a session opened
   // mid-run reads as busy from this before its first session.status event.
@@ -132,7 +143,7 @@ export default function ChatRoute() {
       ))}
       {/* Background skill jobs outlive the agent turn; the dock keeps their
           cards updating from the job ledger after the session goes idle. */}
-      <SkillJobsDock sessionId={sessionId} />
+      <SkillJobsDock sessionId={sessionId} receiptedJobIds={receiptedJobIds} />
     </>
   )
 

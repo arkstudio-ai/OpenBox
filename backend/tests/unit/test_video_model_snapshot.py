@@ -220,3 +220,33 @@ async def test_spend_card_falls_back_to_the_deployment_default():
         pending = [await db.get(VideoSegment, segment_id)]
         models = await _pending_segment_models(db, production, pending, user_id)
     assert models == [get_config().video_generation.model]
+
+
+def test_receipt_summary_hides_identifiers():
+    """A receipt is read by a person; ids address things for machines.
+
+    The video result is entirely ids — asset, segment, video job, production,
+    provider task — so dumping them made the durable record read as a debug
+    line while the video itself sat right below it.
+    """
+    from types import SimpleNamespace
+
+    from skill_runtime.receipt import _summary
+
+    video_job = SimpleNamespace(
+        status="succeeded",
+        result_data={
+            "asset_id": "asset_1", "segment_id": "segment_1",
+            "video_job_id": "video_1", "production_id": "production_1",
+            "provider_task_id": "task_1",
+        },
+        error_message=None,
+    )
+    assert _summary(video_job) == ""
+
+    informative = SimpleNamespace(
+        status="succeeded",
+        result_data={"echo": "hello", "asset_id": "asset_1"},
+        error_message=None,
+    )
+    assert _summary(informative) == "echo: hello"

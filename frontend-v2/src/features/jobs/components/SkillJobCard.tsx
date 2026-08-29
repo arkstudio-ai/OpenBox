@@ -65,8 +65,20 @@ function ProgressLine({ progress }: { progress: Record<string, unknown> }) {
 }
 
 /** One-line summary of a succeeded job's result. Exported for tests. */
+/** Identifiers are addresses for machines, not information for a reader.
+ *
+ *  A finished video job returns asset_id, segment_id, video_job_id and
+ *  production_id — printing them made the card read like a debug dump while
+ *  the thing the person actually wanted, the video, sat right underneath.
+ */
+function isIdentifier(key: string): boolean {
+  return key === "id" || key.endsWith("_id") || key.endsWith("Id")
+}
+
 export function resultSummary(result: Record<string, unknown>): string | null {
-  const entries = Object.entries(result).filter(([, v]) => v !== null && v !== undefined)
+  const entries = Object.entries(result).filter(
+    ([k, v]) => v !== null && v !== undefined && !isIdentifier(k),
+  )
   if (entries.length === 0) return null
   const text = entries
     .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)

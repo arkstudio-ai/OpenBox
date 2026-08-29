@@ -23,13 +23,20 @@ log = create_logger("skill_runtime.receipt")
 TERMINAL_EVENT_TYPES = {"job.succeeded", "job.failed", "job.cancelled"}
 
 
+def _is_identifier(key: str) -> bool:
+    """Identifiers address things for machines; they tell a reader nothing."""
+    return key == "id" or key.endswith("_id") or key.endswith("Id")
+
+
 def _summary(job) -> str:
     if job.status == "succeeded":
         result = job.result_data or {}
         parts = [
             f"{key}: {value}"
             for key, value in result.items()
-            if not isinstance(value, (dict, list)) and value is not None
+            if not isinstance(value, (dict, list))
+            and value is not None
+            and not _is_identifier(key)
         ]
         text = " · ".join(parts)
         return text[:300]

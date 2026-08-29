@@ -17,6 +17,11 @@ class Session(Base):
     slug: Mapped[str | None] = mapped_column(String(128), nullable=True)
     agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: The video model this conversation generates with. Separate from `model`
+    #: because the two are picked independently and cost wildly different
+    #: things. NULL = the deployment default. A segment snapshots this at
+    #: submission, so switching never disturbs work already in flight.
+    video_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     status: Mapped[str] = mapped_column(String(16), server_default="idle")
     # "normal" | "cron". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,

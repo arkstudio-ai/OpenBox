@@ -117,6 +117,9 @@
       "fast": "快"
     }
   },
+  "videoModel": {
+    "pick": "切换视频模型"
+  },
   "codeCopy": "复制",
   "scrollBottom": "回到底部",
   "empty": "开始向 agent 描述你的任务",

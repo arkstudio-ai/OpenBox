@@ -267,3 +267,42 @@ npm run dev
 - **测试**：新增 ~120 项（含 100 并发幂等、stale lease 拒写、demo/视频 E2E、双用户 IDOR、回执解析回归）；浏览器全链路验收通过。
 
 待办：PR#18 sandbox runtime（用户脚本，里程碑 C）、PR#19 旧视频工具删除（灰度完成后）、PR#20 生产加固；Phase 5 灰度开启为运维动作（开关 + 换用包内 v2 SKILL.md）。
+
+---
+
+## 视频统一渠道 + 双模型选择（2026-08-29）
+
+### 目标
+
+把视频调用收敛成一条统一渠道：新增模型只改配置；用户在输入框同时选择「大语言模型」与「视频模型」；视频制作逻辑走 SkillJob runtime。
+
+### 关键决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 配置化的边界 | 配置管**绑定**（模型→渠道/凭证/能力），代码管**协议**（ark/sd2/task 三个适配器） | 「轮询 `metadata.url`」「拆 `{code,message,data}` 信封」不是配置能表达的东西。说同一协议的新模型纯配置即可加，新协议仍需发版 |
+| 切换语义 | 提交时把模型**冻结**到分段（`video_segments.model` 写回） | 在飞的分段保持原模型，新选择只影响尚未提交的分段。不写回的话，重试或对账会用新模型重新解析，花掉在飞任务从未批准的钱 |
+| 能力声明 | `resolutions` / `max_duration_seconds` / `supports_reference_*` 提交前强校验 | 中转站**静默丢弃**不认识的参数、替换成默认值并照常计费——实测传三个非法值仍建任务出片。这是唯一能拦住的地方 |
+| 两个选择器 | 并列但图标区分（场记板），菜单显示价格档位 | 二者独立且代价不同：换 LLM 免费即时，换视频模型花真钱 |
+
+### 实测得到的两条事实（决定了配置怎么写）
+
+对 `openapi.bossipai.com.cn` 逐模型探测（`503 No available channel` = 无，`400 prompt is required` = 有，编造的模型名做对照组）：
+
+1. 中转站有 6 个视频模型，含 `wan3.0-video` / `wan3.0-video-prime`，且**真实出片**（1920×1080 / 5.04s，产物落在 dashscope OSS，证实上游是阿里百炼）。
+2. 中转站**没有** `/v1/video/generations`（前置 nginx 404），只有 `/v1/videos`。所以 wan3.0 在此部署必须声明为 `sd2` 渠道而非 `task` —— 这正是声明式配置存在的意义。
+
+由此还补了一个会致命的缺口：sd2 分支原先不读 `metadata.url`，而中转站的成品**只**放在那里，照原样接会「已完成却拿不到视频」，钱已经花了。
+
+### 改动
+
+- `core/config.py`：`VideoModelConfig`（id/name/channel/provider/能力/tier）+ `video_generation.models`
+- `tool/video_providers.py`：`resolve_route` 声明优先、`_ark_route` 提取复用、`_validate_declared` 能力校验、sd2 补 `metadata.url`
+- `sessions.video_model`（migration `d2f4a6b8c0e1`）+ `resolve_segment_model` 冻结写回
+- `/api/agent/config` 暴露 `video_models`；`PromptBody`/`RegenerateBody` 带 `video_model`
+- 前端：`VideoModelPicker`、`useVideoModelChoice`、`video-model-choice` store、`useComposerModels`（把两处选择收进一个 hook，Composer 复杂度回到 25 以内）
+- `skill_jobs_video_write: true` —— legacy `video_generate/transcribe/render` 随即不再注册（33→30 个工具），符合「同时只有一个视频写控制面」
+
+### 验证
+
+后端 971 项、前端 165 项通过；变异测试确认冻结写回与能力校验均有回归保护（删掉即有用例失败）。浏览器实测：两个选择器并列渲染、菜单列出 6 个模型及档位、选中 Wan 3.0 后落库 `video_model=wan3.0-video`、刷新后从会话记录恢复。

@@ -66,7 +66,45 @@ async def get_config():
         "models": models,
         "default_model": config.model,
         "default_agent": default_agent_name(),
+        "video_models": _video_models(config),
+        "default_video_model": config.video_generation.model,
     }
+
+
+def _video_models(config) -> list[dict]:
+    """Selectable video models for the composer picker.
+
+    Declared entries are authoritative. When a deployment declares none, the
+    single configured default is still returned so the picker always has
+    something real to show rather than an empty menu.
+    """
+    settings = config.video_generation
+    declared = list(settings.models or [])
+    if not declared:
+        return [{
+            "id": settings.model,
+            "name": settings.model,
+            "channel": "ark",
+            "tier": "",
+            "resolutions": [],
+            "max_duration_seconds": None,
+        }]
+    allowed = set(settings.allowed_models or [])
+    return [
+        {
+            "id": m.id,
+            "name": m.name or m.id,
+            "channel": m.channel,
+            "tier": m.tier,
+            "resolutions": list(m.resolutions or []),
+            "max_duration_seconds": m.max_duration_seconds,
+        }
+        for m in declared
+        # An allowed_models whitelist, when set, also governs what the picker
+        # may offer — otherwise the UI would advertise a model the submit path
+        # refuses.
+        if not allowed or m.id in allowed
+    ]
 
 
 @router.get("/agent")

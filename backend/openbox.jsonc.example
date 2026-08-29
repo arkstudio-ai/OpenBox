@@ -97,7 +97,30 @@
     "liveness_session_ttl_seconds": 300,
     "render_url_ttl_seconds": 86400,
     "max_provider_output_bytes": 1073741824,
-    // Multi-model routing through the new-api gateway. Model names select the
+    // Selectable video models. Declaring one binds it to a wire channel and a
+    // credential, which is all that adding a model normally needs — the three
+    // protocol adapters stay in tool/video_providers.py, because no config can
+    // express "poll metadata.url" or "unwrap a {code,message,data} envelope".
+    //
+    // The capability fields are enforced before submission. That matters: a
+    // gateway typically DROPS parameters it does not understand, substitutes
+    // its own default, and bills you — so an undeclared limit surfaces as a
+    // "successful" task whose output ignores what you asked for.
+    //
+    // `channel` must match the endpoint your gateway actually exposes, not the
+    // model's family. A relay that serves /v1/videos but 404s
+    // /v1/video/generations runs wan3.0 on "sd2", not "task".
+    //
+    // Omit this list entirely to keep the historical behaviour, where the
+    // channel is inferred from the model name.
+    "models": [
+      // { "id": "wan3.0-video", "name": "Wan 3.0", "channel": "sd2",
+      //   "tier": "标准", "max_duration_seconds": 30 },
+      // { "id": "video-sd-720p-proⅠ", "channel": "sd2", "resolutions": ["720p"],
+      //   "supports_reference_video": false },
+    ],
+    // Which credential entry serves each gateway channel, for models that do
+    // not name their own `provider` above. Model names otherwise select the
     // channel in code (tool/video_providers.py):
     //   sd2 channel:  "seedance-2.0-480-fastⅠ", "video-sd-720p-proⅠ",
     //                 "video-sd-1080p-pro"

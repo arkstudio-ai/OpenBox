@@ -26,6 +26,8 @@ export function useMessagesQuery(sessionId: string, live = false) {
 export interface SendMessageVars {
   text: string
   model?: string
+  /** Video model for this turn; the backend records it on the session. */
+  videoModel?: string
   agent?: string
   variant?: string
   attachments?: string[]
@@ -41,6 +43,7 @@ export function useSendMessage(sessionId: string) {
         text: vars.text,
         agent: vars.agent,
         model: vars.model,
+        video_model: vars.videoModel,
         variant: vars.variant,
         attachments: vars.attachments?.length ? vars.attachments : undefined,
         client_message_id: vars.clientMessageId,

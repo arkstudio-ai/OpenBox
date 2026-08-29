@@ -117,6 +117,9 @@
       "fast": "fast"
     }
   },
+  "videoModel": {
+    "pick": "Switch video model"
+  },
   "codeCopy": "Copy",
   "scrollBottom": "Back to bottom",
   "empty": "Describe your task to the agent",

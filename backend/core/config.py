@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -104,6 +104,40 @@ class ImageGenerationConfig(BaseModel):
     dedupe: bool = True
 
 
+class VideoModelConfig(BaseModel):
+    """One selectable video model, declared rather than hard-coded.
+
+    The split is by *protocol*, not by model: this entry says which wire
+    channel a model speaks and whose credential pays for it, while the three
+    adapters (ark/sd2/task) stay in ``tool/video_providers.py``. Adding a model
+    that speaks an existing protocol is therefore config-only; a genuinely new
+    protocol still needs code, because no config schema can express "poll
+    ``metadata.url`` and unwrap a ``{code,message,data}`` envelope".
+
+    The capability fields are not decoration. The BossIP relay silently drops
+    parameters it does not understand and bills for the default it substitutes,
+    so a task that "succeeds" can quietly ignore the reference image it was
+    given. Declaring limits here lets the backend refuse loudly instead.
+    """
+
+    #: Wire model name sent to the provider, and the id the UI selects by.
+    id: str
+    #: Display name; defaults to the id.
+    name: str | None = None
+    channel: Literal["ark", "sd2", "task"] = "ark"
+    #: Which ``provider`` credential entry pays for it. Empty means the
+    #: channel's entry in ``channel_providers``, then ``provider`` above.
+    provider: str = ""
+    #: None = no declared ceiling (the provider's own limit applies).
+    max_duration_seconds: int | None = Field(default=None, ge=1, le=300)
+    #: Empty = accept whatever the production asks for.
+    resolutions: list[str] = []
+    supports_reference_image: bool = True
+    supports_reference_video: bool = True
+    #: Shown next to the name in the picker so an expensive switch is visible.
+    tier: str = ""
+
+
 class VideoGenerationConfig(BaseModel):
     """Async Seedance generation plus sandbox-render orchestration.
 
@@ -146,6 +180,10 @@ class VideoGenerationConfig(BaseModel):
     # e.g. {"sd2": "newapi", "task": "newapi"}. A missing key disables the
     # channel. The default "provider" above stays the ark-channel fallback.
     channel_providers: dict[str, str] = {}
+    #: Declared, selectable video models. Empty keeps the historical behaviour
+    #: where routing is inferred from the model name alone; any entry here wins
+    #: over that inference, so a deployment can add a model without a release.
+    models: list[VideoModelConfig] = []
     # Optional whitelist for per-segment model overrides; empty = any model the
     # routing predicates accept.
     allowed_models: list[str] = []

@@ -1261,6 +1261,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             from core.oss import get_oss
             from tool import video_providers
 
+            from core.config import get_config as _get_config
+
             video_providers.validate_request(
                 target,
                 resolution=resolution,
@@ -1268,6 +1270,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 duration=duration,
                 generate_audio=generate_audio,
                 input_mimes=[row.mime for row in inputs],
+                declared=video_providers.declared_model(target.model, _get_config()),
             )
             character_reference_type = (
                 approved.get("character_reference_type") or "virtual"

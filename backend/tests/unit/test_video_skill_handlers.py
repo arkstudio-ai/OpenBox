@@ -179,7 +179,12 @@ async def _video_job_for(segment_id):
         ).scalar_one_or_none()
 
 
-async def test_flag_off_blocks_admission():
+async def test_flag_off_blocks_admission(monkeypatch):
+    # Explicitly off: this asserts the gate itself, so it must not depend on
+    # whether the deployment happens to have the rollout switched on.
+    from core.config import get_config
+
+    monkeypatch.setattr(get_config(), "skill_jobs_video_write", False)
     user = "u_" + uuid.uuid4().hex[:8]
     production_id, segment_id = await _make_domain(user)
     with pytest.raises(service.SkillDisabled, match="skill_jobs_video_write"):

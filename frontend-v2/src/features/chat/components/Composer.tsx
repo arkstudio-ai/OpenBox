@@ -8,7 +8,7 @@ import { useRunningContainer } from "../api/containers"
 import { useAttachments } from "../hooks/useAttachments"
 import { useMentionMenu } from "../hooks/useMentionMenu"
 import { useSendShortcut } from "../hooks/useSendShortcut"
-import { useModelChoice } from "../hooks/useModelChoice"
+import { useComposerModels } from "../hooks/useComposerModels"
 import { useComposerDrop } from "../hooks/useComposerDrop"
 import { useMentionTrigger } from "../hooks/useMentionTrigger"
 import { modelContextLimit } from "../lib/model"
@@ -17,6 +17,7 @@ import { InputGroup } from "./composer/InputGroup"
 import { AttachmentRow } from "./composer/AttachmentRow"
 import { ComposerActions } from "./composer/ComposerActions"
 import { ModelPicker } from "./composer/ModelPicker"
+import { VideoModelPicker } from "./composer/VideoModelPicker"
 import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
@@ -25,6 +26,8 @@ import type { MentionScope } from "../hooks/useMentionMenu"
 
 export interface ComposerSubmit {
   model?: string
+  /** Video model, only when the user actually picked one this turn. */
+  videoModel?: string
   /** The agent to answer as, when the user changed it before sending. */
   agent?: string
   /** OSS asset ids of the message's attachments. */
@@ -55,6 +58,8 @@ interface Props {
   mentionSlot?: ReactNode
   /** Agents a person may pick — build, plan, and any they defined. */
   agents?: ChatAgent[]
+  /** The video model this conversation generates with. */
+  sessionVideoModel?: string
   /** The agent this conversation is on. */
   sessionAgent?: string
   onPickAgent?: (name: string) => void
@@ -104,6 +109,7 @@ export function Composer({
   autoFocus,
   mentionSlot,
   sessionModel,
+  sessionVideoModel,
   sessionKey,
   contextTokens = 0,
   contextLimit = 0,
@@ -114,7 +120,6 @@ export function Composer({
 }: Props) {
   const { t } = useTranslation("chat")
   const { data: config } = useConfigQuery()
-  const models = config?.models ?? []
   const [text, setText] = useState("")
   const [caret, setCaret] = useState(0)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -124,11 +129,13 @@ export function Composer({
   const attachments = useAttachments(running?.id ?? null)
   const shortcut = useSendShortcut()
 
-  const { activeId, pick } = useModelChoice({
+  const { models, videoModels, chat, video } = useComposerModels({
+    config,
     sessionModel,
+    sessionVideoModel,
     sessionKey,
-    fallback: config?.default_model ?? models[0]?.id,
   })
+  const { activeId, pick } = chat
 
   const pickFiles = (files: File[]) => {
     const ok = files.filter((f) => {
@@ -187,7 +194,13 @@ export function Composer({
     setText("")
     attachments.clear()
 
-    const result = onSubmit(decorated, { model: activeId, attachments: assetIds })
+    // `video.pending`, not `video.activeId`: sending the resolved default
+    // would pin every conversation to it, including ones that never chose.
+    const result = onSubmit(decorated, {
+      model: activeId,
+      videoModel: video.pending,
+      attachments: assetIds,
+    })
     if (result && typeof result.then === "function") {
       void result.catch(() => {
         setText((current) => (current ? current : draft))
@@ -272,6 +285,10 @@ export function Composer({
 
             <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
             <ModelPicker models={models} activeId={activeId} onPick={pick} />
+            {/* Beside the chat model on purpose — the two are picked
+                independently, and a person setting up a video turn expects to
+                choose both in one place. */}
+            <VideoModelPicker models={videoModels} activeId={video.activeId} onPick={video.pick} />
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}
             <ContextRing used={contextTokens} limit={modelContextLimit(activeId, models, contextLimit)} />

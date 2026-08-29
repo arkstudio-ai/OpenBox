@@ -1431,6 +1431,32 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
     )
 
 
+async def resolve_segment_model(db, production, segment, user_id: str) -> str | None:
+    """The model this segment will generate with, resolved once and then frozen.
+
+    Order: an explicit per-segment override, then the conversation's picked
+    video model, then the deployment default (returned as None so the caller
+    keeps using ``video_generation.model``).
+
+    Resolution happens at submission and the answer is written back onto the
+    segment, which is what makes switching safe: a segment already generating
+    keeps the model it started with, and a new pick only reaches segments that
+    have not been submitted yet. Without the write-back, a mid-flight switch
+    would silently change what a retry or a reconciliation submits.
+    """
+    if segment.model:
+        return segment.model
+    from db.models.session import Session as SessionORM
+
+    session_id = getattr(production, "session_id", None)
+    if not session_id:
+        return None
+    session = await db.get(SessionORM, session_id)
+    if not session or session.user_id != user_id:
+        return None
+    return session.video_model or None
+
+
 async def prepare_segment_submission(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:
     """Return the immutable approved segment snapshot consumed by a paid submit."""
     from db.base import get_db_session
@@ -1474,11 +1500,17 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             and (spend.max_calls is None or spend.used_calls >= spend.max_calls)
         ):
             raise RuntimeError("approved generation call limit is exhausted")
+        # Freeze the model onto the segment before the paid call, so a later
+        # switch cannot retarget this submission or its reconciliation.
+        chosen_model = await resolve_segment_model(db, production, segment, ctx.user_id)
+        if chosen_model and segment.model != chosen_model:
+            segment.model = chosen_model
+            await db.commit()
         return {
             "production_id": production.id,
             "segment_id": segment.id,
             "prompt": segment.prompt,
-            "model": segment.model,
+            "model": chosen_model,
             "character_reference_asset": production.character_asset_id,
             "character_reference_type": production.character_reference_type,
             "character_identity_id": production.character_identity_id,

@@ -19,6 +19,8 @@ export interface Session {
   title: string
   agent: string
   model: string
+  /** The video model this conversation generates with; "" = deployment default. */
+  video_model?: string
   status: SessionStatus
   created_at: string
   updated_at: string
@@ -277,10 +279,29 @@ export interface AgentInfo {
   description?: string
   model?: string
 }
+/** A selectable video model, declared by the deployment.
+ *
+ *  Kept separate from `ModelInfo`: the two are picked independently and share
+ *  none of their fields — a video model has no context window, and a chat model
+ *  has no wire channel or price tier.
+ */
+export interface VideoModelInfo {
+  id: string
+  name: string
+  /** Wire channel behind it (`ark` | `sd2` | `task`); shown for diagnostics. */
+  channel: string
+  /** Free-text price tier, so an expensive switch is visible before it happens. */
+  tier?: string
+  resolutions?: string[]
+  max_duration_seconds?: number | null
+}
+
 export interface AppConfig {
   models: ModelInfo[]
   default_model?: string
   default_agent?: string
+  video_models?: VideoModelInfo[]
+  default_video_model?: string
 }
 
 export interface PermissionRequest {

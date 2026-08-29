@@ -11,9 +11,13 @@ Three wire channels behind one route object:
   ``{code, message, data}`` envelope and uppercase statuses. Used by Wan3.0;
   the wan3 protocol shim (wan3-video-adapter) is deployed with new-api itself.
 
-Model → channel routing lives in code so the U+2160 ``Ⅰ`` canonicalization is
-centralized and a config typo cannot misroute a paid call. Hard lessons from
-bossip carried over verbatim:
+Which model speaks which protocol is *declarable* — a ``video_generation.models``
+entry binds a model to a channel and a credential, so adding a model that
+speaks an existing protocol needs no release. What stays in code is the
+protocol itself: no config schema can express "poll ``metadata.url``" or
+"unwrap a ``{code,message,data}`` envelope". Deployments that declare nothing
+keep the historical name-inference below, including the U+2160 ``Ⅰ``
+canonicalization. Hard lessons from bossip carried over verbatim:
 
 - sd2 polling must use the create response's ``id`` (``task_`` prefix), never
   ``task_id`` — upstream overwrites ``task_id`` and polling it yields
@@ -164,14 +168,63 @@ def _gateway_route(model: str, channel: str, model_type: str, config) -> VideoRo
     )
 
 
+def declared_model(model: str, config) -> Any | None:
+    """The ``video_generation.models`` entry for this id, if declared."""
+    for entry in getattr(config.video_generation, "models", None) or []:
+        if entry.id == model:
+            return entry
+    return None
+
+
+def _declared_route(entry: Any, config) -> VideoRoute:
+    """Build a route from a declared model, so adding one needs no release.
+
+    Only the *binding* is declarative — channel, credential, limits. How each
+    channel talks stays in this module's adapters, because that is the part a
+    config schema cannot express.
+    """
+    settings = config.video_generation
+    channel = entry.channel
+    if channel == "ark":
+        return _ark_route(entry.id, config, provider_name=entry.provider or settings.provider)
+    model_type = WAN3_MODEL_TYPE if channel == "task" else SD2_MODEL_TYPE
+    provider_name = entry.provider or (settings.channel_providers or {}).get(channel, "")
+    if not provider_name:
+        raise RuntimeError(
+            f"model '{entry.id}' is declared on the '{channel}' channel, but no "
+            f"credential is bound — set its `provider`, or add a "
+            f"'{channel}' entry to video_generation.channel_providers"
+        )
+    provider = config.provider.get(provider_name)
+    if not provider or not provider.api_key or not provider.base_url:
+        raise RuntimeError(
+            f"provider '{provider_name}' needs api_key and base_url for the "
+            f"'{channel}' video channel"
+        )
+    return VideoRoute(
+        provider=provider_name,
+        model=entry.id,
+        api_key=provider.api_key,
+        base_url=provider.base_url.rstrip("/"),
+        submit_timeout_seconds=settings.submit_timeout_seconds,
+        status_timeout_seconds=settings.status_timeout_seconds,
+        channel=channel,
+        model_type=model_type,
+        auth_scheme=(provider.options or {}).get("auth_scheme", "bearer"),
+    )
+
+
 def resolve_route(model_override: str | None, config) -> VideoRoute:
     """Route a model name to its wire channel.
 
-    Order matters: the wan3 check must run before any other family mapping so
-    an explicit wan3 selection can never be swallowed by a broader rewrite.
-    """
-    import os
+    A declared ``video_generation.models`` entry wins outright; without one the
+    historical name-inference applies, so an existing deployment that declares
+    nothing keeps behaving exactly as before.
 
+    Order matters in the inference path: the wan3 check must run before any
+    other family mapping so an explicit wan3 selection can never be swallowed
+    by a broader rewrite.
+    """
     settings = config.video_generation
     model = (model_override or settings.model).strip()
     if not model:
@@ -184,6 +237,10 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
                 f"model '{model_override}' is not in video_generation.allowed_models"
             )
 
+    entry = declared_model(model, config)
+    if entry is not None:
+        return _declared_route(entry, config)
+
     if is_wan3_model(model):
         return _gateway_route(
             canonicalize_wan3_model_name(model), "task", WAN3_MODEL_TYPE, config
@@ -193,13 +250,21 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
             canonicalize_sd2_model_name(model), "sd2", SD2_MODEL_TYPE, config
         )
 
-    # Legacy ark path — byte-identical to the historical _configured_target.
-    provider = config.provider.get(settings.provider)
+    return _ark_route(model, config, provider_name=settings.provider)
+
+
+def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
+    """The ark path — byte-identical to the historical _configured_target."""
+    import os
+    from urllib.parse import urlsplit
+
+    settings = config.video_generation
+    provider = config.provider.get(provider_name)
     api_key = (provider.api_key if provider else None) or (
-        os.environ.get("DOUBAO_API_KEY", "") if settings.provider == "doubao" else ""
+        os.environ.get("DOUBAO_API_KEY", "") if provider_name == "doubao" else ""
     )
     configured_base = (provider.base_url if provider else None) or (
-        os.environ.get("DOUBAO_BASE_URL", "") if settings.provider == "doubao" else ""
+        os.environ.get("DOUBAO_BASE_URL", "") if provider_name == "doubao" else ""
     )
     if not api_key:
         raise RuntimeError("DOUBAO_API_KEY is empty")
@@ -210,15 +275,13 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
             "https://api.tokenspace.net.cn or https://openapi.bossipai.com.cn), "
             "not the documentation page"
         )
-    from urllib.parse import urlsplit
-
     wire_format = (
         "bossip_videos"
         if (urlsplit(base_url).hostname or "").lower() == BOSSIP_RELAY_HOST
         else "tokenspace_contents"
     )
     return VideoRoute(
-        provider=settings.provider,
+        provider=provider_name,
         model=model,
         api_key=api_key,
         base_url=base_url,
@@ -233,6 +296,36 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
 
 # ── validation ──────────────────────────────────────────────────────────────
 
+def _validate_declared(
+    entry: Any,
+    *,
+    resolution: str,
+    duration: int,
+    has_video_ref: bool,
+    has_image_ref: bool,
+) -> None:
+    """Refuse what a declared model cannot do, before it costs anything.
+
+    The gateway drops parameters it does not understand and bills for the
+    default it substitutes, so an unchecked request comes back "successful"
+    with output that ignores half of what was asked. Declared limits are the
+    only place that can be caught.
+    """
+    allowed = list(entry.resolutions or [])
+    if resolution and allowed and resolution not in allowed:
+        raise RuntimeError(
+            f"model {entry.id} supports {'/'.join(allowed)}; requested "
+            f"{resolution} would be silently substituted upstream"
+        )
+    cap = entry.max_duration_seconds
+    if cap is not None and duration != -1 and duration > cap:
+        raise RuntimeError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
+    if has_video_ref and not entry.supports_reference_video:
+        raise RuntimeError(f"model {entry.id} does not accept video references")
+    if has_image_ref and not entry.supports_reference_image:
+        raise RuntimeError(f"model {entry.id} does not accept image references")
+
+
 def validate_request(
     route: Any,
     *,
@@ -241,9 +334,18 @@ def validate_request(
     duration: int,
     generate_audio: bool,
     input_mimes: list[str],
+    declared: Any | None = None,
 ) -> None:
     channel = getattr(route, "channel", "ark")
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
+    if declared is not None:
+        _validate_declared(
+            declared,
+            resolution=resolution,
+            duration=duration,
+            has_video_ref=has_video_ref,
+            has_image_ref=any(mime.startswith("image/") for mime in input_mimes),
+        )
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
         if resolution and resolution != native:
@@ -463,6 +565,11 @@ def result_video_url(route: Any, data: dict[str, Any]) -> str:
             data.get("video_url"),
             data.get("url"),
             data.get("download_url"),
+            # Observed on the BossIP relay (2026-08-29): a completed
+            # `GET /v1/videos/{id}` carries the OSS link under `metadata.url`
+            # and nowhere else, so omitting it finalizes to "completed without
+            # a video URL" after the generation has already been paid for.
+            (data.get("metadata") or {}).get("url") if isinstance(data.get("metadata"), dict) else None,
             (data.get("result") or {}).get("video_url") if isinstance(data.get("result"), dict) else None,
             (data.get("result") or {}).get("url") if isinstance(data.get("result"), dict) else None,
             (data.get("data") or {}).get("video_url") if isinstance(data.get("data"), dict) else None,

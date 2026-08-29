@@ -31,6 +31,10 @@ class PromptBody(BaseModel):
     text: str
     agent: str | None = None
     model: str | None = None
+    #: Video model picked in the composer. Recorded on the session so the
+    #: video tools can read it when the agent reaches them; a segment then
+    #: freezes it at submission, leaving in-flight work untouched.
+    video_model: str | None = None
     variant: str | None = None
     client_message_id: str | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
@@ -51,6 +55,10 @@ class UpdateSessionBody(BaseModel):
     title: str | None = None
     agent: str | None = None
     model: str | None = None
+    #: The video model this conversation generates with. Independent of
+    #: `model`: segments snapshot it at submission, so a switch only reaches
+    #: work not yet started.
+    video_model: str | None = None
 
 
 class CommandBody(BaseModel):
@@ -74,6 +82,21 @@ async def _remember_model(session, requested: str | None, user_id: str) -> str:
     if chosen and chosen != session.model:
         await session_mod.update_session(session.id, model=chosen, user_id=user_id)
     return chosen
+
+
+async def _remember_video_model(session, requested: str | None, user_id: str) -> None:
+    """Keep the composer's video pick on the session.
+
+    Unlike the chat model this is not resolved or substituted: an unknown id
+    must reach the submit path and fail there by name, because silently
+    swapping a video model would spend real money on something the user did
+    not choose. An empty string clears the pick back to the deployment default.
+    """
+    if requested is None:
+        return
+    value = requested.strip() or None
+    if value != getattr(session, "video_model", None):
+        await session_mod.update_session(session.id, video_model=value, user_id=user_id)
 
 
 async def _require_session_owned(session_id: str, user_id: str):
@@ -222,6 +245,7 @@ async def send_message(
     await sandbox_manager.get_client(session_id, user_id=user_id)
 
     chosen_model = await _remember_model(session, body.model, user_id)
+    await _remember_video_model(session, body.video_model, user_id)
 
     user_msg = await session_mod.create_user_message(
         session_id=session_id,
@@ -275,6 +299,7 @@ async def send_message_async(
     # comes back as an opaque "no channel for model X" that the retry layer
     # attempts five times before failing the turn.
     chosen_model = await _remember_model(session, body.model, user_id)
+    await _remember_video_model(session, body.video_model, user_id)
 
     user_msg = await session_mod.create_user_message(
         session_id=session_id,
@@ -383,6 +408,8 @@ class RegenerateBody(BaseModel):
     # Optional: retry on a different model. A turn that failed because of the
     # model it ran on is the main reason anyone presses regenerate.
     model: str | None = None
+    #: Independently switchable — a turn can fail on the video model alone.
+    video_model: str | None = None
 
 
 @router.get("/session/{session_id}/diff/step")
@@ -479,6 +506,9 @@ async def regenerate_message(
     # and "try it on another one" are a single action.
     if body and body.model:
         await _remember_model(session, body.model, user_id)
+    # Independent of the chat model: a retry may switch only the video model.
+    if body:
+        await _remember_video_model(session, body.video_model, user_id)
 
     last_user = await session_mod.delete_messages_from(session_id, message_id)
     if not last_user:

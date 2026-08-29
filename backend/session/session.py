@@ -25,6 +25,8 @@ class Session(BaseModel):
     title: str = ""
     agent: str = "build"
     model: str = ""
+    #: Video model for this conversation; "" = deployment default.
+    video_model: str = ""
     status: SessionStatus = SessionStatus.IDLE
     created_at: str = ""
     updated_at: str = ""
@@ -47,6 +49,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         title=row.title or "",
         agent=row.agent or "build",
         model=row.model or "",
+        video_model=getattr(row, "video_model", None) or "",
         status=SessionStatus(row.status) if row.status else SessionStatus.IDLE,
         created_at=row.created_at.isoformat() if row.created_at else "",
         updated_at=row.updated_at.isoformat() if row.updated_at else "",

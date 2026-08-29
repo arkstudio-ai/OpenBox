@@ -8,6 +8,7 @@ import { useStreamStore } from "../stores/stream"
 
 export interface StartOpts {
   model?: string
+  videoModel?: string
   agent?: string
   projectId?: string
   attachments?: string[]
@@ -54,6 +55,7 @@ export function useStartChat(
         await http.post(`/api/agent/session/${sessionId}/prompt_async`, {
           text: trimmed,
           model: opts?.model,
+          video_model: opts?.videoModel,
           agent: opts?.agent,
           attachments: opts?.attachments?.length ? opts.attachments : undefined,
           client_message_id: clientMessageId,

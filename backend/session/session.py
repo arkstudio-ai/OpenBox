@@ -429,7 +429,7 @@ async def create_user_message(
     """
     if (
         client_message_id
-        and client_message_id.startswith(("sjr:", "sji:"))
+        and client_message_id.startswith(("sjr:", "sji:", "tabort:"))
         and not synthetic
     ):
         raise ValueError("client_message_id uses a platform-reserved prefix")

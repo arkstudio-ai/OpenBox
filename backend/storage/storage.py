@@ -6,6 +6,7 @@ when the database engine is available (multi-user mode).
 """
 import asyncio
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -58,16 +59,20 @@ async def _db_write(key: list[str], content: Any) -> None:
     from sqlalchemy import text
     db_key = "/".join(key)
     value = json.dumps(content, default=str, ensure_ascii=False)
+    # Bound in Python rather than with the database's own clock: NOW() is
+    # PostgreSQL-only and this table is also written under the single-user
+    # SQLite profile, where it raised "no such function: NOW".
+    now = datetime.now(timezone.utc)
     async with get_db_session() as session:
         # Upsert: try update first, then insert
         result = await session.execute(
-            text("UPDATE kv_store SET value = :value, updated_at = NOW() WHERE key = :key"),
-            {"key": db_key, "value": value},
+            text("UPDATE kv_store SET value = :value, updated_at = :now WHERE key = :key"),
+            {"key": db_key, "value": value, "now": now},
         )
         if result.rowcount == 0:
             await session.execute(
-                text("INSERT INTO kv_store (key, value, updated_at) VALUES (:key, :value, NOW())"),
-                {"key": db_key, "value": value},
+                text("INSERT INTO kv_store (key, value, updated_at) VALUES (:key, :value, :now)"),
+                {"key": db_key, "value": value, "now": now},
             )
 
 

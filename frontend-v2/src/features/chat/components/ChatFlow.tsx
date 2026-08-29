@@ -3,9 +3,10 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
-import type { Turn } from "../lib/turn-view"
+import { isInterruptionMarker, type Turn } from "../lib/turn-view"
 import { AssistantTurn, TypingRow } from "./AssistantTurn"
 import { UserBubble } from "./UserBubble"
+import { InterruptionDivider } from "./InterruptionDivider"
 
 const VIRTUAL_THRESHOLD = 50
 
@@ -81,7 +82,11 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
       key: turn.key,
       node:
         turn.kind === "user" ? (
-          <UserBubble message={turn.message} />
+          isInterruptionMarker(turn.message) ? (
+            <InterruptionDivider message={turn.message} />
+          ) : (
+            <UserBubble message={turn.message} />
+          )
         ) : (
           <AssistantTurn
             messages={turn.messages}

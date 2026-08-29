@@ -17,6 +17,7 @@ import 'widgets/cards/question_dock.dart';
 import 'widgets/chat_flow.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
+import 'widgets/interruption_divider.dart';
 import 'widgets/run_error_notice.dart';
 import 'widgets/turn_actions_sheet.dart';
 import 'widgets/typing_row.dart';
@@ -65,7 +66,10 @@ class ChatScreen extends ConsumerWidget {
     final widgets = <Widget>[
       for (final (index, row) in rows.indexed)
         switch (row) {
-          UserRowData(:final message) => UserBubble(message: message),
+          UserRowData(:final message) =>
+            isInterruptionMarker(message.clientMessageId)
+                ? InterruptionDivider(message: message)
+                : UserBubble(message: message),
           AssistantTurnData() => GestureDetector(
               onLongPress: busy
                   ? null

@@ -146,6 +146,39 @@ export interface TodoView {
   allDone: boolean
 }
 
+/** What a task card is entitled to claim about itself.
+ *
+ *  A card is only allowed to look alive — pulsing mark, moving bar, a
+ *  percentage, present-tense wording — while the turn that wrote it is still
+ *  running. The progress bar is deliberately a fiction (see todo-progress),
+ *  and a fiction that outlives its turn becomes a lie: a stopped task went on
+ *  creeping toward 90% for as long as the page stayed open.
+ *
+ *  Everything else is settled, and settled cards speak in the past tense and
+ *  count discrete steps. A percentage is a claim to precision that a task
+ *  which is not running has no way to make.
+ */
+export type TodoDisposition =
+  | { kind: "live" }
+  /** Every counted task finished. */
+  | { kind: "done" }
+  /** The turn ended while a task was running: `at` is that task's 1-based
+   *  position, for "stopped at step 2 of 3". */
+  | { kind: "interrupted"; at: number }
+  /** The turn ended with tasks left, but none of them mid-flight. */
+  | { kind: "unfinished" }
+
+export function todoDisposition(todo: TodoView, live: boolean): TodoDisposition {
+  if (todo.allDone) return { kind: "done" }
+  if (live) return { kind: "live" }
+  // `current` is the running task's position when one is running. A settled
+  // card that still has one is the interrupted case — the very thing the
+  // stored list is also cleaned up for, though this holds even when that
+  // write never happened (a crash, a killed process).
+  const running = todo.tasks.some((task) => task.item.status === "in_progress")
+  return running ? { kind: "interrupted", at: todo.current } : { kind: "unfinished" }
+}
+
 /** The tools a todo turn shows outside the card, in order. */
 export function looseTools(todo: TodoView): ToolLike[] {
   return [...todo.before, ...todo.after]
@@ -309,4 +342,18 @@ export function buildTurnView(parts: MessagePart[]): TurnView {
     view.toolsStreaming = view.tools.some(isRunning)
   }
   return view
+}
+
+
+/** Reserved prefix the platform stamps on an interruption marker.
+ *
+ *  The marker is a real message — that is the point, the next turn's model
+ *  reads it in-band — but it is not something a person said, so it must not
+ *  wear a user's bubble. `create_user_message` refuses the prefix to clients,
+ *  so anything carrying it was written by the platform.
+ */
+export const INTERRUPTION_MARKER_PREFIX = "tabort:"
+
+export function isInterruptionMarker(message: { client_message_id?: string }): boolean {
+  return (message.client_message_id ?? "").startsWith(INTERRUPTION_MARKER_PREFIX)
 }

@@ -64,7 +64,13 @@
     "allDone": "Done — {{total}} of {{total}} steps",
     "addAfter": "Insert a step after this one",
     "remove": "Remove this step",
-    "addPlaceholder": "Describe a task, press Enter to add"
+    "addPlaceholder": "Describe a task, press Enter to add",
+    "stoppedHere": "stopped here",
+    "interruptedAt": "Interrupted · {{done}}/{{total}} done, stopped at step {{at}}",
+    "unfinished": "Unfinished · {{done}}/{{total}} steps"
+  },
+  "interrupted": {
+    "label": "Interrupted"
   },
   "permission": {
     "title": "Permission request",

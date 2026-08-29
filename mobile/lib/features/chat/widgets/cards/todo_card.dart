@@ -74,7 +74,9 @@ class _TodoCardState extends ConsumerState<TodoCard> {
   }
 
   void _syncTick() {
-    final active = widget.streaming && !widget.todo.allDone;
+    final active =
+        todoDisposition(widget.todo, widget.streaming).isLive &&
+            !widget.todo.allDone;
     if (active && _tick == null) {
       _tick = Timer.periodic(const Duration(seconds: 1), (_) {
         setState(() => _now = DateTime.now());
@@ -112,10 +114,18 @@ class _TodoCardState extends ConsumerState<TodoCard> {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final todo = widget.todo;
-    // An add already being typed survives the last task completing.
-    final editable = widget.editable && (!todo.allDone || _adding != null);
-    final heading = todo.activeForm ??
-        i18n.t(widget.streaming ? 'chat:todo.working' : 'chat:todo.title');
+    // `streaming` is "the turn that wrote this card is still running" — never
+    // "the session is busy". An unrelated later turn makes the session busy
+    // again, and keying off that relit every old card in the conversation.
+    final disposition = todoDisposition(todo, widget.streaming);
+    final live = disposition.isLive;
+    // A settled list takes no edits: adding a task to a plan nothing is
+    // working through only splits the stored list from this snapshot.
+    final editable =
+        widget.editable && live && (!todo.allDone || _adding != null);
+    final heading = live
+        ? (todo.activeForm ?? i18n.t('chat:todo.working'))
+        : i18n.t('chat:todo.title');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -136,7 +146,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                   child: Row(
                     children: [
                       Flexible(
-                        child: widget.streaming && !todo.allDone
+                        child: live && !todo.allDone
                             ? ShimmerText(
                                 heading,
                                 style: const TextStyle(
@@ -158,14 +168,28 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                       if (todo.total > 0) ...[
                         const SizedBox(width: 10),
                         Text(
-                          todo.allDone
-                              ? i18n.t('chat:todo.allDone',
-                                  vars: {'total': todo.total})
-                              : i18n.t('chat:plan.stepCounter', vars: {
+                          switch (disposition.kind) {
+                            TodoDispositionKind.done => i18n.t(
+                                'chat:todo.allDone',
+                                vars: {'total': todo.total}),
+                            TodoDispositionKind.interrupted => i18n.t(
+                                'chat:todo.interruptedAt', vars: {
+                                'done': todo.done,
+                                'total': todo.total,
+                                'at': disposition.at,
+                              }),
+                            TodoDispositionKind.unfinished => i18n.t(
+                                'chat:todo.unfinished', vars: {
+                                'done': todo.done,
+                                'total': todo.total,
+                              }),
+                            TodoDispositionKind.live =>
+                              i18n.t('chat:plan.stepCounter', vars: {
                                   'current':
                                       todo.current < 1 ? 1 : todo.current,
                                   'total': todo.total,
                                 }),
+                          },
                           style: TextStyle(
                               fontSize: FontSizes.sm, color: t.n600),
                         ),
@@ -181,7 +205,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                   ),
                 ),
               ),
-              if (widget.streaming && widget.onStop != null)
+              if (live && widget.onStop != null)
                 GestureDetector(
                   onTap: widget.onStop,
                   child: Padding(
@@ -205,6 +229,7 @@ class _TodoCardState extends ConsumerState<TodoCard> {
                   _TaskRow(
                     task: task,
                     now: _now,
+                    live: live,
                     editable: editable,
                     onAdd: (id) => setState(() {
                       _adding = id;
@@ -273,15 +298,19 @@ class _TodoCardState extends ConsumerState<TodoCard> {
 /// Status circle (web `StatusMark`): filled sage check when done, thick
 /// accent ring while running, muted ring otherwise.
 class _StatusMark extends StatelessWidget {
-  const _StatusMark({required this.item});
+  const _StatusMark({required this.item, required this.live});
 
   final TodoItem item;
+
+  /// The turn is still running. On a settled card the in_progress flag only
+  /// records where work stopped, and must not wear the running ring.
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final done = item.status == TodoStatus.completed;
-    final running = item.status == TodoStatus.inProgress;
+    final running = live && item.status == TodoStatus.inProgress;
     final cancelled = item.status == TodoStatus.cancelled;
     return Opacity(
       opacity: cancelled ? 0.6 : 1,
@@ -307,6 +336,7 @@ class _TaskRow extends ConsumerStatefulWidget {
   const _TaskRow({
     required this.task,
     required this.now,
+    required this.live,
     required this.editable,
     required this.onAdd,
     required this.onRemove,
@@ -314,6 +344,9 @@ class _TaskRow extends ConsumerStatefulWidget {
 
   final TodoTask task;
   final DateTime now;
+
+  /// See _StatusMark.live — the turn that wrote this row is still running.
+  final bool live;
   final bool editable;
   final void Function(String afterId) onAdd;
   final void Function(String id) onRemove;
@@ -325,13 +358,16 @@ class _TaskRow extends ConsumerStatefulWidget {
 class _TaskRowState extends ConsumerState<_TaskRow> {
   // A finished task folds its work away; the running one stays open so the
   // calls stream where they happen. Latched after that.
-  late bool _open = widget.task.item.status == TodoStatus.inProgress;
-  late bool _wasRunning = widget.task.item.status == TodoStatus.inProgress;
+  late bool _open =
+      widget.live && widget.task.item.status == TodoStatus.inProgress;
+  late bool _wasRunning =
+      widget.live && widget.task.item.status == TodoStatus.inProgress;
 
   @override
   void didUpdateWidget(_TaskRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final running = widget.task.item.status == TodoStatus.inProgress;
+    final running =
+        widget.live && widget.task.item.status == TodoStatus.inProgress;
     if (_wasRunning != running) {
       _wasRunning = running;
       if (running) _open = true;
@@ -377,7 +413,7 @@ class _TaskRowState extends ConsumerState<_TaskRow> {
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: Row(
               children: [
-                _StatusMark(item: item),
+                _StatusMark(item: item, live: widget.live),
                 const SizedBox(width: 11),
                 Expanded(
                   child: Text(

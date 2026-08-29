@@ -9,7 +9,6 @@ from auth.quota import check_session_quota, check_concurrent_agents
 from core.config import get_config
 from session import session as session_mod
 from models.message import SessionStatus
-from session.status import trigger_abort
 
 _background_tasks = set()  # prevent GC of background tasks
 
@@ -235,10 +234,9 @@ async def send_message(
     if not session:
         raise HTTPException(404, "Session not found")
     if session.status in _ACTIVE_SESSION_STATUSES:
-        from session.status import trigger_abort
-        trigger_abort(session_id)
-        await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
-        await asyncio.sleep(0.3)
+        from session.abort import abort_session_turn
+
+        await abort_session_turn(session_id, user_id, reason="preempted")
 
     # Chat preflight: ensure user sandbox exists.
     from sandbox.manager import sandbox_manager
@@ -279,13 +277,11 @@ async def send_message_async(
     if not session:
         raise HTTPException(404, "Session not found")
     if session.status in _ACTIVE_SESSION_STATUSES:
-        # Force abort the running loop and reset status so user can send again.
-        # This matches opencode's cancel() behavior: abort + set idle immediately.
-        from session.status import trigger_abort
-        trigger_abort(session_id)
-        await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
-        # Give the old loop a moment to detect the abort signal
-        await asyncio.sleep(0.3)
+        # The newest instruction wins, as in opencode's cancel(). The marker
+        # this leaves is what tells the next turn its predecessor was cut off.
+        from session.abort import abort_session_turn
+
+        await abort_session_turn(session_id, user_id, reason="preempted")
     else:
         # Replacing this Session's own active turn reuses its existing quota
         # slot. New work on an idle Session must acquire a fresh slot.
@@ -495,10 +491,9 @@ async def regenerate_message(
         # Same contract as prompt_async: the newest instruction wins, so cancel
         # the run in flight rather than refusing. Deleting messages out from
         # under a live loop is the one thing we must not do.
-        from session.status import trigger_abort
-        trigger_abort(session_id)
-        await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
-        await asyncio.sleep(0.3)
+        from session.abort import abort_session_turn
+
+        await abort_session_turn(session_id, user_id, reason="preempted")
     else:
         await check_concurrent_agents(user_id, config)
 
@@ -600,11 +595,17 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
 @router.post("/session/{session_id}/abort")
 async def abort_session(session_id: str, current_user: dict = Depends(get_current_user)):
     """Abort a running session."""
+    from session.abort import abort_session_turn
+
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
-    trigger_abort(session_id)
-    await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
-    return {"ok": True}
+    session = await _require_session_owned(session_id, user_id)
+    marked = await abort_session_turn(
+        session_id,
+        user_id,
+        reason="user_stop",
+        was_active=session.status in _ACTIVE_SESSION_STATUSES,
+    )
+    return {"ok": True, "marked": marked}
 
 
 # ─── Compaction ───

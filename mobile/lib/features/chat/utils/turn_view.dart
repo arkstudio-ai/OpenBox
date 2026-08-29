@@ -55,6 +55,47 @@ class TodoView {
   List<MessagePart> get looseTools => [...before, ...after];
 }
 
+/// What a task card is entitled to claim about itself (web `TodoDisposition`).
+///
+/// A card may only look alive — pulsing mark, moving bar, a percentage,
+/// present-tense wording — while the turn that wrote it is still running. The
+/// progress bar is deliberately a fiction, and a fiction that outlives its
+/// turn becomes a lie: a stopped task went on creeping toward 90% for as long
+/// as the screen stayed open.
+enum TodoDispositionKind { live, done, interrupted, unfinished }
+
+class TodoDisposition {
+  const TodoDisposition(this.kind, {this.at = 0});
+
+  final TodoDispositionKind kind;
+
+  /// 1-based position of the task the turn stopped on; only for [interrupted].
+  final int at;
+
+  bool get isLive => kind == TodoDispositionKind.live;
+}
+
+/// [live] is "the turn that wrote this card is still running" — never "the
+/// session is busy". An unrelated later turn makes the session busy again,
+/// and keying off that relit every old card in the conversation.
+TodoDisposition todoDisposition(TodoView todo, bool live) {
+  if (todo.allDone) return const TodoDisposition(TodoDispositionKind.done);
+  if (live) return const TodoDisposition(TodoDispositionKind.live);
+  final running =
+      todo.tasks.any((t) => t.item.status == TodoStatus.inProgress);
+  return running
+      ? TodoDisposition(TodoDispositionKind.interrupted, at: todo.current)
+      : const TodoDisposition(TodoDispositionKind.unfinished);
+}
+
+/// Reserved prefix the platform stamps on an interruption marker. The marker
+/// is a real message — the next turn's model reads it in-band — but it is not
+/// something a person said, so it must not wear a user's bubble.
+const String interruptionMarkerPrefix = 'tabort:';
+
+bool isInterruptionMarker(String? clientMessageId) =>
+    (clientMessageId ?? '').startsWith(interruptionMarkerPrefix);
+
 /// Tools the card itself accounts for; the flat chain must not repeat them.
 bool _isTodoTool(MessagePart part) =>
     part is ToolPart && (part.tool == 'todo_write' || part.tool == 'todo_read');

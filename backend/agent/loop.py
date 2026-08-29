@@ -845,6 +845,19 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             except Exception as cleanup_err:
                 log.warning(f"Tool cleanup error: {cleanup_err}")
 
+            # The same problem one level up: a task still flagged in_progress
+            # after the loop has exited is claiming to be happening when
+            # nothing is. Deliberate stops settle this in session.abort before
+            # the loop even notices; this covers every other way a run ends —
+            # an error, an exhausted retry, a model that simply stopped without
+            # closing its last task.
+            try:
+                from session.abort import settle_running_todos
+
+                await settle_running_todos(session_id, user_id)
+            except Exception as todo_err:
+                log.warning(f"Todo settle error: {todo_err}")
+
             # Post-loop: prune old tool outputs
             try:
                 await prune_tool_outputs(session_id, user_id=user_id)

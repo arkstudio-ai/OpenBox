@@ -12,7 +12,7 @@ import { cn } from "@/shared/lib/cn"
 import type { TodoItem } from "@/shared/types/api"
 import { useAddTodoItem, useRemoveTodoItem } from "../api/todo"
 import { progressPercent, taskProgress } from "../lib/todo-progress"
-import type { TodoTask, TodoView } from "../lib/turn-view"
+import { todoDisposition, type TodoTask, type TodoView } from "../lib/turn-view"
 import { ToolRows } from "./ToolRows"
 
 /** How often the running task's bar is recomputed. The value itself is a
@@ -30,9 +30,9 @@ function useNow(active: boolean): number {
   return now
 }
 
-function StatusMark({ item }: { item: TodoItem }) {
+function StatusMark({ item, live }: { item: TodoItem; live: boolean }) {
   const done = item.status === "completed"
-  const running = item.status === "in_progress"
+  const running = live && item.status === "in_progress"
   const cancelled = item.status === "cancelled"
   return (
     <span
@@ -52,15 +52,21 @@ function StatusMark({ item }: { item: TodoItem }) {
 interface RowProps {
   task: TodoTask
   now: number
+  /** The turn is still running, so its flagged task really is under way. On a
+   *  settled card the same flag only means "this is where it stopped". */
+  live: boolean
   editable: boolean
   onAdd: (afterId: string) => void
   onRemove: (id: string) => void
 }
 
-function TaskRow({ task, now, editable, onAdd, onRemove }: RowProps) {
+function TaskRow({ task, now, live, editable, onAdd, onRemove }: RowProps) {
   const { t } = useTranslation("chat")
   const { item, tools } = task
-  const running = item.status === "in_progress"
+  // Only a live turn has a task genuinely running. On a settled card the flag
+  // survives as a record of where the work stopped, which must not animate.
+  const running = live && item.status === "in_progress"
+  const stoppedHere = !live && item.status === "in_progress"
   const done = item.status === "completed"
   const cancelled = item.status === "cancelled"
 
@@ -81,7 +87,7 @@ function TaskRow({ task, now, editable, onAdd, onRemove }: RowProps) {
   return (
     <li className="group/task">
       <div className="flex min-h-8 items-center gap-3 rounded-lg px-2.5 py-1">
-        <StatusMark item={item} />
+        <StatusMark item={item} live={live} />
         <button
           type="button"
           onClick={() => tools.length > 0 && setOpen((o) => !o)}
@@ -101,6 +107,7 @@ function TaskRow({ task, now, editable, onAdd, onRemove }: RowProps) {
             )}
           >
             {running && item.active_form ? item.active_form : item.subject}
+            {stoppedHere && <span className="text-n500"> · {t("todo.stoppedHere")}</span>}
           </span>
           {tools.length > 0 && (
             <ChevronDown
@@ -173,7 +180,12 @@ interface Props {
 
 export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLatest = true }: Props) {
   const { t } = useTranslation("chat")
-  const now = useNow(streaming && !todo.allDone)
+  // `streaming` is "the turn that wrote this card is still running" — not
+  // "the session is busy". An unrelated later turn makes the session busy
+  // again, and keying off that relit every old card in the conversation.
+  const disposition = todoDisposition(todo, streaming)
+  const live = disposition.kind === "live"
+  const now = useNow(live && !todo.allDone)
   const add = useAddTodoItem(sessionId)
   const remove = useRemoveTodoItem(sessionId)
   const [adding, setAdding] = useState<string | null>(null)
@@ -182,19 +194,28 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
   // Once every task is done the card is a record, not a control: it folds to
   // its heading and stops offering edits, because there is no run left for an
   // added task to join.
-  const [open, setOpen] = useState(!todo.allDone)
-  const [wasDone, setWasDone] = useState(todo.allDone)
-  if (wasDone !== todo.allDone) {
-    setWasDone(todo.allDone)
-    setOpen(!todo.allDone)
+  // Superseded cards fold too. A long conversation accumulates a snapshot per
+  // turn that touched the list, and leaving them all expanded buried the one
+  // that is current under near-identical copies of itself.
+  const foldedByDefault = todo.allDone || !isLatest
+  const [open, setOpen] = useState(!foldedByDefault)
+  const [wasFolded, setWasFolded] = useState(foldedByDefault)
+  if (wasFolded !== foldedByDefault) {
+    setWasFolded(foldedByDefault)
+    setOpen(!foldedByDefault)
   }
 
   // An add already being typed survives the last task completing. The
   // affordance is never *offered* on a finished list — but a run can finish
   // between opening the box and pressing Enter, and dropping what someone
   // typed at that moment reads as the app eating their input.
-  const editable = isLatest && (!todo.allDone || adding !== null)
-  const heading = todo.activeForm ?? t(streaming ? "todo.working" : "todo.title")
+  // A settled list takes no edits: adding a task to a plan nothing is working
+  // through only splits the stored list from the snapshot this card shows.
+  const editable = isLatest && live && (!todo.allDone || adding !== null)
+  const heading =
+    disposition.kind === "live"
+      ? (todo.activeForm ?? t("todo.working"))
+      : t("todo.title")
 
   function submit() {
     const subject = draft.trim()
@@ -215,16 +236,27 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
           <span
             className={cn(
               "truncate text-base font-medium",
-              streaming && !todo.allDone ? "text-shimmer" : "text-ink",
+              live && !todo.allDone ? "text-shimmer" : "text-ink",
             )}
           >
             {heading}
           </span>
           {todo.total > 0 && (
             <span className="text-n600 shrink-0 text-sm">
-              {todo.allDone
+              {disposition.kind === "done"
                 ? t("todo.allDone", { total: todo.total })
-                : t("plan.stepCounter", { current: Math.max(1, todo.current), total: todo.total })}
+                : disposition.kind === "live"
+                  ? t("plan.stepCounter", {
+                      current: Math.max(1, todo.current),
+                      total: todo.total,
+                    })
+                  : disposition.kind === "interrupted"
+                    ? t("todo.interruptedAt", {
+                        done: todo.done,
+                        total: todo.total,
+                        at: disposition.at,
+                      })
+                    : t("todo.unfinished", { done: todo.done, total: todo.total })}
             </span>
           )}
           <ChevronDown
@@ -234,7 +266,7 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
             )}
           />
         </button>
-        {streaming && onStop && (
+        {live && onStop && (
           <button
             type="button"
             onClick={onStop}
@@ -253,6 +285,7 @@ export function TodoCard({ todo, sessionId, streaming, onStop, editable: isLates
                 key={task.item.id}
                 task={task}
                 now={now}
+                live={live}
                 editable={editable}
                 onAdd={(id) => {
                   setAdding(id)

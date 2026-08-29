@@ -38,8 +38,11 @@ class SegmentSpec(BaseModel):
     script_text: str = Field(min_length=1, max_length=2000)
     prompt: str = Field(min_length=1, max_length=32_000)
     input_assets: list[str] = Field(default_factory=list, max_length=7)
-    # Per-segment model override; None = the configured default. Validated and
-    # canonicalized against the provider routing table at set_segments time.
+    #: Leave this unset. The person chooses the video model in the composer,
+    #: and that choice governs every segment; a value here is only a fallback
+    #: for when nobody has chosen. Set it solely when the person named a
+    #: specific model for this segment, and then use a model id from
+    #: video_generation.models — not a tier label like "standard".
     model: str | None = Field(default=None, max_length=160)
 
 
@@ -1473,9 +1476,21 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
 async def resolve_segment_model(db, production, segment, user_id: str) -> str | None:
     """The model this segment will generate with, resolved once and then frozen.
 
-    Order: an explicit per-segment override, then the conversation's picked
-    video model, then the deployment default (returned as None so the caller
-    keeps using ``video_generation.model``).
+    Order: what the person picked in the composer, then a per-segment value,
+    then the deployment default (returned as None so the caller keeps using
+    ``video_generation.model``).
+
+    Two different things live in ``segment.model``: a value this runtime froze
+    at a previous submission, and a value an agent wrote while planning. They
+    are told apart by whether the segment already has a generation job. The
+    frozen one is authoritative; the planned one is only a suggestion.
+
+    The composer's pick beats that suggestion on purpose. The per-segment field
+    used to win outright, and agents fill it in unbidden — one sent the picker's *tier label*
+    ("standard") as a model id, then settled on video-sd-1080p-pro while the
+    person had plainly selected Wan 3.0. A guess must not beat a control the
+    person actually operated; a segment already frozen keeps its own value
+    either way, since freezing writes the resolved answer back.
 
     Resolution happens at submission and the answer is written back onto the
     segment, which is what makes switching safe: a segment already generating
@@ -1483,17 +1498,20 @@ async def resolve_segment_model(db, production, segment, user_id: str) -> str | 
     have not been submitted yet. Without the write-back, a mid-flight switch
     would silently change what a retry or a reconciliation submits.
     """
-    if segment.model:
-        return segment.model
     from db.models.session import Session as SessionORM
 
+    # Already submitted once: keep exactly what it ran with. This is the
+    # in-flight immunity — a retry or a reconciliation of work in progress must
+    # not be retargeted by a switch made after it started.
+    if getattr(segment, "generation_job_id", None) and segment.model:
+        return segment.model
+
     session_id = getattr(production, "session_id", None)
-    if not session_id:
-        return None
-    session = await db.get(SessionORM, session_id)
-    if not session or session.user_id != user_id:
-        return None
-    return session.video_model or None
+    if session_id:
+        session = await db.get(SessionORM, session_id)
+        if session and session.user_id == user_id and session.video_model:
+            return session.video_model
+    return segment.model or None
 
 
 async def _pending_segment_models(db, production, pending: list, user_id: str) -> list[str]:
@@ -1501,15 +1519,24 @@ async def _pending_segment_models(db, production, pending: list, user_id: str) -
 
     Resolved the same way submission resolves them, so the approval card and
     the paid call can never disagree about what is being bought.
+
+    Reported by display name, because that is what the person selected: the
+    composer offers "Wan 3.0", so a card that says "wan3.0-video" is naming the
+    same thing in the machine's words at the moment the person is being asked
+    to approve spending. Undeclared models fall back to their id, which is all
+    there is to show.
     """
     from core.config import get_config
 
-    default = get_config().video_generation.model
+    settings = get_config().video_generation
+    labels = {m.id: (m.name or m.id) for m in (settings.models or [])}
+    default = settings.model
     seen: list[str] = []
     for row in pending:
         model = await resolve_segment_model(db, production, row, user_id) or default
-        if model not in seen:
-            seen.append(model)
+        label = labels.get(model, model)
+        if label not in seen:
+            seen.append(label)
     return seen
 
 

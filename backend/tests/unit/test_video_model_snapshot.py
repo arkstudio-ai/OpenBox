@@ -19,7 +19,12 @@ from db.models.video_production import VideoProduction, VideoSegment
 from tool.video_workflow import resolve_segment_model
 
 
-async def _seed(*, session_video_model: str | None, segment_model: str | None = None):
+async def _seed(
+    *,
+    session_video_model: str | None,
+    segment_model: str | None = None,
+    generation_job_id: str | None = None,
+):
     suffix = uuid4().hex[:10]
     user_id, session_id = f"user_{suffix}", f"session_{suffix}"
     production_id, segment_id = f"prod_{suffix}", f"seg_{suffix}"
@@ -38,7 +43,8 @@ async def _seed(*, session_video_model: str | None, segment_model: str | None = 
             id=segment_id, production_id=production_id, ordinal=1, revision=1,
             is_active=True, role="body", script_text="一句话", prompt="固定镜头@一句话",
             content_hash="h1", input_asset_ids=[], lint_data={}, status="planned",
-            model=segment_model, created_at=now, updated_at=now,
+            model=segment_model, generation_job_id=generation_job_id,
+            created_at=now, updated_at=now,
         ))
     return user_id, production_id, segment_id
 
@@ -57,10 +63,38 @@ async def test_the_conversations_pick_is_used_when_the_segment_has_none():
 
 
 @pytest.mark.asyncio
-async def test_a_frozen_segment_ignores_a_later_switch():
-    """The whole point: an in-flight segment keeps what it started with."""
-    ids = await _seed(session_video_model="wan3.0-video-prime", segment_model="wan3.0-video")
+async def test_a_segment_already_submitted_ignores_a_later_switch():
+    """In-flight immunity: a retry must not be retargeted by a later switch.
+
+    "Already submitted" is what having a generation job means — the runtime
+    froze the model when it went out, so a reconciliation resubmits the same
+    thing rather than whatever the composer says now.
+    """
+    ids = await _seed(
+        session_video_model="wan3.0-video-prime",
+        segment_model="wan3.0-video",
+        generation_job_id="video_already_running",
+    )
     assert await _resolve(*ids) == "wan3.0-video"
+
+
+@pytest.mark.asyncio
+async def test_an_agents_guess_never_beats_the_composer_pick():
+    """A planned segment carries a suggestion, not a decision.
+
+    Agents fill this field in unbidden: one sent the picker's tier label
+    ("standard") as a model id, then settled on video-sd-1080p-pro while the
+    person had plainly selected Wan 3.0. The control the person operated wins.
+    """
+    ids = await _seed(session_video_model="wan3.0-video", segment_model="video-sd-1080p-pro")
+    assert await _resolve(*ids) == "wan3.0-video"
+
+
+@pytest.mark.asyncio
+async def test_a_planned_model_still_applies_when_nobody_picked():
+    """With no pick to respect, the planned value is the best information."""
+    ids = await _seed(session_video_model=None, segment_model="video-sd-1080p-pro")
+    assert await _resolve(*ids) == "video-sd-1080p-pro"
 
 
 @pytest.mark.asyncio
@@ -180,10 +214,13 @@ async def test_submission_freezes_the_pick_onto_the_segment(monkeypatch):
     async with get_db_session() as db:
         assert (await db.get(VideoSegment, segment_id)).model == "wan3.0-video"
 
-    # Switching now must not retarget the segment already submitted above.
+    # Once it is out — which is what having a generation job means — a switch
+    # must not retarget it. The handler links that job right after this gate.
     async with get_db_session() as db:
         session = await db.get(SessionORM, session_id)
         session.video_model = "wan3.0-video-prime"
+        segment = await db.get(VideoSegment, segment_id)
+        segment.generation_job_id = "video_already_running"
         await db.commit()
     async with get_db_session() as db:
         production = await db.get(VideoProduction, production_id)
@@ -206,7 +243,9 @@ async def test_spend_card_names_the_model_that_will_be_billed(monkeypatch):
         production = await db.get(VideoProduction, production_id)
         pending = [await db.get(VideoSegment, segment_id)]
         models = await _pending_segment_models(db, production, pending, user_id)
-    assert models == ["wan3.0-video"]
+    # The display name, matching what the composer offered — see the docstring
+    # on _pending_segment_models.
+    assert models == ["Wan 3.0"]
 
 
 @pytest.mark.asyncio
@@ -219,7 +258,9 @@ async def test_spend_card_falls_back_to_the_deployment_default():
         production = await db.get(VideoProduction, production_id)
         pending = [await db.get(VideoSegment, segment_id)]
         models = await _pending_segment_models(db, production, pending, user_id)
-    assert models == [get_config().video_generation.model]
+    declared = {m.id: (m.name or m.id) for m in get_config().video_generation.models}
+    default = get_config().video_generation.model
+    assert models == [declared.get(default, default)]
 
 
 def test_receipt_summary_hides_identifiers():

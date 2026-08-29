@@ -64,7 +64,13 @@
     "allDone": "已完成 {{total}} / {{total}} 步",
     "addAfter": "在此后插入一步",
     "remove": "移除这一步",
-    "addPlaceholder": "描述要做的事，回车添加"
+    "addPlaceholder": "描述要做的事，回车添加",
+    "stoppedHere": "停在这里",
+    "interruptedAt": "已中断 · 完成 {{done}}/{{total}}，停在第 {{at}} 步",
+    "unfinished": "未完成 · {{done}}/{{total}} 步"
+  },
+  "interrupted": {
+    "label": "已中断"
   },
   "permission": {
     "title": "请求权限",

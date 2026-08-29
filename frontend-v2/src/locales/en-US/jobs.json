@@ -37,5 +37,8 @@
         "rendering": "Rendering on WUYING"
       }
     }
+  },
+  "artifact": {
+    "unavailable": "unavailable"
   }
 }

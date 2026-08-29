@@ -183,6 +183,8 @@ export interface SkillJobPart {
   status: string
   errorCode?: string | null
   summary?: string
+  /** Output files the job produced, embedded so the transcript keeps them. */
+  artifacts?: { assetId: string; name: string; mime?: string }[]
 }
 
 export type MessagePart =

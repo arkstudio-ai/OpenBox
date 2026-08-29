@@ -38,6 +38,26 @@ def _summary(job) -> str:
     return ""
 
 
+async def _receipt_artifacts(job) -> list[dict]:
+    """The job's output files, flattened for the transcript.
+
+    Only what a renderer needs — id, name, mime. Kept small because this is
+    embedded in a message part, not fetched on demand like the live card's.
+    """
+    from skill_runtime import repository as repo
+
+    try:
+        rows = await repo.list_artifacts(job.id, job.user_id)
+    except Exception as exc:  # a receipt must still be written without them
+        log.warning(f"Could not attach artifacts to receipt for {job.id}: {exc!r}")
+        return []
+    return [
+        {"assetId": row["assetId"], "name": row["name"], "mime": row["mime"]}
+        for row in rows
+        if row.get("role") == "output"
+    ]
+
+
 async def write_receipt(job) -> bool:
     """Insert the receipt message for a terminal job. Returns True when a new
     receipt was written."""
@@ -57,6 +77,11 @@ async def write_receipt(job) -> bool:
     now = datetime.now(timezone.utc)
     message_id = ascending("message")
     part_id = ascending("part")
+    # The receipt outlives the live card, so it has to carry what the job
+    # produced. Without this the durable record of a paid video generation is a
+    # status chip and an asset id buried in truncated summary text — the file
+    # itself is only findable by going to look for it.
+    artifacts = await _receipt_artifacts(job)
     part_data = {
         "type": "skill_job",
         "id": part_id,
@@ -66,6 +91,7 @@ async def write_receipt(job) -> bool:
         "status": job.status,
         "errorCode": job.error_code,
         "summary": _summary(job),
+        "artifacts": artifacts,
     }
 
     try:

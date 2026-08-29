@@ -37,5 +37,8 @@
         "rendering": "无影渲染中"
       }
     }
+  },
+  "artifact": {
+    "unavailable": "暂不可用"
   }
 }

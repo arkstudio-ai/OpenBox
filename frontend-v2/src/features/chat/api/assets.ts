@@ -1,9 +1,7 @@
 // OSS asset transfer client. Bytes go browser → OSS on a presigned PUT (the
 // backend only signs and records), and the chat trades an asset id for a
 // fresh preview URL whenever a card needs one — presigned GETs expire.
-import { useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
-import { useAuthStore } from "@/shared/api/auth-store"
 
 export interface AssetTicket {
   id: string
@@ -54,14 +52,6 @@ export function putToOss(
   })
 }
 
-export function useAssetUrl(assetId: string | null | undefined) {
-  const userId = useAuthStore((s) => s.user?.id ?? "anonymous")
-  return useQuery({
-    queryKey: ["asset-url", userId, assetId ?? "none"] as const,
-    queryFn: () => http.get<{ url: string; mime: string; name: string; size: number }>(`/api/assets/${assetId}/url`),
-    enabled: !!assetId,
-    // Presigned GETs live an hour; refresh well inside that.
-    staleTime: 40 * 60_000,
-    retry: 1,
-  })
-}
+// Moved to shared/api/assets so the jobs feature can surface produced files
+// too; re-exported here so chat's existing call sites keep their import.
+export { useAssetUrl } from "@/shared/api/assets"

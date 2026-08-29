@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
+import { AssetPreview } from "@/shared/ui/AssetPreview"
 import type { MessagePart, SkillJobPart } from "@/shared/types/api"
 
 /** Exported for tests. */
@@ -43,6 +44,19 @@ function ReceiptChip({ part }: { part: SkillJobPart }) {
   )
 }
 
+function Receipt({ part }: { part: SkillJobPart }) {
+  return (
+    <div className="min-w-0">
+      <ReceiptChip part={part} />
+      {/* The transcript is the only lasting record once the live card rotates
+          out, so the produced file belongs here, not just its name. */}
+      {(part.artifacts ?? []).map((a) => (
+        <AssetPreview key={a.assetId} artifact={a} />
+      ))}
+    </div>
+  )
+}
+
 /** Durable transcript record of finished background jobs. The jobs dock shows
  *  live cards; this is what remains after they rotate out. */
 export function SkillJobReceipts({ parts }: { parts: MessagePart[] }) {
@@ -51,7 +65,7 @@ export function SkillJobReceipts({ parts }: { parts: MessagePart[] }) {
   return (
     <div className="mt-2 flex flex-col gap-2">
       {receipts.map((part) => (
-        <ReceiptChip key={part.id} part={part} />
+        <Receipt key={part.id} part={part} />
       ))}
     </div>
   )

@@ -320,6 +320,9 @@ class SkillJobPart(BaseModel):
     status: str = ""
     errorCode: str | None = None
     summary: str = ""
+    #: Output files the job produced: {assetId, name, mime}. Embedded rather
+    #: than fetched, so the transcript can show the result forever.
+    artifacts: list[dict] = Field(default_factory=list)
     session_id: str = ""
     message_id: str = ""
 

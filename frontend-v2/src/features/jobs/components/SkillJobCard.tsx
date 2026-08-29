@@ -10,6 +10,7 @@ import {
   useSkillJobArtifacts,
 } from "@/features/jobs/api/jobs"
 import { TERMINAL_JOB_STATUSES, type SkillJobSnapshot } from "@/features/jobs/types"
+import { AssetPreview } from "@/shared/ui/AssetPreview"
 
 /** Status → dot/tone. Exported for tests. */
 export function statusTone(status: SkillJobSnapshot["status"]): {
@@ -168,9 +169,7 @@ export function SkillJobCard({ job }: { job: SkillJobSnapshot }) {
       {job.status === "waiting_user" && <AnswerForm job={job} />}
 
       {(artifacts.data ?? []).map((a) => (
-        <div key={a.artifactId} className="mt-1 truncate text-xs text-n600">
-          📎 {a.name}
-        </div>
+        <AssetPreview key={a.artifactId} artifact={a} />
       ))}
 
       <div className="mt-2 flex items-center gap-2 text-xs text-n500">

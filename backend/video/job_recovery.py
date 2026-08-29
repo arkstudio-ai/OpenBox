@@ -163,13 +163,17 @@ async def _recover_job(job) -> bool:
         if job is None or job.status != "transfer_failed":
             return False
 
-    target, settings = vp._configured_target(None)
+    # Route from the model the job was actually submitted with. Resolving the
+    # default would poll the wrong endpoint and read the wrong response shape
+    # for anything off the default model — and this sweep exists precisely to
+    # rescue jobs nobody else is watching.
+    target, settings = vp._configured_target(job.model or None)
     data = await vp._provider_status(target, job.provider_task_id)
-    state = vp._provider_state(data)
+    state = vp._provider_state(data, target)
     ctx = _recovery_context(job)
 
     if state == "completed":
-        refreshed = await vp._finalize_segment(job, data, ctx, settings)
+        refreshed = await vp._finalize_segment(job, data, ctx, settings, target)
         done = bool(refreshed is not None and refreshed.status == "completed")
         if done:
             log.info(f"Recovered stranded video job {job.id} to completed")

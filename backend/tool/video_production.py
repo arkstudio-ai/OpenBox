@@ -1988,7 +1988,11 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
         return ToolResult(title="Sandbox unavailable", output="Video transcription requires the user's WUYING sandbox.")
     try:
         target = _configured_transcription_target()
-        _, video_settings = _configured_target()
+        # Settings, not a generation route: transcription must not fail because
+        # the deployment's default video model is undeclared.
+        from core.config import get_config
+
+        video_settings = get_config().video_generation
         from core.oss import get_oss
 
         oss = get_oss()
@@ -2299,7 +2303,10 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
     if not ctx.sandbox:
         return ToolResult(title="Sandbox unavailable", output="Video rendering requires the user's WUYING sandbox.")
     try:
-        _, settings = _configured_target()
+        # Same as transcription: render needs the settings, not a route.
+        from core.config import get_config
+
+        settings = get_config().video_generation
         from core.oss import get_oss
 
         oss = get_oss()

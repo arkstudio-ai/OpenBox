@@ -306,3 +306,25 @@ npm run dev
 ### 验证
 
 后端 971 项、前端 165 项通过；变异测试确认冻结写回与能力校验均有回归保护（删掉即有用例失败）。浏览器实测：两个选择器并列渲染、菜单列出 6 个模型及档位、选中 Wan 3.0 后落库 `video_model=wan3.0-video`、刷新后从会话记录恢复。
+
+### 浏览器端到端验收发现的两个缺陷（同日）
+
+两条都只有真跑浏览器才会暴露，单测用的是精确 id 和默认模型，看不见。
+
+**一、声明落空即静默回退推断。** agent 传 `wan3.0`，部署声明的是 `wan3.0-video`。精确匹配落空后回退到名称推断，推断按家族把它路由到 `task` 渠道——而该中转站上那个端点根本不存在。改为失败关闭：配了 `models` 之后它就是全集，未声明的 id 直接报错并列出可用 id 让 agent 自我纠正。
+
+**二、durable handler 完全忽略分段模型，且不支持网关渠道。** handler 三处写死 `_configured_target(None)`，于是不论用户选什么，付费提交一律走部署默认模型——灰度开关打开后 durable 是唯一写路径，这让视频模型选择器**完全形同虚设**（实测分段快照 `wan3.0-video`，实际扣费 `seedance`）。顺查发现 handler 只会拼 ark payload、直接取 `submitted["id"]`、状态归一不传 target、finalize 不传 route，即多渠道路由从未接入 durable 路径：
+
+| 症状 | 后果 |
+|---|---|
+| 取 `submitted["id"]` 而非 `extract_task_id` | sd2 上游覆写 `task_id`，轮询必 `task_not_exist` |
+| `_finalize_segment` 缺 route | 取不到 sd2 的 `metadata.url`，付费完成的任务落到「没有视频 URL」 |
+| `_advance_existing` 用默认模型 | 轮询错端点 |
+
+同类问题还出现在 `video/job_recovery.py` 的滞留补扫——它专门救援卡住的任务，却恰好救不回非默认模型的任务。一并按 `job.model` 路由。
+
+顺带把转写/合成里「只为拿 settings 却顺带解析一次生成路由」的写法改掉：失败关闭之后，默认模型未声明会让它们因无关原因报错。
+
+**验收**：浏览器内选 Wan 3.0 → 三道审批 → `skill_job segment.generate` → succeeded，`video_job.model=wan3.0-video`、`provider_task_id` 为 sd2 的 `task_` 前缀、产物 42MB / 1920×1080 / 5.04s 落入 OSS，Job Card 与终态回执正常渲染。
+
+**已知缺口**：产品没有非口播路径。`video_generate` 与 skill handler 都强制要求 `production_id`+`segment_id`，而 prompt lint 无条件要求固定镜头/中景/手势/语气/无字幕，并要求各段台词拼接后逐字等于已批准脚本。「给我来个 5 秒空镜头」目前不可行——是否加非口播模式属产品决策，未擅自实现。

@@ -838,7 +838,12 @@ async def _segment_transcribe(ctx, payload: dict, checkpoint: dict):
     from tool import video_workflow as vw
 
     target = vp._configured_transcription_target()
-    _, video_settings = vp._configured_target()
+    # Read the settings directly rather than resolving a generation route for
+    # them: transcription does not generate, and routing can legitimately fail
+    # (an undeclared default model) for reasons that must not break QA.
+    from core.config import get_config
+
+    video_settings = get_config().video_generation
     oss = get_oss()
 
     if checkpoint.get("video_job_id"):
@@ -1275,7 +1280,10 @@ async def _production_render(ctx, payload: dict, checkpoint: dict):
     from tool import video_production as vp
     from tool import video_workflow as vw
 
-    _, settings = vp._configured_target()
+    # Same as transcription: render needs the settings, not a generation route.
+    from core.config import get_config
+
+    settings = get_config().video_generation
     oss = get_oss()
 
     if checkpoint.get("video_job_id"):

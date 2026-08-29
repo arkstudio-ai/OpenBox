@@ -88,16 +88,21 @@ def configured_material_target() -> MaterialTarget:
     config = get_config()
     settings = config.video_generation
     provider = config.provider.get(settings.provider)
-    api_key = (provider.api_key if provider else None) or (
-        os.environ.get("DOUBAO_API_KEY", "") if settings.provider == "doubao" else ""
-    )
     # Materials may live on a different origin than generation: the BossIP
     # relay serves /v1/videos but returns an nginx 404 for /api/material, so a
     # relay deployment must point the material APIs at TokenSpace explicitly.
+    # A different origin is a different account, so the key moves with it.
     material_base = (
         settings.material_base_url
         or os.environ.get("DOUBAO_MATERIAL_BASE_URL", "")
     ).strip()
+    material_key = (
+        settings.material_api_key
+        or os.environ.get("DOUBAO_MATERIAL_API_KEY", "")
+    ).strip()
+    api_key = material_key or (provider.api_key if provider else None) or (
+        os.environ.get("DOUBAO_API_KEY", "") if settings.provider == "doubao" else ""
+    )
     configured_base = material_base or (provider.base_url if provider else None) or (
         os.environ.get("DOUBAO_BASE_URL", "") if settings.provider == "doubao" else ""
     )

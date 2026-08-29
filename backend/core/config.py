@@ -126,6 +126,12 @@ class VideoGenerationConfig(BaseModel):
     #: not /api/material, so a relay deployment must point materials at
     #: TokenSpace here or real-person identity cannot work at all.
     material_base_url: str = ""
+    #: The credential for that origin. A separate origin means a separate
+    #: account, so pointing material_base_url elsewhere without this would
+    #: send the generation key to a provider that never issued it. Empty
+    #: means "same account as generation", which is right when both are
+    #: TokenSpace directly.
+    material_api_key: str = ""
     material_timeout_seconds: int = Field(default=180, ge=30, le=600)
     material_poll_interval_seconds: float = Field(default=1.0, ge=0.5, le=10.0)
     liveness_session_ttl_seconds: int = Field(default=300, ge=120, le=1800)

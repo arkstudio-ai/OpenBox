@@ -299,6 +299,12 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 后端套件全绿 + 两处变异检查（破坏 `_public_error` public 分支、删除 status 任一新增
 字段，各须有用例变红）。浏览器验收场景 C（§7）。
 
+**2026-08-30 复核：两处变异检查均已实测闭环。**
+删 `_public_error` 的 `public_message` 分支 → `test_video_error_text.py::
+test_public_material_error_exposes_the_actionable_message` 变红；
+从 status 元数据删 `spend_budget`（`tool/video_workflow.py:843`）→
+`test_status_is_the_recovery_contract.py` 变红。两次均在验证后立即还原，代码未留改动。
+
 ---
 
 ## 7. 浏览器验收场景（PR#2 后跑 A/B，PR#3 后跑 C）
@@ -330,7 +336,11 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 - **C 恢复力**：场景 B 走到审批卡后批准并继续到某一段 `wait` 期间，重启后端进程，
   然后发"继续"。验收：agent 调 `status` 重建事实并接续，不重复提交（幂等键拒绝
   同键不同哈希）。⚠️ 此场景会产生**真实付费生成**——执行前向用户确认预算；
-  用户此前接受过小额测试花费，但每次都要重新确认。**本轮尚未执行，等待单独预算授权。**
+  用户此前接受过小额测试花费，但每次都要重新确认。
+  **2026-08-30 用户决定：付费版不执行，本清理任务以下述零费用替代验收结项。**
+  即：真实供应商链路（真实网络延迟、真实计费、供应商侧异常）在本轮**未被验证**，
+  这是一个已知且被接受的证据缺口，不是遗漏。将来若视频恢复路径出现线上问题，
+  此处是第一个该补的实验。
   零费用自动化已另用 loopback provider 和两个独立进程覆盖 submit→冷重启→恢复前同键
   抢跑→startup recovery→completed→完成后同键重放，确认供应商 POST、调用预算和 attempt
   始终各为 1；它补强核心恢复证据，但不冒充浏览器/真实供应商的付费场景 C。

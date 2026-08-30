@@ -320,23 +320,6 @@ class OpenBoxConfig(BaseModel):
     cron_summary_model: str = ""                   # "" = job model > session model > default model
     cron_transcript_keep_per_job: int = 20         # newest run transcripts kept per job (30d cap on top)
 
-    # -- Skill job runtime (docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md) --
-    skill_jobs_enabled: bool = True                # admission gate for new skill jobs
-    #: off = no worker in this process; embedded = dev-only worker inside the
-    #: web lifespan. Production runs the standalone worker_main role instead.
-    skill_worker_mode: str = "off"
-    skill_worker_queues: str = "default"           # comma-separated resource pools
-    skill_worker_concurrency: int = 4
-    skill_worker_lease_seconds: int = 60
-    skill_worker_per_user_concurrency: int = 2
-    skill_worker_invocation_timeout: int = 120     # default per-invocation bound (manifest can lower)
-    #: Greyed rollout gate for the video write path (segment.generate via the
-    #: generic runtime). Off = the legacy video_generate tool stays the only
-    #: paid submit path; never run both write paths at once (§11.5).
-    skill_jobs_video_write: bool = False
-    #: Terminal jobs leave a structured receipt message in their session's
-    #: timeline (zero LLM tokens, §8.3).
-    skill_job_chat_receipt: bool = True
     cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
 
     # -- Agent --
@@ -534,15 +517,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "logto_jwks_uri": "LOGTO_JWKS_URI",
         "logto_redirect_uri": "LOGTO_REDIRECT_URI",
         "logto_post_logout_redirect_uri": "LOGTO_POST_LOGOUT_REDIRECT_URI",
-        "skill_jobs_enabled": "SKILL_JOBS_ENABLED",
-        "skill_worker_mode": "SKILL_WORKER_MODE",
-        "skill_worker_queues": "SKILL_WORKER_QUEUES",
-        "skill_worker_concurrency": "SKILL_WORKER_CONCURRENCY",
-        "skill_worker_lease_seconds": "SKILL_WORKER_LEASE_SECONDS",
-        "skill_worker_per_user_concurrency": "SKILL_WORKER_PER_USER_CONCURRENCY",
-        "skill_worker_invocation_timeout": "SKILL_WORKER_INVOCATION_TIMEOUT",
-        "skill_jobs_video_write": "SKILL_JOBS_VIDEO_WRITE",
-        "skill_job_chat_receipt": "SKILL_JOB_CHAT_RECEIPT",
     }
     for field_name, env_var in env_map.items():
         value = os.environ.get(env_var)
@@ -554,14 +528,11 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
-                                "oss_user_quota_bytes", "skill_worker_concurrency",
-                                "skill_worker_lease_seconds", "skill_worker_per_user_concurrency",
-                                "skill_worker_invocation_timeout"}:
+                                "oss_user_quota_bytes"}:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)
-            elif field_name in {"debug", "skill_jobs_enabled", "skill_jobs_video_write",
-                                "skill_job_chat_receipt"}:
+            elif field_name == "debug":
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

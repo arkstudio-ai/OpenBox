@@ -220,10 +220,7 @@ async def delete_session(session_id: str, user_id: str = "default") -> bool:
     # guessed another tenant's session id could detach its cron notifications
     # and release its in-memory sandbox binding even though the scoped session
     # update itself matched no row.
-    continuation_jobs: list[str] = []
     async with get_db_session() as db:
-        from db.models.session_inbox import SessionInbox
-
         owned = (
             await db.execute(
                 select(SessionORM.id).where(
@@ -242,67 +239,6 @@ async def delete_session(session_id: str, user_id: str = "default") -> bool:
             )
             .values(is_deleted=True, deleted_at=now)
         )
-        continuation_jobs = list(
-            (
-                await db.execute(
-                    select(SessionInbox.source_job_id)
-                    .where(
-                        SessionInbox.session_id == session_id,
-                        SessionInbox.user_id == user_id,
-                        SessionInbox.status.in_(("pending", "processing")),
-                    )
-                    .distinct()
-                )
-            ).scalars().all()
-        )
-        if continuation_jobs:
-            await db.execute(
-                update(SessionInbox)
-                .where(
-                    SessionInbox.session_id == session_id,
-                    SessionInbox.user_id == user_id,
-                    SessionInbox.status.in_(("pending", "processing")),
-                )
-                # Revoke a live dispatcher claim. Keep the row pending until
-                # request_cancel commits; on a transient failure, the periodic
-                # unroutable scan can retry from this durable marker.
-                .values(status="pending", consumed_at=None, claim_token=None)
-            )
-
-    # A Session is only the continuation route, not the Job's fact source.
-    # Submit cancellation through the normal state machine after invalidating
-    # every dispatcher claim; handlers that own external work still reconcile
-    # provider facts instead of being killed locally.
-    if continuation_jobs:
-        from skill_runtime import repository as skill_job_repo
-
-        for job_id in continuation_jobs:
-            try:
-                await skill_job_repo.request_cancel(
-                    job_id,
-                    user_id,
-                    reason="continuation_session_deleted",
-                )
-            except skill_job_repo.JobNotFound:
-                pass
-            except Exception as exc:
-                log.warning(
-                    f"Could not cancel continuation job {job_id}: "
-                    f"{type(exc).__name__}"
-                )
-                continue
-            async with get_db_session() as db:
-                await db.execute(
-                    update(SessionInbox)
-                    .where(
-                        SessionInbox.session_id == session_id,
-                        SessionInbox.user_id == user_id,
-                        SessionInbox.source_job_id == job_id,
-                        SessionInbox.status == "pending",
-                    )
-                    .values(status="expired", consumed_at=now, claim_token=None)
-                )
-
     # Cascade: cron jobs are project-scoped and outlive conversations. The
     # deleted session merely stops being their notify target.
     try:
@@ -429,7 +365,7 @@ async def create_user_message(
     """
     if (
         client_message_id
-        and client_message_id.startswith(("sjr:", "sji:", "tabort:"))
+        and client_message_id.startswith(("sjr:", "tabort:"))
         and not synthetic
     ):
         raise ValueError("client_message_id uses a platform-reserved prefix")

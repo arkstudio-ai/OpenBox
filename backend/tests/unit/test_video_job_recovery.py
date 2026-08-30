@@ -117,6 +117,20 @@ async def test_stale_in_progress_finalizes_when_provider_done(monkeypatch):
     assert asset.size == 4321
 
 
+async def test_legacy_runtime_link_does_not_block_domain_recovery(monkeypatch):
+    """The removed orchestration ledger no longer owns linked domain rows."""
+    _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
+    job_id = await _insert_job(
+        age_seconds=600,
+        request_data={"skill_job_id": "retired_job_123"},
+    )
+
+    advanced = await job_recovery.sweep()
+
+    assert advanced == 1
+    assert (await _fetch(job_id)).status == "completed"
+
+
 async def test_stale_finalizing_reclaimed_and_completed(monkeypatch):
     _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
     job_id = await _insert_job(age_seconds=600, status="finalizing")

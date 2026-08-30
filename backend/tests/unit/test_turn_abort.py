@@ -157,7 +157,7 @@ def test_the_marker_reads_as_something_you_could_show_a_person():
     assert text.startswith("[上一回合已被用户主动中断]")
     # The two facts the next turn cannot safely guess.
     assert "只执行了一半" in text
-    assert "SkillJob 不受中断影响" in text
+    assert "先查询状态，不要重复提交" in text
     # And the instruction that keeps an unrelated request from being hijacked.
     assert "与新请求无关时不要主动接手" in text
 

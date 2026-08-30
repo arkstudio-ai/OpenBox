@@ -353,7 +353,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         # its declared skill-only tools on subsequent steps without making
         # those schemas a permanent cost for the session or agent.
         active_skill_tools: set[str] = set()
-        active_skills: set[str] = set()
         run_id = uuid.uuid4().hex
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
@@ -503,7 +502,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 abort=abort,
                 workdir=session_workdir,
                 available_tools=frozenset(tools),
-                active_skills=frozenset(active_skills),
             )
 
             # Create hooks with config permission rules + agent permission rules
@@ -700,7 +698,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
             active_skill_tools.update(result.activated_tools)
-            active_skills.update(result.activated_skills)
 
             # Step finish with snapshot
             end_snapshot = await snapshot.track(session_id, sandbox)

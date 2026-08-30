@@ -74,7 +74,7 @@ class MaterialProviderError(RuntimeError):
         self.code = code
         self.status = status
         self.retryable = retryable
-        #: See skill_runtime.types.public_error_text.
+        #: The direct video tool exposes this message only when explicitly set.
         self.public_message = public
 
 

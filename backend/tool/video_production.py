@@ -728,6 +728,8 @@ def _public_error(exc: Exception) -> str:
     stay in provider-side correlation logs, while persisted job state carries
     only the class/status needed for recovery and support.
     """
+    if getattr(exc, "public_message", False):
+        return str(exc)[:500]
     response = getattr(exc, "response", None)
     if response is not None:
         reason = str(getattr(response, "reason_phrase", "") or "request failed")

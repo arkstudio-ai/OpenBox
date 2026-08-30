@@ -120,13 +120,7 @@ def test_video_tools_are_skill_only_and_not_parallel_safe():
 
 
 @pytest.mark.asyncio
-async def test_video_schemas_are_absent_until_the_skill_activates_them(monkeypatch):
-    # Pin the rollout gate rather than inheriting the deployment's: with the
-    # durable path authoritative the legacy tools are not registered at all
-    # (§11.5), which is a different assertion from this one.
-    from core.config import get_config
-
-    monkeypatch.setattr(get_config(), "skill_jobs_video_write", False)
+async def test_video_schemas_are_absent_until_the_skill_activates_them():
     register_builtin_tools()
 
     ordinary = await resolve_step_tools(AGENTS["build"], None, [])

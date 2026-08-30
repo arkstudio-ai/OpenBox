@@ -14,7 +14,7 @@ log = create_logger("skill")
 class SkillInfo:
     name: str
     description: str
-    source: str  # "global", "project", "remote"
+    source: str  # "global" or "project"
     content: str
     # Directory holding SKILL.md, on the machine running the backend. Note this
     # is NOT reachable from the agent's tools, which execute in the sandbox.
@@ -22,14 +22,6 @@ class SkillInfo:
     # Registered skill-only tools this skill unlocks after it is loaded. The
     # names alone are cheap frontmatter; their schemas are not sent yet.
     allowed_tools: tuple[str, ...] = ()
-    # Generic runtime identities this instruction package is allowed to admit.
-    # Keeping this separate from allowed_tools prevents one loaded skill from
-    # using the shared skill_job tool to start a different internal handler.
-    job_skill_keys: tuple[str, ...] = ()
-    # Optional server rollout gate. When enabled, a builtin with this name is
-    # authoritative over a legacy project/container copy; when disabled it is
-    # omitted so the legacy package remains the sole exposed workflow.
-    enabled_config_flag: str = ""
 
 
 # Cache
@@ -46,16 +38,6 @@ _fingerprint: tuple = ()
 # editing a skill file would notice.
 _CHECK_INTERVAL_SECONDS = 2.0
 _last_check = 0.0
-
-
-def _builtin_skill_dir() -> Path:
-    """Skill packages shipped inside the backend image (backend/builtin_skills).
-
-    Ungated builtins are the lowest-precedence fallback. A rollout-gated
-    builtin is applied after project/global discovery when its flag is on, so
-    the legacy and durable write workflows can never both be authoritative.
-    """
-    return Path(__file__).resolve().parent.parent / "builtin_skills"
 
 
 def _skill_dirs() -> list[Path]:
@@ -77,7 +59,7 @@ def _current_fingerprint() -> tuple:
     additions, since a new skill directory bumps its parent's mtime.
     """
     entries = []
-    for base in [_builtin_skill_dir(), *_skill_dirs()]:
+    for base in _skill_dirs():
         try:
             if not base.exists():
                 continue
@@ -133,15 +115,6 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
                 or metadata.get("allowed_tools")
                 or metadata.get("tools")
             )
-            job_skill_keys = normalize_skill_tools(
-                metadata.get("job-skill-keys") or metadata.get("job_skill_keys")
-            )
-            enabled_config_flag = str(
-                metadata.get("enabled-config-flag")
-                or metadata.get("enabled_config_flag")
-                or ""
-            ).strip()
-
             results.append(SkillInfo(
                 name=name,
                 description=description,
@@ -149,8 +122,6 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
                 content=body,
                 path=str(skill_md.parent),
                 allowed_tools=allowed_tools,
-                job_skill_keys=job_skill_keys,
-                enabled_config_flag=enabled_config_flag,
             ))
         except Exception as e:
             log.warning(f"Failed to load skill from {skill_md}: {e}")
@@ -181,17 +152,6 @@ async def load_skills() -> None:
     global _skills, _loaded, _fingerprint, _last_check
     _skills.clear()
 
-    # Ungated builtins are the lowest-precedence fallback. A gated builtin is
-    # held aside: disabled means "do not expose it"; enabled means it must win
-    # over the legacy project/container workflow so both write paths can never
-    # be active in one agent run.
-    gated_builtins: list[SkillInfo] = []
-    for skill in _scan_directory(_builtin_skill_dir(), "builtin"):
-        if skill.enabled_config_flag:
-            gated_builtins.append(skill)
-        else:
-            _skills[skill.name] = skill
-
     globals_, projects = _skill_dirs()[:2], _skill_dirs()[2:]
     for global_dir in globals_:
         for skill in _scan_directory(global_dir, "global"):
@@ -199,14 +159,6 @@ async def load_skills() -> None:
     for skills_dir in projects:
         for skill in _scan_directory(skills_dir, "project"):
             _skills[skill.name] = skill
-
-    if gated_builtins:
-        from core.config import get_config
-
-        config = get_config()
-        for skill in gated_builtins:
-            if bool(getattr(config, skill.enabled_config_flag, False)):
-                _skills[skill.name] = skill
 
     try:
         _fingerprint = _current_fingerprint()

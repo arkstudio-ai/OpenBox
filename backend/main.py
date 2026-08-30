@@ -56,7 +56,7 @@ def _init_infrastructure(config):
 
 
 async def _cleanup_infrastructure(config):
-    """Close the shared ledger plus multi-user-only cache resources."""
+    """Close the shared database plus multi-user-only cache resources."""
     try:
         from db.base import close_engine
         await close_engine()
@@ -82,17 +82,16 @@ async def lifespan(app: FastAPI):
     _init_infrastructure(config)
     _init_agent()
 
-    # Session/Project storage needs the SQL engine even when the SkillJob
-    # feature gate is off. In single-user mode this initializes the shared
-    # SQLite database; in multi-user mode PostgreSQL is already present and
-    # this is a no-op. Worker/dispatcher/admission remain independently gated.
-    from skill_runtime.embedded import ensure_job_engine
+    # Desktop mode has no auth bootstrap, but sessions/projects still need the
+    # shared SQL store. Multi-user infrastructure already initialized it, so
+    # this is a no-op there.
+    from db.base import ensure_engine
 
-    await ensure_job_engine(config)
+    await ensure_engine(config)
 
-    # Rebuild process-local routing from the real execution plane. Docker is
-    # also shared by the web/worker roles in Compose; deleting its containers
-    # on web startup would kill durable work owned by the worker process.
+    # Rebuild process-local routing from the real execution plane. Provider
+    # resources can outlive one web process; deleting them on startup would
+    # kill work that a restarted process still needs to recover.
     from sandbox import provider
     await provider.reconcile()
     log.info(f"OpenBox starting ({config.sandbox_provider} provider, reconciled)")
@@ -112,9 +111,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"Failed to start cron scheduler: {e}")
 
-    # Stopgap (rebuild plan Phase 0.5): re-drive video finalizations stranded
-    # by a previous process exit. The periodic sweep piggybacks on the cron
-    # timer tick; this only schedules the startup pass.
+    # Re-drive direct video finalizations stranded by a previous process exit.
+    # The periodic sweep piggybacks on the cron timer tick; this schedules the
+    # startup pass so provider-completed jobs converge promptly after restart.
     if config.jwt_secret:
         try:
             from video.job_recovery import schedule_startup_recovery
@@ -122,39 +121,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning(f"Failed to schedule video job recovery: {e}")
 
-    # Embedded skill job worker (development only; production runs the
-    # standalone worker role from skill_runtime.worker_main).
-    if config.skill_worker_mode == "embedded":
-        try:
-            from skill_runtime.embedded import start_embedded
-            await start_embedded(config)
-        except Exception as e:
-            log.warning(f"Failed to start embedded skill worker: {e}")
-
-    # NeedsAgent is the only job outcome allowed to start a new Agent turn.
-    # The API role owns it because it already has the agent/tool/sandbox
-    # subsystems initialized; Worker roles remain pure job executors.
-    inbox_dispatcher = None
-    if config.skill_jobs_enabled:
-        try:
-            from skill_runtime.inbox import InboxDispatcher
-
-            inbox_dispatcher = InboxDispatcher(
-                per_user_limit=config.max_concurrent_agents,
-            )
-            inbox_dispatcher.start()
-        except Exception as e:
-            log.warning(f"Failed to start NeedsAgent inbox dispatcher: {e}")
-
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
-
-    if inbox_dispatcher is not None:
-        try:
-            await inbox_dispatcher.stop()
-        except Exception as e:
-            log.warning(f"Error stopping NeedsAgent inbox dispatcher: {e}")
 
     # Stop cron scheduler
     try:
@@ -162,13 +131,6 @@ async def lifespan(app: FastAPI):
         await cron_service.stop()
     except Exception as e:
         log.warning(f"Error stopping cron scheduler: {e}")
-
-    # Drain the embedded skill worker (no-op unless it was started)
-    try:
-        from skill_runtime.embedded import stop_embedded
-        await stop_embedded()
-    except Exception as e:
-        log.warning(f"Error stopping embedded skill worker: {e}")
 
     # Abort active agent loops
     from session.status import abort_all, active_session_ids
@@ -215,7 +177,7 @@ async def lifespan(app: FastAPI):
     await sandbox_manager.release_all(destroy=False)
     # Provider resources intentionally outlive the web process. Explicit owner
     # deletion and the database-guarded idle reaper own destructive cleanup;
-    # a rolling web restart must not terminate standalone-worker jobs.
+    # a rolling web restart must not terminate recoverable provider work.
     await _cleanup_infrastructure(config)
 
 
@@ -279,11 +241,6 @@ def create_app() -> FastAPI:
 
     from api.video_materials import router as video_materials_router
     application.include_router(video_materials_router)
-
-    from api.skill_jobs import router as skill_jobs_router
-    from api.skill_settings import router as skill_settings_router
-    application.include_router(skill_jobs_router)
-    application.include_router(skill_settings_router)
 
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])

@@ -173,7 +173,6 @@ class StepResult:
     # Skill-only tools unlocked by successful skill calls in this step. The
     # outer loop owns the run-scoped set and applies it on the next step.
     activated_tools: set[str] = field(default_factory=set)
-    activated_skills: set[str] = field(default_factory=set)
     agent_switch: str | None = None
     retry_reason: str | None = None
     error: str | None = None
@@ -268,7 +267,6 @@ async def process_step(
     finish_reason = "unknown"
     completed_tool_parts: list = []
     activated_tools: set[str] = set()
-    activated_skills: set[str] = set()
     agent_switch: str | None = None
     step_start_time = time.time()
 
@@ -526,14 +524,6 @@ async def process_step(
                             for name in declared
                             if isinstance(name, str) and name.strip()
                         )
-                    declared_skills = result.metadata.get("activated_skills", [])
-                    if isinstance(declared_skills, (list, tuple, set)):
-                        activated_skills.update(
-                            name.strip()
-                            for name in declared_skills
-                            if isinstance(name, str) and name.strip()
-                        )
-
                 # Check for agent_switch metadata
                 agent_switch = result.metadata.get("agent_switch")
                 if agent_switch:
@@ -646,7 +636,6 @@ async def process_step(
         usage=total_usage,
         completed_tool_parts=completed_tool_parts,
         activated_tools=activated_tools,
-        activated_skills=activated_skills,
         agent_switch=agent_switch,
         duration=time.time() - step_start_time,
     )

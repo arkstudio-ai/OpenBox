@@ -42,9 +42,8 @@ def skills_dir(monkeypatch):
 
 
 async def project_skills():
-    """Only what this test wrote: image-shipped builtin packages are always
-    discovered (lowest precedence) and are not what these tests exercise."""
-    return [s for s in await sk.list_skills() if s.source != "builtin"]
+    """Return only the skills written into this test's project tree."""
+    return list(await sk.list_skills())
 
 
 async def names():

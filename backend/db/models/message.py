@@ -36,10 +36,8 @@ class Message(Base):
         Index("ix_messages_session_created", "session_id", "created_at"),
         Index("ix_messages_user", "user_id"),
         Index("ix_messages_user_created", "user_id", "created_at"),
-        # Skill-job chat receipts dedup at the database, not check-then-insert:
-        # two outbox publishers racing the same terminal event must not write
-        # two receipts. Scoped to the receipt marker prefix so ordinary
-        # client-supplied ids stay unconstrained.
+        # Preserve the historical receipt namespace and its original
+        # uniqueness contract while archived transcripts remain readable.
         Index(
             "uq_messages_receipt_marker",
             "session_id",
@@ -53,16 +51,5 @@ class Message(Base):
                 "client_message_id LIKE 'sjr:%' "
                 "AND role = 'assistant' AND finish = 'skill_job_receipt'"
             ),
-        ),
-        # NeedsAgent continuation prompts use the same insert-if-absent rule.
-        # A dispatcher restart or replica race may retry the marker, but must
-        # never create a second synthetic user turn.
-        Index(
-            "uq_messages_inbox_marker",
-            "session_id",
-            "client_message_id",
-            unique=True,
-            postgresql_where=text("client_message_id LIKE 'sji:%'"),
-            sqlite_where=text("client_message_id LIKE 'sji:%'"),
         ),
     )

@@ -1,13 +1,12 @@
-"""Stopgap recovery for stranded video segment jobs (rebuild plan Phase 0.5).
+"""Recovery for stranded direct video segment jobs.
 
 Today the inline `video_generate` tool call owns provider polling and the
 download → OSS → business-table finalization. When that process exits mid-way
 (deploy, crash, aborted turn) the job stays in `in_progress`/`finalizing`
 forever even though the provider output is already paid for — nobody re-drives
-it until the agent happens to call the tool again. Until the generic SkillJob
-worker (docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md) owns execution, this module
-re-drives finalization from process startup and from the cron timer's
-maintenance piggyback.
+it until the agent happens to call the tool again. This module re-drives
+finalization from process startup and from the cron timer's maintenance
+piggyback, using the video domain row as the sole source of truth.
 
 Recovery only: it re-checks provider state and re-runs the tool's idempotent
 finalization, and never submits new provider work. Ambiguous `submitting` rows
@@ -26,7 +25,7 @@ log = create_logger("video.recovery")
 SWEEP_INTERVAL_MS = 60 * 1000    # piggyback cadence on the cron timer tick
 STALE_AFTER_SECONDS = 120        # untouched this long → no live tool call is polling it
 FINALIZING_STALE_SECONDS = 300   # matches the tool's stale-finalization threshold
-LOOKBACK_DAYS = 7                # older strays wait for the SkillJob migration
+LOOKBACK_DAYS = 7                # bound each sweep to recent recoverable work
 MAX_JOBS_PER_SWEEP = 10
 
 _last_sweep_at_ms: int = 0
@@ -68,7 +67,7 @@ async def sweep() -> int:
     """Run one recovery pass; returns how many jobs reached a new settled state."""
     from db import base as db_base
 
-    if db_base._engine is None:  # startup/shutdown edge: no ledger is available
+    if db_base._engine is None:  # startup/shutdown edge: no database is available
         return 0
 
     from sqlalchemy import select
@@ -100,14 +99,6 @@ async def sweep() -> int:
 
     advanced = 0
     for job in rows:
-        # A domain row linked to the generic ledger belongs to that state
-        # machine for its entire lifetime, including after a terminal result.
-        # Letting this legacy sweep mutate it later would create split truth
-        # (for example SkillJob=failed while VideoJob=completed). Only genuine
-        # pre-migration/orphan rows with no ledger owner use this stopgap.
-        skill_job_id = (job.request_data or {}).get("skill_job_id")
-        if skill_job_id and await _skill_owner_exists(str(skill_job_id), job.user_id):
-            continue
         try:
             if await _recover_job(job):
                 advanced += 1
@@ -130,23 +121,6 @@ async def sweep() -> int:
                 if len(_failed_once) > 500:
                     _failed_once.clear()
     return advanced
-
-
-async def _skill_owner_exists(skill_job_id: str, user_id: str) -> bool:
-    from sqlalchemy import select
-
-    from db.base import get_db_session
-    from db.models.skill_job import SkillJob
-    async with get_db_session() as db:
-        owner_id = (
-            await db.execute(
-                select(SkillJob.id).where(
-                    SkillJob.id == skill_job_id,
-                    SkillJob.user_id == user_id,
-                )
-            )
-        ).scalar_one_or_none()
-    return owner_id is not None
 
 
 async def _recover_job(job) -> bool:

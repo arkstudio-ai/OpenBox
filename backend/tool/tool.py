@@ -38,9 +38,6 @@ class ToolContext:
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
     available_tools: frozenset[str] | None = None
-    # Durable skill identities explicitly activated by a successful skill load
-    # in this user-initiated run.
-    active_skills: frozenset[str] = field(default_factory=frozenset)
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None

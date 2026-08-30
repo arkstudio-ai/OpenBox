@@ -1,4 +1,4 @@
-.PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy
+.PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy retire-legacy-worker k8s-apply k8s-apply-aks
 
 BACKEND_ENTRYPOINT := uv run python scripts/backend_entrypoint.py
 FRONTEND_DIR := frontend-v2
@@ -10,13 +10,13 @@ help: ## Show this help
 sandbox-image: ## Build sandbox container image
 	docker build -t openbox-sandbox:latest ./container
 
-backend: ## Start backend dev server (foreground, with reload)
+backend: retire-legacy-worker ## Start backend dev server (foreground, with reload)
 	cd backend && $(BACKEND_ENTRYPOINT) --reload --host 0.0.0.0 --port 8080
 
 frontend: ## Start frontend dev server (foreground)
 	cd $(FRONTEND_DIR) && npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT)
 
-dev: ## Start backend + V2 frontend for development (foreground)
+dev: retire-legacy-worker ## Start backend + V2 frontend for development (foreground)
 	@echo "Applying database migrations..."
 	cd backend && $(BACKEND_ENTRYPOINT) --migrate-only
 	@echo "Starting backend..."
@@ -24,7 +24,7 @@ dev: ## Start backend + V2 frontend for development (foreground)
 	@echo "Starting frontend..."
 	cd $(FRONTEND_DIR) && npm run dev -- --host 0.0.0.0 --port $(FRONTEND_PORT)
 
-start: ## Start backend + V2 frontend (background)
+start: retire-legacy-worker ## Start backend + V2 frontend (background)
 	@echo "=== Stopping old processes ==="
 	@-pkill -f "uvicorn main:app" 2>/dev/null || true
 	@-pkill -f "vite" 2>/dev/null || true
@@ -67,15 +67,15 @@ deploy: ## Pull latest code and restart backend + V2 frontend
 build: sandbox-image ## Build all Docker images
 	docker compose build
 
-up: sandbox-image ## Start all services with docker-compose
-	docker compose up -d
+up: retire-legacy-worker sandbox-image ## Start all services with docker-compose
+	docker compose up -d --remove-orphans
 
 down: ## Stop all services (docker-compose)
-	docker compose down
+	docker compose down --remove-orphans
 
 clean: ## Remove all sandbox containers and stop services
 	docker ps -a --filter "name=openbox-sandbox-" -q | xargs -r docker rm -f
-	docker compose down --volumes 2>/dev/null || true
+	docker compose down --volumes --remove-orphans 2>/dev/null || true
 
 clean-containers: ## Force remove ALL sandbox containers (Docker + DB)
 	cd backend && DATABASE_URL=$${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@localhost:5432/openbox} uv run python scripts/cleanup_containers.py
@@ -90,8 +90,25 @@ deps: ## Start dev dependencies (PG + Redis + Azurite)
 deps-down: ## Stop dev dependencies
 	docker compose -f docker-compose.dev.yml down
 
-migrate: ## Run database migrations
+migrate: retire-legacy-worker ## Run database migrations
 	cd backend && $(BACKEND_ENTRYPOINT) --migrate-only
+
+retire-legacy-worker: ## Remove this checkout's obsolete SkillJob Compose worker before DB migration
+	@containers=$$(docker ps -aq \
+		--filter "label=com.docker.compose.project.working_dir=$(CURDIR)" \
+		--filter "label=com.docker.compose.service=backend-worker" 2>/dev/null); \
+	if [ -n "$$containers" ]; then \
+		echo "Removing retired SkillJob worker container(s) before migration..."; \
+		docker rm -f $$containers; \
+	fi
+
+k8s-apply: ## Retire the old worker, then apply the GKE/base manifest
+	kubectl -n openbox delete deployment openbox-backend-worker --ignore-not-found=true
+	kubectl apply -f k8s/base.yaml
+
+k8s-apply-aks: ## Retire the old worker, then apply the AKS manifest
+	kubectl -n openbox delete deployment openbox-backend-worker --ignore-not-found=true
+	kubectl apply -f k8s/aks.yaml
 
 test: ## Run backend tests
 	cd backend && uv run pytest tests/ -v

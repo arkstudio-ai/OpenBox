@@ -303,11 +303,10 @@ class SandboxManager:
     async def release(self, session_id: str, *, user_id: str) -> None:
         """Detach one session without deciding the sandbox's global lifetime.
 
-        ``session_ids`` is process-local. In a web/worker or multi-replica
-        deployment it cannot prove that no other process or durable SkillJob
-        still uses the execution environment. Destruction belongs to the
-        database-guarded idle reaper or an explicit owner action, never this
-        local reference release.
+        ``session_ids`` is process-local. In a multi-replica deployment it
+        cannot prove that no other process still uses the execution
+        environment. Destruction belongs to the database-guarded idle reaper
+        or an explicit owner action, never this local reference release.
         """
         expected_key = _map_key(user_id)
         async with self._lock:

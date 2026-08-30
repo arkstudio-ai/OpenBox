@@ -2,6 +2,7 @@
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 import sqlalchemy as sa
@@ -84,6 +85,62 @@ def init_engine(database_url: str, pool_size: int = 10, pool_overflow: int = 20)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     log.info(f"Database engine initialized: {database_url.split('@')[-1] if '@' in database_url else database_url}")
     return _engine
+
+
+async def ensure_engine(config: Any) -> AsyncEngine:
+    """Initialize the shared application database once.
+
+    Authenticated deployments use the configured PostgreSQL database, which
+    the infrastructure bootstrap normally initializes first. Desktop mode has
+    no registration/bootstrap process, so it keeps using the historical
+    ``.openbox/skill_jobs.db`` path for compatibility with existing sessions
+    and projects. The filename is legacy; the database is now the general
+    application store.
+    """
+    if _engine is not None:
+        return _engine
+    if config.jwt_secret:
+        return init_engine(
+            config.database_url,
+            config.db_pool_size,
+            config.db_pool_overflow,
+        )
+
+    data_dir = Path.cwd() / ".openbox"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    database_path = data_dir / "skill_jobs.db"
+    engine = init_engine(f"sqlite+aiosqlite:///{database_path}")
+    import db.models  # noqa: F401
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_seed_single_user_scope)
+    log.info(f"Single-user application database at {database_path}")
+    return engine
+
+
+def _seed_single_user_scope(connection) -> None:
+    """Create the stable owner/project required by relational desktop data."""
+    from datetime import timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO users
+            (id, username, role, is_active, failed_login_count, is_deleted,
+             created_at, updated_at)
+        VALUES ('default', 'default', 'admin', 1, 0, 0, ?, ?)
+        """,
+        (now, now),
+    )
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO projects
+            (id, user_id, name, slug, is_deleted, created_at, updated_at)
+        VALUES ('default', 'default', 'Default', 'default', 0, ?, ?)
+        """,
+        (now, now),
+    )
 
 
 def get_engine() -> AsyncEngine:

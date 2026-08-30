@@ -305,12 +305,10 @@ class TodoPart(BaseModel):
 
 
 class SkillJobPart(BaseModel):
-    """Platform-written receipt for a finished background skill job.
+    """Historical receipt for a finished background skill job.
 
-    Zero-token: skill_runtime/receipt.py inserts it when a job reaches a
-    terminal state, so the transcript keeps the outcome after the live job
-    card rotates out of the dock. camelCase fields match the job snapshot
-    wire format the jobs feature already speaks.
+    The retired runtime wrote these zero-token parts into transcripts. Keep the
+    wire model so old conversations remain readable without a live jobs API.
     """
     type: Literal["skill_job"] = "skill_job"
     id: str = Field(default_factory=lambda: ascending("part"))

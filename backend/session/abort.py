@@ -61,7 +61,7 @@ def marker_text(reason: AbortReason, running_subject: str | None, step: int, tot
     """
     lines = [_OPENING.get(reason, _OPENING["user_stop"])]
     lines.append("- 被打断的工具调用可能只执行了一半。")
-    lines.append("- 后台 SkillJob 不受中断影响，仍在运行，不要重复提交。")
+    lines.append("- 已提交的异步供应商任务可能仍在运行；先查询状态，不要重复提交。")
     if running_subject:
         lines.append(
             f"- 任务清单停在中断时刻：第 {step}/{total} 步「{running_subject}」进行中被打断。"

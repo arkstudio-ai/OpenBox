@@ -249,6 +249,14 @@ POST /restore
   - 格式与 IBlobStorage 接口完全对称
 用途: Backend 侧需要时也可直接访问 GCS（比如管理接口查看用户存储用量）
 四、K8s 部署清单设计
+
+> **升级顺序（2026-08-30 及以后）**：耐久 SkillJob worker 已退役，不能只用
+> `kubectl apply -f` 更新清单；Kubernetes 不会自动删除已从 YAML 中消失的
+> Deployment，而旧 worker 会在数据库删表后持续访问已移除的表。GKE/base 部署请用
+> `make k8s-apply`，AKS 部署请用 `make k8s-apply-aks`。两个入口都会先以
+> `--ignore-not-found` 删除 `openbox-backend-worker`，再应用当前清单，确保删表迁移启动
+> 前旧执行进程已经停止。
+
 k8s/base.yaml
 包含以下资源:
 1. Namespace: openbox-sandbox, openbox

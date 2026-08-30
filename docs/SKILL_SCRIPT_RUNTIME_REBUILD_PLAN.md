@@ -1,5 +1,14 @@
 # OpenBox 通用 Skill Script 作业运行时整体改建规划
 
+> **⛔ 运营决定（2026-08-30）：耐久 SkillJob 运行时在本部署禁用。**
+> 灰度暴露的问题过多（无界拨号循环、失败通知覆盖不全、operator-only 停靠在
+> 无 admin 账号的部署中无人能解、取消不唤醒停靠任务等），判定尚不成熟。
+> `openbox.json` 已置 `skill_jobs_enabled=false` 与 `skill_jobs_video_write=false`：
+> 注册表自动装回 `video_generate`/`video_transcribe`/`video_render` 三个直连
+> 工具并隐藏内置耐久技能，视频制作回归 `.openbox/skills/video-production` 的
+> SKILL.md 直连流程（工具调用 + 回合内等待）。本文档保留为未来重启改建时的
+> 规划底稿；重启前须先解决上列缺陷类别。
+
 > 文档状态：Architecture / Execution Plan v2（已吸收 2026-08-28 对 OpenBox / codex / opencode / symphony 的逐条源码核对与评审意见）<br>
 > 实施进度（2026-08-28）：PR#0–17 已落地——止血（`e0bc0b0`）、通用 Runtime 底座与
 > Worker（PR#1–7）、Manifest/设置/API/工具/demo（PR#8–13）、web+mobile Job Card 与

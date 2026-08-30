@@ -13,6 +13,23 @@ def event_loop():
 
 
 @pytest.fixture(autouse=True)
+def _runtime_flags_are_test_owned(monkeypatch):
+    """Pin the SkillJob flags to the repo defaults for every test.
+
+    get_config() reads the operator's local openbox.json, so without this the
+    suite silently inherits deployment decisions: the day the operator disabled
+    the durable runtime (2026-08-30), 33 tests failed that had never declared
+    a dependency on it being enabled. Tests own these flags — the shipped
+    defaults here, explicit monkeypatch in tests that assert a variation.
+    """
+    from core.config import get_config
+
+    config = get_config()
+    monkeypatch.setattr(config, "skill_jobs_enabled", True)
+    monkeypatch.setattr(config, "skill_jobs_video_write", False)
+
+
+@pytest.fixture(autouse=True)
 async def ensure_test_db():
     """Ensure a test database engine exists for every test.
 

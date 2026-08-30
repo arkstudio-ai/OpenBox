@@ -86,12 +86,14 @@ before reviewing or regenerating results. The machine contract is
    references, `duration=-1`, `ratio=9:16`, `resolution=720p`, generated audio,
    and no watermark. Wait on each returned job; never create a replacement merely
    because the provider is slow.
-7. For every completed segment, submit `video_transcribe` with its exact
-   `transcription_idempotency_key`, then wait. The WUYING queue extracts a mono
-   MP3 with FFmpeg; the backend runs STT, persists actual spoken text, similarity,
-   and phrase-level omissions/replacements. Show all segment video attachments
-   plus each script/transcript/verdict. Request `quality` approval only after all
-   active segments have STT evidence.
+7. For every completed segment **with speech**, submit `video_transcribe` with
+   its exact `transcription_idempotency_key`, then wait. The WUYING queue
+   extracts a mono MP3 with FFmpeg; the backend runs STT, persists actual spoken
+   text, similarity, and phrase-level omissions/replacements. Segments planned
+   with `role="broll"` carry no dialogue: never transcribe them, and the quality
+   gate does not wait for their verdicts. Show all segment video attachments
+   plus each script/transcript/verdict. Request `quality` approval only after
+   all active speech segments have STT evidence.
 8. When the user gives per-segment verdicts in chat, first record each explicit
    verdict with `video_project(action="set_segment_feedback", segment_id=...,
    feedback="approved"|"rejected", feedback_note=...)` (`feedback_note` is

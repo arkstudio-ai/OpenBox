@@ -31,6 +31,9 @@ MAX_JOBS_PER_SWEEP = 10
 _last_sweep_at_ms: int = 0
 _startup_task: asyncio.Task | None = None
 _failed_once: set[str] = set()
+_route_mismatch_once: set[str] = set()
+_route_mismatch_overflow_warned = False
+_scan_after: tuple[datetime, str] | None = None
 
 
 def schedule_startup_recovery() -> None:
@@ -65,12 +68,14 @@ async def sweep_if_due() -> None:
 
 async def sweep() -> int:
     """Run one recovery pass; returns how many jobs reached a new settled state."""
+    global _scan_after
+
     from db import base as db_base
 
     if db_base._engine is None:  # startup/shutdown edge: no database is available
         return 0
 
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
 
     from db.base import get_db_session
     from db.models.video_job import VideoJob
@@ -79,40 +84,62 @@ async def sweep() -> int:
     stale_cutoff = now - timedelta(seconds=STALE_AFTER_SECONDS)
     lookback_cutoff = now - timedelta(days=LOOKBACK_DAYS)
 
+    conditions = [
+        VideoJob.kind == "segment",
+        VideoJob.status.in_(
+            ("queued", "in_progress", "finalizing", "transfer_failed")
+        ),
+        VideoJob.provider_task_id.isnot(None),
+        VideoJob.updated_at < stale_cutoff,
+        VideoJob.updated_at >= lookback_cutoff,
+    ]
+    if _scan_after is not None:
+        cursor_updated_at, cursor_id = _scan_after
+        conditions.append(
+            or_(
+                VideoJob.updated_at > cursor_updated_at,
+                and_(
+                    VideoJob.updated_at == cursor_updated_at,
+                    VideoJob.id > cursor_id,
+                ),
+            )
+        )
+
     async with get_db_session() as db:
         rows = (
             await db.execute(
                 select(VideoJob)
-                .where(
-                    VideoJob.kind == "segment",
-                    VideoJob.status.in_(
-                        ("queued", "in_progress", "finalizing", "transfer_failed")
-                    ),
-                    VideoJob.provider_task_id.isnot(None),
-                    VideoJob.updated_at < stale_cutoff,
-                    VideoJob.updated_at >= lookback_cutoff,
-                )
-                .order_by(VideoJob.updated_at.asc())
+                .where(*conditions)
+                .order_by(VideoJob.updated_at.asc(), VideoJob.id.asc())
                 .limit(MAX_JOBS_PER_SWEEP)
             )
         ).scalars().all()
 
+    # Route-mismatched rows intentionally retain their old updated_at. Advance
+    # a process-local keyset cursor so ten such rows cannot permanently starve
+    # newer recoverable work. A short final page wraps the next sweep back to
+    # the oldest rows, allowing a restored provider route to be discovered.
+    if len(rows) == MAX_JOBS_PER_SWEEP:
+        _scan_after = (rows[-1].updated_at, rows[-1].id)
+    else:
+        _scan_after = None
+
     advanced = 0
     for job in rows:
         try:
-            if await _recover_job(job):
+            recovered = await _recover_job(job)
+            # Any successful provider check is a state change for failure
+            # reporting, even while the remote task is still running. A later
+            # outage should therefore be visible once again.
+            _failed_once.discard(job.id)
+            if recovered:
                 advanced += 1
-                _failed_once.discard(job.id)
         except Exception as exc:
             # A job whose provider lookup keeps failing (expired relay task,
-            # revoked key) would otherwise warn every sweep; warn once, then
-            # drop to debug until something changes.
-            if job.id in _failed_once:
-                log.debug(
-                    f"Video job recovery for {job.id} still failing: "
-                    f"{type(exc).__name__}"
-                )
-            else:
+            # revoked key) would otherwise warn every sweep. The OpenBox
+            # logger itself runs at DEBUG, so logging repeats at debug level is
+            # still noisy; stay silent until a successful check resets it.
+            if job.id not in _failed_once:
                 log.warning(
                     f"Video job recovery for {job.id} failed: "
                     f"{type(exc).__name__}"
@@ -124,17 +151,15 @@ async def sweep() -> int:
 
 
 async def _recover_job(job) -> bool:
+    global _route_mismatch_overflow_warned
+
     from tool import video_production as vp
+    from tool.video_providers import provider_route_mismatch
 
     if job.status == "finalizing":
         # A live finalization younger than the tool's own threshold may still
         # be streaming to OSS in another process; only reclaim past it.
         if _age_seconds(job.updated_at) < FINALIZING_STALE_SECONDS:
-            return False
-        if not await _reclaim_stale_finalizing(job.id):
-            return False
-        job = await _load(job.id)
-        if job is None or job.status != "transfer_failed":
             return False
 
     # Route from the model the job was actually submitted with. Resolving the
@@ -142,6 +167,33 @@ async def _recover_job(job) -> bool:
     # for anything off the default model — and this sweep exists precisely to
     # rescue jobs nobody else is watching.
     target, settings = vp._configured_target(job.model or None)
+    mismatch = provider_route_mismatch(job.request_data, target)
+    if mismatch:
+        # A not-found response from another provider/account says nothing about
+        # the task that was actually paid for. Quarantine it for operator review
+        # instead of polling the wrong endpoint forever or falsely settling it
+        # as failed. This check deliberately precedes reclaiming finalization so
+        # a mismatch performs no database mutation at all.
+        if job.id not in _route_mismatch_once:
+            if len(_route_mismatch_once) < 500:
+                log.warning(f"Video job recovery skipped for {job.id}: {mismatch}")
+                _route_mismatch_once.add(job.id)
+            elif not _route_mismatch_overflow_warned:
+                # Keep memory and logs bounded without clearing the set: a
+                # clear would make the same 500 jobs warn again every minute.
+                log.warning(
+                    "Additional video recovery route mismatches are being suppressed"
+                )
+                _route_mismatch_overflow_warned = True
+        return False
+
+    if job.status == "finalizing":
+        if not await _reclaim_stale_finalizing(job.id):
+            return False
+        job = await _load(job.id)
+        if job is None or job.status != "transfer_failed":
+            return False
+
     data = await vp._provider_status(target, job.provider_task_id)
     state = vp._provider_state(data, target)
     ctx = _recovery_context(job)

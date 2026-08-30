@@ -38,6 +38,7 @@ _BOSSIP_RELAY_MODELS = {
     "1080p": "video-sd-1080p-pro",
 }
 _SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
+_SEGMENT_FINALIZATION_STALE_SECONDS = 300
 
 
 class VideoGenerateArgs(BaseModel):
@@ -1078,7 +1079,13 @@ async def _finalize_segment(
     return await _owned_job(job.id, ctx, "segment")
 
 
-def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_after: int = 5) -> list[str]:
+def _job_lines(
+    job,
+    asset=None,
+    *,
+    queue_position: int | None = None,
+    retry_after: int | None = 5,
+) -> list[str]:
     lines = [f"job_id={job.id}", f"status={job.status}"]
     production_id = getattr(job, "production_id", None)
     segment_id = getattr(job, "segment_id", None)
@@ -1095,7 +1102,7 @@ def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_afte
         lines.append(f"sandbox_job_id={job.sandbox_job_id}")
     if queue_position is not None:
         lines.append(f"queue_position={queue_position}")
-    if job.status not in _SEGMENT_TERMINAL | _RENDER_TERMINAL:
+    if retry_after is not None and job.status not in _SEGMENT_TERMINAL | _RENDER_TERMINAL:
         lines.append(f"retry_after_seconds={retry_after}")
     if asset and asset.status == "ready":
         lines.extend(
@@ -1131,6 +1138,64 @@ def _job_snapshot_version(job) -> int:
     if updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=timezone.utc)
     return max(0, int(updated_at.timestamp() * 1_000_000))
+
+
+def _stale_finalization_needs_provider(job) -> bool:
+    """Whether local OSS recovery has to fall back to another provider probe."""
+    if job.status != "finalizing" or _SEGMENT_FINALIZATION_TASKS.get(job.id) is not None:
+        return False
+    updated_at = getattr(job, "updated_at", None)
+    if not updated_at:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return (
+        datetime.now(timezone.utc) - updated_at
+    ).total_seconds() > _SEGMENT_FINALIZATION_STALE_SECONDS
+
+
+async def _provider_route_blocked_result(
+    job,
+    *,
+    reason: str = "provider_route_changed_since_submission",
+) -> ToolResult:
+    """Return a non-pollable snapshot when a task's owning route is unavailable."""
+    asset = await _job_asset(job)
+    version = _job_snapshot_version(job)
+    lines = _job_lines(job, asset, retry_after=None)
+    lines.extend(
+        [
+            f"version={version}",
+            "recovery_blocked=true",
+            "provider_state_unknown=true",
+            "still_running=false",
+            f"recovery_reason={reason}",
+            (
+                "instruction=do_not_resubmit; do not repeat status, wait, or cancel; "
+                "restore the original provider route or obtain operator review"
+            ),
+        ]
+    )
+    return ToolResult(
+        title="Video generation recovery blocked",
+        output="\n".join(lines),
+        metadata={
+            "job_id": job.id,
+            "status": job.status,
+            "asset_id": asset.id if asset and asset.status == "ready" else None,
+            "attached": False,
+            "ambiguous_submit": False,
+            "recovery_blocked": True,
+            "provider_state_unknown": True,
+            "do_not_resubmit": True,
+            "recovery_reason": reason,
+            # This is a control-plane instruction, not a claim that the
+            # provider task reached a terminal state.
+            "still_running": False,
+            "timed_out": False,
+            "version": version,
+        },
+    )
 
 
 def _is_timeout_error(exc: Exception) -> bool:
@@ -1285,12 +1350,14 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
 
 
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
-    try:
-        target, settings = _configured_target(None)
-    except Exception as exc:
-        return ToolResult(title="Video generation is not configured", output=_public_error(exc))
-
     if args.action == "submit":
+        try:
+            target, settings = _configured_target(None)
+        except Exception as exc:
+            return ToolResult(
+                title="Video generation is not configured",
+                output=_public_error(exc),
+            )
         try:
             from tool.video_workflow import (
                 consume_spend_approval,
@@ -1375,18 +1442,30 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "character_identity_id": approved.get("character_identity_id"),
                 "provider_material_bindings": material_bindings,
                 "provider_wire_format": target.wire_format,
+                "provider_route_fingerprint": (
+                    video_providers.provider_route_fingerprint(target)
+                ),
                 "resolution": resolution,
                 "ratio": ratio,
                 "duration": duration,
                 "generate_audio": generate_audio,
                 "watermark": watermark,
             }
+            # The route fingerprint is recovery metadata, not a logical input.
+            # Excluding it preserves the pre-fingerprint idempotency hash during
+            # rolling upgrades and credential rotation; an existing job is
+            # reused, then its status/cancel path applies the route guard.
+            logical_request_data = {
+                key: value
+                for key, value in request_data.items()
+                if key != "provider_route_fingerprint"
+            }
             request_hash = content_hash(
                 {
                     "kind": "segment",
                     "model": target.model,
                     "prompt": prompt,
-                    "request_data": request_data,
+                    "request_data": logical_request_data,
                 }
             )
             prompt_hash = None
@@ -1676,26 +1755,46 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     job = await _owned_job(args.job_id or "", ctx, "segment")
     if not job:
         return ToolResult(title="Video job not found", output="No owned segment job has that job_id.")
-    if job.model and job.model != target.model:
-        # Poll/cancel with the channel the job was actually submitted on.
-        try:
-            target, settings = _configured_target(job.model)
-        except Exception as exc:
-            return ToolResult(title="Video provider is not configured", output=_public_error(exc))
+    if args.action == "cancel" and job.status in _SEGMENT_TERMINAL:
+        asset = await _job_asset(job)
+        return ToolResult(
+            title="Video generation already finished",
+            output="\n".join(_job_lines(job, asset)),
+            metadata={"job_id": job.id, "status": job.status},
+        )
+    if args.action == "cancel" and job.status == "finalizing":
+        return ToolResult(
+            title="Video finalization in progress",
+            output="The provider task has completed and its output is being secured in OSS; it can no longer be cancelled.",
+            metadata={"job_id": job.id, "status": job.status},
+        )
+
+    provider_route_required = job.status not in _SEGMENT_TERMINAL | {"finalizing"}
+    recover_stale_finalization = (
+        args.action != "cancel" and _stale_finalization_needs_provider(job)
+    )
+    if recover_stale_finalization:
+        provider_route_required = True
+    target = None
+    settings = None
+    route_block_reason = None
+    try:
+        # Controls always resolve from the persisted model. The deployment's
+        # current default is not evidence of the route that owns this task.
+        target, settings = _configured_target(job.model or None)
+    except Exception:
+        route_block_reason = "provider_route_unavailable"
+    if job.provider_task_id and target is not None:
+        from tool.video_providers import provider_route_mismatch
+
+        if provider_route_mismatch(job.request_data, target):
+            route_block_reason = "provider_route_changed_since_submission"
+    if job.provider_task_id and provider_route_required and route_block_reason:
+        # The current endpoint/account has no authority to answer for this paid
+        # task. Leave the durable job untouched for its original route.
+        return await _provider_route_blocked_result(job, reason=route_block_reason)
+    poll_interval_seconds = float(getattr(settings, "poll_interval_seconds", 5))
     if args.action == "cancel":
-        if job.status in _SEGMENT_TERMINAL:
-            asset = await _job_asset(job)
-            return ToolResult(
-                title="Video generation already finished",
-                output="\n".join(_job_lines(job, asset)),
-                metadata={"job_id": job.id, "status": job.status},
-            )
-        if job.status == "finalizing":
-            return ToolResult(
-                title="Video finalization in progress",
-                output="The provider task has completed and its output is being secured in OSS; it can no longer be cancelled.",
-                metadata={"job_id": job.id, "status": job.status},
-            )
         if job.provider_task_id and job.status != "transfer_failed":
             try:
                 await _provider_cancel(target, job.provider_task_id)
@@ -1730,10 +1829,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         if is_wait and args.after_version and version > args.after_version:
             break
         if job.status == "finalizing":
-            updated = job.updated_at
-            if updated and updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc)
-            if updated and (datetime.now(timezone.utc) - updated).total_seconds() > 300:
+            finalization = _SEGMENT_FINALIZATION_TASKS.get(job.id)
+            # This decision is frozen before the route guard. Do not promote a
+            # previously young/tracked finalization to provider recovery later
+            # in the same call: the clock may cross the threshold, or a task's
+            # done callback may remove it, after the guard has already passed.
+            if recover_stale_finalization:
                 await _update_job(
                     job.id,
                     status="transfer_failed",
@@ -1749,14 +1850,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 timed_out = True
                 break
             await ctx.update_output("Provider completed; securing the video in OSS…")
-            finalization = _SEGMENT_FINALIZATION_TASKS.get(job.id)
             try:
                 if finalization is not None:
                     job = await asyncio.wait_for(
                         asyncio.shield(finalization), timeout=remaining
                     )
                 else:
-                    await asyncio.sleep(min(settings.poll_interval_seconds, remaining))
+                    await asyncio.sleep(min(poll_interval_seconds, remaining))
                     job = await _owned_job(job.id, ctx, "segment")
             except Exception as exc:
                 if _is_timeout_error(exc):
@@ -1770,6 +1870,15 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             continue
         if not job.provider_task_id:
             break
+        if route_block_reason:
+            # A locally tracked finalization may legitimately be allowed to run
+            # despite a route mismatch, then return transfer_failed. Re-check
+            # the frozen route verdict immediately next to the provider probe
+            # so that state transition cannot bypass the initial guard.
+            return await _provider_route_blocked_result(
+                job,
+                reason=route_block_reason,
+            )
         try:
             if is_wait:
                 remaining = deadline - asyncio.get_running_loop().time()
@@ -1845,7 +1954,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             timed_out = True
             break
         await ctx.update_output(f"Video is {job.status}; waiting for the provider…")
-        await asyncio.sleep(min(settings.poll_interval_seconds, remaining))
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
 
     asset = await _job_asset(job)
     if job.status == "completed":
@@ -1859,7 +1968,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if job.status == "submitting" and not job.provider_task_id
             else "Video generation status"
         )
-    lines = _job_lines(job, asset, retry_after=round(settings.poll_interval_seconds))
+    lines = _job_lines(job, asset, retry_after=round(poll_interval_seconds))
     version = _job_snapshot_version(job)
     still_running = job.status not in _SEGMENT_TERMINAL
     lines.append(f"version={version}")
@@ -1893,7 +2002,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             "still_running": still_running,
             "timed_out": timed_out,
             "version": version,
-            "retry_after_seconds": round(settings.poll_interval_seconds),
+            "retry_after_seconds": round(poll_interval_seconds),
         },
     )
 

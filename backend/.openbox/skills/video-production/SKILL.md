@@ -90,7 +90,11 @@ before reviewing or regenerating results. The machine contract is
    back the exact returned `version` and increment only `wait_iteration`.
    `still_running=true` is a normal timeout snapshot, not a failure; continue
    from that job or recover it through `video_project status`. Never create a
-   replacement merely because the provider is slow.
+   replacement merely because the provider is slow. If generation status,
+   wait, or cancel instead returns `recovery_blocked=true` with
+   `provider_state_unknown=true`, stop all calls for that job. Do not resubmit,
+   revise, or keep waiting: report that the original provider route must be
+   restored or an operator must reconcile the paid task.
 7. For every completed segment **with speech**, submit `video_transcribe` with
    its exact `transcription_idempotency_key`, then wait. The WUYING queue
    extracts a mono MP3 with FFmpeg; the backend runs STT, persists actual spoken
@@ -137,6 +141,9 @@ before reviewing or regenerating results. The machine contract is
 - User-facing confirmation always follows the complete content it refers to.
 - Never retry an ambiguous paid submit. Reusing the same key only reconciles the
   same request; the server rejects that key with a different request hash.
+- `recovery_blocked=true` is a control-plane stop, not evidence that the remote
+  task failed. Obey `do_not_resubmit`, make no more status/wait/cancel calls for
+  that job, and preserve it for operator recovery on its original route.
 - A `submitting` job without `provider_task_id` or output is ambiguous. Use the
   exact `generation_job_id` reported for that segment, never a job remembered
   from an older revision. Do not bind an older revision's asset to the new one.

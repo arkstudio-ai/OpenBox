@@ -133,6 +133,76 @@ class VideoRoute:
     wire_format: Literal["tokenspace_contents", "bossip_videos"] = "tokenspace_contents"
 
 
+def provider_route_fingerprint(route: Any) -> str:
+    """Return a non-secret identity for the route that owns a provider task.
+
+    Provider task ids are scoped to an endpoint/account, not just a model. A
+    later config change must therefore not send an old id to today's route.
+    The credential is hashed before it enters the canonical route document and
+    that document is hashed again, so neither the API key nor its standalone
+    digest is persisted in ``video_jobs.request_data``.
+    """
+    api_key_sha256 = hashlib.sha256(
+        str(getattr(route, "api_key", "") or "").encode("utf-8")
+    ).hexdigest()
+    identity = {
+        "provider": str(getattr(route, "provider", "") or "").strip(),
+        "channel": str(getattr(route, "channel", "ark") or "ark").strip().lower(),
+        "wire_format": str(
+            getattr(route, "wire_format", "tokenspace_contents")
+            or "tokenspace_contents"
+        )
+        .strip()
+        .lower(),
+        "base_url": str(getattr(route, "base_url", "") or "").strip().rstrip("/"),
+        "auth_scheme": str(
+            getattr(route, "auth_scheme", "bearer") or "bearer"
+        )
+        .strip()
+        .lower(),
+        "api_key_sha256": api_key_sha256,
+    }
+    canonical = json.dumps(
+        identity,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "v1:" + hashlib.sha256(canonical).hexdigest()
+
+
+def provider_route_mismatch(request_data: Any, route: Any) -> str | None:
+    """Explain why ``route`` must not operate on a persisted provider task.
+
+    New jobs carry a complete route fingerprint. During the compatibility
+    window, jobs without it fall back to their stored ark wire format; rows
+    older than relay support have no wire field and unambiguously used the
+    historical direct TokenSpace contents API.
+    """
+    snapshot = request_data if isinstance(request_data, dict) else {}
+    if "provider_route_fingerprint" in snapshot:
+        submitted = snapshot.get("provider_route_fingerprint")
+        if not isinstance(submitted, str) or not submitted.strip():
+            return "stored provider route fingerprint is invalid"
+        if submitted.strip() != provider_route_fingerprint(route):
+            return "stored provider route fingerprint differs from the current route"
+        return None
+
+    submitted_wire = str(
+        snapshot.get("provider_wire_format") or "tokenspace_contents"
+    ).strip().lower()
+    current_wire = str(
+        getattr(route, "wire_format", "tokenspace_contents")
+        or "tokenspace_contents"
+    ).strip().lower()
+    if submitted_wire != current_wire:
+        return (
+            f"legacy submitted wire {submitted_wire!r} differs from current wire "
+            f"{current_wire!r}"
+        )
+    return None
+
+
 def auth_header(route: Any) -> str:
     key = route.api_key
     if getattr(route, "auth_scheme", "bearer") == "raw":

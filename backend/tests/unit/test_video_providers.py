@@ -4,6 +4,7 @@ Pure functions, no DB. The edge cases here are the ones the reference system
 (bossip) learned the hard way — the U+2160 Ⅰ spelling, the sd2 poll-id trap,
 silent reference discarding, wan3's wider duration window.
 """
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,8 @@ from tool.video_providers import (
     is_wan3_model,
     map_wan3_resolution,
     normalize_state,
+    provider_route_fingerprint,
+    provider_route_mismatch,
     resolve_route,
     result_video_url,
     sd2_native_resolution,
@@ -65,6 +68,45 @@ def _config(channel_providers=None, allowed_models=None, provider_options=None):
             ),
         },
     )
+
+
+# ── durable provider route identity ─────────────────────────────────────────
+
+def test_provider_route_fingerprint_is_non_secret_and_covers_route_identity():
+    route = _route()
+    fingerprint = provider_route_fingerprint(route)
+
+    assert fingerprint.startswith("v1:")
+    assert len(fingerprint) == 67
+    assert route.api_key not in fingerprint
+    # A transport-equivalent trailing slash is normalized.
+    assert provider_route_fingerprint(replace(route, base_url=route.base_url + "/")) == fingerprint
+
+    variants = [
+        replace(route, provider="another-provider"),
+        replace(route, channel="sd2"),
+        replace(route, wire_format="bossip_videos"),
+        replace(route, base_url="https://another-gw.test"),
+        replace(route, auth_scheme="raw"),
+        replace(route, api_key="sk-rotated"),
+    ]
+    assert all(provider_route_fingerprint(candidate) != fingerprint for candidate in variants)
+
+
+def test_provider_route_mismatch_prefers_fingerprint_then_legacy_wire():
+    direct = _route()
+    relay = replace(
+        direct,
+        base_url="https://openapi.bossipai.com.cn",
+        wire_format="bossip_videos",
+    )
+    snapshot = {"provider_route_fingerprint": provider_route_fingerprint(direct)}
+
+    assert provider_route_mismatch(snapshot, direct) is None
+    assert "fingerprint differs" in str(provider_route_mismatch(snapshot, relay))
+    assert provider_route_mismatch({"provider_wire_format": "bossip_videos"}, relay) is None
+    assert "legacy submitted wire" in str(provider_route_mismatch({}, relay))
+    assert provider_route_mismatch({}, direct) is None
 
 
 # ── model canonicalization ──────────────────────────────────────────────────

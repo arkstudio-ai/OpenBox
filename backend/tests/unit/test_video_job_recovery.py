@@ -8,6 +8,14 @@ from video import job_recovery
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 
 DUMMY_TARGET = SimpleNamespace(provider="doubao", model="m", api_key="k", base_url="https://api.example")
+RELAY_TARGET = SimpleNamespace(
+    provider="doubao",
+    model="m",
+    api_key="k",
+    base_url="https://relay.example",
+    channel="ark",
+    wire_format="bossip_videos",
+)
 DUMMY_SETTINGS = SimpleNamespace(max_provider_output_bytes=10**9, poll_interval_seconds=5)
 
 
@@ -82,6 +90,18 @@ async def _fetch_asset(asset_id: str):
         return await db.get(FileAsset, asset_id)
 
 
+async def _retire_test_job(job_id: str) -> None:
+    """Keep an intentionally stranded row out of later shared-DB sweeps."""
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        job = await db.get(VideoJob, job_id)
+        if job is not None:
+            job.status = "cancelled"
+            job.updated_at = NOW()
+
+
 def _patch_provider(monkeypatch, payload, calls=None):
     from tool import video_production as vp
 
@@ -131,6 +151,164 @@ async def test_legacy_runtime_link_does_not_block_domain_recovery(monkeypatch):
     assert (await _fetch(job_id)).status == "completed"
 
 
+async def test_legacy_direct_job_is_not_polled_through_a_new_relay(monkeypatch):
+    """Missing wire metadata predates relay support and means TokenSpace."""
+    from tool import video_production as vp
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+
+    async def must_not_poll(target, task_id):
+        calls.append(task_id)
+        raise AssertionError("a legacy TokenSpace task was sent to the relay")
+
+    monkeypatch.setattr(vp, "_provider_status", must_not_poll)
+    job_id = await _insert_job(age_seconds=600, request_data={})
+    job_recovery._route_mismatch_once.discard(job_id)
+    warnings: list[str] = []
+    monkeypatch.setattr(job_recovery.log, "warning", warnings.append)
+
+    try:
+        assert await job_recovery.sweep() == 0
+        assert await job_recovery.sweep() == 0
+
+        assert calls == []
+        assert (await _fetch(job_id)).status == "in_progress"
+        assert len([message for message in warnings if job_id in message]) == 1
+    finally:
+        await _retire_test_job(job_id)
+
+
+async def test_fingerprint_mismatch_is_not_polled_or_mutated(monkeypatch):
+    from tool import video_production as vp
+    from tool.video_providers import provider_route_fingerprint
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+
+    async def must_not_poll(_target, task_id):
+        calls.append(task_id)
+        raise AssertionError("a task fingerprinted for another route was polled")
+
+    monkeypatch.setattr(vp, "_provider_status", must_not_poll)
+    job_id = await _insert_job(
+        age_seconds=600,
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(DUMMY_TARGET),
+            "provider_wire_format": "tokenspace_contents",
+        },
+    )
+    job_recovery._route_mismatch_once.discard(job_id)
+
+    try:
+        assert await job_recovery.sweep() == 0
+        assert calls == []
+        job = await _fetch(job_id)
+        assert job.status == "in_progress"
+        assert job.error is None
+    finally:
+        await _retire_test_job(job_id)
+
+
+async def test_matching_relay_snapshot_still_recovers(monkeypatch):
+    from tool import video_production as vp
+
+    _patch_provider(
+        monkeypatch,
+        {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"},
+    )
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+    job_id = await _insert_job(
+        age_seconds=600,
+        request_data={"provider_wire_format": "bossip_videos"},
+    )
+
+    assert await job_recovery.sweep() == 1
+    assert (await _fetch(job_id)).status == "completed"
+
+
+async def test_matching_route_fingerprint_still_recovers(monkeypatch):
+    from tool import video_production as vp
+    from tool.video_providers import provider_route_fingerprint
+
+    _patch_provider(
+        monkeypatch,
+        {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"},
+    )
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+    job_id = await _insert_job(
+        age_seconds=600,
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(RELAY_TARGET),
+            "provider_wire_format": "bossip_videos",
+        },
+    )
+
+    assert await job_recovery.sweep() == 1
+    assert (await _fetch(job_id)).status == "completed"
+
+
+async def test_mismatch_batch_does_not_starve_a_newer_matching_job(monkeypatch):
+    from tool import video_production as vp
+    from tool.video_providers import provider_route_fingerprint
+
+    calls: list[str] = []
+    _patch_provider(
+        monkeypatch,
+        {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"},
+        calls,
+    )
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+    mismatch_ids = [
+        await _insert_job(
+            age_seconds=700 - offset,
+            request_data={"provider_wire_format": "tokenspace_contents"},
+        )
+        for offset in range(job_recovery.MAX_JOBS_PER_SWEEP)
+    ]
+    matching_id = await _insert_job(
+        age_seconds=600,
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(RELAY_TARGET),
+            "provider_wire_format": "bossip_videos",
+        },
+    )
+    matching_task_id = (await _fetch(matching_id)).provider_task_id
+    job_recovery._scan_after = None
+
+    try:
+        assert await job_recovery.sweep() == 0
+        assert calls == []
+        assert await job_recovery.sweep() == 1
+        assert calls == [matching_task_id]
+        assert (await _fetch(matching_id)).status == "completed"
+    finally:
+        for job_id in mismatch_ids:
+            await _retire_test_job(job_id)
+            job_recovery._route_mismatch_once.discard(job_id)
+        job_recovery._scan_after = None
+
+
 async def test_stale_finalizing_reclaimed_and_completed(monkeypatch):
     _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
     job_id = await _insert_job(age_seconds=600, status="finalizing")
@@ -140,6 +318,38 @@ async def test_stale_finalizing_reclaimed_and_completed(monkeypatch):
     assert advanced == 1
     job = await _fetch(job_id)
     assert job.status == "completed"
+
+
+async def test_route_mismatch_does_not_reclaim_stale_finalizing(monkeypatch):
+    from tool import video_production as vp
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
+    )
+
+    async def must_not_poll(_target, task_id):
+        calls.append(task_id)
+        raise AssertionError("mismatched stale finalization was polled")
+
+    monkeypatch.setattr(vp, "_provider_status", must_not_poll)
+    job_id = await _insert_job(
+        age_seconds=600,
+        status="finalizing",
+        request_data={},
+    )
+    job_recovery._route_mismatch_once.discard(job_id)
+
+    try:
+        assert await job_recovery.sweep() == 0
+        job = await _fetch(job_id)
+        assert calls == []
+        assert job.status == "finalizing"
+        assert job.error is None
+    finally:
+        await _retire_test_job(job_id)
 
 
 async def test_recent_finalizing_left_alone(monkeypatch):
@@ -179,6 +389,53 @@ async def test_provider_failed_settles_job(monkeypatch):
     assert job.status == "failed"
     assert job.error == "boom"
     assert (await _fetch_asset(job.output_asset_id)).status == "failed"
+
+
+async def test_other_provider_http_error_remains_retryable(monkeypatch):
+    import httpx
+
+    from tool import video_production as vp
+    from tool.video_providers import provider_route_fingerprint
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        vp,
+        "_configured_target",
+        lambda model_override=None: (DUMMY_TARGET, DUMMY_SETTINGS),
+    )
+
+    async def unavailable(_target, task_id):
+        calls.append(task_id)
+        request = httpx.Request("GET", f"https://api.example/tasks/{task_id}")
+        response = httpx.Response(503, request=request, json={"error": "unavailable"})
+        raise httpx.HTTPStatusError(
+            "service unavailable",
+            request=request,
+            response=response,
+        )
+
+    monkeypatch.setattr(vp, "_provider_status", unavailable)
+    job_id = await _insert_job(
+        age_seconds=600,
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(DUMMY_TARGET),
+            "provider_wire_format": "tokenspace_contents",
+        },
+    )
+    job_recovery._failed_once.discard(job_id)
+    warnings: list[str] = []
+    monkeypatch.setattr(job_recovery.log, "warning", warnings.append)
+
+    try:
+        assert await job_recovery.sweep() == 0
+        assert await job_recovery.sweep() == 0
+        assert calls == [(await _fetch(job_id)).provider_task_id] * 2
+        assert len([message for message in warnings if job_id in message]) == 1
+        job = await _fetch(job_id)
+        assert job.status == "in_progress"
+        assert job.error is None
+    finally:
+        await _retire_test_job(job_id)
 
 
 async def test_fresh_job_untouched(monkeypatch):

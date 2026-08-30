@@ -1,5 +1,6 @@
 """Skill-only video tools validate billable and render calls conservatively."""
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -301,6 +302,458 @@ async def test_generation_wait_provider_timeout_returns_running_snapshot(monkeyp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["status", "wait", "cancel"])
+async def test_generation_control_blocks_fingerprint_mismatch_without_provider_io(
+    monkeypatch, action
+):
+    from tool.video_providers import provider_route_fingerprint
+
+    submitted_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-original",
+        base_url="https://api.original.test",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+    )
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-current",
+        base_url="https://api.current.test",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+    )
+    job = SimpleNamespace(
+        id=f"video_route_mismatch_{action}",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(submitted_route),
+            "provider_wire_format": "tokenspace_contents",
+        },
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=5)
+    provider_calls: list[str] = []
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def forbidden_provider_call(*_args, **_kwargs):
+        provider_calls.append("called")
+        raise AssertionError("mismatched route must perform zero provider I/O")
+
+    async def forbidden_update(*_args, **_kwargs):
+        raise AssertionError("mismatched route must not mutate the durable job")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", forbidden_provider_call)
+    monkeypatch.setattr(video_mod, "_provider_cancel", forbidden_provider_call)
+    monkeypatch.setattr(video_mod, "_update_job", forbidden_update)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action=action, job_id=job.id, wait_seconds=0),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert provider_calls == []
+    assert result.title == "Video generation recovery blocked"
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+    assert result.metadata["do_not_resubmit"] is True
+    assert result.metadata["still_running"] is False
+    assert result.metadata["timed_out"] is False
+    assert "recovery_blocked=true" in result.output
+    assert "provider_state_unknown=true" in result.output
+    assert "still_running=false" in result.output
+    assert "instruction=do_not_resubmit" in result.output
+    assert "retry_after_seconds" not in result.output
+    assert "retry_after_seconds" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_generation_control_blocks_pre_relay_legacy_job_on_relay(monkeypatch):
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-relay",
+        base_url="https://openapi.bossipai.com.cn",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="bossip_videos",
+    )
+    job = SimpleNamespace(
+        id="video_legacy_direct",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="cgt-old-direct-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=5)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def must_not_poll(*_args):
+        raise AssertionError("pre-relay task id must not be sent to the relay")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", must_not_poll)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action="status", job_id=job.id),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+
+
+@pytest.mark.asyncio
+async def test_generation_control_blocks_when_persisted_route_is_unavailable(monkeypatch):
+    job = SimpleNamespace(
+        id="video_route_unavailable",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="removed-model",
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def must_not_poll(*_args):
+        raise AssertionError("an unavailable route must perform zero provider I/O")
+
+    def unavailable(_model):
+        raise RuntimeError("provider was removed")
+
+    monkeypatch.setattr(video_mod, "_configured_target", unavailable)
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", must_not_poll)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action="status", job_id=job.id),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+    assert result.metadata["still_running"] is False
+    assert result.metadata["do_not_resubmit"] is True
+    assert result.metadata["recovery_reason"] == "provider_route_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_generation_terminal_status_does_not_require_provider_config(monkeypatch):
+    job = SimpleNamespace(
+        id="video_terminal_without_route",
+        kind="segment",
+        status="failed",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error="provider failed before its route was removed",
+        model="removed-model",
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    def unavailable(_model):
+        raise RuntimeError("provider was removed")
+
+    monkeypatch.setattr(video_mod, "_configured_target", unavailable)
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action="status", job_id=job.id),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert result.title == "Video generation status"
+    assert result.metadata["status"] == "failed"
+    assert result.metadata["still_running"] is False
+    assert result.metadata.get("recovery_blocked") is not True
+
+
+@pytest.mark.asyncio
+async def test_generation_status_guards_stale_untracked_finalizing_before_mutation(
+    monkeypatch,
+):
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-relay",
+        base_url="https://openapi.bossipai.com.cn",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="bossip_videos",
+    )
+    job = SimpleNamespace(
+        id="video_stale_finalizing_mismatch",
+        kind="segment",
+        status="finalizing",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="cgt-old-direct-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=5)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("stale route mismatch must do zero provider I/O and DB mutation")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", forbidden)
+    monkeypatch.setattr(video_mod, "_update_job", forbidden)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action="status", job_id=job.id),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert job.status == "finalizing"
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_keeps_tracked_stale_finalization_local(monkeypatch):
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-relay",
+        base_url="https://openapi.bossipai.com.cn",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="bossip_videos",
+    )
+    job = SimpleNamespace(
+        id="video_tracked_stale_finalizing",
+        kind="segment",
+        status="finalizing",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="cgt-old-direct-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=0.01)
+    provider_calls: list[str] = []
+
+    async def finish_locally():
+        await asyncio.sleep(0)
+        job.status = "completed"
+        job.updated_at = datetime.now(timezone.utc)
+        return job
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def must_not_poll(*_args):
+        provider_calls.append("called")
+        raise AssertionError("a tracked finalization must finish locally")
+
+    async def fake_update_output(_message):
+        return None
+
+    async def fake_attach(_job, _ctx):
+        return False
+
+    task = asyncio.create_task(finish_locally())
+    video_mod._SEGMENT_FINALIZATION_TASKS[job.id] = task
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", must_not_poll)
+    monkeypatch.setattr(video_mod, "_attach_completed", fake_attach)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    try:
+        result = await video_mod.execute_generate(
+            VideoGenerateArgs(action="wait", job_id=job.id, wait_seconds=1),
+            SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+        )
+    finally:
+        video_mod._SEGMENT_FINALIZATION_TASKS.pop(job.id, None)
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert provider_calls == []
+    assert result.metadata["status"] == "completed"
+    assert result.metadata.get("recovery_blocked") is not True
+
+
+@pytest.mark.asyncio
+async def test_tracked_finalization_failure_cannot_bypass_route_guard(monkeypatch):
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-relay",
+        base_url="https://openapi.bossipai.com.cn",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="bossip_videos",
+    )
+    job = SimpleNamespace(
+        id="video_tracked_transfer_failed",
+        kind="segment",
+        status="finalizing",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="cgt-old-direct-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=0.01)
+    provider_calls: list[str] = []
+
+    async def fail_local_transfer():
+        await asyncio.sleep(0)
+        job.status = "transfer_failed"
+        job.error = "copy failed"
+        job.updated_at = datetime.now(timezone.utc)
+        return job
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def must_not_poll(*_args):
+        provider_calls.append("called")
+        raise AssertionError("transfer_failed must pass the saved route guard")
+
+    async def fake_update_output(_message):
+        return None
+
+    task = asyncio.create_task(fail_local_transfer())
+    video_mod._SEGMENT_FINALIZATION_TASKS[job.id] = task
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", must_not_poll)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    try:
+        result = await video_mod.execute_generate(
+            VideoGenerateArgs(action="wait", job_id=job.id, wait_seconds=1),
+            SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+        )
+    finally:
+        video_mod._SEGMENT_FINALIZATION_TASKS.pop(job.id, None)
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert provider_calls == []
+    assert job.status == "transfer_failed"
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+    assert result.metadata["still_running"] is False
+
+
+@pytest.mark.asyncio
+async def test_generation_status_freezes_non_provider_finalization_decision(monkeypatch):
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-relay",
+        base_url="https://openapi.bossipai.com.cn",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="bossip_videos",
+    )
+    job = SimpleNamespace(
+        id="video_finalizing_guard_race",
+        kind="segment",
+        status="finalizing",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="cgt-old-direct-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        # Deliberately stale by loop time. The patched helper models an initial
+        # young/tracked snapshot that became stale/untracked after the guard.
+        updated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=0.01)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("an unguarded call must not upgrade to provider recovery")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_stale_finalization_needs_provider", lambda _job: False)
+    monkeypatch.setattr(video_mod, "_provider_status", forbidden)
+    monkeypatch.setattr(video_mod, "_update_job", forbidden)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action="status", job_id=job.id),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert job.status == "finalizing"
+    assert result.metadata["status"] == "finalizing"
+    assert result.metadata.get("recovery_blocked") is not True
+
+
+@pytest.mark.asyncio
 async def test_generation_wait_finalizing_reloads_with_backoff_until_timeout(monkeypatch):
     updated_at = datetime.now(timezone.utc)
     job = SimpleNamespace(
@@ -567,6 +1020,10 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
     target = SimpleNamespace(
         model="doubao-seedance-2-0-260128",
         provider="doubao",
+        api_key="sk-submit-secret",
+        base_url="https://api.tokenspace.test",
+        channel="ark",
+        auth_scheme="bearer",
         wire_format="tokenspace_contents",
     )
     settings = SimpleNamespace(
@@ -632,6 +1089,7 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
 
     async def fake_create(**kwargs):
         observed["request_data"] = kwargs["request_data"]
+        observed["request_hash"] = kwargs["request_hash"]
         job.request_data = kwargs["request_data"]
         return job, output_asset, True
 
@@ -701,6 +1159,24 @@ async def test_submit_records_and_sends_character_reference_first(monkeypatch):
 
     assert observed["request_data"]["character_reference_asset_id"] == "asset_portrait"
     assert observed["request_data"]["input_asset_ids"] == ["asset_portrait", "asset_scene"]
+    from tool.video_providers import provider_route_fingerprint
+
+    assert observed["request_data"]["provider_route_fingerprint"] == provider_route_fingerprint(
+        target
+    )
+    assert "sk-submit-secret" not in json.dumps(observed["request_data"], sort_keys=True)
+    from tool.video_workflow import content_hash
+
+    legacy_request_data = dict(observed["request_data"])
+    legacy_request_data.pop("provider_route_fingerprint")
+    assert observed["request_hash"] == content_hash(
+        {
+            "kind": "segment",
+            "model": target.model,
+            "prompt": "主持人说一句话",
+            "request_data": legacy_request_data,
+        }
+    )
     content = observed["payload"]["content"]
     assert content[1]["role"] == "reference_image"
     assert content[1]["image_url"]["url"] == "asset://asset-provider-portrait"
@@ -895,6 +1371,9 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     assert "exact returned `version`" in skill
     assert 'video_generate(action="wait"' in skill
     assert "`still_running=true` is a normal timeout snapshot" in skill
+    assert "`recovery_blocked=true`" in skill
+    assert "`provider_state_unknown=true`" in skill
+    assert "Obey `do_not_resubmit`" in skill
     assert "Do not wrap" in skill
     assert "generic Batch/parallel tool" in skill
     assert "generation_job_id" in skill

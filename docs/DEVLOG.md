@@ -359,16 +359,24 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 - `video_project status` 返回审批 scope/decision/hash 是否匹配、剩余付费调用预算、
   每段冻结模型与生成 job、生成/转写/合成幂等键；当前 hash 上的拒绝证据与批准 gate
   分开表达。
+- 浏览器验收时发现两条 8/27 的 TokenSpace 直连任务仍被当前 BossIP relay 路由按分钟
+  错查。现在每次付费提交都会快照版本化 provider route fingerprint（provider/channel/
+  wire/base/auth/credential identity），但不把恢复元数据计入逻辑 `request_hash`，保持滚动
+  升级期间的幂等兼容。历史任务若 wire 不匹配、或新任务 fingerprint 不匹配，后台恢复与
+  `status/wait/cancel` 都在任何 provider I/O 前隔离为 `provider_state_unknown`：不请求错误
+  账号、不改写数据库、不把 400/404 误判成付费任务失败，也绝不自动重提。
 
 ### 验证
 
 - PostgreSQL 在快照保护下实跑 `upgrade → downgrade → upgrade`：七表删除、44 列主表/
   23 个索引/全部约束完整回滚、再删除均通过，历史回执回填保持幂等。
-- 后端 `894 passed`；Web `174 passed`、TypeScript/i18n 通过；Mobile analyze 与 4 项
+- 后端 `913 passed`；Web `174 passed`、TypeScript/i18n 通过；Mobile analyze 与 4 项
   Flutter 测试通过。全量 ESLint 仍仅有 `content-view.ts` 两个既有复杂度错误，无新增。
 - 两项变异验证分别删除 `public_message` 分支与恢复快照预算字段，锚点测试均按预期失败，
   恢复实现后重新通过。
 - 浏览器 A/B 已用 `qa_jobs` 实测通过：历史会话的 3 条视频回执均可加载且无 live job UI；
   零花费新会话在同一回合直连完成 create/set_script/request_approval/status，最终停在
   `needs_script_approval`，数据库确认 segments/jobs/approvals 均为 0，控制台无
-  warning/error。付费恢复力场景 C 仍需另行确认预算。
+  warning/error。冷重启后再次复测仍通过；两个 legacy route mismatch 仅在启动时各告警
+  一次，跨过 60 秒恢复周期后无 provider HTTP/重复日志，原任务状态与 `updated_at` 未变。
+  付费恢复力场景 C 仍需另行确认预算。

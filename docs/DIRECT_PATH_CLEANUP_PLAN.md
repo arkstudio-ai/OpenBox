@@ -323,7 +323,9 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
   完成 skill load 与 `video_project` create/set_script/request_approval/status；审批卡弹出并
   以"跳过"收尾。项目 `production_01M18J3HFP297ZMKWX0DMYXZN8` 最终为
   `needs_script_approval`，数据库复核 segments/jobs/approvals 均为 0；无 live job UI、
-  `skill_job`、`video_generate` 或 `segment.generate`，控制台无 warning/error。
+  `skill_job`、`video_generate` 或 `segment.generate`，控制台无 warning/error。后端冷重启后
+  A/B 再次复测仍通过；同时确认 legacy provider route mismatch 只隔离、不请求当前 relay、
+  不改写原任务事实。
 - **C 恢复力**：场景 B 走到审批卡后批准并继续到某一段 `wait` 期间，重启后端进程，
   然后发"继续"。验收：agent 调 `status` 重建事实并接续，不重复提交（幂等键拒绝
   同键不同哈希）。⚠️ 此场景会产生**真实付费生成**——执行前向用户确认预算；

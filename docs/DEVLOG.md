@@ -348,8 +348,8 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
   continuation 索引与客户端前缀限制。
 - Web/Mobile 删除 live job dock/card/API/WS，历史回执继续只凭 message part 渲染，并补齐
   视频、图片、普通文件预览及 unknown/missing/unavailable 回退。
-- 部署入口会在迁移前停止旧 Compose worker；Kubernetes 使用 `make k8s-apply` 或
-  `make k8s-apply-aks`，先删除旧 Deployment 再应用清单，避免 orphan worker 与 DDL 竞态。
+- 部署入口会在迁移前停止旧 Compose worker。按本轮最终范围，后续部署只走无影云；
+  Kubernetes 不作为交付或验收目标，本轮不再追加其升级编排改动。
 
 ### 直连恢复契约
 
@@ -383,4 +383,8 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
   `needs_script_approval`，数据库确认 segments/jobs/approvals 均为 0，控制台无
   warning/error。冷重启后再次复测仍通过；两个 legacy route mismatch 仅在启动时各告警
   一次，跨过 60 秒恢复周期后无 provider HTTP/重复日志，原任务状态与 `updated_at` 未变。
-  付费恢复力场景 C 仍需另行确认预算。
+- 另完成零费用浏览器恢复替代场景：把视频路由临时锁到 loopback 后，浏览器人工完成
+  剧本/单分段/单次预算审批并提交；后端在 `wait` 后重启，后台跨过 120 秒安全窗后用保存的
+  task id 恢复查询，浏览器再按版本继续等待。最终 mock 为 `POST=1 / GET=3`，数据库仅 1 个
+  job、`attempt=1`、预算 `1/1`；测试作业随后由 mock 预期失败终态收敛，控制台无
+  warning/error，真实供应商请求为 0。付费供应商版场景 C 仍需另行预算授权。

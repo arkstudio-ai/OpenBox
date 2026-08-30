@@ -334,6 +334,16 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
   零费用自动化已另用 loopback provider 和两个独立进程覆盖 submit→冷重启→恢复前同键
   抢跑→startup recovery→completed→完成后同键重放，确认供应商 POST、调用预算和 attempt
   始终各为 1；它补强核心恢复证据，但不冒充浏览器/真实供应商的付费场景 C。
+  **2026-08-30 零费用浏览器替代验收通过**：`qa_jobs` 会话
+  `session_7YBYQ7PBN0VR3V1QDQ57RZWTTG` 创建并人工批准单段项目
+  `production_01M18RAKAMT1NC2FAK9HRBTKJY`，模型显式固定为 `video-sd-720p-proⅠ`；测试时把
+  视频路由锁到 `127.0.0.1` loopback（真实供应商不可达），浏览器只提交一次后强制重启
+  后端。跨过 120 秒活跃轮询保护窗后，后台恢复用已保存的
+  `provider_task_id=task_browser_restart_1` 查询；随后浏览器按返回的 `version` 与
+  `wait_iteration` 继续同一 job。最终 mock 精确为 `POST=1 / GET=3 / unexpected=0`，数据库
+  只有一个 job，`attempt=1`、预算 `used_calls=1/max_calls=1`，没有重提。mock 再返回预期
+  failed 终态以清理作业；页面无 live job UI，控制台无 warning/error。此证据覆盖真实
+  浏览器与进程重启链路，但仍不声称完成了真实供应商付费生成。
 
 ---
 

@@ -38,7 +38,8 @@
 | WUYING 沙箱 | `.env` 指向生产桌面（隧道 `127.0.0.1:18000`）；`.env.wuying-dev` 指向 dev 桌面（18001，**已过期不可用**）。隧道脚本 `backend/scripts/wuying_dev.sh` |
 | 热重载盲区 | `uvicorn --reload` 只看 `.py`；改 `openbox.json` / `skill.yaml` / locale 必须手动重启后端 |
 | 测试基线 | 后端 `cd backend && uv run pytest -q` → **1016 passed**；前端 `npm run test`（vitest，182 例）、`npm run check`（含 tsc）、`npm run lint`（**存在 2 个既有错误**，均在 `content-view.ts`，圈复杂度 27/50——不是你造成的，也不许新增）；移动端 `cd mobile && dart analyze` 零问题 |
-| 浏览器验收账号 | 用户账号 `qa_jobs`（凭据向用户索取，勿写入任何文件）；历史数据验收会话：`http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8` |
+| 浏览器验收账号 | `qa_jobs`，**密码见 `docs/LOCAL_CREDENTIALS.md`**（gitignored，不在仓库里，本机已存在）；历史数据验收会话：`http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8` |
+| ⚠️ 仓库可见性 | `origin` = `github.com/arkstudio-ai/OpenBox`，**公开仓库**。任何入库内容都会被公开发布且 git 历史永久留存——**绝不把密码、token、API key 写进任何被跟踪的文件**（包括本手册） |
 | 提交规范 | 中文 commit message、`类型(范围): 摘要` + 正文讲清 why；每个 PR 单独提交并 push `origin main` |
 
 ### 0.4 铁律
@@ -301,7 +302,8 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 
 ## 7. 浏览器验收场景（PR#2 后跑 A/B，PR#3 后跑 C）
 
-前置：后端（8000）与前端（3000）都在跑；用 `qa_jobs` 登录（凭据向用户索取）。
+前置：后端（8000）与前端（3000）都在跑；用 `qa_jobs` 登录，
+密码见 `docs/LOCAL_CREDENTIALS.md`（该文件 gitignored，只在本机）。
 
 - **A 历史回执**：打开
   `http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8`（"魔仙堡"会话，
@@ -333,6 +335,9 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 7. `skill_installs` / `user_skills` / `kv_store` 与运行时表同族异名，**不许删**（§2）。
 8. `test_video_model_snapshot.py` 整体是共享层测试，只删一个用例（§3.6.2）。
 9. 提交信息用中文、讲 why；每个 PR 独立提交并 push。
+10. **`origin` 是公开仓库**。凭据一律只进 `docs/LOCAL_CREDENTIALS.md`（gitignored）
+    或已忽略的 `.env` / `backend/openbox.json`；`git add -A` 之前扫一眼
+    `git status --short`，确认没有把本地凭据文件或 `openbox.json` 带进暂存区。
 
 ---
 

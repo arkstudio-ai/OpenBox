@@ -969,13 +969,21 @@ async def _dispatch_stt(
         raise
     except Exception as exc:
         # Media dispatch is idempotent per (owner, idempotency_key) on the
-        # node's queue, so unlike a paid provider submit this can retry.
+        # node's queue, so unlike a paid provider submit this can retry -- but
+        # it must retry on the fault budget. WaitExternal is a loop with no
+        # counter: only Retry moves retry_count, so answering a failed *call*
+        # with it re-dials a node that is simply down every poll interval
+        # until the 24h deadline, and the failure notice that would have woken
+        # the agent never fires. The dispatch never reached a remote state,
+        # so there is nothing external to wait on.
         await ctx.assert_lease()
-        await vp._update_job(job.id, status="dispatch_unknown", error=vp._public_error(exc))
-        return WaitExternal(
+        detail = vp._public_error(exc)
+        await vp._update_job(job.id, status="dispatch_unknown", error=detail)
+        return Retry(
             checkpoint=checkpoint,
-            wake_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
-            progress={"dispatch": "retrying"},
+            error_code="dispatch_unavailable",
+            error_message=detail,
+            retry_at=_now() + timedelta(seconds=_poll_seconds(video_settings)),
         )
     await ctx.progress(
         {"sandbox_job_id": remote.get("job_id"), "queue_position": remote.get("queue_position")},
@@ -1406,12 +1414,22 @@ async def _dispatch_render_step(
     except StaleLeaseError:
         raise
     except Exception as exc:
+        # Media dispatch is idempotent per (owner, idempotency_key) on the
+        # node's queue, so unlike a paid provider submit this can retry -- but
+        # it must retry on the fault budget. WaitExternal is a loop with no
+        # counter: only Retry moves retry_count, so answering a failed *call*
+        # with it re-dials a node that is simply down every poll interval
+        # until the 24h deadline, and the failure notice that would have woken
+        # the agent never fires. The dispatch never reached a remote state,
+        # so there is nothing external to wait on.
         await ctx.assert_lease()
-        await vp._update_job(job.id, status="dispatch_unknown", error=vp._public_error(exc))
-        return WaitExternal(
+        detail = vp._public_error(exc)
+        await vp._update_job(job.id, status="dispatch_unknown", error=detail)
+        return Retry(
             checkpoint=checkpoint,
-            wake_at=_now() + timedelta(seconds=_poll_seconds(settings)),
-            progress={"dispatch": "retrying"},
+            error_code="dispatch_unavailable",
+            error_message=detail,
+            retry_at=_now() + timedelta(seconds=_poll_seconds(settings)),
         )
     await ctx.progress(
         {"sandbox_job_id": remote.get("job_id"), "queue_position": remote.get("queue_position")},

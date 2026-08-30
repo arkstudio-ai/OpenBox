@@ -596,6 +596,15 @@ async def test_transcribe_full_path(monkeypatch, enable_write, fast_poll):
 
 
 async def test_transcribe_dispatch_failure_retries_idempotently(monkeypatch, enable_write, fast_poll):
+    """A failed dispatch retries -- on the fault budget, not beside it.
+
+    The media queue dedupes on (owner, idempotency_key), so re-dialling is
+    safe. What is not safe is *how* the wait was expressed: this test used to
+    assert WAITING_EXTERNAL, which is a loop with no counter -- only Retry
+    moves retry_count. A node that was simply unreachable therefore re-dialled
+    every poll interval for the full two-hour external-wait budget, never
+    reaching `failed`, so the notice that wakes the agent never fired.
+    """
     user = "u_" + uuid.uuid4().hex[:8]
     production_id, segment_id = await _make_domain(user)
     sandbox = FakeSandbox()
@@ -604,14 +613,45 @@ async def test_transcribe_dispatch_failure_retries_idempotently(monkeypatch, ena
     worker = _worker()
 
     job = await _start_op(user, "segment.transcribe", {"production_id": production_id, "segment_id": segment_id})
-    waiting = await _drive_until(worker, job, {JobStatus.WAITING_EXTERNAL.value})
-    assert waiting.status == JobStatus.WAITING_EXTERNAL.value
+    waiting = await _drive_until(worker, job, {JobStatus.RETRY_SCHEDULED.value})
+    assert waiting.status == JobStatus.RETRY_SCHEDULED.value, "a failed call is a retry, not external waiting"
+    assert waiting.retry_count >= 1, "the attempt has to cost something or it never ends"
     assert len(sandbox.submits) >= 1
 
     sandbox.fail_submit = False
     sandbox.remote = {"status": "completed", "result": {}}
     done = await _drive_until(worker, job, {JobStatus.SUCCEEDED.value})
     assert done.status == JobStatus.SUCCEEDED.value
+
+
+async def test_a_node_that_never_comes_back_stops_dialling_and_parks(
+    monkeypatch, enable_write, fast_poll
+):
+    """The tunnel is down. Re-dialling must be bounded by the fault budget.
+
+    Where it lands afterwards is the STT adapter's existing safety property,
+    not a failure: the adapter cannot prove the absence of a remote task, so a
+    spent budget parks for operator confirmation instead of declaring the work
+    dead. Both halves matter -- unbounded dialling was the bug, and quietly
+    failing a job whose remote state is unknown would be the next one.
+    """
+    user = "u_" + uuid.uuid4().hex[:8]
+    production_id, segment_id = await _make_domain(user)
+    sandbox = FakeSandbox()
+    sandbox.fail_submit = True
+    _install_media(monkeypatch, production_id, segment_id, sandbox)
+    worker = _worker()
+
+    job = await _start_op(
+        user, "segment.transcribe", {"production_id": production_id, "segment_id": segment_id}
+    )
+    parked = await _drive_until(worker, job, {JobStatus.WAITING_USER.value}, ticks=80)
+
+    assert parked.status == JobStatus.WAITING_USER.value, "it must stop rather than dial forever"
+    assert parked.retry_count == parked.max_attempts, "every attempt costs budget"
+    # The bug dialled every poll interval for the whole external-wait budget.
+    assert len(sandbox.submits) == parked.max_attempts, "no dialling past the budget"
+    assert parked.error_code == "dispatch_unavailable"
 
 
 async def test_transcribe_cancel_during_extraction(monkeypatch, enable_write, fast_poll):

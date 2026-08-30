@@ -37,6 +37,7 @@ _BOSSIP_RELAY_MODELS = {
     "720p": "video-sd-720p-proⅠ",
     "1080p": "video-sd-1080p-pro",
 }
+_SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
 
 
 class VideoGenerateArgs(BaseModel):
@@ -46,6 +47,15 @@ class VideoGenerateArgs(BaseModel):
     segment_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
+    after_version: int = Field(default=0, ge=0)
+    wait_iteration: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Supply and increment this on every wait call; together with after_version "
+            "it makes repeated bounded waits explicit rather than an accidental tool loop."
+        ),
+    )
 
     @model_validator(mode="after")
     def _required_by_action(self):
@@ -1113,6 +1123,59 @@ def _job_lines(job, asset=None, *, queue_position: int | None = None, retry_afte
     return lines
 
 
+def _job_snapshot_version(job) -> int:
+    """Return an opaque monotonic-enough version for a persisted job snapshot."""
+    updated_at = getattr(job, "updated_at", None)
+    if not updated_at:
+        return 0
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return max(0, int(updated_at.timestamp() * 1_000_000))
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    """Whether a provider probe exhausted time rather than failed semantically."""
+    if isinstance(exc, TimeoutError):
+        return True
+    try:
+        import httpx
+
+        return isinstance(exc, httpx.TimeoutException)
+    except ImportError:  # pragma: no cover - httpx is a runtime dependency
+        return False
+
+
+def _forget_segment_finalization(job_id: str, task: asyncio.Task[Any]) -> None:
+    if _SEGMENT_FINALIZATION_TASKS.get(job_id) is task:
+        _SEGMENT_FINALIZATION_TASKS.pop(job_id, None)
+    if task.cancelled():
+        log.warning("video finalization task was cancelled for %s", job_id)
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning(
+            "video finalization task failed for %s: %s",
+            job_id,
+            type(exc).__name__,
+        )
+
+
+def _start_segment_finalization(job, data, ctx, settings, target) -> asyncio.Task[Any]:
+    """Keep OSS finalization alive when a bounded wait or client is cancelled."""
+    existing = _SEGMENT_FINALIZATION_TASKS.get(job.id)
+    if existing is not None and not existing.done():
+        return existing
+    task = asyncio.create_task(
+        _finalize_segment(job, data, ctx, settings, target),
+        name=f"video-finalize:{job.id}",
+    )
+    _SEGMENT_FINALIZATION_TASKS[job.id] = task
+    task.add_done_callback(
+        lambda done, job_id=job.id: _forget_segment_finalization(job_id, done)
+    )
+    return task
+
+
 async def _job_asset(job):
     if not job or not job.output_asset_id:
         return None
@@ -1659,8 +1722,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         job = await _owned_job(job.id, ctx, "segment")
         return ToolResult(title="Video generation cancelled", output="\n".join(_job_lines(job)))
 
-    deadline = asyncio.get_running_loop().time() + (args.wait_seconds if args.action == "wait" else 0)
+    is_wait = args.action == "wait"
+    deadline = asyncio.get_running_loop().time() + (args.wait_seconds if is_wait else 0)
+    version = _job_snapshot_version(job)
+    timed_out = False
     while job.status not in _SEGMENT_TERMINAL:
+        if is_wait and args.after_version and version > args.after_version:
+            break
         if job.status == "finalizing":
             updated = job.updated_at
             if updated and updated.tzinfo is None:
@@ -1672,16 +1740,65 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     error="recovering a stale OSS finalization",
                 )
                 job = await _owned_job(job.id, ctx, "segment")
+                version = _job_snapshot_version(job)
                 continue
-            break
+            if not is_wait:
+                break
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            await ctx.update_output("Provider completed; securing the video in OSS…")
+            finalization = _SEGMENT_FINALIZATION_TASKS.get(job.id)
+            try:
+                if finalization is not None:
+                    job = await asyncio.wait_for(
+                        asyncio.shield(finalization), timeout=remaining
+                    )
+                else:
+                    await asyncio.sleep(min(settings.poll_interval_seconds, remaining))
+                    job = await _owned_job(job.id, ctx, "segment")
+            except Exception as exc:
+                if _is_timeout_error(exc):
+                    timed_out = True
+                    job = await _owned_job(job.id, ctx, "segment")
+                    break
+                return ToolResult(
+                    title="Video status check failed", output=_public_error(exc)
+                )
+            version = _job_snapshot_version(job)
+            continue
         if not job.provider_task_id:
             break
         try:
-            data = await _provider_status(target, job.provider_task_id)
+            if is_wait:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                data = await asyncio.wait_for(
+                    _provider_status(target, job.provider_task_id),
+                    timeout=remaining,
+                )
+            else:
+                data = await _provider_status(target, job.provider_task_id)
             state = _provider_state(data, target)
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
-                job = await _finalize_segment(job, data, ctx, settings, target)
+                finalization = _start_segment_finalization(
+                    job, data, ctx, settings, target
+                )
+                if is_wait:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        timed_out = True
+                        job = await _owned_job(job.id, ctx, "segment")
+                        break
+                    job = await asyncio.wait_for(
+                        asyncio.shield(finalization), timeout=remaining
+                    )
+                else:
+                    job = await asyncio.shield(finalization)
             elif state in {"failed", "cancelled"}:
                 from tool.video_providers import failure_detail
 
@@ -1709,14 +1826,23 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     )
                 job = await _owned_job(job.id, ctx, "segment")
             else:
-                await _update_job(job.id, status=state, error=None)
-                job = await _owned_job(job.id, ctx, "segment")
+                if state != job.status or getattr(job, "error", None):
+                    await _update_job(job.id, status=state, error=None)
+                    job = await _owned_job(job.id, ctx, "segment")
+            version = _job_snapshot_version(job)
         except Exception as exc:
+            if is_wait and _is_timeout_error(exc):
+                timed_out = True
+                job = await _owned_job(job.id, ctx, "segment")
+                break
             return ToolResult(title="Video status check failed", output=_public_error(exc))
-        if args.action != "wait" or job.status in _SEGMENT_TERMINAL:
+        if not is_wait or job.status in _SEGMENT_TERMINAL:
+            break
+        if args.after_version and version > args.after_version:
             break
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
+            timed_out = True
             break
         await ctx.update_output(f"Video is {job.status}; waiting for the provider…")
         await asyncio.sleep(min(settings.poll_interval_seconds, remaining))
@@ -1734,6 +1860,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             else "Video generation status"
         )
     lines = _job_lines(job, asset, retry_after=round(settings.poll_interval_seconds))
+    version = _job_snapshot_version(job)
+    still_running = job.status not in _SEGMENT_TERMINAL
+    lines.append(f"version={version}")
+    if still_running:
+        lines.extend(
+            [
+                "still_running=true",
+                (
+                    f"next_wait_after_version={version} "
+                    f"next_wait_iteration={args.wait_iteration + 1}"
+                ),
+            ]
+        )
     ambiguous_submit = job.status == "submitting" and not job.provider_task_id
     if ambiguous_submit:
         lines.extend(
@@ -1751,6 +1890,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             "asset_id": asset.id if asset and asset.status == "ready" else None,
             "attached": attached,
             "ambiguous_submit": ambiguous_submit,
+            "still_running": still_running,
+            "timed_out": timed_out,
+            "version": version,
             "retry_after_seconds": round(settings.poll_interval_seconds),
         },
     )

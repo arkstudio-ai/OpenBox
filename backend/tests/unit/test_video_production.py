@@ -1,5 +1,6 @@
 """Skill-only video tools validate billable and render calls conservatively."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -168,7 +169,317 @@ def test_generation_schema_exposes_only_control_plane_fields():
         "segment_id",
         "idempotency_key",
         "wait_seconds",
+        "after_version",
+        "wait_iteration",
     }
+
+
+def test_generation_wait_schema_and_runtime_share_the_optional_iteration_default():
+    schema = VideoGenerateArgs.model_json_schema()
+    args = VideoGenerateArgs(action="wait", job_id="video_1", after_version=0)
+
+    assert args.wait_iteration == 0
+    assert "wait_iteration" not in schema["required"]
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_timeout_returns_a_versioned_running_snapshot(monkeypatch):
+    updated_at = datetime.now(timezone.utc)
+    version = int(updated_at.timestamp() * 1_000_000)
+    job = SimpleNamespace(
+        id="video_1",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=updated_at,
+    )
+    target = SimpleNamespace(model="video-model-1", channel="ark")
+    settings = SimpleNamespace(poll_interval_seconds=5)
+    provider_calls = 0
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def fake_status(_target, _provider_task_id):
+        nonlocal provider_calls
+        provider_calls += 1
+        return {"status": "processing"}
+
+    async def fake_update_output(_message):
+        return None
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", fake_status)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(
+            action="wait",
+            job_id=job.id,
+            wait_seconds=0,
+            after_version=version,
+            wait_iteration=3,
+        ),
+        SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+    )
+
+    assert provider_calls == 0
+    assert result.metadata == {
+        "job_id": job.id,
+        "status": "in_progress",
+        "asset_id": None,
+        "attached": False,
+        "ambiguous_submit": False,
+        "still_running": True,
+        "timed_out": True,
+        "version": version,
+        "retry_after_seconds": 5,
+    }
+    assert "still_running=true" in result.output
+    assert f"version={version}" in result.output
+    assert f"next_wait_after_version={version} next_wait_iteration=4" in result.output
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_provider_timeout_returns_running_snapshot(monkeypatch):
+    updated_at = datetime.now(timezone.utc)
+    job = SimpleNamespace(
+        id="video_provider_timeout",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=updated_at,
+    )
+    target = SimpleNamespace(model="video-model-1", channel="ark")
+    settings = SimpleNamespace(poll_interval_seconds=5)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def fake_status(_target, _provider_task_id):
+        raise TimeoutError("provider status timed out")
+
+    async def fake_update_output(_message):
+        return None
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", fake_status)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(
+            action="wait",
+            job_id=job.id,
+            after_version=0,
+            wait_iteration=0,
+            wait_seconds=0.1,
+        ),
+        SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+    )
+
+    assert result.title == "Video generation status"
+    assert result.metadata["status"] == "in_progress"
+    assert result.metadata["still_running"] is True
+    assert result.metadata["timed_out"] is True
+    assert "still_running=true" in result.output
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_finalizing_reloads_with_backoff_until_timeout(monkeypatch):
+    updated_at = datetime.now(timezone.utc)
+    job = SimpleNamespace(
+        id="video_finalizing",
+        kind="segment",
+        status="finalizing",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=updated_at,
+    )
+    target = SimpleNamespace(model="video-model-1", channel="ark")
+    settings = SimpleNamespace(poll_interval_seconds=0.01)
+    reloads = 0
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        nonlocal reloads
+        reloads += 1
+        return job
+
+    async def fake_update_output(_message):
+        return None
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    started = asyncio.get_running_loop().time()
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(
+            action="wait",
+            job_id=job.id,
+            after_version=int(updated_at.timestamp() * 1_000_000),
+            wait_iteration=1,
+            wait_seconds=0.03,
+        ),
+        SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+    )
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed >= 0.02
+    assert reloads >= 2
+    assert result.metadata["status"] == "finalizing"
+    assert result.metadata["still_running"] is True
+    assert result.metadata["timed_out"] is True
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_timeout_does_not_cancel_oss_finalization(monkeypatch):
+    updated_at = datetime.now(timezone.utc)
+    job = SimpleNamespace(
+        id="video_shielded_finalization",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id="provider_1",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=updated_at,
+    )
+    target = SimpleNamespace(model="video-model-1", channel="ark")
+    settings = SimpleNamespace(poll_interval_seconds=0.01)
+    release = asyncio.Event()
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def fake_status(_target, _provider_task_id):
+        return {"status": "succeeded", "video_url": "https://cdn.example/video.mp4"}
+
+    async def fake_finalize(_job, _data, _ctx, _settings, _target):
+        job.status = "finalizing"
+        job.updated_at = datetime.now(timezone.utc)
+        await release.wait()
+        job.status = "completed"
+        job.updated_at = datetime.now(timezone.utc)
+        return job
+
+    async def fake_update_output(_message):
+        return None
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", fake_status)
+    monkeypatch.setattr(video_mod, "_finalize_segment", fake_finalize)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(
+            action="wait",
+            job_id=job.id,
+            after_version=0,
+            wait_iteration=0,
+            wait_seconds=0.01,
+        ),
+        SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+    )
+
+    task = video_mod._SEGMENT_FINALIZATION_TASKS[job.id]
+    assert task.cancelled() is False
+    assert task.done() is False
+    assert result.metadata["status"] == "finalizing"
+    assert result.metadata["timed_out"] is True
+
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert job.status == "completed"
+    assert job.id not in video_mod._SEGMENT_FINALIZATION_TASKS
+
+
+@pytest.mark.asyncio
+async def test_generation_wait_returns_when_snapshot_version_advances(monkeypatch):
+    updated_at = datetime.now(timezone.utc)
+    old_version = int(updated_at.timestamp() * 1_000_000)
+    job = SimpleNamespace(
+        id="video_2",
+        kind="segment",
+        status="queued",
+        production_id="production_1",
+        segment_id="segment_2",
+        request_data={},
+        provider_task_id="provider_2",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=updated_at,
+    )
+    target = SimpleNamespace(model="video-model-1", channel="ark")
+    settings = SimpleNamespace(poll_interval_seconds=5)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def fake_status(_target, _provider_task_id):
+        return {"status": "processing"}
+
+    async def fake_update(_job_id, **values):
+        for key, value in values.items():
+            setattr(job, key, value)
+        job.updated_at = updated_at + timedelta(microseconds=1)
+
+    async def fake_asset(_job):
+        return None
+
+    async def fake_update_output(_message):
+        return None
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", fake_status)
+    monkeypatch.setattr(video_mod, "_update_job", fake_update)
+    monkeypatch.setattr(video_mod, "_job_asset", fake_asset)
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(
+            action="wait",
+            job_id=job.id,
+            after_version=old_version,
+            wait_iteration=0,
+        ),
+        SimpleNamespace(user_id="user_1", update_output=fake_update_output),
+    )
+
+    assert result.metadata["status"] == "in_progress"
+    assert result.metadata["version"] > old_version
+    assert result.metadata["still_running"] is True
+    assert result.metadata["timed_out"] is False
+    assert "next_wait_iteration=1" in result.output
 
 
 def test_completed_segment_explicitly_hands_off_to_transcription():
@@ -582,6 +893,8 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
     assert 'render_engine="auto"' in skill
     assert "wait_iteration" in skill
     assert "exact returned `version`" in skill
+    assert 'video_generate(action="wait"' in skill
+    assert "`still_running=true` is a normal timeout snapshot" in skill
     assert "Do not wrap" in skill
     assert "generic Batch/parallel tool" in skill
     assert "generation_job_id" in skill

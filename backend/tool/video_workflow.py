@@ -754,6 +754,7 @@ def _plan_hash(production, segments: list[Any]) -> str:
 async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
     """Full production snapshot; the public name is imported by the HTTP API."""
     from db.base import get_db_session
+    from db.models.video_production import VideoApproval
 
     async with get_db_session() as db:
         production = await _owned_production(db, production_id, user_id)
@@ -768,9 +769,49 @@ async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any
             "quality": quality_scope(production, segments) if segments else "",
             "render": render_scope(production, segments) if segments else "",
         }
-        approvals = {
-            kind: bool(scope and await _matching_approval(db, production.id, kind, scope))
+        matching_approvals = {
+            kind: (
+                await _matching_approval(db, production.id, kind, scope)
+                if scope
+                else None
+            )
             for kind, scope in scopes.items()
+        }
+        approvals = {kind: bool(row) for kind, row in matching_approvals.items()}
+        approval_rows = (
+            await db.execute(
+                select(VideoApproval)
+                .where(VideoApproval.production_id == production.id)
+                .order_by(VideoApproval.created_at.desc())
+            )
+        ).scalars().all()
+        latest_approvals: dict[str, Any] = {}
+        for row in approval_rows:
+            latest_approvals.setdefault(row.kind, row)
+        approval_details = {}
+        for kind, scope in scopes.items():
+            matched = matching_approvals[kind]
+            evidence = matched or latest_approvals.get(kind)
+            approval_details[kind] = {
+                "current_scope_hash": scope,
+                "approval_scope_hash": evidence.scope_hash if evidence else "",
+                "decision": evidence.decision if evidence else None,
+                # Hash identity is evidence, not a gate decision. A rejection
+                # can refer to the exact current scope while still leaving the
+                # corresponding value in ``approvals`` false.
+                "matches_current_hash": bool(
+                    scope and evidence and evidence.scope_hash == scope
+                ),
+            }
+        spend = matching_approvals["spend"]
+        spend_budget = {
+            "max_calls": spend.max_calls if spend else None,
+            "used_calls": spend.used_calls if spend else 0,
+            "remaining_calls": (
+                max(0, spend.max_calls - spend.used_calls)
+                if spend and spend.max_calls is not None
+                else 0
+            ),
         }
         return {
             "production_id": production.id,
@@ -794,10 +835,12 @@ async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any
             "render_asset_id": production.render_asset_id,
             "render_idempotency_key": (
                 f"{production.id}:render:{scopes['render'][:16]}"
-                if scopes["render"] and approvals.get("render")
+                if scopes["render"]
                 else ""
             ),
             "approvals": approvals,
+            "approval_details": approval_details,
+            "spend_budget": spend_budget,
             "segments": [
                 {
                     "segment_id": row.id,
@@ -840,6 +883,10 @@ def _snapshot_output(value: dict[str, Any]) -> str:
         f"character_identity_id={value.get('character_identity_id') or ''}",
         f"render_idempotency_key={value.get('render_idempotency_key', '')}",
         "approvals=" + json.dumps(value["approvals"], ensure_ascii=False, separators=(",", ":")),
+        "approval_details="
+        + json.dumps(value["approval_details"], ensure_ascii=False, separators=(",", ":")),
+        "spend_budget="
+        + json.dumps(value["spend_budget"], ensure_ascii=False, separators=(",", ":")),
     ]
     for row in value["segments"]:
         lines.extend(
@@ -848,6 +895,7 @@ def _snapshot_output(value: dict[str, Any]) -> str:
                 f"segment_{row['ordinal']}_revision={row['revision']}",
                 f"segment_{row['ordinal']}_status={row['status']}",
                 f"segment_{row['ordinal']}_generation_job_id={row['generation_job_id'] or ''}",
+                f"segment_{row['ordinal']}_model={row['model'] or ''}",
                 f"segment_{row['ordinal']}_script={row['script_text']}",
                 f"segment_{row['ordinal']}_prompt={row['prompt']}",
                 f"segment_{row['ordinal']}_output_asset_id={row['output_asset_id'] or ''}",

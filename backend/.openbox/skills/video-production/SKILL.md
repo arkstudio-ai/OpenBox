@@ -84,8 +84,13 @@ before reviewing or regenerating results. The machine contract is
    arguments. The narrow tool schema intentionally omits those fields. The
    backend supplies the approved prompt,
    references, `duration=-1`, `ratio=9:16`, `resolution=720p`, generated audio,
-   and no watermark. Wait on each returned job; never create a replacement merely
-   because the provider is slow.
+   and no watermark. Wait on each returned job with one bounded
+   `video_generate(action="wait", after_version=..., wait_iteration=...)` call at
+   a time: use `after_version=0, wait_iteration=0` for the first wait, then pass
+   back the exact returned `version` and increment only `wait_iteration`.
+   `still_running=true` is a normal timeout snapshot, not a failure; continue
+   from that job or recover it through `video_project status`. Never create a
+   replacement merely because the provider is slow.
 7. For every completed segment **with speech**, submit `video_transcribe` with
    its exact `transcription_idempotency_key`, then wait. The WUYING queue
    extracts a mono MP3 with FFmpeg; the backend runs STT, persists actual spoken

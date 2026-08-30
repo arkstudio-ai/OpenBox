@@ -869,13 +869,9 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
 
 IMAGE_GEN_DESCRIPTION = """\
-Generate or edit raster images with the image provider configured in openbox.json. \
-With no input_images this creates images from text; with OSS asset IDs or \
-/workspace/uploads paths it performs image-to-image editing/compositing, and an \
-optional PNG mask can target the first input. Every result is uploaded to OSS, \
-attached to the current reply, and indexed in the resource centre automatically. \
-Do not call view_image or share_file on the result again. Use the imagegen skill \
-to shape prompts and choose parameters."""
+Generate raster images from text, or edit OSS assets and uploads. An optional PNG
+mask targets the first input. Results are stored, indexed, and attached
+automatically; do not attach them again."""
 
 
 image_gen_tool = define_tool(
@@ -885,5 +881,4 @@ image_gen_tool = define_tool(
     execute=execute,
     sandbox_required=False,
     parallel_safe=False,
-    skill_only=True,
 )

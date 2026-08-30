@@ -19,8 +19,9 @@ class SkillInfo:
     # Directory holding SKILL.md, on the machine running the backend. Note this
     # is NOT reachable from the agent's tools, which execute in the sandbox.
     path: str = ""
-    # Registered skill-only tools this skill unlocks after it is loaded. The
-    # names alone are cheap frontmatter; their schemas are not sent yet.
+    # Documentary/display-only names describing tools a skill discusses.
+    # Skill fields never affect the runtime tool set; exposure is owned by the
+    # agent allowlist and permission rules (decoupled 2026-08-30).
     allowed_tools: tuple[str, ...] = ()
 
 
@@ -130,7 +131,7 @@ def _scan_directory(base_dir: Path, source: str) -> list[SkillInfo]:
 
 
 def normalize_skill_tools(value) -> tuple[str, ...]:
-    """Normalize a skill's optional ``allowed-tools`` declaration."""
+    """Normalize a documentary ``allowed-tools`` declaration for display."""
     if isinstance(value, str):
         values = value.replace(",", " ").split()
     elif isinstance(value, (list, tuple)):

@@ -34,7 +34,7 @@ async def test_write_memory_creates_candidate_and_truncates_summary():
 
 
 @pytest.mark.asyncio
-async def test_write_memory_validates_scope_owner_and_pending_note():
+async def test_write_memory_validates_scope_owner_and_proposal_only_notes():
     user_id = await _make_user()
     with pytest.raises(ValueError):
         await memory_service.write_memory(
@@ -46,11 +46,12 @@ async def test_write_memory_validates_scope_owner_and_pending_note():
             user_id=user_id, scope="LONG_TERM", type="TAGS",
             value={"summary": "s"}, owner="ADMIN",
         )
-    with pytest.raises(ValueError, match="propose_note"):
-        await memory_service.write_memory(
-            user_id=user_id, scope="LONG_TERM", type="PENDING_NOTE",
-            value={"summary": "s"}, owner="SYSTEM_INFERRED",
-        )
+    for note_type in (memory_service.PENDING_NOTE_TYPE, memory_service.USER_NOTE_TYPE):
+        with pytest.raises(ValueError, match="propose_note"):
+            await memory_service.write_memory(
+                user_id=user_id, scope="LONG_TERM", type=note_type,
+                value={"summary": "s"}, owner="SYSTEM_INFERRED",
+            )
 
 
 @pytest.mark.asyncio

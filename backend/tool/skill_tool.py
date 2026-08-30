@@ -83,7 +83,6 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     files: list[str] = []
     host_only = False
     container_error: str | None = None
-    activated_tools: tuple[str, ...] = ()
 
     from skill.skill import get_skill
     local_skill = await get_skill(args.skill)
@@ -95,7 +94,6 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         content = local_skill.content
         host_only = True
         files = _host_files(local_skill.path) if local_skill.path else []
-        activated_tools = local_skill.allowed_tools
         log.info(
             f"Using authoritative {local_skill.source} host copy of skill {args.skill!r}; it overrides any "
             "sandbox copy"
@@ -108,21 +106,36 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
             content = skill_data.get("content", "")
             base_dir = skill_data.get("base_dir", "")
             files = skill_data.get("files", [])
+            # Invariant: no field in a skill file, from any source, may change
+            # the agent's callable tool set. Container skills are untrusted
+            # user data, so keep a diagnostic for obsolete declarations but
+            # discard them at this parsing boundary.
             from core.markdown import parse_frontmatter
-            from skill.skill import normalize_skill_tools
             metadata, _ = parse_frontmatter(content)
-            activated_tools = normalize_skill_tools(
-                skill_data.get("allowed_tools")
-                or skill_data.get("tools")
-                or metadata.get("allowed-tools")
-                or metadata.get("allowed_tools")
-            )
+            declaration_keys = {
+                key
+                for key in ("allowed-tools", "allowed_tools", "tools")
+                if key in skill_data or key in metadata
+            }
+            if declaration_keys:
+                log.debug(
+                    f"Ignoring documentary tool fields from untrusted container skill "
+                    f"{args.skill!r}: {', '.join(sorted(declaration_keys))}"
+                )
         except Exception as e:
             # Kept, not swallowed: an unreachable container and a genuinely
             # missing skill need different answers. Reporting "not found" for a
             # dropped tunnel tells the model to give up on a skill that exists.
-            container_error = str(e) or e.__class__.__name__
-            log.debug(f"Container lookup for skill {args.skill!r} failed: {e}")
+            import httpx
+
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
+                # The real SandboxClient raises for a missing /skills/{name}.
+                # A 404 is a normal catalogue miss, not evidence that the
+                # WUYING tunnel or action server is unavailable.
+                log.debug(f"Container has no skill named {args.skill!r}")
+            else:
+                container_error = str(e) or e.__class__.__name__
+                log.debug(f"Container lookup for skill {args.skill!r} failed: {e}")
 
     # Fall back to local skills
     if not content:
@@ -151,7 +164,6 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         # over a path the model would only fail to read.
         host_only = True
         files = _host_files(skill.path) if skill.path else []
-        activated_tools = skill.allowed_tools
 
     if args.args:
         content = content.replace("$ARGUMENTS", args.args)
@@ -186,12 +198,6 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         output_parts.append("</skill_files>")
     output_parts.append("</skill_content>")
 
-    if activated_tools:
-        output_parts.append("")
-        output_parts.append(
-            "Activated tools for this agent run: " + ", ".join(activated_tools)
-        )
-
     if args.skill == "dev-browser":
         output_parts.append("")
         output_parts.append(await _browser_readiness(ctx))
@@ -199,9 +205,6 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
         output="\n".join(output_parts),
-        metadata={
-            "activated_tools": list(activated_tools),
-        },
     )
 
 

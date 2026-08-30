@@ -87,6 +87,12 @@ def test_tools_are_replaced_not_widened(with_config):
     assert mod.get_agent("build").tools == ["read"]
 
 
+def test_a_built_in_agent_honours_an_explicit_empty_tool_allowlist(with_config):
+    with_config({"build": AgentOverride(tools=[])})
+
+    assert mod.get_agent("build").tools == []
+
+
 def test_a_built_in_can_be_hidden(with_config):
     with_config({"plan": AgentOverride(hidden=True)})
     assert "plan" not in {a.name for a in mod.list_agents()}
@@ -120,6 +126,39 @@ def test_an_all_agent_is_not_treated_as_a_subagent_only(with_config):
 
 
 # ── what a custom agent is allowed to do ──
+
+BUILD_ONLY_WORKFLOW_TOOLS = {
+    "image_gen",
+    "video_identity",
+    "video_project",
+    "video_generate",
+    "video_transcribe",
+    "video_render",
+    "creator_context",
+    "skill_manage",
+}
+
+
+def test_a_custom_agent_does_not_inherit_build_only_workflows(with_config):
+    with_config({"reviewer": AgentOverride()})
+    reviewer = mod.get_agent("reviewer")
+
+    assert reviewer.mode == "all"
+    assert "reviewer" in {agent.name for agent in mod.list_subagents()}
+    assert BUILD_ONLY_WORKFLOW_TOOLS.isdisjoint(reviewer.tools)
+
+
+def test_a_custom_agent_may_explicitly_opt_into_a_workflow_tool(with_config):
+    with_config({"reviewer": AgentOverride(tools=["read", "image_gen"])})
+
+    assert mod.get_agent("reviewer").tools == ["read", "image_gen"]
+
+
+def test_a_custom_agent_honours_an_explicit_empty_tool_allowlist(with_config):
+    with_config({"reviewer": AgentOverride(tools=[])})
+
+    assert mod.get_agent("reviewer").tools == []
+
 
 def _stripped(agent):
     """Tools removed from the schema before the model ever sees them."""

@@ -77,8 +77,10 @@ async def write_memory(
         raise ValueError(f"scope must be one of {sorted(ALLOWED_SCOPES)}")
     if owner not in ALLOWED_OWNERS:
         raise ValueError(f"owner must be one of {sorted(ALLOWED_OWNERS)}")
-    if type == PENDING_NOTE_TYPE:
-        raise ValueError("proposals must go through propose_note, not write_memory")
+    if type in {PENDING_NOTE_TYPE, USER_NOTE_TYPE}:
+        raise ValueError(
+            f"{type} must go through propose_note, not write_memory"
+        )
     now = _now()
     row = UserMemory(
         id=ascending("memory"),

@@ -13,148 +13,71 @@ allowed-tools:
 
 # OpenBox Spoken Video Production
 
-Turn a topic or supplied script into one real-person vertical spoken video. This
-skill is the only place the six media tool schemas are exposed; do not use shell
-commands for generation, FFmpeg, Chrome, HyperFrames, uploads, or provider calls.
-Credentials remain on the backend and must never appear in prompts or files.
-Call these skill-only tools directly after loading the skill. Do not wrap
-`video_identity`, `video_project`, `video_generate`, `video_transcribe`, or
-`video_render` in a generic Batch/parallel tool: the wrapper does not inherit
-skill-only schemas or their sequential safety guarantees.
+Create a real-person or virtual-host vertical spoken video from a topic or full
+script. Skills teach the workflow; the build agent's allowlist and permission
+rules independently decide tool availability. Keep credentials and provider
+calls on the backend, and do not replace the native tools with shell or FFmpeg.
 
-Before planning segments, read [references/prompt-recipes.md](references/prompt-recipes.md).
-For gates and recovery read [references/workflow-gates.md](references/workflow-gates.md).
-Read [references/asset-contract.md](references/asset-contract.md) when references
-are used, and [references/quality-and-retries.md](references/quality-and-retries.md)
-before reviewing or regenerating results. The machine contract is
-[references/io-schema.json](references/io-schema.json).
+Bundled detail is routed through `references/prompt-recipes.md`,
+`workflow-gates.md`, `asset-contract.md`, `quality-and-retries.md`, and
+`io-schema.json`. The essential workflow below is self-contained when those
+host-side files are not readable from the sandbox.
 
-## Required workflow
+## Workflow
 
-0. Call `creator_context(action="get_user_context")` before drafting anything.
-   Use the persona (表达风格/受众/内容定位) to shape the script; treat every 边界
-   entry as a hard constraint. When the user states a stable fact or preference
-   about themselves or their brand, call
-   `creator_context(action="propose_memory", summary=...)` — one third-person
-   sentence; the card the user answers IS the confirmation. Never write a
-   USER_NOTE via `write_memory`. Session-scoped impressions may be written with
-   `write_memory(scope="SHORT_TERM", ttl_seconds=...)`. 宁可漏不可烦: when
-   unsure, don't propose, and never re-propose something already confirmed or
-   rejected.
-1. Call `video_project(action="create")` once. Use `mode="standard"` unless the
-   user explicitly delegates a bounded end-to-end test. Delegation changes who
-   evaluates the result, not the stored gates or paid-call ceiling.
-   After creation, non-create `video_project` actions may omit `production_id`;
-   the backend resolves the session's active production. On "not found" never
-   retry with a guessed id — call `status` with no id.
-2. Draft the complete word-for-word script. Default to 45–60 seconds and about
-   3.2 Chinese characters per second. Show the entire script in chat, call
-   `video_project(action="set_script")`, then call
-   `video_project(action="request_approval", approval_kind="script")`. Do not
-   design segments before that card is approved.
-3. Establish one host reference and classify it before planning segments:
-   - For a recognizable real person, use the exact user-owned portrait and call
-     `video_identity(action="create")`. The provider H5/QR authorization card is
-     shown directly to the user. Stop until that person says authorization is
-     complete, call `video_identity(action="status")`, then
-     `video_identity(action="add_asset")` with the exact portrait. Only an
-     `active` LivenessFace identity and `active` material asset may continue.
-   - For an AI-generated, illustrated, or otherwise virtual host, call
-     `image_gen` once if needed and do not request real-person authorization. The backend places it
-     in the user's AIGC material group automatically at generation time.
-   Reuse the exact same source `asset_id` across every segment. Never call a
-   real person virtual to evade provider privacy checks, and never claim
-   identity continuity from unrelated text-only generations.
-4. Split the approved script at semantic boundaries. Use 5 segments as a useful
-   30–60 second default, normally ≤40 Chinese characters each and never >48.
-   Write every prompt with the five-part recipe and one identical `visual_anchor`.
-   Call `video_project(action="set_segments")`; pass
-   `character_reference_type="real_person"` plus the active
-   `character_identity_id` for a real host, otherwise pass `"virtual"`. Its
-   server-side lint and real-person material ownership checks are final.
-5. Show the user the full asset list and, for every segment, the exact dialogue
-   and exact complete prompt that will be sent. Then request `segments` approval.
-   After it passes, immediately request `spend` approval. The spend card records
-   a hash-bound maximum number of new Seedance submissions. Without it,
-   `video_generate` rejects every submit.
-6. Read the returned segment IDs, current generation job IDs, and idempotency
-   keys from `video_project status`.
-   Submit each segment with only its `production_id`, `segment_id`, and exact
-   `generation_idempotency_key`; do not invent placeholder prompt/model/media
-   arguments. The narrow tool schema intentionally omits those fields. The
-   backend supplies the approved prompt,
-   references, `duration=-1`, `ratio=9:16`, `resolution=720p`, generated audio,
-   and no watermark. Wait on each returned job with one bounded
-   `video_generate(action="wait", after_version=..., wait_iteration=...)` call at
-   a time: use `after_version=0, wait_iteration=0` for the first wait, then pass
-   back the exact returned `version` and increment only `wait_iteration`.
-   `still_running=true` is a normal timeout snapshot, not a failure; continue
-   from that job or recover it through `video_project status`. Never create a
-   replacement merely because the provider is slow. If generation status,
-   wait, or cancel instead returns `recovery_blocked=true` with
-   `provider_state_unknown=true`, stop all calls for that job. Do not resubmit,
-   revise, or keep waiting: report that the original provider route must be
-   restored or an operator must reconcile the paid task.
-7. For every completed segment **with speech**, submit `video_transcribe` with
-   its exact `transcription_idempotency_key`, then wait. The WUYING queue
-   extracts a mono MP3 with FFmpeg; the backend runs STT, persists actual spoken
-   text, similarity, and phrase-level omissions/replacements. Segments planned
-   with `role="broll"` carry no dialogue: never transcribe them, and the quality
-   gate does not wait for their verdicts. Show all segment video attachments
-   plus each script/transcript/verdict. Request `quality` approval only after
-   all active speech segments have STT evidence.
-8. When the user gives per-segment verdicts in chat, first record each explicit
-   verdict with `video_project(action="set_segment_feedback", segment_id=...,
-   feedback="approved"|"rejected", feedback_note=...)` (`feedback_note` is
-   required on reject — it becomes the revision rationale). Then regenerate
-   ONLY segments the user rejected (`review_status=user_rejected`) or
-   STT-suspect segments the user chose to redo; never revise an approved
-   segment. If the user chooses to rework suspect segments, call
-   `video_project(action="revise_segment")` only for those segments. This creates
-   a new revision while preserving the paid old result. For another take with
-   identical words, pass only `segment_id` and `revision_reason`. If the dialogue
-   changes, pass the new word-for-word `script_text` and a complete lintable
-   `segment_prompt`; this atomically updates that one segment and the full script
-   while keeping every other active generated segment. Never use `set_script` or
-   `set_segments` as a workaround for a selective revision. Reapprove the script
-   when its hash changed, then show and reapprove the new segment plan and spend
-   ceiling, generate/transcribe only the planned revision, and repeat quality
-   review.
-9. Request `render` approval. Its card chooses subtitled or clean output. After
-   approval, call status to obtain `render_idempotency_key`, then submit
-   `video_render` with `production_id` and that key. Do not supply captions:
-   subtitled output is built only from the accepted STT text. Keep
-   `render_engine="auto"` unless the user genuinely requests HTML/GSAP/Lottie
-   animation; normal concatenation and captions use the fast FFmpeg path.
-10. Wait with the exact returned `version` as `after_version` and increment only
-    `wait_iteration`. On completion, verify `resource_check.temp_removed=true`,
-    no `remaining_job_processes`, a real audio track, and consistent duration.
-    Only then say the final video is complete; the OSS MP4 is already attached.
-    A displayed `/workspace/generated_videos/...` path describes the attachment
-    contract and is not guaranteed to be mounted in a later tool sandbox. Inspect
-    the attachment/status rather than trying to reopen that path with `read_file`.
+1. Call `creator_context(action="get_user_context")` before drafting. Apply the
+   creator's voice, audience, and boundaries. Propose only a new stable fact via
+   `propose_memory`; its confirmation card is the confirmation.
+2. Call `video_project(action="create")` once. Use `mode="standard"` unless the
+   user explicitly delegates a bounded end-to-end test.
+3. Draft the complete word-for-word script (normally 45–60 seconds at about 3.2
+   Chinese characters/second), show it in chat, call `set_script`, then request
+   `script` approval. Do not plan segments until that approval passes.
+4. Establish one host reference; reuse its exact `asset_id` in every segment.
+   Pass it once as the project-level `character_reference_asset` in
+   `set_segments`; the backend applies that same anchor to every segment:
+   - Recognizable real person: use the exact user-owned portrait; run
+     `video_identity create → status → add_asset`. Stop for the person's H5/QR
+     authorization and continue only when the identity and material are active.
+   - AI-generated, illustrated, or virtual host: generate once with `image_gen`
+     if needed and use `character_reference_type="virtual"`; never misclassify a
+     real person to avoid privacy checks.
+5. Split the approved script at semantic boundaries (five segments is a useful
+   30–60 second default; normally ≤40 Chinese characters and never >48). Use the
+   same byte-for-byte `visual_anchor`. Every spoken prompt must contain all five
+   parts: fixed medium/half-body camera; exact visual anchor; speech lead followed
+   immediately by `@<exact dialogue>`; restrained gesture plus tone; `无字幕`.
+   Call `set_segments` with `character_reference_asset`, the correct host type,
+   and `character_identity_id` for a real person.
+6. Show the complete asset list and every segment's exact dialogue and full
+   prompt. Request `segments` approval, then `spend` approval. All gates are
+   server-enforced; `video_project(status)` reports what is missing.
+7. Read active segment IDs, job IDs, and exact idempotency keys from `status`.
+   Submit each planned segment with only its project ID, segment ID, and returned
+   key. Wait sequentially with the returned `version` and incremented
+   `wait_iteration`. A timeout is normal; never replace an ambiguous paid task.
+   If `recovery_blocked=true`, stop all calls for that job and preserve it for
+   recovery on its original provider route.
+8. Transcribe every completed speech segment with its exact returned key; never
+   transcribe `role="broll"`. Show each video, intended dialogue, actual
+   transcript, similarity, and phrase-level verdict before requesting `quality`
+   approval. Captions must use accepted actual STT, not intended dialogue.
+9. Record explicit per-segment feedback before revision. Regenerate only rejected
+   or user-selected suspect segments through `revise_segment`; preserve every old
+   output and all approved segments. Dialogue changes require the new exact line
+   and a complete lintable prompt, followed by the reopened approvals.
+10. Request `render` approval for subtitled or clean output. Read the render key
+    from `status`, submit and wait with returned versions, then verify a real audio
+    track, consistent duration, `temp_removed=true`, and no remaining job process
+    before handing off the attached OSS MP4.
 
 ## Non-negotiable rules
 
-- A visible plan or todo is not approval. The approval record must exist for the
-  exact current hash; editing content or references invalidates downstream gates.
-- User-facing confirmation always follows the complete content it refers to.
-- Never retry an ambiguous paid submit. Reusing the same key only reconciles the
-  same request; the server rejects that key with a different request hash.
-- `recovery_blocked=true` is a control-plane stop, not evidence that the remote
-  task failed. Obey `do_not_resubmit`, make no more status/wait/cancel calls for
-  that job, and preserve it for operator recovery on its original route.
-- A `submitting` job without `provider_task_id` or output is ambiguous. Use the
-  exact `generation_job_id` reported for that segment, never a job remembered
-  from an older revision. Do not bind an older revision's asset to the new one.
-- Never manually caption from the intended script. Captions use accepted STT
-  actual speech. A clean master may omit captions but may not falsify QA.
-- Never discard old segment outputs. Selective regeneration creates a revision.
-- `allow_replan` and `replace_character_reference` are deliberate escalations:
-  pass them only after the user explicitly confirmed replanning generated
-  segments or changing the presenter. Old outputs stay archived as inactive
-  revisions; in-flight jobs can never be replanned over.
-- A segment's own generated output must never appear in `input_assets` — always
-  reference the originally uploaded material.
-- For a progress question, call `video_project(action="status")` and continue
-  from its `status`, active segment IDs, approvals, and idempotency keys.
+- For any progress or recovery question, call `video_project(action="status")`
+  first and continue only from its active IDs, approvals, jobs, and keys.
+- A visible plan or chat confirmation is not a hash-bound approval. Editing
+  script, prompts, references, or outputs can reopen downstream gates.
+- Never retry an ambiguous paid submit or reuse a key with changed content.
+- Never use a generated segment as a new character reference, discard historical
+  revisions, manually fabricate captions, or claim completion before checks pass.
+- `allow_replan` and `replace_character_reference` require explicit user consent.

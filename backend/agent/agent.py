@@ -128,6 +128,23 @@ Rules:
 - Use the same language as the conversation"""
 
 
+# These workflows are deliberately confined to the built-in build agent. In
+# particular, a config-defined agent defaults to mode="all" and may therefore
+# run underneath Task; silently copying these tools into that agent would undo
+# the structural no-media-in-subagents guarantee. An explicit config `tools`
+# list remains the platform owner's opt-in escape hatch.
+BUILD_ONLY_WORKFLOW_TOOLS = frozenset({
+    "image_gen",
+    "video_identity",
+    "video_project",
+    "video_generate",
+    "video_transcribe",
+    "video_render",
+    "creator_context",
+    "skill_manage",
+})
+
+
 # Built-in agent definitions
 AGENTS: dict[str, AgentDef] = {
     "build": AgentDef(
@@ -138,6 +155,8 @@ AGENTS: dict[str, AgentDef] = {
             "task", "batch", "question", "todo_write", "todo_read",
             "plan_enter", "skill", "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode",
+            "image_gen", "video_identity", "video_project", "video_generate",
+            "video_transcribe", "video_render", "creator_context", "skill_manage",
         ],
         max_steps=200,
         # prompt is None — dynamically selected based on model_id
@@ -288,7 +307,11 @@ def _merged_registry() -> dict[str, AgentDef]:
             agent = AgentDef(
                 name=name,
                 description=ov.description or f"{name} agent",
-                tools=list(AGENTS["build"].tools),
+                tools=[
+                    tool
+                    for tool in AGENTS["build"].tools
+                    if tool not in BUILD_ONLY_WORKFLOW_TOOLS
+                ],
                 mode=DEFAULT_CONFIG_MODE,
             )
         agent = apply_agent_overrides(copy.copy(agent), ov)
@@ -322,7 +345,7 @@ def apply_agent_overrides(agent_def: AgentDef, overrides) -> AgentDef:
         agent_def.mode = overrides.mode
     if getattr(overrides, "hidden", None) is not None:
         agent_def.hidden = overrides.hidden
-    if getattr(overrides, "tools", None):
+    if getattr(overrides, "tools", None) is not None:
         agent_def.tools = list(overrides.tools)
     if valid_color(getattr(overrides, "color", None)):
         agent_def.color = overrides.color

@@ -11,8 +11,8 @@ Use the built-in `image_gen` tool for image generation and editing. The tool
 reads its provider, model, defaults, API key, and base URL from `openbox.json`;
 never copy credentials into a command, prompt, or workspace file.
 
-Loading this skill activates `image_gen` only for the current agent run. Its
-schema is intentionally absent from ordinary conversations.
+`image_gen` is part of the build agent's fixed toolset. Loading this skill adds
+guidance only and never changes runtime tool availability.
 
 ## Storage contract
 

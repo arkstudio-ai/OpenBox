@@ -41,7 +41,7 @@
 | 后端测试 | `cd backend && uv run pytest -q` → **917 passed** |
 | 前端 | `npm run check` 干净；lint 恰有 2 个既有错误（`content-view.ts`，不许新增）；`npm run test` 174 例 |
 | 移动端 | `dart analyze` 零问题（本次不应产生任何 Dart 改动） |
-| 七个门控工具 schema 总量 | **16,056 字符 ≈ 5.3K tokens**（测量脚本见 §6.3，逐项：video_project 4,326 / video_generate 1,715 / video_transcribe 1,385 / video_render 2,255 / video_identity 1,009 / image_gen 2,762 / creator_context 2,604） |
+| 七个门控工具 schema 总量 | Pydantic 原始中间态 **16,056 字符**；经实际 provider 序列化（内联 ref、移除 title、简化 nullable）为 **11,632 字符**。§6.3 的预算以真正发送的后者为准。 |
 | 主对话 agent | `build`（`agent/agent.py:132`），其 `tools` 白名单**不含**任何门控工具——见 §5.1 关键事实 |
 
 ### 0.4 铁律
@@ -238,20 +238,22 @@ frontmatter 的 `allowed-tools` 保留原列表（现在是纯文档：读者知
 ### 6.3 schema 瘦身（对冲 +5.3K tokens）
 
 八工具恒定暴露后，schema 常驻每次 LLM 调用。预算：七个原门控工具（skill_manage
-不计，本就小）合计从 **16,056 字符压到 ≤10,000**。瘦身对象是 description 里的
-流程性散文（那些属于技能文档），保留一切约束性语句（参数取值边界、幂等键格式、
-安全语义）。测量脚本（改前改后各跑一次，数字记入 commit message）：
+不计，本就小）的**实际 provider payload** 从 **11,632 字符压到 ≤10,000**。
+Pydantic 原始 `model_json_schema()` 的 16,056 含 provider 发送前必然移除的 title / nullable
+噪声，不作为 token 预算口径。瘦身对象是 description 里的流程性散文（那些属于技能
+文档），保留一切约束性语句（参数取值边界、幂等键格式、安全语义）。测量脚本（改前
+改后各跑一次，数字记入 commit message）：
 
 ```bash
 cd backend && uv run python - <<'EOF'
 import json
+from agent.llm import _tool_parameters_schema
 from tool.registry import register_builtin_tools, get_tool
 register_builtin_tools()
 total = 0
 for n in ["video_project","video_generate","video_transcribe","video_render",
           "video_identity","image_gen","creator_context"]:
-    t = get_tool(n); p = t.parameters
-    if hasattr(p, "model_json_schema"): p = p.model_json_schema()
+    t = get_tool(n); p = _tool_parameters_schema(t)
     s = len(json.dumps({"name":n,"description":t.description,"parameters":p}, ensure_ascii=False))
     total += s; print(f"{n:16} {s:6,}")
 print(f"{'合计':16} {total:,}")

@@ -1,4 +1,4 @@
-"""Skill-only video tools validate billable and render calls conservatively."""
+"""Video tools validate billable and render calls conservatively."""
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
@@ -8,11 +8,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from agent.agent import AGENTS
-from agent.tool_resolution import resolve_step_tools
 from core.markdown import parse_frontmatter
 import tool.video_production as video_mod
-from tool.registry import register_builtin_tools
 from tool.video_production import (
     VideoProviderTarget,
     VideoTranscriptionTarget,
@@ -111,48 +108,11 @@ async def test_dashscope_transcription_submit_poll_and_result(monkeypatch):
     }
 
 
-def test_video_tools_are_skill_only_and_not_parallel_safe():
-    assert video_identity_tool.skill_only is True
-    assert video_generate_tool.skill_only is True
-    assert video_transcribe_tool.skill_only is True
-    assert video_render_tool.skill_only is True
+def test_video_tools_are_not_parallel_safe():
     assert video_identity_tool.parallel_safe is False
     assert video_generate_tool.parallel_safe is False
     assert video_transcribe_tool.parallel_safe is False
     assert video_render_tool.parallel_safe is False
-
-
-@pytest.mark.asyncio
-async def test_video_schemas_are_absent_until_the_skill_activates_them():
-    register_builtin_tools()
-
-    ordinary = await resolve_step_tools(AGENTS["build"], None, [])
-    assert "image_gen" not in ordinary
-    assert "video_identity" not in ordinary
-    assert "video_project" not in ordinary
-    assert "video_generate" not in ordinary
-    assert "video_transcribe" not in ordinary
-    assert "video_render" not in ordinary
-
-    loaded = await resolve_step_tools(
-        AGENTS["build"],
-        None,
-        [],
-        activated_tools={
-            "image_gen",
-            "video_identity",
-            "video_project",
-            "video_generate",
-            "video_transcribe",
-            "video_render",
-        },
-    )
-    assert loaded["video_identity"].skill_only is True
-    assert loaded["image_gen"].skill_only is True
-    assert loaded["video_generate"].skill_only is True
-    assert loaded["video_transcribe"].skill_only is True
-    assert loaded["video_render"].skill_only is True
-
 
 def test_billable_submit_requires_idempotency_key():
     with pytest.raises(ValidationError, match="idempotency_key"):
@@ -1425,7 +1385,7 @@ async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
     assert _provider_video_url(status) == "https://result.test/out.mp4"
 
 
-def test_video_skill_preserves_host_identity_and_source_resolution():
+def test_video_skill_preserves_identity_recovery_and_teaching_contract():
     skill_path = (
         Path(__file__).resolve().parents[2]
         / ".openbox"
@@ -1444,18 +1404,17 @@ def test_video_skill_preserves_host_identity_and_source_resolution():
         "video_render",
         "creator_context",
     ]
-    assert "`image_gen` once" in skill
-    assert "Reuse the exact same source `asset_id` across every segment" in skill
-    assert "request `spend` approval" in skill
-    assert "accepted STT text" in skill
-    assert 'render_engine="auto"' in skill
+    assert len(skill_path.read_text(encoding="utf-8").splitlines()) <= 90
+    assert "generate once with `image_gen`" in skill
+    assert "reuse its exact `asset_id` in every segment" in skill
+    assert "`spend` approval" in skill
+    assert "accepted actual STT" in skill
     assert "wait_iteration" in skill
-    assert "exact returned `version`" in skill
-    assert 'video_generate(action="wait"' in skill
-    assert "`still_running=true` is a normal timeout snapshot" in skill
+    assert "returned `version`" in skill
+    assert "A timeout is normal" in skill
     assert "`recovery_blocked=true`" in skill
-    assert "`provider_state_unknown=true`" in skill
-    assert "Obey `do_not_resubmit`" in skill
-    assert "Do not wrap" in skill
-    assert "generic Batch/parallel tool" in skill
-    assert "generation_job_id" in skill
+    assert 'role="broll"' in skill
+    assert "fixed medium/half-body camera" in skill
+    assert "`@<exact dialogue>`" in skill
+    assert "`无字幕`" in skill
+    assert "generic Batch/parallel tool" not in skill

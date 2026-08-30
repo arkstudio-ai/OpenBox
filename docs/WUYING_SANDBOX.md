@@ -220,10 +220,10 @@ Everything on the desktop is systemd and self-heals across reboots:
 | `openbox-action-server.service` | The execution plane on `:8000` |
 | `openbox-tunnel.service` | Reverse tunnel to the relay |
 
-The action server also owns the durable media queue. The `video-production`
-skill is loaded on demand from the desktop, so its detailed workflow and the
-`image_gen`/`video_generate`/`video_render` schemas are absent from ordinary
-turns. The queue's SQLite state lives in
+The action server also owns the durable media queue. The build agent receives
+the media tools from its fixed allowlist; loading `video-production` on demand
+adds detailed workflow guidance only and never changes schema availability.
+The queue's SQLite state lives in
 `/data/openbox-media`, while per-attempt files and the reusable input cache live
 under `/tmp/openbox-media`. Queue concurrency and FFmpeg threads come from
 `container/media-jobs.json` (defaults: one render and four FFmpeg threads).

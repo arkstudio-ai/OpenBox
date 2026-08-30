@@ -7,9 +7,9 @@ allowed-tools:
 
 # OpenBox Skill Creator
 
-Create a reusable personal Skill from what the user wants the agent to do. The
-full authoring guidance and the `skill_manage` schema are loaded only for this
-agent run; do not copy this Skill into the core prompt.
+Create a reusable personal Skill from what the user wants the agent to do. This
+Skill provides authoring guidance; `skill_manage` availability is independently
+owned by the build agent's allowlist and permission rules.
 
 ## Conversation
 
@@ -36,11 +36,16 @@ skill-name/
 `-- agents/        optional UI metadata
 ```
 
-Use a lowercase name of at most 64 characters containing only letters, digits,
-and hyphens. The YAML frontmatter must contain the same `name` and a concise,
+Use a lowercase name of at most 64 characters. It must start and end with a
+letter or digit and contain only letter/digit groups separated by single
+hyphens. The YAML frontmatter must contain the same `name` and a concise,
 discriminating `description` that says what the Skill does and when it applies.
-OpenBox also supports `icon`, `requires-mcp`, `homepage`, and `allowed-tools`
-when they are genuinely needed.
+OpenBox also supports `icon`, `requires-mcp`, `homepage`, and `allowed-tools`.
+`allowed-tools` is documentary metadata describing existing tools the Skill is
+about; it may be shown in listings but has zero effect on runtime availability.
+Built-in tools come from platform registration and agent allowlists; sandbox MCP
+tools enter only through the configured MCP channel. Permission rules may
+restrict either path, and no Skill field grants capabilities.
 
 Keep `SKILL.md` focused on purpose, essential workflow, non-obvious constraints,
 and routing to resources. Put substantial conditional guidance in

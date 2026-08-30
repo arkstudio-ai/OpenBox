@@ -25,8 +25,7 @@ async def _make_ctx() -> ToolContext:
     return ToolContext(session_id=f"session_{suffix}", user_id=user_id, message_id="m1", part_id="p1")
 
 
-def test_tool_is_skill_only_and_registered():
-    assert creator_context_tool.skill_only is True
+def test_tool_is_registered_and_not_parallel_safe():
     assert creator_context_tool.parallel_safe is False
     assert creator_context_tool.sandbox_required is False
     from tool.registry import register_builtin_tools, get_tool
@@ -38,11 +37,12 @@ def test_tool_is_skill_only_and_registered():
 def test_args_validation():
     with pytest.raises(ValueError, match="write_memory requires"):
         CreatorContextArgs(action="write_memory")
-    with pytest.raises(ValueError, match="propose_memory"):
-        CreatorContextArgs(
-            action="write_memory", scope="LONG_TERM", type="PENDING_NOTE",
-            value={"summary": "s"}, owner="SYSTEM_INFERRED",
-        )
+    for note_type in ("PENDING_NOTE", "USER_NOTE"):
+        with pytest.raises(ValueError, match="propose_memory"):
+            CreatorContextArgs(
+                action="write_memory", scope="LONG_TERM", type=note_type,
+                value={"summary": "s"}, owner="SYSTEM_INFERRED",
+            )
     with pytest.raises(ValueError, match="summary"):
         CreatorContextArgs(action="propose_memory")
 

@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 import skill.skill as sk
@@ -33,6 +34,20 @@ class LiveSandbox:
 
     async def get_skill(self, name):
         return self.payload
+
+
+class HttpErrorSandbox:
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+    async def get_skill(self, name):
+        request = httpx.Request("GET", f"http://sandbox.test/skills/{name}")
+        response = httpx.Response(self.status_code, request=request)
+        raise httpx.HTTPStatusError(
+            f"sandbox returned {self.status_code}",
+            request=request,
+            response=response,
+        )
 
 
 @pytest.fixture
@@ -99,7 +114,7 @@ async def test_a_container_skill_keeps_its_base_directory(host_skill):
 
 
 @pytest.mark.asyncio
-async def test_container_skill_allowed_tools_are_read_from_its_content(host_skill):
+async def test_container_skill_allowed_tools_have_no_runtime_effect(host_skill):
     payload = {
         "content": (
             "---\nname: imagegen\ndescription: d\n"
@@ -111,7 +126,8 @@ async def test_container_skill_allowed_tools_are_read_from_its_content(host_skil
     result = await execute(
         SkillArgs(skill="imagegen"), ctx(LiveSandbox(payload))
     )
-    assert result.metadata["activated_tools"] == ["image_gen"]
+    assert result.metadata == {}
+    assert "Activated tools" not in result.output
 
 
 @pytest.mark.asyncio
@@ -128,6 +144,26 @@ async def test_a_genuinely_missing_skill_still_says_so(host_skill):
     result = await execute(SkillArgs(skill="nope"), ctx())
     assert "not found" in result.title.lower()
     assert result.metadata.get("error") != "container_unreachable"
+
+
+@pytest.mark.asyncio
+async def test_a_container_404_is_a_genuine_missing_skill(host_skill):
+    result = await execute(
+        SkillArgs(skill="nope"), ctx(HttpErrorSandbox(404))
+    )
+
+    assert "not found" in result.title.lower()
+    assert result.metadata.get("error") != "container_unreachable"
+
+
+@pytest.mark.asyncio
+async def test_a_container_5xx_is_reported_as_unreachable(host_skill):
+    result = await execute(
+        SkillArgs(skill="maybe-exists"), ctx(HttpErrorSandbox(503))
+    )
+
+    assert result.metadata.get("error") == "container_unreachable"
+    assert "unreachable" in result.output.lower()
 
 
 @pytest.mark.asyncio
@@ -158,13 +194,13 @@ async def test_arguments_are_substituted(host_skill):
 
 
 @pytest.mark.asyncio
-async def test_a_host_skill_activates_its_declared_tools(host_skill):
+async def test_a_host_skill_treats_declared_tools_as_documentation(host_skill):
     (host_skill / "SKILL.md").write_text(
         "---\nname: demo\ndescription: d\nallowed-tools:\n  - image_gen\n---\nUse it"
     )
     result = await execute(SkillArgs(skill="demo"), ctx())
-    assert result.metadata["activated_tools"] == ["image_gen"]
-    assert "Activated tools for this agent run: image_gen" in result.output
+    assert result.metadata == {}
+    assert "Activated tools" not in result.output
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""The creator is a run-scoped, validated package writer rather than raw file access."""
+"""The creator is a validated package writer rather than raw file access."""
 from pathlib import Path
 import uuid
 
@@ -39,7 +39,7 @@ def test_creator_rejects_an_unsafe_or_mismatched_name():
     assert "exactly match" in (_validation_error(mismatch) or "")
 
 
-def test_creator_skill_activates_only_the_management_tool():
+def test_creator_skill_documents_the_management_tool():
     root = Path(__file__).parents[2] / ".openbox" / "skills"
     skills = {item.name: item for item in _scan_directory(root, "project")}
     creator = skills["skill-creator"]

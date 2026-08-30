@@ -1,4 +1,4 @@
-"""Skill-only authoring operations used by the skill-creator workflow."""
+"""Authoring operations used by the skill-creator workflow."""
 from __future__ import annotations
 
 import re
@@ -209,11 +209,10 @@ async def execute(args: SkillManageArgs, ctx: ToolContext) -> ToolResult:
 
 
 SKILL_MANAGE_DESCRIPTION = """\
-Create or export one user-owned OpenBox skill package. This tool is available
-only after loading the skill-creator skill. Use create with a complete validated
-SKILL.md and optional text resources; use export when the user asks for a ZIP,
-then pass the returned path to share_file. Publishing to the public store is a
-separate explicit action in Skill Centre."""
+Create or export one user-owned OpenBox skill package. Use create with a complete
+validated SKILL.md and optional text resources; use export for a ZIP and pass its
+path to share_file. Publishing remains a separate explicit action in Skill
+Centre; the skill-creator skill provides authoring guidance only."""
 
 
 skill_manage_tool = define_tool(
@@ -222,5 +221,4 @@ skill_manage_tool = define_tool(
     parameters=SkillManageArgs,
     execute=execute,
     parallel_safe=False,
-    skill_only=True,
 )

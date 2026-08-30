@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy as _copy
 import hashlib as _hashlib
 import json as _json
 import re as _re
@@ -213,32 +214,101 @@ def _inline_refs(schema: dict) -> dict:
     Pydantic v2's model_json_schema() emits $defs + $ref for nested models.
     Some OpenAI-compatible proxies don't support $ref — inline them.
     Also strips Pydantic's 'title' keys and simplifies anyOf nullables.
+
+    Recursive schemas cannot be represented after inlining.  Reject them
+    explicitly instead of repeatedly expanding the cycle until the worker
+    hangs or runs out of memory.
     """
-    defs = schema.pop("$defs", None) or schema.pop("definitions", None)
-    if not defs:
-        return _simplify_schema(_strip_titles(schema))
+    # ToolInfo.raw_schema may be reused across many turns. Normalisation must
+    # not consume its $defs on the first call and leave dangling $refs later.
+    schema = _copy.deepcopy(schema)
+    definition_sets: dict[str, dict] = {}
+    for keyword in ("$defs", "definitions"):
+        definitions = schema.pop(keyword, None)
+        if definitions is None:
+            definition_sets[keyword] = {}
+        elif isinstance(definitions, dict):
+            definition_sets[keyword] = definitions
+        else:
+            raise ValueError(f"JSON Schema {keyword} must be an object")
 
-    import json
-    raw = json.dumps(schema)
-    changed = True
-    # Iteratively resolve refs (handles nested refs)
-    while changed:
-        changed = False
-        for name, definition in defs.items():
-            ref = f'"$ref": "#/$defs/{name}"'
-            if ref in raw:
-                raw = raw.replace(ref, json.dumps(definition)[1:-1])  # strip outer {}
-                changed = True
-            ref_alt = f'"$ref": "#/definitions/{name}"'
-            if ref_alt in raw:
-                raw = raw.replace(ref_alt, json.dumps(definition)[1:-1])
-                changed = True
+    resolved_definitions: dict[tuple[str, str], dict] = {}
 
-    result = json.loads(raw)
-    result.pop("$defs", None)
-    result.pop("definitions", None)
+    def definition_key(ref: str) -> tuple[str, str] | None:
+        for keyword in ("$defs", "definitions"):
+            prefix = f"#/{keyword}/"
+            if not ref.startswith(prefix):
+                continue
+            token = ref[len(prefix):]
+            # Only direct references into the root definition maps were ever
+            # supported here. A slash denotes a deeper JSON Pointer path;
+            # silently retaining it would send a provider-incompatible $ref.
+            if not token or "/" in token:
+                return None
+            return keyword, token.replace("~1", "/").replace("~0", "~")
+        return None
+
+    def resolve(node: Any, active: tuple[tuple[str, str], ...] = ()) -> Any:
+        if isinstance(node, list):
+            return [resolve(value, active) for value in node]
+        if not isinstance(node, dict):
+            return node
+
+        # A schema may define an object property literally named "$ref". In
+        # that case this dictionary is the `properties` name-to-schema map and
+        # its value is another dictionary, not a reference string.
+        if not isinstance(node.get("$ref"), str):
+            return {key: resolve(value, active) for key, value in node.items()}
+
+        ref = node["$ref"]
+        key = definition_key(ref)
+        if key is None:
+            raise ValueError(f"Unable to inline JSON Schema reference: {ref!r}")
+        keyword, name = key
+        definitions = definition_sets[keyword]
+        if name not in definitions:
+            raise ValueError(f"Undefined JSON Schema reference: {ref}")
+        if key in active:
+            cycle = " -> ".join(
+                f"#/{item_keyword}/{item_name}"
+                for item_keyword, item_name in (*active, key)
+            )
+            raise ValueError(f"Recursive JSON Schema reference detected: {cycle}")
+
+        if key in resolved_definitions:
+            expanded = _copy.deepcopy(resolved_definitions[key])
+        else:
+            target = definitions[name]
+            if not isinstance(target, dict):
+                raise ValueError(f"JSON Schema definition {ref} must be an object")
+            expanded = resolve(target, (*active, key))
+            resolved_definitions[key] = expanded
+            expanded = _copy.deepcopy(expanded)
+
+        # JSON Schema permits annotation/constraint siblings beside $ref.
+        # The old textual replacement effectively merged them, with the local
+        # sibling winning on duplicate keys, so preserve that behaviour.
+        siblings = {
+            sibling_key: resolve(value, active)
+            for sibling_key, value in node.items()
+            if sibling_key != "$ref"
+        }
+        expanded.update(siblings)
+        return expanded
+
+    result = resolve(schema)
     # Remove title keys that Pydantic adds (not part of OpenAI spec)
     return _simplify_schema(_strip_titles(result))
+
+
+def _tool_parameters_schema(tool_info: ToolInfo) -> dict:
+    """Return the exact, provider-compatible schema advertised for a tool."""
+    source = (
+        tool_info.raw_schema
+        if tool_info.raw_schema is not None
+        else tool_info.parameters.model_json_schema()
+    )
+    return _inline_refs(source)
 
 
 def _strip_titles(obj: Any) -> Any:
@@ -523,8 +593,7 @@ async def _stream_responses_api(
     # Build tool definitions for Responses API
     api_tools = []
     for tool_id, tool_info in tools.items():
-        schema = tool_info.raw_schema or tool_info.parameters.model_json_schema()
-        schema = _inline_refs(schema)
+        schema = _tool_parameters_schema(tool_info)
         api_tools.append({
             "type": "function",
             "name": tool_id,
@@ -978,8 +1047,7 @@ async def _stream_litellm_direct(
             tool_schemas = []
 
         for tool_id, tool_info in tools.items():
-            schema = tool_info.raw_schema or tool_info.parameters.model_json_schema()
-            schema = _inline_refs(schema)
+            schema = _tool_parameters_schema(tool_info)
             tool_schemas.append({
                 "type": "function",
                 "function": {

@@ -74,8 +74,9 @@
     "dedupe": true
   },
 
-  // Async Seedance generation. The associated tools remain invisible until
-  // the video-production skill is loaded. FFmpeg/HyperFrames run in WUYING;
+  // Async Seedance generation. The build agent receives the associated tools
+  // from its fixed allowlist; video-production adds workflow guidance only.
+  // FFmpeg/HyperFrames run in WUYING;
   // this section controls only provider polling and signed-OSS lifetimes.
   // The BossIP origin selects its `/v1/videos` format automatically; the
   // official TokenSpace origin keeps the native contents/tasks format.

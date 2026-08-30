@@ -1,7 +1,7 @@
 """Creator-context tool: persona assembly and memory writes for skills.
 
 Ported from bossip's creator-context MCP server, reshaped as a native
-skill-only tool. Identity always comes from ToolContext — there is no
+native tool. Identity always comes from ToolContext — there is no
 user id argument, which removes the impersonation surface the MCP
 version had to guard with token plumbing.
 
@@ -25,15 +25,10 @@ from tool.tool import ToolContext, ToolResult, define_tool
 
 log = create_logger("tool.creator_context")
 
-CREATOR_CONTEXT_DESCRIPTION = """Read and maintain the creator's persona and long-term memory.
-
-Actions:
-- get_user_context: assembled persona markdown (voice, boundaries, audience, recent impressions). Call before drafting content for the user; treat 边界 entries as hard constraints.
-- propose_memory: propose remembering ONE stable fact the user just stated (third person, one sentence via `summary`). The user confirms on a card — the card IS the confirmation, never write a USER_NOTE directly. When unsure, don't propose; never re-propose something already confirmed or rejected.
-- write_memory: low-level write for volatile, session-scoped impressions (scope=SHORT_TERM with ttl_seconds) or typed persona facts. Always lands as a CANDIDATE.
-- search_memories / list_active_memories: structured reads.
-
-All memories belong to the current user; there is no way to read or write another user's memory."""
+CREATOR_CONTEXT_DESCRIPTION = """Read the current creator's persona and memories.
+Get context before drafting; boundaries are hard constraints. Propose one stable
+fact through a confirmation card; USER_NOTE cannot be written directly. Other
+direct writes are CANDIDATE typed or short-lived impressions. Data never crosses users."""
 
 
 class CreatorContextArgs(BaseModel):
@@ -75,9 +70,12 @@ class CreatorContextArgs(BaseModel):
             ]
             if missing:
                 raise ValueError(f"write_memory requires: {', '.join(missing)}")
-            if self.type == memory_service.PENDING_NOTE_TYPE:
+            if self.type in {
+                memory_service.PENDING_NOTE_TYPE,
+                memory_service.USER_NOTE_TYPE,
+            }:
                 raise ValueError(
-                    "PENDING_NOTE cannot be written directly; use propose_memory"
+                    f"{self.type} cannot be written directly; use propose_memory"
                 )
         if self.action == "propose_memory" and not self.summary:
             raise ValueError("propose_memory requires summary")
@@ -240,5 +238,4 @@ creator_context_tool = define_tool(
     execute=execute_creator_context,
     sandbox_required=False,
     parallel_safe=False,
-    skill_only=True,
 )

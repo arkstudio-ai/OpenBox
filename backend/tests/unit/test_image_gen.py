@@ -49,16 +49,20 @@ def test_output_names_are_safe_unique_variants():
     assert _safe_filename("hero.png", "asset_1", 2, 3, "webp") == "hero-2.webp"
 
 
-def test_image_gen_is_not_a_fixed_agent_tool():
+def test_image_gen_is_a_build_only_agent_tool():
     from agent.agent import AGENTS
 
-    assert all("image_gen" not in agent.tools for agent in AGENTS.values())
+    assert "image_gen" in AGENTS["build"].tools
+    assert all(
+        "image_gen" not in AGENTS[name].tools
+        for name in ("plan", "explore", "general")
+    )
 
 
-def test_image_gen_is_registered_as_skill_only():
+def test_image_gen_is_registered_and_not_parallel_safe():
     from tool.image_gen import image_gen_tool
 
-    assert image_gen_tool.skill_only is True
+    assert image_gen_tool.parallel_safe is False
 
 
 @pytest.mark.asyncio

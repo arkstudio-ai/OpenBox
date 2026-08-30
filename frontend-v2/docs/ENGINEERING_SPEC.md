@@ -1523,19 +1523,19 @@ _FC_ID_OK = re.compile(r"fc_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")   # 总长 4..64,�
 
 ## 附录 H · 内置图片生成（2026-08-26）
 
-> 目标：让 build/general agent 直接完成文生图与图生图，同时沿用 OpenBox 的 OSS 资产链路。供应商密钥只留在后端，聊天消息、资源中心和无影云工作目录引用同一个 OSS 对象。
+> 目标：让 build agent 直接完成文生图与图生图，同时沿用 OpenBox 的 OSS 资产链路。供应商密钥只留在后端，聊天消息、资源中心和无影云工作目录引用同一个 OSS 对象。
 
 ### H.1 配置与能力边界
 
 - `openbox.json` 新增 `image_generation`：`provider`、`model`、`default_size`、`default_quality`、`output_format`、`timeout_seconds`。密钥与 `base_url` 仍从既有 `provider.<name>` 读取，不在 skill、提示词或无影云目录复制。
 - 默认模型为 `gpt-image-2`；无输入图调用 `/images/generations`，传入一个或多个 OSS 图片时调用 `/images/edits`，可选 PNG mask 作用于第一张输入图。
-- `image_gen` 是注册在后端的 `skill_only` 工具，不在任何 agent 的固定工具白名单，也不进入普通对话的工具 schema。build/general 先调用 `skill("imagegen")`，加载成功后的下一步才在**本次 agent run** 暴露；新一轮用户请求重新从空激活集开始。plan/explore 没有 skill 入口，因而不会获得该工具。
-- `image_gen` 不依赖沙箱才能调用，也禁止通用 batch 并行，避免对同一消息附件和付费生成产生竞态。skill 只能激活注册时明确标记为 `skill_only` 的工具，不能借 frontmatter 扩大普通工具白名单，最终仍经过 permission 过滤。
+- `image_gen` 注册在后端并恒定列入 build agent 的固定工具白名单，因此普通 build 对话无需先加载技能即可使用；plan/explore/general 均不包含它。技能只注入说明，任何 frontmatter 字段都不能改变工具集合。
+- `image_gen` 不依赖沙箱才能调用，也禁止通用 batch 并行，避免对同一消息附件和付费生成产生竞态。工具暴露由 agent 白名单决定，permission 只做限制；技能内容不参与两者。
 - 失败不自动重试。图片 API 的响应存在已生成但客户端未收到的歧义，自动重试可能产生第二张图片与第二次计费。
 
 ### H.2 Skill 与 OSS 数据流
 
-- host skill 位于 `backend/.openbox/skills/imagegen/SKILL.md`，短 description 是普通步骤唯一承担的发现成本；完整正文与 `image_gen` schema 都按需加载。frontmatter 用官方字段 `allowed-tools: [image_gen]` 声明能力，skill tool 成功后把它交给 run-scoped 激活集。
+- host skill 位于 `backend/.openbox/skills/imagegen/SKILL.md`；短 description 用于发现，完整正文按需加载。frontmatter 的 `allowed-tools: [image_gen]` 只说明该技能围绕哪个既有工具展开，供文档与列表展示，对运行时工具可用性零效果。
 - skill 按 OpenAI 官方 imagegen skill 改写：保留提示词结构、编辑不变量、输入图角色、尺寸/质量/格式规则，但要求 agent 统一调用 OpenBox 的 `image_gen`，不得在 shell 里临时拼 SDK/HTTP 请求。
 - 文生图：后端请求供应商 → 校验真实返回格式 → 预签名 PUT 到 OSS → 新建 `file_assets(source='agent', transient=false, status='ready')` → 给当前 assistant message 写 `FilePart`。聊天图片卡和资源中心因此无需新增前端传输协议。
 - 图生图：`input_images` 接收 `asset_id`（首选）或 `/workspace/uploads/<name>`；后端先校验用户所有权和 ready 状态，再从 OSS 取源图并以 multipart 传给编辑接口。只在无影云本地存在的图片先用 `view_image` 推到 OSS，返回的 `asset_id` 再用于编辑。
@@ -1555,4 +1555,4 @@ _FC_ID_OK = re.compile(r"fc_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")   # 总长 4..64,�
 - 浏览器真实对话加载 `imagegen` skill 后生成 `openbox-imagegen-e2e.png`；图片卡正常显示，资源中心「模型产出」可见，对象已拉到无影云工作目录。
 - 继续以第一张的 `asset_id` 调图生图，仅把蓝色立方体改为橙色；生成 `openbox-imagegen-edit-e2e.png`，证明 OSS 输入中间层与 `/images/edits` 路径可用。
 - 数据库与 OSS 复核：两条资产均为 `ready/source=agent/transient=false`，数据库和 OSS 字节数分别一致为 1,134,953 与 1,201,770；文件头均为有效 `1254x1254` PNG。
-- 后端 unit suite、skill validator、配置加载、工具注册与前端检查均纳入最终验收；另有回归测试明确断言默认工具集合不含 `image_gen`，加载 `imagegen` 后才出现。
+- 后端 unit suite、skill validator、配置加载、工具注册与前端检查均纳入最终验收；回归测试明确断言 build 默认工具集合包含 `image_gen`、plan/explore/general 不包含，且加载任何 skill 都不会改变工具集合。

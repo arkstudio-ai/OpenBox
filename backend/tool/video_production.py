@@ -1,9 +1,9 @@
-"""Skill-only Seedance generation and WUYING media-render orchestration.
+"""Seedance generation and WUYING media-render orchestration.
 
 Provider calls and ownership checks live on the backend.  FFmpeg and
 HyperFrames live behind the sandbox action server's durable per-desktop queue.
-The three tools in this module are registered globally but hidden until the
-``video-production`` skill explicitly activates them for an agent run.
+The build agent exposes these tools directly; skills provide workflow guidance
+but never change tool availability.
 """
 from __future__ import annotations
 
@@ -2723,24 +2723,18 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
 
 VIDEO_GENERATE_DESCRIPTION = """\
-Submit, inspect, wait for, or cancel an asynchronous Seedance video generation. \
-Paid submit requires production_id and segment_id and consumes the exact prompt, \
-references, content hash, and spend approval stored by video_project. Completed output is copied to OSS, \
-indexed in the resource centre, and attached to chat. Billable submit requires \
-an idempotency_key; never automatically create a replacement task after an \
-ambiguous provider error. Load the video-production skill before use."""
+Submit, inspect, wait for, or cancel Seedance generation for an approved segment.
+Paid submit requires production_id, segment_id, and the exact idempotency_key.
+Never replace a task after an ambiguous result; reconcile the same job or key."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
-Queue FFmpeg audio extraction on the durable WUYING media queue, transcribe the \
-stable OSS MP3 through the configured STT gateway, compare actual spoken words \
-against the active segment script, and persist similarity, phrase-level diffs, \
-and a quality verdict. Provider retry is explicit and never happens on status."""
+Submit, inspect, wait for, cancel, or explicitly retry transcription for a
+generated speech segment. It persists actual words, diffs, similarity, and the
+quality verdict; status never retries."""
 
 VIDEO_RENDER_DESCRIPTION = """\
-Queue, inspect, wait for, cancel, or retry a durable WUYING HyperFrames/FFmpeg \
-render. Inputs and output move over OSS; the desktop queue enforces its configured \
-concurrency and returns queue_position/retry_after_seconds for bounded waiting. \
-Terminal paths clean per-job temp files and report memory/process cleanup."""
+Submit, inspect, wait for, cancel, or explicitly retry an OSS-backed WUYING
+render. It reports queue state for bounded waits and terminal cleanup evidence."""
 
 
 video_generate_tool = define_tool(
@@ -2750,7 +2744,6 @@ video_generate_tool = define_tool(
     execute=execute_generate,
     sandbox_required=False,
     parallel_safe=False,
-    skill_only=True,
 )
 
 
@@ -2761,7 +2754,6 @@ video_transcribe_tool = define_tool(
     execute=execute_transcribe,
     sandbox_required=True,
     parallel_safe=False,
-    skill_only=True,
 )
 
 
@@ -2772,5 +2764,4 @@ video_render_tool = define_tool(
     execute=execute_render,
     sandbox_required=True,
     parallel_safe=False,
-    skill_only=True,
 )

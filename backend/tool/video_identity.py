@@ -1,4 +1,4 @@
-"""Skill-only control surface for verified real-person references."""
+"""Control surface for verified real-person references."""
 from __future__ import annotations
 
 import json
@@ -129,12 +129,9 @@ async def execute_video_identity(args: VideoIdentityArgs, ctx: ToolContext) -> T
 
 
 VIDEO_IDENTITY_DESCRIPTION = """\
-Create and inspect a provider-hosted H5 consent/liveness session for an
-identifiable real person, then upload that user's owned portrait into the
-resulting LivenessFace group. Never use this for an AI-generated, illustrated,
-or otherwise virtual character. The H5 card requires deliberate action by the
-person; do not continue until they say authorization is complete. Load the
-video-production skill before use."""
+Create or inspect H5 consent for a recognizable real person, then attach their
+owned portrait to the active identity. Never use this for a virtual character.
+Wait for reported completion and verify active status before continuing."""
 
 
 video_identity_tool = define_tool(
@@ -144,5 +141,4 @@ video_identity_tool = define_tool(
     execute=execute_video_identity,
     sandbox_required=False,
     parallel_safe=False,
-    skill_only=True,
 )

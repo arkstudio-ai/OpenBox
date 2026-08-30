@@ -1,4 +1,4 @@
-"""Skill-only spoken-video production state, approvals, lint, and gates.
+"""Spoken-video production state, approvals, lint, and gates.
 
 The model can propose scripts and prompts, but the backend owns the mutable
 state machine.  Every approval is bound to a content hash, so editing a script,
@@ -1948,11 +1948,9 @@ async def mark_render_complete(
 
 
 VIDEO_PROJECT_DESCRIPTION = """\
-Create or resume a persistent spoken-video production, store an exact script and
-linted segment plan, request hash-bound user approvals, create selective segment
-revisions, or inspect recovery status. This is the control plane: video_generate,
-video_transcribe, and video_render consume its approved snapshots. Load the
-video-production skill before use."""
+Manage a spoken-video project: create or resume it, store exact script and
+segments, request hash-bound approvals, revise or review one segment, or inspect
+status. Server gates and returned IDs and keys are authoritative."""
 
 
 video_project_tool = define_tool(
@@ -1962,5 +1960,4 @@ video_project_tool = define_tool(
     execute=execute_project,
     sandbox_required=False,
     parallel_safe=False,
-    skill_only=True,
 )

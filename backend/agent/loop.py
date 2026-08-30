@@ -349,10 +349,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             except Exception as e:
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
-        # Starts empty for every user-initiated run. Loading a skill can expose
-        # its declared skill-only tools on subsequent steps without making
-        # those schemas a permanent cost for the session or agent.
-        active_skill_tools: set[str] = set()
         run_id = uuid.uuid4().hex
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
@@ -477,7 +473,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 agent_def,
                 sandbox,
                 config_rules,
-                activated_tools=active_skill_tools,
             )
 
             # Structured output is a synthetic tool rather than a provider
@@ -697,8 +692,6 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             total_usage = result.usage
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
-            active_skill_tools.update(result.activated_tools)
-
             # Step finish with snapshot
             end_snapshot = await snapshot.track(session_id, sandbox)
             step_finish = StepFinishPart(

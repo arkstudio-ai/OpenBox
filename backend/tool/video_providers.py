@@ -174,10 +174,10 @@ def provider_route_fingerprint(route: Any) -> str:
 def provider_route_mismatch(request_data: Any, route: Any) -> str | None:
     """Explain why ``route`` must not operate on a persisted provider task.
 
-    New jobs carry a complete route fingerprint. During the compatibility
-    window, jobs without it fall back to their stored ark wire format; rows
-    older than relay support have no wire field and unambiguously used the
-    historical direct TokenSpace contents API.
+    New jobs carry a complete route fingerprint.  A legacy row without one is
+    never safe to poll automatically: matching wire formats still do not prove
+    that the endpoint or credential/account is the one that accepted the paid
+    task.  Its stored wire is used only to make the quarantine reason useful.
     """
     snapshot = request_data if isinstance(request_data, dict) else {}
     if "provider_route_fingerprint" in snapshot:
@@ -200,7 +200,10 @@ def provider_route_mismatch(request_data: Any, route: Any) -> str | None:
             f"legacy submitted wire {submitted_wire!r} differs from current wire "
             f"{current_wire!r}"
         )
-    return None
+    return (
+        f"legacy submitted wire {submitted_wire!r} has no complete provider "
+        "route fingerprint"
+    )
 
 
 def auth_header(route: Any) -> str:

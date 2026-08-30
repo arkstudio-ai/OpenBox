@@ -325,11 +325,15 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
   `needs_script_approval`，数据库复核 segments/jobs/approvals 均为 0；无 live job UI、
   `skill_job`、`video_generate` 或 `segment.generate`，控制台无 warning/error。后端冷重启后
   A/B 再次复测仍通过；同时确认 legacy provider route mismatch 只隔离、不请求当前 relay、
-  不改写原任务事实。
+  不改写原任务事实。后续独立审查进一步收紧为：凡历史任务缺完整 route fingerprint，
+  即使 wire 相同也默认不可验证并隔离，避免 endpoint 或供应商账号轮换后误查旧 task id。
 - **C 恢复力**：场景 B 走到审批卡后批准并继续到某一段 `wait` 期间，重启后端进程，
   然后发"继续"。验收：agent 调 `status` 重建事实并接续，不重复提交（幂等键拒绝
   同键不同哈希）。⚠️ 此场景会产生**真实付费生成**——执行前向用户确认预算；
   用户此前接受过小额测试花费，但每次都要重新确认。**本轮尚未执行，等待单独预算授权。**
+  零费用自动化已另用 loopback provider 和两个独立进程覆盖 submit→冷重启→恢复前同键
+  抢跑→startup recovery→completed→完成后同键重放，确认供应商 POST、调用预算和 attempt
+  始终各为 1；它补强核心恢复证据，但不冒充浏览器/真实供应商的付费场景 C。
 
 ---
 

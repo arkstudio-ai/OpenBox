@@ -1788,7 +1788,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         from tool.video_providers import provider_route_mismatch
 
         if provider_route_mismatch(job.request_data, target):
-            route_block_reason = "provider_route_changed_since_submission"
+            route_snapshot = (
+                job.request_data if isinstance(job.request_data, dict) else {}
+            )
+            stored_fingerprint = route_snapshot.get("provider_route_fingerprint")
+            if "provider_route_fingerprint" not in route_snapshot:
+                route_block_reason = "legacy_provider_route_unverifiable"
+            elif not isinstance(stored_fingerprint, str) or not stored_fingerprint.strip():
+                route_block_reason = "provider_route_identity_invalid"
+            else:
+                route_block_reason = "provider_route_changed_since_submission"
     if job.provider_task_id and provider_route_required and route_block_reason:
         # The current endpoint/account has no authority to answer for this paid
         # task. Leave the durable job untouched for its original route.

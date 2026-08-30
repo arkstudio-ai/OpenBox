@@ -93,7 +93,7 @@ def test_provider_route_fingerprint_is_non_secret_and_covers_route_identity():
     assert all(provider_route_fingerprint(candidate) != fingerprint for candidate in variants)
 
 
-def test_provider_route_mismatch_prefers_fingerprint_then_legacy_wire():
+def test_provider_route_mismatch_requires_complete_identity_even_when_legacy_wire_matches():
     direct = _route()
     relay = replace(
         direct,
@@ -104,9 +104,21 @@ def test_provider_route_mismatch_prefers_fingerprint_then_legacy_wire():
 
     assert provider_route_mismatch(snapshot, direct) is None
     assert "fingerprint differs" in str(provider_route_mismatch(snapshot, relay))
-    assert provider_route_mismatch({"provider_wire_format": "bossip_videos"}, relay) is None
+    assert "no complete provider route fingerprint" in str(
+        provider_route_mismatch({"provider_wire_format": "bossip_videos"}, relay)
+    )
     assert "legacy submitted wire" in str(provider_route_mismatch({}, relay))
-    assert provider_route_mismatch({}, direct) is None
+    assert "no complete provider route fingerprint" in str(
+        provider_route_mismatch({}, direct)
+    )
+
+    # Wire compatibility alone cannot detect endpoint or account rotation.
+    legacy_direct = {"provider_wire_format": "tokenspace_contents"}
+    assert provider_route_mismatch(legacy_direct, replace(direct, api_key="sk-rotated"))
+    assert provider_route_mismatch(
+        legacy_direct,
+        replace(direct, base_url="https://new-account-gateway.test"),
+    )
 
 
 # ── model canonicalization ──────────────────────────────────────────────────

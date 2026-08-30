@@ -1,4 +1,4 @@
-"""Phase 0.5 stopgap: stranded segment jobs converge without a live tool call."""
+"""Stranded direct segment jobs converge without a live tool call."""
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -45,6 +45,7 @@ async def _insert_asset(user_id: str) -> str:
 async def _insert_job(*, age_seconds: int, **overrides) -> str:
     from db.base import get_db_session
     from db.models.video_job import VideoJob
+    from tool.video_providers import provider_route_fingerprint
 
     user_id = overrides.pop("user_id", "u_" + uuid.uuid4().hex[:8])
     job_id = "vjob_" + uuid.uuid4().hex[:12]
@@ -62,7 +63,10 @@ async def _insert_job(*, age_seconds: int, **overrides) -> str:
         status="in_progress",
         provider_task_id="task_" + uuid.uuid4().hex[:8],
         output_asset_id=await _insert_asset(user_id),
-        request_data={},
+        request_data={
+            "provider_route_fingerprint": provider_route_fingerprint(DUMMY_TARGET),
+            "provider_wire_format": "tokenspace_contents",
+        },
         result_data={},
         attempt=1,
         created_at=stamp,
@@ -139,10 +143,16 @@ async def test_stale_in_progress_finalizes_when_provider_done(monkeypatch):
 
 async def test_legacy_runtime_link_does_not_block_domain_recovery(monkeypatch):
     """The removed orchestration ledger no longer owns linked domain rows."""
+    from tool.video_providers import provider_route_fingerprint
+
     _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
     job_id = await _insert_job(
         age_seconds=600,
-        request_data={"skill_job_id": "retired_job_123"},
+        request_data={
+            "skill_job_id": "retired_job_123",
+            "provider_route_fingerprint": provider_route_fingerprint(DUMMY_TARGET),
+            "provider_wire_format": "tokenspace_contents",
+        },
     )
 
     advanced = await job_recovery.sweep()
@@ -218,25 +228,33 @@ async def test_fingerprint_mismatch_is_not_polled_or_mutated(monkeypatch):
         await _retire_test_job(job_id)
 
 
-async def test_matching_relay_snapshot_still_recovers(monkeypatch):
+async def test_legacy_matching_relay_wire_without_fingerprint_is_quarantined(monkeypatch):
     from tool import video_production as vp
 
-    _patch_provider(
-        monkeypatch,
-        {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"},
-    )
+    calls: list[str] = []
     monkeypatch.setattr(
         vp,
         "_configured_target",
         lambda model_override=None: (RELAY_TARGET, DUMMY_SETTINGS),
     )
+
+    async def must_not_poll(_target, task_id):
+        calls.append(task_id)
+        raise AssertionError("a legacy task without full route identity was polled")
+
+    monkeypatch.setattr(vp, "_provider_status", must_not_poll)
     job_id = await _insert_job(
         age_seconds=600,
         request_data={"provider_wire_format": "bossip_videos"},
     )
 
-    assert await job_recovery.sweep() == 1
-    assert (await _fetch(job_id)).status == "completed"
+    try:
+        assert await job_recovery.sweep() == 0
+        assert calls == []
+        assert (await _fetch(job_id)).status == "in_progress"
+    finally:
+        await _retire_test_job(job_id)
+        job_recovery._route_mismatch_once.discard(job_id)
 
 
 async def test_matching_route_fingerprint_still_recovers(monkeypatch):

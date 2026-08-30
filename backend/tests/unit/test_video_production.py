@@ -32,6 +32,7 @@ from tool.video_production import (
     video_render_tool,
 )
 from tool.video_identity import video_identity_tool
+from tool.video_providers import provider_route_fingerprint
 
 
 @pytest.mark.asyncio
@@ -202,6 +203,10 @@ async def test_generation_wait_timeout_returns_a_versioned_running_snapshot(monk
         updated_at=updated_at,
     )
     target = SimpleNamespace(model="video-model-1", channel="ark")
+    job.request_data = {
+        "provider_route_fingerprint": provider_route_fingerprint(target),
+        "provider_wire_format": "tokenspace_contents",
+    }
     settings = SimpleNamespace(poll_interval_seconds=5)
     provider_calls = 0
 
@@ -267,6 +272,10 @@ async def test_generation_wait_provider_timeout_returns_running_snapshot(monkeyp
         updated_at=updated_at,
     )
     target = SimpleNamespace(model="video-model-1", channel="ark")
+    job.request_data = {
+        "provider_route_fingerprint": provider_route_fingerprint(target),
+        "provider_wire_format": "tokenspace_contents",
+    }
     settings = SimpleNamespace(poll_interval_seconds=5)
 
     async def fake_owned(_job_id, _ctx, _kind):
@@ -426,6 +435,67 @@ async def test_generation_control_blocks_pre_relay_legacy_job_on_relay(monkeypat
 
     assert result.metadata["recovery_blocked"] is True
     assert result.metadata["provider_state_unknown"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["status", "wait", "cancel"])
+async def test_generation_control_blocks_legacy_matching_wire_without_fingerprint(
+    monkeypatch, action
+):
+    """A wire match cannot prove that endpoint and provider account still match."""
+    current_route = VideoProviderTarget(
+        provider="doubao",
+        model="video-model-1",
+        api_key="sk-current-account",
+        base_url="https://api.current-account.test",
+        submit_timeout_seconds=30,
+        status_timeout_seconds=10,
+        wire_format="tokenspace_contents",
+    )
+    job = SimpleNamespace(
+        id=f"video_legacy_same_wire_{action}",
+        kind="segment",
+        status="in_progress",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={"provider_wire_format": "tokenspace_contents"},
+        provider_task_id="legacy-provider-task",
+        sandbox_job_id=None,
+        output_asset_id=None,
+        error=None,
+        model="video-model-1",
+        updated_at=datetime.now(timezone.utc),
+    )
+    settings = SimpleNamespace(poll_interval_seconds=5)
+
+    async def fake_owned(_job_id, _ctx, _kind):
+        return job
+
+    async def must_not_poll(*_args):
+        raise AssertionError("legacy task without a full fingerprint must not be polled")
+
+    async def must_not_mutate(*_args, **_kwargs):
+        raise AssertionError("legacy route quarantine must not mutate the durable job")
+
+    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (current_route, settings))
+    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
+    monkeypatch.setattr(video_mod, "_provider_status", must_not_poll)
+    monkeypatch.setattr(video_mod, "_provider_cancel", must_not_poll)
+    monkeypatch.setattr(video_mod, "_update_job", must_not_mutate)
+    monkeypatch.setattr(video_mod, "_mark_asset", must_not_mutate)
+    monkeypatch.setattr(video_mod, "_job_asset", lambda _job: asyncio.sleep(0, result=None))
+
+    result = await video_mod.execute_generate(
+        VideoGenerateArgs(action=action, job_id=job.id, wait_seconds=0),
+        SimpleNamespace(user_id="user_1"),
+    )
+
+    assert result.metadata["recovery_blocked"] is True
+    assert result.metadata["provider_state_unknown"] is True
+    assert result.metadata["do_not_resubmit"] is True
+    assert result.metadata["recovery_reason"] == "legacy_provider_route_unverifiable"
+    assert "retry_after_seconds" not in result.metadata
+    assert "retry_after_seconds" not in result.output
 
 
 @pytest.mark.asyncio
@@ -771,6 +841,10 @@ async def test_generation_wait_finalizing_reloads_with_backoff_until_timeout(mon
         updated_at=updated_at,
     )
     target = SimpleNamespace(model="video-model-1", channel="ark")
+    job.request_data = {
+        "provider_route_fingerprint": provider_route_fingerprint(target),
+        "provider_wire_format": "tokenspace_contents",
+    }
     settings = SimpleNamespace(poll_interval_seconds=0.01)
     reloads = 0
 
@@ -824,6 +898,10 @@ async def test_generation_wait_timeout_does_not_cancel_oss_finalization(monkeypa
         updated_at=updated_at,
     )
     target = SimpleNamespace(model="video-model-1", channel="ark")
+    job.request_data = {
+        "provider_route_fingerprint": provider_route_fingerprint(target),
+        "provider_wire_format": "tokenspace_contents",
+    }
     settings = SimpleNamespace(poll_interval_seconds=0.01)
     release = asyncio.Event()
 
@@ -893,6 +971,10 @@ async def test_generation_wait_returns_when_snapshot_version_advances(monkeypatc
         updated_at=updated_at,
     )
     target = SimpleNamespace(model="video-model-1", channel="ark")
+    job.request_data = {
+        "provider_route_fingerprint": provider_route_fingerprint(target),
+        "provider_wire_format": "tokenspace_contents",
+    }
     settings = SimpleNamespace(poll_interval_seconds=5)
 
     async def fake_owned(_job_id, _ctx, _kind):

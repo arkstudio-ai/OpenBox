@@ -1,7 +1,15 @@
 # 工具目录与 Schema 延迟物化——执行手册
 
-> 文档状态：Execution Handbook v1（2026-08-30）
+> 文档状态：Execution Handbook v2（2026-08-30，无影云双平面与能力分层适配版）
 > 基线 commit：`d453f78`（技能/工具解耦已经完成）
+> v2 相对 v1 的适配（按当前产品事实收敛，全文已同步改写）：
+> ① 前端只有 `frontend-v2` 与 `mobile`；`frontend/`（v1）是遗留迁移参考，零触碰。
+> ② 沙箱执行面唯一生产形态是阿里云无影云电脑（`SANDBOX_PROVIDER=wuying`）；
+> docker/k8s provider 代码与 `k8s/` 部署文件冻结，不作为验收环境。
+> ③ agent loop 在后端、执行层在无影云的**双平面架构**成为一等设计输入（§1.4）；
+> 与 codex/opencode 的单进程一体架构不同，规划期不得触隧道（铁律 12）。
+> ④ 内置能力（native tool、host skill、平台 pack）与用户安装到无影云的能力
+> （沙箱 skill、沙箱 MCP）按**平台面/沙箱面**分层暴露（§2.6–§2.7、§4.1）。
 > 前置手册：`docs/SKILL_TOOL_DECOUPLING_PLAN.md`。本文件把其 §10 Backlog B2
 > 升级为独立工程，但**不推翻**原手册的信任边界。原计划的“工具恒定注册”继续成立；
 > “所有完整 schema 每个 step 恒定发送”不再是目标。两者不是一回事。
@@ -26,7 +34,12 @@ OpenBox 当前把 build agent 的 30 个完整工具定义放进每一次 provid
 4. OpenAI Responses / Anthropic 在经过真实协议验收后使用原生 deferred tool search；
 5. Gemini、Kimi、未知 OpenAI-compatible 网关始终有 OpenBox 自己的 portable 路径；
 6. 多 step、跨用户消息、重启与 compaction 后不重复搜索，也不让工具无限累积；
-7. 隐藏 schema 只是一项上下文优化，任何执行仍重新经过权限、审批、付费与沙箱门。
+7. 隐藏 schema 只是一项上下文优化，任何执行仍重新经过权限、审批、付费与沙箱门；
+8. 目录规划全程是后端本地计算：沙箱侧能力只以缓存投影参与，planner、预算器与
+   discovery 检索不触发任何跨隧道调用（现存的每 step 目录拉取在 PR#5 收敛为投影）；
+9. 内置与用户自装分层落地：resident core、deterministic intent pack、prompt fragment
+   与 `same_response_safe=True` 只引用平台面能力；用户装进无影云的 MCP/技能属沙箱面，
+   只经 discovery 进入，其一切字符串按不可信输入清洗与预算。
 
 成功不是“provider payload 变小”这一件事。完整成功定义是：
 
@@ -34,10 +47,13 @@ OpenBox 当前把 build agent 的 30 个完整工具定义放进每一次 provid
 - 视频、图片、网页、浏览器、自动化等明确请求首轮直接看见对应能力包，不要求用户或
   模型先说出技能名；
 - 模糊请求最多多一次 portable discovery step；
-- 加载任意 project/global/container skill 前后，资格目录和暴露计划都不因技能字段改变；
+- 加载任意来源 skill（host project/global、沙箱 builtin/container）前后，资格目录和
+  暴露计划都不因技能字段改变；
 - denied、agent 白名单外、未购买或环境不可用的工具不进入目录搜索结果；
 - Batch、模型猜名、历史 tool call、provider fallback 均不能绕过暴露与执行边界；
 - 任何 paid submit 不因重试或 fallback 被执行两次；
+- 用户装进无影云的 MCP 工具可被发现与调用，但从不出现在首轮 deterministic pack；
+  隧道断开只造成执行期错误，不缩水资格目录，重连后无需重新发现；
 - 浏览器场景与全量回归均通过。
 
 ### 0.2 与解耦计划的继承关系
@@ -52,6 +68,7 @@ OpenBox 当前把 build agent 的 30 个完整工具定义放进每一次 provid
 | permission 只做限制 | 目录生成前先过滤；执行前再次检查 |
 | build 拥有八个工作流工具，子 agent 默认没有 | 延迟物化不得让 plan/explore/general/custom 子 agent发现或调用它们 |
 | 付费、审批、幂等由服务端强制 | schema 是否可见不改变任何业务门 |
+| 内置技能与无影云用户技能按信任分层 | 推广为 §2.7 平台面/沙箱面硬边界：凡定义字节经隧道读回的能力（含全部沙箱 MCP）永不进 pack/core/prompt fragment |
 
 本计划只取代原计划 §7 中“完整 schema 恒定进入每次请求”的 B1 发送策略；不取代工具
 注册、白名单、permission 或技能语义。
@@ -59,20 +76,26 @@ OpenBox 当前把 build agent 的 30 个完整工具定义放进每一次 provid
 ### 0.3 必读文件（按顺序）
 
 1. `docs/SKILL_TOOL_DECOUPLING_PLAN.md` 全文；
-2. `backend/agent/agent.py`：AgentDef 白名单与 custom agent 默认继承；
-3. `backend/tool/registry.py` 与 `backend/tool/tool.py`：注册表、ToolInfo、ToolContext；
-4. `backend/agent/tool_resolution.py`：native + sandbox MCP + skill listing + permission；
-5. `backend/agent/loop.py` 的 `run_loop`、`_build_system_prompt` 和上下文估算；
-6. `backend/agent/processor.py` 的 `process_step`：stream、工具调用持久化与执行；
-7. `backend/agent/llm.py` 的 `_stream_responses_api`、`_stream_litellm_direct`、
+2. `docs/WUYING_SANDBOX.md` 全文：双平面拓扑、双跳隧道、action server systemd 单元、
+   单租户共享桌面事实与 TUN 代理坑；
+3. `backend/agent/agent.py`：AgentDef 白名单与 custom agent 默认继承；
+4. `backend/tool/registry.py` 与 `backend/tool/tool.py`：注册表、ToolInfo、ToolContext、
+   `.openbox/tools/*.py` host custom tool 加载（`register_custom_tools`）；
+5. `backend/agent/tool_resolution.py`：native + sandbox MCP + skill listing + permission；
+6. `backend/agent/loop.py` 的 `run_loop`、`_build_system_prompt` 和上下文估算；
+7. `backend/agent/processor.py` 的 `process_step`：stream、工具调用持久化与执行；
+8. `backend/agent/llm.py` 的 `_stream_responses_api`、`_stream_litellm_direct`、
    `_tool_parameters_schema`；
-8. `backend/tool/mcp_tool.py`：当前 40 个工具阈值和 find/call 元工具；
-9. `backend/tool/skill_tool.py`：动态技能目录预算；
-10. `backend/tool/batch.py`：`ctx.available_tools` 的嵌套调用边界；
-11. `backend/agent/prompts/system.py`：当前无条件提及的工具名；
-12. `backend/tests/unit/test_skill_tool_activation.py`、`test_llm_schema.py`、
+9. `backend/tool/mcp_tool.py`：当前 40 个工具阈值和 find/call 元工具；
+10. `backend/tool/skill_tool.py`：动态技能目录预算与四来源合并；
+11. `backend/sandbox/wuying.py`、`backend/sandbox/client.py`、
+    `container/action_server.py`：执行面协议（`/execute`、`/mcp/*`、`/skills/*`）、
+    `X-API-Key`、`trust_env=False`、目录接口的每 step 拉取现状；
+12. `backend/tool/batch.py`：`ctx.available_tools` 的嵌套调用边界；
+13. `backend/agent/prompts/system.py`：当前无条件提及的工具名；
+14. `backend/tests/unit/test_skill_tool_activation.py`、`test_llm_schema.py`、
     `test_batch_parallel_safety.py`、`test_agent_registry.py`。
-13. `docs/DIRECT_PATH_CLEANUP_PLAN.md` §0.3、§7、§8：本地端口、测试账号、数据库、
+15. `docs/DIRECT_PATH_CLEANUP_PLAN.md` §0.3、§7、§8：本地端口、测试账号、数据库、
     无影云隧道、浏览器步骤、热重载盲区和公开仓库凭据红线。
 
 ### 0.4 术语（代码、测试和日志统一使用）
@@ -88,6 +111,9 @@ OpenBox 当前把 build agent 的 30 个完整工具定义放进每一次 provid
 | resident core | 每个请求都物化、无需搜索的最小闭环 |
 | intent pack | 由用户意图或产品状态一次物化的一组相关工具 |
 | revealed | 通过 portable/native search 已发现，允许在后续 step 物化的工具 ID |
+| 平台面（platform plane） | 定义字节由后端代码/配置产生并经 git/管理员评审：native registry、`.openbox/tools` host custom tool、host project/global skill、pack/core/prompt fragment 定义 |
+| 沙箱面（sandbox plane） | 定义字节经隧道从无影云读回：沙箱 MCP 的 name/description/schema、`/opt/openbox/skills` 与 `/data/skills` 技能文件、目录列表、一切工具输出 |
+| 目录投影（catalogue projection） | 后端缓存的沙箱面目录快照，带 generation/ETag；planner 与 discovery 只读它，不实时打隧道（PR#5 §12.4） |
 
 资格、发现、物化和执行必须是不同的数据结构，禁止用一个 `dict[str, ToolInfo]` 同时代表
 四层含义。
@@ -151,7 +177,16 @@ JSON 序列化；下表是当前 legacy-eager wire，也是当前模型初始可
 10. **普通 ToolResult metadata 不得改变 exposure state。** 只有保留 ID 的平台 discovery
     工具通过专用内部 callback/typed outcome，或经验证的 provider tool_reference，才能提交
     reveal；这条边界不能重演旧 `skill → metadata → activated_tools` 授予链。
-11. 任何权限泄漏、重复 paid submit、子 agent 获得媒体工具，均是立即停止发布的 P0。
+11. **沙箱面数据不是 trigger，也永不升平台面。** 凡定义字节经隧道读回的能力与文本
+    （MCP 工具名/描述/schema、四来源技能文件、目录列表、工具输出）一律按不可信输入
+    处理：只能经清洗、预算与有界 canonical ID 进入 discoverable 层；不得进入
+    resident core、deterministic intent pack、prompt fragment、`same_response_safe=True`
+    或路由信号。平台经 bootstrap 预置到桌面盘的内容（`/opt/openbox/skills`）落盘后
+    同样按沙箱面处理——桌面上的任何执行都能改写它。
+12. **Exposure 规划零隧道。** `collect_exposure_signals`、planner、预算器与
+    `capability_search` 检索只读后端内存/数据库与缓存的目录投影。PR#5 落地投影前，
+    现存的每 step 目录拉取维持原样（坑 22），但新增代码不得引入新的规划期隧道调用。
+13. 任何权限泄漏、重复 paid submit、子 agent 获得媒体工具，均是立即停止发布的 P0。
 
 ---
 
@@ -207,6 +242,47 @@ HTTP payload 仍含 definitions，模型选择空间仍然过大，不能把 cac
 - `loop.py` 当前用 `len(tools) * 400` 估算 schema context；同样数量的
   `view_image` 与 `todo_write` 实际相差近 20 倍，此估算必须替换。
 
+### 1.4 双平面架构事实（无影云）
+
+OpenBox 与 codex/opencode 的根本差异：agent loop、permission、catalogue 规划与 LLM
+调用全部在后端控制面；bash/文件/MCP server/媒体队列/dev-browser 全部在无影云桌面的
+action server 执行面（`container/action_server.py`），两者之间只有一条
+`WUYING_ENDPOINT=http://127.0.0.1:18000` 的双跳 SSH 隧道（laptop → relay ECS →
+桌面反向隧道；完整拓扑见 `docs/WUYING_SANDBOX.md`）。
+
+```text
+backend 控制面                          无影云执行面（共享单桌面）
+  run_loop / planner / permission        action_server :8000（systemd 自愈）
+  EligibleCatalog / ExposurePlan           /execute /read_file /write_file /glob /grep
+  provider adapters                        /mcp/tools  /mcp/tools/{server}/{tool}
+        │   SandboxClient(HTTP,            /skills  /skills/{name}
+        │   X-API-Key, trust_env=False)    /media/jobs/*  /dev-browser/*
+        └── 127.0.0.1:18000 隧道 ────────  /alive（uptime/hostname）
+```
+
+延迟物化必须知道的实测事实：
+
+- `resolve_step_tools` 在 `loop.py` 主循环内**每 step** 调用；其中
+  `merge_sandbox_tools` 每 step `GET /mcp/tools`、`attach_skill_listing` 每 step
+  `GET /skills`（后者裁剪文件列表前曾实测 55KB/step，现仍是每步全量往返，见
+  action_server.py `_SKILL_FILE_SKIP_DIRS` 注释）。这是 backend↔沙箱 的 wire 成本
+  与时延，不进模型 token，但它决定了 §12.4 目录投影的必要性；
+- 沙箱三 provider（docker/kubernetes/wuying）代码都在
+  （`backend/sandbox/__init__.py` `_create_provider`，config 默认仍是 `docker`）。
+  生产唯一形态是 `wuying`；docker/k8s 是遗留冻结路径（§6），本计划不为它们写任何
+  exposure 分支；
+- 无影桌面是带外预置、长期存活、**所有会话共享的一台桌面**，隔离只有
+  `/workspace/sessions/<id>` 工作目录，action server 不约束绝对路径——当前按
+  单租户对待。目录投影与 reveal state 仍按 user/session key 隔离缓存，但
+  "桌面上装了什么"在事实上是全局状态（坑 24）；
+- 桌面重启后 systemd 拉起 action server 并 `reconnect_configured()` 自动重连 MCP
+  （工具集可能变化），dev-browser 不自启；隧道断开时后端启动只 loud log 不 abort。
+
+推论：codex 能在同一进程每 step 重算 ToolExposure，因为规划与执行共内存；OpenBox
+的等价物必须是"执行面发布目录、控制面缓存投影"。任何把隧道调用放进规划热路径的
+设计都同时损害时延与可用性。执行期与规划期的失败语义必须分开：隧道断开是执行
+错误（清晰报错、重连可重试），永远不是资格目录收缩的理由（§2.1）。
+
 ---
 
 ## 2. 安全语义模型
@@ -236,6 +312,11 @@ global native registry / sandbox MCP catalogue
 provider 暂时不可达为由移除恢复能力。已有 video/image/MCP job 的 status、cancel、reconcile
 工具必须保持 eligible/pinned，并在调用后返回真实 readiness/recovery 信息。
 
+无影云下这条具体化为：隧道断开、`/alive` 失败或 action server 重启都不改变
+eligible/discoverable 集合；沙箱依赖工具（bash/文件/MCP/媒体）此时执行返回清晰错误，
+重连后可直接重试，已 revealed 的沙箱 MCP 工具无需重新发现。目录投影过期按 §12.4 的
+generation 规则刷新，不做"探测失败即隐藏"。
+
 ### 2.2 Skill 零副作用
 
 以下三类技能执行前后必须满足：
@@ -246,9 +327,14 @@ discoverable_ids_before == discoverable_ids_after
 materialized_ids_before == materialized_ids_after
 ```
 
-适用来源：project、global、container。即使正文或 frontmatter 写了
-`allowed-tools`、`allowed_tools`、`tools`、`requires-mcp` 或未来新增同义字段，也只能作为
-不可信文本/展示数据。可信插件安装 MCP 是平台安装流程，不能由 SKILL.md 加载动作触发。
+适用来源：**四个**，不是解耦手册写的三个——host `project`（`backend/.openbox/skills`）、
+host `global`（`~/.config/openbox/skills`）、沙箱预置 `builtin`
+（`/opt/openbox/skills`，bootstrap 推送，action_server `BUILTIN_SKILLS_DIR`）与沙箱
+用户 `container`（`/data/skills`，技能中心安装，`SKILLS_DIR`）。沙箱预置技能虽由平台
+下发，落盘后可被桌面上的任何执行改写，运行时信任级别等同用户技能（铁律 11）。即使
+正文或 frontmatter 写了 `allowed-tools`、`allowed_tools`、`tools`、`requires-mcp` 或
+未来新增同义字段，也只能作为不可信文本/展示数据。可信插件安装 MCP 是平台安装流程，
+不能由 SKILL.md 加载动作触发。
 
 ### 2.3 Permission 与隐私
 
@@ -283,14 +369,37 @@ materialized_ids_before == materialized_ids_after
 
 ### 2.6 信任层
 
-| 来源 | 可进入 eligible catalogue | 可决定 intent pack | 可扩大权限 |
-|---|---|---|---|
-| built-in registry + AgentDef | 是 | 平台静态配置可定义 | 否；permission 仍可减 |
-| 平台 product state（active video/job/browser） | 只选择已有 eligible | 是 | 否 |
-| 用户自然语言 | 只影响确定性路由/搜索 query | 是 | 否 |
-| project/global/container Skill | 否 | **否** | **否** |
-| 已批准安装的 MCP/plugin manifest | 通过正规注册通道 | 可提供 catalogue hint | 否 |
-| provider tool_reference | 只引用已发给该 provider 的 eligible tool | 是，限当前响应 | 否 |
+| 来源 | 平面 | 可进入 eligible catalogue | 可决定 intent pack | 可扩大权限 |
+|---|---|---|---|---|
+| built-in registry + AgentDef | 平台 | 是 | 平台静态配置可定义 | 否；permission 仍可减 |
+| `.openbox/tools/*.py` host custom tool | 平台 | 是（随 registry 注册） | 平台配置可定义 | 否 |
+| 平台 product state（active video/job/browser） | 平台 | 只选择已有 eligible | 是 | 否 |
+| 用户自然语言 | — | 只影响确定性路由/搜索 query | 是 | 否 |
+| host project/global Skill | 平台（知识） | 否 | **否** | **否** |
+| 沙箱技能（`/opt/openbox/skills` 预置 + `/data/skills` 用户装） | 沙箱（知识） | 否 | **否** | **否** |
+| 沙箱 MCP server（catalog 安装或用户手装，一律同权） | 沙箱 | 经正规注册通道 + 清洗/预算/有界 ID | **否，永不** | 否 |
+| provider tool_reference | — | 只引用已发给该 provider 的 eligible tool | 是，限当前响应 | 否 |
+
+安装 provenance（`skill/catalog.py` 的 MCP_CATALOG 商店安装 vs 用户直接 add）只用于
+UI/telemetry 展示。桌面上的 `/data/mcp/config.json` 与 server 进程本身都可被沙箱内
+任意执行改写，因此 provenance 不参与任何信任判定——所有沙箱 MCP 同层。
+
+### 2.7 平台面/沙箱面硬边界
+
+1. **平台面能力**（native built-in、`.openbox/tools` host custom tool）：
+   discovery hint、pack 归属、same-response-safe 审计、prompt fragment 全部由平台
+   代码/配置定义，随 git/管理员评审；
+2. **沙箱面能力**（一切定义字节经隧道读回的条目——当前即全部 MCP）：只能出现在
+   discoverable 与 revealed-then-materialized 两层；`discovery_hint` 从远端
+   description 清洗截断而来并计入预算；canonical ID 用 §9.1 的 `mcp:v2:` 有界摘要；
+   `same_response_safe` 恒为 `False`；不进任何 deterministic pack、resident core 或
+   prompt fragment；
+3. **沙箱面知识**（四来源技能正文，§2.2）照旧可注入对话，但对
+   eligible/discoverable/materialized 三层零效果，正文属不可信文本（提示注入加固仍
+   在 Backlog）；
+4. 当前**不存在** backend 直连的"平台托管 MCP"（`config.mcp` 只用于 OAuth 元数据，
+   不在 session 启动时 seed 沙箱）。若未来出现，其进入 pack 的资格须单独立项与审计
+   （Backlog 10），不得复用沙箱 MCP 通道的默认信任。
 
 ---
 
@@ -342,20 +451,65 @@ Gemini 先走 portable；`allowed_function_names` 只是调用限制，不等于
 默认 portable。OpenAI-compatible 只说明 JSON 外形相近，不说明支持 Responses Tool Search、
 deferred 字段、event replay 或相同的 tool call ID 约束。
 
-### 3.5 Workspace 参考实现
+### 3.5 Workspace 参考实现与市场对照
 
-本机 `/Users/wang/workspace/codex` 已经把执行器与暴露方式拆开：
-`codex-rs/tools/src/tool_executor.rs` 的 `ToolExposure` 包含 Direct、Deferred、
-CodeModeOnly、Hidden 等状态，`core/src/tools/spec_plan.rs` 再构造并 finalize router。可借鉴的
-不是枚举名字，而是“不把能执行与本轮直接展示混成一个 bool”的结构。
+本机两套实现已逐源验证，另加 Claude Code harness 的公开可观察行为作为市场基准。
+结论按"可借鉴的结构"记录，不照搬任何枚举名或默认值。
 
-本机 `/Users/wang/workspace/opencode` 的 `packages/core/src/tool/registry.ts` 在每个 provider
-turn materialize definition，并在 materialize 前应用 whole-tool permission；
-`packages/core/src/tool/skill.ts` 只加载技能内容。它没有替 OpenBox 决定 intent pack，但继续
-证明 skill service 与 tool registry 必须是两条独立链。
+**codex（`/Users/wang/workspace/codex/codex-rs`，单进程一体架构）**
 
-不得照搬 Codex 中可信插件/MCP 的平台安装例外到不可信容器 Skill；OpenBox 的 Skill
-frontmatter 仍是零能力语义。
+- `tools/src/tool_executor.rs` 的 `ToolExposure` 六态（Direct / Deferred /
+  DeferredModelOnly / DirectModelOnly / CodeModeOnly / Hidden）：工具自报偏好、host
+  每 step 终裁（`core/src/tools/spec_plan.rs` 构造并 finalize router）。可借鉴的是
+  "能执行 / 本轮直接展示 / 可被搜索"三事分离，而非枚举本身；
+- 原生 deferred 已在其 Responses 结构体落地：`tools/src/responses_api.rs` 的
+  `defer_loading: Option<bool>` 字段，deferred 项还剥掉 output_schema；发现走单个
+  `tool_search` 工具 + BM25 索引（`core/src/tools/handlers/tool_search.rs`，默认返回
+  8 项），命中的完整 schema 于下一次请求物化——两段式与本计划 §4.6/§4.7 一致，
+  可作 §11.1 Responses adapter 的行为对照物；
+- MCP 策略：开启 search 时 MCP 默认全部 Deferred（`core/src/mcp_tool_exposure.rs`）；
+  预算为 description ≤1K、单 spec 序列化 ≤8K（超限把 parameters 替换成
+  `additionalProperties:true` 开放对象）、agent-plugin 聚合 ≤64K（超限直接降
+  Hidden）。本计划在单项 >5K 时选择"保留原 schema 走 meta 调用"而非删参数约束
+  （§5.2）——有意分歧：OpenBox 的 MCP 参数约束是执行侧验证的一部分，不牺牲；
+- prompt cache 稳定性：注册表用插入序 IndexMap、namespace 内按名排序、tool_search
+  handler 只在 deferred 源集合变化时重建——印证 §4.1 "tuple 排序稳定"与 §4.9 的
+  片段稳定追加；
+- 架构对照（本计划最重要的差异输入）：codex 规划与执行共进程共内存，per-step 重算
+  exposure 零成本，沙箱是 per-command 的 OS 原生隔离（seatbelt/landlock）。OpenBox
+  的执行面在无影云另一端，等价物必须是"执行面发布目录 + 控制面缓存投影"
+  （§1.4、§12.4），不能翻译成每 step 跨隧道重拉。
+
+**opencode（`/Users/wang/workspace/opencode`）**
+
+- 现行实现每 turn 组装工具（`packages/opencode/src/session/tools.ts`），whole-tool
+  deny 在请求组装层剔除；v2 `packages/core/src/tool/registry.ts` 把 whole-tool
+  permission 过滤放进 `materialize()`，并返回绑定当次物化身份的 `settle`，用
+  identity token 拒绝"调用上一 turn 已消失的工具"——与本计划的 schema digest /
+  catalogue generation 校验同构，可作 §4.8 失效语义参照；
+- `packages/core/src/tool/skill.ts` 只加载内容、frontmatter 无 `allowed-tools`
+  字段、技能全量列进 system prompt——继续证明 skill 与 tool 是两条独立链；其对
+  listing 无预算是弱点而非榜样，印证 §12.1 必须补 `skill_search`；
+- MCP 反面教材：sanitize 后同名静默 `result[key]=` 覆盖、无数量/大小阈值——本计划
+  §9.1 的碰撞 fail-closed 与双向映射正是针对这类洞；正面参考：按
+  `ToolListChangedNotification` 事件刷新缓存目录、分页拉取——§12.4 的 generation
+  失效应对齐"事件驱动刷新"，不是每 step 重拉；
+- Code Mode（实验）把全部 MCP 折叠成一个 `execute` 工具 + 代码目录：是"折叠"而非
+  "延迟"，丢失 typed 验证/审批/UI，本计划不采用（铁律 9），记录以备 Backlog 讨论。
+
+**Claude Code harness（公开可观察行为，市场基准）**
+
+- deferred 工具只以名字出现在上下文，模型用检索工具按 `select:<name,...>` 精确批量
+  加载 schema，并被明确要求"把预期要用的工具合并进一次加载调用"——印证 §4.6 的
+  exact `names` 参数与"pack 一次物化优于逐个 reveal"；
+- MCP server 可自带 instructions 指明"这类任务先加载哪组工具"——与 §4.4 intent
+  pack 同构；但 OpenBox 的 pack 定义只在平台面（§2.7），不接受沙箱 MCP 自述；
+- 技能以一行 name+description 列出、按需加载全文——与 §12.1 listing 预算方向一致；
+- Anthropic 官方 Tool Search Tool（§3.1）建议保留 3–5 个最常用工具不 deferred，与
+  §4.3 resident core 的量级互相印证。
+
+不得照搬 Codex 中可信插件/MCP 的平台安装例外到无影云沙箱面；OpenBox 的 Skill
+frontmatter 与沙箱 MCP 自述仍是零能力语义。
 
 ### 3.6 策略选择
 
@@ -395,6 +549,7 @@ class CatalogEntry:
     discovery_hint: str
     parameter_names: tuple[str, ...]
     source: Literal["builtin", "mcp", "synthetic"]
+    plane: Literal["platform", "sandbox"]
     pack: str | None
     schema_digest: str
     schema_chars: int
@@ -418,7 +573,13 @@ class ExposurePlan:
 
 约束：
 
+- `plane` 由注册通道决定，不可配置覆盖：native registry 与 `.openbox/tools` host
+  custom tool 为 `platform`；一切定义字节经隧道读回的条目（当前全部 MCP）为
+  `sandbox`。构造器校验 `pack is not None` 与 `same_response_safe=True` 都要求
+  `plane == "platform"`，违反即 fail closed（§2.7）；
 - `CatalogEntry.discovery_hint` 是 1–2 句触发提示，不复制 full description；
+  `plane == "sandbox"` 条目的 hint 从远端 description 清洗（去控制字符、转义
+  HTML/XML）并截断（≤200 chars）得到，不得原样透传；
 - `id` 是稳定、有界的平台 canonical ID，`provider_name` 才是按 provider 限制清洗/
   截断的调用名。built-in 使用固定注册 ID；MCP 使用 §9.1 定义的 59 字符
   `mcp:v2:<sha256-base32>`，并在当前 catalogue 的双向映射中无损保留原始 server/tool
@@ -499,6 +660,11 @@ plan/explore/general 使用各自最小 core：plan 常驻 `plan_exit`；explore
 可以保证 `project → generate → transcribe → render` 续接稳定；付费与顺序仍由服务端门保证。
 后续只有生产遥测证明值得，才在 Backlog 中细分。
 
+pack 成员只能是平台面 native 工具 ID（`plane == "platform"`，§2.7）。沙箱 MCP 工具
+无论多常用都不进 pack——用户自装能力的首轮路径永远是 discovery（最多多一个 step）。
+这是分层的硬边界而非优化取舍：pack 表由平台代码定义，若沙箱侧数据能进入它，桌面上
+的任何执行就能改写首轮暴露。
+
 ### 4.5 确定性路由
 
 路由输入只允许：
@@ -536,7 +702,8 @@ class ExposureSignals:
 ```
 
 来源固定为当前 user message parts、todo service、视频域表、browser/session mode 和当前用户
-file assets；collector 不读取 Skill。瞬时信号查询失败时记录 `signal_error`，不扩大工具集，
+file assets；collector 不读取 Skill，也不触发任何 SandboxClient 调用——所有信号来自
+后端数据库与会话内存（铁律 12）。瞬时信号查询失败时记录 `signal_error`，不扩大工具集，
 保留本 run 最近一次成功的 product-state pinned signal，并让逻辑 discovery slot 作为恢复路径。
 静态 entitlement/config 缺失可以令“创建新任务”工具不 eligible；瞬时 provider readiness
 失败不能隐藏已有付费任务的 status/cancel/recovery 控制面，否则用户无法对账和恢复。
@@ -547,6 +714,7 @@ file assets；collector 不读取 Skill。瞬时信号查询失败时记录 `sig
 
 - 入参：`query`，可选 exact `names`；
 - 只搜索 eligible + discoverable entries；
+- 检索在后端本地目录（含沙箱目录投影）上执行，零隧道调用（铁律 12）；
 - 索引名称、discovery hint、参数名、pack/tags；
 - 先 exact/prefix/词法 BM25；第一版不调用额外 LLM；
 - 返回最多 5 项，总结果 ≤2,000 chars；
@@ -882,8 +1050,8 @@ native catalogue >128K 和单项 >5K，断言上述优先级、fallback 与 disc
 | permission 系统 | 保留语义，只允许为“过滤目录”和“执行重验”接线 |
 | 视频/图片业务状态机 | 不改变审批、花费、幂等、provider route 和恢复逻辑 |
 | MCP 执行协议 | PR#2 先做无歧义 ID、discovery evidence 与底层 permission 闭包的安全修复；PR#5 才改预算/目录拓扑 |
-| 前端/移动端 | 第一阶段零运行时代码改动；诊断 UI 进 Backlog |
-| K8s/无影云部署 | 不改资源配置；bash 仍在原沙箱执行 |
+| 前端（frontend-v2）/移动端（mobile） | 第一阶段零运行时代码改动；诊断 UI 进 Backlog。`frontend/`（v1）是遗留迁移参考，任何 diff 触碰它即错误 |
+| 沙箱形态 | 执行面唯一生产形态是无影云（`SANDBOX_PROVIDER=wuying`）。docker/k8s provider 代码与 `k8s/` 部署文件为遗留冻结区：不修改、不删除、不为其新增 exposure 分支、不作为验收环境。无影拓扑（action server、隧道、relay、bootstrap）只允许 §12.4 明确列出的目录接口增量，bash 仍在无影桌面执行 |
 | 凭据 | 不进入 schema、目录、日志、Skill 或测试 fixture |
 | Skill 内容提示注入 | 仍是独立安全课题，见 Backlog |
 | learned router | 第一版不用额外模型/embedding 服务 |
@@ -991,7 +1159,8 @@ uv run pytest -q
 
 1. 保留当前 `resolve_step_tools()` 结果作为 full eligible catalogue；可在调用点稳定后重命名
    `resolve_eligible_tools`，但不要同时改变 permission 顺序；
-2. 建立 CatalogEntry / EligibleCatalog / ExposurePlan；
+2. 建立 CatalogEntry / EligibleCatalog / ExposurePlan（含 `plane` 字段与其构造校验，
+   §4.1/§2.7：native/host custom 为 platform，全部沙箱 MCP 为 sandbox）；
 3. legacy-eager planner 的 direct_ids = eligible IDs，保证行为不变；
 4. processor 分开接收 eligible catalogue、provider plan、execution lookup 与 executable IDs；
 5. `ctx.available_tools` 只从 executable IDs 构造；
@@ -1046,6 +1215,8 @@ uv run pytest -q
 - stable ordering；
 - eligible 包含 build 八工具，其他 agent 仍不含；
 - denied 工具不在 CatalogEntry；
+- 全部沙箱 MCP 条目 `plane == "sandbox"`；构造 `plane="sandbox"` 且 `pack` 非空或
+  `same_response_safe=True` 的条目在构造期 fail closed，错误信息不含远端 description；
 - legacy-eager plan 的 provider/executable IDs 与旧 resolver 完全相同；
 - Batch 精确猜一个 eligible 但未 executable 的名字会失败；
 - 顶层模型在没有 reveal 时 exact 猜 hidden 名、用不同大小写或近似名调用均失败，executor
@@ -1058,7 +1229,8 @@ uv run pytest -q
   executable 四层都不存在；exact/case/fuzzy/Batch 猜名均失败；
 - custom agent 显式 opt-in 的无副作用工具正常进入它自己的 catalogue，证明上一条
   不是靠禁用 custom tools 假绿；
-- skill project/global/container 加载前后 planner 输入输出完全相同。
+- skill 四来源（host project/global、沙箱 builtin/container）加载前后 planner
+  输入输出完全相同。
 - 构造 >40 个 MCP：denied canonical tool 的 exact search 返回 0，直接/模糊 call 均拒绝；
   未经 find/planner reveal 的 allowed tool 即使猜中 exact 名也不能 call；经 reveal 后可 call，
   且底层 authorize callback 收到 canonical ID 与参数；MCP refresh/generation 变化使旧
@@ -1096,7 +1268,9 @@ uv run pytest -q
    测试必须红；
 8. discovery evidence 删掉 session/account/agent/sandbox/run 任一 scope → 跨边界 replay
    executor-zero 测试必须红；
-9. 把 skill allowed_tools 接进 pack → 现有三来源反向锚点必须红。
+9. 把 skill allowed_tools 接进 pack → 现有四来源反向锚点必须红；
+10. 把任一沙箱 MCP 条目改标 `plane="platform"`，或删除 `plane` 构造校验 →
+    plane 边界与 pack 隔离测试必须红。
 
 ### 9.4 DoD
 
@@ -1124,7 +1298,7 @@ uv run pytest -q
 5. 同一 Alembic revision 增加确定的 `Session.tool_exposure_state` JSONB 和
    独立 `InternalPartORM` 表、回填/收紧 default，实现内部 part 专用读写通道与
    event + state 同事务原子更新；
-6. 实现 `ExposureSignals` collector；
+6. 实现 `ExposureSignals` collector（零隧道，铁律 12）；
 7. 条件化 system prompt；
 8. feature flag 对 build 开启 `portable`，其余 agent 先 shadow；
 9. MCP 继续使用 PR#2 已完成底层过滤/二次授权的 direct/meta 执行器并纳入总预算；禁止把
@@ -1180,7 +1354,10 @@ step N+1:
 - skill、普通 built-in、custom/MCP 工具伪造 `metadata.revealed_ids` 全部无效；只有保留 ID 的
   capability_search typed outcome 可提交，且必须同时校验 generation、eligible subset、
   per-step 聚合上限；
-- 并行/连续 2–N 次 search、重复 ID、超 5 ID/2K chars 均确定性截断，Batch 调 search 被拒绝。
+- 并行/连续 2–N 次 search、重复 ID、超 5 ID/2K chars 均确定性截断，Batch 调 search 被拒绝；
+- 用计数版 fake SandboxClient 断言：planner、预算器、`ExposureSignals` collector 与
+  `capability_search` 检索全程沙箱 HTTP 调用数为 0（目录数据只来自本 step 已有的
+  解析结果/投影）；工具执行路径不受此限制。
 
 ### 10.4 路由与 prompt 测试
 
@@ -1204,8 +1381,8 @@ step N+1:
 - resident / active budget 全绿；
 - 明确意图零额外 discovery step，模糊意图最多一个；
 - permission/Batch/skill 负向测试全绿；
-- browser §13.6–§13.13（A–H，含真实 portable discovery 成功路径）通过后才
-  允许扩大 portable 灰度。
+- browser §13.6–§13.13（A–H，含真实 portable discovery 成功路径）与 §13.15
+  （Browser J 首跑：无影自装 MCP 分层与断连恢复）通过后才允许扩大 portable 灰度。
 
 ---
 
@@ -1348,7 +1525,34 @@ sandbox 的 catalogue 不得串用。另用 fake clock 与受控 loader 验证�
 copy-on-read，按 Responses → LiteLLM 和 LiteLLM → Responses 两种顺序构建都不修改源
 schema，也不让一个 dialect 的修改污染另一个 dialect。
 
-### 12.4 DoD
+无影云补充：cache key 还必须纳入 §12.4 的执行面 boot 身份（action server
+`START_TIME` + hostname digest）与沙箱目录 generation——桌面重启或目录变化即失效。
+
+### 12.4 沙箱目录投影（无影云双平面适配的核心工程）
+
+现状是每 step 两次跨隧道全量拉取（`GET /mcp/tools`、`GET /skills`，§1.4）。本 PR 按
+"执行面发布、控制面订阅"改造为缓存投影：
+
+- `container/action_server.py` 为 `/skills` 与 `/mcp/tools` 增加目录 generation：对
+  当前目录内容（技能名/文件 digest、MCP server 连接集合与工具列表 hash）计算稳定
+  hash，经 `ETag` 返回并支持 `If-None-Match` → 304；另提供聚合
+  `GET /catalog/version`（skills generation + mcp generation + `START_TIME`）。
+  技能安装/删除、MCP add/remove/connect/disconnect、以及 server 端 `listChanged`
+  通知（对齐 opencode 的事件驱动刷新，server 支持时）都必须使 generation 变化；
+- backend 维持按 §12.3 cache key 隔离的投影缓存：每 step 至多一次条件请求（304 时
+  目录零字节），TTL 内可完全不请求；`START_TIME` 变化视为桌面/action server 重启，
+  强制全量刷新并 bump catalogue generation，旧 reveal 与 MCP discovery evidence 随
+  §12.2 规则失效；
+- 版本兼容：旧版 action server 响应无 `ETag` 头即判定不支持，退回现状全量拉取——
+  不崩溃、不缓存错误 generation。本项改动必须用
+  `python backend/scripts/wuying_deploy_action_server.py` 下发到桌面后才生效：
+  后端热重载不会更新桌面（坑 23），验收前先核对 `/alive` 的 uptime 已重置；
+- 投影只服务目录/规划；工具执行、skill 正文获取（`GET /skills/{name}`）仍实时打
+  隧道，语义不变；
+- 隧道断开时投影按最后一次成功快照继续服务 discovery（§2.1），执行期错误照常
+  上抛；断连不写长期 negative cache。
+
+### 12.5 DoD
 
 - 1/39/40/41/200 个大小不同的 MCP 工具均按 bytes 而非数量做正确选择；
 - 大目录 initial model-visible/portable wire 仍在 32K cap，native catalogue wire ≤128K；
@@ -1366,9 +1570,13 @@ schema，也不让一个 dialect 的修改污染另一个 dialect。
   授权读取的配对 tool result 含 sentinel，且仍受通用 output 截断预算；
 - catalogue/schema cache 的 fake-clock、N 并发 singleflight、瞬时失败立即恢复、TTL 到期
   单次重建、跨 dialect 双向 copy-on-read 测试通过；
+- 目录投影生效：同 generation 连续 step 的沙箱目录传输为 304/零目录字节，目录变化后
+  恰好一次全量刷新；旧版 action server（无 ETag fixture）自动退回全量拉取且行为等价；
+  `START_TIME` 变化触发投影、reveal 与 discovery evidence 联动失效；隧道断开期间
+  discovery 仍用最后投影服务，执行报清晰错误，重连后已 revealed 工具无需重新发现；
 - skill 目录无论多少项都严格受总预算；
-- 全量与 Browser A–H 必过；Browser I 只对已进入 native allowlist 的
-  endpoint + model + account 组合必过，无 entitlement 不阻断 provider-neutral PR#5。
+- 全量与 Browser A–H 必过、Browser J 复跑必过；Browser I 只对已进入 native allowlist
+  的 endpoint + model + account 组合必过，无 entitlement 不阻断 provider-neutral PR#5。
 
 ---
 
@@ -1401,12 +1609,15 @@ git ls-files --others --exclude-standard
 - `test_session_internal_parts.py`
 - `test_tool_exposure_migration.py`
 
-保留现有：skill 三来源不变式、agent registry、自定义空白名单、schema 规范化、Batch 安全、
-call-id compatibility、视频付费/审批/幂等测试。
+保留现有：skill 来源不变式（现有三来源测试保留，PR#2 扩为四来源，§2.2）、agent
+registry、自定义空白名单、schema 规范化、Batch 安全、call-id compatibility、视频
+付费/审批/幂等测试。
 
 每个 PR 都必须人工审查上述 diff/status/untracked 输出：本计划默认不改
-`frontend-v2/src`、`frontend/src`、`mobile/lib`、K8s/部署文件、真实 `openbox.json`
-或 `docs/LOCAL_CREDENTIALS.md`。若任务明确扩展到前端，还要运行 `npm run check --prefix
+`frontend-v2/src`、`mobile/lib`、遗留 `frontend/`（v1 迁移参考，任何触碰即错误）、
+`k8s/` 与 docker/k8s sandbox provider、真实 `openbox.json` 或
+`docs/LOCAL_CREDENTIALS.md`；`container/action_server.py` 只有 PR#5 §12.4 的目录
+接口增量允许改动。若任务明确扩展到前端，还要运行 `npm run check --prefix
 frontend-v2`（已包含 Vitest）；若明确修改移动端，运行 `cd mobile && dart
 analyze`。本地凭据、测试用 signed URL 和真实 API key 不得出现在 diff 或 fixture。
 
@@ -1443,7 +1654,8 @@ analyze`。本地凭据、测试用 signed URL 和真实 API key 不得出现在
   `read_resource` tool result 可包含经截断的正文；
 - 同一 step/response 多次 search/reference 合计仍受 2 次搜索、5 个 unique ID、2K
   result hard cap，不能分批枚举目录；
-- project/global/container 恶意 Skill 加载前后完整 exposure plan 相同；
+- 四来源（host project/global、沙箱 builtin/container）恶意 Skill 加载前后完整
+  exposure plan 相同；
 - custom child agent 省略 tools、默认 mode=all 且真正由 Task 启动时，无法发现/
   物化/执行 `BUILD_ONLY_WORKFLOW_TOOLS` 任一项或 `plan_exit`；exact/fuzzy/Batch 均失败。
 
@@ -1480,20 +1692,31 @@ analyze`。本地凭据、测试用 signed URL 和真实 API key 不得出现在
     `read_resource` 权限直接返回正文 → secret-sentinel 隔离测试红；
 17. 删除 catalogue singleflight、永久缓存瞬时失败、TTL 后重复并发重建，或返回可共享
     修改的 schema cache 对象 → 并发计数、失败恢复、fake-clock 与跨 dialect source
-    immutable 测试红。
+    immutable 测试红；
+18. 把任一 `plane="sandbox"` 条目放进 deterministic pack/resident core，或让远端
+    description 未经清洗截断直接成为 discovery_hint → plane 边界与 hint 清洗测试红；
+19. 隧道断开/健康检查失败时收缩 eligible、清空投影或清除 reveal state → 断连恢复
+    测试（§10.3、Browser J 步骤 4）红。
 
 ### 13.5 Browser 环境与零费用前置
 
-1. 确认 Docker 数据库 `openbox-postgres-1` 运行；
-2. 后端用 `uv run --directory backend python scripts/backend_entrypoint.py --reload
+1. 确认 Docker 数据库 `openbox-postgres-1` 运行（docker 只剩本地依赖，没有 docker
+   沙箱）；
+2. 无影隧道就绪：`backend/scripts/wuying_tunnel.sh` 常驻运行，
+   `curl http://127.0.0.1:18000/alive` 返回 `status:ok` 且 hostname 是目标桌面；
+   `WUYING_API_KEY` 只存在于 gitignored 的 `backend/.env`，禁止出现在 diff/日志；
+3. 后端用 `uv run --directory backend python scripts/backend_entrypoint.py --reload
    --host 0.0.0.0 --port 8080` 启动；
-3. 前端用 `npm run dev --prefix frontend-v2` 启动，打开 `http://localhost:3000`；
-4. 使用 `qa_jobs` 测试账号，密码只从 gitignored 的
+4. 前端用 `npm run dev --prefix frontend-v2` 启动，打开 `http://localhost:3000`；
+5. 使用 `qa_jobs` 测试账号，密码只从 gitignored 的
    `docs/LOCAL_CREDENTIALS.md` 读取，禁止抄入日志、截图说明、文档或 commit；
-5. fallback、断流、重试和 paid-action 默认用 loopback/fake provider 验证。除非当次
+6. fallback、断流、重试和 paid-action 默认用 loopback/fake provider 验证。除非当次
    得到新的用户确认，不向真实付费供应商提交生成任务；
-6. Python 热重载不等于重读 config、Skill、custom tool 和 provider capability cache。
-   验收重启/续接时要明确停止旧进程并验证新 PID。
+7. 热重载盲区有两层：backend `--reload` 只看 `.py`（改 config/skill/locale 必须
+   重启后端并核对新 PID）；桌面上的 action server 完全不随后端重启更新——凡改
+   `container/*` 必须跑 `python backend/scripts/wuying_deploy_action_server.py`
+   下发，并用 `/alive` 的 uptime 重置确认生效。桌面重启后 dev-browser 需重新
+   Enable（涉浏览器自动化场景时）。
 
 ### 13.6 Browser A：通用编码只用 core
 
@@ -1591,7 +1814,29 @@ call 收到同 ID blocked result、可原序重放、无 `_noop`，且 executor 
 如果测试账号没有原生能力，结论是“native rollout 被阻断，继续 portable”，不得用
 mock 成功、字段被服务端接受或 Browser G fallback 代替这条真实证据。
 
-### 13.15 真实日志核对
+### 13.15 Browser J：无影云用户自装 MCP 分层与断连恢复
+
+验证“用户装进无影云的能力”走且只走 discovery 层——这是 §2.7 分层的端到端证据。
+PR#3 后首跑（发现与断连语义），PR#5 后复跑（投影 generation 语义）。
+
+1. 经技能中心/API 在无影桌面安装一个无副作用 MCP server（推荐 `skill/catalog.py`
+   目录里的 `everything` 或 `memory`，或本地 echo server；需含名字唯一可辨识的
+   工具）；
+2. 新会话发一个普通编码请求：首轮 provider wire 与所有 deterministic pack 中不得
+   出现该 MCP 任何工具的名称、unique description 或参数 marker；
+3. 再请求“找到能〈该工具功能〉的能力并使用一次”（不说工具名）：模型经
+   `capability_search`（大目录下为 `mcp_find_tool`）发现 → 下一 step typed/meta
+   调用经隧道执行恰好一次；canonical ID 为 `mcp:v2:` 形态，authorize callback 收到
+   底层 ID 与真实参数；
+4. 停掉 `wuying_tunnel.sh` 后同会话再调用一次：执行返回清晰的沙箱不可达错误，
+   目录/资格不缩水、无 fallback 重试造成的第二次执行；重启隧道后同一 reveal 直接
+   可用，无需重新搜索；
+5. PR#5 复跑时另验：TTL 内连续 step 沙箱目录传输为 304/零字节；卸载该 MCP server
+   后 generation 变化、旧 reveal 失效、exact 搜索返回 0；
+6. 对该 server 的一个工具加 deny 规则：目录、搜索、logs/metrics 全程零泄漏；
+7. 验收后卸载测试 server 与 deny 规则，桌面不留残留配置。
+
+### 13.16 真实日志核对
 
 每个场景记录：
 
@@ -1673,7 +1918,7 @@ portable 本身也故障时，且运维已显式设置 `allow_emergency_eager=tr
 
 ### 14.5 清理时机
 
-portable 稳定两周且 Browser A–H 重复通过后，才删除 portable 对应的 shadow
+portable 稳定两周且 Browser A–H+J 重复通过后，才删除 portable 对应的 shadow
 compat 分支。某个 native adapter 还必须另外满足 §14.3 并通过 Browser I，才能清理
 它的 native shadow/compat。`emergency_eager` 保留一个发布周期。任何清理不得删除
 permission 双重检查。
@@ -1698,6 +1943,11 @@ permission 双重检查。
 | prompt | 与 ExposurePlan 同源、条件化；不得命令模型调用隐藏工具 |
 | budget | portable/native resident ≤24K chars、active ≤32K、单包 ≤12K；native/legacy/emergency wire ≤128K |
 | 回退 | pre-stream unsupported 最多一次；partial stream 后绝不重放 |
+| 内置 vs 无影自装 | 平台面（native/host custom）可进 core/pack/prompt fragment；沙箱面（全部 MCP、四来源技能）只经 discovery，恒非 same-response-safe（§2.7） |
+| 技能来源 | host project/global + 沙箱 builtin/container 四来源一律零能力语义；沙箱预置技能落盘即按不可信数据处理 |
+| 沙箱目录获取 | 缓存投影 + generation/ETag 条件请求（PR#5 §12.4）；规划期零隧道调用（铁律 12） |
+| 沙箱形态 | 执行面唯一生产形态为无影云；docker/k8s provider 冻结，不写 exposure 分支 |
+| 隧道断开 | 只是执行期错误；不缩资格目录、不清 reveal、重连免重新发现 |
 
 再次固定：原解耦计划的“工具恒定注册”继续成立；“完整 schema 每轮恒定发送”不再是目标。
 
@@ -1743,6 +1993,26 @@ permission 双重检查。
     事件重建，不能丢并发更新或保留已删分支的能力可见性。
 21. **Native blocked call 也要闭环。** `same_response_safe=False` 不等于丢弃 tool call；
     必须用同 call ID 的无副作用 blocked result 闭合历史。
+22. **每步隧道目录拉取是现状。** `merge_sandbox_tools` / `attach_skill_listing` 每
+    step 各打一次隧道（`GET /skills` 裁剪前曾实测 55KB/step）。PR#5 之前这是既有
+    行为——PR#0–#3 不要顺手改它，否则行为等价性验收失真；也不要把它误当模型
+    token 成本（它是 backend↔沙箱 wire 成本）。
+23. **执行面部署盲区。** `container/action_server.py` 跑在桌面上，后端重启/热重载
+    不会更新它；改动必须 `wuying_deploy_action_server.py` 下发，且下发前后新旧版本
+    会共存——一切协议增量（ETag/generation）必须先探测再使用、无头时优雅退回。
+24. **共享单桌面。** 所有会话共用一台无影桌面：`/data/skills`、`/data/mcp/config.json`
+    是全局状态，且可被沙箱内任意执行（包括 agent 自己跑的 bash）改写。目录投影与
+    审批按 user key 隔离缓存，但"装了什么"事实上全局；absolute path 可逃逸 session
+    工作目录。多租户上线前必须 revisit（Backlog 11）。
+25. **TUN 代理与 trust_env。** 沙箱 HTTP 客户端 `trust_env=False` 不可回退；新增的
+    目录投影/健康检查客户端同样必须显式关闭代理继承，否则被 TUN 级代理劫持后表现
+    为"端口开着但请求挂死"（WUYING_SANDBOX.md 排障节）。
+26. **桌面重启的连带效应。** systemd 自动拉起 action server 并 `reconnect_configured()`
+    重连 MCP（工具集可能变化）、dev-browser 不自启、`START_TIME` 重置。`START_TIME`
+    是唯一可靠的重启信号，必须进目录 generation 与 evidence 失效链。
+27. **config 默认值陷阱。** `sandbox_provider` 代码默认仍是 `docker`；一切验收环境
+    必须显式 `SANDBOX_PROVIDER=wuying`。不要因为本地 fixture 用 fake sandbox 就误以
+    为 docker 路径被测试覆盖——它是冻结区，不是回归目标。
 
 ---
 
@@ -1755,5 +2025,12 @@ permission 双重检查。
 5. 前端“本轮工具为何可见/未可见”诊断 UI；
 6. 用户可配置的工具 pin/favorite；
 7. 跨会话共享 reveal（当前明确禁止）；
-8. 将低风险 MCP 工具编译成 provider code execution callable；
-9. 自动根据 provider 实际 tokenizer 调整 chars 预算——在稳定、可测试前仍以 chars 为硬门。
+8. 将低风险 MCP 工具编译成 provider code execution callable（对照 codex/opencode 的
+   Code Mode"折叠"范式，需先解决 typed 验证/审批/UI 的等价物）；
+9. 自动根据 provider 实际 tokenizer 调整 chars 预算——在稳定、可测试前仍以 chars 为硬门；
+10. backend 直连"平台托管 MCP"平面：可信 MCP 进入 deterministic pack 的前提工程
+    （独立注册通道 + 管理员审计，不复用沙箱 MCP 默认信任，§2.7 第 4 条）；
+11. 无影多租户隔离：per-user 桌面或 action server 路径约束，对齐
+    `docs/MULTI_USER_STORAGE_PLAN.md`；在此之前共享桌面按单租户运营（坑 24）；
+12. 目录投影的事件推送升级：action server 主动推送 skills/MCP `listChanged`，替代
+    §12.4 的条件请求轮询。

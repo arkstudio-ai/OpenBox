@@ -111,6 +111,10 @@ sealed class MessagePart {
           status: asString(json['status']) ?? '',
           errorCode: asString(json['errorCode']),
           summary: asString(json['summary']) ?? '',
+          artifacts: asList(json['artifacts'])
+              .whereType<Map<String, dynamic>>()
+              .map(SkillJobArtifact.fromJson)
+              .toList(),
         );
       default:
         return UnknownPart(id: id, rawType: asString(json['type']) ?? '', raw: json);
@@ -404,8 +408,7 @@ class TodoPart extends MessagePart {
   String get type => 'todo';
 }
 
-/// Platform-written receipt for a finished background skill job (web
-/// `SkillJobPart`, backend `models/message.py`).
+/// Historical platform-written receipt retained for old transcript rendering.
 class SkillJobPart extends MessagePart {
   const SkillJobPart({
     required super.id,
@@ -415,6 +418,7 @@ class SkillJobPart extends MessagePart {
     required this.status,
     this.errorCode,
     this.summary = '',
+    this.artifacts = const [],
   });
 
   final String jobId;
@@ -423,9 +427,28 @@ class SkillJobPart extends MessagePart {
   final String status;
   final String? errorCode;
   final String summary;
+  final List<SkillJobArtifact> artifacts;
 
   @override
   String get type => 'skill_job';
+}
+
+/// Small, durable artifact envelope embedded in historical skill-job receipts.
+/// Fields are tolerant because receipts written before the envelope existed
+/// omit it, and a partial old row should still render an unavailable fallback.
+class SkillJobArtifact {
+  const SkillJobArtifact({this.assetId = '', this.name = '', this.mime});
+
+  final String assetId;
+  final String name;
+  final String? mime;
+
+  factory SkillJobArtifact.fromJson(Map<String, dynamic> json) =>
+      SkillJobArtifact(
+        assetId: asString(json['assetId']) ?? '',
+        name: asString(json['name']) ?? '',
+        mime: asString(json['mime']),
+      );
 }
 
 class UnknownPart extends MessagePart {

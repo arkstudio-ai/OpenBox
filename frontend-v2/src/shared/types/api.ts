@@ -172,19 +172,18 @@ export interface TodoPart {
   source?: "model" | "user"
 }
 
-/** Platform-written receipt for a finished background skill job (§8.3 of the
- *  skill runtime plan). Zero-token: the backend inserts it, no model runs. */
+/** Historical platform-written receipt retained for old transcript rendering. */
 export interface SkillJobPart {
   type: "skill_job"
   id: string
-  jobId: string
-  skillKey: string
-  operation: string
-  status: string
+  jobId?: string
+  skillKey?: string
+  operation?: string
+  status?: string
   errorCode?: string | null
   summary?: string
   /** Output files the job produced, embedded so the transcript keeps them. */
-  artifacts?: { assetId: string; name: string; mime?: string }[]
+  artifacts?: { assetId?: string; name?: string; mime?: string }[]
 }
 
 export type MessagePart =

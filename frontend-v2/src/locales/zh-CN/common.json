@@ -30,6 +30,7 @@
     "running": "运行中",
     "done": "已完成",
     "error": "出错了",
+    "unavailable": "暂不可用",
     "connecting": "连接中…",
     "offline": "连接已断开，正在重连…"
   },

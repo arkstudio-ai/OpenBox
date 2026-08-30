@@ -1,44 +1,7 @@
 {
-  "dock": {
-    "title": "Background jobs"
-  },
   "status": {
-    "queued": "Queued",
-    "running": "Running",
-    "waiting_external": "Waiting on external service",
-    "waiting_user": "Waiting for your answer",
-    "waiting_agent": "Waiting for the assistant",
-    "retry_scheduled": "Retrying soon",
     "succeeded": "Completed",
     "failed": "Failed",
     "cancelled": "Cancelled"
-  },
-  "card": {
-    "cancel": "Cancel job",
-    "cancelling": "Cancelling…",
-    "answerPlaceholder": "Type your answer…",
-    "answerSend": "Send"
-  },
-  "skill": {
-    "demo-echo": {
-      "phase": {
-        "waiting_provider": "Waiting for generation",
-        "waiting_answer": "Waiting for answer",
-        "delivering": "Delivering result"
-      }
-    },
-    "video-production": {
-      "phase": {
-        "preparing": "Preparing submission",
-        "provider_generate": "Provider generating",
-        "asset_publish": "Publishing output",
-        "extract_audio": "Extracting audio on WUYING",
-        "speech_to_text": "Speech-to-text QA",
-        "rendering": "Rendering on WUYING"
-      }
-    }
-  },
-  "artifact": {
-    "unavailable": "unavailable"
   }
 }

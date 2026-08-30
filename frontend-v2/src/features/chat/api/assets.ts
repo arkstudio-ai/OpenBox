@@ -52,6 +52,6 @@ export function putToOss(
   })
 }
 
-// Moved to shared/api/assets so the jobs feature can surface produced files
-// too; re-exported here so chat's existing call sites keep their import.
+// Re-export the shared transport hook so chat call sites keep one asset URL
+// resolver, including historical receipt previews.
 export { useAssetUrl } from "@/shared/api/assets"

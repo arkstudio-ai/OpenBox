@@ -8,7 +8,6 @@ import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
-import '../features/jobs/widgets/skill_jobs_dock.dart';
 import '../features/landing/landing_page.dart';
 import '../features/resources/resources_screen.dart';
 import '../features/resources/utils/upload_flow.dart';
@@ -132,7 +131,6 @@ class _ChatRoute extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => ChatScreen(
         sessionId: sessionId,
         resources: _resourceSlot(ref),
-        jobsDock: SkillJobsDock(sessionId: sessionId),
       );
 }
 

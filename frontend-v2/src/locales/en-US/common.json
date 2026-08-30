@@ -30,6 +30,7 @@
     "running": "Running",
     "done": "Done",
     "error": "Something went wrong",
+    "unavailable": "Unavailable",
     "connecting": "Connecting…",
     "offline": "Connection lost — reconnecting…"
   },

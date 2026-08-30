@@ -1,44 +1,7 @@
 {
-  "dock": {
-    "title": "后台任务"
-  },
   "status": {
-    "queued": "排队中",
-    "running": "执行中",
-    "waiting_external": "等待外部服务",
-    "waiting_user": "等待你的回答",
-    "waiting_agent": "等待助手接手",
-    "retry_scheduled": "稍后重试",
     "succeeded": "已完成",
     "failed": "失败",
     "cancelled": "已取消"
-  },
-  "card": {
-    "cancel": "取消任务",
-    "cancelling": "正在取消…",
-    "answerPlaceholder": "输入回答…",
-    "answerSend": "发送"
-  },
-  "skill": {
-    "demo-echo": {
-      "phase": {
-        "waiting_provider": "等待生成",
-        "waiting_answer": "等待回答",
-        "delivering": "交付结果"
-      }
-    },
-    "video-production": {
-      "phase": {
-        "preparing": "准备提交",
-        "provider_generate": "供应商生成中",
-        "asset_publish": "结果入库",
-        "extract_audio": "无影提取音频",
-        "speech_to_text": "语音转写质检",
-        "rendering": "无影渲染中"
-      }
-    }
-  },
-  "artifact": {
-    "unavailable": "暂不可用"
   }
 }

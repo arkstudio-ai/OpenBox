@@ -257,7 +257,7 @@ npm run dev
 
 ## Skill Job Runtime 阶段（2026-08-28）
 
-按 `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`（v2）实施，一次性落地 PR#0–17：
+按 `docs/archive/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`（v2，现已归档）实施，一次性落地 PR#0–17：
 
 - **止血**（`video/job_recovery.py`）：滞留视频 finalize 的启动恢复 + cron piggyback 补扫；上线首日即在 dev 库发现并安全处理两个 8/27 遗留任务。
 - **通用 Runtime**（`backend/skill_runtime/`）：九态状态机、七张表（PG 实测 migration `a2c4e6f8b0d1`）、幂等接纳（服务端从 tool_call 派生默认键）、条件 UPDATE claim + fencing token、七种 Outcome 结算、transactional outbox、Reconciler（lease 回收/外部到期/deadline）、独立 worker 角色（compose + k8s 清单）与开发 embedded 模式（单用户模式初始化 `.openbox/skill_jobs.db`）。
@@ -328,3 +328,47 @@ npm run dev
 **验收**：浏览器内选 Wan 3.0 → 三道审批 → `skill_job segment.generate` → succeeded，`video_job.model=wan3.0-video`、`provider_task_id` 为 sd2 的 `task_` 前缀、产物 42MB / 1920×1080 / 5.04s 落入 OSS，Job Card 与终态回执正常渲染。
 
 **已知缺口**：产品没有非口播路径。`video_generate` 与 skill handler 都强制要求 `production_id`+`segment_id`，而 prompt lint 无条件要求固定镜头/中景/手势/语气/无字幕，并要求各段台词拼接后逐字等于已批准脚本。「给我来个 5 秒空镜头」目前不可行——是否加非口播模式属产品决策，未擅自实现。
+
+---
+
+## 直连路径清理（2026-08-30）
+
+两天灰度证明通用 SkillJob 九态运行时的复杂度和运维成本高于当前产品收益，视频写路径
+重新收敛到 `.openbox/skills/video-production` 加三个直连工具。移除实现见 `4d93463`，
+Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿已移入
+`docs/archive/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md` 并加墓碑，不能再作为实施依据。
+
+### 清理与兼容
+
+- 物理删除 runtime、worker、七表 ORM、API、通用 `skill_job` 工具、内置 demo/视频包，
+  同步移除 Compose/Kubernetes worker 和所有 Agent/Session/WS/config 接线。
+- 删表迁移先把旧 `skill_job_artifacts` 中仍是唯一事实源的 output 映射回填到历史
+  `SkillJobPart.artifacts`；36 条回执全部保留，可打开产物的回执由 5 条增至 7 条。
+- 保留历史 `sjr:` 回执命名空间；随 `session_inbox` 一并释放已无生产者的 `sji:`
+  continuation 索引与客户端前缀限制。
+- Web/Mobile 删除 live job dock/card/API/WS，历史回执继续只凭 message part 渲染，并补齐
+  视频、图片、普通文件预览及 unknown/missing/unavailable 回退。
+- 部署入口会在迁移前停止旧 Compose worker；Kubernetes 使用 `make k8s-apply` 或
+  `make k8s-apply-aks`，先删除旧 Deployment 再应用清单，避免 orphan worker 与 DDL 竞态。
+
+### 直连恢复契约
+
+- `video_generate wait` 以 25 秒为硬上限，供应商超时和 OSS 收尾超时返回带
+  `version`、`still_running`、`timed_out` 的事实快照；后台收尾 task 按 job 去重并受
+  shield 保护，`finalizing` 不再快速空转。
+- `video_project status` 返回审批 scope/decision/hash 是否匹配、剩余付费调用预算、
+  每段冻结模型与生成 job、生成/转写/合成幂等键；当前 hash 上的拒绝证据与批准 gate
+  分开表达。
+
+### 验证
+
+- PostgreSQL 在快照保护下实跑 `upgrade → downgrade → upgrade`：七表删除、44 列主表/
+  23 个索引/全部约束完整回滚、再删除均通过，历史回执回填保持幂等。
+- 后端 `894 passed`；Web `174 passed`、TypeScript/i18n 通过；Mobile analyze 与 4 项
+  Flutter 测试通过。全量 ESLint 仍仅有 `content-view.ts` 两个既有复杂度错误，无新增。
+- 两项变异验证分别删除 `public_message` 分支与恢复快照预算字段，锚点测试均按预期失败，
+  恢复实现后重新通过。
+- 浏览器 A/B 已用 `qa_jobs` 实测通过：历史会话的 3 条视频回执均可加载且无 live job UI；
+  零花费新会话在同一回合直连完成 create/set_script/request_approval/status，最终停在
+  `needs_script_approval`，数据库确认 segments/jobs/approvals 均为 0，控制台无
+  warning/error。付费恢复力场景 C 仍需另行确认预算。

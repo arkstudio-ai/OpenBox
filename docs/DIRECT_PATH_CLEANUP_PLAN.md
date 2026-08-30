@@ -31,7 +31,7 @@
 
 | 事项 | 事实 |
 |---|---|
-| 后端启动 | `uv run --directory backend python scripts/backend_entrypoint.py --reload --host 0.0.0.0 --port 8000`（先跑 alembic 再起 uvicorn） |
+| 后端启动 | `uv run --directory backend python scripts/backend_entrypoint.py --reload --host 0.0.0.0 --port 8080`（先跑 alembic 再起 uvicorn；与 `frontend-v2/vite.config.ts` 代理目标一致） |
 | 前端启动 | `npm run dev --prefix frontend-v2`（端口 3000） |
 | 数据库 | Docker 容器 `openbox-postgres-1`（postgres:16-alpine，5432）。**宿主机没有 pg_dump**（实测 command not found），一切 pg 工具用 `docker exec openbox-postgres-1 ...` |
 | 后端配置 | `backend/openbox.json`（**gitignored**，本机真实配置）+ `backend/.env`；模板是 `openbox.jsonc.example` |
@@ -56,7 +56,8 @@
 ## 1. 背景：为什么删（执行时的判断依据）
 
 耐久运行时是 2026-08-28 落地的九态作业状态机（租约/fencing/outbox/reconciler/
-session_inbox 唤醒链，设计底稿见 `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`）。
+session_inbox 唤醒链，历史设计底稿见
+`docs/archive/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`）。
 灰度两天暴露成批缺陷（无界拨号循环、失败通知漏 3/4 条死法、operator-only 停靠在无
 admin 账号的部署死锁、取消不唤醒停靠），2026-08-30 用户决定禁用，视频制作回归直连
 路径：agent 按 `.openbox/skills/video-production/SKILL.md` 直接调 `video_generate` /
@@ -302,23 +303,31 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 
 ## 7. 浏览器验收场景（PR#2 后跑 A/B，PR#3 后跑 C）
 
-前置：后端（8000）与前端（3000）都在跑；用 `qa_jobs` 登录，
+前置：后端（8080）与前端（3000）都在跑；用 `qa_jobs` 登录，
 密码见 `docs/LOCAL_CREDENTIALS.md`（该文件 gitignored，只在本机）。
 
 - **A 历史回执**：打开
   `http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8`（"魔仙堡"会话，
   含耐久时代的回执与已取消作业记录）。验收：聊天流中回执 chip 正常渲染；
   **不再出现**"后台任务"区块；浏览器控制台零报错。
+  **2026-08-30 实测通过**：3 条 `video-production · segment.generate` 回执均显示完成，
+  3 个视频均加载到 `readyState=4`（约 5.04 秒、默认静音、带播放控件）；"后台任务"
+  零命中，控制台无 warning/error。
 - **B 直连全流程（零花费）**：新会话发送——"使用视频制作技能：创建一个竖屏测试项目，
   主题《清理验收》，写好完整台词并发起剧本审批。做到剧本审批为止，不要设计分段，
   不要生成任何视频。"验收：技能加载、`video_project` create/set_script/
   request_approval 全部**回合内直连**工具调用；剧本审批卡弹出；点"跳过"收尾；
   全程无作业卡。（注意：模型可能中途结束回合，任务清单显示"已中断"属正常，
   发"继续"即恢复——这是 todo 生命周期的既有行为，不是 bug。）
+  **2026-08-30 实测通过**：会话 `session_7YBYQDX9GZ3DY2PN5NBCZE5VTX` 在同一回合
+  完成 skill load 与 `video_project` create/set_script/request_approval/status；审批卡弹出并
+  以"跳过"收尾。项目 `production_01M18J3HFP297ZMKWX0DMYXZN8` 最终为
+  `needs_script_approval`，数据库复核 segments/jobs/approvals 均为 0；无 live job UI、
+  `skill_job`、`video_generate` 或 `segment.generate`，控制台无 warning/error。
 - **C 恢复力**：场景 B 走到审批卡后批准并继续到某一段 `wait` 期间，重启后端进程，
   然后发"继续"。验收：agent 调 `status` 重建事实并接续，不重复提交（幂等键拒绝
   同键不同哈希）。⚠️ 此场景会产生**真实付费生成**——执行前向用户确认预算；
-  用户此前接受过小额测试花费，但每次都要重新确认。
+  用户此前接受过小额测试花费，但每次都要重新确认。**本轮尚未执行，等待单独预算授权。**
 
 ---
 
@@ -347,6 +356,5 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
    等产品需要"关页面也继续"再立项，按"一根线"而非"一个运行时"评估。
 2. v1 前端淘汰（用户另行处理）。
 3. `qa_jobs` 测试账号清理（其密码曾出现在对话记录；环境对外前删号或改密）。
-4. `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md` 移入 `docs/archive/` 加墓碑头——
-   这是 **PR#4**：全部删除完成后执行，墓碑注明移除 commit 与本文件路径，并跑
-   `grep -rn "REBUILD_PLAN" --include='*.md' docs/ backend/` 清死链，DEVLOG 记一条。
+4. ~~将旧运行时规划移入 `docs/archive/` 并加墓碑头。~~ 已在 **PR#4** 完成；墓碑
+   指向移除提交 `4d93463` 与本文件，所有现行引用均改为归档路径。

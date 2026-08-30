@@ -1,214 +1,347 @@
-# 直连路径清理与强化规划
+# 直连路径清理与强化——执行手册
 
-> 文档状态：Execution Plan v1（2026-08-30）<br>
-> 前置决定：耐久 SkillJob 运行时已于 2026-08-30 禁用（`1d453a0`），视频制作回归
-> `.openbox/skills/video-production` 直连流程。本文把"禁用"推进到"移除"，并把省下的
-> 力气投到工具层契约上。<br>
-> 设计哲学（本轮讨论定稿）：**薄 agent + 硬工具**。状态由工具提供者管控且只有一份；
-> LLM 凭 `status` 重建事实并自由决策；平台不做编排。恢复 = 用户再说一句话；
-> 付费安全 = 服务端幂等键。codex（`unified_exec` yield/poll）与 Claude Code
-> （后台进程 + 唤醒会话）均为此形态的实证，无一家构建耐久作业状态机。
+> 文档状态：Execution Handbook v2（2026-08-30）<br>
+> **本文件是执行助手的第一准则。** 你（执行者）没有参与前期讨论，本文即全部上下文；
+> 按顺序执行，不要引入本文之外的目标。行号以 commit `1649310` 为基准，动手前先用
+> grep 复核（行号会漂移，符号名不会）。<br>
+> 决策规则：本文已对所有已知分歧给出定论（§5）。遇到本文未覆盖且影响范围超过单文件
+> 的新情况：**停下来向用户报告**，不要自行发挥。
 
-## 0. 结论先行
+---
 
-耐久运行时禁用后，仓库里留着约 **1.2 万行**只为它存在的代码：运行时本体 6,179 行、
-内置技能 2,010 行、API/工具 553 行、七张表与模型 319 行、专属测试 2,484+ 行（137 个
-用例）、前端与移动端作业卡组件约 900 行。这些代码有测试守着、有配置门控着，但没有
-任何调用者——它们现在唯一的产出是维护成本和"两套控制面"的认知负担。
+## 0. 执行者须知（先读完再动手）
 
-本规划分两个里程碑：**M1 移除**（四个 PR，把死代码、死表、死配置清干净，历史数据的
-回执渲染保留）；**M2 强化**（把移除中发现的契约缺口补在工具层：错误公开声明、
-等待语义统一、status 完整性）。M2 不是可选项——移除会切断两条仍有价值的线
-（材料错误指引文本、有界重试语义），必须在同一批工作里落回直连工具，否则是净退化。
+### 0.1 你要做什么
 
-## 1. 范围与不动区
+删除已退役的"耐久 SkillJob 后台任务运行时"约 1.2 万行死代码（M1，四个 PR），
+并把两条仍有价值的契约迁回直连工具层（M2）。运行时已于 2026-08-30 用配置开关禁用
+（commit `1d453a0`），当前没有任何调用者；本手册把"禁用"推进到"移除"。
 
-**明确不碰**（防误删清单）：
+### 0.2 必读文件（按序）
+
+1. 本文件全文；
+2. `frontend-v2/docs/ENGINEERING_SPEC.md` —— 前端规范。最常踩的条款：
+   §4.1 features 之间禁止互相 import、§4.2 由 routes 接线、§6.1 行数分级门禁、
+   §9.4 逻辑属性（`ms-`/`me-`，不用 `ml-`/`mr-`）；
+3. `mobile/README.md` —— 移动端规范（单文件 800 行门禁；locale 与 web 逐字节同步）；
+4. `backend/.openbox/skills/video-production/SKILL.md` —— 现行直连流程（保留区，读懂它
+   才知道哪些是"活"代码）。
+
+### 0.3 环境地图（实测事实，非猜测）
+
+| 事项 | 事实 |
+|---|---|
+| 后端启动 | `uv run --directory backend python scripts/backend_entrypoint.py --reload --host 0.0.0.0 --port 8000`（先跑 alembic 再起 uvicorn） |
+| 前端启动 | `npm run dev --prefix frontend-v2`（端口 3000） |
+| 数据库 | Docker 容器 `openbox-postgres-1`（postgres:16-alpine，5432）。**宿主机没有 pg_dump**（实测 command not found），一切 pg 工具用 `docker exec openbox-postgres-1 ...` |
+| 后端配置 | `backend/openbox.json`（**gitignored**，本机真实配置）+ `backend/.env`；模板是 `openbox.jsonc.example` |
+| WUYING 沙箱 | `.env` 指向生产桌面（隧道 `127.0.0.1:18000`）；`.env.wuying-dev` 指向 dev 桌面（18001，**已过期不可用**）。隧道脚本 `backend/scripts/wuying_dev.sh` |
+| 热重载盲区 | `uvicorn --reload` 只看 `.py`；改 `openbox.json` / `skill.yaml` / locale 必须手动重启后端 |
+| 测试基线 | 后端 `cd backend && uv run pytest -q` → **1016 passed**；前端 `npm run test`（vitest，182 例）、`npm run check`（含 tsc）、`npm run lint`（**存在 2 个既有错误**，均在 `content-view.ts`，圈复杂度 27/50——不是你造成的，也不许新增）；移动端 `cd mobile && dart analyze` 零问题 |
+| 浏览器验收账号 | 用户账号 `qa_jobs`（凭据向用户索取，勿写入任何文件）；历史数据验收会话：`http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8` |
+| 提交规范 | 中文 commit message、`类型(范围): 摘要` + 正文讲清 why；每个 PR 单独提交并 push `origin main` |
+
+### 0.4 铁律
+
+1. **绝不重新开启** `skill_jobs_enabled` / `skill_jobs_video_write`（删除它们正是任务之一）。
+2. **v1 前端（仓库根 `frontend/` 目录，若存在）完全不碰**——用户明示另行处理。
+3. 不动区清单（§2）里的任何文件被你的改动波及，先停下核对本文，再动。
+4. 破坏性操作（drop 表）前必须完成 §3.4 的快照步骤。
+5. 每个 PR 的 Definition of Done（§6）全绿才允许提交；浏览器验收不可跳过——
+   本仓库的规矩是"不信代码测试"。
+
+---
+
+## 1. 背景：为什么删（执行时的判断依据）
+
+耐久运行时是 2026-08-28 落地的九态作业状态机（租约/fencing/outbox/reconciler/
+session_inbox 唤醒链，设计底稿见 `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md`）。
+灰度两天暴露成批缺陷（无界拨号循环、失败通知漏 3/4 条死法、operator-only 停靠在无
+admin 账号的部署死锁、取消不唤醒停靠），2026-08-30 用户决定禁用，视频制作回归直连
+路径：agent 按 `.openbox/skills/video-production/SKILL.md` 直接调 `video_generate` /
+`video_transcribe` / `video_render` 并在回合内有界等待。
+
+定稿的设计哲学（你在改代码拿不准时用它裁决）：**薄 agent + 硬工具**。
+状态由工具提供者管控且只有一份（域表 `video_*`）；LLM 凭 `video_project(status)`
+重建事实并自由决策；平台不做编排。恢复 = 用户再说一句话；付费安全 = 服务端幂等键。
+codex 与 Claude Code 均为此形态，无一家构建耐久作业状态机。
+
+由此推出删除边界：**凡是"编排"的都删，凡是"不变量"的都留。**
+
+---
+
+## 2. 不动区（防误删清单，删除前逐条自查）
 
 | 区域 | 原因 |
 |---|---|
-| `frontend/`（v1 前端） | 用户指示：整体不在本次清理范围，淘汰另行处理 |
-| `tool/video_workflow.py` 共享层 | 两套控制面共用的不变量层：审批哈希、花费上限、模型冻结、b-roll 豁免、lint。这是"硬工具"的本体 |
-| `tool/video_production.py` 三个直连工具 | 现行唯一视频控制面 |
-| `skill_install` / `user_skills` 表及 `skill/user_library.py` | 技能中心（创建/分享/安装）的表，与作业运行时同名不同族 |
-| `db/models/kv_store` 相关 | `mcp/oauth.py` 与 `storage/storage.py` 在用，非运行时资产 |
-| todo/中断生命周期全部代码 | 与运行时无关（`session/abort.py`、turn-view、divider 等） |
-| 聊天回执**渲染器** | 历史会话里回执是已落库的消息 part，必须继续可读（见 §2.6） |
-| `.openbox/skills/video-production/` | 现行技能文档（已含 b-roll 修订） |
+| `frontend/`（v1，若存在） | 用户指示排除 |
+| `backend/tool/video_workflow.py` | 共享不变量层：审批哈希、花费上限（`max_calls`）、提交时模型冻结（`resolve_segment_model`）、b-roll 豁免（`:695`）、分段 lint。两套控制面它一行未改——它就是"硬工具"本体 |
+| `backend/tool/video_production.py`、`video_providers.py`、`video_identity.py` | 现行直连控制面 |
+| `backend/video/`（materials 等） | 域层 |
+| 表 `skill_installs` / `user_skills` 与 `backend/skill/user_library.py` | **技能中心**（创建/分享/安装）的资产，与运行时同名不同族。运行时的表只有 §3.4 列的七张 |
+| 表 `kv_store` 与 `backend/storage/storage.py`、`backend/mcp/oauth.py` | MCP OAuth 在用 |
+| `backend/session/abort.py`、turn-view/todo/中断分隔线相关（前端与 Dart 两侧） | todo 生命周期功能，与运行时无关 |
+| `frontend-v2/src/features/chat/components/SkillJobReceipts.tsx` 与 `mobile/lib/features/chat/widgets/cards/skill_job_receipt.dart`、`mobile/lib/shared/models/skill_job.dart` | 历史回执渲染器：回执是已落库的消息 part，老会话必须继续可读。该组件自注释写明"仅凭 part 数据渲染，不依赖 jobs API"，天然存活 |
+| `backend/tests/unit/test_video_model_snapshot.py` | 测的是共享层 `resolve_segment_model`，只删其中一个用例（§3.6） |
+| `backend/.openbox/skills/`（全部四个技能目录） | 现行技能文档 |
 
-## 2. M1 移除清单
+---
 
-### 2.1 后端代码（整目录/整文件删除）
+## 3. PR#1 后端移除（M1 主体）
 
-| 路径 | 行数 | 说明 |
+### 3.1 整目录/整文件删除
+
+| 路径 | 行数 | 内容 |
 |---|---|---|
-| `backend/skill_runtime/`（14 文件） | 6,179 | types / repository / worker / reconciler / manifest / service / inbox / outbox / receipt / embedded / worker_main / registry / context |
-| `backend/builtin_skills/`（整目录） | 2,010 | 耐久版 video handlers 1,628 行 + demo_echo 参考技能 + 门控版 SKILL.md/skill.yaml |
-| `backend/api/skill_jobs.py` | 213 | 作业 API（含无人能用的 operator-input 端点） |
-| `backend/api/skill_settings.py` | 62 | 按用户启停内置技能——前端 **零调用**，纯运行时时代遗产 |
+| `backend/skill_runtime/`（整目录，14 文件） | 6,179 | 运行时本体 |
+| `backend/builtin_skills/`（整目录） | 2,010 | 耐久版 video handlers、demo_echo 参考技能、门控版 SKILL.md/skill.yaml |
+| `backend/api/skill_jobs.py` | 213 | 作业 API |
+| `backend/api/skill_settings.py` | 62 | 按用户启停内置技能。**前端零调用**（已 grep 实证 `skills/settings` 在 frontend-v2 无命中） |
 | `backend/tool/skill_job.py` | 278 | agent 侧作业工具 |
-| `db/models/`：`skill_job.py` `skill_job_attempt.py` `skill_job_event.py` `skill_job_input.py` `skill_job_artifact.py` `session_inbox.py` `user_skill_setting.py` | 319 | 七表的 ORM 模型 |
+| `backend/db/models/`：`skill_job.py`、`skill_job_attempt.py`、`skill_job_event.py`、`skill_job_input.py`、`skill_job_artifact.py`、`session_inbox.py`、`user_skill_setting.py` | 319 | 七表 ORM 模型 |
 
-### 2.2 接线手术点（逐处断开，不是整文件删）
+### 3.2 接线手术点（逐处，行号基准 `1649310`）
 
-1. **`main.py`**：`ensure_job_engine`（:89）、embedded worker 启停（:126-133, :168）、
-   `InboxDispatcher` 启停（:138-146）、两个 router 挂载（:283-286）。
-2. **`session/session.py:277`** 会话删除时的 continuation 作业取消块——连同上游收集
-   `continuation_jobs` 的查询一起移除。
-3. **`api/ws.py:_has_active_skill_jobs`** 浏览器断连后沙箱清理的 fail-closed 门。
-   直连路径下"工作是否在进行"的事实源是**会话 busy 状态**（回合在服务端跑），
-   替换判定并在 §4.3 浏览器实测断连场景，不许直接裸删。
-4. **`tool/registry.py`**：删除 `durable_video_authoritative` 分支——三个直连工具无条件
-   注册；同时删除 `skill_job_tool` 的注册与 import。
-5. **`skill/skill.py`**：删除 `gated_builtins` / `enabled_config_flag` 机制与 builtin 扫描
-   （builtin 目录即将不存在；project/global 两级保留）。
-6. **`core/config.py`** 配置簇整段删除：`skill_jobs_enabled`、`skill_worker_mode` /
-   `queues` / `concurrency` / `lease_seconds` / `per_user_concurrency` /
-   `invocation_timeout`、`skill_jobs_video_write`、`skill_job_chat_receipt`，
-   及对应 env 映射（`SKILL_JOBS_ENABLED` 等）。
-7. **`tests/conftest.py`** 的旗标钉住 fixture **必须与 #6 同一 PR 撤除**——
-   `monkeypatch.setattr` 打在已删除的属性上会直接 `AttributeError`。
-8. 本地 `openbox.json`（gitignored）与 `openbox.jsonc.example` 的相关键清除。
+1. **`backend/db/models/__init__.py:20-26`**：删除七个模型的 import。
+2. **`backend/main.py`**：
+   - `:89-91` `ensure_job_engine`；
+   - `:126-133` embedded worker 启动块（含 `SKILL_WORKER_MODE` 分支）；
+   - `:138-146` `InboxDispatcher` 启动，及 lifespan 尾部对应的 `inbox_dispatcher.stop()`；
+   - `:168-169` `stop_embedded`；
+   - `:283-286` 两个 router 的 import 与挂载。
+3. **`backend/session/session.py`**：`continuation_jobs` 的完整生命周期——声明
+   `:223`、收集查询 `:245`（查的是 `session_inbox`）、两个使用块 `:258` 与 `:276`
+   （删除会话时取消续跑作业）。整段移除；会话删除的其余逻辑不动。
+4. **`backend/api/ws.py`**：删除 `_has_active_skill_jobs`（`:45`）及其**三处调用**
+   （`:180`、`:194`、循环内第三处）。⚠️ 不需要写替代——同函数已有
+   `_has_active_agent_sessions` 在每个调用点**并列存在**，直连路径下"工作是否进行"
+   的事实源就是它（回合在服务端跑，会话 busy 即活跃）。删完后该清理门语义完整。
+5. **`backend/tool/registry.py:70-91`**：删除 `durable_video_authoritative` 条件分支，
+   三个直连工具改为无条件注册；同时删除 `skill_job_tool` 的 import 与注册项。
+6. **`backend/skill/skill.py`**：删除 `enabled_config_flag` 字段（`:32`、`:139-153`）、
+   `gated_builtins` 逻辑与 builtin 目录扫描（`:184-209` 一带）。project/global 两级
+   扫描保留。`SkillInfo.source == "builtin"` 的其他残留一并清理。
+7. **`backend/core/config.py`**：删除配置簇（约 `:324-345`）：`skill_jobs_enabled`、
+   `skill_worker_mode`、`skill_worker_queues`、`skill_worker_concurrency`、
+   `skill_worker_lease_seconds`、`skill_worker_per_user_concurrency`、
+   `skill_worker_invocation_timeout`、`skill_jobs_video_write`、
+   `skill_job_chat_receipt`；以及 env 映射表（约 `:537-563`）里对应的
+   `SKILL_JOBS_*` / `SKILL_WORKER_*` 条目和布尔解析列表里的旗标名。
+8. **`backend/tests/conftest.py`**：删除 `_runtime_flags_are_test_owned` fixture
+   **（必须与 #7 同一提交）**——它 `monkeypatch.setattr` 这两个旗标，属性一删即全场
+   `AttributeError`。
+9. **本机 `backend/openbox.json`**：删除 `skill_jobs_enabled` / `skill_jobs_video_write`
+   两键及其注释块（gitignored，改完**手动重启后端**）；`openbox.jsonc.example` 同步
+   清除运行时示例段。
 
-### 2.3 数据库
+### 3.3 错误公开契约下沉（与 3.1 同一 PR，不留窗口期）
 
-新增一个 alembic 迁移（单 head，注意此前多 head 教训），`upgrade()` 按依赖序 drop：
-`session_inbox` → `skill_job_artifacts` → `skill_job_inputs` → `skill_job_events` →
-`skill_job_attempts` → `skill_jobs` → `user_skill_settings`；`downgrade()` 原样重建
-（从 `a2c4e6f8b0d1` 复制建表代码，保证结构可回滚——数据不可回滚，见风险表）。
+**问题**：`public_error_text` 契约在 `skill_runtime/types.py`；
+`backend/video/materials.py` 的 `MaterialProviderError` 按它携带逐实例的
+`public_message` / `retryable` 标记（默认 `False`/保密）。运行时删除后，直连路径的
+`tool/video_production.py:723 _public_error` 只输出 `"类名: operation failed"`——
+用户将看不到 `请配置 material_base_url` 这类修复指引，属净退化。
 
-破坏性评估：这些表只在本机 dev 库有数据（全部是测试作业）；其余环境
-`skill_jobs_video_write` 从未开启，表恒为空。单用户 SQLite 模式建表走 ORM
-`create_all`，删除模型即自然不再建表；存量 SQLite 文件里的孤表无害，不做清理。
+**做法**：在 `_public_error` 开头加一个分支——异常对象 `getattr(exc, "public_message",
+False)` 为真时，返回 `str(exc)` 截断 500 字符；其余逻辑不变（供应商响应体保密的既有
+语义就在"默认 False"里，勿改动 `MaterialProviderError` 本身）。`HandlerError` 类
+不迁移（无其他使用者）。
 
-### 2.4 测试（删 137 例，移植其中约 20 例的不变量）
+### 3.4 数据库迁移
 
-**整文件删除**：`test_skill_job_outbox / receipt / repository / tool / transitions /
-worker`、`test_skill_manifest`、`test_job_continuation`、`test_job_failure_report`、
-`test_video_skill_handlers`（合计 137 个用例，约 2,900 行）。
+**先快照**（宿主机没有 pg_dump，用容器内的）：
 
-**先移植后删**（这是 M1 里最关键的一步，丢了就是净退化）：
+```bash
+mkdir -p ~/openbox-db-snapshots
+docker exec openbox-postgres-1 pg_dump -U openbox openbox \
+  -t skill_jobs -t skill_job_attempts -t skill_job_events -t skill_job_inputs \
+  -t skill_job_artifacts -t session_inbox -t user_skill_settings \
+  > ~/openbox-db-snapshots/skill-runtime-tables-$(date +%Y%m%d-%H%M).sql
+```
 
-| 源 | 移植去向 | 不变量 |
-|---|---|---|
-| `test_job_failure_report` §"what a handler is allowed to publish"（4 例） | 新 `test_video_error_text.py`，对准直连工具的 `_public_error` | 供应商响应体永不外泄；**声明过 public 的指引文本必须外显**（"请配置 material_base_url"这类）；retryable 声明可读 |
-| `test_video_skill_handlers::test_a_node_that_never_comes_back_stops_dialling_and_parks` 的精神 | 直连工具已有 `wait_seconds` 有界语义，在 `test_video_production.py` 补"wait 超时返回而非死等"断言（若已有则标注即可） | 一切等待有界 |
-| `test_video_model_snapshot.py` | **保留原文件**，仅剥离对 `skill_runtime` 的 import（其测的是共享层 `resolve_segment_model`） | 选择器/冻结语义 |
+（若 `-U openbox` 认证失败，连接串在 `backend/scripts/backend_entrypoint.py` 的
+`LOCAL_DATABASE_URL`：`openbox:openbox_dev@localhost:5432/openbox`。）
 
-### 2.5 错误公开契约的迁移（M1 内完成，不留窗口期）
+**再迁移**：`backend/db/migrations/versions/` 新增一个 revision（**动手前先
+`uv run alembic heads` 确认单 head**——本仓库出过多 head 事故）：
 
-`public_error_text` / `HandlerError` 现居 `skill_runtime/types.py`，而
-`video/materials.py` 的 `MaterialProviderError` 按此契约携带 `public_message` /
-`retryable` 标记。运行时删除后，直连路径的 `_public_error` 只会输出
-`"MaterialProviderError: operation failed"`——用户将**再也看不到**"请配置
-material_base_url"这句修复指引。
+- `upgrade()` 按依赖序 drop：`session_inbox` → `skill_job_artifacts` →
+  `skill_job_inputs` → `skill_job_events` → `skill_job_attempts` → `skill_jobs` →
+  `user_skill_settings`；
+- `downgrade()` 从 `a2c4e6f8b0d1_add_skill_job_runtime.py` 原样复制七张表的建表
+  代码（结构可回滚；数据靠上面的快照）。
+- 相关旧迁移文件（`a2c4e6f8b0d1`、`c5e7f9a1b3d5_skill_job_policy_snapshot`、
+  `e3a5c7d9f1b2_job_continue_agent_on_success`）**保留不动**——迁移历史不可改写。
 
-处置：把契约下沉为工具层资产——`_public_error(exc)` 开头加一条：凡异常携带
-`public_message=True`（逐实例声明、默认保密的语义原样保留），返回其消息文本
-（截断 500 字符）。`HandlerError` 类若无其他使用者则不迁移，`MaterialProviderError`
-自带标记已够。§2.4 的移植测试即验收此项。
+单用户 SQLite 模式建表走 ORM `create_all`，模型删除即自然不再建；存量文件里的孤表
+无害，不处理。
 
-### 2.6 frontend-v2（v1 前端不在范围）
+### 3.5 测试：删除清单
 
-**删除**：`src/features/jobs/` 下的 `SkillJobsDock.tsx`、`SkillJobCard.tsx`（及其
-test）、`hooks/useSkillJobLiveEvents.ts`、`api/jobs.ts`、`api/keys.ts`，
-`ChatRoute.tsx` 中的 dock 接线与"后台任务"区块。
+整文件删除（合计 137 用例）：`test_skill_job_outbox.py`、`test_skill_job_receipt.py`、
+`test_skill_job_repository.py`、`test_skill_job_tool.py`、`test_skill_job_transitions.py`、
+`test_skill_job_worker.py`、`test_skill_manifest.py`、`test_job_continuation.py`、
+`test_job_failure_report.py`、`test_video_skill_handlers.py`。
 
-**保留**：`features/chat/components/SkillJobReceipts.tsx`——它自注释写明"仅凭
-part 数据渲染，不依赖 jobs API"（§4.1 合规），是历史会话回执的唯一读取器；
-`shared/types/api` 的 `SkillJobPart` 类型随之保留。若 `features/jobs/types` 中有
-被回执引用的类型，随保留件迁往 `shared/types`（遵守 §4.1 禁止跨 feature import）。
+### 3.6 测试：先移植后删（丢了算净退化）
 
-**locale**：`jobs.json`（web 与 mobile 各一份）裁剪到只剩回执 chip 所需键；
-两侧**逐字节一致**是验收门。
+1. **新建 `backend/tests/unit/test_video_error_text.py`**，从
+   `test_job_failure_report.py` 移植"错误文本卫生"四例，对准 `_public_error`：
+   - 普通异常（如 `RuntimeError("token=sk-live …")`）→ 输出不含原文，只有类名；
+   - 带 `response` 属性的 HTTP 异常 → `HTTP {code}: {reason}`（既有行为回归）；
+   - `MaterialProviderError(..., public=True)` → **原文外显**（§3.3 的验收）；
+   - `MaterialProviderError`（默认）→ 原文保密。
+   变异检查：注释掉 §3.3 新分支，第 3 例必须变红。
+2. **`test_video_model_snapshot.py`**：删除 `test_receipt_summary_hides_identifiers`
+   一个用例（其 `:275` `from skill_runtime.receipt import _summary`），其余全保留。
 
-### 2.7 mobile（Flutter，对照 web）
+### 3.7 PR#1 Definition of Done
 
-删除 `features/jobs/api/jobs_api.dart`、`widgets/skill_job_card.dart`、
-`widgets/skill_jobs_dock.dart` 及 `router.dart` / `chat_screen.dart` 中的接线；
-保留 `features/chat/widgets/cards/skill_job_receipt.dart` 与
-`shared/models/skill_job.dart`（回执 part 模型）。800 行门禁照常。
+```bash
+cd backend
+grep -rn "skill_runtime\|builtin_skills" --include='*.py' . | grep -v .venv   # 必须零命中
+uv run alembic heads                                                          # 单 head
+uv run alembic upgrade head && uv run alembic downgrade -1 && uv run alembic upgrade head
+uv run pytest -q        # 全绿；预期 ≈ 1016 − 137 + 新增（以实测为准，记入 commit message）
+```
 
-### 2.8 文档与记忆
+后端冷启动（§0.3 命令）日志无 `skill_runtime` / worker / inbox 残留；`/api/jobs`
+类路由 404。**手动重启后端**（openbox.json 已改，reload 不管它）。
 
-- `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md` 移入 `docs/archive/`，头部墓碑注明
-  移除 commit 与本文件路径（它保留的价值是：若干年后重做后台任务时的完整反面教材
-  与设计底稿）。
-- DEVLOG 记一条移除事件。
-- `openbox.jsonc.example` 清除运行时配置示例。
+---
 
-## 3. M2 强化（把力气花在契约上）
+## 4. PR#2 前端与移动端移除
 
-### 3.1 等待语义统一
+### 4.1 frontend-v2
 
-现状不对称：`video_transcribe` / `video_render` 有 `wait_iteration` + `after_version`，
-`video_generate` 只有裸 `wait`。统一为 codex `unified_exec` 同构的三段式：
+**删除**：`src/features/jobs/` 下 `components/SkillJobsDock.tsx`、
+`components/SkillJobCard.tsx`（含 `.test.ts`）、`hooks/useSkillJobLiveEvents.ts`、
+`api/jobs.ts`、`api/keys.ts`；`src/routes/workspace/ChatRoute.tsx` 中 dock 的 import
+与"后台任务"区块接线（§4.2：接线都在 routes，正好只此一处）。
 
-1. `submit` 幂等提交，返回句柄；
-2. `wait` **单次有界**（服务端上限对齐现有 `wait_seconds` 边界），超时返回
-   `still_running` + 当前状态快照，绝不在一次调用里等到天荒地老；
-3. 重复 `wait` 用 `wait_iteration` 递增自证不是复读，`after_version` 防错拿旧态。
+**保留**：`features/chat/components/SkillJobReceipts.tsx`（§2 不动区）。它依赖
+`shared/types/api` 的 `SkillJobPart` 类型——保留该类型。若它引用了
+`features/jobs/types` 里的东西，把被引部分**移入 `shared/types`** 再删源
+（§4.1 禁止跨 feature import，不许留反向依赖）。`features/jobs/` 目录若因此清空
+则整目录删除。
 
-`SKILL.md` 步骤 6/7/10 的等待表述随之核对（现文已基本符合，逐句过一遍）。
+**locale**：`src/locales/{zh-CN,en-US}/jobs.json` 裁剪到回执所需——实测回执只用
+`status.succeeded` / `status.failed` / `status.cancelled` 三键（`t(tone.labelKey,
+{defaultValue: part.status})`，缺键可降级但不许裁出缺键）。
 
-### 3.2 status 完整性审计——"仅凭 status 恢复"测试
+### 4.2 mobile（对照 web）
 
-哲学落地的硬指标：**新回合、零记忆，只调 `video_project(action="status")`，
-必须能重建继续推进所需的全部事实**。新增一个端到端测试：走到"分段已批、第 1 段
-已生成、第 2 段提交中"的状态，然后模拟全新回合，仅凭 status 返回值断言能拿到——
-当前阶段、每段状态与 `generation_job_id`、全部审批及其哈希匹配性、三类幂等键、
-冻结的模型、花费余量。缺哪个字段补哪个字段。这个测试今后是 status 字段的回归锚。
+**删除**：`lib/features/jobs/api/jobs_api.dart`、`widgets/skill_job_card.dart`、
+`widgets/skill_jobs_dock.dart`；`lib/app/router.dart` 与
+`lib/features/chat/chat_screen.dart` 中的接线。
 
-### 3.3 断连场景验收
+**保留**：`lib/features/chat/widgets/cards/skill_job_receipt.dart`、
+`lib/shared/models/skill_job.dart`（回执 part 模型；若模型文件里混有 live-job 专用
+字段类，删除未被回执引用的部分）。
 
-替换 `_has_active_skill_jobs` 后，浏览器实测：发起一段真实生成（可用最小时长），
-生成中关闭浏览器标签 → 服务端回合继续 → 重开页面 → 会话恢复显示进行中/完成结果；
-沙箱不被断连清理误杀。
+**locale**：`mobile/assets/locales/{zh-CN,en-US}/jobs.json` 与 web 侧**逐字节一致**。
 
-## 4. 已定决策（默认值，不再开口子）
+### 4.3 PR#2 Definition of Done
+
+```bash
+cd frontend-v2 && npm run check && npm run lint && npm run test && npm run check:i18n
+cd ../mobile && dart analyze
+for l in zh-CN en-US; do diff ../frontend-v2/src/locales/$l/jobs.json assets/locales/$l/jobs.json; done  # 空输出
+```
+
+lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 行（mobile）。
+浏览器验收场景 A、B（§7）。
+
+---
+
+## 5. 已定决策（不再开口子）
 
 | 决策 | 定论 | 依据 |
 |---|---|---|
-| `session_inbox` 表 | 随七表一起删 | 未来"完成唤醒"薄层按 Claude Code 形态重新设计（provider 看护 → 注入会话消息），不复用九态机的附属表 |
+| `session_inbox` 表 | 随七表删除 | 未来"完成唤醒"薄层（provider 看护 → 注入会话消息）另行从零设计，不复用九态机附属物 |
 | demo_echo | 删 | 纯运行时参考件 |
-| `api/skill_settings.py` | 删 | 前端零调用；技能启停将来若需要，挂在技能中心而非运行时 manifest |
+| `api/skill_settings.py` | 删 | 前端零调用 |
 | 回执渲染器 | 保留（只读历史件） | 老会话数据完整性 |
-| operator-input 类端点 | 不迁移 | 直连路径失败当场可见，无停靠概念 |
-| 运行时代码"归档到分支" | 不做 | git 历史即归档（`1d453a0` 之前俱在），另立分支只会腐烂 |
+| 运行时代码"归档分支" | 不做 | git 历史即归档（`1d453a0` 之前俱在） |
+| operator-input 端点 | 不迁移 | 直连路径失败当场可见，无停靠概念 |
+| `ws.py` 清理门 | 直接删 skill-job 判定，不写替代 | `_has_active_agent_sessions` 已并列存在且语义正确 |
 
-## 5. PR 分解与验收门
+---
 
-| PR | 内容 | 验收门 |
-|---|---|---|
-| **PR#1** 后端移除 | §2.1–2.5 全部（含迁移、conftest、测试删除与移植） | 后端套件全绿（预期 1016 − 137 + 移植新增，以实测数为准）；`alembic upgrade head` + `downgrade -1` 在 dev PG 实跑通过；uvicorn 冷启动日志无 runtime 残留；`grep -r skill_runtime` 零命中 |
-| **PR#2** 前端与移动端 | §2.6–2.7 | `tsc` 清洁；lint 不高于既有基线（content-view.ts 两处旧账）；vitest 全绿；`dart analyze` 清洁；web/mobile locale 逐字节 diff 为空；浏览器验收 A/B（见下） |
-| **PR#3** 契约强化 | §3.1–3.2 | 新增测试全绿且做变异检查（破坏 `_public_error` 的 public 分支、破坏 status 字段各须有用例变红）；浏览器验收 C |
-| **PR#4** 文档归档 | §2.8 | 死链检查（`grep -r REBUILD_PLAN docs/ backend/ --include='*.md'`） |
+## 6. PR#3 契约强化（M2）
 
-**浏览器验收场景**（延续本仓库"不信代码测试"的规矩）：
+### 6.1 等待语义统一
 
-- **A 历史回执**：打开含耐久时代回执/作业卡的老会话（如"魔仙堡"）：回执 chip 正常、
-  无"后台任务"区块、控制台零报错。
-- **B 直连全流程**：新会话走技能到剧本审批卡（不产生花费），确认工具直连、无作业卡。
-- **C 恢复力**：进行中的等待被打断（重启后端）后，新消息一句"继续"，agent 仅凭
-  status 重建并接续；失败注入（临时改坏 material_base_url）时用户能看到指引文本
-  而非类名。
+现状不对称（实测）：`VideoTranscribeArgs` / `VideoRenderArgs` 有
+`wait_iteration` + `after_version`，`VideoGenerateArgs`（`tool/video_production.py:42`）
+只有裸 `wait`。统一为三段式：
 
-## 6. 风险与回滚
+1. `submit` 幂等提交返回句柄（已有，勿动）；
+2. `wait` 单次有界：给 `video_generate` 补 `wait_iteration`（必填于 wait 动作）与
+   `after_version`（防拿旧态），语义抄 transcribe 的现行实现；超时返回
+   `still_running` + 状态快照，不报错；
+3. `.openbox/skills/video-production/SKILL.md` 步骤 6 的等待表述随 schema 核对更新
+   （改 SKILL.md 后重启后端才生效）。
 
-| 风险 | 缓解 |
-|---|---|
-| drop 表不可逆（数据层面） | 仅本机 dev 数据；迁移 `downgrade` 保证**结构**可回滚；执行前 `pg_dump -t 'skill_job*' -t session_inbox -t user_skill_settings` 留一份快照在 scratchpad 外的本地目录 |
-| 老会话渲染回归 | 回执渲染器保留 + 验收场景 A；作业卡区块消失属预期行为（卡片数据源 API 已删），不算回归 |
-| 断连清理门替换引入沙箱误杀 | §3.3 实测；PR#1 内先保守（宁可不清理）再在 PR#3 收紧 |
-| 材料错误指引文本丢失 | §2.5 在 PR#1 内同批完成，不留窗口期 |
-| `test_video_model_snapshot` 误删 | §1 不动区 + §2.4 明确"保留仅剥 import" |
-| alembic 再度多 head | 迁移前 `alembic heads` 确认单 head；这是上次合并踩过的坑 |
+### 6.2 status 完整性——"仅凭 status 恢复"锚点测试
 
-## 7. Backlog（本规划明确不做）
+新增 `backend/tests/unit/test_status_is_the_recovery_contract.py`：构造
+"分段已批、第 1 段已生成、第 2 段提交中"的库状态，然后**只**调
+`video_project(action="status")`，断言返回值足以重建：当前阶段、每段状态与
+`generation_job_id`、五类审批及哈希匹配性、三类幂等键、冻结的模型、花费余量
+（`max_calls` − `used_calls`）。缺字段补字段（改 `tool/video_workflow.py` 的 status
+组装处）。此测试今后是 status 字段的回归锚——**它存在的意义写进测试 docstring**。
 
-1. **完成唤醒薄层**：provider 任务看护 + 完成时向会话注入一条续跑消息
-   （Claude Code 形态）。等产品真的需要"关掉页面也继续"再立项，届时从零设计，
-   预算按"一根线"而非"一个运行时"评估。
-2. v1 前端（`frontend/`）淘汰——用户已明示另行处理。
-3. `qa_jobs` 测试账号清理（密码曾出现在对话记录，环境对外前须删号或改密）。
+### 6.3 PR#3 Definition of Done
+
+后端套件全绿 + 两处变异检查（破坏 `_public_error` public 分支、删除 status 任一新增
+字段，各须有用例变红）。浏览器验收场景 C（§7）。
+
+---
+
+## 7. 浏览器验收场景（PR#2 后跑 A/B，PR#3 后跑 C）
+
+前置：后端（8000）与前端（3000）都在跑；用 `qa_jobs` 登录（凭据向用户索取）。
+
+- **A 历史回执**：打开
+  `http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8`（"魔仙堡"会话，
+  含耐久时代的回执与已取消作业记录）。验收：聊天流中回执 chip 正常渲染；
+  **不再出现**"后台任务"区块；浏览器控制台零报错。
+- **B 直连全流程（零花费）**：新会话发送——"使用视频制作技能：创建一个竖屏测试项目，
+  主题《清理验收》，写好完整台词并发起剧本审批。做到剧本审批为止，不要设计分段，
+  不要生成任何视频。"验收：技能加载、`video_project` create/set_script/
+  request_approval 全部**回合内直连**工具调用；剧本审批卡弹出；点"跳过"收尾；
+  全程无作业卡。（注意：模型可能中途结束回合，任务清单显示"已中断"属正常，
+  发"继续"即恢复——这是 todo 生命周期的既有行为，不是 bug。）
+- **C 恢复力**：场景 B 走到审批卡后批准并继续到某一段 `wait` 期间，重启后端进程，
+  然后发"继续"。验收：agent 调 `status` 重建事实并接续，不重复提交（幂等键拒绝
+  同键不同哈希）。⚠️ 此场景会产生**真实付费生成**——执行前向用户确认预算；
+  用户此前接受过小额测试花费，但每次都要重新确认。
+
+---
+
+## 8. 已知坑（本手册作者亲踩，按出现概率排序）
+
+1. `conftest.py` 旗标 fixture 与 config 属性必须同一提交删除，否则全场
+   `AttributeError`（§3.2 第 8 条）。
+2. `uvicorn --reload` 不看 `openbox.json` / `skill.yaml` / locale——改这些必须手动
+   重启后端，否则你会对着旧行为 debug。
+3. 宿主机没有 `pg_dump`，用 `docker exec openbox-postgres-1 pg_dump ...`。
+4. alembic 曾出多 head 事故：建迁移前 `uv run alembic heads` 必须单 head。
+5. 前端 lint 有 2 个既有错误（`content-view.ts`）——不是你的问题，也不许变成 3 个。
+6. locale 逐字节同步是硬门：web 与 mobile 的同名 json 必须 `diff` 为空。
+7. `skill_installs` / `user_skills` / `kv_store` 与运行时表同族异名，**不许删**（§2）。
+8. `test_video_model_snapshot.py` 整体是共享层测试，只删一个用例（§3.6.2）。
+9. 提交信息用中文、讲 why；每个 PR 独立提交并 push。
+
+---
+
+## 9. Backlog（本手册明确不做）
+
+1. **完成唤醒薄层**：provider 任务看护 + 完成时注入会话续跑消息（Claude Code 形态）。
+   等产品需要"关页面也继续"再立项，按"一根线"而非"一个运行时"评估。
+2. v1 前端淘汰（用户另行处理）。
+3. `qa_jobs` 测试账号清理（其密码曾出现在对话记录；环境对外前删号或改密）。
+4. `docs/SKILL_SCRIPT_RUNTIME_REBUILD_PLAN.md` 移入 `docs/archive/` 加墓碑头——
+   这是 **PR#4**：全部删除完成后执行，墓碑注明移除 commit 与本文件路径，并跑
+   `grep -rn "REBUILD_PLAN" --include='*.md' docs/ backend/` 清死链，DEVLOG 记一条。

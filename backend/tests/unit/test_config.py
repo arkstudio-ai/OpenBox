@@ -1,5 +1,8 @@
 """Test new config fields are present and have correct defaults."""
-from core.config import OpenBoxConfig
+import pytest
+from pydantic import ValidationError
+
+from core.config import OpenBoxConfig, ToolExposureConfig
 
 
 def test_database_config_defaults():
@@ -57,3 +60,38 @@ def test_video_transcription_config_defaults():
     assert config.video_transcription.timeout_seconds == 180
     assert config.video_transcription.poll_interval_seconds == 1.0
     assert config.video_transcription.similarity_threshold == 0.90
+
+
+def test_tool_exposure_config_defaults_are_migration_safe():
+    config = OpenBoxConfig().tool_exposure
+    assert config.mode == "legacy_eager"
+    assert config.resident_hard_chars == 24_000
+    assert config.active_hard_chars == 32_000
+    assert config.native_wire_hard_chars == 128_000
+    assert config.reveal_ttl_seconds == 1_800
+    assert config.max_persisted_reveals == 8
+    assert config.max_search_calls_per_step == 2
+    assert config.max_reveals_per_step == 5
+    assert config.max_search_result_chars_per_step == 2_000
+    assert config.allow_emergency_eager is False
+
+
+def test_tool_exposure_soft_budget_cannot_exceed_hard_budget():
+    with pytest.raises(ValidationError, match="resident_soft_chars"):
+        ToolExposureConfig(resident_soft_chars=25_000, resident_hard_chars=24_000)
+
+
+def test_emergency_eager_requires_the_separate_safety_switch():
+    with pytest.raises(ValidationError, match="allow_emergency_eager"):
+        ToolExposureConfig(mode="emergency_eager")
+
+    config = ToolExposureConfig(
+        mode="emergency_eager",
+        allow_emergency_eager=True,
+    )
+    assert config.mode == "emergency_eager"
+
+
+def test_native_wire_ceiling_cannot_be_configured_above_128k():
+    with pytest.raises(ValidationError, match="less than or equal to 128000"):
+        ToolExposureConfig(native_wire_hard_chars=128_001)

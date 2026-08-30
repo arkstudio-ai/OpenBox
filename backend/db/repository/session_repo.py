@@ -13,7 +13,11 @@ class PgSessionRepo:
         row = Session(user_id=user_id, created_at=now, updated_at=now, **fields)
         async with get_db_session() as session:
             session.add(row)
-        return {**fields, "user_id": user_id, "created_at": str(now)}
+        public_fields = {
+            key: value for key, value in fields.items()
+            if key != "tool_exposure_state"
+        }
+        return {**public_fields, "user_id": user_id, "created_at": str(now)}
 
     async def get(self, session_id: str, user_id: str) -> dict | None:
         async with get_db_session() as session:
@@ -83,4 +87,10 @@ class PgSessionRepo:
 
 
 def _to_dict(row: Session) -> dict:
-    return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+    # This repository feeds API/quota callers.  Private reveal/fallback state
+    # is available only through session.internal_parts' owner-checked helpers.
+    return {
+        c.name: getattr(row, c.name)
+        for c in row.__table__.columns
+        if c.name != "tool_exposure_state"
+    }

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Load .env from project root before anything reads os.environ
@@ -265,6 +266,13 @@ def create_app() -> FastAPI:
     # ── Health check ──
     @application.get("/health")
     async def health():
+        from db.base import database_schema_ready
+
+        if not await database_schema_ready():
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "version": "0.1.0"},
+            )
         return {"status": "ok", "version": "0.1.0"}
 
     return application

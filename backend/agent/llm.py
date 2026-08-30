@@ -4,11 +4,15 @@ from __future__ import annotations
 import asyncio
 import copy as _copy
 import hashlib as _hashlib
+import hmac as _hmac
 import json as _json
 import re as _re
+from collections.abc import Mapping
 from typing import Any, AsyncIterator
+from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
+from agent.tool_payload import build_tool_definitions
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
 
@@ -19,6 +23,8 @@ OUTPUT_TOKEN_MAX = 32000  # Fallback for unknown models
 #: Room left for the visible answer once a thinking budget is reserved out of
 #: the same allowance. Anthropic requires max_tokens > thinking.budget_tokens.
 THINKING_OUTPUT_RESERVE = 8000
+OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
+RESPONSES_API_VERSION = "2025-03-01-preview"
 
 
 #: What the Responses API actually accepts for an item id: `fc_`, then up to 61
@@ -76,6 +82,13 @@ def build_responses_input(messages: list[dict], system: list[str] | None = None)
         items.append({"role": "system", "content": "\n\n".join(system)})
 
     for msg in messages:
+        replay_items = msg.get("_responses_input_items")
+        if isinstance(replay_items, list):
+            # These opaque items came from the exact provider binding's
+            # API-hidden transcript store.  They are never constructed from
+            # public message content or sent through LiteLLM.
+            items.extend(_copy.deepcopy(replay_items))
+            continue
         role = msg.get("role", "")
         content = msg.get("content", "")
 
@@ -158,6 +171,49 @@ def _get_max_output_tokens(model_id: str) -> int:
     return OUTPUT_TOKEN_MAX
 
 
+def provider_api_base(model_id: str, *, config: Any | None = None) -> str:
+    """Resolve the exact provider base URL used by the wire adapter.
+
+    This is shared by the request builder, provider binding and native gate so
+    an omitted official OpenAI URL cannot produce three different identities.
+    Unknown/custom provider slots deliberately have no inferred endpoint.
+    """
+
+    if config is None:
+        try:
+            from core.config import get_config
+
+            config = get_config()
+        except Exception:
+            return ""
+    providers = getattr(config, "provider", {})
+    provider_slot = model_id.split("/", 1)[0] if "/" in model_id else model_id
+    provider_cfg = providers.get(provider_slot) if isinstance(providers, dict) else None
+    if provider_cfg is None:
+        return ""
+    if hasattr(provider_cfg, "model_dump"):
+        payload = provider_cfg.model_dump(mode="json")
+    elif isinstance(provider_cfg, dict):
+        payload = dict(provider_cfg)
+    else:
+        return ""
+    options = payload.get("options") or {}
+    if not isinstance(options, dict):
+        options = {}
+    endpoint = str(
+        options.get("api_base")
+        or options.get("base_url")
+        or options.get("endpoint")
+        or payload.get("base_url")
+        or ""
+    ).strip()
+    if endpoint:
+        return endpoint
+    if provider_slot == "openai":
+        return OPENAI_DEFAULT_API_BASE
+    return ""
+
+
 def _get_provider_kwargs(model_id: str) -> dict:
     """Extract provider-specific kwargs (api_key, api_base) from config.
 
@@ -183,11 +239,14 @@ def _get_provider_kwargs(model_id: str) -> dict:
     kwargs: dict = {}
     if provider_cfg.api_key:
         kwargs["api_key"] = provider_cfg.api_key
-    if provider_cfg.base_url:
-        kwargs["api_base"] = provider_cfg.base_url
     # Pass through any extra options
     if provider_cfg.options:
         kwargs.update(provider_cfg.options)
+    api_base = provider_api_base(model_id, config=config)
+    if api_base:
+        # Canonicalize aliases such as options.base_url/endpoint to the key the
+        # direct Responses adapter actually consumes.
+        kwargs["api_base"] = api_base
 
     return kwargs
 
@@ -548,6 +607,194 @@ def _needs_responses_api(model_id: str) -> bool:
     return False
 
 
+def tool_dialect_for_model(model_id: str) -> str:
+    """Return the definition wrapper used by the actual provider path."""
+
+    return "responses" if _needs_responses_api(model_id) else "litellm"
+
+
+_SENSITIVE_HEADER = _re.compile(
+    r"(?:authorization|api[-_]?key|token|secret|password|credential|cookie)",
+    _re.IGNORECASE,
+)
+_HEADER_NAME = _re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _binding_endpoint(raw: str, provider_name: str) -> str:
+    """Return a route identity without retaining URL credentials or queries."""
+
+    value = str(raw or "").strip()
+    if not value:
+        return f"provider://{provider_name}"
+    parsed = _urlsplit(value)
+    if not parsed.scheme or not parsed.hostname:
+        return f"configured:{_hashlib.sha256(value.encode()).hexdigest()}"
+    try:
+        port = f":{parsed.port}" if parsed.port is not None else ""
+    except ValueError:
+        return f"configured:{_hashlib.sha256(value.encode()).hexdigest()}"
+    # Paths sometimes contain gateway tenant ids or signed routing material.
+    # Their full digest still distinguishes endpoints without recording them.
+    path_digest = _hashlib.sha256((parsed.path or "/").encode()).hexdigest()
+    return f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}/path:{path_digest}"
+
+
+def _wire_capability_headers(options: Mapping[str, Any]) -> dict[str, str]:
+    """Return only bounded, non-secret beta/version headers for the wire."""
+
+    selected: dict[str, tuple[str, str]] = {}
+
+    def add(name: object, raw_value: object) -> None:
+        header_name = str(name).strip()
+        lowered = header_name.lower()
+        if (
+            not header_name
+            or not _HEADER_NAME.fullmatch(header_name)
+            or _SENSITIVE_HEADER.search(header_name)
+            or (
+                "beta" not in lowered
+                and lowered not in {"openai-version", "api-version"}
+            )
+        ):
+            return
+        if isinstance(raw_value, (list, tuple, set)):
+            value = ",".join(str(item) for item in raw_value)
+        else:
+            value = str(raw_value)
+        if not value or "\r" in value or "\n" in value or len(value) > 4_096:
+            return
+        selected[lowered] = (header_name, value)
+
+    for option_name in ("beta_headers", "extra_headers", "default_headers", "headers"):
+        value = options.get(option_name)
+        if isinstance(value, dict):
+            for name, header_value in value.items():
+                add(name, header_value)
+        elif value not in (None, "") and "beta" in option_name:
+            add("OpenAI-Beta", value)
+
+    anthropic_beta = options.get("anthropic_beta")
+    if anthropic_beta not in (None, ""):
+        add("Anthropic-Beta", anthropic_beta)
+    return {
+        original: value
+        for _lowered, (original, value) in sorted(selected.items())
+    }
+
+
+def _binding_beta_headers(options: dict[str, Any]) -> tuple[str, ...]:
+    """Fingerprint exactly the non-secret capability headers sent on wire."""
+
+    return tuple(
+        f"{name.lower()}=sha256:{_hashlib.sha256(value.encode()).hexdigest()}"
+        for name, value in _wire_capability_headers(options).items()
+    )
+
+
+def provider_tool_binding(
+    model_id: str,
+    *,
+    provider_to_canonical: Mapping[str, str],
+    dialect: str | None = None,
+    config: Any | None = None,
+):
+    """Build the complete, secret-free identity of one tool wire binding.
+
+    The persisted value is only ``ProviderCapabilityBinding.digest()``.  Its
+    account/config dimension is a keyed fingerprint of the credential slot,
+    provider options and exact canonical-to-wire projection; raw credentials,
+    URL query parameters and header secrets never enter the returned model.
+    Consequently a key/account/endpoint/model/version/beta/config or tool-name
+    mapping change forces canonical remapping instead of trusting stale wire
+    names.
+    """
+
+    from session.internal_parts import ProviderCapabilityBinding
+
+    if config is None:
+        try:
+            from core.config import get_config
+
+            config = get_config()
+        except Exception:
+            config = None
+
+    provider_slot = model_id.split("/", 1)[0] if "/" in model_id else model_id
+    provider_name = _detect_provider(model_id) or provider_slot or "unknown"
+    providers = getattr(config, "provider", {}) if config is not None else {}
+    provider_cfg = providers.get(provider_slot) if isinstance(providers, dict) else None
+    if provider_cfg is None:
+        cfg_payload: dict[str, Any] = {}
+    elif hasattr(provider_cfg, "model_dump"):
+        cfg_payload = provider_cfg.model_dump(mode="json")
+    elif isinstance(provider_cfg, dict):
+        cfg_payload = dict(provider_cfg)
+    else:
+        cfg_payload = {"configured_type": type(provider_cfg).__qualname__}
+
+    options = cfg_payload.get("options") or {}
+    if not isinstance(options, dict):
+        options = {"value": options}
+    endpoint_raw = provider_api_base(model_id, config=config)
+    endpoint = _binding_endpoint(endpoint_raw, provider_slot or provider_name)
+
+    if (dialect or tool_dialect_for_model(model_id)) == "responses":
+        api_version = RESPONSES_API_VERSION
+    else:
+        api_version = str(
+            options.get("api_version")
+            or options.get("api-version")
+            or options.get("version")
+            or "default"
+        )
+        if api_version == "default" and endpoint_raw:
+            query = _parse_qs(_urlsplit(endpoint_raw).query)
+            api_version = str(
+                (query.get("api-version") or query.get("api_version") or ["default"])[0]
+            )
+
+    exact_projection = sorted(
+        (str(wire), str(canonical))
+        for wire, canonical in dict(provider_to_canonical).items()
+    )
+    private_account_payload = {
+        "provider_slot": provider_slot,
+        # This complete provider block may contain secrets, but exists only as
+        # input to HMAC and is never returned, logged or persisted.
+        "provider_config": cfg_payload,
+        "wire_projection": exact_projection,
+        "dialect": dialect or tool_dialect_for_model(model_id),
+    }
+    encoded = _json.dumps(
+        private_account_payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    jwt_secret = str(getattr(config, "jwt_secret", "") or "")
+    hmac_key = _hashlib.sha256(
+        b"openbox:provider-tool-binding:v1\0" + jwt_secret.encode()
+    ).digest()
+    account_config_id = _hmac.new(hmac_key, encoded, _hashlib.sha256).hexdigest()
+
+    safe_provider = provider_name if 0 < len(provider_name) <= 64 else _hashlib.sha256(
+        provider_name.encode()
+    ).hexdigest()
+    safe_model = model_id if 0 < len(model_id) <= 256 else _hashlib.sha256(
+        model_id.encode()
+    ).hexdigest()
+    return ProviderCapabilityBinding(
+        provider=safe_provider,
+        endpoint=endpoint,
+        account_id=f"account-config:{account_config_id}",
+        api_version=api_version[:128] or "default",
+        model=safe_model,
+        dialect=dialect or tool_dialect_for_model(model_id),
+        beta_headers=_binding_beta_headers(options),
+    )
+
+
 async def _stream_responses_api(
     model_id: str,
     system: list[str],
@@ -555,6 +802,11 @@ async def _stream_responses_api(
     tools: dict[str, ToolInfo],
     variant: str | None = None,
     tool_choice: str | None = None,
+    native_plan: Any | None = None,
+    native_portable_tools: dict[str, ToolInfo] | None = None,
+    native_portable_system: list[str] | None = None,
+    native_record_capability: Any | None = None,
+    native_discovery_state: Any | None = None,
 ) -> AsyncIterator[dict]:
     """Stream LLM via OpenAI Responses API directly (for GPT-5.x reasoning).
 
@@ -580,7 +832,7 @@ async def _stream_responses_api(
     root = api_base.rstrip("/")
     if not root.endswith("/v1"):
         root = f"{root}/v1"
-    url = f"{root}/responses?api-version=2025-03-01-preview"
+    url = f"{root}/responses?api-version={RESPONSES_API_VERSION}"
 
     # Determine reasoning effort
     variant_kwargs = _get_variant_kwargs(model_id, variant)
@@ -590,16 +842,13 @@ async def _stream_responses_api(
 
     input_messages = build_responses_input(messages, system)
 
-    # Build tool definitions for Responses API
-    api_tools = []
-    for tool_id, tool_info in tools.items():
-        schema = _tool_parameters_schema(tool_info)
-        api_tools.append({
-            "type": "function",
-            "name": tool_id,
-            "description": tool_info.description,
-            "parameters": schema,
-        })
+    # Production serialization is shared with budget measurement and the
+    # LiteLLM adapter; do not build a provider-shaped near-copy here.
+    api_tools = (
+        [dict(definition) for definition in native_plan.tools]
+        if native_plan is not None
+        else build_tool_definitions(tools, "responses")
+    )
 
     # Strip the provider prefix from model_id (e.g., "openai/gpt-5.2" -> "gpt-5.2")
     bare_model = model_id.split("/", 1)[1] if "/" in model_id else model_id
@@ -625,19 +874,148 @@ async def _stream_responses_api(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    headers.update(_wire_capability_headers(provider_kwargs))
 
     try:
         tool_calls: list[dict] = []
         stream_usage: dict = {}
         had_streaming_text = False
         had_streaming_reasoning = False
+        response_chain_id = ""
+        native_call_decisions: dict[str, Any] = {}
+        native_normalizer = None
+        if native_plan is not None:
+            from agent.native_tool_search import (
+                NativeProtocolError,
+                OpenAIResponsesNativeNormalizer,
+            )
+
+            if native_discovery_state is None:
+                raise NativeProtocolError(
+                    "native Responses request has no step discovery budget state"
+                )
+            native_normalizer = OpenAIResponsesNativeNormalizer(
+                native_plan,
+                budget_state=native_discovery_state,
+            )
+
+        def capture_final_function_call(item: Mapping[str, Any]) -> tuple[int, bool, str]:
+            """Upsert authoritative done/summary arguments without silent drift."""
+
+            item_id = str(item.get("id") or item.get("item_id") or "")
+            call_id = str(item.get("call_id") or "")
+            name = str(item.get("name") or "")
+            existing = None
+            tc_index = -1
+            for index, candidate in enumerate(tool_calls):
+                if (
+                    (item_id and candidate.get("item_id") == item_id)
+                    or (not item_id and call_id and candidate.get("call_id") == call_id)
+                ):
+                    existing = candidate
+                    tc_index = index
+                    break
+            is_new = existing is None
+            if existing is None:
+                existing = {
+                    "item_id": item_id,
+                    "call_id": call_id,
+                    "name": name,
+                    "args": "",
+                    "finalized": False,
+                }
+                tool_calls.append(existing)
+                tc_index = len(tool_calls) - 1
+
+            def conflict(field: str) -> None:
+                message = f"Responses function call {field} changed before completion"
+                if native_plan is not None:
+                    raise NativeProtocolError(message)
+                raise RuntimeError(message)
+
+            for field, final_value in (("call_id", call_id), ("name", name)):
+                previous = str(existing.get(field) or "")
+                if previous and final_value and previous != final_value:
+                    conflict(field)
+                if final_value:
+                    existing[field] = final_value
+
+            emitted_delta = ""
+            if "arguments" in item:
+                final_args = item.get("arguments")
+                if not isinstance(final_args, str):
+                    conflict("arguments")
+                previous_args = str(existing.get("args") or "")
+                if previous_args and previous_args != final_args:
+                    conflict("arguments")
+                if not previous_args and final_args:
+                    emitted_delta = final_args
+                existing["args"] = final_args
+                existing["finalized"] = True
+            return tc_index, is_new, emitted_delta
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
-                    log.error(f"Responses API error {resp.status_code}: {body.decode()[:500]}")
-                    yield {"type": "error", "error": Exception(f"Responses API {resp.status_code}: {body.decode()[:200]}")}
+                    body_text = body.decode("utf-8", errors="replace")
+                    if native_plan is not None:
+                        from agent.native_tool_search import is_explicit_native_unsupported
+
+                        if is_explicit_native_unsupported(resp.status_code, body_text):
+                            if native_record_capability is not None:
+                                try:
+                                    await native_record_capability(
+                                        "unsupported",
+                                        f"pre_stream_http_{resp.status_code}",
+                                    )
+                                except Exception:
+                                    # A private-state write failure must not
+                                    # turn a safe pre-stream portable fallback
+                                    # into an outage. The callback records the
+                                    # process-local sticky state before its DB
+                                    # write, so this remains fail-closed within
+                                    # the current worker.
+                                    log.warning(
+                                        "Could not persist native unsupported state",
+                                        exc_info=True,
+                                    )
+                            # Exactly one replay is allowed, and only before
+                            # any SSE event. The recursive call has no native
+                            # plan, so it cannot recurse/fallback a second time.
+                            async for event in _stream_responses_api(
+                                model_id,
+                                (
+                                    native_portable_system
+                                    if native_portable_system is not None
+                                    else system
+                                ),
+                                [
+                                    message
+                                    for message in messages
+                                    if "_responses_input_items" not in message
+                                ],
+                                (
+                                    native_portable_tools
+                                    if native_portable_tools is not None
+                                    else tools
+                                ),
+                                variant=variant,
+                                tool_choice=tool_choice,
+                            ):
+                                yield event
+                            return
+                    log.error(
+                        "Responses API error %s: %s",
+                        resp.status_code,
+                        body_text[:500],
+                    )
+                    yield {
+                        "type": "error",
+                        "error": Exception(
+                            f"Responses API {resp.status_code}: {body_text[:200]}"
+                        ),
+                    }
                     return
 
                 async for line in resp.aiter_lines():
@@ -649,16 +1027,60 @@ async def _stream_responses_api(
 
                     try:
                         data = _json.loads(data_str)
-                    except _json.JSONDecodeError:
+                    except _json.JSONDecodeError as exc:
+                        if native_plan is not None:
+                            raise NativeProtocolError(
+                                "native Responses stream emitted malformed JSON"
+                            ) from exc
                         continue
 
                     etype = data.get("type", "")
+
+                    if etype in {"response.created", "response.completed"}:
+                        candidate_response_id = str(
+                            (data.get("response") or {}).get("id") or ""
+                        )
+                        if (
+                            candidate_response_id
+                            and response_chain_id
+                            and candidate_response_id != response_chain_id
+                        ):
+                            message = "Responses stream changed response id before completion"
+                            if native_plan is not None:
+                                raise NativeProtocolError(message)
+                            raise RuntimeError(message)
+                        if candidate_response_id:
+                            response_chain_id = candidate_response_id
 
                     terminal_error = responses_event_error(data)
                     if terminal_error:
                         log.error(f"Responses API stream failed: {terminal_error[:500]}")
                         yield {"type": "error", "error": Exception(terminal_error)}
                         return
+
+                    if native_normalizer is not None:
+                        normalized = native_normalizer.feed_sse(data)
+                        for native_event in normalized:
+                            if not response_chain_id:
+                                raise NativeProtocolError(
+                                    "native Tool Search event preceded response.created"
+                                )
+                            if native_event.type == "tool_call":
+                                native_call_decisions[
+                                    str(native_event.call_id or "")
+                                ] = native_event
+                                continue
+                            yield {
+                                "type": f"native_{native_event.type}",
+                                "stream_seq": native_event.stream_seq,
+                                "raw_item": dict(native_event.raw_item),
+                                "canonical_tool_id": native_event.canonical_tool_id,
+                                "wire_tool_name": native_event.wire_tool_name,
+                                "same_response_executable": (
+                                    native_event.same_response_executable
+                                ),
+                                "response_chain_id": response_chain_id,
+                            }
 
                     # Reasoning summary text (the readable thinking content)
                     if etype == "response.reasoning_summary_text.delta":
@@ -687,9 +1109,10 @@ async def _stream_responses_api(
                                 "call_id": item.get("call_id", ""),
                                 "name": item.get("name", ""),
                                 "args": "",
+                                "finalized": False,
                             })
                             # Emit tool_call_start so frontend shows card immediately
-                            if item.get("name"):
+                            if item.get("name") and native_plan is None:
                                 yield {"type": "tool_call_start", "index": tc_index, "tool": item["name"], "call_id": item.get("call_id", "")}
 
                     elif etype == "response.function_call_arguments.delta":
@@ -703,6 +1126,10 @@ async def _stream_responses_api(
                                 tc_index = i
                                 break
                         if existing:
+                            if existing.get("finalized"):
+                                raise RuntimeError(
+                                    "Responses emitted arguments after function call completion"
+                                )
                             existing["args"] += delta
                         else:
                             # Fallback: create entry if output_item.added was missed
@@ -712,10 +1139,48 @@ async def _stream_responses_api(
                                 "call_id": data.get("call_id", ""),
                                 "name": data.get("name", ""),
                                 "args": delta,
+                                "finalized": False,
                             })
                         # Stream argument delta to frontend for live preview
-                        if delta:
+                        # Native deferred calls are not exposed to the public
+                        # processor until the ordered Tool Search normalizer
+                        # has seen their reveal.  Emitting an args delta here
+                        # would reference a pending card that intentionally
+                        # was not created above.
+                        if delta and native_plan is None:
                             yield {"type": "tool_call_args_delta", "index": tc_index, "delta": delta}
+
+                    elif etype in {
+                        "response.output_item.done",
+                        "response.function_call_arguments.done",
+                    }:
+                        item = (
+                            data.get("item", {})
+                            if etype == "response.output_item.done"
+                            else {
+                                "item_id": data.get("item_id", ""),
+                                "call_id": data.get("call_id", ""),
+                                "name": data.get("name", ""),
+                                "arguments": data.get("arguments", ""),
+                            }
+                        )
+                        if isinstance(item, dict) and item.get("type", "function_call") == "function_call":
+                            tc_index, is_new, final_delta = capture_final_function_call(item)
+                            if native_plan is None:
+                                captured = tool_calls[tc_index]
+                                if is_new and captured.get("name"):
+                                    yield {
+                                        "type": "tool_call_start",
+                                        "index": tc_index,
+                                        "tool": captured["name"],
+                                        "call_id": captured.get("call_id", ""),
+                                    }
+                                if final_delta:
+                                    yield {
+                                        "type": "tool_call_args_delta",
+                                        "index": tc_index,
+                                        "delta": final_delta,
+                                    }
 
                     # Response completed — extract usage + non-streamed content
                     # GPT-5.4 does NOT stream tool calls or reasoning; everything
@@ -743,31 +1208,23 @@ async def _stream_responses_api(
                                         yield {"type": "reasoning_delta", "text": text}
 
                             elif item_type == "function_call":
-                                fc_id = output_item.get("id", "")
-                                already_captured = any(
-                                    tc.get("item_id") == fc_id for tc in tool_calls
+                                tc_index, is_new, final_delta = capture_final_function_call(
+                                    output_item
                                 )
-                                if not already_captured:
-                                    tc_index = len(tool_calls)
-                                    tool_calls.append({
-                                        "item_id": fc_id,
-                                        "call_id": output_item.get("call_id", ""),
-                                        "name": output_item.get("name", ""),
-                                        "args": output_item.get("arguments", ""),
-                                    })
-                                    if output_item.get("name"):
+                                if native_plan is None:
+                                    captured = tool_calls[tc_index]
+                                    if is_new and captured.get("name"):
                                         yield {
                                             "type": "tool_call_start",
                                             "index": tc_index,
-                                            "tool": output_item["name"],
-                                            "call_id": output_item.get("call_id", ""),
+                                            "tool": captured["name"],
+                                            "call_id": captured.get("call_id", ""),
                                         }
-                                    args_str = output_item.get("arguments", "")
-                                    if args_str:
+                                    if final_delta:
                                         yield {
                                             "type": "tool_call_args_delta",
                                             "index": tc_index,
-                                            "delta": args_str,
+                                            "delta": final_delta,
                                         }
 
                             elif item_type == "message" and not had_streaming_text:
@@ -777,6 +1234,18 @@ async def _stream_responses_api(
                                         if text:
                                             yield {"type": "text_delta", "text": text}
 
+        if native_normalizer is not None:
+            native_normalizer.finalize()
+        if native_plan is not None and native_record_capability is not None:
+            try:
+                await native_record_capability("supported", "request_completed")
+            except Exception:
+                # The provider response has already completed; capability
+                # bookkeeping cannot discard or duplicate its tool calls.
+                log.warning(
+                    "Could not persist native supported state",
+                    exc_info=True,
+                )
         log.info(f"Responses API usage for {model_id}: {stream_usage}")
 
         # Estimate cost
@@ -801,17 +1270,38 @@ async def _stream_responses_api(
                     args = {}
 
                 tool_name = tc["name"]
-                call_id = tc.get("call_id", tc.get("item_id", ""))
+                call_id = tc.get("call_id") or tc.get("item_id", "")
+                if native_plan is not None:
+                    decision = native_call_decisions.get(str(call_id or ""))
+                    if decision is None:
+                        from agent.native_tool_search import NativeProtocolError
+
+                        raise NativeProtocolError(
+                            "native function call lacks an ordered authorization decision"
+                        )
+                    yield {
+                        "type": "tool_call",
+                        "tool": tool_name,
+                        "wire_tool": tool_name,
+                        "args": args,
+                        "call_id": call_id,
+                        "stream_seq": decision.stream_seq,
+                        "native_same_response_executable": (
+                            decision.same_response_executable
+                        ),
+                        "native_error_code": decision.error_code,
+                    }
+                    continue
                 repaired = _repair_tool_name(tool_name, tools)
                 if repaired is None:
                     log.warning(f"Unknown tool call: {tool_name}")
                     yield {
-                        "type": "tool_call", "tool": tool_name,
+                        "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
                         "args": args, "call_id": call_id, "invalid": True,
                     }
                 else:
                     yield {
-                        "type": "tool_call", "tool": repaired,
+                        "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
                         "args": args, "call_id": call_id,
                     }
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
@@ -819,6 +1309,20 @@ async def _stream_responses_api(
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        if native_plan is not None and native_record_capability is not None:
+            from agent.native_tool_search import NativeProtocolError
+
+            if isinstance(e, NativeProtocolError):
+                try:
+                    await native_record_capability(
+                        "unsupported",
+                        f"protocol_violation:{type(e).__name__}",
+                    )
+                except Exception:
+                    log.warning(
+                        "Could not persist native protocol fallback",
+                        exc_info=True,
+                    )
         log.error(f"Responses API error: {e}")
         yield {"type": "error", "error": e}
 
@@ -849,7 +1353,17 @@ async def stream_llm(
     # GPT-5.x models: use Responses API for reasoning content
     if _needs_responses_api(model_id):
         async for event in _stream_responses_api(
-            model_id, system, messages, tools, variant=variant, tool_choice=tool_choice
+            model_id,
+            system,
+            messages,
+            tools,
+            variant=variant,
+            tool_choice=tool_choice,
+            native_plan=ctx._native_tool_plan,
+            native_portable_tools=ctx._native_portable_tools,
+            native_portable_system=ctx._native_portable_system,
+            native_record_capability=ctx._native_record_capability,
+            native_discovery_state=ctx,
         ):
             yield event
         return
@@ -1032,30 +1546,14 @@ async def _stream_litellm_direct(
         if llm_messages and llm_messages[-1].get("role") == "assistant":
             llm_messages.append({"role": "user", "content": "Continue."})
 
-        # LiteLLM/Anthropic proxy compatibility: add _noop tool when
-        # message history contains tool calls but no active tools are provided.
-        if not tools and _has_tool_calls(llm_messages):
-            tool_schemas = [{
-                "type": "function",
-                "function": {
-                    "name": "_noop",
-                    "description": "Placeholder for proxy compatibility",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }]
-        else:
-            tool_schemas = []
-
-        for tool_id, tool_info in tools.items():
-            schema = _tool_parameters_schema(tool_info)
-            tool_schemas.append({
-                "type": "function",
-                "function": {
-                    "name": tool_id,
-                    "description": tool_info.description,
-                    "parameters": schema,
-                },
-            })
+        # LiteLLM/Anthropic proxy compatibility: the same production builder
+        # also owns the synthetic _noop definition so budget measurement cannot
+        # report an empty payload while the adapter sends one.
+        tool_schemas = build_tool_definitions(
+            tools,
+            "litellm",
+            include_noop=not tools and history_has_tool_calls(llm_messages),
+        )
 
         # Merge variant-specific parameters (thinking budget, reasoning effort, etc.)
         variant_kwargs = _get_variant_kwargs(model_id, variant)
@@ -1202,12 +1700,12 @@ async def _stream_litellm_direct(
                 if repaired is None:
                     log.warning(f"Unknown tool call: {tool_name}")
                     yield {
-                        "type": "tool_call", "tool": tool_name,
+                        "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
                         "args": args, "call_id": tc["id"], "invalid": True,
                     }
                 else:
                     yield {
-                        "type": "tool_call", "tool": repaired,
+                        "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
                         "args": args, "call_id": tc["id"],
                     }
 
@@ -1220,7 +1718,7 @@ async def _stream_litellm_direct(
         yield {"type": "error", "error": e}
 
 
-def _has_tool_calls(messages: list[dict]) -> bool:
+def history_has_tool_calls(messages: list[dict]) -> bool:
     """Check if any message in history contains tool call/result content.
 
     Used to determine if a _noop tool should be added for LiteLLM proxy compatibility.
@@ -1238,3 +1736,8 @@ def _has_tool_calls(messages: list[dict]) -> bool:
         if role == "assistant" and msg.get("tool_calls"):
             return True
     return False
+
+
+# Compatibility export for older tests/extensions that imported the private
+# helper before it became part of payload accounting.
+_has_tool_calls = history_has_tool_calls

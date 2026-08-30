@@ -7,6 +7,16 @@ from core.log import create_logger
 log = create_logger("agent.agent")
 
 
+def _with_skill_search_companion(tools: list[str]) -> list[str]:
+    """Keep Skill loading and its conditional large-directory search atomic."""
+    resolved = [tool for tool in tools if tool != "skill_search"]
+    if "skill" not in resolved:
+        return resolved
+    position = resolved.index("skill") + 1
+    resolved.insert(position, "skill_search")
+    return resolved
+
+
 @dataclass
 class AgentDef:
     """Definition of an agent."""
@@ -23,7 +33,18 @@ class AgentDef:
     #: Accent colour for the UI, when the agent wants one.
     color: str | None = None
     permission: list[dict] = field(default_factory=list)
+    # True only when a config-defined agent explicitly listed the logical
+    # discovery slot in its own ``tools`` whitelist. Custom agents inherit a
+    # safe default toolset for compatibility, including capability_search,
+    # but inheritance is not consent to leave the shadow rollout.
+    portable_opt_in: bool = False
     # Each dict: {"permission": "edit", "pattern": "*", "action": "deny"}
+
+    def __post_init__(self) -> None:
+        # `skill_search` grants no execution authority, but a large Skill
+        # directory cannot be capped safely without it. Conversely an agent
+        # without the Skill loader must never receive the companion alone.
+        self.tools = _with_skill_search_companion(self.tools)
 
 
 # Note: Build/plan agents use model-specific prompts from agent.prompts.system,
@@ -153,7 +174,8 @@ AGENTS: dict[str, AgentDef] = {
         tools=[
             "bash", "read", "write", "edit", "multiedit", "apply_patch", "glob", "grep",
             "task", "batch", "question", "todo_write", "todo_read",
-            "plan_enter", "skill", "web_fetch", "web_search", "cron", "view_image",
+            "plan_enter", "skill", "skill_search", "capability_search",
+            "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode",
             "image_gen", "video_identity", "video_project", "video_generate",
             "video_transcribe", "video_render", "creator_context", "skill_manage",
@@ -218,7 +240,7 @@ AGENTS: dict[str, AgentDef] = {
             # prompt forbids. It grants no new authority either, since `bash`
             # can already run anything a skill would instruct; what it adds is
             # the instructions.
-            "skill",
+            "skill", "skill_search",
         ],
         max_steps=100,
         mode="subagent",
@@ -313,6 +335,9 @@ def _merged_registry() -> dict[str, AgentDef]:
                     if tool not in BUILD_ONLY_WORKFLOW_TOOLS
                 ],
                 mode=DEFAULT_CONFIG_MODE,
+                portable_opt_in=(
+                    "capability_search" in (getattr(ov, "tools", None) or ())
+                ),
             )
         agent = apply_agent_overrides(copy.copy(agent), ov)
         registry[name] = agent
@@ -346,7 +371,7 @@ def apply_agent_overrides(agent_def: AgentDef, overrides) -> AgentDef:
     if getattr(overrides, "hidden", None) is not None:
         agent_def.hidden = overrides.hidden
     if getattr(overrides, "tools", None) is not None:
-        agent_def.tools = list(overrides.tools)
+        agent_def.tools = _with_skill_search_companion(list(overrides.tools))
     if valid_color(getattr(overrides, "color", None)):
         agent_def.color = overrides.color
     return agent_def

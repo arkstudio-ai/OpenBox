@@ -65,11 +65,49 @@ async def fork_session(
             return False
 
     if _use_db():
+        from sqlalchemy import select
         from db.base import get_db_session
         from db.models.message import Message as MessageORM
         from db.models.part import Part as PartORM
 
         async with get_db_session() as db:
+            source_part_ids = []
+            for message in messages:
+                for source_part in message.parts or []:
+                    source_data = source_part if isinstance(source_part, dict) else (
+                        source_part.model_dump() if hasattr(source_part, "model_dump") else {}
+                    )
+                    if isinstance(source_data, dict) and source_data.get("id"):
+                        source_part_ids.append(source_data["id"])
+            identity_by_part: dict[str, dict] = {}
+            if source_part_ids:
+                source_rows = (await db.execute(
+                    select(PartORM).where(
+                        PartORM.id.in_(source_part_ids),
+                        PartORM.session_id == source_session_id,
+                        PartORM.user_id == user_id,
+                    )
+                )).scalars().all()
+                for source_row in source_rows:
+                    values = {
+                        "canonical_tool_id": source_row.canonical_tool_id,
+                        "wire_tool_name": source_row.wire_tool_name,
+                        "provider_binding_digest": source_row.provider_binding_digest,
+                        "provider_dialect": source_row.provider_dialect,
+                    }
+                    present = [value is not None for value in values.values()]
+                    if any(present) and (
+                        not all(present) or source_row.stream_seq is None
+                    ):
+                        raise ValueError(
+                            "Cannot fork a transcript with partial ToolPart identity"
+                        )
+                    if all(present):
+                        identity_by_part[source_row.id] = {
+                            **values,
+                            "stream_seq": source_row.stream_seq,
+                        }
+
             for msg in messages:
                 new_msg_id = ascending("message")
                 role = msg.role if isinstance(msg.role, str) else msg.role.value
@@ -97,6 +135,7 @@ async def fork_session(
                         continue
 
                     new_part_id = ascending("part")
+                    source_part_id = p.get("id", "")
                     p_copy = {
                         **p,
                         "id": new_part_id,
@@ -111,6 +150,7 @@ async def fork_session(
                         user_id=user_id,
                         type=p.get("type", "text"),
                         data=p_copy,
+                        **identity_by_part.get(source_part_id, {}),
                         created_at=now,
                     )
                     db.add(part_row)

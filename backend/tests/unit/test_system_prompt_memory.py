@@ -1,8 +1,35 @@
 """Creator memory injection into the system prompt: last part, gated, resilient."""
+from types import SimpleNamespace
+
 import pytest
 
 from agent.agent import AgentDef
 from agent.loop import _build_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_environment_prompt_describes_wuying_without_docker_claims(monkeypatch):
+    async def no_instructions(_config):
+        return []
+
+    monkeypatch.setattr(
+        "core.config.get_config",
+        lambda: SimpleNamespace(sandbox_provider="wuying"),
+    )
+    monkeypatch.setattr(
+        "session.instruction.instruction_system_with_config",
+        no_instructions,
+    )
+
+    parts = await _build_system_prompt(
+        AgentDef(name="explore", description="", prompt="x"),
+        "openai/gpt-5",
+    )
+    environment = next(part for part in parts if part.startswith("You are powered"))
+    assert "Alibaba Cloud Wuying workstation" in environment
+    assert "Docker" not in environment
+    assert "Kubernetes" not in environment
+    assert "root (full system access)" not in environment
 
 
 @pytest.mark.asyncio

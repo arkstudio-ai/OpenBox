@@ -108,6 +108,39 @@ async def test_cleanup_stale_sandbox_clears_all_state(manager, sandbox_info):
     assert "abc123" not in mock_provider._container_projects
 
 
+@pytest.mark.asyncio
+async def test_unresponsive_external_sandbox_preserves_warm_client_projection(
+    manager,
+    sandbox_info,
+):
+    """A Wuying tunnel outage must not replace the cache-owning client."""
+
+    key = _map_key("user1", "default")
+    sandbox_info.project_id = "default"
+    warm_client = MagicMock(spec=SandboxClient)
+    warm_client.catalogue_generation = "warm-generation"
+    manager._project_map[key] = sandbox_info
+    manager._clients[key] = warm_client
+    manager._session_project["sess1"] = key
+    manager._verify_sandbox_alive = AsyncMock(return_value=False)
+    manager._ensure_session_dir = AsyncMock()
+
+    external_provider = MagicMock()
+    external_provider.owns_containers = False
+    external_provider.get_user_container = MagicMock(
+        side_effect=AssertionError("must not rebuild an external sandbox client")
+    )
+
+    with patch("sandbox.provider", external_provider):
+        client = await manager.get_client("sess1", user_id="user1")
+
+    assert client is warm_client
+    assert manager._clients[key] is warm_client
+    assert manager._project_map[key] is sandbox_info
+    assert manager._session_project["sess1"] == key
+    manager._ensure_session_dir.assert_not_awaited()
+
+
 # ── acquire() with dead container ──
 
 @pytest.mark.asyncio

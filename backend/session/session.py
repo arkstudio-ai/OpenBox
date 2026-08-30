@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 
 from bus import bus
@@ -11,7 +11,7 @@ from bus.events import SESSION_STATUS, SESSION_TITLE
 from db.base import get_db_session
 from db.models.session import Session as SessionORM
 from db.models.message import Message as MessageORM
-from db.models.part import Part as PartORM
+from db.models.part import Part as PartORM, PRIVATE_TOOL_PART_FIELDS, public_part_data
 from models.message import SessionStatus, TokenUsage, MessageWithParts, MessageInfo, MessagePart
 from core.identifier import descending, ascending
 from core.log import create_logger
@@ -40,6 +40,9 @@ class Session(BaseModel):
     project_id: str = "default"
     parent_id: str | None = None  # Links child (subtask) sessions to their parent
     kind: str = "normal"  # "normal" | "cron" (cron run transcript)
+    # Never serialize private reveal/fallback state through REST, SSE, forks,
+    # logs, or the frontend session payload.
+    tool_exposure_state: dict = Field(default_factory=dict, exclude=True)
 
 
 def _orm_to_session(row: SessionORM) -> Session:
@@ -62,6 +65,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         project_id=row.project_id or "default",
         parent_id=row.parent_id,
         kind=getattr(row, "kind", None) or "normal",
+        tool_exposure_state=getattr(row, "tool_exposure_state", None) or {},
     )
 
 
@@ -121,6 +125,7 @@ async def create_session(
             kind=kind,
             parent_id=parent_id,
             token_usage={},
+            tool_exposure_state={},
             created_at=now,
             updated_at=now,
         )
@@ -220,25 +225,29 @@ async def delete_session(session_id: str, user_id: str = "default") -> bool:
     # guessed another tenant's session id could detach its cron notifications
     # and release its in-memory sandbox binding even though the scoped session
     # update itself matched no row.
-    async with get_db_session() as db:
-        owned = (
-            await db.execute(
-                select(SessionORM.id).where(
-                    SessionORM.id == session_id,
-                    SessionORM.user_id == user_id,
+    from session.internal_parts import (
+        begin_session_write,
+        clear_internal_session_locked,
+        lock_owned_session,
+        session_exposure_lock,
+    )
+
+    async with session_exposure_lock(session_id):
+        async with get_db_session() as db:
+            await begin_session_write(db)
+            try:
+                row = await lock_owned_session(
+                    db,
+                    session_id,
+                    user_id,
+                    include_deleted=True,
                 )
-            )
-        ).scalar_one_or_none()
-        if owned is None:
-            return False
-        await db.execute(
-            update(SessionORM)
-            .where(
-                SessionORM.id == session_id,
-                SessionORM.user_id == user_id,
-            )
-            .values(is_deleted=True, deleted_at=now)
-        )
+            except LookupError:
+                return False
+            await clear_internal_session_locked(db, row)
+            row.is_deleted = True
+            row.deleted_at = now
+            row.updated_at = now
     # Cascade: cron jobs are project-scoped and outlive conversations. The
     # deleted session merely stops being their notify target.
     try:
@@ -542,7 +551,10 @@ async def save_part(part: MessagePart, is_new: bool = False, *, user_id: str) ->
         is_new: If True, publish PART_CREATED instead of PART_UPDATED.
         user_id: Whose update this is. Required.
     """
-    part_dict = part.model_dump()
+    from session.tool_part_identity import tool_part_identity_values
+
+    identity_values = tool_part_identity_values(part)
+    part_dict = public_part_data(part.model_dump())
     msg_id = part_dict.get("message_id", "")
     session_id = part_dict.get("session_id", "")
 
@@ -560,16 +572,23 @@ async def save_part(part: MessagePart, is_new: bool = False, *, user_id: str) ->
                 user_id=user_id,
                 type=part_dict.get("type", "text"),
                 data=part_dict,
+                **identity_values,
                 created_at=datetime.now(timezone.utc),
             )
             db.add(row)
         else:
+            values = {"data": part_dict, **identity_values}
             await db.execute(
-                update(PartORM).where(PartORM.id == part.id).values(data=part_dict)
+                update(PartORM).where(PartORM.id == part.id).values(**values)
             )
 
     # Exclude internal fields from SSE event (frontend doesn't need them)
-    sse_dict = part.model_dump(exclude={"session_id", "message_id", "state"})
+    sse_dict = public_part_data(part.model_dump(exclude={
+        "session_id",
+        "message_id",
+        "state",
+        *PRIVATE_TOOL_PART_FIELDS,
+    }))
 
     from bus.events import PART_CREATED, PART_UPDATED
     event_type = PART_CREATED if is_new else PART_UPDATED
@@ -623,7 +642,7 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_
     # Group parts by message_id
     parts_by_msg: dict[str, list[dict]] = {}
     for p in all_parts:
-        parts_by_msg.setdefault(p.message_id, []).append(p.data)
+        parts_by_msg.setdefault(p.message_id, []).append(public_part_data(p.data))
 
     # Build result
     from models.message import id_to_iso
@@ -656,7 +675,12 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_
     return result
 
 
-async def delete_messages_from(session_id: str, message_id: str) -> str | None:
+async def delete_messages_from(
+    session_id: str,
+    message_id: str,
+    *,
+    user_id: str = "default",
+) -> str | None:
     """Drop `message_id` and everything after it. Returns the id of the last
     user message that survives, or None if the session has none left.
 
@@ -669,42 +693,65 @@ async def delete_messages_from(session_id: str, message_id: str) -> str | None:
     own context) unless all of them learn to filter it, and one that forgets is
     a silent context bug rather than a visible one.
     """
-    async with get_db_session() as db:
-        target = await db.execute(
-            select(MessageORM.created_at).where(
-                MessageORM.id == message_id,
-                MessageORM.session_id == session_id,
+    from session.internal_parts import (
+        begin_session_write,
+        delete_internal_parts_for_messages_locked,
+        lock_owned_session,
+        session_exposure_lock,
+    )
+
+    doomed: list[str] = []
+    async with session_exposure_lock(session_id):
+        async with get_db_session() as db:
+            await begin_session_write(db)
+            try:
+                session_row = await lock_owned_session(db, session_id, user_id)
+            except LookupError:
+                return None
+            target = await db.execute(
+                select(MessageORM.created_at).where(
+                    MessageORM.id == message_id,
+                    MessageORM.session_id == session_id,
+                    MessageORM.user_id == user_id,
+                )
             )
-        )
-        cutoff = target.scalar_one_or_none()
-        if cutoff is None:
-            return None
+            cutoff = target.scalar_one_or_none()
+            if cutoff is None:
+                return None
 
-        doomed = (await db.execute(
-            select(MessageORM.id).where(
-                MessageORM.session_id == session_id,
-                MessageORM.created_at >= cutoff,
+            doomed = list((await db.execute(
+                select(MessageORM.id).where(
+                    MessageORM.session_id == session_id,
+                    MessageORM.user_id == user_id,
+                    MessageORM.created_at >= cutoff,
+                ).order_by(MessageORM.id)
+            )).scalars().all())
+
+            if doomed:
+                # Lock order is session -> private event -> public part/message.
+                await delete_internal_parts_for_messages_locked(db, session_row, doomed)
+                await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
+                await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
+
+            survivor = await db.execute(
+                select(MessageORM.id).where(
+                    MessageORM.session_id == session_id,
+                    MessageORM.user_id == user_id,
+                    MessageORM.role == "user",
+                ).order_by(MessageORM.created_at.desc()).limit(1)
             )
-        )).scalars().all()
-
-        if doomed:
-            # Parts first: they carry a foreign key onto messages.
-            await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
-            await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
-
-        survivor = await db.execute(
-            select(MessageORM.id).where(
-                MessageORM.session_id == session_id,
-                MessageORM.role == "user",
-            ).order_by(MessageORM.created_at.desc()).limit(1)
-        )
-        last_user = survivor.scalar_one_or_none()
+            last_user = survivor.scalar_one_or_none()
 
     log.info(f"Regenerate: dropped {len(doomed)} message(s) from {message_id} in {session_id}")
     return last_user
 
 
-async def delete_failed_turn(session_id: str, message_id: str) -> int:
+async def delete_failed_turn(
+    session_id: str,
+    message_id: str,
+    *,
+    user_id: str = "default",
+) -> int:
     """Remove an errored assistant message, and the prompt that produced it.
 
     For a failed turn the user has already moved past: it answers nothing, and
@@ -719,31 +766,48 @@ async def delete_failed_turn(session_id: str, message_id: str) -> int:
     "dismiss a failure", not a general history-rewriting endpoint. Returns the
     number of messages removed, 0 if the id does not qualify.
     """
-    async with get_db_session() as db:
-        row = (await db.execute(
-            select(MessageORM.id, MessageORM.parent_id, MessageORM.error, MessageORM.role).where(
-                MessageORM.id == message_id,
-                MessageORM.session_id == session_id,
-            )
-        )).one_or_none()
-        if row is None or row.role != "assistant" or not row.error:
-            return 0
+    from session.internal_parts import (
+        begin_session_write,
+        delete_internal_parts_for_messages_locked,
+        lock_owned_session,
+        session_exposure_lock,
+    )
 
-        doomed = [message_id]
-
-        if row.parent_id:
-            siblings = (await db.execute(
-                select(MessageORM.id).where(
+    doomed: list[str] = []
+    async with session_exposure_lock(session_id):
+        async with get_db_session() as db:
+            await begin_session_write(db)
+            try:
+                session_row = await lock_owned_session(db, session_id, user_id)
+            except LookupError:
+                return 0
+            row = (await db.execute(
+                select(MessageORM.id, MessageORM.parent_id, MessageORM.error, MessageORM.role).where(
+                    MessageORM.id == message_id,
                     MessageORM.session_id == session_id,
-                    MessageORM.parent_id == row.parent_id,
-                    MessageORM.id != message_id,
+                    MessageORM.user_id == user_id,
                 )
-            )).scalars().all()
-            if not siblings:
-                doomed.append(row.parent_id)
+            )).one_or_none()
+            if row is None or row.role != "assistant" or not row.error:
+                return 0
 
-        await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
-        await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
+            doomed = [message_id]
+
+            if row.parent_id:
+                siblings = (await db.execute(
+                    select(MessageORM.id).where(
+                        MessageORM.session_id == session_id,
+                        MessageORM.user_id == user_id,
+                        MessageORM.parent_id == row.parent_id,
+                        MessageORM.id != message_id,
+                    )
+                )).scalars().all()
+                if not siblings:
+                    doomed.append(row.parent_id)
+
+            await delete_internal_parts_for_messages_locked(db, session_row, doomed)
+            await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
+            await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
 
     log.info(f"Dismissed failed turn {message_id} in {session_id} ({len(doomed)} message(s))")
     return len(doomed)
@@ -766,7 +830,7 @@ async def get_parts_for_message(message_id: str) -> list[dict]:
             select(PartORM).where(PartORM.message_id == message_id)
             .order_by(PartORM.created_at)
         )
-        return [p.data for p in result.scalars().all()]
+        return [public_part_data(p.data) for p in result.scalars().all()]
 
 
 async def update_part_data(part_id: str, data: dict, publish: bool = False, user_id: str = "default") -> None:
@@ -778,6 +842,7 @@ async def update_part_data(part_id: str, data: dict, publish: bool = False, user
     the event the row spins forever, because the store still holds the stale
     ``running`` copy until something forces a refetch.
     """
+    data = public_part_data(data)
     async with get_db_session() as db:
         await db.execute(
             update(PartORM).where(PartORM.id == part_id).values(data=data)

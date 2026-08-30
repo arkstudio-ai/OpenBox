@@ -6,9 +6,32 @@ registry was a frozen dict and config could only reach a handful of run-time
 fields, so an agent you defined simply did not exist.
 """
 import pytest
+from pydantic import BaseModel
 
 import agent.agent as mod
+from agent.tool_runtime import assemble_tool_runtime, effective_exposure_mode
 from core.config import AgentOverride
+from tool.tool import ToolInfo, ToolResult
+
+
+class _Args(BaseModel):
+    value: str = ""
+
+
+async def _execute(_args, _ctx):
+    return ToolResult(title="ok", output="ok")
+
+
+def _runtime_tools() -> dict[str, ToolInfo]:
+    return {
+        tool_id: ToolInfo(
+            id=tool_id,
+            description=f"Use {tool_id}.",
+            parameters=_Args,
+            execute=_execute,
+        )
+        for tool_id in ("capability_search", "read")
+    }
 
 
 class Cfg:
@@ -36,6 +59,53 @@ def with_config(monkeypatch):
 def test_a_config_agent_is_created(with_config):
     with_config({"reviewer": AgentOverride(description="Reviews code")})
     assert mod.get_agent("reviewer").description == "Reviews code"
+
+
+def test_inherited_discovery_slot_does_not_opt_custom_agent_out_of_shadow(with_config):
+    with_config({"reviewer": AgentOverride()})
+    reviewer = mod.get_agent("reviewer")
+
+    assert "capability_search" in reviewer.tools
+    assert reviewer.portable_opt_in is False
+    mode = effective_exposure_mode(
+        "portable",
+        reviewer.name,
+        portable_opt_in=reviewer.portable_opt_in,
+    )
+    assert mode == "shadow"
+    runtime = assemble_tool_runtime(
+        _runtime_tools(), mode=mode, agent_name=reviewer.name
+    )
+    assert set(runtime.provider_tools) == {"read"}
+    assert runtime.candidate_plan is not None
+    assert runtime.candidate_plan.direct_ids == ("capability_search",)
+    assert runtime.candidate_plan.discovery_ids == ("read",)
+
+
+@pytest.mark.parametrize("requested_mode", ["portable", "native_auto"])
+def test_explicit_custom_discovery_whitelist_opts_into_deferred_runtime(
+    with_config,
+    requested_mode,
+):
+    with_config({
+        "reviewer": AgentOverride(tools=["capability_search", "read"]),
+    })
+    reviewer = mod.get_agent("reviewer")
+
+    assert reviewer.portable_opt_in is True
+    mode = effective_exposure_mode(
+        requested_mode,
+        reviewer.name,
+        portable_opt_in=reviewer.portable_opt_in,
+    )
+    assert mode == requested_mode
+    runtime = assemble_tool_runtime(
+        _runtime_tools(), mode=mode, agent_name=reviewer.name
+    )
+    assert set(runtime.provider_tools) == {"capability_search"}
+    assert runtime.provider_plan.direct_ids == ("capability_search",)
+    assert runtime.provider_plan.discovery_ids == ("read",)
+    assert runtime.candidate_plan is None
 
 
 def test_it_defaults_to_being_usable_both_ways(with_config):

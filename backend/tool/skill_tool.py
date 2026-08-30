@@ -1,7 +1,10 @@
 """Skill tool: load and inject skill content."""
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import replace
+
 from pydantic import BaseModel, Field
 
 from core.log import create_logger
@@ -13,6 +16,19 @@ log = create_logger("tool.skill")
 class SkillArgs(BaseModel):
     skill: str = Field(description="Name of the skill to load")
     args: str = Field(default="", description="Optional arguments for the skill")
+
+
+class SkillSearchArgs(BaseModel):
+    query: str = Field(
+        default="",
+        max_length=500,
+        description="Short words describing the needed skill.",
+    )
+    name: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional exact skill name. Exact lookup does not fall back to fuzzy matching.",
+    )
 
 
 #: Where the container keeps user-installed skills, and the convenience symlink
@@ -281,6 +297,69 @@ skill_tool = define_tool(
 from core.markdown import MAX_DESCRIPTION_CHARS, clip_description as _clip
 
 LISTING_BUDGET_TOKENS = 2_000
+LISTING_HARD_CHARS_DEFAULT = 8_000
+SKILL_SEARCH_MAX_RESULTS = 5
+SKILL_SEARCH_RESULT_CHARS = 2_000
+SKILL_SEARCH_INDEX_NAME_CHARS = 500
+
+_SEARCH_WORDS = re.compile(r"[\w.-]+", re.UNICODE)
+_XML_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_SEARCH_NOTICE = (
+    "  <notice>More skills are available; use skill_search to find them.</notice>"
+)
+
+
+class SkillListingCompanionRequired(RuntimeError):
+    """A complete Skill directory cannot fit without its search companion."""
+
+
+def _xml_text(value, limit: int | None = None) -> str:
+    """Return XML-safe text, optionally bounded without splitting entities."""
+    raw = _XML_CONTROL.sub("", str(value or ""))
+    if limit is None:
+        return html.escape(raw, quote=True)
+    if limit <= 0:
+        return ""
+
+    escaped: list[str] = []
+    used = 0
+    for character in raw:
+        fragment = html.escape(character, quote=True)
+        if used + len(fragment) > limit:
+            suffix = "…"
+            while escaped and used + len(suffix) > limit:
+                used -= len(escaped.pop())
+            return "".join(escaped) + suffix[: max(0, limit - used)]
+        escaped.append(fragment)
+        used += len(fragment)
+    return "".join(escaped)
+
+
+def _listing_hard_chars() -> int:
+    try:
+        from core.config import get_config
+
+        return int(get_config().tool_exposure.skill_listing_hard_chars)
+    except Exception:
+        return LISTING_HARD_CHARS_DEFAULT
+
+
+def _listing_entries(skills: list[dict]) -> list[tuple[str, str]]:
+    entries = []
+    for skill in skills:
+        name = str(skill.get("name") or "")
+        if name:
+            entries.append((name, _clip(skill.get("description", ""))))
+    return sorted(entries, key=lambda item: item[0])
+
+
+def _full_listing_block(name: str, description: str) -> list[str]:
+    return [
+        "  <skill>",
+        f"    <name>{_xml_text(name)}</name>",
+        f"    <description>{_xml_text(description)}</description>",
+        "  </skill>",
+    ]
 
 
 def _permitted(skills: list[dict], ruleset: list) -> list[dict]:
@@ -303,32 +382,25 @@ def _permitted(skills: list[dict], ruleset: list) -> list[dict]:
 
 
 def render_listing(skills: list[dict], budget: int = LISTING_BUDGET_TOKENS) -> str:
-    """Render <available_skills>, degrading to names once the budget is spent.
+    """Render the complete legacy listing used by the PR#0 meter.
 
     Names are kept for every skill even when descriptions have to go: the model
-    can still load one by name, and a silently truncated list would read as
-    "these are all the skills there are".
+    can still load one by name. This function deliberately remains unbounded so
+    measurement sees the complete would-be wire. PR#5 applies its hard cap only
+    after this value has been measured and only when ``skill_search`` is present.
     """
     from core.token import token_estimate
 
-    entries = sorted(skills, key=lambda s: s.get("name", ""))
+    entries = _listing_entries(skills)
     lines = ["<available_skills>"]
     spent = 0
     names_only: list[str] = []
 
-    for s in entries:
-        name = s.get("name", "")
-        if not name:
-            continue
+    for name, description in entries:
         if names_only:
             names_only.append(name)
             continue
-        block = [
-            "  <skill>",
-            f"    <name>{name}</name>",
-            f"    <description>{_clip(s.get('description', ''))}</description>",
-            "  </skill>",
-        ]
+        block = _full_listing_block(name, description)
         cost = token_estimate("\n".join(block))
         if spent + cost > budget:
             names_only.append(name)
@@ -342,21 +414,263 @@ def render_listing(skills: list[dict], budget: int = LISTING_BUDGET_TOKENS) -> s
         lines.append("  <!-- Description budget reached. These skills are also")
         lines.append("       available; call the tool by name to see what one does. -->")
         for name in names_only:
-            lines.append(f"  <skill><name>{name}</name></skill>")
+            lines.append(f"  <skill><name>{_xml_text(name)}</name></skill>")
 
     lines.append("</available_skills>")
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    hard_chars = _listing_hard_chars()
+    if len(rendered) > hard_chars:
+        # PR#0 stays measurement-only. The caller performs the PR#5 bounded
+        # materialization only after it has also built a searchable index.
+        log.warning(
+            "skill_listing over_hard_budget chars=%s hard=%s entries=%s; "
+            "complete meter preserved",
+            len(rendered),
+            hard_chars,
+            len(entries),
+        )
+    return rendered
 
 
-async def build_skill_tool_with_listing(sandbox=None, ruleset: list | None = None) -> ToolInfo:
-    """Build a copy of skill_tool with <available_skills> injected into the description.
+def _render_bounded_listing(
+    skills: list[dict],
+    *,
+    hard_chars: int,
+    budget: int = LISTING_BUDGET_TOKENS,
+) -> str:
+    """Render a stable XML prefix plus a fixed search notice under the cap."""
+    from core.token import token_estimate
 
-    This is called per-loop-iteration so the model knows which skills are available.
-    Follows the same pattern as opencode's SkillTool.init().
-    """
+    entries = _listing_entries(skills)
+    lines = ["<available_skills>"]
+    spent = 0
+    descriptions_exhausted = False
+    closing = "</available_skills>"
+
+    for name, description in entries:
+        full = _full_listing_block(name, description)
+        cost = token_estimate("\n".join(full))
+        if descriptions_exhausted or spent + cost > budget:
+            descriptions_exhausted = True
+            block = [f"  <skill><name>{_xml_text(name)}</name></skill>"]
+        else:
+            block = full
+
+        candidate = "\n".join([*lines, *block, _SEARCH_NOTICE, closing])
+        if len(candidate) > hard_chars:
+            break
+        lines.extend(block)
+        if not descriptions_exhausted:
+            spent += cost
+
+    rendered = "\n".join([*lines, _SEARCH_NOTICE, closing])
+    # Config validation keeps this at >=500. Stay fail-closed if a test or
+    # hand-built config violates that contract: never emit an oversized wire.
+    if len(rendered) > hard_chars:
+        rendered = "\n".join([
+            "<available_skills>",
+            "  <notice>Use skill_search to find available skills.</notice>",
+            closing,
+        ])
+    if len(rendered) > hard_chars:
+        raise ValueError("skill listing hard cap is too small for the search notice")
+    return rendered
+
+
+def _skill_search_index(skills: list[dict]) -> tuple[tuple[str, str], ...]:
+    """Detach only permitted names and short hints; never retain Skill bodies."""
+    index: dict[str, str] = {}
+    for skill in skills:
+        name = str(skill.get("name") or "")
+        # Valid installed names are short slugs. Refuse an adversarial host
+        # frontmatter name that would otherwise make every lexical scan
+        # unbounded; the tool schema enforces the same exact-name ceiling.
+        if not name or len(name) > SKILL_SEARCH_INDEX_NAME_CHARS or name in index:
+            continue
+        index[name] = _clip(skill.get("description", ""))
+    return tuple(sorted(index.items(), key=lambda item: item[0]))
+
+
+def _rank_skill_search(
+    index: tuple[tuple[str, str], ...],
+    args: SkillSearchArgs,
+) -> list[tuple[str, str]]:
+    if args.name is not None:
+        wanted = args.name.strip()
+        return [item for item in index if item[0] == wanted][:1]
+
+    query = args.query.strip().casefold()
+    terms = [word.casefold() for word in _SEARCH_WORDS.findall(query)[:16] if word]
+    if not terms:
+        return []
+
+    ranked: list[tuple[int, str, str]] = []
+    for name, hint in index:
+        folded_name = name.casefold()
+        folded_hint = hint.casefold()
+        score = 0
+        if query == folded_name:
+            score += 100
+        elif folded_name.startswith(query):
+            score += 40
+        elif query in folded_name:
+            score += 20
+        for term in terms:
+            if term == folded_name:
+                score += 20
+            elif folded_name.startswith(term):
+                score += 8
+            elif term in folded_name:
+                score += 4
+            elif term in folded_hint:
+                score += 1
+        if score:
+            ranked.append((score, name, hint))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [(name, hint) for _score, name, hint in ranked[:SKILL_SEARCH_MAX_RESULTS]]
+
+
+def _render_skill_search_results(
+    matches: list[tuple[str, str]],
+    *,
+    hard_chars: int = SKILL_SEARCH_RESULT_CHARS,
+) -> tuple[str, int]:
+    if not matches:
+        message = "No permitted skills matched. Try an exact name or narrower keywords."
+        return (
+            message[:hard_chars],
+            0,
+        )
+
+    closing = "</skill_search_results>"
+    lines = ["<skill_search_results>"]
+    rendered_count = 0
+    for name, hint in matches:
+        block = [
+            "  <skill>",
+            f"    <name>{_xml_text(name, 120)}</name>",
+            f"    <hint>{_xml_text(hint, 140)}</hint>",
+            "  </skill>",
+        ]
+        candidate = "\n".join([*lines, *block, closing])
+        if len(candidate) > hard_chars:
+            break
+        lines.extend(block)
+        rendered_count += 1
+    rendered = "\n".join([*lines, closing])
+    if len(rendered) > hard_chars:
+        raise AssertionError("skill search renderer exceeded its hard cap")
+    return rendered, rendered_count
+
+
+async def _execute_skill_search(
+    args: SkillSearchArgs,
+    ctx: ToolContext,
+    index: tuple[tuple[str, str], ...],
+) -> ToolResult:
+    max_calls = max(1, int(ctx._capability_max_search_calls))
+    max_reveals = max(1, int(ctx._capability_max_reveals))
+    max_result_chars = max(100, int(ctx._capability_max_result_chars))
+    if ctx._capability_search_calls >= max_calls:
+        return ToolResult(
+            title="Skill search limit reached",
+            output="This step already used the bounded capability-search limit.",
+            metadata={"blocked": True},
+        )
+    ctx._capability_search_calls += 1
+
+    remaining_ids = max_reveals - len(ctx._capability_revealed_ids)
+    remaining_chars = max_result_chars - ctx._capability_result_chars
+    if remaining_ids <= 0 or remaining_chars <= 0:
+        return ToolResult(
+            title="Skill result limit reached",
+            output="The bounded capability-result budget for this step is exhausted.",
+            metadata={"blocked": True},
+        )
+    minimum_envelope_chars = len(
+        "<skill_search_results>\n</skill_search_results>"
+    )
+    if remaining_chars < minimum_envelope_chars:
+        return ToolResult(
+            title="Skill result limit reached",
+            output="The bounded capability-result budget for this step is exhausted.",
+            metadata={"blocked": True},
+        )
+
+    matches = _rank_skill_search(index, args)
+    unseen = [
+        item
+        for item in matches
+        if f"skill:{item[0]}" not in ctx._capability_revealed_ids
+    ][:remaining_ids]
+    output, rendered_count = _render_skill_search_results(
+        unseen,
+        hard_chars=min(SKILL_SEARCH_RESULT_CHARS, remaining_chars),
+    )
+    selected = unseen[:rendered_count]
+    if matches and not selected:
+        return ToolResult(
+            title="Skill result budget exhausted",
+            output="Matching skills exceeded the remaining bounded result budget.",
+            metadata={"blocked": True},
+        )
+    ctx._capability_revealed_ids.update(
+        f"skill:{name}" for name, _hint in selected
+    )
+    ctx._capability_result_chars += len(output)
+    return ToolResult(
+        title=f"Found {len(selected)} skills" if selected else "No matching skills",
+        output=output,
+        metadata={"count": len(selected)},
+    )
+
+
+def _skill_search_for(skills: list[dict]) -> ToolInfo:
+    index = _skill_search_index(skills)
+
+    async def search(args: SkillSearchArgs, ctx: ToolContext) -> ToolResult:
+        return await _execute_skill_search(args, ctx, index)
+
+    return define_tool(
+        "skill_search",
+        description=(
+            "Search the permitted Skill directory by exact name or short keywords. "
+            "Returns at most five names and short hints; use skill(name=...) next to "
+            "load the selected instructions."
+        ),
+        parameters=SkillSearchArgs,
+        execute=search,
+        sandbox_required=False,
+        parallel_safe=False,
+        discovery_hint="Find a permitted Skill whose name is not in the bounded listing.",
+    )
+
+
+async def _empty_skill_search(args: SkillSearchArgs, ctx: ToolContext) -> ToolResult:
+    return await _execute_skill_search(args, ctx, ())
+
+
+skill_search_tool = define_tool(
+    "skill_search",
+    description=(
+        "Search the permitted Skill directory by exact name or short keywords. "
+        "This companion is exposed only when the Skill listing exceeds its hard cap."
+    ),
+    parameters=SkillSearchArgs,
+    execute=_empty_skill_search,
+    sandbox_required=False,
+    parallel_safe=False,
+    discovery_hint="Find a permitted Skill whose name is not in the bounded listing.",
+)
+
+
+async def _collect_permitted_skills(
+    sandbox=None,
+    ruleset: list | None = None,
+) -> list[dict]:
+    """Merge container/global/project directories, then authorize every row."""
     skills: list[dict] = []
 
-    # 1. Gather skills from the container
     if sandbox:
         try:
             container_skills = await sandbox.list_skills()
@@ -365,7 +679,6 @@ async def build_skill_tool_with_listing(sandbox=None, ruleset: list | None = Non
         except Exception:
             pass
 
-    # 2. Gather local skills
     try:
         from skill.skill import list_skills as list_local_skills
         local = await list_local_skills()
@@ -397,10 +710,49 @@ async def build_skill_tool_with_listing(sandbox=None, ruleset: list | None = Non
     except Exception:
         pass
 
-    skills = _permitted(skills, ruleset or [])
+    return _permitted(skills, ruleset or [])
+
+
+async def build_skill_tools_with_listing(
+    sandbox=None,
+    ruleset: list | None = None,
+    *,
+    enable_search: bool = True,
+) -> tuple[ToolInfo, ToolInfo | None]:
+    """Build the Skill loader and its conditional, same-step search companion."""
+    skills = await _collect_permitted_skills(sandbox, ruleset)
 
     if not skills:
-        return skill_tool  # No skills — use original static description
+        return skill_tool, None
 
-    enriched_description = "\n".join([_BASE_DESCRIPTION, "", render_listing(skills)])
-    return replace(skill_tool, description=enriched_description)
+    complete_listing = render_listing(skills)
+    hard_chars = _listing_hard_chars()
+    search: ToolInfo | None = None
+    wire_listing = complete_listing
+    if len(complete_listing) > hard_chars:
+        if enable_search:
+            # Build the permission-filtered index before dropping any wire row.
+            # Truncation and discovery therefore become one atomic materialization.
+            search = _skill_search_for(skills)
+            wire_listing = _render_bounded_listing(skills, hard_chars=hard_chars)
+        else:
+            raise SkillListingCompanionRequired(
+                "Skill directory exceeds its hard cap without an eligible "
+                "skill_search companion"
+            )
+
+    enriched_description = "\n".join([_BASE_DESCRIPTION, "", wire_listing])
+    return replace(skill_tool, description=enriched_description), search
+
+
+async def build_skill_tool_with_listing(
+    sandbox=None,
+    ruleset: list | None = None,
+) -> ToolInfo:
+    """Compatibility helper that never truncates without returning a search tool."""
+    tool, _search = await build_skill_tools_with_listing(
+        sandbox,
+        ruleset,
+        enable_search=False,
+    )
+    return tool

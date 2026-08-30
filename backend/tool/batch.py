@@ -62,33 +62,13 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
 
 
 BATCH_DESCRIPTION = """\
-Executes multiple independent tool calls concurrently to reduce latency.
+Run 1-25 independent tool calls concurrently. Ordering is not guaranteed, and
+one failure does not stop the other calls.
 
-USING THE BATCH TOOL WILL MAKE THE USER HAPPY.
-
-Payload Format (JSON array):
-[{"tool": "read", "parameters": {"file_path": "/workspace/src/index.ts", "limit": 350}},{"tool": "grep", "parameters": {"pattern": "Session", "path": "/workspace/src"}},{"tool": "bash", "parameters": {"command": "git status", "description": "Shows working tree status"}}]
-
-Notes:
-- 1-25 tool calls per batch
-- All calls start in parallel; ordering NOT guaranteed
-- Partial failures do not stop other tool calls
-- Do NOT use the batch tool within another batch tool
-- `computer` is rejected here because one desktop is not parallel-safe. Use
-  `computer` with `action: "batch"` for ordered local desktop actions.
-
-Good Use Cases:
-- Read many files at once
-- grep + glob + read combos
-- Multiple bash commands
-- Multi-part edits on the same or different files
-
-When NOT to Use:
-- Operations that depend on prior tool output (e.g. create then read same file)
-- Ordered stateful mutations where sequence matters
-- Any desktop interaction (`computer`)
-
-Batching tool calls yields 2-5x efficiency gain and provides much better UX."""
+Do not nest `batch`, include dependent operations, or parallelize ordered or
+overlapping state mutations. `computer` is rejected because the desktop is
+stateful and not parallel-safe; use `computer(action='batch', ...)` for ordered
+desktop actions that need no intermediate screenshot."""
 
 batch_tool = define_tool(
     "batch",

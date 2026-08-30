@@ -76,6 +76,21 @@ class SandboxManager:
         """Clear stale sandbox state from both manager and provider caches."""
         from sandbox import provider
 
+        # A failed liveness probe is not proof that a pre-provisioned remote
+        # desktop was deleted. In particular, a Wuying tunnel outage must keep
+        # the existing SandboxClient: it owns the last-known-good catalogue
+        # projection needed to replay historical canonical tool calls. Replacing
+        # that client turns a warm outage into a cold empty catalogue and makes
+        # the provider transcript unreplayable before the executor can report
+        # the real connectivity error.
+        if not getattr(provider, "owns_containers", True):
+            log.warning(
+                "Retaining unresponsive externally managed sandbox %s for key %s",
+                sandbox.container_id,
+                key,
+            )
+            return
+
         async with self._lock:
             # The health probe ran without the map lock. Another coroutine may
             # already have replaced this entry; never let an old failed probe
@@ -91,13 +106,6 @@ class SandboxManager:
                 self._session_project.pop(sid, None)
             if session_id:
                 self._session_project.pop(session_id, None)
-
-        # Only forget containers this provider can make again. A shared,
-        # pre-provisioned box (the WUYING desktop) is not OpenBox's to evict:
-        # dropping it left every later request raising KeyError until the
-        # process restarted, because only the provider's __init__ registers it.
-        if not getattr(provider, "owns_containers", True):
-            return
 
         provider._containers.pop(sandbox.container_id, None)
         provider._api_keys.pop(sandbox.container_id, None)
@@ -202,6 +210,22 @@ class SandboxManager:
                     return sandbox
             else:
                 await self._cleanup_stale_sandbox(sandbox, key, session_id)
+                # Externally managed desktops are retained on a transient
+                # health failure. Reattach this session to the same client and
+                # let catalogue reads use its stale projection. Do not run the
+                # directory bootstrap here: the failed probe already proved it
+                # would only add latency and another transport error.
+                async with self._lock:
+                    retained_client = (
+                        self._clients.get(key)
+                        if self._project_map.get(key) is sandbox
+                        else None
+                    )
+                    if retained_client is not None:
+                        sandbox.session_ids.add(session_id)
+                        self._session_project[session_id] = key
+                if retained_client is not None:
+                    return sandbox
 
         from sandbox import provider
 

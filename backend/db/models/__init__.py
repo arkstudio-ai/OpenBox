@@ -5,6 +5,7 @@ from db.models.project import Project
 from db.models.session import Session
 from db.models.message import Message
 from db.models.part import Part
+from db.models.internal_part import InternalPart
 from db.models.permission import PermissionRule
 from db.models.container import Container
 from db.models.todo import Todo
@@ -21,7 +22,7 @@ from db.models.memory import UserMemory
 from db.models.image_gen_cache import ImageGenCache
 
 __all__ = [
-    "User", "UserPreference", "Project", "Session", "Message", "Part",
+    "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "VideoMaterialGroup", "VideoMaterialAsset",

@@ -51,6 +51,17 @@ class ToolHooks:
         if blocked is not None:
             return blocked
 
+        previous_authorized_id = ctx._authorized_tool_id
+        previous_authorized_args = ctx._authorized_tool_args_key
+        ctx._authorized_tool_id = tool_id
+        ctx._authorized_tool_args_key = json.dumps(
+            args,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
         # Set part_id on context so tools can reference their own tool call
         ctx.part_id = part_id
 
@@ -140,6 +151,8 @@ class ToolHooks:
             )
         finally:
             ctx._on_output = None  # Clean up callback
+            ctx._authorized_tool_id = previous_authorized_id
+            ctx._authorized_tool_args_key = previous_authorized_args
 
         duration = time.time() - start_time
         bus.publish(TOOL_COMPLETED, {
@@ -239,6 +252,14 @@ class ToolHooks:
             return [args.get("pattern", "")]
         elif tool_id == "skill":
             return [args.get("skill", "")]
+        elif tool_id == "mcp_read_resource":
+            # Resource bodies are not catalogue data. Authorize the exact raw
+            # server/URI tuple through a fixed-size, unambiguous subject before
+            # the executor can fetch any body bytes. Existing rule evaluation
+            # remains last-match-wins.
+            from tool.mcp_tool import _canonical_resource_id
+
+            return [_canonical_resource_id(args.get("server"), args.get("uri"))]
         elif tool_id == "web_fetch":
             return [args.get("url", "")]
         return ["*"]

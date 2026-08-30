@@ -110,6 +110,14 @@ class ToolPartData(BaseModel):
     error: str | None = None
     title: str | None = None
     call_id: str = ""  # LLM's original tool_call_id (e.g. "call_xxx" for OpenAI, "functions.name:0" for Kimi)
+    # API-hidden replay identity. ``tool`` remains the existing display field;
+    # authorization and provider switching must never trust it as a canonical
+    # ID.  Field-level exclusion protects both REST snapshots and SSE dumps.
+    canonical_tool_id: str | None = Field(default=None, exclude=True, repr=False)
+    wire_tool_name: str | None = Field(default=None, exclude=True, repr=False)
+    provider_binding_digest: str | None = Field(default=None, exclude=True, repr=False)
+    provider_dialect: str | None = Field(default=None, exclude=True, repr=False)
+    stream_seq: int | None = Field(default=None, exclude=True, repr=False)
     duration: float | None = None
     # Tool-reported extras the UI renders (exit_code, blocked, …). Kept small:
     # the agent loop uses metadata for control flow too, so only public keys ship.

@@ -203,67 +203,26 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
 
 
 BASH_DESCRIPTION = """\
-Execute a bash command in the sandbox with real-time output streaming.
+Execute a shell command in the current sandbox project directory and stream its
+output. Use this for terminal-only operations; use the dedicated file tools for
+reading, searching, editing, or writing files, and respond directly instead of
+using shell output for conversation.
 
-IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. \
-DO NOT use it for file operations (reading, writing, editing, searching, finding files) — use the specialized tools instead.
+Quote paths containing spaces. The timeout defaults to 120 seconds and is
+capped at 600 seconds. Long output may be truncated; inspect the full artifact
+with the file tools. Run independent commands as separate parallel calls, and
+join dependent commands with `&&` so failure stops the sequence.
 
-Before executing the command, please follow these steps:
+Sandbox safety: never stop, replace, or modify the action server, its port, or
+PID 1; protected commands are blocked. Do not expose secrets in commands or
+output.
 
-1. Directory Verification:
-   - If the command will create new directories or files, first use `ls` to verify the parent directory exists and is the correct location
-
-2. Command Execution:
-   - Always quote file paths that contain spaces with double quotes
-   - You can specify an optional timeout in seconds. Default 120s (2 minutes), max 600s (10 minutes).
-   - Write a clear, concise description of what this command does in 5-10 words.
-   - If the output exceeds the maximum, it will be truncated. Use Read with offset/limit or Grep to search full content. You do NOT need to use `head`, `tail`, or other truncation commands.
-
-   - Avoid using Bash with `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands unless truly necessary. Instead, use dedicated tools:
-     - File search: Use Glob (NOT find or ls)
-     - Content search: Use Grep (NOT grep or rg)
-     - Read files: Use Read (NOT cat/head/tail)
-     - Edit files: Use Edit (NOT sed/awk)
-     - Write files: Use Write (NOT echo >/cat <<EOF)
-     - Communication: Output text directly (NOT echo/printf)
-   - When issuing multiple commands:
-     - If the commands are independent, make multiple Bash tool calls in a single message to run them in parallel.
-     - If the commands depend on each other, use a single Bash call with '&&' to chain them.
-     - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
-     - DO NOT use newlines to separate commands.
-
-# Committing changes with git
-
-Only create commits when requested by the user. If unclear, ask first. When the user asks you to create a new git commit, follow these steps:
-
-Git Safety Protocol:
-- NEVER update the git config
-- NEVER run destructive/irreversible git commands (like push --force, hard reset) unless the user explicitly requests them
-- NEVER skip hooks (--no-verify) unless the user explicitly requests it
-- NEVER run force push to main/master, warn the user if they request it
-- CRITICAL: Always create NEW commits rather than amending. Only amend when: (1) user explicitly requested it, (2) HEAD was created by you, (3) commit has NOT been pushed.
-- If commit FAILED or was REJECTED by hook, NEVER amend — fix the issue and create a NEW commit.
-- NEVER commit changes unless the user explicitly asks you to.
-
-1. Run git status and git diff in parallel to see all changes.
-2. Analyze all staged changes and draft a commit message:
-   - Summarize the nature of the changes (new feature, bug fix, refactoring, etc.)
-   - Do not commit files that likely contain secrets (.env, credentials.json, etc.)
-3. Add relevant files, create the commit, and run git status to verify.
-4. If the commit fails due to pre-commit hook, fix the issue and create a NEW commit.
-
-Important:
-- NEVER run additional commands to read or explore code, besides git bash commands
-- DO NOT push to the remote repository unless the user explicitly asks
-- NEVER use git commands with the -i flag (interactive) since they require input which is not supported
-
-# Creating pull requests
-Use the gh command for ALL GitHub-related tasks.
-
-When creating a pull request:
-1. Run git status, git diff, and git log in parallel to understand changes
-2. Analyze ALL commits and draft a PR summary
-3. Create branch if needed, push with -u, and create PR using gh pr create"""
+Git safety: commit or push only when the user explicitly requests it. Review
+status and diffs first and include only intended files. Never change git config,
+skip hooks, use interactive flags, or run destructive/force operations without
+explicit authorization. Prefer a new commit; amend only when explicitly asked,
+the commit is yours, and it has not been pushed. Never force-push a protected
+branch."""
 
 bash_tool = define_tool(
     "bash",

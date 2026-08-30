@@ -1,6 +1,7 @@
 """HTTP client for communicating with the Action Server inside a sandbox container."""
 import asyncio
 import base64
+import copy
 import contextvars
 import json
 import os
@@ -8,9 +9,10 @@ import re
 import secrets
 import shlex
 import socket
+import time
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable, Literal
 from urllib.parse import quote
 
 import httpx
@@ -25,6 +27,7 @@ log = create_logger("sandbox.client")
 #: can say so. An outer budget equal to the inner one just races it and
 #: replaces a useful message with a timeout.
 MCP_CALL_TIMEOUT_SECONDS = 180.0
+CATALOGUE_CACHE_TTL_SECONDS = 2.0
 
 
 # Older long-lived WUYING desktops expose the generic file/execute API and the
@@ -181,13 +184,52 @@ class RequestTrace:
     lease_token: str = ""
 
 
+@dataclass
+class _CatalogueCacheEntry:
+    snapshot: dict
+    etag: str | None
+    expires_at: float
+
+
+CatalogueAvailability = Literal["available", "stale", "unavailable"]
+
+
+@dataclass(frozen=True)
+class CatalogueProjectionState:
+    """One catalogue read plus how trustworthy that read is.
+
+    ``stale`` is a last-known-good snapshot retained across a transient tunnel
+    failure. ``unavailable`` means this process has never obtained a snapshot;
+    callers must not mistake an empty fail-small tool set for an authoritative
+    empty remote catalogue.
+    """
+
+    availability: CatalogueAvailability
+    snapshot: dict | None
+
+
+@dataclass(frozen=True)
+class _CatalogueLoad:
+    availability: Literal["available", "stale"]
+    snapshot: dict
+
+
 class SandboxClient:
     """HTTP client for the Action Server running inside a sandbox container.
 
     All file and command operations go through this client to the sandbox.
     """
 
-    def __init__(self, host: str, port: int, api_key: str, base_url: str | None = None):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        api_key: str,
+        base_url: str | None = None,
+        *,
+        catalogue_ttl_seconds: float = CATALOGUE_CACHE_TTL_SECONDS,
+        catalogue_clock: Callable[[], float] | None = None,
+    ):
         # base_url wins when set — remote providers (wuying) address the action
         # server through a tunnel endpoint rather than a host/port pair.
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
@@ -196,6 +238,11 @@ class SandboxClient:
         self._trace: contextvars.ContextVar[RequestTrace] = contextvars.ContextVar(
             f"sandbox_request_trace_{id(self)}", default=RequestTrace()
         )
+        self._catalogue_ttl_seconds = max(0.0, float(catalogue_ttl_seconds))
+        self._catalogue_clock = catalogue_clock or time.monotonic
+        self._catalogue_cache: _CatalogueCacheEntry | None = None
+        self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
+        self._catalogue_epoch = 0
 
     @staticmethod
     def _header_value(value: str, limit: int = 120) -> str:
@@ -586,6 +633,223 @@ class SandboxClient:
             resp.raise_for_status()
             return resp.json()
 
+    # ---- Sandbox catalogue projection ----
+
+    def _invalidate_catalogue_cache(self) -> None:
+        """Force revalidation without discarding the last-known-good view."""
+        self._catalogue_epoch += 1
+        if self._catalogue_cache is not None:
+            self._catalogue_cache = _CatalogueCacheEntry(
+                snapshot=self._catalogue_cache.snapshot,
+                etag=self._catalogue_cache.etag,
+                expires_at=float("-inf"),
+            )
+        # Do not cancel a request another caller is awaiting. Detaching it
+        # lets the next caller load the post-mutation generation immediately;
+        # the epoch guard prevents the old task from repopulating the cache.
+        self._catalogue_inflight = None
+
+    @staticmethod
+    def _resource_metadata(resources) -> list[dict]:
+        """Whitelist resource catalogue fields; bodies never cross this path."""
+        projected = []
+        for raw in resources if isinstance(resources, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            projected.append({
+                "server": str(raw.get("server") or ""),
+                "uri": str(raw.get("uri") or ""),
+                "name": str(raw.get("name") or ""),
+                "description": str(raw.get("description") or ""),
+                "mimeType": str(raw.get("mimeType") or raw.get("mime_type") or ""),
+            })
+        return projected
+
+    @classmethod
+    def _normalize_catalogue_snapshot(cls, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("sandbox catalogue projection must be an object")
+        skills = payload.get("skills")
+        tools = payload.get("mcp_tools")
+        resources = payload.get("mcp_resources")
+        servers = payload.get("mcp_servers", [])
+        if not isinstance(skills, list) or not isinstance(tools, list):
+            raise ValueError("sandbox catalogue projection is missing directory lists")
+        if not isinstance(resources, list) or not isinstance(servers, list):
+            raise ValueError("sandbox catalogue projection has malformed MCP metadata")
+        snapshot = copy.deepcopy(payload)
+        snapshot["skills"] = copy.deepcopy(skills)
+        snapshot["mcp_tools"] = copy.deepcopy(tools)
+        snapshot["mcp_resources"] = cls._resource_metadata(resources)
+        snapshot["mcp_servers"] = copy.deepcopy(servers)
+        return snapshot
+
+    async def _legacy_catalogue_projection(self, client: httpx.AsyncClient) -> dict:
+        """Build an equivalent snapshot from an older Action Server."""
+        headers = self._request_headers()
+        responses = []
+        for path in ("/skills", "/mcp/tools", "/mcp/resources"):
+            response = await client.get(path, headers=headers)
+            response.raise_for_status()
+            responses.append(response.json())
+        skills, tools, resources = responses
+        if not isinstance(skills, list) or not isinstance(tools, list):
+            raise ValueError("legacy sandbox catalogue returned malformed lists")
+        resource_metadata = self._resource_metadata(resources)
+        return {
+            "catalogue_version": 0,
+            "boot_id": "",
+            "started_at": None,
+            # Do not invent an authoritative generation for old servers.
+            "skills_generation": "",
+            "mcp_generation": "",
+            "generation": "",
+            "counts": {
+                "skills": len(skills),
+                "mcp_servers": 0,
+                "mcp_tools": len(tools),
+                "mcp_resources": len(resource_metadata),
+            },
+            "skills": copy.deepcopy(skills),
+            "mcp_servers": [],
+            "mcp_tools": copy.deepcopy(tools),
+            "mcp_resources": resource_metadata,
+        }
+
+    async def _reload_catalogue_projection(self) -> _CatalogueLoad:
+        load_epoch = self._catalogue_epoch
+        previous = self._catalogue_cache
+        availability: Literal["available", "stale"] = "available"
+        try:
+            async with self._client(timeout=15.0) as client:
+                headers = self._request_headers()
+                if previous is not None and previous.etag:
+                    headers["If-None-Match"] = previous.etag
+                response = await client.get("/catalog", headers=headers)
+
+                if response.status_code == 304:
+                    if previous is None or not previous.etag:
+                        raise RuntimeError("sandbox returned 304 without a cached catalogue")
+                    entry = _CatalogueCacheEntry(
+                        snapshot=previous.snapshot,
+                        etag=previous.etag,
+                        expires_at=(
+                            self._catalogue_clock() + self._catalogue_ttl_seconds
+                        ),
+                    )
+                elif response.status_code in {404, 405}:
+                    legacy = await self._legacy_catalogue_projection(client)
+                    # Three legacy endpoints cannot provide one atomic
+                    # generation. The snapshot is usable but never destructive
+                    # validation authority.
+                    availability = "stale"
+                    entry = _CatalogueCacheEntry(
+                        snapshot=legacy,
+                        etag=None,
+                        expires_at=(
+                            self._catalogue_clock() + self._catalogue_ttl_seconds
+                        ),
+                    )
+                else:
+                    response.raise_for_status()
+                    etag = response.headers.get("etag")
+                    if not etag:
+                        # An endpoint without ETag cannot provide the projection
+                        # protocol's consistency guarantee. Treat it as legacy.
+                        legacy = await self._legacy_catalogue_projection(client)
+                        availability = "stale"
+                        entry = _CatalogueCacheEntry(
+                            snapshot=legacy,
+                            etag=None,
+                            expires_at=(
+                                self._catalogue_clock() + self._catalogue_ttl_seconds
+                            ),
+                        )
+                    else:
+                        snapshot = self._normalize_catalogue_snapshot(response.json())
+                        entry = _CatalogueCacheEntry(
+                            snapshot=snapshot,
+                            etag=etag,
+                            expires_at=(
+                                self._catalogue_clock() + self._catalogue_ttl_seconds
+                            ),
+                        )
+        except Exception:
+            # A tunnel outage retains the last known good projection, but its
+            # expired deadline is not extended. The very next request retries,
+            # so failures never become a long negative cache.
+            if previous is not None:
+                return _CatalogueLoad("stale", previous.snapshot)
+            raise
+
+        if self._catalogue_epoch == load_epoch:
+            self._catalogue_cache = entry
+            return _CatalogueLoad(availability, entry.snapshot)
+        # A local mutation raced this read. Its response is still a bounded,
+        # last-known snapshot, but it cannot authoritatively describe the
+        # post-mutation directory and must not drive destructive validation.
+        return _CatalogueLoad("stale", entry.snapshot)
+
+    async def _load_catalogue_projection(self) -> _CatalogueLoad:
+        current = self._catalogue_cache
+        if current is not None and self._catalogue_clock() < current.expires_at:
+            # A TTL hit is last-known-good, not proof that another worker has
+            # not already observed a newer remote generation.
+            return _CatalogueLoad("stale", current.snapshot)
+
+        task = self._catalogue_inflight
+        if task is None:
+            task = asyncio.create_task(self._reload_catalogue_projection())
+            self._catalogue_inflight = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if self._catalogue_inflight is task and task.done():
+                self._catalogue_inflight = None
+
+    async def get_catalogue_projection_state(self) -> CatalogueProjectionState:
+        """Return a copy-on-read snapshot with explicit outage semantics.
+
+        A cold failure is represented as ``unavailable`` and is never cached.
+        This status-oriented API is used by tool resolution so a transient
+        empty view cannot destructively invalidate persisted reveal evidence.
+        The compatibility ``get_catalogue_projection`` API below continues to
+        raise the original transport error on a cold failure.
+        """
+        try:
+            loaded = await self._load_catalogue_projection()
+        except Exception as exc:
+            log.debug(
+                "Sandbox catalogue unavailable error_type=%s",
+                type(exc).__name__,
+            )
+            return CatalogueProjectionState("unavailable", None)
+        return CatalogueProjectionState(
+            loaded.availability,
+            copy.deepcopy(loaded.snapshot),
+        )
+
+    async def get_catalogue_projection(self) -> dict:
+        """Return one copy-on-read Skill/MCP directory snapshot.
+
+        All three legacy list methods below use this function. Within TTL they
+        perform no tunnel request; after TTL, concurrent callers share one
+        conditional request and a 304 carries no directory bytes.
+        """
+        loaded = await self._load_catalogue_projection()
+        return copy.deepcopy(loaded.snapshot)
+
+    async def get_catalogue_version(self) -> dict:
+        """Return version fields from the shared projection without another GET."""
+        snapshot = await self.get_catalogue_projection()
+        return {
+            key: copy.deepcopy(snapshot.get(key))
+            for key in (
+                "catalogue_version", "boot_id", "started_at",
+                "skills_generation", "mcp_generation", "generation", "counts",
+            )
+        }
+
     # ---- Dev-browser management ----
 
     async def start_dev_browser(self) -> dict:
@@ -604,7 +868,7 @@ class SandboxClient:
 
     async def list_skills(self) -> list[dict]:
         """List all installed skills in the container."""
-        return await self._get("/skills")
+        return (await self.get_catalogue_projection())["skills"]
 
     async def get_skill(self, name: str) -> dict:
         """Get a specific skill by name."""
@@ -624,11 +888,13 @@ class SandboxClient:
         """
         payload_files = files or []
         try:
-            return await self._post(
+            created = await self._post(
                 "/skills/create",
                 timeout=30.0,
                 json={"name": name, "skill_md": skill_md, "files": payload_files},
             )
+            self._invalidate_catalogue_cache()
+            return created
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {404, 405}:
                 raise
@@ -690,6 +956,7 @@ class SandboxClient:
             raise
 
         created = await self.get_skill(name)
+        self._invalidate_catalogue_cache()
         return {**created, "created": True}
 
     async def _legacy_export_skill_archive(self, name: str) -> dict:
@@ -744,11 +1011,13 @@ class SandboxClient:
         content: str | None = None,
     ) -> dict:
         """Install a skill in the container."""
-        return await self._post(
+        installed = await self._post(
             "/skills/install",
             timeout=90.0,
             json={"url": url, "name": name, "content": content},
         )
+        self._invalidate_catalogue_cache()
+        return installed
 
     async def upload_skill_archive(self, file_bytes: bytes, filename: str, name: str = "") -> dict:
         """Upload a skill archive (zip/tar/tar.gz/rar) to the container."""
@@ -761,11 +1030,15 @@ class SandboxClient:
             if resp.status_code != 200:
                 detail = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
                 raise Exception(detail)
-            return resp.json()
+            installed = resp.json()
+        self._invalidate_catalogue_cache()
+        return installed
 
     async def uninstall_skill(self, name: str) -> dict:
         """Uninstall a skill from the container."""
-        return await self._delete(f"/skills/{name}")
+        removed = await self._delete(f"/skills/{name}")
+        self._invalidate_catalogue_cache()
+        return removed
 
     # ---- MCP server management ----
 
@@ -775,23 +1048,33 @@ class SandboxClient:
 
     async def add_mcp_server(self, name: str, config: dict) -> dict:
         """Add a new MCP server configuration."""
-        return await self._post("/mcp/servers", json={"name": name, **config})
+        added = await self._post("/mcp/servers", json={"name": name, **config})
+        self._invalidate_catalogue_cache()
+        return added
 
     async def remove_mcp_server(self, name: str) -> dict:
         """Remove an MCP server configuration."""
-        return await self._delete(f"/mcp/servers/{name}")
+        removed = await self._delete(f"/mcp/servers/{name}")
+        self._invalidate_catalogue_cache()
+        return removed
 
     async def connect_mcp(self, name: str) -> dict:
         """Connect to an MCP server."""
-        return await self._post(f"/mcp/servers/{name}/connect")
+        try:
+            return await self._post(f"/mcp/servers/{name}/connect")
+        finally:
+            self._invalidate_catalogue_cache()
 
     async def disconnect_mcp(self, name: str) -> dict:
         """Disconnect from an MCP server."""
-        return await self._post(f"/mcp/servers/{name}/disconnect")
+        try:
+            return await self._post(f"/mcp/servers/{name}/disconnect")
+        finally:
+            self._invalidate_catalogue_cache()
 
     async def list_mcp_tools(self) -> list[dict]:
         """List all tools from connected MCP servers."""
-        return await self._get("/mcp/tools")
+        return (await self.get_catalogue_projection())["mcp_tools"]
 
     async def call_mcp_tool(self, server: str, tool: str, arguments: dict) -> dict:
         """Call a tool on a connected MCP server.
@@ -815,7 +1098,7 @@ class SandboxClient:
 
     async def list_mcp_resources(self) -> list[dict]:
         """List all resources from connected MCP servers."""
-        return await self._get("/mcp/resources")
+        return (await self.get_catalogue_projection())["mcp_resources"]
 
     async def read_mcp_resource(self, server: str, uri: str) -> dict:
         """Read a specific MCP resource."""
@@ -831,4 +1114,7 @@ class SandboxClient:
 
     async def refresh_mcp_server(self, name: str) -> dict:
         """Refresh tools/resources/prompts for a connected MCP server."""
-        return await self._post(f"/mcp/servers/{name}/refresh", timeout=30.0)
+        try:
+            return await self._post(f"/mcp/servers/{name}/refresh", timeout=30.0)
+        finally:
+            self._invalidate_catalogue_cache()

@@ -708,45 +708,23 @@ def _describe(action: str, args: _ActionPayload) -> str:
 
 
 COMPUTER_DESCRIPTION = """\
-Control the sandbox's graphical desktop: take a screenshot, move and click the \
-mouse, type text, press keys, scroll. Use this for anything that only exists \
-in a GUI — a browser page, a desktop app, a dialog — when no CLI can do the job.
+Control the shared, stateful graphical desktop. Take a `screenshot` first and
+act only on visible state; each visual action returns a fresh screenshot.
+Coordinates must use the shown screenshot's pixel space. Never guess an unseen
+target. Click the intended window or field before typing, then verify the next
+frame.
 
-Workflow: take a `screenshot` first, read it on your next turn, then act on \
-what you see. Actions return a fresh screenshot automatically, so you can \
-chain steps without asking for one each time.
+Use `action: "batch"` only for ordered atomic actions that need no intermediate
+visual decision, such as clicking a visible field, typing, and pressing Return.
+It runs locally and uploads one final screenshot through OSS. Never put
+`computer` inside the generic parallel `batch`: one desktop cannot be driven
+concurrently. If a later target appears or moves after an earlier action,
+inspect the intermediate screenshot instead of batching that coordinate.
 
-Use this `computer` tool with `action: "batch"` when several actions do not \
-need an intermediate visual decision, \
-for example click a known field → type text → press Return. Put the ordered \
-atomic actions in `actions`; they execute locally and only one final screenshot \
-is uploaded through OSS. Never put `computer` calls inside the generic parallel \
-`batch` tool; one desktop is stateful and cannot be driven concurrently. Do not \
-batch a later coordinate click when its target \
-only appears after an earlier action — inspect the intermediate screenshot first.
-
-Coordinates: the screenshot you are shown is downscaled from the real screen. \
-Always give coordinates in the screenshot's own pixel space (its size is \
-reported with every capture) — they are mapped back to the real display for \
-you. Never guess coordinates you have not seen in a screenshot.
-
-Typing goes to whatever currently has keyboard focus, which is often NOT the \
-window you just opened. Click the window (or the field) first, then type, and \
-check the next screenshot to confirm the text landed where you meant. If a \
-launcher or overview overlay is covering the screen, press Escape — twice if \
-a search box still holds text, since the first Escape only clears it.
-
-Keys use xdotool names: Return, Escape, Tab, BackSpace, Delete, Up/Down/Left/\
-Right, super, and combos like ctrl+c, ctrl+shift+t, alt+Tab.
-
-**Need a browser and there is none on screen? Use `open_browser`.** Never hunt \
-for a browser icon in a dock, launcher or menu. A Chrome started by clicking \
-its icon comes up with no remote-debugging port, so the dev-browser skill \
-cannot drive it — the icon hunt fails, and succeeding at it would be worse. \
-`open_browser` starts the managed browser (correct profile, policy, debug \
-port, extension) and re-attaches to one that is already running, including one \
-the user closed by hand. Once it reports ready, drive pages with the \
-dev-browser skill; keep `computer` for what the page itself cannot reach."""
+When no browser is visible, use `open_browser`; never hunt for or click a browser
+icon. It starts or reconnects the managed browser with its automation endpoint.
+After it is ready, use the browser tool for page content and reserve `computer`
+for operating-system UI, desktop apps, and dialogs."""
 
 computer_tool = define_tool(
     "computer",

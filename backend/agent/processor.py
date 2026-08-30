@@ -15,17 +15,19 @@ comes back as RETRY with no sleeping and no counter of its own.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Mapping
 
 from agent.agent import get_agent
 from agent.compaction import create_compaction
 from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeat_of_recent
 from agent.hooks import ToolHooks
-from agent.llm import stream_llm
+from agent.llm import provider_tool_binding, stream_llm
 from agent.retry import ContextOverflowError, is_context_overflow, is_retryable
 from bus import bus
 from bus.events import (
@@ -132,9 +134,10 @@ def unchanged_validation_failure(
 def sanitize_call_id(raw: str) -> str:
     """A provider-portable form of a tool-call id.
 
-    Only has to stay unique within one assistant turn, so replacing illegal
-    characters and clipping is enough — and it must stay deterministic, since
-    the id is what pairs a call with its result.
+    It must stay deterministic and collision-resistant, since the id is what
+    pairs a call with its result.  Keeping only the first 64 characters is not
+    sufficient: Gemini thought-signature ids commonly share a long prefix, so
+    two different calls could otherwise be persisted under the same id.
 
     The trailing strip is not cosmetic. This function is itself the source of
     the separators it removes: substitution turns `/` and `+` into `_`, and the
@@ -143,10 +146,148 @@ def sanitize_call_id(raw: str) -> str:
     the conversation is opened on a GPT model — with an error that blames the
     character set instead.
     """
-    cleaned = _CALL_ID_ILLEGAL.sub("_", raw or "")[:MAX_CALL_ID].rstrip("_-")
+    value = raw or ""
+    cleaned = _CALL_ID_ILLEGAL.sub("_", value).rstrip("_-")
     # Never return empty: an id of "" pairs a call with the wrong result, or
     # with nothing at all. Only reachable when the id was entirely separators.
-    return cleaned or "call"
+    if not cleaned:
+        return "call"
+
+    # Preserve already-portable ids for readable traces.  Rewritten or long
+    # ids get a hash suffix so sanitisation/truncation cannot merge distinct
+    # provider calls.  The suffix ends in hexadecimal, which also satisfies
+    # the Responses API's no-trailing-separator rule.
+    if cleaned == value and len(cleaned) <= MAX_CALL_ID:
+        return cleaned
+
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    head_budget = MAX_CALL_ID - len(digest) - 1
+    head = cleaned[:head_budget].rstrip("_-") or "call"
+    return f"{head}_{digest}"
+
+
+def _tool_call_payload_key(event: dict) -> str:
+    """Stable identity for duplicate/collision checks without logging args."""
+    return json.dumps(
+        {
+            "tool": event.get("tool", ""),
+            "args": event.get("args") or {},
+            "invalid": bool(event.get("invalid", False)),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _event_stream_seq(event: Mapping[str, object], fallback: int) -> int:
+    """Use the provider's ordered native sequence when one was verified."""
+
+    value = event.get("stream_seq")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return fallback
+
+
+def prepare_tool_call_batch(events: list[dict]) -> tuple[list[dict], list[int], bool]:
+    """Canonicalise one assistant turn and detect provider-id conflicts.
+
+    Returns ``(unique_events, duplicate_indexes, has_conflict)``.  Identical
+    repeated events are idempotent and execute once.  Reusing one non-empty
+    provider id for different payloads is a protocol violation: the entire
+    batch must fail closed before any executor is entered, otherwise the
+    persisted result can later be paired with the wrong call.
+
+    Providers occasionally omit an id.  Those calls receive a deterministic
+    per-position id instead of all collapsing to the generic ``call`` value.
+    """
+    prepared: list[dict] = []
+    duplicate_indexes: list[int] = []
+    seen: dict[str, tuple[str, int]] = {}
+    has_conflict = False
+
+    for index, original in enumerate(events):
+        event = dict(original)
+        payload_key = _tool_call_payload_key(event)
+        raw_id = str(event.get("call_id") or "")
+        canonical_id = sanitize_call_id(
+            raw_id if raw_id else f"generated:{index}:{payload_key}"
+        )
+        event["_canonical_call_id"] = canonical_id
+        event["_batch_index"] = index
+
+        previous = seen.get(canonical_id)
+        if previous is None:
+            seen[canonical_id] = (payload_key, index)
+            prepared.append(event)
+            continue
+
+        previous_payload, _previous_index = previous
+        if raw_id and previous_payload != payload_key:
+            has_conflict = True
+        elif previous_payload == payload_key:
+            duplicate_indexes.append(index)
+        else:
+            # A missing provider id is generated from index+payload and should
+            # never collide.  Treat an unexpected collision as hostile input.
+            has_conflict = True
+
+    return prepared, duplicate_indexes, has_conflict
+
+
+def _canonical_for_wire(wire_name: str, wire_to_canonical: Mapping[str, str]) -> str | None:
+    """Resolve only the same case repair accepted at the provider boundary."""
+
+    canonical = wire_to_canonical.get(wire_name)
+    if canonical is not None:
+        return str(canonical)
+    lowered = wire_name.lower()
+    if lowered != wire_name:
+        canonical = wire_to_canonical.get(lowered)
+        if canonical is not None:
+            return str(canonical)
+    return None
+
+
+def _persistable_wire_name(raw_name: object) -> str:
+    """Keep valid provider names exact; bind malformed names opaquely."""
+
+    value = str(raw_name or "")
+    if 0 < len(value) <= 128 and not any(ord(char) <= 0x20 or ord(char) == 0x7F for char in value):
+        return value
+    digest = hashlib.sha256(value.encode()).hexdigest()
+    return f"invalid_wire_v1_{digest}"
+
+
+def _tool_part_runtime_identity(
+    event: Mapping[str, object],
+    *,
+    stream_seq: int,
+    wire_to_canonical: Mapping[str, str],
+    provider_binding_digest: str,
+    provider_dialect: str,
+) -> dict[str, object]:
+    """Private persistence fields shared by every tool-call outcome path."""
+
+    resolved_name = str(event.get("tool") or "")
+    raw_wire_name = str(event.get("wire_tool") or resolved_name)
+    canonical = (
+        _canonical_for_wire(resolved_name, wire_to_canonical)
+        or _canonical_for_wire(raw_wire_name, wire_to_canonical)
+    )
+    if canonical is None:
+        # Unknown/blocked calls still need a complete, non-spoofable identity
+        # so a partial rollout cannot later mistake their display name for an
+        # authorized canonical tool. They remain outside executable_ids.
+        canonical = f"invalid:v1:{hashlib.sha256(raw_wire_name.encode()).hexdigest()}"
+    return {
+        "canonical_tool_id": canonical,
+        "wire_tool_name": _persistable_wire_name(raw_wire_name),
+        "provider_binding_digest": provider_binding_digest,
+        "provider_dialect": provider_dialect,
+        "stream_seq": stream_seq,
+    }
 
 
 class StepOutcome(str, Enum):
@@ -246,6 +387,11 @@ async def process_step(
     doom_loop_history: list,
     user_variant: str | None = None,
     tool_choice: str | None = None,
+    execution_lookup: Mapping[str, object] | None = None,
+    step_executable_ids: frozenset[str] | set[str] | None = None,
+    provider_to_canonical: Mapping[str, str] | None = None,
+    provider_binding_digest: str | None = None,
+    provider_dialect: str | None = None,
 ) -> StepResult:
     """Run one LLM turn: stream it, persist its parts, execute its tool calls.
 
@@ -265,6 +411,37 @@ async def process_step(
     completed_tool_parts: list = []
     agent_switch: str | None = None
     step_start_time = time.time()
+    provider_event_received = False
+    execution_tools = dict(execution_lookup) if execution_lookup is not None else dict(tools)
+    executable_ids = (
+        frozenset(step_executable_ids)
+        if step_executable_ids is not None
+        else frozenset(execution_tools)
+    )
+    response_executable = set(executable_ids)
+    wire_to_canonical = (
+        dict(provider_to_canonical)
+        if provider_to_canonical is not None
+        else {name: name for name in tools}
+    )
+    if (provider_binding_digest is None) != (provider_dialect is None):
+        raise ValueError("provider binding digest and dialect must be supplied together")
+    if provider_binding_digest is None:
+        binding = provider_tool_binding(
+            model_id,
+            provider_to_canonical=wire_to_canonical,
+        )
+        provider_binding_digest = binding.digest()
+        provider_dialect = binding.dialect
+    assert provider_dialect is not None
+    visible_wire_names = tuple(sorted(
+        name
+        for name, canonical_id in wire_to_canonical.items()
+        if canonical_id in executable_ids and name in tools
+    ))
+    # Nested dispatchers must observe the same execution frontier as direct
+    # calls; the complete eligible catalogue is never placed here.
+    ctx.available_tools = frozenset(response_executable)
 
     try:
         llm_stream = stream_llm(
@@ -279,6 +456,11 @@ async def process_step(
             tool_choice=tool_choice,
         )
         async for event in _iter_until_abort(llm_stream, abort):
+            # Once any provider event has crossed the stream boundary, this
+            # response may already have visible text, persisted native state,
+            # or a pending tool card. Replaying the whole request after a
+            # transport error could duplicate narration or side effects.
+            provider_event_received = True
             if event["type"] == "reasoning_delta":
                 text = event["text"]
                 collected_reasoning += text
@@ -350,6 +532,126 @@ async def process_step(
                         )
                         text_checkpoint_at = now
 
+            elif event["type"] in {"native_search_started", "native_search_result"}:
+                if ctx._native_binding is None or ctx._native_capability_key is None:
+                    raise RuntimeError("native provider event arrived without a binding")
+                from session.internal_parts import (
+                    PROVIDER_TRANSCRIPT_KIND,
+                    save_internal_part,
+                )
+
+                await save_internal_part(
+                    session_id=session_id,
+                    user_id=user_id,
+                    message_id=assistant_info.id,
+                    kind=PROVIDER_TRANSCRIPT_KIND,
+                    data=event["raw_item"],
+                    binding=ctx._native_binding,
+                    capability_key_digest=ctx._native_capability_key.digest(),
+                    response_chain_id=event["response_chain_id"],
+                    stream_seq=int(event["stream_seq"]),
+                    idempotency_key=(
+                        f"{event['response_chain_id']}:{event['stream_seq']}:"
+                        f"{event['type']}"
+                    ),
+                )
+
+            elif event["type"] == "native_tool_revealed":
+                if ctx._native_binding is None or ctx._native_capability_key is None:
+                    raise RuntimeError("native reveal arrived without a capability binding")
+                catalogue = ctx._capability_catalog
+                canonical_id = str(event.get("canonical_tool_id") or "")
+                entry = (
+                    catalogue.entries.get(canonical_id)
+                    if catalogue is not None
+                    else None
+                )
+                native_plan = ctx._native_tool_plan
+                if (
+                    entry is None
+                    or native_plan is None
+                    or str(event.get("wire_tool_name") or "")
+                    not in native_plan.deferred_wire_names
+                    or native_plan.wire_to_canonical.get(
+                        str(event.get("wire_tool_name") or "")
+                    )
+                    != canonical_id
+                ):
+                    raise RuntimeError("native reveal is outside the eligible frontier")
+                # The provider event is evidence, not authority. Same-response
+                # execution is granted only by the server-owned catalogue bit;
+                # reject a forged/misparsed elevation before it can persist any
+                # reveal evidence.
+                if event.get("same_response_executable") and not entry.same_response_safe:
+                    raise RuntimeError(
+                        "native reveal attempted unauthorized same-response execution"
+                    )
+
+                from session.internal_parts import (
+                    PROVIDER_TRANSCRIPT_KIND,
+                    ToolRevealEvent,
+                    commit_tool_reveal,
+                    save_internal_part,
+                )
+
+                provider_item = event["raw_item"].get("provider_item")
+                if (
+                    isinstance(provider_item, dict)
+                    and provider_item.get("type") == "tool_reference"
+                ):
+                    await save_internal_part(
+                        session_id=session_id,
+                        user_id=user_id,
+                        message_id=assistant_info.id,
+                        kind=PROVIDER_TRANSCRIPT_KIND,
+                        data=provider_item,
+                        binding=ctx._native_binding,
+                        capability_key_digest=ctx._native_capability_key.digest(),
+                        response_chain_id=event["response_chain_id"],
+                        stream_seq=int(event["stream_seq"]),
+                        idempotency_key=(
+                            f"{event['response_chain_id']}:{event['stream_seq']}:"
+                            f"tool_reference:{canonical_id}"
+                        ),
+                    )
+
+                origin = await save_internal_part(
+                    session_id=session_id,
+                    user_id=user_id,
+                    message_id=assistant_info.id,
+                    kind="provider_tool_reveal",
+                    data=event["raw_item"],
+                    binding=ctx._native_binding,
+                    capability_key_digest=ctx._native_capability_key.digest(),
+                    response_chain_id=event["response_chain_id"],
+                    stream_seq=int(event["stream_seq"]),
+                    idempotency_key=(
+                        f"{event['response_chain_id']}:{event['stream_seq']}:"
+                        f"tool_revealed:{canonical_id}"
+                    ),
+                )
+                await commit_tool_reveal(
+                    ToolRevealEvent(
+                        session_id=session_id,
+                        user_id=user_id,
+                        message_id=assistant_info.id,
+                        origin_part_id=origin.id,
+                        agent_id=ctx.agent_id,
+                        canonical_tool_id=canonical_id,
+                        schema_digest=entry.schema_digest,
+                        catalog_generation=catalogue.generation,
+                        evidence_source="native",
+                        stream_seq=int(event["stream_seq"]),
+                        capability_key_digest=ctx._native_capability_key.digest(),
+                        response_chain_id=event["response_chain_id"],
+                    ),
+                    ttl_seconds=ctx._native_reveal_ttl_seconds,
+                    max_reveals=ctx._native_max_persisted_reveals,
+                )
+                if event.get("same_response_executable"):
+                    response_executable.add(canonical_id)
+                    ctx.available_tools = frozenset(response_executable)
+
             elif event["type"] == "tool_call_start":
                 # LLM just started emitting a tool call — create a pending
                 # tool part immediately so the frontend can show the card.
@@ -361,6 +663,13 @@ async def process_step(
                     tool=event["tool"],
                     status=ToolStatus.PENDING,
                     input={},
+                    **_tool_part_runtime_identity(
+                        event,
+                        stream_seq=int(tc_index),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
@@ -397,26 +706,115 @@ async def process_step(
                 else:
                     raise error
 
+        # Validate the complete batch before entering any executor.  A reused
+        # provider call id with different payloads is ambiguous on replay; if
+        # even one exists, fail the whole batch closed rather than allowing a
+        # safe-looking prefix of calls to cause side effects.
+        original_tool_calls = pending_tool_calls
+        pending_tool_calls, duplicate_indexes, has_call_id_conflict = (
+            prepare_tool_call_batch(original_tool_calls)
+        )
+
+        if has_call_id_conflict:
+            log.warning(
+                "Rejected assistant tool-call batch with conflicting call ids "
+                "(count=%d)",
+                len(original_tool_calls),
+            )
+            for tc_idx, tc_event in enumerate(original_tool_calls):
+                collision_id = sanitize_call_id(
+                    f"conflict:{tc_idx}:{tc_event.get('call_id') or ''}:"
+                    f"{_tool_call_payload_key(tc_event)}"
+                )
+                existing_part_id = streaming_tool_parts.get(tc_idx)
+                tool_part = ToolPartData(
+                    id=existing_part_id or ascending("part"),
+                    tool=tc_event.get("tool", ""),
+                    status=ToolStatus.ERROR,
+                    input=tc_event.get("args") or {},
+                    call_id=collision_id,
+                    **_tool_part_runtime_identity(
+                        tc_event,
+                        stream_seq=_event_stream_seq(tc_event, tc_idx),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
+                    error=(
+                        "Provider returned conflicting tool calls with the same call id; "
+                        "the entire batch was blocked before execution."
+                    ),
+                    title="Conflicting tool call ids blocked",
+                    metadata={"blocked": True},
+                    session_id=session_id,
+                    message_id=assistant_info.id,
+                )
+                await save_part(
+                    tool_part,
+                    is_new=not bool(existing_part_id),
+                    user_id=user_id,
+                )
+            pending_tool_calls = []
+
+        # A byte-for-byte duplicate event is an idempotent transport replay,
+        # not a second execution.  Usually no second streaming card exists; if
+        # one does, close it explicitly so no pending part is stranded.
+        if not has_call_id_conflict:
+            for duplicate_index in duplicate_indexes:
+                duplicate_part_id = streaming_tool_parts.get(duplicate_index)
+                if not duplicate_part_id:
+                    continue
+                duplicate_event = original_tool_calls[duplicate_index]
+                duplicate_part = ToolPartData(
+                    id=duplicate_part_id,
+                    tool=duplicate_event.get("tool", ""),
+                    status=ToolStatus.ERROR,
+                    input=duplicate_event.get("args") or {},
+                    call_id=sanitize_call_id(
+                        f"duplicate:{duplicate_index}:"
+                        f"{duplicate_event.get('call_id') or ''}:"
+                        f"{_tool_call_payload_key(duplicate_event)}"
+                    ),
+                    **_tool_part_runtime_identity(
+                        duplicate_event,
+                        stream_seq=_event_stream_seq(
+                            duplicate_event,
+                            duplicate_index,
+                        ),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
+                    error="Duplicate provider tool-call event ignored; the original executes once.",
+                    title="Duplicate tool call ignored",
+                    metadata={"blocked": True},
+                    session_id=session_id,
+                    message_id=assistant_info.id,
+                )
+                await save_part(duplicate_part, is_new=False, user_id=user_id)
+
         # Execute tool calls after stream completes (with correct part_id)
         ctx.message_id = assistant_info.id
-        for tc_idx, tc_event in enumerate(pending_tool_calls):
+        for tc_event in pending_tool_calls:
             if abort.is_set():
                 break
 
+            tc_idx = int(tc_event["_batch_index"])
+
             tool_name = tc_event["tool"]
             tool_args = tc_event["args"]
-            is_invalid = tc_event.get("invalid", False)
+            canonical_tool_id = wire_to_canonical.get(tool_name)
+            native_error_code = tc_event.get("native_error_code")
+            is_invalid = (
+                tc_event.get("invalid", False)
+                or canonical_tool_id is None
+                or canonical_tool_id not in response_executable
+                or native_error_code is not None
+            )
 
-            # Preserve the LLM's original call_id for accurate matching.
-            # Kimi uses "functions.name:idx", OpenAI uses "call_xxxx".
-            #
-            # Bounded, because this is persisted and later replayed — possibly
-            # to a different provider. Gemini packs an encrypted thought
-            # signature into the id (kilobytes of it), and OpenAI's Responses
-            # API rejects any id over 64 characters, so an unbounded id poisons
-            # the conversation for every future provider. The id only has to be
-            # unique within one assistant turn, so the head is enough.
-            llm_call_id = sanitize_call_id(tc_event.get("call_id", ""))
+            # Bounded, portable and collision-resistant.  The full batch was
+            # validated above before any side effect was allowed.
+            llm_call_id = str(tc_event["_canonical_call_id"])
 
             # Reuse the streaming part_id if we already created one during
             # LLM streaming, otherwise create a new part.
@@ -429,6 +827,13 @@ async def process_step(
                     status=ToolStatus.RUNNING,
                     input=tool_args,
                     call_id=llm_call_id,
+                    **_tool_part_runtime_identity(
+                        tc_event,
+                        stream_seq=_event_stream_seq(tc_event, tc_idx),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
@@ -440,6 +845,13 @@ async def process_step(
                     status=ToolStatus.RUNNING,
                     input=tool_args,
                     call_id=llm_call_id,
+                    **_tool_part_runtime_identity(
+                        tc_event,
+                        stream_seq=_event_stream_seq(tc_event, tc_idx),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
@@ -447,7 +859,22 @@ async def process_step(
 
             if is_invalid:
                 tool_part.status = ToolStatus.ERROR
-                tool_part.error = f"Tool '{tool_name}' not found. Available: {', '.join(tools.keys())}"
+                if native_error_code == "deferred_until_next_step":
+                    tool_part.title = "Deferred tool available next step"
+                    tool_part.error = (
+                        "deferred_until_next_step: the tool was safely revealed, "
+                        "but its execution policy requires a newly planned step and "
+                        "a new call id. No executor was entered."
+                    )
+                    tool_part.metadata = {
+                        "blocked": True,
+                        "failure_code": "deferred_until_next_step",
+                    }
+                else:
+                    tool_part.error = (
+                        f"Tool '{tool_name}' is not materialized for this step. "
+                        f"Available: {', '.join(visible_wire_names)}"
+                    )
                 await save_part(tool_part, user_id=user_id)
                 continue
 
@@ -495,10 +922,16 @@ async def process_step(
             # abort so the stop button interrupts a running command instead of
             # waiting it out — the abandoned part is finalised as interrupted
             # by the loop's cleanup, mirroring opencode.
-            tool_info = tools.get(tool_name)
+            tool_info = execution_tools.get(str(canonical_tool_id))
             if tool_info:
                 exec_task = asyncio.create_task(
-                    hooks.wrap_execute(tool_name, tool_info.execute, tool_args, ctx, part_id=tool_part.id)
+                    hooks.wrap_execute(
+                        str(canonical_tool_id),
+                        tool_info.execute,
+                        tool_args,
+                        ctx,
+                        part_id=tool_part.id,
+                    )
                 )
                 abort_task = asyncio.create_task(abort.wait())
                 done, _ = await asyncio.wait({exec_task, abort_task}, return_when=asyncio.FIRST_COMPLETED)
@@ -568,10 +1001,11 @@ async def process_step(
             except Exception:
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)
-        if retry_msg:
+        if retry_msg and not provider_event_received:
             # Classify only. Whether to retry at all, and how long to wait, is
             # retry *policy* — it belongs to the caller that owns the attempt
-            # counter, not to a single step.
+            # counter, not to a single step. A partially consumed response is
+            # never replay-safe, even when its transport error is transient.
             return StepResult(
                 outcome=StepOutcome.RETRY,
                 retry_reason=retry_msg,

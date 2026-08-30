@@ -3,12 +3,28 @@
 Applies ephemeral cache markers to system and conversation messages
 to reduce token costs and latency for providers that support it.
 """
+import hashlib
+
 from core.log import create_logger
 
 log = create_logger("agent.caching")
 
 
-def apply_caching(messages: list[dict], model_id: str) -> list[dict]:
+def session_cache_key(*, secret: str, user_id: str, session_id: str) -> str:
+    """Return a non-reversible, tenant/session-scoped prompt-cache key."""
+    if not user_id or not session_id:
+        return ""
+    salt = secret or "openbox-prompt-cache-v1"
+    payload = f"{len(user_id)}:{user_id}{len(session_id)}:{session_id}"
+    return hashlib.sha256(f"{salt}\0{payload}".encode("utf-8")).hexdigest()
+
+
+def apply_caching(
+    messages: list[dict],
+    model_id: str,
+    *,
+    cache_key: str = "",
+) -> list[dict]:
     """Apply prompt caching based on the provider.
 
     For Anthropic: adds ephemeral cache control to first 2 system messages
@@ -28,7 +44,7 @@ def apply_caching(messages: list[dict], model_id: str) -> list[dict]:
     if provider in ("anthropic", "bedrock"):
         return _apply_anthropic_caching(messages, provider)
     elif provider == "openai":
-        return _apply_openai_caching(messages)
+        return _apply_openai_caching(messages, cache_key)
 
     return messages
 
@@ -72,13 +88,17 @@ def _apply_anthropic_caching(messages: list[dict], provider: str) -> list[dict]:
     return messages
 
 
-def _apply_openai_caching(messages: list[dict], session_id: str = "") -> list[dict]:
+def _apply_openai_caching(messages: list[dict], cache_key: str = "") -> list[dict]:
     """Add session-level cache key for OpenAI."""
+    if not cache_key:
+        return messages
     for msg in messages:
         if msg.get("role") == "system":
             existing = msg.get("provider_options", {})
             msg["provider_options"] = _deep_merge(existing, {
-                "setCacheKey": session_id or "default",
+                # Never use one cross-tenant literal. Callers pass a salted,
+                # session-scoped digest; missing identity disables the hint.
+                "setCacheKey": cache_key,
             })
             break  # Only set on first system message
 

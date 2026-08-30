@@ -101,6 +101,22 @@ def test_a_tiny_budget_still_lists_every_name():
     assert all(s["name"] in out for s in skills)
 
 
+def test_pr0_measures_but_does_not_truncate_a_thousand_skill_listing(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(
+        "tool.skill_tool.log.warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+    skills = catalogue(1_000)
+    skills.append({"name": "zz-tail-" + "x" * 10_000, "description": "y" * 40_000})
+
+    out = render_listing(skills)
+
+    assert skills[-1]["name"] in out
+    assert len(out) > 8_000
+    assert any("over_hard_budget" in warning for warning in warnings)
+
+
 # ── permission filtering ──
 
 def test_denied_skills_are_not_advertised():

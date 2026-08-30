@@ -1,0 +1,173 @@
+"""Previous-head to new-head schema smoke for private exposure state."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+import pytest
+import sqlalchemy as sa
+
+
+PREVIOUS_HEAD = "b6d8f0a2c4e6"
+NEW_HEAD = "c7d9e1f3a5b7"
+
+
+def _previous_head_fixture(database_path: Path) -> None:
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE projects (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql(
+            "CREATE TABLE sessions ("
+            "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
+            "project_id VARCHAR(64) NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE messages ("
+            "id VARCHAR(64) PRIMARY KEY, session_id VARCHAR(64) NOT NULL, "
+            "user_id VARCHAR(64) NOT NULL, created_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE parts ("
+            "id VARCHAR(64) PRIMARY KEY, message_id VARCHAR(64) NOT NULL, "
+            "session_id VARCHAR(64) NOT NULL, user_id VARCHAR(64) NOT NULL, "
+            "type VARCHAR(32) NOT NULL, data TEXT NOT NULL, created_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO alembic_version(version_num) VALUES (?)",
+            (PREVIOUS_HEAD,),
+        )
+        connection.exec_driver_sql("INSERT INTO users(id) VALUES ('old-user')")
+        connection.exec_driver_sql("INSERT INTO projects(id) VALUES ('old-project')")
+        connection.exec_driver_sql(
+            "INSERT INTO sessions(id, user_id, project_id) "
+            "VALUES ('old-session', 'old-user', 'old-project')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO messages(id, session_id, user_id, created_at) "
+            "VALUES ('old-message', 'old-session', 'old-user', CURRENT_TIMESTAMP)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO parts(id, message_id, session_id, user_id, type, data, created_at) "
+            "VALUES ('old-part', 'old-message', 'old-session', 'old-user', "
+            "'tool', '{\"type\":\"tool\",\"tool\":\"legacy_alias\"}', CURRENT_TIMESTAMP)"
+        )
+    engine.dispose()
+
+
+def _config(database_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    backend_dir = Path(__file__).resolve().parents[2]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "db" / "migrations"))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    return config
+
+
+def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, monkeypatch):
+    database_path = tmp_path / "previous-head.db"
+    _previous_head_fixture(database_path)
+    config = _config(database_path, monkeypatch)
+
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    with engine.connect() as connection:
+        state = connection.exec_driver_sql(
+            "SELECT tool_exposure_state FROM sessions WHERE id='old-session'"
+        ).scalar_one()
+        version = connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one()
+    assert state == "{}"
+    assert version == NEW_HEAD
+    assert "internal_parts" in inspector.get_table_names()
+    assert "tool_exposure_state" in {
+        column["name"] for column in inspector.get_columns("sessions")
+    }
+    part_columns = {column["name"] for column in inspector.get_columns("parts")}
+    assert {
+        "stream_seq",
+        "canonical_tool_id",
+        "wire_tool_name",
+        "provider_binding_digest",
+        "provider_dialect",
+    } <= part_columns
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
+        ).scalar_one() is None
+    assert ScriptDirectory.from_config(config).get_heads() == [NEW_HEAD]
+    engine.dispose()
+
+    # An empty/drained deployment can safely roll the schema back.  The
+    # separate test below proves live private state is refused instead.
+    command.downgrade(config, PREVIOUS_HEAD)
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one() == PREVIOUS_HEAD
+    assert "internal_parts" not in inspector.get_table_names()
+    assert "tool_exposure_state" not in {
+        column["name"] for column in inspector.get_columns("sessions")
+    }
+    downgraded_part_columns = {
+        column["name"] for column in inspector.get_columns("parts")
+    }
+    assert not {
+        "stream_seq",
+        "canonical_tool_id",
+        "wire_tool_name",
+        "provider_binding_digest",
+        "provider_dialect",
+    } & downgraded_part_columns
+    engine.dispose()
+
+
+def test_downgrade_preflight_refuses_live_private_state(tmp_path, monkeypatch):
+    database_path = tmp_path / "unsafe-downgrade.db"
+    _previous_head_fixture(database_path)
+    config = _config(database_path, monkeypatch)
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE sessions SET tool_exposure_state = ? WHERE id='old-session'",
+            ('{"v":1,"next_origin_seq":2,"agents":{"build":{}},"provider_fallback":{}}',),
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="downgrade refused"):
+        command.downgrade(config, PREVIOUS_HEAD)
+
+
+def test_downgrade_preflight_refuses_persisted_tool_identity(tmp_path, monkeypatch):
+    database_path = tmp_path / "unsafe-tool-identity-downgrade.db"
+    _previous_head_fixture(database_path)
+    config = _config(database_path, monkeypatch)
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE parts SET stream_seq=0, canonical_tool_id=?, wire_tool_name=?, "
+            "provider_binding_digest=?, provider_dialect=? WHERE id='old-part'",
+            (
+                "mcp:v2:" + "a" * 52,
+                "wire_name",
+                "a" * 64,
+                "responses",
+            ),
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="downgrade refused"):
+        command.downgrade(config, PREVIOUS_HEAD)

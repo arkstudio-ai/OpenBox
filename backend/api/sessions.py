@@ -458,7 +458,7 @@ async def dismiss_failed_turn(
     """
     user_id = current_user["user_id"]
     await _require_session_owned(session_id, user_id)
-    removed = await session_mod.delete_failed_turn(session_id, message_id)
+    removed = await session_mod.delete_failed_turn(session_id, message_id, user_id=user_id)
     if not removed:
         raise HTTPException(404, "No failed turn to dismiss at that message")
     return {"ok": True, "removed": removed}
@@ -505,7 +505,11 @@ async def regenerate_message(
     if body:
         await _remember_video_model(session, body.video_model, user_id)
 
-    last_user = await session_mod.delete_messages_from(session_id, message_id)
+    last_user = await session_mod.delete_messages_from(
+        session_id,
+        message_id,
+        user_id=user_id,
+    )
     if not last_user:
         raise HTTPException(404, "Nothing to regenerate: no prompt precedes that message")
 

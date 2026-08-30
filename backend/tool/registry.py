@@ -49,7 +49,7 @@ def register_builtin_tools() -> None:
     from tool.question_tool import question_tool
     from tool.todo_tool import todo_write_tool, todo_read_tool
     from tool.plan import plan_enter_tool, plan_exit_tool
-    from tool.skill_tool import skill_tool
+    from tool.skill_tool import skill_search_tool, skill_tool
     from tool.web_fetch import web_fetch_tool
     from tool.web_search import web_search_tool
     from tool.invalid import invalid_tool
@@ -64,6 +64,7 @@ def register_builtin_tools() -> None:
     from tool.browser_mode import browser_mode_tool
     from tool.skill_manage import skill_manage_tool
     from tool.creator_context import creator_context_tool
+    from tool.capability_search import capability_search_tool
     from tool.video_production import (
         video_generate_tool,
         video_render_tool,
@@ -74,12 +75,12 @@ def register_builtin_tools() -> None:
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
         glob_tool, grep_tool, task_tool, batch_tool, question_tool,
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
-        skill_tool, web_fetch_tool, web_search_tool, invalid_tool,
+        skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
         video_identity_tool, video_project_tool, video_generate_tool,
         video_transcribe_tool, video_render_tool,
         computer_tool, browser_mode_tool, skill_manage_tool,
-        creator_context_tool,
+        creator_context_tool, capability_search_tool,
     ]:
         register(tool)
 
@@ -124,6 +125,15 @@ def register_custom_tools() -> None:
         for attr_name in dir(module):
             attr = getattr(module, attr_name, None)
             if isinstance(attr, ToolInfo):
+                # The registration channel, not module-provided metadata,
+                # decides trust. Host custom tools are platform-plane but are
+                # kept distinct from reviewed built-ins for policy/budgeting.
+                attr.source = "custom"
+                attr.plane = "platform"
+                attr.canonical_id = attr.id
+                attr.provider_name = attr.id
+                attr.pack = None
+                attr.same_response_safe = False
                 register(attr)
                 loaded_count += 1
                 log.info(f"Loaded custom tool '{attr.id}' from {py_file.name}")

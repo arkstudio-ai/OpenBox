@@ -29,7 +29,7 @@ the real function drifted.
 import re
 
 from agent.llm import _FC_ID_OK, build_responses_input, ensure_fc_id, responses_event_error
-from agent.processor import MAX_CALL_ID, sanitize_call_id
+from agent.processor import MAX_CALL_ID, prepare_tool_call_batch, sanitize_call_id
 
 SAFE = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -132,6 +132,45 @@ def test_write_side_leaves_a_clean_id_alone():
 
 def test_write_side_is_deterministic():
     assert sanitize_call_id(GEMINI_ID) == sanitize_call_id(GEMINI_ID)
+
+
+def test_write_side_does_not_merge_ids_with_the_same_long_prefix():
+    first = "call_shared_" + "x" * 200 + "first"
+    second = "call_shared_" + "x" * 200 + "second"
+    assert sanitize_call_id(first) != sanitize_call_id(second)
+
+
+def test_identical_provider_event_is_deduplicated_idempotently():
+    event = {"tool": "read", "args": {"path": "a"}, "call_id": "call_same"}
+    prepared, duplicates, conflict = prepare_tool_call_batch([event, dict(event)])
+
+    assert len(prepared) == 1
+    assert duplicates == [1]
+    assert conflict is False
+
+
+def test_same_provider_id_with_different_payload_fails_the_batch():
+    prepared, duplicates, conflict = prepare_tool_call_batch([
+        {"tool": "read", "args": {"path": "a"}, "call_id": "call_reused"},
+        {"tool": "read", "args": {"path": "b"}, "call_id": "call_reused"},
+    ])
+
+    assert len(prepared) == 1
+    assert duplicates == []
+    assert conflict is True
+
+
+def test_missing_provider_ids_are_generated_per_call():
+    prepared, duplicates, conflict = prepare_tool_call_batch([
+        {"tool": "read", "args": {"path": "a"}, "call_id": ""},
+        {"tool": "read", "args": {"path": "b"}, "call_id": ""},
+    ])
+
+    assert [item["_canonical_call_id"] for item in prepared][0] != [
+        item["_canonical_call_id"] for item in prepared
+    ][1]
+    assert duplicates == []
+    assert conflict is False
 
 
 def test_write_and_read_sides_compose():

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.log import create_logger
 
@@ -83,6 +83,63 @@ class AgentOverride(BaseModel):
 class SkillsConfig(BaseModel):
     paths: list[str] = []
     urls: list[str] = []
+
+
+class ToolExposureConfig(BaseModel):
+    """Tool schema exposure and discovery budgets.
+
+    ``legacy_eager`` remains the safe migration default.  The other modes are
+    explicit so rollout never silently changes when a provider/model name is
+    edited elsewhere in the config.
+    """
+
+    mode: Literal[
+        "legacy_eager",
+        "shadow",
+        "portable",
+        "native_auto",
+        "emergency_eager",
+    ] = "legacy_eager"
+    resident_soft_chars: int = Field(default=20_000, ge=1_000, le=128_000)
+    resident_hard_chars: int = Field(default=24_000, ge=1_000, le=128_000)
+    active_soft_chars: int = Field(default=28_000, ge=1_000, le=128_000)
+    active_hard_chars: int = Field(default=32_000, ge=1_000, le=128_000)
+    native_wire_soft_chars: int = Field(default=96_000, ge=1_000, le=128_000)
+    # 128K is a platform safety ceiling, not a tuneable performance target.
+    # Deployments may lower it but cannot configure their way around it.
+    native_wire_hard_chars: int = Field(default=128_000, ge=1_000, le=128_000)
+    single_tool_soft_chars: int = Field(default=2_500, ge=100, le=128_000)
+    single_tool_hard_chars: int = Field(default=5_000, ge=100, le=128_000)
+    intent_pack_soft_chars: int = Field(default=10_000, ge=500, le=128_000)
+    intent_pack_hard_chars: int = Field(default=12_000, ge=500, le=128_000)
+    skill_listing_soft_chars: int = Field(default=6_000, ge=500, le=128_000)
+    skill_listing_hard_chars: int = Field(default=8_000, ge=500, le=128_000)
+    reveal_ttl_seconds: int = Field(default=1_800, ge=60, le=86_400)
+    max_persisted_reveals: int = Field(default=8, ge=1, le=64)
+    max_search_calls_per_step: int = Field(default=2, ge=1, le=10)
+    max_reveals_per_step: int = Field(default=5, ge=1, le=50)
+    max_search_result_chars_per_step: int = Field(default=2_000, ge=100, le=32_000)
+    native_endpoint_allowlist: list[str] = Field(default_factory=list)
+    native_model_allowlist: list[str] = Field(default_factory=list)
+    allow_emergency_eager: bool = False
+
+    @model_validator(mode="after")
+    def validate_budget_order(self) -> "ToolExposureConfig":
+        for prefix in (
+            "resident",
+            "active",
+            "native_wire",
+            "single_tool",
+            "intent_pack",
+            "skill_listing",
+        ):
+            if getattr(self, f"{prefix}_soft_chars") > getattr(self, f"{prefix}_hard_chars"):
+                raise ValueError(f"{prefix}_soft_chars must not exceed {prefix}_hard_chars")
+        if self.mode == "emergency_eager" and not self.allow_emergency_eager:
+            raise ValueError(
+                "tool_exposure.mode=emergency_eager requires allow_emergency_eager=true"
+            )
+        return self
 
 
 class ImageGenerationConfig(BaseModel):
@@ -335,6 +392,7 @@ class OpenBoxConfig(BaseModel):
     permission: dict[str, Any] = {}
     mcp: dict[str, McpServerConfig] = {}
     skills: SkillsConfig = SkillsConfig()
+    tool_exposure: ToolExposureConfig = ToolExposureConfig()
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
@@ -554,6 +612,18 @@ def _apply_env_overrides(data: dict) -> dict:
             provider_cfg["api_key"] = api_key
         if base_url:
             provider_cfg["base_url"] = base_url
+
+    # Tool exposure has its own nested config. Keep environment overrides
+    # explicit rather than inventing a generic nested-key parser that could
+    # accidentally accept misspelled security settings.
+    exposure_mode = os.environ.get("OPENBOX_TOOL_EXPOSURE_MODE")
+    allow_emergency = os.environ.get("OPENBOX_ALLOW_EMERGENCY_EAGER")
+    if exposure_mode or allow_emergency is not None:
+        exposure = data.setdefault("tool_exposure", {})
+        if exposure_mode:
+            exposure["mode"] = exposure_mode
+        if allow_emergency is not None:
+            exposure["allow_emergency_eager"] = allow_emergency.lower() == "true"
 
     return data
 

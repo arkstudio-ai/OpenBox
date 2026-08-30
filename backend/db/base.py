@@ -150,6 +150,70 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+# The HTTP readiness probe must cover additive columns/tables that ORM
+# ``create_all`` cannot retrofit into an existing database.  Keeping this
+# small, explicit list beside the engine avoids reporting a healthy service
+# whose first session query will fail with UndefinedColumnError.
+_READINESS_SCHEMA: dict[str, frozenset[str]] = {
+    "sessions": frozenset({"tool_exposure_state"}),
+    "parts": frozenset({
+        "stream_seq",
+        "canonical_tool_id",
+        "wire_tool_name",
+        "provider_binding_digest",
+        "provider_dialect",
+    }),
+    "internal_parts": frozenset({
+        "id",
+        "session_id",
+        "message_id",
+        "user_id",
+        "kind",
+        "capability_key_digest",
+        "response_chain_id",
+        "stream_seq",
+        "origin_seq",
+        "dedupe_key",
+        "data",
+        "created_at",
+    }),
+}
+
+
+def _missing_readiness_schema(connection) -> tuple[str, ...]:
+    """Return stable table/column identifiers missing from one SQL database."""
+    inspector = sa.inspect(connection)
+    available_tables = set(inspector.get_table_names())
+    missing: list[str] = []
+    for table, required_columns in _READINESS_SCHEMA.items():
+        if table not in available_tables:
+            missing.append(table)
+            continue
+        available_columns = {
+            column["name"] for column in inspector.get_columns(table)
+        }
+        missing.extend(
+            f"{table}.{column}"
+            for column in sorted(required_columns - available_columns)
+        )
+    return tuple(missing)
+
+
+async def database_schema_ready() -> bool:
+    """Check connectivity and the minimum schema required by this release."""
+    try:
+        engine = get_engine()
+        async with engine.connect() as connection:
+            missing = await connection.run_sync(_missing_readiness_schema)
+        if missing:
+            log.error("Database schema is not ready missing=%s", ",".join(missing))
+            return False
+        return True
+    except Exception as exc:
+        log.error("Database readiness check failed error_type=%s", type(exc).__name__)
+        return False
+
+
 @asynccontextmanager
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     """Short-lived async session context manager.

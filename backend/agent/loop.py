@@ -2,12 +2,13 @@
 import asyncio
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
 
 from agent.agent import get_agent, AgentDef
-from agent.caching import apply_caching
+from agent.caching import apply_caching, session_cache_key
 from agent.compaction import is_overflow, create_compaction, process_compaction, prune_tool_outputs, get_model_context_limit
 from agent.hooks import ToolHooks
 from agent.processor import StepOutcome, process_step
@@ -19,7 +20,23 @@ from agent.structured_output import (
 )
 from agent.tool_resolution import resolve_step_tools
 from project.workspace import ensure_directory, workdir_for_session, slug_for
-from agent.llm import stream_llm
+from agent.llm import (
+    ensure_fc_id,
+    history_has_tool_calls,
+    provider_api_base,
+    provider_tool_binding,
+    stream_llm,
+    tool_dialect_for_model,
+)
+from agent.tool_payload import measure_tool_definitions
+from agent.tool_runtime import (
+    assemble_tool_runtime,
+    effective_exposure_mode,
+    enforce_serialized_payload_limits,
+)
+from agent.exposure_signals import collect_exposure_signals
+from agent.tool_exposure import preferred_editor_id
+from agent.prompt_visibility import build_tool_visibility_fragment
 from agent.retry import with_retry, ContextOverflowError, is_context_overflow, is_retryable, retry_delay
 from bus import bus
 from bus.events import (
@@ -469,10 +486,23 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             # time.
 
             config_rules = _get_permission_rules(config)
-            tools = await resolve_step_tools(
+            requested_exposure_mode = config.tool_exposure.mode
+            exposure_mode = effective_exposure_mode(
+                requested_exposure_mode,
+                agent_name,
+                portable_opt_in=agent_def.portable_opt_in,
+            )
+            resolved_step_tools = await resolve_step_tools(
                 agent_def,
                 sandbox,
                 config_rules,
+                include_discovery=exposure_mode
+                in {"shadow", "portable", "native_auto"},
+                return_catalogue_state=True,
+            )
+            eligible_tools = resolved_step_tools.tools
+            sandbox_catalogue_availability = (
+                resolved_step_tools.catalogue_availability
             )
 
             # Structured output is a synthetic tool rather than a provider
@@ -480,10 +510,70 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             # `structured` is a one-slot mailbox the tool writes into.
             structured: dict = {}
             output_schema = requested_schema(last_user)
+            synthetic_tools: dict = {}
             if output_schema:
-                tools[STRUCTURED_OUTPUT_TOOL] = create_structured_output_tool(
+                synthetic_tools[STRUCTURED_OUTPUT_TOOL] = create_structured_output_tool(
                     output_schema, lambda payload: structured.setdefault("value", payload)
                 )
+
+            exposure_signals = await collect_exposure_signals(
+                last_user,
+                session_id=session_id,
+                user_id=user_id,
+            )
+            editor_id = preferred_editor_id(model_id, eligible_tools)
+            preliminary_runtime = assemble_tool_runtime(
+                eligible_tools,
+                mode=exposure_mode,
+                agent_name=agent_name,
+                signals=exposure_signals,
+                editor_id=editor_id,
+                synthetic_tools=synthetic_tools,
+                exposure_config=config.tool_exposure,
+            )
+            revealed_ids: frozenset[str] = frozenset()
+            if exposure_mode in {"portable", "native_auto"}:
+                try:
+                    from session.internal_parts import get_valid_revealed_ids
+
+                    revealed_ids = await get_valid_revealed_ids(
+                        session_id=session_id,
+                        user_id=user_id,
+                        agent_id=agent_name,
+                        catalog_generation=preliminary_runtime.eligible_catalog.generation,
+                        schema_digests={
+                            tool_id: entry.schema_digest
+                            for tool_id, entry in preliminary_runtime.eligible_catalog.entries.items()
+                        },
+                        catalogue_availability=sandbox_catalogue_availability,
+                    )
+                except Exception as exc:
+                    # A rollout against an old/unavailable state store starts
+                    # from an empty frontier; it must never widen to eager.
+                    log.warning(
+                        "Could not restore tool reveal state error_type=%s",
+                        type(exc).__name__,
+                    )
+            runtime = (
+                assemble_tool_runtime(
+                    eligible_tools,
+                    mode=exposure_mode,
+                    agent_name=agent_name,
+                    signals=exposure_signals,
+                    revealed_ids=revealed_ids,
+                    editor_id=editor_id,
+                    synthetic_tools=synthetic_tools,
+                    exposure_config=config.tool_exposure,
+                )
+                if exposure_mode in {"portable", "native_auto"}
+                else preliminary_runtime
+            )
+            if (
+                runtime.budget_result is not None
+                and runtime.budget_result.catalogue_decision == "fail_closed"
+            ):
+                raise RuntimeError("Tool catalogue exceeds the configured provider ceiling")
+            tools = dict(runtime.provider_tools)
 
             # Sessions run in their project's directory, so a follow-up
             # conversation lands on the files the last one left behind.
@@ -492,11 +582,24 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 session_id=session_id,
                 run_id=run_id,
                 user_id=user_id,
+                project_id=session.project_id or "",
+                agent_id=agent_name,
                 sandbox=sandbox,
                 bus=bus,
                 abort=abort,
                 workdir=session_workdir,
-                available_tools=frozenset(tools),
+                available_tools=runtime.step_executable_ids,
+                _capability_catalog=runtime.eligible_catalog,
+                _capability_discovery_ids=frozenset(runtime.provider_plan.discovery_ids),
+                _capability_max_search_calls=(
+                    config.tool_exposure.max_search_calls_per_step
+                ),
+                _capability_max_reveals=(
+                    config.tool_exposure.max_reveals_per_step
+                ),
+                _capability_max_result_chars=(
+                    config.tool_exposure.max_search_result_chars_per_step
+                ),
             )
 
             # Create hooks with config permission rules + agent permission rules
@@ -508,6 +611,50 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             )
             ctx._authorize_tool = hooks.authorize_tool
 
+            async def _commit_reveals(
+                ids: tuple[str, ...],
+                generation: str,
+                digests: dict[str, str],
+            ) -> None:
+                if sandbox_catalogue_availability == "unavailable":
+                    # The fail-small runtime is intentionally incomplete. Do
+                    # not persist its generation or replace last-known-good
+                    # reveal evidence while the sandbox directory is unknown.
+                    raise RuntimeError("sandbox catalogue is unavailable")
+                if generation != runtime.eligible_catalog.generation:
+                    raise ValueError("stale capability catalogue generation")
+                discovery_ids = set(runtime.provider_plan.discovery_ids)
+                if any(tool_id not in discovery_ids for tool_id in ids):
+                    raise ValueError("capability result is outside the discovery frontier")
+                from session.internal_parts import ToolRevealEvent, commit_tool_reveals
+
+                events = []
+                for stream_seq, tool_id in enumerate(ids):
+                    entry = runtime.eligible_catalog.entries.get(tool_id)
+                    if entry is None or digests.get(tool_id) != entry.schema_digest:
+                        raise ValueError("capability schema digest changed")
+                    events.append(
+                        ToolRevealEvent(
+                            session_id=session_id,
+                            user_id=user_id,
+                            message_id=assistant_info.id,
+                            origin_part_id=ctx.part_id,
+                            agent_id=agent_name,
+                            canonical_tool_id=tool_id,
+                            schema_digest=entry.schema_digest,
+                            catalog_generation=generation,
+                            evidence_source="portable",
+                            stream_seq=stream_seq,
+                        )
+                    )
+                await commit_tool_reveals(
+                    tuple(events),
+                    ttl_seconds=config.tool_exposure.reveal_ttl_seconds,
+                    max_reveals=config.tool_exposure.max_persisted_reveals,
+                )
+
+            ctx._commit_tool_reveal = _commit_reveals
+
             # Build system prompt (with instruction files)
             system = await _build_system_prompt(
                 agent_def,
@@ -516,11 +663,217 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 user_id=user_id,
                 project_id=session.project_id or "",
             )
+            system.append(build_tool_visibility_fragment(
+                tools.keys(),
+                strategy=runtime.provider_plan.strategy,
+                deferred_count=len(runtime.provider_plan.deferred_ids),
+            ))
             if output_schema:
                 system.append(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
 
-            # Convert messages to LLM format
-            llm_messages = _to_llm_messages(msgs, user_id=user_id)
+            # Provider-visible tool names are request bindings, never stable
+            # authorization identities. Resolve every historical ToolPart
+            # through its API-hidden identity before constructing provider
+            # messages. Structured output has a stable replay-only name even
+            # on later turns where it is not an active tool definition.
+            payload_dialect = tool_dialect_for_model(model_id)
+            replay_provider_to_canonical = dict(runtime.provider_to_canonical)
+            replay_provider_to_canonical.setdefault(
+                STRUCTURED_OUTPUT_TOOL,
+                STRUCTURED_OUTPUT_TOOL,
+            )
+            provider_binding = provider_tool_binding(
+                model_id,
+                provider_to_canonical=replay_provider_to_canonical,
+                dialect=payload_dialect,
+                config=config,
+            )
+            provider_binding_digest = provider_binding.digest()
+
+            # Native Tool Search is a binding-scoped canary, never a provider
+            # name shortcut.  Until this complete gate passes, native_auto is
+            # byte-for-byte the portable path assembled above.
+            native_plan = None
+            if (
+                exposure_mode == "native_auto"
+                and runtime.provider_plan.deferred_ids
+                and sandbox_catalogue_availability != "unavailable"
+            ):
+                from datetime import datetime, timezone
+
+                from agent.native_tool_search import (
+                    NATIVE_CAPABILITY_CACHE,
+                    NativeCapabilityKey,
+                    build_openai_responses_native_plan,
+                    decide_native_adapter,
+                    native_config_generation,
+                )
+                from session.internal_parts import (
+                    get_provider_fallback_status,
+                    set_provider_fallback_status,
+                )
+
+                exposure_dump = config.tool_exposure.model_dump(mode="json")
+                config_generation = native_config_generation(
+                    exposure_dump,
+                    catalogue_generation=runtime.eligible_catalog.generation,
+                )
+                capability_key = NativeCapabilityKey(
+                    adapter="openai_responses_tool_search_v1",
+                    binding_digest=provider_binding_digest,
+                    config_generation=config_generation,
+                )
+                stored_capability = await get_provider_fallback_status(
+                    session_id=session_id,
+                    user_id=user_id,
+                    capability_key_digest=capability_key.digest(),
+                )
+                if stored_capability is not None:
+                    stored_status, expires_at, stored_reason = stored_capability
+                    remaining_ttl = max(
+                        1,
+                        int(
+                            (
+                                expires_at
+                                - datetime.now(timezone.utc)
+                            ).total_seconds()
+                        ),
+                    )
+                    NATIVE_CAPABILITY_CACHE.record(
+                        session_id,
+                        capability_key,
+                        stored_status,
+                        ttl_seconds=remaining_ttl,
+                        reason=stored_reason,
+                    )
+
+                catalog_provider_names = {
+                    entry.provider_name
+                    for entry in runtime.eligible_catalog.entries.values()
+                }
+                native_synthetic = {
+                    provider_name: tool
+                    for provider_name, tool in runtime.provider_tools.items()
+                    if provider_name not in catalog_provider_names
+                }
+                candidate_native_plan = build_openai_responses_native_plan(
+                    runtime.eligible_catalog,
+                    runtime.provider_plan,
+                    synthetic_tools=native_synthetic,
+                )
+                configured_endpoint = provider_api_base(model_id, config=config)
+                native_decision = decide_native_adapter(
+                    requested_mode=exposure_mode,
+                    model_id=model_id,
+                    configured_endpoint=configured_endpoint,
+                    binding=provider_binding,
+                    endpoint_allowlist=config.tool_exposure.native_endpoint_allowlist,
+                    model_allowlist=config.tool_exposure.native_model_allowlist,
+                    config_generation=config_generation,
+                    session_id=session_id,
+                    cache=NATIVE_CAPABILITY_CACHE,
+                    has_deferred_tools=bool(runtime.provider_plan.deferred_ids),
+                    catalogue_wire_chars=candidate_native_plan.catalogue_wire_chars,
+                    catalogue_wire_hard_chars=(
+                        config.tool_exposure.native_wire_hard_chars
+                    ),
+                )
+                if native_decision.enabled:
+                    native_plan = candidate_native_plan
+                    ctx._native_portable_tools = dict(tools)
+                    ctx._native_portable_system = list(system)
+                    tools.pop("capability_search", None)
+                    ctx._native_tool_plan = native_plan
+                    ctx._native_binding = provider_binding
+                    ctx._native_capability_key = capability_key
+                    ctx._native_reveal_ttl_seconds = (
+                        config.tool_exposure.reveal_ttl_seconds
+                    )
+                    ctx._native_max_persisted_reveals = (
+                        config.tool_exposure.max_persisted_reveals
+                    )
+
+                    async def _record_native_capability(
+                        status: str,
+                        reason: str = "",
+                    ) -> None:
+                        if status not in {"supported", "unsupported"}:
+                            raise ValueError("invalid native capability status")
+                        NATIVE_CAPABILITY_CACHE.record(
+                            session_id,
+                            capability_key,
+                            status,
+                            ttl_seconds=config.tool_exposure.reveal_ttl_seconds,
+                            reason=reason,
+                        )
+                        await set_provider_fallback_status(
+                            session_id=session_id,
+                            user_id=user_id,
+                            capability_key_digest=capability_key.digest(),
+                            status=status,
+                            ttl_seconds=config.tool_exposure.reveal_ttl_seconds,
+                            reason=reason,
+                        )
+
+                    ctx._native_record_capability = _record_native_capability
+                    visibility_index = -2 if output_schema else -1
+                    system[visibility_index] = build_tool_visibility_fragment(
+                        tools.keys(),
+                        strategy="native_openai",
+                        deferred_count=len(runtime.provider_plan.deferred_ids),
+                    )
+                else:
+                    log.info(
+                        "native_tool_search_fallback reason=%s",
+                        native_decision.reason,
+                    )
+            current_wire_by_canonical = _wire_by_canonical(
+                replay_provider_to_canonical
+            )
+            history_tool_names = await _resolve_history_tool_names(
+                msgs,
+                session_id=session_id,
+                user_id=user_id,
+                current_binding_digest=provider_binding_digest,
+                current_provider_dialect=payload_dialect,
+                current_wire_by_canonical=current_wire_by_canonical,
+                legacy_aliases=_legacy_tool_aliases(
+                    replay_provider_to_canonical,
+                    runtime.execution_lookup,
+                ),
+            )
+            provider_replay_by_message: dict[str, list[dict]] = {}
+            if native_plan is not None:
+                from collections import defaultdict
+
+                from agent.native_tool_search import build_openai_native_replay_sequence
+                from session.internal_parts import (
+                    get_provider_replay_parts_for_binding,
+                )
+
+                grouped_replay = defaultdict(list)
+                for record in await get_provider_replay_parts_for_binding(
+                    session_id=session_id,
+                    user_id=user_id,
+                    binding=provider_binding,
+                    capability_key_digest=capability_key.digest(),
+                ):
+                    grouped_replay[record.message_id].append(
+                        {
+                            "stream_seq": record.stream_seq,
+                            "data": record.data,
+                        }
+                    )
+                provider_replay_by_message = {
+                    message_id: build_openai_native_replay_sequence(records)
+                    for message_id, records in grouped_replay.items()
+                }
+            llm_messages = _to_llm_messages(
+                msgs,
+                user_id=user_id,
+                tool_replay_names=history_tool_names,
+                provider_replay_by_message=provider_replay_by_message,
+            )
             # Fetch the image bytes only here, on the path that actually calls
             # a vision model — token counting and cron never need them.
             llm_messages = await resolve_images(llm_messages, model_id)
@@ -551,10 +904,112 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             llm_messages = await _insert_todo_notices(llm_messages, session_id)
             llm_messages = await _insert_todo_pacing(llm_messages, session_id)
 
+            payload_sources = {}
+            revealed_provider_names: set[str] = set()
+            for provider_name in tools:
+                canonical_id = runtime.provider_to_canonical.get(provider_name)
+                entry = (
+                    runtime.eligible_catalog.entries.get(canonical_id)
+                    if canonical_id is not None else None
+                )
+                payload_sources[provider_name] = entry.source if entry else "synthetic"
+                if (
+                    canonical_id is not None
+                    and runtime.provider_plan.reasons.get(canonical_id) == "revealed"
+                ):
+                    revealed_provider_names.add(provider_name)
+            payload_metrics = measure_tool_definitions(
+                tools,
+                payload_dialect,
+                sources=payload_sources,
+                revealed_ids=revealed_provider_names,
+                include_noop=(
+                    payload_dialect == "litellm"
+                    and not tools
+                    and history_has_tool_calls(llm_messages)
+                ),
+            )
+            catalogue_wire_chars = (
+                native_plan.catalogue_wire_chars
+                if native_plan is not None
+                else payload_metrics.catalogue_wire_definition_chars
+            )
+            initial_visible_chars = (
+                native_plan.initial_visible_chars
+                if native_plan is not None
+                else payload_metrics.initial_model_visible_definition_chars
+            )
+            catalogue_wire_proxy_tokens = (
+                native_plan.catalogue_wire_proxy_tokens
+                if native_plan is not None
+                else payload_metrics.catalogue_wire_proxy_tokens
+            )
+            initial_visible_proxy_tokens = (
+                native_plan.initial_visible_proxy_tokens
+                if native_plan is not None
+                else payload_metrics.initial_model_visible_proxy_tokens
+            )
+            provider_tool_count = (
+                len(native_plan.tools)
+                if native_plan is not None
+                else payload_metrics.tool_count
+            )
+            exposure_config = config.tool_exposure
+            enforce_serialized_payload_limits(
+                exposure_mode=exposure_mode,
+                catalogue_wire_chars=catalogue_wire_chars,
+                initial_visible_chars=initial_visible_chars,
+                native_wire_hard_chars=exposure_config.native_wire_hard_chars,
+                active_hard_chars=exposure_config.active_hard_chars,
+            )
+            largest_payload_items = ",".join(
+                f"{item.tool_id}:{item.definition_chars}"
+                for item in payload_metrics.largest_items
+            )
+            reason_counts: dict[str, int] = {}
+            for reason in runtime.provider_plan.reasons.values():
+                family = reason.split(":", 1)[0]
+                reason_counts[family] = reason_counts.get(family, 0) + 1
+            visible_names = sorted(tools)
+            visible_name_preview = ",".join(visible_names[:40])
+            if len(visible_names) > 40:
+                visible_name_preview += f",...(+{len(visible_names) - 40})"
+            payload_log = (
+                f"tool_payload mode={exposure_mode} "
+                f"configured_mode={requested_exposure_mode} "
+                f"strategy={'native_openai' if native_plan is not None else runtime.provider_plan.strategy} "
+                f"dialect={payload_metrics.dialect} "
+                f"count={provider_tool_count} "
+                f"direct_count={len(runtime.provider_plan.direct_ids)} "
+                f"deferred_count={len(runtime.provider_plan.deferred_ids)} "
+                f"discovery_count={len(runtime.provider_plan.discovery_ids)} "
+                f"revealed_count={len(revealed_provider_names)} "
+                f"catalogue_wire_chars={catalogue_wire_chars} "
+                f"initial_visible_chars={initial_visible_chars} "
+                f"revealed_visible_chars={payload_metrics.revealed_model_visible_definition_chars} "
+                f"proxy_tokens={catalogue_wire_proxy_tokens} "
+                f"sources={dict(payload_metrics.source_counts)} "
+                f"reasons={reason_counts} "
+                f"visible_ids={visible_name_preview} "
+                f"largest={largest_payload_items}"
+            )
+            if (
+                initial_visible_chars > exposure_config.active_hard_chars
+            ):
+                # legacy_eager is a migration exception: warn without changing
+                # the model-visible set.  The 128K provider ceiling above is
+                # still fail-closed.
+                log.warning(payload_log)
+            else:
+                log.info(payload_log)
+            if runtime.budget_result is not None:
+                for warning in runtime.budget_result.warnings:
+                    log.warning("tool_exposure_budget %s", warning)
+
             # Estimate context size and update frontend in real-time
             from core.token import token_estimate as _te
             _ctx_estimate = sum(_te(str(m.get("content", ""))) for m in llm_messages)
-            _ctx_estimate += len(tools) * 400  # tool schemas
+            _ctx_estimate += initial_visible_proxy_tokens
             _ctx_estimate += sum(_te(s) for s in system)  # system prompt
             try:
                 _ctx_limit = get_model_context_limit(model_id)
@@ -571,7 +1026,15 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 pass
 
             # Apply prompt caching for supported providers
-            llm_messages = apply_caching(llm_messages, model_id)
+            llm_messages = apply_caching(
+                llm_messages,
+                model_id,
+                cache_key=session_cache_key(
+                    secret=config.jwt_secret,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
 
             # Add max steps prompt if at limit
             if step >= agent_def.max_steps:
@@ -632,6 +1095,11 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 abort=abort,
                 doom_loop_history=doom_loop_history,
                 user_variant=user_variant,
+                execution_lookup=runtime.execution_lookup,
+                step_executable_ids=runtime.step_executable_ids,
+                provider_to_canonical=runtime.provider_to_canonical,
+                provider_binding_digest=provider_binding_digest,
+                provider_dialect=payload_dialect,
                 # "required" makes the model pick some tool; the system prompt
                 # names which one. Left unset otherwise so ordinary turns can
                 # still answer in plain text.
@@ -901,6 +1369,7 @@ async def _build_system_prompt(
     else:
         parts.append("You are a helpful AI coding assistant.")
 
+    config = None
     # Load instruction files (AGENTS.md, CLAUDE.md, etc.)
     try:
         from session.instruction import instruction_system_with_config
@@ -912,13 +1381,29 @@ async def _build_system_prompt(
         log.debug(f"Could not load instruction files: {e}")
 
     # Environment info (separate part for cache control purposes)
+    sandbox_provider = str(
+        getattr(config, "sandbox_provider", "docker") or "docker"
+    ).lower()
+    if sandbox_provider == "wuying":
+        platform = "linux (Alibaba Cloud Wuying workstation)"
+        access = "action-server managed workspace access"
+        package_managers = "pip and npm/npx; system packages depend on workspace policy"
+    elif sandbox_provider == "kubernetes":
+        platform = "linux (Kubernetes sandbox)"
+        access = "sandbox-scoped user access"
+        package_managers = "pip and npm/npx; system packages depend on the sandbox image"
+    else:
+        platform = "linux (Docker sandbox)"
+        access = "sandbox-scoped user access"
+        package_managers = "apt-get, pip, npm/npx (subject to sandbox policy)"
+
     env_info = (
         f"You are powered by the model {model_id}.\n"
         f"<env>\n"
-        f"  Platform: linux (Docker container)\n"
+        f"  Platform: {platform}\n"
         f"  Shell: bash\n"
-        f"  User: root (full system access)\n"
-        f"  Package managers: apt-get, pip, npm/npx (install as needed)\n"
+        f"  Access: {access}\n"
+        f"  Package managers: {package_managers}\n"
         f"  Pre-installed: python3, pip, git, curl, wget, jq, build-essential\n"
         f"  Network: internet access available\n"
         f"  Working directory: {workdir}\n"
@@ -943,7 +1428,104 @@ async def _build_system_prompt(
     return parts
 
 
-def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> list[dict]:
+def _wire_by_canonical(provider_to_canonical: Mapping[str, str]) -> dict[str, str]:
+    """Invert a provider projection, rejecting canonical-name ambiguity."""
+
+    result: dict[str, str] = {}
+    for wire_name, canonical_id in provider_to_canonical.items():
+        previous = result.get(str(canonical_id))
+        if previous is not None and previous != str(wire_name):
+            raise RuntimeError("canonical tool has multiple provider wire names")
+        result[str(canonical_id)] = str(wire_name)
+    return result
+
+
+def _legacy_tool_aliases(
+    provider_to_canonical: Mapping[str, str],
+    execution_lookup: Mapping[str, object],
+) -> dict[str, tuple[str, ...]]:
+    """Build legacy aliases without collapsing collisions to one tool."""
+
+    aliases: dict[str, set[str]] = {}
+
+    def add(alias: object, canonical: str) -> None:
+        value = str(alias or "")
+        if value:
+            aliases.setdefault(value, set()).add(canonical)
+
+    for wire_name, canonical_value in provider_to_canonical.items():
+        canonical = str(canonical_value)
+        add(wire_name, canonical)
+        add(canonical, canonical)
+        tool = execution_lookup.get(canonical)
+        if tool is not None:
+            add(getattr(tool, "id", ""), canonical)
+            add(getattr(tool, "provider_name", ""), canonical)
+
+        # MCP v2 adds the complete canonical digest when two old sanitised
+        # aliases collide. Recover the old prefix for lazy migration, retaining
+        # every candidate so resolve_tool_part_for_replay can fail closed.
+        if canonical.startswith("mcp:v2:"):
+            digest = canonical.removeprefix("mcp:v2:")
+            suffix = f"_{digest}"
+            wire = str(wire_name)
+            if wire.endswith(suffix):
+                add(wire.removesuffix(suffix), canonical)
+
+    return {alias: tuple(sorted(candidates)) for alias, candidates in aliases.items()}
+
+
+async def _resolve_history_tool_names(
+    msgs: list[MessageWithParts],
+    *,
+    session_id: str,
+    user_id: str,
+    current_binding_digest: str,
+    current_provider_dialect: str,
+    current_wire_by_canonical: Mapping[str, str],
+    legacy_aliases: Mapping[str, str | tuple[str, ...]],
+) -> dict[str, str]:
+    """Resolve provider wire names for public history via private DB columns."""
+
+    from session.tool_part_identity import resolve_tool_part_for_replay
+
+    resolved: dict[str, str] = {}
+    for msg in msgs:
+        role = msg.role if isinstance(msg.role, str) else msg.role.value
+        if role != "assistant" or getattr(msg, "error", None) is not None:
+            continue
+        for part in msg.parts or []:
+            if isinstance(part, dict):
+                data = part
+            elif hasattr(part, "model_dump"):
+                data = part.model_dump()
+            else:
+                continue
+            if data.get("type") != "tool":
+                continue
+            part_id = str(data.get("id") or "")
+            if not part_id:
+                raise RuntimeError("historical ToolPart has no persisted identity key")
+            replay = await resolve_tool_part_for_replay(
+                part_id=part_id,
+                session_id=session_id,
+                user_id=user_id,
+                current_binding_digest=current_binding_digest,
+                current_provider_dialect=current_provider_dialect,
+                current_wire_by_canonical=current_wire_by_canonical,
+                legacy_aliases=legacy_aliases,
+            )
+            resolved[part_id] = replay.wire_tool_name
+    return resolved
+
+
+def _to_llm_messages(
+    msgs: list[MessageWithParts],
+    user_id: str = "default",
+    *,
+    tool_replay_names: Mapping[str, str] | None = None,
+    provider_replay_by_message: Mapping[str, list[dict]] | None = None,
+) -> list[dict]:
     """Convert internal messages to LLM API format.
 
     For assistant messages with tool calls, produces proper function-calling format:
@@ -970,7 +1552,21 @@ def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> 
             if isinstance(part, dict):
                 parsed.append(part)
             elif hasattr(part, "model_dump"):
-                parsed.append(part.model_dump())
+                dumped = part.model_dump()
+                # Provider identity fields are excluded from every public
+                # serialization, but this private replay builder must retain
+                # the DB-loaded sequence in order to merge across stores.
+                for hidden in (
+                    "canonical_tool_id",
+                    "wire_tool_name",
+                    "provider_binding_digest",
+                    "provider_dialect",
+                    "stream_seq",
+                ):
+                    value = getattr(part, hidden, None)
+                    if value is not None:
+                        dumped[hidden] = value
+                parsed.append(dumped)
             else:
                 parsed.append(part)
 
@@ -1011,6 +1607,109 @@ def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> 
                 result.append(user_msg)
 
         elif role == "assistant":
+            # Native provider search blocks are API-hidden but must precede
+            # the public function call/result they authorized. They are only
+            # populated for an exact provider-capability binding; portable and
+            # switched-provider requests never see this sentinel.
+            replay_items = (
+                provider_replay_by_message.get(str(msg.id), [])
+                if provider_replay_by_message is not None
+                else []
+            )
+            native_replayed_tool_ids: set[str] = set()
+            native_text_preplayed = False
+            if replay_items:
+                ordered_payloads: dict[int, list[dict]] = {}
+                for replay in replay_items:
+                    if not isinstance(replay, dict):
+                        raise RuntimeError("invalid native replay sequence entry")
+                    seq = replay.get("stream_seq")
+                    item = replay.get("item")
+                    if (
+                        not isinstance(seq, int)
+                        or isinstance(seq, bool)
+                        or seq < 0
+                        or not isinstance(item, dict)
+                        or seq in ordered_payloads
+                    ):
+                        raise RuntimeError("ambiguous native replay stream sequence")
+                    ordered_payloads[seq] = [item]
+
+                for p in parsed:
+                    if p.get("type") != "tool":
+                        continue
+                    seq = p.get("stream_seq")
+                    if (
+                        not isinstance(seq, int)
+                        or isinstance(seq, bool)
+                        or seq < 0
+                        or seq in ordered_payloads
+                    ):
+                        raise RuntimeError("ambiguous public/native replay stream sequence")
+                    part_id = str(p.get("id") or "")
+                    tool_name = (
+                        tool_replay_names.get(part_id, p.get("tool", ""))
+                        if tool_replay_names is not None
+                        else p.get("tool", "")
+                    )
+                    tool_input = p.get("input") or {}
+                    tool_output = p.get("output", "") or ""
+                    tool_error = p.get("error", "")
+                    tool_status = getattr(p.get("status", ""), "value", p.get("status", ""))
+                    tool_metadata = p.get("metadata") or {}
+                    if tool_status in ("error", "pending", "running"):
+                        replay_args = {
+                            key: (str(value)[:50] + "..." if len(str(value)) > 50 else value)
+                            for key, value in tool_input.items()
+                        }
+                        if tool_status == "error":
+                            if isinstance(tool_metadata, dict) and tool_metadata.get("validation_failed"):
+                                replay_output = tool_output or tool_error or "Unknown validation error"
+                            else:
+                                replay_output = f"[Error] {(tool_error or 'Unknown error')[:200]}"
+                        else:
+                            replay_output = "[Tool execution was interrupted]"
+                    else:
+                        replay_args = tool_input
+                        replay_output = tool_output
+                    replay_call_id = ensure_fc_id(
+                        str(p.get("call_id") or f"call_{part_id}")
+                    )
+                    ordered_payloads[seq] = [
+                        {
+                            "type": "function_call",
+                            "id": replay_call_id,
+                            "call_id": replay_call_id,
+                            "name": tool_name,
+                            "arguments": _json.dumps(replay_args, ensure_ascii=False),
+                        },
+                        {
+                            "type": "function_call_output",
+                            "call_id": replay_call_id,
+                            "output": replay_output,
+                        },
+                    ]
+                    native_replayed_tool_ids.add(part_id)
+
+                # Responses represents assistant narration before its function
+                # calls. Text has no provider stream_seq today, so preserve the
+                # existing assistant-before-calls contract rather than moving
+                # it behind tool results during the cross-store merge.
+                native_text = "".join(
+                    str(p.get("text") or "")
+                    for p in parsed
+                    if p.get("type") == "text"
+                ).strip()
+                if native_text:
+                    result.append({"role": "assistant", "content": native_text})
+                    native_text_preplayed = True
+                merged_items = [
+                    item
+                    for seq in sorted(ordered_payloads)
+                    for item in ordered_payloads[seq]
+                ]
+                result.append({"_responses_input_items": merged_items})
+
             # Collect text content and tool calls from this assistant message
             text_content = ""
             tool_calls_api = []
@@ -1020,15 +1719,23 @@ def _to_llm_messages(msgs: list[MessageWithParts], user_id: str = "default") -> 
             for p in parsed:
                 pt = p.get("type", "")
                 if pt == "text":
+                    if native_text_preplayed:
+                        continue
                     text_content += p.get("text", "")
                 elif pt == "tool":
-                    tool_name = p.get("tool", "")
+                    part_id = p.get("id", "")
+                    if str(part_id) in native_replayed_tool_ids:
+                        continue
+                    tool_name = (
+                        tool_replay_names.get(str(part_id), p.get("tool", ""))
+                        if tool_replay_names is not None
+                        else p.get("tool", "")
+                    )
                     tool_input = p.get("input") or {}
                     tool_output = p.get("output", "") or ""
                     tool_error = p.get("error", "")
                     tool_status = p.get("status", "")
                     tool_metadata = p.get("metadata") or {}
-                    part_id = p.get("id", "")
 
                     # Check if compacted
                     state = p.get("state", {})

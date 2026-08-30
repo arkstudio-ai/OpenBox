@@ -158,86 +158,23 @@ async def _run_child(ctx: ToolContext, child_id: str) -> None:
 
 
 TASK_DESCRIPTION = """\
-Launch a new agent to handle complex, multistep tasks autonomously.
+Delegate a bounded, non-trivial research or implementation task to a subagent.
+Use `explore` for codebase discovery and focused research, or `general` for
+multi-step work; configured spawnable agent types may also be selected. Do not
+delegate a simple lookup in one known file.
 
-Available agent types:
-- explore: Fast agent for exploring codebases. Use for finding files by patterns, \
-searching code for keywords, or answering questions about the codebase. Specify \
-thoroughness: "quick", "medium", or "very thorough".
-- general: General-purpose agent for researching complex questions and executing \
-multi-step tasks. Use to execute multiple units of work in parallel.
+Each invocation gets a fresh child conversation and context, isolated from the
+parent conversation. It still shares the parent's project sandbox/worktree, so
+concurrent agents can observe or conflict with each other's file changes.
 
-When using the Task tool, you must specify a subagent_type parameter to select which \
-agent type to use.
+Make the prompt self-contained: state the objective and scope, relevant paths,
+whether writes are allowed, constraints, verification commands, and the exact
+result to return. Run only independent tasks concurrently; run dependent or
+overlapping edits sequentially.
 
-When to use the Task tool:
-- When exploring the codebase to gather context or answer a non-trivial question
-- For multi-step research that requires reading many files
-- To execute independent work in parallel (launch multiple agents at once)
-- When you are instructed to execute custom slash commands. Use the Task tool with \
-the slash command invocation as the entire prompt. The slash command can take arguments. \
-For example: Task(description="Check the file", prompt="/check-file path/to/file.py")
-
-When NOT to use the Task tool:
-- If you want to read a specific file path, use Read or Glob instead
-- If you are searching for a specific class definition like "class Foo", use Glob instead
-- If you are searching for code within a specific file or set of 2-3 files, use Read instead
-- Other tasks that are not related to the agent descriptions above
-
-Usage notes:
-1. Launch multiple agents concurrently whenever possible, to maximize performance; \
-to do that, use a single message with multiple tool uses
-2. When the agent is done, it will return a single message back to you. The result \
-returned by the agent is not visible to the user. To show the user the result, you \
-should send a text message back to the user with a concise summary of the result.
-3. Each invocation starts with a fresh context. Your prompt should contain a highly \
-detailed task description for the agent to perform autonomously and you should specify \
-exactly what information the agent should return back to you in its final and only \
-message to you.
-4. The agent's outputs should generally be trusted.
-5. Clearly tell the agent whether you expect it to write code or just to do research \
-(search, file reads, web fetches, etc.), since it is not aware of the user's intent. \
-Tell it how to verify its work if possible (e.g., relevant test commands).
-6. If the agent description mentions that it should be used proactively, then you should \
-try your best to use it without the user having to ask for it first. Use your judgement.
-
-Example usage (NOTE: The agents below are fictional examples for illustration only — \
-use the actual agents listed above):
-
-<example_agent_descriptions>
-"code-reviewer": use this agent after you are done writing a significant piece of code
-"greeting-responder": use this agent to respond to user greetings with a friendly joke
-</example_agent_descriptions>
-
-<example>
-user: "Please write a function that checks if a number is prime"
-assistant: Sure let me write a function that checks if a number is prime
-assistant: First let me use the Write tool to write a function that checks if a number is prime
-assistant: I'm going to use the Write tool to write the following code:
-<code>
-function isPrime(n) {
-  if (n <= 1) return false
-  for (let i = 2; i * i <= n; i++) {
-    if (n % i === 0) return false
-  }
-  return true
-}
-</code>
-<commentary>
-Since a significant piece of code was written and the task was completed, now use the \
-code-reviewer agent to review the code
-</commentary>
-assistant: Now let me use the code-reviewer agent to review the code
-assistant: Uses the Task tool to launch the code-reviewer agent
-</example>
-
-<example>
-user: "Hello"
-<commentary>
-Since the user is greeting, use the greeting-responder agent to respond with a friendly joke
-</commentary>
-assistant: "I'm going to use the Task tool to launch the greeting-responder agent"
-</example>"""
+The subagent returns one result to this parent; inspect it and summarize the
+user-facing outcome. The child session is linked to this tool call and is
+stopped when the parent run is stopped."""
 
 task_tool = define_tool(
     "task",

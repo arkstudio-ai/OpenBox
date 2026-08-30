@@ -29,6 +29,14 @@ class Session(Base):
     kind: Mapped[str] = mapped_column(String(16), server_default="normal")
     parent_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("sessions.id"), nullable=True)
     token_usage: Mapped[dict] = mapped_column(JSONType, server_default="{}")
+    # Private, provider-neutral materialization state.  It is deliberately a
+    # database concern rather than a public Session field: the Pydantic model
+    # marks its mirror ``exclude=True`` so REST/SSE cannot leak reveal history.
+    tool_exposure_state: Mapped[dict] = mapped_column(
+        JSONType,
+        nullable=False,
+        server_default="{}",
+    )
     additions: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     deletions: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     files_changed: Mapped[int] = mapped_column(Integer, server_default=text("0"))

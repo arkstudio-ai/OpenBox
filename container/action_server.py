@@ -60,7 +60,11 @@ from media_jobs import (  # noqa: E402
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.08.27-video-production-v3"
+ACTION_SERVER_VERSION = "2026.08.30-catalogue-projection-v1"
+CATALOGUE_PROTOCOL_VERSION = 1
+_ACTION_SERVER_BOOT_ID = hashlib.sha256(
+    f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
+).hexdigest()
 # Uvicorn owns the configured INFO handler in both containers and the WUYING
 # systemd service. A standalone child logger inherited the root WARNING level
 # and silently discarded the very traces this feature exists to preserve.
@@ -319,6 +323,7 @@ async def alive():
         "capabilities": [
             "desktop_lease_v1",
             "execution_trace_v1",
+            "catalogue_projection_v1",
             "media_jobs_v1",
             "media_jobs_fastpath_v2",
             "media_jobs_audio_extract_v3",
@@ -1808,6 +1813,118 @@ def _scan_skills() -> list[dict]:
     return merged
 
 
+def _stable_catalogue_digest(value) -> str:
+    """Hash one normalized directory view without leaking its source bytes."""
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _skill_package_digest(skill: dict) -> tuple[str, int]:
+    """Hash addressable files in one skill while returning no file bodies.
+
+    The projection must notice script/reference edits as well as SKILL.md
+    edits. Files are streamed into the digest and symlinks/noise directories
+    are ignored using the same rules as the public skill listing.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    try:
+        base_dir = str(skill.get("base_dir") or "")
+        if not base_dir:
+            raise OSError("skill root is missing")
+        root = Path(base_dir).resolve(strict=True)
+        if not root.is_dir():
+            raise OSError("skill root is not a directory")
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+            if path.is_symlink() or not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            if any(
+                part in _SKILL_FILE_SKIP_DIRS or part.startswith(".")
+                for part in relative.parts
+            ):
+                continue
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root):
+                continue
+            relative_bytes = relative.as_posix().encode("utf-8")
+            digest.update(len(relative_bytes).to_bytes(8, "big"))
+            digest.update(relative_bytes)
+            with resolved.open("rb") as stream:
+                while chunk := stream.read(64 * 1024):
+                    digest.update(chunk)
+            count += 1
+    except (OSError, ValueError):
+        # A concurrently removed package still gets a deterministic fallback;
+        # the next request rescans and publishes the stable post-mutation view.
+        fallback = {
+            "content": str(skill.get("content") or ""),
+            "files": sorted(str(item) for item in (skill.get("files") or [])),
+        }
+        return _stable_catalogue_digest(fallback), len(fallback["files"]) + 1
+    return digest.hexdigest(), count
+
+
+def _skill_catalogue_projection(skills: list[dict] | None = None) -> dict:
+    """Return bounded Skill metadata plus a content-derived generation."""
+    source = _scan_skills() if skills is None else skills
+    projected = []
+    for skill in source:
+        package_digest, file_count = _skill_package_digest(skill)
+        projected.append({
+            "name": str(skill.get("name") or ""),
+            "description": str(skill.get("description") or "")[:500],
+            "icon": str(skill.get("icon") or "")[:8],
+            "requires_mcp": [
+                str(item)[:200] for item in (skill.get("requires_mcp") or [])[:20]
+            ],
+            "homepage": str(skill.get("homepage") or "")[:300],
+            "source": str(skill.get("source") or ""),
+            "install_dir": str(skill.get("install_dir") or ""),
+            "file_count": file_count,
+            "package_digest": package_digest,
+        })
+    projected.sort(key=lambda item: (
+        item["name"], item["source"], item["install_dir"], item["package_digest"]
+    ))
+    return {
+        "items": projected,
+        "count": len(projected),
+        "generation": _stable_catalogue_digest(projected),
+    }
+
+
+def _catalogue_etag(generation: str) -> str:
+    return f'"{generation}"'
+
+
+def _etag_matches(request: Request, etag: str) -> bool:
+    supplied = request.headers.get("if-none-match", "")
+    for candidate in supplied.split(","):
+        candidate = candidate.strip()
+        if candidate == "*":
+            return True
+        if candidate.startswith("W/"):
+            candidate = candidate[2:].strip()
+        if candidate == etag:
+            return True
+    return False
+
+
+def _catalogue_json_response(request: Request, payload, generation: str) -> Response:
+    etag = _catalogue_etag(generation)
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if _etag_matches(request, etag):
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(content=payload, headers=headers)
+
+
 def _user_skill_directory(name: str) -> tuple[str, Path]:
     """Resolve a chat-created user skill, never a builtin or alias."""
     skill_name = _strict_skill_slug(name)
@@ -1917,9 +2034,11 @@ def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
 
 
 @app.get("/skills")
-async def list_skills():
+async def list_skills(request: Request):
     """List all installed skills (builtin + user)."""
-    return _scan_skills()
+    skills = _scan_skills()
+    generation = _skill_catalogue_projection(skills)["generation"]
+    return _catalogue_json_response(request, skills, generation)
 
 
 @app.post("/skills/create")
@@ -2625,6 +2744,17 @@ class ContainerMcpManager:
         #: Remote servers whose raw HTTP probe failed, so call paths skip
         #: straight to the SSE transport instead of paying the failure twice.
         self._remote_transport: dict[str, str] = {}  # name -> "raw" | "sse"
+        # Explicit mutations bump this even when a refresh returns byte-for-byte
+        # identical metadata. We cannot claim list_changed support while MCP
+        # sessions are per-operation; only operations observed here advance it.
+        self._catalogue_revision = 0
+
+    @property
+    def catalogue_revision(self) -> int:
+        return self._catalogue_revision
+
+    def _bump_catalogue_revision(self) -> None:
+        self._catalogue_revision += 1
 
     # -- config persistence --
 
@@ -2682,6 +2812,7 @@ class ContainerMcpManager:
         full_config = self._load_config()
         full_config.setdefault("servers", {})[name] = config
         self._save_config(full_config)
+        self._bump_catalogue_revision()
 
     def remove_server(self, name: str):
         """Remove an MCP server configuration."""
@@ -2692,6 +2823,7 @@ class ContainerMcpManager:
         del servers[name]
         self._save_config(full_config)
         self._forget(name)
+        self._bump_catalogue_revision()
 
     def _forget(self, name: str) -> None:
         self._servers.pop(name, None)
@@ -2896,6 +3028,8 @@ class ContainerMcpManager:
             self._servers[name] = {"status": "error", "error": str(e)}
             self._tools.pop(name, None)
             raise
+        finally:
+            self._bump_catalogue_revision()
 
     async def disconnect(self, name: str):
         """Drop a server's cached listing and mark it disconnected.
@@ -2904,6 +3038,7 @@ class ContainerMcpManager:
         close here.
         """
         self._forget(name)
+        self._bump_catalogue_revision()
 
     def get_all_tools(self) -> list[dict]:
         """Get all tools from all connected servers."""
@@ -3004,6 +3139,7 @@ class ContainerMcpManager:
         old_tools = len(self._tools.get(name, []))
         async with self._session(name) as session:
             await self._discover(name, session)
+        self._bump_catalogue_revision()
         return {
             "tools": len(self._tools.get(name, [])),
             "resources": len(self._resources.get(name, [])),
@@ -3032,6 +3168,123 @@ class ContainerMcpManager:
 
 # Singleton MCP manager
 mcp_manager = ContainerMcpManager()
+
+
+def _catalogue_json_value(value):
+    """Detach remote SDK models into JSON values before publishing/caching."""
+    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _mcp_catalogue_projection(manager: ContainerMcpManager | None = None) -> dict:
+    """Return connected MCP definition metadata, never resource bodies."""
+    active = manager or mcp_manager
+    config = active._load_config()
+    servers = []
+    for name, server_config in sorted(config.get("servers", {}).items()):
+        state = active._servers.get(name) or {}
+        servers.append({
+            "name": str(name),
+            "type": str(server_config.get("type") or "stdio"),
+            "status": str(state.get("status") or "disconnected"),
+        })
+
+    tools = []
+    for raw in active.get_all_tools():
+        if not isinstance(raw, dict):
+            continue
+        schema = raw.get("input_schema", {})
+        tools.append({
+            "server": str(raw.get("server") or ""),
+            "name": str(raw.get("name") or ""),
+            "description": str(raw.get("description") or ""),
+            "input_schema": _catalogue_json_value(
+                schema if isinstance(schema, dict) else {}
+            ),
+        })
+    tools.sort(key=lambda item: (item["server"], item["name"]))
+
+    resources = []
+    for raw in active.get_all_resources():
+        if not isinstance(raw, dict):
+            continue
+        # Whitelist metadata. Never forward text/blob/contents or unknown
+        # extension fields from an untrusted MCP server into the catalogue.
+        resources.append({
+            "server": str(raw.get("server") or ""),
+            "uri": str(raw.get("uri") or ""),
+            "name": str(raw.get("name") or ""),
+            "description": str(raw.get("description") or ""),
+            "mimeType": str(raw.get("mimeType") or raw.get("mime_type") or ""),
+        })
+    resources.sort(key=lambda item: (item["server"], item["uri"], item["name"]))
+
+    generation_input = {
+        "revision": active.catalogue_revision,
+        "servers": servers,
+        "tools": tools,
+        "resources": resources,
+    }
+    return {
+        "servers": servers,
+        "tools": tools,
+        "resources": resources,
+        "server_count": len(servers),
+        "tool_count": len(tools),
+        "resource_count": len(resources),
+        "revision": active.catalogue_revision,
+        "generation": _stable_catalogue_digest(generation_input),
+    }
+
+
+def _catalogue_version_payload(skills: dict, mcp: dict) -> dict:
+    generation = _stable_catalogue_digest({
+        "boot_id": _ACTION_SERVER_BOOT_ID,
+        "skills_generation": skills["generation"],
+        "mcp_generation": mcp["generation"],
+    })
+    return {
+        "catalogue_version": CATALOGUE_PROTOCOL_VERSION,
+        "boot_id": _ACTION_SERVER_BOOT_ID,
+        "started_at": START_TIME,
+        "skills_generation": skills["generation"],
+        "mcp_generation": mcp["generation"],
+        "generation": generation,
+        "counts": {
+            "skills": skills["count"],
+            "mcp_servers": mcp["server_count"],
+            "mcp_tools": mcp["tool_count"],
+            "mcp_resources": mcp["resource_count"],
+        },
+    }
+
+
+def _build_catalogue_projection() -> dict:
+    skills = _skill_catalogue_projection()
+    mcp = _mcp_catalogue_projection()
+    version = _catalogue_version_payload(skills, mcp)
+    return {
+        **version,
+        "skills": skills["items"],
+        "mcp_servers": mcp["servers"],
+        "mcp_tools": mcp["tools"],
+        "mcp_resources": mcp["resources"],
+    }
+
+
+@app.get("/catalog/version")
+async def get_catalogue_version(request: Request):
+    """Publish stable sandbox boot and directory generations."""
+    skills = _skill_catalogue_projection()
+    mcp = _mcp_catalogue_projection()
+    payload = _catalogue_version_payload(skills, mcp)
+    return _catalogue_json_response(request, payload, payload["generation"])
+
+
+@app.get("/catalog")
+async def get_catalogue_projection(request: Request):
+    """Publish one body-free directory snapshot for the backend control plane."""
+    payload = _build_catalogue_projection()
+    return _catalogue_json_response(request, payload, payload["generation"])
 
 
 @app.get("/mcp/servers")
@@ -3094,9 +3347,14 @@ async def disconnect_mcp_server(name: str):
 
 
 @app.get("/mcp/tools")
-async def list_mcp_tools():
+async def list_mcp_tools(request: Request):
     """List all tools from all connected MCP servers."""
-    return mcp_manager.get_all_tools()
+    projection = _mcp_catalogue_projection()
+    return _catalogue_json_response(
+        request,
+        mcp_manager.get_all_tools(),
+        projection["generation"],
+    )
 
 
 @app.post("/mcp/tools/{server_name}/{tool_name}")
@@ -3133,9 +3391,14 @@ async def call_mcp_tool(server_name: str, tool_name: str, req: CallMcpToolReques
 
 
 @app.get("/mcp/resources")
-async def list_mcp_resources():
+async def list_mcp_resources(request: Request):
     """List all resources from all connected MCP servers."""
-    return mcp_manager.get_all_resources()
+    projection = _mcp_catalogue_projection()
+    return _catalogue_json_response(
+        request,
+        mcp_manager.get_all_resources(),
+        projection["generation"],
+    )
 
 
 @app.post("/mcp/resources/read")

@@ -1,7 +1,8 @@
 # 工具目录与 Schema 延迟物化——执行手册
 
-> 文档状态：Execution Handbook v2（2026-08-30，无影云双平面与能力分层适配版）
+> 文档状态：Implemented & Verified v3（2026-08-31，无影云双平面与能力分层适配版）
 > 基线 commit：`d453f78`（技能/工具解耦已经完成）
+> 实现 commit：`5702fd4`（Schema 延迟物化、持久 reveal、MCP 投影与安全边界）
 > v2 相对 v1 的适配（按当前产品事实收敛，全文已同步改写）：
 > ① 前端只有 `frontend-v2` 与 `mobile`；`frontend/`（v1）是遗留迁移参考，零触碰。
 > ② 沙箱执行面唯一生产形态是阿里云无影云电脑（`SANDBOX_PROVIDER=wuying`）；
@@ -1600,13 +1601,13 @@ git ls-files --others --exclude-standard
 前两个命令零命中。新增测试至少覆盖：
 
 - `test_tool_exposure.py`
-- `test_tool_exposure_state.py`
+- `test_tool_exposure_state.py`（含 InternalPart 持久化）
 - `test_capability_search.py`
-- `test_tool_prompt_alignment.py`
+- `test_prompt_visibility.py`
 - `test_llm_tool_search_responses.py`
 - `test_llm_tool_search_anthropic.py`
-- `test_mcp_tool_budget.py`
-- `test_session_internal_parts.py`
+- `test_mcp_security.py`
+- `test_tool_part_identity.py`
 - `test_tool_exposure_migration.py`
 
 保留现有：skill 来源不变式（现有三来源测试保留，PR#2 扩为四来源，§2.2）、agent
@@ -2034,3 +2035,150 @@ permission 双重检查。
     `docs/MULTI_USER_STORAGE_PLAN.md`；在此之前共享桌面按单租户运营（坑 24）；
 12. 目录投影的事件推送升级：action server 主动推送 skills/MCP `listChanged`，替代
     §12.4 的条件请求轮询。
+
+---
+
+## 18. 实施完成记录（2026-08-31）
+
+本章记录 `5702fd4` 的实际落地与最终验收。它是执行结果，不改变 §2 的安全不变式，也
+不把 Browser/Provider 环境限制伪装成代码通过。后续维护者应以本章的真实测试口径和
+§13 的验收矩阵共同判断回归。
+
+### 18.1 最终数据流
+
+```text
+平台注册 + AgentDef allowlist + 沙箱目录投影
+                    ↓
+         permission-before-catalogue
+                    ↓
+             eligible catalogue
+                    ↓
+ resident core + explicit intent + product state + valid reveal
+                    ↓
+ 20K resident soft / 24K resident hard / 28K active soft / 32K active hard
+                    ↓
+ provider-visible definitions + step_executable_ids
+                    ↓
+ typed reveal evidence → session state → 下一 step 再验权限/契约
+                    ↓
+       executor hooks / approval / paid guard / sandbox
+```
+
+这里有四个必须继续分开的集合：
+
+1. `eligible`：AgentDef、环境与 permission 过滤后的完整资格目录；
+2. `materialized`：本次 provider 真正看到的完整 schema；
+3. `step_executable_ids`：本次可直接执行及可被 Batch 嵌套调用的集合；
+4. `revealed`：有可信 typed evidence、已持久化、且当前 generation/schema/permission
+   复验仍有效的历史发现集合。
+
+Skill 正文、frontmatter、普通工具 metadata 与沙箱返回值都不能把 ID 写进第 2–4 个集合。
+
+### 18.2 已落地能力
+
+| 模块 | 实际结果 |
+|---|---|
+| 常驻与路由 | build 使用 lean resident core；视频、图片、research、browser、automation 按明确意图首轮直达；运行中的视频、待办、交付资产按 product-state 以更高优先级保留 |
+| Portable discovery | 新增 `capability_search`；模糊能力先返回最多 5 个受权限过滤的候选，下一 step 才物化完整 schema；每 response 的搜索次数、唯一 ID 与返回字符有聚合硬限 |
+| 大 Skill 目录 | 小目录继续使用 `skill` listing；超过 8K 时原子切换为独立 `skill_search`，正文仍由 `skill` 按需加载；四来源 Skill 的工具字段继续零效果 |
+| 持久状态 | session 保存版本化 reveal 投影，独立 InternalPart 保存 provider 私有事件；agent、catalogue generation、schema digest、TTL/LRU、删除/重生/fork 均有 fail-closed 处理 |
+| Provider | OpenAI Responses 只在 endpoint + model allowlist 命中后发起 binding-scoped native canary；account/headers 属 binding 与 capability cache 隔离维度；明确 unsupported 后 sticky portable；Anthropic LiteLLM、Gemini、Kimi 与未知代理使用 portable |
+| 历史身份 | ToolPart 分离 canonical ID 与 provider wire name；同 binding 原样 replay，切 provider 按当前唯一映射重建，碰撞或不完整身份拒绝执行 |
+| MCP | action server 提供 `/catalog`、generation 与 ETag/304；后端 TTL/singleflight/LKG；canonical v2 ID、碰撞处理、permission-before-index、搜索证据、执行前二次授权、资源正文截断均已落地 |
+| 无影云断连 | 暖目录失联时保留最近可信投影且不破坏 reveal；调用只执行一次并返回清晰不可达；恢复后无需重新发现 |
+| Schema 预算 | provider-exact serializer、逐工具与总目录计量已进入测试；描述瘦身不删除 enum、required、边界、幂等、审批或安全约束 |
+| Retry | 仅首个 provider event 前的明确可重试错误可以重放；任一 event 后断流只结束当前 step，禁止自动重放与双执行 |
+
+### 18.3 量化结果
+
+| 口径 | 结果 |
+|---|---:|
+| 改造前 build 30 工具 + 动态 Skill listing，Responses 形态 | 56,503 chars / 12,891 `o200k_base` 代理 tokens |
+| 描述瘦身后 legacy eager，Responses 形态 | 38,982 chars |
+| Browser A 首个 portable payload | 10 个 definitions / 12,603 chars / 2,843 代理 tokens |
+| Browser A 当次 deferred catalogue | 21 个工具 |
+| 七个永久媒体/creator schema 的既有安全预算 | 9,882 chars，≤10,000 |
+| video-production 主 SKILL | 83 行，≤90 |
+
+`o200k_base` 仅用于稳定比较，不冒充其他 provider 的精确计费 token。OpenAI/Anthropic
+上线判断仍必须用 provider usage 与冷缓存 A/B；HTTP 请求字节也不能冒充模型可见 context。
+
+### 18.4 自动化验收
+
+最终代码提交前复跑结果：
+
+- `cd backend && uv run pytest -q`：**1188 passed，17 warnings**；warning 仅为既有
+  Pydantic class Config 与 Python 3.12 sqlite datetime adapter deprecation；
+- `uv run python -m compileall -q agent api core db models sandbox session tool`：通过；
+- Alembic：单一 head `c7d9e1f3a5b7`；旧库到新 head、API 隐藏内部状态和安全 downgrade
+  均有测试；
+- `git diff --check`：通过；Python 中 `skill_only`、`activated_tools`、
+  `activate_skill_tools`：零命中；
+- `frontend-v2`：22 个文件、174 个测试通过，`npx tsc -b` 与 i18n 检查通过；
+  `npm run check` 仍只报告未改文件 `frontend-v2/src/features/chat/lib/content-view.ts`
+  的两条既有 complexity 错误及既有 warning；本轮无前端运行时代码 diff；
+- 遗留 `frontend/`、`mobile/`、`k8s/`、Dockerfile 与 docker/k8s sandbox provider：零改动；
+  允许范围内仅更新 `container/action_server.py` 的无影云目录投影协议。
+
+### 18.5 浏览器 A–J 实测
+
+所有可能产生费用的场景使用 fake/loopback 或停在审批前。联网场景按当前网络条件改用
+中国大陆可访问的 `https://www.baidu.com`；国外站点不可达不计为 OpenBox 回归。
+
+| 场景 | 结果 | 关键证据 |
+|---|---|---|
+| A 通用编码 | 通过 | 首包仅 10 个 core definitions；无 media/browser/research/cron/MCP；真实创建、测试并删除临时 Python 文件 |
+| B 视频直达 | 通过 | 未提技能名，并显式要求不加载 Skill；首轮仍出现 video pack，完成 project、完整台词与 script approval 后停止；零付费 |
+| C 视频续接 | 通过 | 第二轮和后端完整重启后直接 status/继续，无重搜、无重复项目 |
+| D 图片直达 | 通过 | 本地 fake provider 生成 1024×1024 蓝图，再以同一 asset_id 编辑为绿图；零付费，fixture 已删除 |
+| E Research | 通过 | `web_fetch` 成功读取百度标题“百度一下，你就知道” |
+| E Browser | 路由与调用通过；视觉环境受限 | browser pack 首轮出现，`computer` 执行打开百度与截图；无影桌面当时停在应用总览，模型明确报告未看见页面且未盲目重试。此项不作为 schema/权限实现通过证据，发布环境仍需按 §13.5 启用 dev-browser 后复测页面内容 |
+| E Automation | 通过 | 唯一 QA 标签的 cron 创建、list 确认、delete 清理；普通编码首包不含 cron |
+| F 恶意 Skill | 通过 | 无影云测试 Skill 同时伪造 `allowed-tools`/`tools`；加载前后四集合不变，清理后目录无残留 |
+| G fallback | 通过（契约测试） | pre-stream 明确 unsupported 仅一次 portable fallback；首 event 后断流不重放，executor 不重复 |
+| H Portable discovery | 通过 | 临时 custom agent 首包只有 `capability_search`；N→N+1 才物化 echo；第二轮及后端重启后直接执行；fixture/config 已删除 |
+| I Native | 条件未满足，安全保持 portable | 测试账户没有可证明的 live native entitlement；未用 mock 冒充 canary。OpenAI raw wire/stream/replay 契约测试通过；Anthropic adapter 未验证，明确不启用 |
+| J 无影云 MCP | 通过 | 安装无副作用 MCP 后首包不泄漏；搜索→单次调用得到 42；ETag 200/304；隧道断开只调用一次并清晰失败，恢复后免重搜；refresh generation 变化；最终卸载清理 |
+
+### 18.6 浏览器阶段发现并闭环的缺陷
+
+浏览器与对抗审查不是形式验收；本轮实际发现并修复了以下实现问题：
+
+1. 旧开发进程未运行新迁移而 `/health` 假绿：增加完整 schema-head readiness；
+2. config-defined agent 无法显式 opt-in portable：只对明确列出 discovery slot 的 custom
+   agent 开放，默认 custom/plan/explore/general 仍 shadow；
+3. 多 ID reveal 逐项提交会部分落库：改为同 session 锁与单事务的整批原子提交；
+4. provider 首 event 后网络错误会自动重放：改为 ERROR 且 executor 零重放；
+5. 无影云外部托管 sandbox 健康失败会替换暖 client、丢失 LKG：断连时保留真实 client，
+   stale/unavailable 不做 destructive prune；
+6. 大 MCP 目录 permission-before-index、canonical ID 碰撞、搜索证据、资源正文与远端
+   identity 字符串存在旁路或放大风险：全部加边界、截断和二次授权；
+7. catalogue snapshot wrapper 与真实 sandbox 的身份不同，导致 `find → call` 证据失效：
+   identity 统一解包到真实 live client，同时保持不同 sandbox 严格隔离；
+8. 同一 MCP generation 每 step 重做 schema digest/index：增加 generation/scope/dialect 绑定的
+   60 秒、64 项 LRU 与同 event-loop singleflight；授权结论不缓存，每次读取后重新过滤；
+9. product-state probe 瞬时失败会隐藏在途付费任务工具：增加每 user/session/probe 的短 TTL
+   布尔 LKG；首次失败仍 fail-small、失败不续 TTL、成功 False 覆盖旧 True。
+10. “不要加载任何 Skill，直接做视频”中的负向 Skill 子句曾让提示清理逻辑误吞同句视频
+    意图：改为只清理 Skill 指令片段，保留同句真实任务信号，并由 Browser B 锁定。
+
+### 18.7 发布结论与剩余条件
+
+`portable` 路径和无影云目录投影已经达到代码合并条件；`native_auto` 仍必须 fail-safe：
+
+- OpenAI 只有 endpoint + model allowlist 命中时才允许发起 binding-scoped native canary；
+  account、headers、credential/config 等进入 binding/cache 隔离键。首次 canary 本身就是 probe，
+  未命中 allowlist 或明确 unsupported 时使用 sticky portable；
+- Anthropic/LiteLLM 没有真实 wire-level conformance 证据，保持 portable，不能仅凭 SDK 参数
+  被接受就开启；
+- Browser I 的 live native canary 与冷缓存 token A/B 是 rollout exit criteria，不是本次代码
+  合并的伪造前置；
+- Browser E 的页面视觉内容需要在无影云 dev-browser 已 Enable、桌面不在应用总览的环境中
+  用国内站点复测；其当前限制不影响 research、automation 或 schema 分层结论；
+- 发布 `container/action_server.py` 时必须使用无影云窄部署脚本，并确认 `/alive` 显示
+  `2026.08.30-catalogue-projection-v1`、uptime 重置及 `/catalog` ETag 行为；
+- 工作区中与本任务无关的未跟踪嵌套仓库 `deepseek-harness/` 未进入 `5702fd4`，后续提交也
+  必须继续排除，禁止使用无审查的 `git add -A`。
+
+最终不变式仍是：**Skill 只注入知识；平台注册与 AgentDef 决定资格；permission 只做减法；
+Schema 物化只优化上下文；执行必须重新经过权限、审批、计费、幂等与沙箱边界。**

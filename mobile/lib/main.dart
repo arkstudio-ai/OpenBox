@@ -1,4 +1,5 @@
 import 'package:cookie_jar/cookie_jar.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +14,11 @@ import 'shared/i18n/i18n.dart';
 /// then silent refresh BEFORE first paint, then mount the app.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Every screen here is laid out for a phone held upright. The one exception
+  // — the cloud desktop's fullscreen viewer — asks for landscape itself and
+  // puts this back on the way out.
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   final prefs = await SharedPreferences.getInstance();
   final supportDir = await getApplicationSupportDirectory();

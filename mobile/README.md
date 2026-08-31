@@ -41,7 +41,7 @@ cd mobile && flutter run
 | 技能中心(`features/skills-center`,双栏 + 弹窗) | `/app/skills`(`SkillsScreen`):我的/商店切页 + 类型 chip + 搜索,五个弹窗全部改成底部抽屉;技能包折叠、依赖补装、发布确认、聊天创建都在 |
 | 左侧 Sidebar | 抽屉 `SessionDrawer` |
 | 右侧 WorkbenchPanel(菜单 tab + 审阅/终端/浏览器/文件/云桌面/定时) | 路由 `/app/w/:sessionId` = **菜单页**(`WorkbenchScreen` + `WorkbenchMenu`,与 web `MenuTab` 同一份入口与实时提示);点一行 push `WorkbenchSurfacePage` —— 手机没有 tab 条,返回手势和返回箭头就是 web 那条 tab 条的替代 |
-| DesktopTab(Wuying Web SDK) | `desktop_tab.dart`:原生轮询 `/api/desktop/ticket`(202→task_id 重试),WebView 装载同版本 SDK 引导页,JS channel 回报 connected/error,允许操控开关经 `__setControl` 注入 |
+| DesktopTab(Wuying Web SDK) | `desktop_bridge.dart`(SDK 引导页 + JS 桥)+ `desktop_tab.dart`(Flutter UI)。原生轮询 `/api/desktop/ticket`(202→task_id 重试),WebView 装载 SDK,JS channel 回报 connected/error。**桌面固定 XGA 1024×768**:后端 `obx-display` 钉死,客户端再用 `uiConfig.fixedResolution` 兜住 —— 手机的视口一直在变(旋转/全屏/键盘),不锁住 SDK 会反过来把远端分辨率改掉,agent 看的桌面就在它脚下变形了;iframe **直接定尺**而不是 CSS transform 缩放,变换过的画面会让 SDK 观测到与手指落点不同的坐标系。**横屏全屏**:`SystemChrome` 切 landscape + `immersiveSticky`,`onImmersive` 回调让 `WorkbenchSurfacePage` 摘掉 AppBar(不 push 新路由 —— 重新挂载 WebView 会把流打断);退出/dispose 都恢复竖屏。**指针**:`setMouseMode('Client')` 绝对坐标,手指点哪就点哪(相对模式需要指针锁定,WebView 给不了,实测点击直接失效,所以不提供)。**键盘**:`session.openSoftKeyboard(true)` 打开 SDK 自带的画面内键盘 —— 这是文字进 guest 的唯一通道,带 Esc/F1-F12/Ctrl/Alt 和切 guest 输入法的 中/En 键 |
 | BrowserTab(dev-browser 截图流) | `browser_tab.dart`:原生 WS 客户端,JPEG 帧 → `Image.memory`(gapless),点击/滚动映射回页面像素坐标,4004 → 无沙箱 |
 | Composer 的 ReasoningPicker(思考强度) | `utils/reasoning.dart`(纯函数 `resolveReasoning`,判定与 web hook 逐条一致)+ `picker_sheets.dart` 的 `showReasoningPicker`;只有声明了 variants 的模型才出这个胶囊。Dart 没有 `undefined`,所以用 `Variant?` 包装三态:**不传**=保留会话已存的强度,**`Variant(null)`**=显式清空回模型默认,**`Variant('high')`**=本轮用这一档 |
 | Composer 的 `/`、`@` 提及菜单 | `utils/mention.dart`(触发规则逐条移植)+ `mention_menu.dart`;文件搜索 160ms 防抖,技能/命令同款分组;资源段由 app 层经 `ComposerResourceSlot` 注入(特性之间不互相 import) |
@@ -81,5 +81,7 @@ lib/
 - 技能中心的"下载 ZIP"落到 app 的 Documents 目录并把路径回报在 toast 里 —— 手机没有下载栏,路径就是唯一有用的回执。
 - 附件**上传**已接(资源中心与 composer 的 `+` 都走 `file_picker` → 预签名 PUT 直传 OSS,不经后端;8MB legacy 兜底不需要)。语音输入仍缺;屏幕截图入口是桌面范畴,省略。附件**展示**已齐:图片宫格 + Lightbox + 视频播放。
 - 顶栏"分享"(web 为复制 URL)在移动端无意义,省略。
-- 云桌面:剪贴板开关/文件上传/独立全屏未做(tab 本身已是全屏;操控开关已有);浏览器 tab 的键盘输入未做(截图流点击/滚动/导航已有)。
+- 云桌面:剪贴板开关/文件上传未做(剪贴板在连上时直接打开,操控开关、横屏全屏、画面内键盘已有);浏览器 tab 的键盘输入未做(截图流点击/滚动/导航已有)。
+- **手机输入法直通云桌面做不了**(2026-08-31 逐条验证):无影 Web SDK 的全部消息接口(62 个)只有输入开关、指针、分辨率、文件和剪贴板,**没有任何注入文本/按键的 API**;`customASPAction` 只能打到 `htmlEngine` 上,`setImeCommit`/`sendKeyDown` 不在那上面。另一头 WKWebView 也不会为 SDK 那个跨域 iframe 里的隐藏 IME 输入框弹 iOS 软键盘(程序化 focus 不满足用户手势要求)—— 实测点云端输入框只拿到光标,键盘不弹。要真做端云一体输入法只有两条路:换无影原生 ASP iOS SDK,或后端加一个 `xdotool type` 接口。当前方案是用 SDK 自带的画面内键盘。
+- 全 app 锁竖屏(`main.dart` 的 `setPreferredOrientations`),只有云桌面全屏例外 —— 其余页面都是按竖屏排的,自由旋转是以前没设置而已。
 - 消息列表 >50 行虚拟化未做专门处理(ListView.builder 本身惰性构建)。

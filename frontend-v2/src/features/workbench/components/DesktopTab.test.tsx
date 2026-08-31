@@ -70,12 +70,12 @@ describe("DesktopTab", () => {
       uiConfig: Record<string, unknown>
       desktopInfo: { connConfig: Record<string, unknown> }
     }
-    expect(options.uiConfig).toMatchObject({ defaultResolution: "B" })
+    expect(options.uiConfig).toMatchObject({ defaultResolution: "A" })
     expect(options.uiConfig).not.toHaveProperty("resolutionType")
     expect(options.desktopInfo.connConfig).toMatchObject({
       useCustomIme: true,
       disableIME: false,
-      resolutionAdaptive: true,
+      resolutionAdaptive: false,
       enableAutoSwitchMouseMode: true,
       mediaSuspendedTipFlag: 27,
     })

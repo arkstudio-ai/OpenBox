@@ -15,11 +15,11 @@ const SDK_URL =
 const SDK_PATH =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/sdk/ASP/container.html"
 const FRAME_ID = "wuying-desktop-frame"
-// Keep the stream at the desktop's native aspect ratio. The iframe itself is
-// laid out at its displayed size: CSS-transforming a 1920px iframe makes the
+// Keep the stream at the desktop's fixed XGA aspect ratio. The iframe itself is
+// laid out at its displayed size: CSS-transforming a 1024px iframe makes the
 // SDK observe a different input coordinate space than the user clicks in.
-const REMOTE_W = 1920
-const REMOTE_H = 1080
+const REMOTE_W = 1024
+const REMOTE_H = 768
 
 interface WuyingSession {
   start: () => void
@@ -184,7 +184,9 @@ export function DesktopTab() {
               // instead of reducing it to physical key scan codes.
               useCustomIme: true,
               disableIME: false,
-              resolutionAdaptive: true,
+              // The agent, screenshots and Wuying policy all use XGA. Never
+              // let a browser resize renegotiate the remote X11 framebuffer.
+              resolutionAdaptive: false,
               enableAutoSwitchMouseMode: true,
               // Show media-resume hints without consuming the click that also
               // targets the remote desktop (1 + 2 + 8 + 16).
@@ -195,7 +197,9 @@ export function DesktopTab() {
             toolbar: { visible: false },
             exitCheck: false,
             reconnectType: "simple",
-            defaultResolution: "B",
+            // "B" multiplies by devicePixelRatio and changes across clients.
+            // The fixed server-side policy is authoritative.
+            defaultResolution: "A",
           },
         })
         if (!session) throw new Error("sdk")

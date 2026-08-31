@@ -1,8 +1,9 @@
 """Session routes: CRUD + messages + agent control."""
 import asyncio
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, StringConstraints, field_validator
 
 from auth.middleware import get_current_user
 from auth.quota import check_session_quota, check_concurrent_agents
@@ -15,11 +16,16 @@ _background_tasks = set()  # prevent GC of background tasks
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 _ACTIVE_SESSION_STATUSES = {SessionStatus.BUSY, SessionStatus.COMPACTING}
+ReasoningVariant = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=32),
+]
 
 
 class CreateSessionBody(BaseModel):
     model: str = ""
     agent: str = "build"
+    variant: ReasoningVariant | None = None
     title: str | None = None
     #: Project the session runs in. Accepts an id or a slug; omitting it files
     #: the session under the user's default project.
@@ -34,7 +40,9 @@ class PromptBody(BaseModel):
     #: video tools can read it when the agent reaches them; a segment then
     #: freezes it at submission, leaving in-flight work untouched.
     video_model: str | None = None
-    variant: str | None = None
+    #: Omitted keeps the conversation selection; explicit null clears it and
+    #: returns to the selected model's advertised default.
+    variant: ReasoningVariant | None = None
     client_message_id: str | None = None
     # {"type": "json_schema", "schema": {...}} to require a structured answer.
     format: dict | None = None
@@ -54,6 +62,7 @@ class UpdateSessionBody(BaseModel):
     title: str | None = None
     agent: str | None = None
     model: str | None = None
+    variant: ReasoningVariant | None = None
     #: The video model this conversation generates with. Independent of
     #: `model`: segments snapshot it at submission, so a switch only reaches
     #: work not yet started.
@@ -96,6 +105,47 @@ async def _remember_video_model(session, requested: str | None, user_id: str) ->
     value = requested.strip() or None
     if value != getattr(session, "video_model", None):
         await session_mod.update_session(session.id, video_model=value, user_id=user_id)
+
+
+def _checked_variant(model_id: str, requested: str | None) -> str | None:
+    """Turn model-capability failures into an HTTP validation response."""
+
+    from agent.llm import validate_reasoning_variant
+
+    try:
+        return validate_reasoning_variant(model_id, requested)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _remember_variant(
+    session,
+    model_id: str,
+    requested: str | None,
+    *,
+    explicit: bool,
+    user_id: str,
+) -> str | None:
+    """Resolve the tri-state prompt field and persist future-turn selection.
+
+    Omitted inherits the conversation, explicit null clears it, and an
+    explicit value must be supported by the exact model route. A stale value
+    left by switching models is cleared instead of being sent to a different
+    provider family.
+    """
+
+    previous = getattr(session, "variant", None)
+    selected = requested if explicit else previous
+    if selected is not None:
+        try:
+            selected = _checked_variant(model_id, selected)
+        except HTTPException:
+            if explicit:
+                raise
+            selected = None
+    if selected != previous:
+        await session_mod.update_session(session.id, variant=selected, user_id=user_id)
+    return selected
 
 
 async def _require_session_owned(session_id: str, user_id: str):
@@ -158,9 +208,11 @@ async def create_session(
     # Validate at birth so a retired model never gets stored in the first place.
     from agent.model_resolve import resolve as resolve_model
     model, _ = resolve_model(body.model, config, context="new session")
+    variant = _checked_variant(model, body.variant)
     session = await session_mod.create_session(
         model=model,
         agent=body.agent,
+        variant=variant,
         title=body.title,
         user_id=user_id,
         project_id=body.project_id,
@@ -205,7 +257,20 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 @router.patch("/session/{session_id}")
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+    current = await _require_session_owned(session_id, user_id)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    target_model = updates.get("model") or current.model
+    if "variant" in body.model_fields_set:
+        # Keep explicit null: unlike the other optional PATCH fields it means
+        # "return to this model's default", not "leave unchanged".
+        updates["variant"] = _checked_variant(target_model, body.variant)
+    elif "model" in body.model_fields_set and current.variant is not None:
+        # A model switch cannot carry an adapter-owned value into a different
+        # family. Preserve it only when the new route advertises the same id.
+        try:
+            updates["variant"] = _checked_variant(target_model, current.variant)
+        except HTTPException:
+            updates["variant"] = None
     session = await session_mod.update_session(session_id, user_id=user_id, **updates)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -244,13 +309,20 @@ async def send_message(
 
     chosen_model = await _remember_model(session, body.model, user_id)
     await _remember_video_model(session, body.video_model, user_id)
+    chosen_variant = await _remember_variant(
+        session,
+        chosen_model,
+        body.variant,
+        explicit="variant" in body.model_fields_set,
+        user_id=user_id,
+    )
 
     user_msg = await session_mod.create_user_message(
         session_id=session_id,
         text=body.text,
         agent=body.agent or session.agent,
         model=chosen_model,
-        variant=body.variant,
+        variant=chosen_variant,
         client_message_id=body.client_message_id,
         output_format=body.format,
         user_id=user_id,
@@ -296,13 +368,20 @@ async def send_message_async(
     # attempts five times before failing the turn.
     chosen_model = await _remember_model(session, body.model, user_id)
     await _remember_video_model(session, body.video_model, user_id)
+    chosen_variant = await _remember_variant(
+        session,
+        chosen_model,
+        body.variant,
+        explicit="variant" in body.model_fields_set,
+        user_id=user_id,
+    )
 
     user_msg = await session_mod.create_user_message(
         session_id=session_id,
         text=body.text,
         agent=body.agent or session.agent,
         model=chosen_model,
-        variant=body.variant,
+        variant=chosen_variant,
         client_message_id=body.client_message_id,
         output_format=body.format,
         user_id=user_id,

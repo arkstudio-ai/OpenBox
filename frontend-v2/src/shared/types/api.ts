@@ -19,6 +19,8 @@ export interface Session {
   title: string
   agent: string
   model: string
+  /** Persisted reasoning strength; null delegates to the model default. */
+  variant?: string | null
   /** The video model this conversation generates with; "" = deployment default. */
   video_model?: string
   status: SessionStatus
@@ -274,6 +276,10 @@ export interface ModelInfo {
   context_limit?: number
   /** Whether the model accepts image input. */
   vision?: boolean
+  /** Reasoning strengths this model accepts, in display order. */
+  variants?: string[]
+  /** Effective strength when the conversation does not override it. */
+  default_variant?: string | null
 }
 export interface AgentInfo {
   name: string

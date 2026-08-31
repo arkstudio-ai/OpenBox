@@ -40,35 +40,52 @@ async def get_config():
     from agent.compaction import get_model_context_limit
     from agent.vision import supports_vision
 
-    # Build model list: use explicit models list if configured, else fall back to single model
-    if config.models:
-        models = []
-        for m in config.models:
-            models.append({
-                "id": m.id,
-                "name": m.name or m.id.split("/")[-1],
-                "provider": m.provider or (m.id.split("/")[0] if "/" in m.id else ""),
-                "max_tokens": m.max_tokens,
-                "context_limit": get_model_context_limit(m.id),
-                "vision": supports_vision(m.id),
-            })
-    else:
-        models = [{
-            "id": config.model,
-            "name": config.model.split("/")[-1],
-            "provider": config.model.split("/")[0] if "/" in config.model else "",
-            "max_tokens": 200000,
-            "context_limit": get_model_context_limit(config.model),
-            "vision": supports_vision(config.model),
-        }]
-
     return {
-        "models": models,
+        "models": _chat_models(
+            config,
+            context_limit=get_model_context_limit,
+            supports_vision=supports_vision,
+        ),
         "default_model": config.model,
         "default_agent": default_agent_name(),
         "video_models": _video_models(config),
         "default_video_model": config.video_generation.model,
     }
+
+
+def _chat_models(config, *, context_limit, supports_vision) -> list[dict]:
+    """Frontend chat-model catalogue with route-owned reasoning controls."""
+
+    from agent.llm import reasoning_profile
+
+    declared = list(config.models or [])
+    if not declared:
+        profile = reasoning_profile(config.model)
+        return [{
+            "id": config.model,
+            "name": config.model.split("/")[-1],
+            "provider": config.model.split("/")[0] if "/" in config.model else "",
+            "max_tokens": 200000,
+            "context_limit": context_limit(config.model),
+            "vision": supports_vision(config.model),
+            "variants": list(profile.variants),
+            "default_variant": profile.default_variant,
+        }]
+
+    rows = []
+    for model in declared:
+        profile = reasoning_profile(model.id)
+        rows.append({
+            "id": model.id,
+            "name": model.name or model.id.split("/")[-1],
+            "provider": model.provider or (model.id.split("/")[0] if "/" in model.id else ""),
+            "max_tokens": model.max_tokens,
+            "context_limit": context_limit(model.id),
+            "vision": supports_vision(model.id),
+            "variants": list(profile.variants),
+            "default_variant": profile.default_variant,
+        })
+    return rows
 
 
 def _video_models(config) -> list[dict]:

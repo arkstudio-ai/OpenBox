@@ -196,15 +196,18 @@ class VideoModelConfig(BaseModel):
 
 
 class VideoGenerationConfig(BaseModel):
-    """Async Seedance generation plus sandbox-render orchestration.
+    """Async video generation plus sandbox-render orchestration.
 
     Provider credentials are selected from the existing provider map.  The
     renderer itself never receives them; it only sees object-scoped OSS URLs.
     """
 
     provider: str = "doubao"
-    model: str = "doubao-seedance-2-0-260128"
-    default_resolution: str = "720p"
+    # Wan 3.0 is the product default. Deployments still declare its concrete
+    # channel below because the BossIP relay serves it through ``/v1/videos``
+    # (``sd2``), while another gateway may expose the native ``task`` protocol.
+    model: str = "wan3.0-video"
+    default_resolution: str = "1080p"
     default_ratio: str = "9:16"
     default_duration: int = Field(default=-1, ge=-1, le=30)
     default_generate_audio: bool = True

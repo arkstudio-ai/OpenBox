@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 PREVIOUS_HEAD = "b6d8f0a2c4e6"
-NEW_HEAD = "e9a1c3d5f7b2"
+NEW_HEAD = "f0b2d4e6a8c1"
 
 
 def _previous_head_fixture(database_path: Path) -> None:
@@ -147,6 +147,9 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
         column["name"] for column in inspector.get_columns("video_approvals")
     }
     assert "tool_exposure_state" in {
+        column["name"] for column in inspector.get_columns("sessions")
+    }
+    assert "variant" in {
         column["name"] for column in inspector.get_columns("sessions")
     }
     part_columns = {column["name"] for column in inspector.get_columns("parts")}

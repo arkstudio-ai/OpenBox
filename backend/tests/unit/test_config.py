@@ -1,8 +1,10 @@
 """Test new config fields are present and have correct defaults."""
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from core.config import OpenBoxConfig, ToolExposureConfig
+from core.config import OpenBoxConfig, ToolExposureConfig, _load_json
 
 
 def test_database_config_defaults():
@@ -50,6 +52,38 @@ def test_image_generation_config_defaults():
     assert config.image_generation.default_quality == "medium"
     assert config.image_generation.output_format == "png"
     assert config.image_generation.timeout_seconds == 600
+
+
+def test_video_generation_defaults_to_wan_3():
+    config = OpenBoxConfig()
+    assert config.video_generation.model == "wan3.0-video"
+    assert config.video_generation.default_resolution == "1080p"
+
+
+def test_example_binds_default_wan_3_to_the_bossip_protocol():
+    from tool.video_providers import declared_model, resolve_route, validate_request
+
+    path = Path(__file__).parents[2] / "openbox.jsonc.example"
+    config = OpenBoxConfig(**_load_json(path))
+    settings = config.video_generation
+    declared = {model.id: model for model in settings.models}
+
+    assert settings.model == "wan3.0-video"
+    assert settings.default_resolution == "1080p"
+    assert declared[settings.model].channel == "sd2"
+    assert declared[settings.model].provider == "newapi"
+    assert declared[settings.model].resolutions == ["1080p"]
+
+    route = resolve_route(None, config)
+    validate_request(
+        route,
+        resolution=settings.default_resolution,
+        ratio=settings.default_ratio,
+        duration=settings.default_duration,
+        generate_audio=settings.default_generate_audio,
+        input_mimes=["image/png"],
+        declared=declared_model(settings.model, config),
+    )
 
 
 def test_video_transcription_config_defaults():

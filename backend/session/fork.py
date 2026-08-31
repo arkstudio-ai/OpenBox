@@ -49,6 +49,7 @@ async def fork_session(
     new_session = await create_session(
         model=source.model,
         agent=source.agent or "build",
+        variant=source.variant,
         title=f"Fork: {source.title or 'Untitled'}",
         user_id=user_id,
         project_id=getattr(source, "project_id", None),

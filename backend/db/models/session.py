@@ -17,6 +17,9 @@ class Session(Base):
     slug: Mapped[str | None] = mapped_column(String(128), nullable=True)
     agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: Model-owned reasoning effort selected for future turns. NULL means use
+    #: the exact model route's advertised default.
+    variant: Mapped[str | None] = mapped_column(String(32), nullable=True)
     #: The video model this conversation generates with. Separate from `model`
     #: because the two are picked independently and cost wildly different
     #: things. NULL = the deployment default. A segment snapshots this at

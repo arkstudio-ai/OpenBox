@@ -1076,8 +1076,12 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             else:
                 compact_fail_count = 0
 
-            # Read variant from last user message (matching opencode)
+            # User messages freeze an explicit selection for replay. Synthetic
+            # continuations (plan approval, reminders, compaction) may omit it;
+            # those inherit the conversation's persisted future-turn choice.
             user_variant = getattr(last_user, "variant", None)
+            if user_variant is None:
+                user_variant = getattr(session, "variant", None)
 
             result = await process_step(
                 session_id=session_id,

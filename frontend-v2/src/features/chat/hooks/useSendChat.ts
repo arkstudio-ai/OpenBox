@@ -7,6 +7,7 @@ import { useStreamStore } from "../stores/stream"
 
 export interface SendOpts {
   model?: string
+  variant?: string | null
   videoModel?: string
   agent?: string
   attachments?: string[]
@@ -30,6 +31,7 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
       const vars: SendMessageVars = {
         text: trimmed,
         model: opts?.model,
+        variant: opts?.variant,
         videoModel: opts?.videoModel,
         agent: opts?.agent,
         attachments: opts?.attachments,

@@ -74,7 +74,7 @@
     "dedupe": true
   },
 
-  // Async Seedance generation. The build agent receives the associated tools
+  // Async video generation. The build agent receives the associated tools
   // from its fixed allowlist; video-production adds workflow guidance only.
   // FFmpeg/HyperFrames run in WUYING;
   // this section controls only provider polling and signed-OSS lifetimes.
@@ -82,8 +82,8 @@
   // official TokenSpace origin keeps the native contents/tasks format.
   "video_generation": {
     "provider": "doubao",
-    "model": "doubao-seedance-2-0-260128",
-    "default_resolution": "720p",
+    "model": "wan3.0-video",
+    "default_resolution": "1080p",
     "default_ratio": "9:16",
     "default_duration": -1,
     "default_generate_audio": true,
@@ -109,11 +109,13 @@
     // model's family. A relay that serves /v1/videos but 404s
     // /v1/video/generations runs wan3.0 on "sd2", not "task".
     //
-    // Omit this list entirely to keep the historical behaviour, where the
-    // channel is inferred from the model name.
+    // Wan 3.0 is the default below. Keep its explicit sd2 binding when using
+    // the BossIP-compatible `/v1/videos` relay; name-based inference would
+    // otherwise select the unrelated native `task` protocol.
     "models": [
-      // { "id": "wan3.0-video", "name": "Wan 3.0", "channel": "sd2",
-      //   "tier": "标准", "max_duration_seconds": 30 },
+      { "id": "wan3.0-video", "name": "Wan 3.0", "channel": "sd2",
+        "provider": "newapi", "tier": "标准", "max_duration_seconds": 30,
+        "resolutions": ["1080p"] }
       // { "id": "video-sd-720p-proⅠ", "channel": "sd2", "resolutions": ["720p"],
       //   "supports_reference_video": false },
     ],
@@ -130,7 +132,7 @@
     // A missing channel key disables that channel; everything else stays on
     // the default ark provider above.
     "channel_providers": {
-      // "sd2": "newapi",
+      "sd2": "newapi"
       // "task": "newapi"
     },
     // Optional whitelist for per-segment model overrides; empty = any model

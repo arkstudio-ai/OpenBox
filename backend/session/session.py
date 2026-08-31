@@ -25,6 +25,8 @@ class Session(BaseModel):
     title: str = ""
     agent: str = "build"
     model: str = ""
+    #: Model-owned reasoning effort; None means use the model route's default.
+    variant: str | None = None
     #: Video model for this conversation; "" = deployment default.
     video_model: str = ""
     status: SessionStatus = SessionStatus.IDLE
@@ -52,6 +54,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         title=row.title or "",
         agent=row.agent or "build",
         model=row.model or "",
+        variant=getattr(row, "variant", None),
         video_model=getattr(row, "video_model", None) or "",
         status=SessionStatus(row.status) if row.status else SessionStatus.IDLE,
         created_at=row.created_at.isoformat() if row.created_at else "",
@@ -89,6 +92,7 @@ async def plan_path_for(session: Session) -> str:
 async def create_session(
     model: str = "",
     agent: str = "build",
+    variant: str | None = None,
     title: str | None = None,
     parent_id: str | None = None,
     user_id: str = "default",
@@ -120,6 +124,7 @@ async def create_session(
             title=final_title,
             agent=agent,
             model=model,
+            variant=variant,
             status="idle",
             slug=slug,
             kind=kind,
@@ -136,6 +141,7 @@ async def create_session(
         title=final_title,
         agent=agent,
         model=model,
+        variant=variant,
         status=SessionStatus.IDLE,
         created_at=now_iso,
         updated_at=now_iso,

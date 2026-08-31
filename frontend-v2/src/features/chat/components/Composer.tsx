@@ -17,6 +17,7 @@ import { InputGroup } from "./composer/InputGroup"
 import { AttachmentRow } from "./composer/AttachmentRow"
 import { ComposerActions } from "./composer/ComposerActions"
 import { ModelPicker } from "./composer/ModelPicker"
+import { ReasoningPicker } from "./composer/ReasoningPicker"
 import { VideoModelPicker } from "./composer/VideoModelPicker"
 import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
@@ -26,6 +27,8 @@ import type { MentionScope } from "../hooks/useMentionMenu"
 
 export interface ComposerSubmit {
   model?: string
+  /** Reasoning strength for the chat model; null returns to its default. */
+  variant?: string | null
   /** Video model, only when the user actually picked one this turn. */
   videoModel?: string
   /** The agent to answer as, when the user changed it before sending. */
@@ -43,6 +46,8 @@ interface Props {
   /** The model this conversation last used. Each session carries its own, so
    *  reopening one restores that choice rather than the global default. */
   sessionModel?: string
+  /** The reasoning strength persisted on this conversation. */
+  sessionVariant?: string | null
   /** Changes when the user moves to another conversation, which resets the
    *  picker — an unsent choice belongs to the chat it was made in. */
   sessionKey?: string
@@ -109,6 +114,7 @@ export function Composer({
   autoFocus,
   mentionSlot,
   sessionModel,
+  sessionVariant,
   sessionVideoModel,
   sessionKey,
   contextTokens = 0,
@@ -129,9 +135,10 @@ export function Composer({
   const attachments = useAttachments(running?.id ?? null)
   const shortcut = useSendShortcut()
 
-  const { models, videoModels, chat, video } = useComposerModels({
+  const { models, videoModels, chat, video, reasoning } = useComposerModels({
     config,
     sessionModel,
+    sessionVariant,
     sessionVideoModel,
     sessionKey,
   })
@@ -198,6 +205,7 @@ export function Composer({
     // would pin every conversation to it, including ones that never chose.
     const result = onSubmit(decorated, {
       model: activeId,
+      variant: reasoning.value,
       videoModel: video.pending,
       attachments: assetIds,
     })
@@ -285,6 +293,12 @@ export function Composer({
 
             <ModePicker agents={agents} activeId={sessionAgent} onPick={onPickAgent} disabled={busy} />
             <ModelPicker models={models} activeId={activeId} onPick={pick} />
+            <ReasoningPicker
+              variants={reasoning.variants}
+              activeId={reasoning.activeId}
+              defaultId={reasoning.defaultId}
+              onPick={reasoning.pick}
+            />
             {/* Beside the chat model on purpose — the two are picked
                 independently, and a person setting up a video turn expects to
                 choose both in one place. */}

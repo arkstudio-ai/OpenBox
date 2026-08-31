@@ -8,6 +8,7 @@ would silently re-resolve and could submit against a different (and differently
 priced) model than the one the user approved and started.
 """
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -16,7 +17,71 @@ from db.base import get_db_session
 from db.models.session import Session as SessionORM
 from db.models.user import User
 from db.models.video_production import VideoProduction, VideoSegment
-from tool.video_workflow import resolve_segment_model
+from tool.video_workflow import (
+    VideoProjectArgs,
+    compatible_video_resolution,
+    execute_project,
+    preferred_video_resolution,
+    resolve_segment_model,
+)
+
+
+def _resolution_config(*models, default="1080p", selected="wan3.0-video"):
+    return SimpleNamespace(
+        video_generation=SimpleNamespace(
+            model=selected,
+            default_resolution=default,
+            models=list(models),
+        )
+    )
+
+
+def test_wan_models_use_their_declared_sd2_resolution():
+    standard = SimpleNamespace(
+        id="wan3.0-video", channel="sd2", resolutions=["1080p"]
+    )
+    prime = SimpleNamespace(
+        id="wan3.0-video-prime", channel="sd2", resolutions=[]
+    )
+    config = _resolution_config(standard, prime, default="720p")
+
+    assert preferred_video_resolution("wan3.0-video", config) == "1080p"
+    assert preferred_video_resolution("wan3.0-video-prime", config) == "1080p"
+    assert compatible_video_resolution(["wan3.0-video"], "720p", config) == "1080p"
+
+
+@pytest.mark.asyncio
+async def test_create_uses_the_composer_models_resolution(monkeypatch):
+    suffix = uuid4().hex[:10]
+    user_id, session_id = f"user_{suffix}", f"session_{suffix}"
+    now = datetime.now(timezone.utc)
+    config = _resolution_config(
+        SimpleNamespace(id="wan3.0-video", channel="sd2", resolutions=["1080p"]),
+        default="720p",
+    )
+    monkeypatch.setattr("core.config.get_config", lambda: config)
+    async with get_db_session() as db:
+        db.add(User(id=user_id, username=f"vr-{suffix}", created_at=now, updated_at=now))
+        db.add(
+            SessionORM(
+                id=session_id,
+                user_id=user_id,
+                project_id="default",
+                video_model="wan3.0-video",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    from tool.tool import ToolContext
+
+    result = await execute_project(
+        VideoProjectArgs(action="create", title="题目", brief="简介"),
+        ToolContext(session_id=session_id, user_id=user_id),
+    )
+    async with get_db_session() as db:
+        production = await db.get(VideoProduction, result.metadata["production_id"])
+        assert production.resolution == "1080p"
 
 
 async def _seed(
@@ -210,6 +275,7 @@ async def test_submission_freezes_the_pick_onto_the_segment(monkeypatch):
 
     gate = await prepare_segment_submission(ctx, production_id, segment_id)
     assert gate["model"] == "wan3.0-video"
+    assert gate["resolution"] == "1080p"
 
     async with get_db_session() as db:
         assert (await db.get(VideoSegment, segment_id)).model == "wan3.0-video"

@@ -1295,7 +1295,11 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
     )
     if job.segment_id:
         await mark_segment_job(
-            job.segment_id, job.id, status="completed", output_asset_id=job.output_asset_id
+            job.segment_id,
+            job.id,
+            user_id=ctx.user_id,
+            status="completed",
+            output_asset_id=job.output_asset_id,
         )
     return await _owned_job(job.id, ctx, "segment")
 

@@ -68,7 +68,8 @@ class VideoProjectArgs(BaseModel):
     mode: Literal["standard", "delegated"] = "standard"
     target_duration_seconds: int = Field(default=60, ge=15, le=180)
     ratio: Literal["9:16"] = "9:16"
-    resolution: Literal["720p", "1080p"] = "720p"
+    # Omitted means the backend derives the selected composer's model tier.
+    resolution: Literal["480p", "720p", "1080p"] | None = None
     quality_policy: Literal["required", "advisory"] = "required"
     channel_name: str = Field(default="", max_length=100)
     script_text: str | None = Field(
@@ -133,6 +134,89 @@ class VideoProjectArgs(BaseModel):
 def content_hash(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+class VideoWorkflowInputError(RuntimeError):
+    """Safe, actionable workflow validation error shown to the user."""
+
+    public_message = True
+
+
+def preferred_video_resolution(model: str, config: Any) -> str:
+    """Resolve the default resolution for one selectable video model.
+
+    Model declarations are authoritative.  A one-tier model (the common shape
+    for the ``sd2`` gateway) must use that tier; a multi-tier model keeps the
+    deployment default when possible.  Undeclared legacy models retain the
+    existing name-based ``sd2`` inference and otherwise use the deployment
+    default.
+    """
+    from tool.video_providers import declared_model, is_sd2_model, sd2_native_resolution
+
+    settings = config.video_generation
+    default = settings.default_resolution
+    entry = declared_model(model, config)
+    allowed = list(entry.resolutions or []) if entry is not None else []
+    if allowed:
+        return default if default in allowed else allowed[0]
+    if (entry is not None and entry.channel == "sd2") or is_sd2_model(model):
+        return sd2_native_resolution(model)
+    return default
+
+
+def supported_video_resolutions(model: str, config: Any) -> list[str]:
+    """Return declared/native fixed tiers; empty means the route is flexible."""
+    from tool.video_providers import declared_model, is_sd2_model, sd2_native_resolution
+
+    entry = declared_model(model, config)
+    allowed = list(entry.resolutions or []) if entry is not None else []
+    if allowed:
+        return allowed
+    if (entry is not None and entry.channel == "sd2") or is_sd2_model(model):
+        return [sd2_native_resolution(model)]
+    return []
+
+
+def compatible_video_resolution(models: list[str], current: str, config: Any) -> str:
+    """Keep ``current`` when valid, otherwise select one common model tier."""
+    constrained = [supported_video_resolutions(model, config) for model in models]
+    constrained = [options for options in constrained if options]
+    if not constrained:
+        return current
+    common = [value for value in constrained[0] if all(value in row for row in constrained[1:])]
+    if not common:
+        detail = ", ".join(
+            f"{model}={'/'.join(supported_video_resolutions(model, config)) or 'flexible'}"
+            for model in models
+        )
+        raise VideoWorkflowInputError(
+            f"The selected video models do not share one production resolution: {detail}"
+        )
+    if current in common:
+        return current
+    preferred = preferred_video_resolution(models[0], config)
+    return preferred if preferred in common else common[0]
+
+
+async def _session_video_model(db, ctx: ToolContext) -> str:
+    """Return the composer's durable video pick, then the deployment default."""
+    from core.config import get_config
+    from db.models.session import Session as SessionORM
+
+    config = get_config()
+    if ctx.session_id:
+        session = await db.get(SessionORM, ctx.session_id)
+        if session and session.user_id == ctx.user_id and session.video_model:
+            return session.video_model
+    return config.video_generation.model
+
+
+async def _model_default_resolution(db, ctx: ToolContext) -> str:
+    """Return the selected model's compatible default resolution."""
+    from core.config import get_config
+
+    model = await _session_video_model(db, ctx)
+    return preferred_video_resolution(model, get_config())
 
 
 def normalize_spoken_text(value: str) -> str:
@@ -919,6 +1003,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
     if args.action == "create":
         production_id = ascending("production")
         async with get_db_session() as db:
+            model_resolution = await _model_default_resolution(db, ctx)
             row = VideoProduction(
                 id=production_id,
                 user_id=ctx.user_id,
@@ -930,7 +1015,7 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 status="init",
                 target_duration_seconds=args.target_duration_seconds,
                 ratio=args.ratio,
-                resolution=args.resolution,
+                resolution=args.resolution or model_resolution,
                 quality_policy=args.quality_policy,
                 channel_name=args.channel_name.strip(),
                 created_at=now,
@@ -1332,9 +1417,27 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 pending = [row for row in segments if row.status == "planned"]
                 if not pending:
                     return ToolResult(title="No generation spend needed", output="Every active segment is already generated.")
+                from core.config import get_config
+
+                model_ids = await _pending_segment_model_ids(
+                    db, production, pending, ctx.user_id
+                )
+                selected_resolution = compatible_video_resolution(
+                    model_ids,
+                    production.resolution,
+                    get_config(),
+                )
+                if selected_resolution != production.resolution:
+                    production.resolution = selected_resolution
+                    production.updated_at = now
                 scope = spend_scope(production, segments)
                 estimated_seconds = sum(max(4, min(15, round(len(normalize_spoken_text(row.script_text)) / 3.2))) for row in pending)
-                metadata = {"segment_ids": [row.id for row in pending], "estimated_seconds": estimated_seconds}
+                metadata = {
+                    "segment_ids": [row.id for row in pending],
+                    "estimated_seconds": estimated_seconds,
+                    "models": model_ids,
+                    "resolution": production.resolution,
+                }
                 # Name the model that will actually be billed. Hard-coding
                 # "Seedance" here misreported the spend at the exact moment the
                 # user authorises it — the card said Seedance while the segments
@@ -1342,7 +1445,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 models = await _pending_segment_models(db, production, pending, ctx.user_id)
                 model_label = "/".join(models) if models else "默认模型"
                 question = (
-                    f"将提交 {len(pending)} 段 {model_label}，预计约 {estimated_seconds} 秒。"
+                    f"将提交 {len(pending)} 段 {model_label}（{production.resolution}），"
+                    f"预计约 {estimated_seconds} 秒。"
                     "当前不设生成次数限制，后续统一由积分系统按实际用量结算。确认吗？"
                 )
                 options = [
@@ -1511,8 +1615,25 @@ async def resolve_segment_model(db, production, segment, user_id: str) -> str | 
     return segment.model or None
 
 
-async def _pending_segment_models(db, production, pending: list, user_id: str) -> list[str]:
-    """Distinct models the pending segments will submit with, in plan order.
+async def _pending_segment_model_ids(
+    db, production, pending: list, user_id: str
+) -> list[str]:
+    """Distinct model ids the pending segments will submit with, in plan order."""
+    from core.config import get_config
+
+    default = get_config().video_generation.model
+    seen: list[str] = []
+    for row in pending:
+        model = await resolve_segment_model(db, production, row, user_id) or default
+        if model not in seen:
+            seen.append(model)
+    return seen
+
+
+async def _pending_segment_models(
+    db, production, pending: list, user_id: str
+) -> list[str]:
+    """Distinct display names the pending segments will submit with, in plan order.
 
     Resolved the same way submission resolves them, so the approval card and
     the paid call can never disagree about what is being bought.
@@ -1527,14 +1648,8 @@ async def _pending_segment_models(db, production, pending: list, user_id: str) -
 
     settings = get_config().video_generation
     labels = {m.id: (m.name or m.id) for m in (settings.models or [])}
-    default = settings.model
-    seen: list[str] = []
-    for row in pending:
-        model = await resolve_segment_model(db, production, row, user_id) or default
-        label = labels.get(model, model)
-        if label not in seen:
-            seen.append(label)
-    return seen
+    ids = await _pending_segment_model_ids(db, production, pending, user_id)
+    return [labels.get(model, model) for model in ids]
 
 
 async def prepare_segment_submission(ctx: ToolContext, production_id: str, segment_id: str) -> dict[str, Any]:
@@ -1572,12 +1687,35 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             raise RuntimeError("current script is not approved")
         if not await _matching_approval(db, production.id, "segments", production.plan_hash):
             raise RuntimeError("current segment plan is not approved")
+        # Resolve the composer's current model before checking spend. Older
+        # projects were created with a hard-coded 720p default even when Wan
+        # 3.0 (1080p on the deployed sd2 route) was selected. Repair that
+        # local-only state before any paid call, then require a fresh approval
+        # because the spend scope includes resolution.
+        chosen_model = await resolve_segment_model(db, production, segment, ctx.user_id)
+        if not reconciling_existing:
+            from core.config import get_config
+
+            billed_model = chosen_model or get_config().video_generation.model
+            selected_resolution = compatible_video_resolution(
+                [billed_model], production.resolution, get_config()
+            )
+            if selected_resolution != production.resolution:
+                previous_resolution = production.resolution
+                production.resolution = selected_resolution
+                production.updated_at = datetime.now(timezone.utc)
+                await _refresh_status(db, production, segments)
+                await db.commit()
+                raise VideoWorkflowInputError(
+                    f"Selected video model {billed_model} requires {selected_resolution}; "
+                    f"the project was updated from {previous_resolution}. "
+                    "Approve generation spend again before submitting."
+                )
         spend = await _matching_approval(db, production.id, "spend", spend_scope(production, segments))
         if not spend:
             raise RuntimeError("current generation spend is not approved")
         # Freeze the model onto the segment before the paid call, so a later
         # switch cannot retarget this submission or its reconciliation.
-        chosen_model = await resolve_segment_model(db, production, segment, ctx.user_id)
         if chosen_model and segment.model != chosen_model:
             segment.model = chosen_model
             await db.commit()

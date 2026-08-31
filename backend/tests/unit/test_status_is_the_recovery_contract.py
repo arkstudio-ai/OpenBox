@@ -20,6 +20,7 @@ from tool.video_workflow import (
     content_hash,
     execute_project,
     quality_scope,
+    render_idempotency_key,
     render_scope,
     spend_scope,
 )
@@ -59,8 +60,6 @@ async def test_status_is_the_complete_recovery_contract():
         channel_name="",
         visual_anchor=anchor,
         character_asset_id=None,
-        character_reference_type="virtual",
-        character_identity_id=None,
         script_text=script,
         script_hash=script_hash,
         plan_hash="",
@@ -228,8 +227,6 @@ async def test_status_is_the_complete_recovery_contract():
                     scope_hash=scope_hash,
                     decision="approved",
                     answer="测试批准",
-                    max_calls=2 if kind == "spend" else None,
-                    used_calls=1 if kind == "spend" else 0,
                     evidence_message_id=None,
                     evidence_part_id=None,
                     metadata_data={},
@@ -249,8 +246,6 @@ async def test_status_is_the_complete_recovery_contract():
                 scope_hash=scopes["render"],
                 decision="rejected",
                 answer="先不成片",
-                max_calls=None,
-                used_calls=0,
                 evidence_message_id=None,
                 evidence_part_id=None,
                 metadata_data={},
@@ -297,11 +292,7 @@ async def test_status_is_the_complete_recovery_contract():
     assert details["render"]["approval_scope_hash"] == scopes["render"]
     assert details["render"]["decision"] == "rejected"
     assert details["render"]["matches_current_hash"] is True
-    assert recovered.metadata["spend_budget"] == {
-        "max_calls": 2,
-        "used_calls": 1,
-        "remaining_calls": 1,
-    }
+    assert "spend_budget" not in recovered.metadata
 
     for row in recovered_segments:
         assert row["generation_idempotency_key"] == (
@@ -310,8 +301,8 @@ async def test_status_is_the_complete_recovery_contract():
         assert row["transcription_idempotency_key"] == (
             f"{production_id}:{row['segment_id']}:stt"
         )
-    assert recovered.metadata["render_idempotency_key"] == (
-        f"{production_id}:render:{scopes['render'][:16]}"
+    assert recovered.metadata["render_idempotency_key"] == render_idempotency_key(
+        production_id, scopes["render"]
     )
     schema_path = (
         Path(__file__).parents[2]
@@ -319,6 +310,6 @@ async def test_status_is_the_complete_recovery_contract():
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(recovered.metadata)
-    assert "spend_budget={\"max_calls\":2,\"used_calls\":1,\"remaining_calls\":1}" in recovered.output
+    assert "spend_budget=" not in recovered.output
     assert f"segment_1_model={first.model}" in recovered.output
     assert f"segment_2_generation_job_id={second_job_id}" in recovered.output

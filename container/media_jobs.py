@@ -32,6 +32,12 @@ import httpx
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ACTIVE_STATUSES = frozenset({"queued", "in_progress"})
 
+# BossIP's 28% bottom margin is a localization preset for replacing subtitles
+# already burned into social-video source material. OpenBox composes clean
+# videos, so keep captions in the conventional lower safe area instead. This
+# value is shared by the FFmpeg/ASS and HyperFrames renderers.
+_SUBTITLE_BOTTOM_RATIO = 0.095
+
 
 class MediaJobError(RuntimeError):
     """Base error exposed to the action-server route layer."""
@@ -727,14 +733,102 @@ class MediaJobManager:
 
     @staticmethod
     def _ass_escape(value: str) -> str:
-        return (
-            str(value)
-            .replace("\\", r"\\")
-            .replace("{", r"\{")
-            .replace("}", r"\}")
-            .replace("\r", "")
-            .replace("\n", r"\N")
+        # Match BossIP's proven ASS escaping order.  In particular, preserve
+        # explicit ``\N`` line-break tokens instead of doubling their slash;
+        # libass treats ``\\N`` as text and collapses the caption to one long
+        # line, which is exactly the overflow this renderer must prevent.
+        text = str(value).replace("\r", "").replace("\n", r"\N")
+        text = text.replace(r"\N", "\x00N").replace(r"\n", "\x00n")
+        text = text.replace("\\", "")
+        text = text.replace("{", r"\{").replace("}", r"\}")
+        return text.replace("\x00N", r"\N").replace("\x00n", r"\n")
+
+    @staticmethod
+    def _caption_language(value: str) -> str:
+        """Match BossIP's lightweight CJK-vs-Latin subtitle classifier."""
+        text = str(value or "")
+        chinese = sum(
+            1
+            for char in text
+            if "\u3400" <= char <= "\u4dbf" or "\u4e00" <= char <= "\u9fff"
         )
+        alpha = sum(1 for char in text if char.isalpha())
+        if alpha == 0:
+            return "zh"
+        return "zh" if chinese / alpha > 0.3 else "en"
+
+    @classmethod
+    def _wrap_subtitle_text(
+        cls,
+        value: str,
+        *,
+        width: int,
+        font_size: int,
+        side_margin: int,
+    ) -> str:
+        """Wrap captions before libass so unspaced CJK cannot leave the frame.
+
+        BossIP calculates the line budget from the actual usable width instead
+        of relying on libass's whitespace-oriented automatic wrapping. Return
+        BossIP-style ASS ``\\N`` tokens directly; ``_ass_escape`` protects
+        those tokens while removing stray transcript backslashes.
+        """
+        text = re.sub(r"[ \t\f\v]+", " ", str(value or "").replace("\r", "")).strip()
+        if not text:
+            return ""
+        language = cls._caption_language(text)
+        usable_width = max(1, int(width) - 2 * int(side_margin))
+        if language == "zh":
+            max_chars = max(8, int(usable_width / max(1, int(font_size))))
+        else:
+            max_chars = max(16, int(usable_width / max(1.0, float(font_size) * 0.55)))
+
+        wrapped_lines: list[str] = []
+        for paragraph in text.split("\n"):
+            remaining = paragraph.strip()
+            if not remaining:
+                continue
+            if language == "en":
+                current = ""
+                for word in remaining.split():
+                    candidate = f"{current} {word}".strip()
+                    if current and len(candidate) > max_chars:
+                        wrapped_lines.append(current)
+                        current = word
+                    else:
+                        current = candidate
+                if current:
+                    wrapped_lines.append(current)
+                continue
+
+            punctuation = " ,，。、；：！？·"
+            while len(remaining) > max_chars:
+                chunk = remaining[:max_chars]
+                break_pos = max_chars
+                if remaining[max_chars] in punctuation:
+                    break_pos = max_chars + 1
+                else:
+                    for index in range(len(chunk) - 1, 0, -1):
+                        if chunk[index] in punctuation:
+                            break_pos = index + 1
+                            break
+                # A Chinese sentence can contain English product names.  Do
+                # not split one of those words merely to satisfy the CJK grid.
+                while (
+                    0 < break_pos < len(remaining)
+                    and remaining[break_pos - 1].isascii()
+                    and remaining[break_pos - 1].isalpha()
+                    and remaining[break_pos].isascii()
+                    and remaining[break_pos].isalpha()
+                ):
+                    break_pos -= 1
+                if break_pos <= 0:
+                    break_pos = max_chars
+                wrapped_lines.append(remaining[:break_pos].rstrip())
+                remaining = remaining[break_pos:].lstrip()
+            if remaining:
+                wrapped_lines.append(remaining)
+        return r"\N".join(wrapped_lines)
 
     @classmethod
     def _ass_document(
@@ -747,11 +841,14 @@ class MediaJobManager:
         width: int,
         height: int,
     ) -> str:
-        subtitle_size = max(28, round(width * 0.048))
+        # Keep BossIP's proven 48 px sizing, 60 px side margins and explicit
+        # greedy wrapping. Its 28% vertical preset is intentionally excluded:
+        # that position is for replacing old burned-in social-video captions.
+        subtitle_size = max(16, round(min(width, height) * (48 / 1080)))
         channel_size = max(20, round(width * 0.027))
-        subtitle_margin = max(24, round(height * 0.095))
+        subtitle_margin = max(24, round(height * _SUBTITLE_BOTTOM_RATIO))
         channel_margin_v = max(18, round(height * 0.04))
-        side_margin = max(24, round(width * 0.055))
+        side_margin = max(24, round(min(width, height) * (60 / 1080)))
         header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -761,7 +858,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Subtitle,Noto Sans CJK SC,{subtitle_size},&H00FFFFFF,&H000000FF,&H00000000,&H78000000,-1,0,0,0,100,100,1,0,1,3,1,2,{side_margin},{side_margin},{subtitle_margin},1
+Style: Subtitle,Noto Sans CJK SC,{subtitle_size},&H00FFFFFF,&H000000FF,&H00000000,&H78000000,-1,0,0,0,100,100,0,0,1,3,1,2,{side_margin},{side_margin},{subtitle_margin},1
 Style: Channel,Noto Sans CJK SC,{channel_size},&H20FFFFFF,&H000000FF,&H00000000,&H78000000,-1,0,0,0,100,100,0,0,1,2,1,1,{side_margin},{side_margin},{channel_margin_v},1
 
 [Events]
@@ -772,10 +869,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for duration, caption in zip(durations, captions):
             end = current + float(duration)
             if subtitles and str(caption).strip():
+                wrapped_caption = cls._wrap_subtitle_text(
+                    str(caption).strip(),
+                    width=width,
+                    font_size=subtitle_size,
+                    side_margin=side_margin,
+                )
                 events.append(
                     "Dialogue: 0,"
                     f"{cls._ass_timestamp(current)},{cls._ass_timestamp(end)},"
-                    f"Subtitle,,0,0,0,,{cls._ass_escape(str(caption).strip())}"
+                    f"Subtitle,,0,0,0,,{cls._ass_escape(wrapped_caption)}"
                 )
             current = end
         if channel_name.strip() and current > 0:
@@ -1501,9 +1604,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 f'data-has-audio="true" src="assets/{html.escape(path.name)}" playsinline></video>'
             )
             if subtitles and caption.strip():
+                subtitle_size = max(16, round(min(width, height) * (48 / 1080)))
+                side_margin = max(24, round(min(width, height) * (60 / 1080)))
+                wrapped_caption = MediaJobManager._wrap_subtitle_text(
+                    caption.strip(),
+                    width=width,
+                    font_size=subtitle_size,
+                    side_margin=side_margin,
+                )
+                wrapped_html = html.escape(wrapped_caption).replace(r"\N", "<br />")
+                wrapped_html = wrapped_html.replace(r"\n", "<br />")
                 subtitle_nodes.append(
                     f'<div id="sub-{index}" class="subtitle clip" data-start="{start}" '
-                    f'data-duration="{duration}" data-track-index="2">{html.escape(caption.strip())}</div>'
+                    f'data-duration="{duration}" data-track-index="2">'
+                    f'{wrapped_html}</div>'
                 )
                 animations.append(
                     f'tl.from("#sub-{index}", {{y: 24, opacity: 0, duration: 0.35, ease: "power2.out"}}, {start});'
@@ -1530,7 +1644,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     html,body {{ width:{width}px; height:{height}px; overflow:hidden; background:#000; font-family:"Noto Sans SC",sans-serif; color:#fff; }}
     .video {{ position:absolute; inset:0; width:{width}px; height:{height}px; object-fit:cover; background:#000; }}
     .vignette {{ position:absolute; inset:0; pointer-events:none; background:linear-gradient(to bottom,rgba(0,0,0,.28),transparent 35%,transparent 62%,rgba(0,0,0,.68)); }}
-    .subtitle {{ position:absolute; left:5.5%; right:5.5%; bottom:9.5%; font-size:{max(28, round(width * .048))}px; font-weight:700; line-height:1.42; text-align:center; letter-spacing:1px; text-shadow:0 3px 18px rgba(0,0,0,.95),0 1px 2px #000; }}
+    .subtitle {{ position:absolute; left:5.5%; right:5.5%; bottom:{_SUBTITLE_BOTTOM_RATIO * 100:g}%; max-width:89%; white-space:normal; overflow-wrap:anywhere; line-break:strict; font-size:{max(28, round(width * .048))}px; font-weight:700; line-height:1.42; text-align:center; letter-spacing:1px; text-shadow:0 3px 18px rgba(0,0,0,.95),0 1px 2px #000; }}
     .channel {{ position:absolute; left:5.5%; bottom:4%; display:flex; gap:14px; align-items:center; font-size:{max(20, round(width * .027))}px; font-weight:700; color:rgba(255,255,255,.88); }}
     .dot {{ width:12px; height:12px; border-radius:50%; background:#ff6b35; box-shadow:0 0 12px rgba(255,107,53,.8); }}
   </style>

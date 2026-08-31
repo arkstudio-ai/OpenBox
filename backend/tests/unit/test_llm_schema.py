@@ -16,7 +16,6 @@ PERMANENT_MEDIA_TOOLS = (
     "video_generate",
     "video_transcribe",
     "video_render",
-    "video_identity",
     "image_gen",
     "creator_context",
 )
@@ -29,7 +28,6 @@ EXPECTED_ACTIONS = {
     "video_generate": {"submit", "status", "wait", "cancel"},
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
     "video_render": {"submit", "status", "wait", "cancel", "retry"},
-    "video_identity": {"create", "status", "list", "add_asset"},
     "creator_context": {
         "get_user_context", "write_memory", "propose_memory",
         "search_memories", "list_active_memories",
@@ -161,9 +159,6 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     assert (render["width"]["minimum"], render["width"]["maximum"]) == (320, 3840)
     assert render["segment_assets"]["maxItems"] == 100
 
-    identity = schemas["video_identity"]["properties"]
-    assert (identity["label"]["minLength"], identity["label"]["maxLength"]) == (1, 120)
-
     context = schemas["creator_context"]["properties"]
     assert (context["limit"]["minimum"], context["limit"]["maximum"]) == (1, 100)
     assert (context["confidence"]["minimum"],
@@ -172,8 +167,6 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     # The budget is not permission to erase the non-obvious safety contract.
     assert "idempotency_key" in get_tool("video_generate").description
     assert "ambiguous" in get_tool("video_generate").description
-    assert "real person" in get_tool("video_identity").description
-    assert "virtual" in get_tool("video_identity").description
     assert "confirmation card" in get_tool("creator_context").description
     assert "never crosses users" in get_tool("creator_context").description
 

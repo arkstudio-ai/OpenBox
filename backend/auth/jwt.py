@@ -46,6 +46,28 @@ def create_refresh_token(user_id: str) -> str:
     return jwt.encode(payload, _secret, algorithm=ALGORITHM)
 
 
+def create_asset_download_token(
+    user_id: str,
+    asset_id: str,
+    *,
+    expire_hours: int = 24,
+) -> str:
+    """Create a bounded bearer capability for one owned asset download.
+
+    A normal Markdown link navigation cannot carry the SPA's Authorization
+    header.  This purpose-specific token lets that one link resolve while
+    keeping the asset endpoint owner-bound and time-limited.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)
+    payload = {
+        "sub": user_id,
+        "asset_id": asset_id,
+        "type": "asset_download",
+        "exp": expire,
+    }
+    return jwt.encode(payload, _secret, algorithm=ALGORITHM)
+
+
 def decode_token(token: str) -> dict | None:
     """Decode and verify a JWT token. Returns payload or None if invalid."""
     try:
@@ -67,5 +89,18 @@ def decode_refresh_token(token: str) -> dict | None:
     """Decode a refresh token specifically. Returns None if invalid or wrong type."""
     payload = decode_token(token)
     if payload and payload.get("type") == "refresh":
+        return payload
+    return None
+
+
+def decode_asset_download_token(token: str, asset_id: str) -> dict | None:
+    """Verify a download capability is valid for exactly ``asset_id``."""
+    payload = decode_token(token)
+    if (
+        payload
+        and payload.get("type") == "asset_download"
+        and payload.get("asset_id") == asset_id
+        and payload.get("sub")
+    ):
         return payload
     return None

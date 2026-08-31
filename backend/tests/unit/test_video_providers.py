@@ -365,8 +365,6 @@ def test_prompt_hash_stability_and_key_order():
         duration=5, ratio="9:16", resolution="1080p",
         inputs=[{"digest": "etag1:100", "kind": "image"}],
         extra_params={"generate_audio": True, "watermark": False},
-        character_reference_type="virtual",
-        character_identity_id=None,
     )
     a = compute_prompt_hash(**base)
     # Key order inside extra_params must not fork the hash.
@@ -381,8 +379,6 @@ def test_prompt_hash_differs_on_inputs_and_extra_params():
         duration=5, ratio="9:16", resolution="1080p",
         inputs=[{"digest": "etag1:100", "kind": "image"}],
         extra_params={"generate_audio": True, "watermark": False},
-        character_reference_type="virtual",
-        character_identity_id=None,
     )
     a = compute_prompt_hash(**base)
     # The two documented false-hit traps: different reference bytes, and
@@ -395,57 +391,6 @@ def test_prompt_hash_differs_on_inputs_and_extra_params():
     )
     assert a != different_input
     assert a != different_audio
-
-
-def test_prompt_hash_separates_real_person_from_virtual():
-    """A virtual render must never be served as a verified real-person one.
-
-    Same prompt, same portrait bytes, same everything else — only the
-    character reference type differs. The portrait routes to an AIGC group
-    under "virtual" and a LivenessFace group under "real_person", so these are
-    materially different submissions and must not share a reuse key.
-    """
-    base = dict(
-        prompt="p", model_type="seedance", model_name="doubao-seedance-2-0-260128",
-        duration=5, ratio="9:16", resolution="720p",
-        inputs=[{"digest": "etag1:100", "kind": "image"}],
-        extra_params={"generate_audio": True, "watermark": False},
-    )
-    virtual = compute_prompt_hash(
-        **base, character_reference_type="virtual", character_identity_id=None
-    )
-    real_person = compute_prompt_hash(
-        **base, character_reference_type="real_person", character_identity_id="identity_a",
-    )
-    assert virtual != real_person
-
-
-def test_prompt_hash_separates_distinct_verified_identities():
-    """A consented render must not cross to a different identity."""
-    base = dict(
-        prompt="p", model_type="seedance", model_name="doubao-seedance-2-0-260128",
-        duration=5, ratio="9:16", resolution="720p",
-        inputs=[{"digest": "etag1:100", "kind": "image"}],
-        extra_params={"generate_audio": True, "watermark": False},
-        character_reference_type="real_person",
-    )
-    a = compute_prompt_hash(**base, character_identity_id="identity_a")
-    b = compute_prompt_hash(**base, character_identity_id="identity_b")
-    assert a != b
-    # Same identity still dedupes — the feature keeps working.
-    assert a == compute_prompt_hash(**base, character_identity_id="identity_a")
-
-
-def test_prompt_hash_requires_the_character_fields():
-    """Omission was the original bug, so it must fail loudly, not silently."""
-    import pytest
-
-    with pytest.raises(TypeError):
-        compute_prompt_hash(
-            prompt="p", model_type="seedance", model_name="m",
-            duration=5, ratio="9:16", resolution="720p",
-            inputs=None, extra_params=None,
-        )
 
 
 # ── declared models (config-driven routing) ─────────────────────────────────

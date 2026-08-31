@@ -7,9 +7,9 @@ approval stores its user/session evidence and the SHA-256 scope it approved.
 |---|---|
 | `init` | set the complete script |
 | `needs_script_approval` | show full script; request `script` approval |
-| `script_ok` | create/reuse the host; real people must complete `video_identity` authorization and material upload before setting segments |
+| `script_ok` | create or reuse one host image, then set the segments |
 | `needs_segments_approval` | show all assets, dialogue, and full prompts; request `segments` |
-| `needs_spend_approval` | request the bounded paid-call ceiling |
+| `needs_spend_approval` | request explicit spend confirmation for the current content hash |
 | `spend_ok` / `generating` | submit or wait only the active segment IDs |
 | `needs_segment_revision` | revise only failed/cancelled active segments, then reapprove the plan |
 | `generated` | transcribe every active segment |
@@ -35,11 +35,13 @@ evidence, not the current segment result.
 
 Spend approval includes only `planned` revisions. If any active segment is
 submitting, generating, failed, or cancelled, resolve that state first; the
-backend will not silently count it as another new paid call.
+backend will not silently create another paid job. There is no per-approval
+call counter: billing will be handled by the shared points ledger, while the
+content hash and per-segment idempotency key prevent stale or duplicate submits.
 
 Approval cards are hard boundaries. If a card is rejected or dismissed, stop
 that downstream action. In delegated tests, the tester may make the selections,
-but the tool still records the same evidence and budget ceiling.
+but the tool still records the same hash-bound evidence.
 
 Per-segment user feedback (`set_segment_feedback`) is routing metadata, not a
 gate: it never opens paid calls. A `user_rejected` generated segment drives the

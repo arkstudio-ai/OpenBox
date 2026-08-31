@@ -154,7 +154,6 @@ def test_direct_video_recovers_across_process_restart_without_resubmit(tmp_path:
         assert submitted["job_status"] == "in_progress"
         assert submitted["provider_task_id"] == TASK_ID
         assert submitted["attempt"] == 1
-        assert submitted["spend_used_calls"] == 1
         assert submitted["segment_status"] == "generating"
         assert submitted["segment_job_id"] == submitted["job_id"]
         assert submitted["route_fingerprint"].startswith("v1:")
@@ -187,7 +186,6 @@ def test_direct_video_recovers_across_process_restart_without_resubmit(tmp_path:
         assert recovered["job_asset_id"] == submitted["job_asset_id"]
         assert recovered["asset_status"] == "ready"
         assert recovered["asset_size"] == 777
-        assert recovered["spend_used_calls"] == 1
         assert recovered["replay_status"] == "completed"
         assert recovered["replay_idempotent_reuse"] is True
         assert recovered["second_sweep"] == 0

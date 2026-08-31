@@ -77,9 +77,9 @@ codex 与 Claude Code 均为此形态，无一家构建耐久作业状态机。
 | 区域 | 原因 |
 |---|---|
 | `frontend/`（v1，若存在） | 用户指示排除 |
-| `backend/tool/video_workflow.py` | 共享不变量层：审批哈希、花费上限（`max_calls`）、提交时模型冻结（`resolve_segment_model`）、b-roll 豁免（`:695`）、分段 lint。两套控制面它一行未改——它就是"硬工具"本体 |
-| `backend/tool/video_production.py`、`video_providers.py`、`video_identity.py` | 现行直连控制面 |
-| `backend/video/`（materials 等） | 域层 |
+| `backend/tool/video_workflow.py` | 共享不变量层：审批哈希、逐段幂等键、提交时模型冻结（`resolve_segment_model`）、b-roll 豁免、分段 lint。它就是"硬工具"本体 |
+| `backend/tool/video_production.py`、`video_providers.py` | 现行直连控制面 |
+| `backend/video/` | 视频作业恢复域层 |
 | 表 `skill_installs` / `user_skills` 与 `backend/skill/user_library.py` | **技能中心**（创建/分享/安装）的资产，与运行时同名不同族。运行时的表只有 §3.4 列的七张 |
 | 表 `kv_store` 与 `backend/storage/storage.py`、`backend/mcp/oauth.py` | MCP OAuth 在用 |
 | `backend/session/abort.py`、turn-view/todo/中断分隔线相关（前端与 Dart 两侧） | todo 生命周期功能，与运行时无关 |
@@ -139,14 +139,13 @@ codex 与 Claude Code 均为此形态，无一家构建耐久作业状态机。
 ### 3.3 错误公开契约下沉（与 3.1 同一 PR，不留窗口期）
 
 **问题**：`public_error_text` 契约在 `skill_runtime/types.py`；
-`backend/video/materials.py` 的 `MaterialProviderError` 按它携带逐实例的
-`public_message` / `retryable` 标记（默认 `False`/保密）。运行时删除后，直连路径的
+可公开的操作错误按异常实例携带 `public_message` 标记（默认 `False`/保密）。运行时删除后，直连路径的
 `tool/video_production.py:723 _public_error` 只输出 `"类名: operation failed"`——
-用户将看不到 `请配置 material_base_url` 这类修复指引，属净退化。
+用户将看不到明确标记为可公开的修复指引，属净退化。
 
 **做法**：在 `_public_error` 开头加一个分支——异常对象 `getattr(exc, "public_message",
 False)` 为真时，返回 `str(exc)` 截断 500 字符；其余逻辑不变（供应商响应体保密的既有
-语义就在"默认 False"里，勿改动 `MaterialProviderError` 本身）。`HandlerError` 类
+语义就在"默认 False"里）。`HandlerError` 类
 不迁移（无其他使用者）。
 
 ### 3.4 数据库迁移
@@ -290,9 +289,10 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 新增 `backend/tests/unit/test_status_is_the_recovery_contract.py`：构造
 "分段已批、第 1 段已生成、第 2 段提交中"的库状态，然后**只**调
 `video_project(action="status")`，断言返回值足以重建：当前阶段、每段状态与
-`generation_job_id`、五类审批及哈希匹配性、三类幂等键、冻结的模型、花费余量
-（`max_calls` − `used_calls`）。缺字段补字段（改 `tool/video_workflow.py` 的 status
-组装处）。此测试今后是 status 字段的回归锚——**它存在的意义写进测试 docstring**。
+`generation_job_id`、五类审批及哈希匹配性、三类幂等键、冻结的模型。花费审批只保留
+哈希绑定的同意证据，不再维护生成次数余额；实际结算由统一积分系统接管。缺字段补字段
+（改 `tool/video_workflow.py` 的 status 组装处）。此测试今后是 status 字段的回归锚——
+**它存在的意义写进测试 docstring**。
 
 ### 6.3 PR#3 Definition of Done
 
@@ -302,8 +302,8 @@ lint 错误数 ≤ 2（既有 `content-view.ts` 两处）；单文件 ≤ 800 �
 **2026-08-30 复核：两处变异检查均已实测闭环。**
 删 `_public_error` 的 `public_message` 分支 → `test_video_error_text.py::
 test_public_material_error_exposes_the_actionable_message` 变红；
-从 status 元数据删 `spend_budget`（`tool/video_workflow.py:843`）→
-`test_status_is_the_recovery_contract.py` 变红。两次均在验证后立即还原，代码未留改动。
+从 status 元数据删审批哈希详情 → `test_status_is_the_recovery_contract.py` 变红。
+两次均在验证后立即还原，代码未留改动。
 
 ---
 
@@ -342,7 +342,7 @@ test_public_material_error_exposes_the_actionable_message` 变红；
   这是一个已知且被接受的证据缺口，不是遗漏。将来若视频恢复路径出现线上问题，
   此处是第一个该补的实验。
   零费用自动化已另用 loopback provider 和两个独立进程覆盖 submit→冷重启→恢复前同键
-  抢跑→startup recovery→completed→完成后同键重放，确认供应商 POST、调用预算和 attempt
+  抢跑→startup recovery→completed→完成后同键重放，确认供应商 POST 和 attempt
   始终各为 1；它补强核心恢复证据，但不冒充浏览器/真实供应商的付费场景 C。
   **2026-08-30 零费用浏览器替代验收通过**：`qa_jobs` 会话
   `session_7YBYQ7PBN0VR3V1QDQ57RZWTTG` 创建并人工批准单段项目
@@ -351,7 +351,7 @@ test_public_material_error_exposes_the_actionable_message` 变红；
   后端。跨过 120 秒活跃轮询保护窗后，后台恢复用已保存的
   `provider_task_id=task_browser_restart_1` 查询；随后浏览器按返回的 `version` 与
   `wait_iteration` 继续同一 job。最终 mock 精确为 `POST=1 / GET=3 / unexpected=0`，数据库
-  只有一个 job，`attempt=1`、预算 `used_calls=1/max_calls=1`，没有重提。mock 再返回预期
+  只有一个 job，`attempt=1`，同一逐段幂等键没有重提。mock 再返回预期
   failed 终态以清理作业；页面无 live job UI，控制台无 warning/error。此证据覆盖真实
   浏览器与进程重启链路，但仍不声称完成了真实供应商付费生成。
 

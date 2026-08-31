@@ -29,22 +29,21 @@ def is_auth_enabled() -> bool:
 _SINGLE_USER = {"user_id": "default", "role": "admin"}
 
 
-async def get_current_user(
+async def get_optional_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> dict:
-    """Extract and verify the current user from JWT access token.
+) -> dict | None:
+    """Extract a user when present, without requiring an auth header.
 
-    In single-user mode (no JWT_SECRET): returns default user without auth.
-    In multi-user mode: requires valid JWT.
-
-    Returns: {"user_id": str, "role": str}
+    Invalid supplied credentials still fail closed.  Only a genuinely absent
+    header returns ``None`` in multi-user mode, allowing narrowly-scoped
+    capability routes to perform their own token check.
     """
     if not is_auth_enabled():
         return _SINGLE_USER
 
     if credentials is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        return None
 
     token = credentials.credentials
     payload = decode_access_token(token)
@@ -62,6 +61,15 @@ async def get_current_user(
             raise HTTPException(status_code=401, detail="Token has been revoked")
 
     return {"user_id": user_id, "role": payload.get("role", "user")}
+
+
+async def get_current_user(
+    current_user: dict | None = Depends(get_optional_current_user),
+) -> dict:
+    """Require the authenticated user for ordinary API routes."""
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return current_user
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:

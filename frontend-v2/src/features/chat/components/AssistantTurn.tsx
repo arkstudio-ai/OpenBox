@@ -20,7 +20,6 @@ import { ThinkingRow } from "./ThinkingRow"
 import { ThinkingTrace } from "./ThinkingTrace"
 import { TodoCard } from "./TodoCard"
 import { ToolChainTrace } from "./ToolChainTrace"
-import { VideoIdentityCards } from "./VideoIdentityCards"
 import { WorkLogTrace } from "./WorkLogTrace"
 
 const Markdown = lazy(() => import("./Markdown"))
@@ -114,7 +113,6 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
         streaming={preAnswer}
         defaultOpen={content.incomplete}
       />
-      <VideoIdentityCards parts={parts} sessionId={sessionId} />
       <SkillJobReceipts parts={parts} />
 
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">

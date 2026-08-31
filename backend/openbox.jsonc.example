@@ -93,9 +93,6 @@
     "poll_interval_seconds": 5,
     "wait_timeout_seconds": 25,
     "provider_input_url_ttl_seconds": 3600,
-    "material_timeout_seconds": 180,
-    "material_poll_interval_seconds": 1,
-    "liveness_session_ttl_seconds": 300,
     "render_url_ttl_seconds": 86400,
     "max_provider_output_bytes": 1073741824,
     // Selectable video models. Declaring one binds it to a wire channel and a

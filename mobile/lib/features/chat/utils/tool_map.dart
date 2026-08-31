@@ -6,7 +6,6 @@ import '../../../shared/models/message_part.dart';
 String toolKindKey(String tool) {
   final name = tool.toLowerCase();
   if (name.startsWith('mcp')) return 'mcp';
-  if (name == 'video_identity') return 'videoIdentity';
   if (name.contains('todo')) return 'todo';
   // Exact match only: an MCP server or a user tool whose name merely
   // contains "skill" is not a skill load (web tool-map.ts).

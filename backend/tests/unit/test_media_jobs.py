@@ -282,11 +282,12 @@ async def test_command_output_is_file_backed_and_tail_bounded(tmp_path: Path):
 
 
 def test_composition_has_audio_clips_and_optional_subtitles():
+    long_caption = "专家三招：一，清洁魔法别念错，不然扫的是隔壁扫帚；二，找小蓝姐姐领库存。"
     with_subtitles = MediaJobManager._composition_html(
         job_id="render-job-1",
         inputs=[Path("segment-1.mp4"), Path("segment-2.mp4")],
         durations=[4.2, 5.1],
-        captions=["第一段", "<第二段>"],
+        captions=[long_caption, "<第二段>"],
         subtitles=True,
         channel_name="旅途频道",
         width=1080,
@@ -297,6 +298,9 @@ def test_composition_has_audio_clips_and_optional_subtitles():
     assert "../assets/" not in with_subtitles
     assert 'data-start="4.2"' in with_subtitles
     assert "&lt;第二段&gt;" in with_subtitles
+    assert "<br />" in with_subtitles
+    assert "bottom:9.5%" in with_subtitles
+    assert "overflow-wrap:anywhere" in with_subtitles
     assert 'window.__timelines["render-job-1"]' in with_subtitles
     assert "https://" not in with_subtitles
 
@@ -343,6 +347,30 @@ def test_ffmpeg_fast_path_command_and_ass_timeline():
     assert "0:00:04.20,0:00:09.30,Subtitle" in ass
     assert r"第二段\N换行" in ass
     assert "● 旅途频道" in ass
+    subtitle_style = next(
+        line for line in ass.splitlines() if line.startswith("Style: Subtitle,")
+    )
+    assert subtitle_style.split(",")[-2] == str(round(1280 * 0.095))
+
+    long_caption = "专家三招：一，清洁魔法别念错，不然扫的是隔壁扫帚；二，找小蓝姐姐领库存。"
+    wrapped = manager._wrap_subtitle_text(
+        long_caption,
+        width=720,
+        font_size=35,
+        side_margin=40,
+    )
+    assert r"\N" in wrapped
+    assert all(len(line) <= 19 for line in wrapped.split(r"\N"))
+    long_ass = manager._ass_document(
+        durations=[8.0],
+        captions=[long_caption],
+        subtitles=True,
+        channel_name="",
+        width=720,
+        height=1280,
+    )
+    assert r"\N" in long_ass
+    assert r"\\N" not in long_ass
 
     command = manager._ffmpeg_render_command(
         inputs=[Path("one.mp4"), Path("two.mp4")],

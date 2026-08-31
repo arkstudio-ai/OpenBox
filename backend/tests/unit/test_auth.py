@@ -2,7 +2,15 @@
 import asyncio
 import pytest
 
-from auth.jwt import init_auth, create_access_token, create_refresh_token, decode_access_token, decode_refresh_token
+from auth.jwt import (
+    create_access_token,
+    create_asset_download_token,
+    create_refresh_token,
+    decode_access_token,
+    decode_asset_download_token,
+    decode_refresh_token,
+    init_auth,
+)
 from auth.password import hash_password, verify_password, validate_password_strength
 from auth.ticket import init_ticket_store, create_ticket, consume_ticket
 from cache.memory_cache import MemoryCache
@@ -68,6 +76,15 @@ def test_refresh_token_not_access():
 
 def test_invalid_token():
     assert decode_access_token("invalid.token.here") is None
+
+
+def test_asset_download_token_is_bound_to_one_asset():
+    token = create_asset_download_token("user123", "asset_123")
+    payload = decode_asset_download_token(token, "asset_123")
+
+    assert payload is not None
+    assert payload["sub"] == "user123"
+    assert decode_asset_download_token(token, "asset_other") is None
 
 
 # ── Ticket tests ──

@@ -33,7 +33,6 @@ cd mobile && flutter run
 | `WorkLogTrace`(过程说明 + 工作证据时间线) | `widgets/traces/work_log_trace.dart`(computer 截图同样只留首/中/末三帧) |
 | `ResultArtifacts` / `AudioPreview` | `widgets/result_artifacts.dart` / `widgets/audio_preview.dart`(音频用 `video_player`,平台自带 AVPlayer/ExoPlayer 就能放,不多引一个播放依赖) |
 | `ToolOutput` + `ToolPrimitives`(9 种工具详情布局) | `widgets/traces/tool_output.dart` + `tool_primitives.dart`;web 详情列常驻展开,手机一行放不下,所以保留"点一下展开" |
-| `VideoIdentityCards` + `lib/video-identity-card.ts`(真人授权) | `widgets/cards/video_identity_card.dart` + `utils/video_identity_card.dart` + `shared/models/video_identity.dart`;状态由 tool part 的 metadata 重建,不额外拉接口 |
 | `SkillJobReceipts`(历史终态作业的只读回执 chip + embedded artifact 预览/下载;live dock/API 已退役) | `widgets/cards/skill_job_receipt.dart` + `shared/models/message_part.dart` 的 `SkillJobPart`/`SkillJobArtifact` 分支;媒体复用 `AttachmentGallery`,普通文件复用 `FileChipRow` |
 | `SubagentLine`(子 agent 实时进度) | `widgets/traces/subagent_line.dart` + `state/subagent_progress.dart`(同样读子会话在 stream store 里的 part,只在为空时补一次 REST) |
 | `ThinkingRow`(等待/重试行) | `widgets/typing_row.dart`(三点脉冲 + `status.thinking`/`status.retrying`) |
@@ -78,7 +77,6 @@ lib/
 
 - SSO/Logto 登录未做(当前 web LoginForm 也已移除 SSO 按钮;移动端需要 PKCE + 回调 scheme,后续补)。
 - 模型选择器显示 provider 名称,不画 `ModelLogo` 的各家矢量图标(信息等价,少一个 SVG 依赖)。
-- 真人授权卡片不画二维码 —— web 自己在 `max-sm` 断点下也隐藏它;手机上本人直接点"打开认证页面"即可,二维码是给另一台设备扫的。
 - 技能中心的"下载 ZIP"落到 app 的 Documents 目录并把路径回报在 toast 里 —— 手机没有下载栏,路径就是唯一有用的回执。
 - 附件**上传**已接(资源中心与 composer 的 `+` 都走 `file_picker` → 预签名 PUT 直传 OSS,不经后端;8MB legacy 兜底不需要)。语音输入仍缺;屏幕截图入口是桌面范畴,省略。附件**展示**已齐:图片宫格 + Lightbox + 视频播放。
 - 顶栏"分享"(web 为复制 URL)在移动端无意义,省略。

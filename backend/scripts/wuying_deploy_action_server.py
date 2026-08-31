@@ -103,7 +103,46 @@ def main() -> int:
     if MEDIA_LOCK.exists():
         d.put(MEDIA_LOCK, "/opt/openbox/media/package-lock.json")
     d.run(
-        f"python3 -m py_compile {REMOTE_PATH} /opt/action_server/media_jobs.py && echo 'compile ok'",
+        f"""
+set -e
+python3 -m py_compile {REMOTE_PATH} /opt/action_server/media_jobs.py
+
+# Some desktops intentionally pin the service to a rollback bytecode bundle
+# (for example /opt/action_server/v11/action_server.pyc).  Updating only the
+# source directory then reports a successful deploy while the live service
+# keeps importing the old media renderer.  Detect that effective ExecStart
+# and atomically refresh only its sibling media renderer bytecode from the
+# just-uploaded source.  The pinned action_server.pyc can intentionally be
+# newer than this checkout, so replacing that entry point would be a rollback.
+active_pyc=$(systemctl show -p ExecStart --value {SERVICE} 2>/dev/null \
+  | grep -o '/opt/action_server/[^ ;]*/action_server\\.pyc' | head -n 1 || true)
+if [ -n "$active_pyc" ]; then
+  active_dir=$(dirname "$active_pyc")
+  python3 - "$active_dir" <<'PY'
+import os
+import pathlib
+import py_compile
+import shutil
+import sys
+
+target_dir = pathlib.Path(sys.argv[1]).resolve()
+allowed_root = pathlib.Path("/opt/action_server").resolve()
+if allowed_root not in target_dir.parents:
+    raise SystemExit(f"refusing unexpected active bytecode directory: {{target_dir}}")
+target_dir.mkdir(parents=True, exist_ok=True)
+for name in ("media_jobs",):
+    source = allowed_root / f"{{name}}.py"
+    target = target_dir / f"{{name}}.pyc"
+    staged = target_dir / f".{{name}}.pyc.next"
+    py_compile.compile(str(source), cfile=str(staged), doraise=True)
+    if target.exists():
+        shutil.copy2(target, target.with_suffix(".pyc.previous"))
+    os.replace(staged, target)
+print(f"refreshed active bytecode bundle: {{target_dir}}")
+PY
+fi
+echo 'compile ok'
+""",
         timeout=120,
     )
     print("  remote syntax check passed")

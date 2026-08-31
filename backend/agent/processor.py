@@ -15,6 +15,7 @@ comes back as RETRY with no sleeping and no counter of its own.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -56,11 +57,6 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "questions", "answers",
-    # ``video_identity`` returns only its deliberately public projection here:
-    # the short-lived H5 link/QR may be rendered by the chat UI, while the
-    # provider polling token remains private in the database and never enters
-    # ToolResult metadata.
-    "action", "identity", "identities", "material_asset",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
@@ -73,6 +69,54 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
 # enough for a near-current recovery snapshot, without a database write per
 # token.
 STREAM_CHECKPOINT_INTERVAL = 0.5
+
+
+async def _run_parallel_safe_groups(
+    items: list,
+    *,
+    supports_parallel,
+    run_one,
+    stop_requested=lambda: False,
+) -> list:
+    """Run ordered calls with unsafe calls acting as full barriers.
+
+    This mirrors Codex's read/write execution gate for a completed provider
+    response: consecutive parallel-safe calls share a group, while each unsafe
+    call waits for the preceding group and blocks the following one. Results
+    stay in provider order even when completion order differs.
+    """
+    results: list = []
+    parallel_group: list = []
+
+    async def flush_parallel_group() -> None:
+        nonlocal parallel_group
+        if not parallel_group:
+            return
+        tasks = [asyncio.create_task(run_one(item)) for item in parallel_group]
+        parallel_group = []
+        try:
+            results.extend(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    for item in items:
+        if stop_requested():
+            break
+        if supports_parallel(item):
+            parallel_group.append(item)
+            continue
+        await flush_parallel_group()
+        if stop_requested():
+            break
+        results.append(await run_one(item))
+
+    if not stop_requested():
+        await flush_parallel_group()
+    return results
 
 
 def persisted_tool_metadata(metadata: dict | None) -> dict:
@@ -793,14 +837,30 @@ async def process_step(
                 )
                 await save_part(duplicate_part, is_new=False, user_id=user_id)
 
-        # Execute tool calls after stream completes (with correct part_id)
+        # Execute tool calls after the stream completes. Calls explicitly
+        # marked parallel-safe run together; an unsafe call is a barrier before
+        # and after itself. Each call gets a shallow context copy because hooks
+        # bind part_id, incremental output and authorization identity to it.
         ctx.message_id = assistant_info.id
-        for tc_event in pending_tool_calls:
+
+        def supports_parallel(tc_event: dict) -> bool:
+            tool_name = tc_event.get("tool", "")
+            canonical_id = wire_to_canonical.get(tool_name)
+            if (
+                tc_event.get("invalid", False)
+                or tc_event.get("native_error_code") is not None
+                or canonical_id is None
+                or canonical_id not in response_executable
+            ):
+                return False
+            tool_info = execution_tools.get(str(canonical_id))
+            return bool(tool_info and getattr(tool_info, "parallel_safe", False))
+
+        async def execute_one(tc_event: dict):
             if abort.is_set():
-                break
+                return None
 
             tc_idx = int(tc_event["_batch_index"])
-
             tool_name = tc_event["tool"]
             tool_args = tc_event["args"]
             canonical_tool_id = wire_to_canonical.get(tool_name)
@@ -812,50 +872,31 @@ async def process_step(
                 or native_error_code is not None
             )
 
-            # Bounded, portable and collision-resistant.  The full batch was
+            # Bounded, portable and collision-resistant. The full batch was
             # validated above before any side effect was allowed.
             llm_call_id = str(tc_event["_canonical_call_id"])
-
-            # Reuse the streaming part_id if we already created one during
-            # LLM streaming, otherwise create a new part.
             existing_part_id = streaming_tool_parts.get(tc_idx)
-            if existing_part_id:
-                # Update the pending part → RUNNING with full args
-                tool_part = ToolPartData(
-                    id=existing_part_id,
-                    tool=tool_name,
-                    status=ToolStatus.RUNNING,
-                    input=tool_args,
-                    call_id=llm_call_id,
-                    **_tool_part_runtime_identity(
-                        tc_event,
-                        stream_seq=_event_stream_seq(tc_event, tc_idx),
-                        wire_to_canonical=wire_to_canonical,
-                        provider_binding_digest=provider_binding_digest,
-                        provider_dialect=provider_dialect,
-                    ),
-                    session_id=session_id,
-                    message_id=assistant_info.id,
-                )
-                await save_part(tool_part, is_new=False, user_id=user_id)
-            else:
-                tool_part = ToolPartData(
-                    id=ascending("part"),
-                    tool=tool_name,
-                    status=ToolStatus.RUNNING,
-                    input=tool_args,
-                    call_id=llm_call_id,
-                    **_tool_part_runtime_identity(
-                        tc_event,
-                        stream_seq=_event_stream_seq(tc_event, tc_idx),
-                        wire_to_canonical=wire_to_canonical,
-                        provider_binding_digest=provider_binding_digest,
-                        provider_dialect=provider_dialect,
-                    ),
-                    session_id=session_id,
-                    message_id=assistant_info.id,
-                )
-                await save_part(tool_part, is_new=True, user_id=user_id)
+            tool_part = ToolPartData(
+                id=existing_part_id or ascending("part"),
+                tool=tool_name,
+                status=ToolStatus.RUNNING,
+                input=tool_args,
+                call_id=llm_call_id,
+                **_tool_part_runtime_identity(
+                    tc_event,
+                    stream_seq=_event_stream_seq(tc_event, tc_idx),
+                    wire_to_canonical=wire_to_canonical,
+                    provider_binding_digest=provider_binding_digest,
+                    provider_dialect=provider_dialect,
+                ),
+                session_id=session_id,
+                message_id=assistant_info.id,
+            )
+            await save_part(
+                tool_part,
+                is_new=not bool(existing_part_id),
+                user_id=user_id,
+            )
 
             if is_invalid:
                 tool_part.status = ToolStatus.ERROR
@@ -876,12 +917,11 @@ async def process_step(
                         f"Available: {', '.join(visible_wire_names)}"
                     )
                 await save_part(tool_part, user_id=user_id)
-                continue
+                return None
 
-            # A semantic validation failure already returned a structured fix
-            # recipe.  Re-executing the identical mutation cannot change the
-            # outcome, so block the first unchanged retry instead of waiting
-            # for the generic three-call doom-loop threshold.
+            # Repeating a handled validation error with unchanged arguments
+            # cannot make progress. Stateful validation tools are barriers, so
+            # completed_tool_parts is stable while this check runs.
             prior_failure = unchanged_validation_failure(
                 [*doom_loop_history, *completed_tool_parts],
                 tool_name,
@@ -904,11 +944,13 @@ async def process_step(
                     "failure_code": prior_failure,
                 }
                 await save_part(tool_part, user_id=user_id)
-                continue
+                return None
 
-            # Doom loop detection: check if same tool+args repeated across steps
             if is_repeat_of_recent(doom_loop_history, tool_name, tool_args):
-                log.warning(f"Doom loop detected: {tool_name} called {DOOM_LOOP_THRESHOLD} times with same args")
+                log.warning(
+                    f"Doom loop detected: {tool_name} called "
+                    f"{DOOM_LOOP_THRESHOLD} times with same args"
+                )
                 tool_part.status = ToolStatus.ERROR
                 tool_part.error = (
                     f"Doom loop detected: '{tool_name}' has been called {DOOM_LOOP_THRESHOLD} "
@@ -916,66 +958,83 @@ async def process_step(
                     f"Please try a different approach."
                 )
                 await save_part(tool_part, user_id=user_id)
-                continue
+                return None
 
-            # Execute via hooks (passes part_id for SSE events). Raced against
-            # abort so the stop button interrupts a running command instead of
-            # waiting it out — the abandoned part is finalised as interrupted
-            # by the loop's cleanup, mirroring opencode.
             tool_info = execution_tools.get(str(canonical_tool_id))
-            if tool_info:
-                exec_task = asyncio.create_task(
-                    hooks.wrap_execute(
-                        str(canonical_tool_id),
-                        tool_info.execute,
-                        tool_args,
-                        ctx,
-                        part_id=tool_part.id,
-                    )
+            if not tool_info:
+                return None
+
+            # Stateful/barrier tools keep the original context because some
+            # capability commits intentionally observe their bound part_id
+            # after execution. Parallel-safe calls must be isolated from one
+            # another because hooks mutate per-call fields on the context.
+            call_ctx = copy.copy(ctx) if supports_parallel(tc_event) else ctx
+            call_ctx.message_id = assistant_info.id
+            exec_task = asyncio.create_task(
+                hooks.wrap_execute(
+                    str(canonical_tool_id),
+                    tool_info.execute,
+                    tool_args,
+                    call_ctx,
+                    part_id=tool_part.id,
                 )
-                abort_task = asyncio.create_task(abort.wait())
-                done, _ = await asyncio.wait({exec_task, abort_task}, return_when=asyncio.FIRST_COMPLETED)
-                abort_task.cancel()
-                if exec_task not in done:
-                    exec_task.cancel()
-                    try:
-                        await exec_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                    break
-                result = exec_task.result()
+            )
+            abort_task = asyncio.create_task(abort.wait())
+            done, _ = await asyncio.wait(
+                {exec_task, abort_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            abort_task.cancel()
+            if exec_task not in done:
+                exec_task.cancel()
+                try:
+                    await exec_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return None
+            result = exec_task.result()
 
-                # Check for agent_switch metadata
-                agent_switch = result.metadata.get("agent_switch")
-                if agent_switch:
-                    try:
-                        # Validate before persisting; the switch itself takes
-                        # effect on the next step, which re-resolves the agent
-                        # from the session. Rebinding agent_def here would only
-                        # touch this function's local and mislead the reader.
-                        get_agent(agent_switch)
-                        # user_id is not optional here — update_session
-                        # filters on it, so omitting it silently updated
-                        # nobody and the switch never took effect.
-                        await update_session(session_id, user_id=user_id, agent=agent_switch)
-                        log.info(f"Agent switched to {agent_switch}")
-                    except ValueError:
-                        log.warning(f"Unknown agent for switch: {agent_switch}")
+            tool_part.status = (
+                ToolStatus.COMPLETED
+                if not result.metadata.get("error")
+                else ToolStatus.ERROR
+            )
+            tool_part.output = result.output
+            tool_part.title = result.title
+            tool_part.error = result.output if result.metadata.get("error") else None
+            tool_part.metadata = persisted_tool_metadata(result.metadata)
+            await save_part(tool_part, user_id=user_id)
+            return tool_part, result
 
-                # Update tool part with result
-                tool_part.status = ToolStatus.COMPLETED if not result.metadata.get("error") else ToolStatus.ERROR
-                tool_part.output = result.output
-                tool_part.title = result.title
-                tool_part.error = result.output if result.metadata.get("error") else None
-                tool_part.metadata = persisted_tool_metadata(result.metadata)
-                await save_part(tool_part, user_id=user_id)
+        tool_outcomes = await _run_parallel_safe_groups(
+            pending_tool_calls,
+            supports_parallel=supports_parallel,
+            run_one=execute_one,
+            stop_requested=abort.is_set,
+        )
 
-                # Track for doom loop detection (across steps)
-                completed_tool_parts.append(tool_part)
+        # Gather preserves provider order, so shared loop state stays
+        # deterministic even when parallel tools finish out of order.
+        for outcome in tool_outcomes:
+            if outcome is None:
+                continue
+            tool_part, result = outcome
+            agent_switch = result.metadata.get("agent_switch")
+            if agent_switch:
+                try:
+                    get_agent(agent_switch)
+                    await update_session(
+                        session_id,
+                        user_id=user_id,
+                        agent=agent_switch,
+                    )
+                    log.info(f"Agent switched to {agent_switch}")
+                except ValueError:
+                    log.warning(f"Unknown agent for switch: {agent_switch}")
 
-                # plan_exit: stop the loop so the user can review
-                if result.metadata.get("plan_ready"):
-                    finish_reason = "stop"
+            completed_tool_parts.append(tool_part)
+            if result.metadata.get("plan_ready"):
+                finish_reason = "stop"
 
     except ContextOverflowError:
         await create_compaction(session_id, auto=True, user_id=user_id,

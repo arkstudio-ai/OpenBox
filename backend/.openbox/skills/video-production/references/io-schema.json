@@ -4,7 +4,7 @@
   "type": "object",
   "required": [
     "production_id", "status", "segments", "approvals",
-    "approval_details", "spend_budget", "render_idempotency_key"
+    "approval_details", "render_idempotency_key"
   ],
   "properties": {
     "production_id": {"type": "string"},
@@ -25,15 +25,6 @@
       "type": "object",
       "required": ["script", "segments", "spend", "quality", "render"],
       "additionalProperties": {"$ref": "#/$defs/approvalDetail"}
-    },
-    "spend_budget": {
-      "type": "object",
-      "required": ["max_calls", "used_calls", "remaining_calls"],
-      "properties": {
-        "max_calls": {"type": ["integer", "null"], "minimum": 0},
-        "used_calls": {"type": "integer", "minimum": 0},
-        "remaining_calls": {"type": "integer", "minimum": 0}
-      }
     },
     "segments": {
       "type": "array",
@@ -57,9 +48,7 @@
       }
     },
     "render_idempotency_key": {"type": "string"},
-    "render_asset_id": {"type": ["string", "null"]},
-    "character_reference_type": {"enum": ["virtual", "real_person"]},
-    "character_identity_id": {"type": ["string", "null"]}
+    "render_asset_id": {"type": ["string", "null"]}
   },
   "$defs": {
     "approvalDetail": {

@@ -25,6 +25,10 @@ log = create_logger("tool.video_workflow")
 _PUNCT = re.compile(r"[\s。！？；：，、,.!?;:…·~—\-\"'“”‘’（）()《》<>【】\[\]]+")
 _FILLERS = "嗯呃唔诶哦噢喔呀啊吧呢啦嘛"
 _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
+# Rendering code can change while the approved script, segments and output form
+# stay identical. Version the idempotency key so an explicit user-requested
+# recompose does not silently reuse an artifact produced by an older renderer.
+RENDER_PIPELINE_REVISION = "bossip-wrap-bottom-v5"
 
 
 class SegmentSpec(BaseModel):
@@ -67,12 +71,28 @@ class VideoProjectArgs(BaseModel):
     resolution: Literal["720p", "1080p"] = "720p"
     quality_policy: Literal["required", "advisory"] = "required"
     channel_name: str = Field(default="", max_length=100)
-    script_text: str | None = Field(default=None, min_length=1, max_length=20_000)
-    segment_prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
+    script_text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=20_000,
+        description=(
+            "For set_script, pass the complete production script. For revise_segment, "
+            "pass only the replacement dialogue for the selected segment_id—never the "
+            "complete production script. Omit it to keep that segment's dialogue unchanged."
+        ),
+    )
+    segment_prompt: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=32_000,
+        description=(
+            "For revise_segment, pass the complete lintable prompt for the selected segment "
+            "only. Its speech marker must be @ immediately followed by that segment's exact "
+            "script_text; do not pass a shared prompt summary or a production-wide prompt."
+        ),
+    )
     visual_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
     character_reference_asset: str | None = Field(default=None, max_length=512)
-    character_reference_type: Literal["virtual", "real_person"] = "virtual"
-    character_identity_id: str | None = Field(default=None, max_length=96)
     segments: list[SegmentSpec] = Field(default_factory=list, max_length=100)
     approval_kind: Literal["script", "segments", "spend", "quality", "render"] | None = None
     segment_id: str | None = Field(default=None, max_length=96)
@@ -96,13 +116,6 @@ class VideoProjectArgs(BaseModel):
                 raise ValueError("set_segments requires visual_anchor")
             if not self.segments:
                 raise ValueError("set_segments requires segments")
-            if self.character_reference_type == "real_person":
-                if not self.character_reference_asset:
-                    raise ValueError("real_person requires character_reference_asset")
-                if not self.character_identity_id:
-                    raise ValueError("real_person requires an active character_identity_id")
-            elif self.character_identity_id:
-                raise ValueError("character_identity_id is only valid for real_person")
         if self.action == "request_approval" and not self.approval_kind:
             raise ValueError("request_approval requires approval_kind")
         if self.action == "revise_segment" and (not self.segment_id or not self.revision_reason):
@@ -660,6 +673,12 @@ def render_scope(production, segments: list[Any]) -> str:
     )
 
 
+def render_idempotency_key(production_id: str, scope_hash: str) -> str:
+    if not scope_hash:
+        return ""
+    return f"{production_id}:render:{scope_hash[:16]}:{RENDER_PIPELINE_REVISION}"
+
+
 async def _derive_status(db, production, segments: list[Any] | None = None) -> str:
     segments = segments if segments is not None else await _active_segments(db, production.id)
     if not production.script_hash:
@@ -683,8 +702,6 @@ async def _derive_status(db, production, segments: list[Any] | None = None) -> s
         return "needs_spend_approval"
     pending = [row for row in segments if row.status == "planned"]
     if pending:
-        if spend.max_calls is None or spend.used_calls >= spend.max_calls:
-            return "needs_spend_approval"
         return "spend_ok"
     if not all(row.status == "generated" and row.output_asset_id for row in segments):
         return "needs_segment_revision"
@@ -734,8 +751,6 @@ def _plan_hash(production, segments: list[Any]) -> str:
             "script_hash": production.script_hash,
             "visual_anchor": production.visual_anchor,
             "character_asset_id": production.character_asset_id,
-            "character_reference_type": production.character_reference_type,
-            "character_identity_id": production.character_identity_id,
             "segments": [
                 {
                     "id": row.id,
@@ -803,16 +818,6 @@ async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any
                     scope and evidence and evidence.scope_hash == scope
                 ),
             }
-        spend = matching_approvals["spend"]
-        spend_budget = {
-            "max_calls": spend.max_calls if spend else None,
-            "used_calls": spend.used_calls if spend else 0,
-            "remaining_calls": (
-                max(0, spend.max_calls - spend.used_calls)
-                if spend and spend.max_calls is not None
-                else 0
-            ),
-        }
         return {
             "production_id": production.id,
             "title": production.title,
@@ -829,18 +834,13 @@ async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any
             "script_hash": production.script_hash,
             "visual_anchor": production.visual_anchor,
             "character_asset_id": production.character_asset_id,
-            "character_reference_type": production.character_reference_type,
-            "character_identity_id": production.character_identity_id,
             "plan_hash": production.plan_hash,
             "render_asset_id": production.render_asset_id,
-            "render_idempotency_key": (
-                f"{production.id}:render:{scopes['render'][:16]}"
-                if scopes["render"]
-                else ""
+            "render_idempotency_key": render_idempotency_key(
+                production.id, scopes["render"]
             ),
             "approvals": approvals,
             "approval_details": approval_details,
-            "spend_budget": spend_budget,
             "segments": [
                 {
                     "segment_id": row.id,
@@ -879,14 +879,10 @@ def _snapshot_output(value: dict[str, Any]) -> str:
         f"plan_hash={value['plan_hash']}",
         f"visual_anchor={value.get('visual_anchor', '')}",
         f"character_asset_id={value.get('character_asset_id') or ''}",
-        f"character_reference_type={value.get('character_reference_type') or 'virtual'}",
-        f"character_identity_id={value.get('character_identity_id') or ''}",
         f"render_idempotency_key={value.get('render_idempotency_key', '')}",
         "approvals=" + json.dumps(value["approvals"], ensure_ascii=False, separators=(",", ":")),
         "approval_details="
         + json.dumps(value["approval_details"], ensure_ascii=False, separators=(",", ":")),
-        "spend_budget="
-        + json.dumps(value["spend_budget"], ensure_ascii=False, separators=(",", ":")),
     ]
     for row in value["segments"]:
         lines.extend(
@@ -973,8 +969,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 production.plan_hash = ""
                 production.visual_anchor = ""
                 production.character_asset_id = None
-                production.character_reference_type = "virtual"
-                production.character_identity_id = None
                 production.render_asset_id = None
                 production.subtitles = None
             production.script_text = script
@@ -1045,46 +1039,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                         output=f"segment {item.ordinal}: {exc}",
                     )
                 model_by_ordinal[item.ordinal] = route.model
-            identity = None
-            if args.character_reference_type == "real_person":
-                from db.models.video_material import VideoMaterialAsset, VideoMaterialGroup
-
-                identity = (
-                    await db.execute(
-                        select(VideoMaterialGroup).where(
-                            VideoMaterialGroup.id == args.character_identity_id,
-                            VideoMaterialGroup.user_id == ctx.user_id,
-                            VideoMaterialGroup.group_type == "LivenessFace",
-                            VideoMaterialGroup.status == "active",
-                        )
-                    )
-                ).scalar_one_or_none()
-                if not identity or not identity.provider_group_id:
-                    return ToolResult(
-                        title="真人授权尚未完成",
-                        output=(
-                            "character_identity_id must be an active, user-owned LivenessFace identity. "
-                            "Call video_identity.create/status and wait for the person to finish authorization."
-                        ),
-                    )
-                binding = (
-                    await db.execute(
-                        select(VideoMaterialAsset).where(
-                            VideoMaterialAsset.user_id == ctx.user_id,
-                            VideoMaterialAsset.group_id == identity.id,
-                            VideoMaterialAsset.source_asset_id == character.id,
-                            VideoMaterialAsset.status == "active",
-                        )
-                    )
-                ).scalar_one_or_none()
-                if not binding or not binding.provider_asset_id:
-                    return ToolResult(
-                        title="真人参考素材尚未入库",
-                        output=(
-                            "The selected portrait is not active in this LivenessFace identity. "
-                            "Call video_identity.add_asset with this identity_id and character asset_id first."
-                        ),
-                    )
             validated: list[tuple[SegmentSpec, list[Any], dict[str, Any], str]] = []
             issues_by_ordinal: dict[int, list[dict[str, str]]] = {}
             for item in args.segments:
@@ -1126,8 +1080,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     "script_text": item.script_text.strip(),
                     "prompt": item.prompt.strip(),
                     "character_asset_id": character.id if character else None,
-                    "character_reference_type": args.character_reference_type,
-                    "character_identity_id": identity.id if identity else None,
                     "input_asset_ids": [row.id for row in assets],
                     "visual_anchor": (args.visual_anchor or "").strip(),
                 }
@@ -1207,8 +1159,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
             active.sort(key=lambda row: row.ordinal)
             production.visual_anchor = (args.visual_anchor or "").strip()
             production.character_asset_id = character.id if character else None
-            production.character_reference_type = args.character_reference_type
-            production.character_identity_id = identity.id if identity else None
             production.plan_hash = _plan_hash(production, active)
             production.render_asset_id = None
             production.subtitles = None
@@ -1287,8 +1237,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 "script_text": revised_script,
                 "prompt": revised_prompt,
                 "character_asset_id": character.id if character else None,
-                "character_reference_type": production.character_reference_type,
-                "character_identity_id": production.character_identity_id,
                 "input_asset_ids": [row.id for row in assets],
                 "visual_anchor": production.visual_anchor,
             }
@@ -1394,10 +1342,16 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 models = await _pending_segment_models(db, production, pending, ctx.user_id)
                 model_label = "/".join(models) if models else "默认模型"
                 question = (
-                    f"将提交 {len(pending)} 段 {model_label}，预计约 {estimated_seconds} 秒"
-                    "并消耗视频额度。确认吗？"
+                    f"将提交 {len(pending)} 段 {model_label}，预计约 {estimated_seconds} 秒。"
+                    "当前不设生成次数限制，后续统一由积分系统按实际用量结算。确认吗？"
                 )
-                options = [(f"确认，生成 {len(pending)} 段（消耗额度）", "最多允许本快照提交同样数量的新任务"), ("先不生成", "不调用收费的视频生成接口")]
+                options = [
+                    (
+                        f"确认，生成 {len(pending)} 段",
+                        "确认当前内容快照并调用视频生成；后续统一由积分系统按实际用量结算",
+                    ),
+                    ("先不生成", "不调用收费的视频生成接口"),
+                ]
             elif kind == "quality":
                 if not segments or not all(
                     row.status == "generated" and (row.stt_verdict or row.role == "broll")
@@ -1449,11 +1403,8 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
             answer = answers[0][0] if answers and answers[0] else ""
             positive = answer == options[0][0] or (kind == "render" and answer in {options[0][0], options[1][0]})
             decision = "rejected"
-            max_calls = None
             if positive:
                 decision = "approved"
-                if kind == "spend":
-                    max_calls = len(metadata["segment_ids"])
                 if kind == "quality" and metadata.get("suspect_segment_ids"):
                     decision = "override"
                     await db.execute(
@@ -1473,8 +1424,6 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                 scope_hash=scope,
                 decision=decision,
                 answer=answer or "未回答",
-                max_calls=max_calls,
-                used_calls=0,
                 evidence_message_id=ctx.message_id or None,
                 evidence_part_id=ctx.part_id or None,
                 metadata_data=metadata,
@@ -1626,11 +1575,6 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
         spend = await _matching_approval(db, production.id, "spend", spend_scope(production, segments))
         if not spend:
             raise RuntimeError("current generation spend is not approved")
-        if (
-            not reconciling_existing
-            and (spend.max_calls is None or spend.used_calls >= spend.max_calls)
-        ):
-            raise RuntimeError("approved generation call limit is exhausted")
         # Freeze the model onto the segment before the paid call, so a later
         # switch cannot retarget this submission or its reconciliation.
         chosen_model = await resolve_segment_model(db, production, segment, ctx.user_id)
@@ -1643,8 +1587,6 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             "prompt": segment.prompt,
             "model": chosen_model,
             "character_reference_asset": production.character_asset_id,
-            "character_reference_type": production.character_reference_type,
-            "character_identity_id": production.character_identity_id,
             "input_assets": list(segment.input_asset_ids or []),
             "resolution": production.resolution,
             "ratio": production.ratio,
@@ -1653,27 +1595,8 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             "watermark": False,
             "content_hash": segment.content_hash,
             "plan_hash": production.plan_hash,
-            "spend_approval_id": spend.id,
             "reconciling_existing": reconciling_existing,
         }
-
-
-async def consume_spend_approval(approval_id: str) -> None:
-    from db.base import get_db_session
-    from db.models.video_production import VideoApproval
-
-    async with get_db_session() as db:
-        result = await db.execute(
-            update(VideoApproval)
-            .where(
-                VideoApproval.id == approval_id,
-                VideoApproval.decision.in_(["approved", "override"]),
-                VideoApproval.used_calls < VideoApproval.max_calls,
-            )
-            .values(used_calls=VideoApproval.used_calls + 1)
-        )
-        if result.rowcount != 1:
-            raise RuntimeError("approved generation call limit was consumed concurrently")
 
 
 async def mark_segment_job(
@@ -1894,14 +1817,16 @@ async def prepare_render_submission(ctx: ToolContext, production_id: str) -> dic
         subtitles = bool((render.metadata_data or {}).get("subtitles"))
         if subtitles and any(not (row.transcript_text or "").strip() for row in segments):
             raise RuntimeError("subtitled render requires accepted transcript text for every segment")
+        long_edge = 1920 if production.resolution == "1080p" else 1280
+        short_edge = 1080 if production.resolution == "1080p" else 720
         return {
             "production_id": production.id,
             "segment_assets": [row.output_asset_id for row in segments],
             "captions": [row.transcript_text or "" for row in segments],
             "subtitles": subtitles,
             "channel_name": production.channel_name,
-            "width": 720 if production.ratio == "9:16" else 1280,
-            "height": 1280 if production.ratio == "9:16" else 720,
+            "width": short_edge if production.ratio == "9:16" else long_edge,
+            "height": long_edge if production.ratio == "9:16" else short_edge,
             "scope_hash": render.scope_hash,
         }
 

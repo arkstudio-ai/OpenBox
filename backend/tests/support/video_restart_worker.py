@@ -135,8 +135,6 @@ async def _seed_approved_segment() -> None:
         channel_name="",
         visual_anchor="固定镜头",
         character_asset_id=None,
-        character_reference_type="virtual",
-        character_identity_id=None,
         script_text=script,
         script_hash=script_hash,
         plan_hash="restart-e2e-plan",
@@ -183,8 +181,6 @@ async def _seed_approved_segment() -> None:
             scope_hash=script_hash,
             decision="approved",
             answer="测试批准",
-            max_calls=None,
-            used_calls=0,
             evidence_message_id=None,
             evidence_part_id=None,
             metadata_data={},
@@ -199,8 +195,6 @@ async def _seed_approved_segment() -> None:
             scope_hash=production.plan_hash,
             decision="approved",
             answer="测试批准",
-            max_calls=None,
-            used_calls=0,
             evidence_message_id=None,
             evidence_part_id=None,
             metadata_data={},
@@ -215,8 +209,6 @@ async def _seed_approved_segment() -> None:
             scope_hash=spend_scope(production, [segment]),
             decision="approved",
             answer="仅限本地 mock",
-            max_calls=1,
-            used_calls=0,
             evidence_message_id=None,
             evidence_part_id=None,
             metadata_data={},
@@ -255,7 +247,7 @@ async def _snapshot() -> dict:
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from db.models.video_job import VideoJob
-    from db.models.video_production import VideoApproval, VideoSegment
+    from db.models.video_production import VideoSegment
 
     async with get_db_session() as db:
         job = (
@@ -269,7 +261,6 @@ async def _snapshot() -> dict:
         ).scalar_one()
         segment = await db.get(VideoSegment, SEGMENT_ID)
         asset = await db.get(FileAsset, job.output_asset_id)
-        spend = await db.get(VideoApproval, "restart-e2e-spend-approval")
         return {
             "pid": os.getpid(),
             "job_id": job.id,
@@ -286,7 +277,6 @@ async def _snapshot() -> dict:
             "segment_asset_id": segment.output_asset_id,
             "asset_status": asset.status,
             "asset_size": asset.size,
-            "spend_used_calls": spend.used_calls,
         }
 
 

@@ -403,6 +403,89 @@ async def test_identical_duplicate_tool_event_executes_once(monkeypatch):
     assert executed == [{"path": "a"}]
 
 
+async def test_parallel_safe_calls_overlap_and_unsafe_calls_are_barriers(monkeypatch):
+    active: set[str] = set()
+    timeline: list[str] = []
+    max_active = 0
+
+    async def execute(args, ctx):
+        nonlocal max_active
+        value = args["value"]
+        if value == "unsafe":
+            assert active == set()
+        else:
+            if value.startswith("after"):
+                assert "unsafe:end" in timeline
+            active.add(value)
+            max_active = max(max_active, len(active))
+
+        bound_part_id = ctx.part_id
+        timeline.append(f"{value}:start")
+        await asyncio.sleep(0.02)
+        assert ctx.part_id == bound_part_id
+        timeline.append(f"{value}:end")
+        active.discard(value)
+        return ToolResult(title=value, output=value)
+
+    class Hooks:
+        async def wrap_execute(self, tool_name, execute_fn, args, ctx, part_id=""):
+            ctx.part_id = part_id
+            return await execute_fn(args, ctx)
+
+    events = [
+        {
+            "type": "tool_call",
+            "tool": tool,
+            "args": {"value": value},
+            "call_id": f"call_{index}",
+        }
+        for index, (tool, value) in enumerate(
+            [
+                ("safe", "before_a"),
+                ("safe", "before_b"),
+                ("unsafe", "unsafe"),
+                ("safe", "after_a"),
+                ("safe", "after_b"),
+            ]
+        )
+    ]
+    events.append({"type": "finish", "reason": "tool_calls", "usage": {}})
+    monkeypatch.setattr(P, "stream_llm", fake_stream(events=events))
+
+    result = await process_step(
+        session_id="s1",
+        user_id="u1",
+        session=None,
+        agent_def=None,
+        system=[],
+        llm_messages=[],
+        tools={
+            "safe": SimpleNamespace(execute=execute, parallel_safe=True),
+            "unsafe": SimpleNamespace(execute=execute, parallel_safe=False),
+        },
+        model_id="test/model",
+        ctx=Ctx(),
+        hooks=Hooks(),
+        assistant_info=Info(),
+        sandbox=None,
+        abort=NotAborted(),
+        doom_loop_history=[],
+    )
+
+    assert max_active == 2
+    assert timeline.index("before_a:end") < timeline.index("unsafe:start")
+    assert timeline.index("before_b:end") < timeline.index("unsafe:start")
+    assert timeline.index("unsafe:end") < timeline.index("after_a:start")
+    assert timeline.index("unsafe:end") < timeline.index("after_b:start")
+    assert [part.input["value"] for part in result.completed_tool_parts] == [
+        "before_a",
+        "before_b",
+        "unsafe",
+        "after_a",
+        "after_b",
+    ]
+
+
 async def test_hidden_exact_tool_name_cannot_execute_from_full_lookup(monkeypatch):
     executed = []
     saved = []

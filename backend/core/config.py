@@ -214,20 +214,6 @@ class VideoGenerationConfig(BaseModel):
     poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     wait_timeout_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     provider_input_url_ttl_seconds: int = Field(default=3600, ge=600, le=86400)
-    #: Where the TokenSpace material/real-person APIs live, when that is not
-    #: the same origin as generation. The BossIP relay serves /v1/videos but
-    #: not /api/material, so a relay deployment must point materials at
-    #: TokenSpace here or real-person identity cannot work at all.
-    material_base_url: str = ""
-    #: The credential for that origin. A separate origin means a separate
-    #: account, so pointing material_base_url elsewhere without this would
-    #: send the generation key to a provider that never issued it. Empty
-    #: means "same account as generation", which is right when both are
-    #: TokenSpace directly.
-    material_api_key: str = ""
-    material_timeout_seconds: int = Field(default=180, ge=30, le=600)
-    material_poll_interval_seconds: float = Field(default=1.0, ge=0.5, le=10.0)
-    liveness_session_ttl_seconds: int = Field(default=300, ge=120, le=1800)
     render_url_ttl_seconds: int = Field(default=86400, ge=3600, le=604800)
     max_provider_output_bytes: int = Field(
         default=1024 * 1024 * 1024, ge=1024 * 1024, le=4 * 1024 * 1024 * 1024

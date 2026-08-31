@@ -68,9 +68,12 @@ async def ensure_cli(client, container_key: str) -> None:
         return
     b64 = base64.b64encode(OBX_FILE_SCRIPT.encode()).decode()
     cmd = (
-        f"printf %s {b64} | base64 -d > /tmp/.obx-file && chmod +x /tmp/.obx-file && "
-        "(sudo -n install -m755 /tmp/.obx-file /usr/local/bin/obx-file 2>/dev/null || "
-        '(mkdir -p "$HOME/.local/bin" && install -m755 /tmp/.obx-file "$HOME/.local/bin/obx-file"))'
+        'obx_file_tmp="$(mktemp "${TMPDIR:-/tmp}/obx-file.XXXXXX")" && '
+        'trap \'rm -f "$obx_file_tmp"\' EXIT && '
+        f"printf %s {b64} | base64 -d > \"$obx_file_tmp\" && "
+        'chmod +x "$obx_file_tmp" && '
+        '(sudo -n install -m755 "$obx_file_tmp" /usr/local/bin/obx-file 2>/dev/null || '
+        '(mkdir -p "$HOME/.local/bin" && install -m755 "$obx_file_tmp" "$HOME/.local/bin/obx-file"))'
     )
     result = await client.execute(cmd, timeout=30)
     if result.exit_code != 0:

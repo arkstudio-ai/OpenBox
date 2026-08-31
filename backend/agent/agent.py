@@ -156,7 +156,6 @@ Rules:
 # list remains the platform owner's opt-in escape hatch.
 BUILD_ONLY_WORKFLOW_TOOLS = frozenset({
     "image_gen",
-    "video_identity",
     "video_project",
     "video_generate",
     "video_transcribe",
@@ -177,7 +176,7 @@ AGENTS: dict[str, AgentDef] = {
             "plan_enter", "skill", "skill_search", "capability_search",
             "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode",
-            "image_gen", "video_identity", "video_project", "video_generate",
+            "image_gen", "video_project", "video_generate",
             "video_transcribe", "video_render", "creator_context", "skill_manage",
         ],
         max_steps=200,

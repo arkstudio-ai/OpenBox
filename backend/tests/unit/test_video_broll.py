@@ -83,7 +83,7 @@ async def test_b_roll_does_not_wait_for_a_transcription_verdict(monkeypatch):
     import tool.video_workflow as wf
 
     async def approved(*_a, **_k):
-        return SimpleNamespace(id="appr", max_calls=1, used_calls=0)
+        return SimpleNamespace(id="appr")
 
     monkeypatch.setattr(wf, "_matching_approval", approved)
     status = await _derive_status(None, _production(), [_segment()])
@@ -95,7 +95,7 @@ async def test_a_spoken_segment_still_waits_for_its_verdict(monkeypatch):
     import tool.video_workflow as wf
 
     async def approved(*_a, **_k):
-        return SimpleNamespace(id="appr", max_calls=1, used_calls=0)
+        return SimpleNamespace(id="appr")
 
     monkeypatch.setattr(wf, "_matching_approval", approved)
     status = await _derive_status(None, _production(), [_segment(role="body")])

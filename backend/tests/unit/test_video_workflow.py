@@ -14,7 +14,6 @@ from tool.video_workflow import (
     SegmentSpec,
     VideoProjectArgs,
     compare_transcript,
-    consume_spend_approval,
     execute_project,
     lint_segment_prompt,
     mark_segment_job,
@@ -22,6 +21,17 @@ from tool.video_workflow import (
     prepare_segment_submission,
     record_segment_transcript,
 )
+
+
+def test_revision_schema_distinguishes_segment_text_from_full_script():
+    properties = VideoProjectArgs.model_json_schema()["properties"]
+
+    script_description = properties["script_text"]["description"]
+    prompt_description = properties["segment_prompt"]["description"]
+    assert "only the replacement dialogue" in script_description
+    assert "never the complete production script" in script_description
+    assert "selected segment only" in prompt_description
+    assert "@ immediately followed" in prompt_description
 
 
 def test_prompt_lint_requires_recipe_and_valid_reference_numbers():
@@ -141,7 +151,10 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
             )
         )
 
+    asked_questions = []
+
     async def approve_first(*, questions, **_kwargs):
+        asked_questions.extend(questions)
         return [[questions[0].options[0].label]]
 
     monkeypatch.setattr("question.question.ask", approve_first)
@@ -231,12 +244,18 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
         ctx,
     )
     assert spent.metadata["status"] == "spend_ok"
+    spend_question = next(question for question in asked_questions if question.header == "生成费用确认")
+    assert "当前不设生成次数限制" in spend_question.question
+    assert "积分系统按实际用量结算" in spend_question.question
+    assert "额度" not in spend_question.question
+    assert spend_question.options[0].label == "确认，生成 1 段"
     gate = await prepare_segment_submission(ctx, production_id, segment_id)
     assert gate["prompt"] == prompt
     assert gate["character_reference_asset"] == portrait_id
-    await consume_spend_approval(gate["spend_approval_id"])
-    with pytest.raises(RuntimeError, match="limit is exhausted"):
-        await prepare_segment_submission(ctx, production_id, segment_id)
+    # Spend approval is hash-bound evidence, not a consumable call counter.
+    # The generation job's per-segment idempotency key owns duplicate safety.
+    repeated_gate = await prepare_segment_submission(ctx, production_id, segment_id)
+    assert repeated_gate == gate
 
     existing_job_id = f"video_existing_{suffix}"
     async with get_db_session() as db:

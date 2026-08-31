@@ -128,7 +128,7 @@ async def test_feedback_is_ownership_scoped():
 @pytest.mark.asyncio
 async def test_user_rejected_routes_to_needs_segment_revision(monkeypatch):
     async def always_approved(_db, _production_id, _kind, _scope):
-        return SimpleNamespace(max_calls=5, used_calls=0)
+        return SimpleNamespace(id="approval")
 
     monkeypatch.setattr(wf, "_matching_approval", always_approved)
     production = SimpleNamespace(

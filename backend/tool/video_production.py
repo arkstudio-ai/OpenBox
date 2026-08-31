@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from auth.jwt import create_asset_download_token
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -39,6 +40,8 @@ _BOSSIP_RELAY_MODELS = {
 }
 _SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
 _SEGMENT_FINALIZATION_STALE_SECONDS = 300
+_MAX_INLINE_GENERATION_WAITS = 8
+_DEFERRED_PROVIDER_RECHECK_SECONDS = 60
 
 
 class VideoGenerateArgs(BaseModel):
@@ -54,7 +57,9 @@ class VideoGenerateArgs(BaseModel):
         ge=0,
         description=(
             "Supply and increment this on every wait call; together with after_version "
-            "it makes repeated bounded waits explicit rather than an accidental tool loop."
+            "it makes repeated bounded waits explicit rather than an accidental tool loop. "
+            "When the tool returns polling_paused=true, stop the current run and resume "
+            "that same durable job later; never resubmit it."
         ),
     )
 
@@ -368,109 +373,43 @@ async def _resolve_generation_inputs(
     return ordered, character
 
 
-async def _materialize_provider_inputs(
-    rows: list[Any],
-    character: Any | None,
-    *,
-    character_reference_type: str,
-    character_identity_id: str | None,
-    ctx: ToolContext,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Convert owned OSS rows into stable provider ``asset://`` references.
+def _presigned_provider_refs(
+    rows: list[Any], *, input_url_ttl_seconds: int
+) -> list[dict[str, str]]:
+    """Turn owned image/video rows into ordinary provider reference inputs.
 
-    An actual person's explicit character image is constrained to their active
-    LivenessFace group. Every other reference goes through the user's AIGC
-    material group, which removes expiring/cross-account URLs from paid tasks.
+    This matches BossIP's normal image-to-video path: OpenBox sends scoped OSS
+    URLs, and the configured gateway handles any provider-specific preparation.
     """
-    from video.materials import materialize_generation_asset
+    if not rows:
+        return []
 
-    content: list[dict[str, Any]] = []
-    bindings: list[dict[str, Any]] = []
-    for row in rows:
-        real_character = bool(
-            character
-            and row.id == character.id
-            and character_reference_type == "real_person"
-        )
-        if real_character and not character_identity_id:
-            raise RuntimeError(
-                "real-person generation requires an active character identity before submission"
-            )
-        uri, binding = await materialize_generation_asset(
-            ctx.user_id,
-            row.id,
-            identity_id=character_identity_id if real_character else None,
-        )
-        if row.mime.startswith(_IMAGE_PREFIX):
-            content.append(
-                {"type": "image_url", "image_url": {"url": uri}, "role": "reference_image"}
-            )
-        else:
-            content.append(
-                {"type": "video_url", "video_url": {"url": uri}, "role": "reference_video"}
-            )
-        bindings.append(
-            {
-                "source_asset_id": row.id,
-                "material_asset_id": binding.get("material_asset_id"),
-                "provider_asset_id": binding.get("provider_asset_id"),
-                "group_id": binding.get("identity_id"),
-                "group_type": "LivenessFace" if real_character else "AIGC",
-            }
-        )
-    return content, bindings
-
-
-def _relay_provider_inputs(
-    rows: list[Any],
-    character: Any | None,
-    *,
-    character_reference_type: str,
-    input_url_ttl_seconds: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Give BossIP public source URLs and let its adapter own materialization.
-
-    TokenSpace asset ids are scoped to the upstream credential that created
-    them. Reusing OpenBox's direct-account ids through the relay would fail as
-    cross-account assets, so the relay receives signed OSS URLs and records its
-    own stable material bindings instead.
-    """
     from core.oss import get_oss
 
     oss = get_oss()
-    content: list[dict[str, Any]] = []
-    bindings: list[dict[str, Any]] = []
+    refs: list[dict[str, str]] = []
     for row in rows:
         url = oss.presign_get(row.oss_key, expires_sec=input_url_ttl_seconds)
-        if row.mime.startswith(_IMAGE_PREFIX):
-            content.append(
-                {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
-            )
-        else:
-            content.append(
-                {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
-            )
-        requested_reference_type = (
-            "real_person"
-            if (
-                character
-                and row.id == character.id
-                and character_reference_type == "real_person"
-            )
-            else "virtual"
-        )
-        bindings.append(
+        kind = "image" if row.mime.startswith(_IMAGE_PREFIX) else "video"
+        refs.append(
             {
-                "source_asset_id": row.id,
-                "managed_by": "bossip_relay",
-                # The current BossIP adapter owns an AIGC material group. A
-                # prior LivenessFace approval on another TokenSpace account
-                # cannot be claimed or transferred by changing gateways.
-                "group_type": "AIGC",
-                "requested_reference_type": requested_reference_type,
+                "kind": kind,
+                "url": url,
+                "role": "reference_image" if kind == "image" else "reference_video",
             }
         )
-    return content, bindings
+    return refs
+
+
+def _ark_reference_content(refs: list[dict[str, str]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": f"{ref['kind']}_url",
+            f"{ref['kind']}_url": {"url": ref["url"]},
+            "role": ref["role"],
+        }
+        for ref in refs
+    ]
 
 
 def _validate_generation(model: str, resolution: str, duration: int, generate_audio: bool) -> None:
@@ -1079,6 +1018,11 @@ async def _finalize_segment(
     return await _owned_job(job.id, ctx, "segment")
 
 
+def _asset_download_url(asset) -> str:
+    token = create_asset_download_token(str(asset.user_id), str(asset.id))
+    return f"/api/assets/{asset.id}/download?token={quote(token, safe='')}"
+
+
 def _job_lines(
     job,
     asset=None,
@@ -1105,14 +1049,21 @@ def _job_lines(
     if retry_after is not None and job.status not in _SEGMENT_TERMINAL | _RENDER_TERMINAL:
         lines.append(f"retry_after_seconds={retry_after}")
     if asset and asset.status == "ready":
+        download_url = _asset_download_url(asset)
         lines.extend(
             [
                 f"asset_id={asset.id}",
                 f"name={asset.name}",
                 f"path=/workspace/generated_videos/{asset.name}",
+                f"download_url={download_url}",
                 f"bytes={asset.size}",
             ]
         )
+        if getattr(job, "kind", None) == "render":
+            lines.append(
+                "handoff_instruction=use the attached final-video card or the exact "
+                "download_url; never construct a markdown URL from path or asset_id"
+            )
     if job.error:
         lines.append(f"error={job.error}")
     if getattr(job, "kind", None) == "segment" and job.status == "completed" and production_id and segment_id:
@@ -1360,7 +1311,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             )
         try:
             from tool.video_workflow import (
-                consume_spend_approval,
                 content_hash,
                 mark_segment_job,
                 prepare_segment_submission,
@@ -1404,31 +1354,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 input_mimes=[row.mime for row in inputs],
                 declared=video_providers.declared_model(target.model, _get_config()),
             )
-            character_reference_type = (
-                approved.get("character_reference_type") or "virtual"
-            )
             channel = getattr(target, "channel", "ark")
-            provider_content: list[dict[str, Any]] = []
-            material_bindings: list[dict[str, Any]] = []
-            if channel == "ark":
-                # The relay/material-library flows (verified real persons, AIGC
-                # groups) apply only to the ark wire; gateway channels receive
-                # short-lived OSS URLs directly in build_payload below.
-                if target.wire_format == "bossip_videos":
-                    provider_content, material_bindings = _relay_provider_inputs(
-                        inputs,
-                        character_reference,
-                        character_reference_type=character_reference_type,
-                        input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
-                    )
-                else:
-                    provider_content, material_bindings = await _materialize_provider_inputs(
-                        inputs,
-                        character_reference,
-                        character_reference_type=character_reference_type,
-                        character_identity_id=approved.get("character_identity_id"),
-                        ctx=ctx,
-                    )
+            refs = _presigned_provider_refs(
+                inputs,
+                input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
+            )
+            provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
                 "production_id": approved["production_id"],
                 "segment_id": approved["segment_id"],
@@ -1438,9 +1369,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "character_reference_asset_id": (
                     character_reference.id if character_reference else None
                 ),
-                "character_reference_type": character_reference_type,
-                "character_identity_id": approved.get("character_identity_id"),
-                "provider_material_bindings": material_bindings,
                 "provider_wire_format": target.wire_format,
                 "provider_route_fingerprint": (
                     video_providers.provider_route_fingerprint(target)
@@ -1484,8 +1412,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             "generate_audio": generate_audio,
                             "watermark": watermark,
                         },
-                        character_reference_type=character_reference_type,
-                        character_identity_id=approved.get("character_identity_id"),
                     )
             job, asset, created = await _create_pending_job(
                 ctx=ctx,
@@ -1540,8 +1466,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     source_job, source_asset = reusable
                     reused_job = await _complete_from_reuse(job, source_job, source_asset, ctx)
                     if reused_job is not None:
-                        # No paid call happened, so the spend approval is NOT
-                        # consumed. Source identifiers stay out of the output.
+                        # No paid call happened. The spend approval remains
+                        # hash-bound audit evidence; source identifiers stay
+                        # out of the output.
                         await _attach_completed(reused_job, ctx)
                         reused_asset = await _job_asset(reused_job)
                         return ToolResult(
@@ -1575,21 +1502,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 }
                 submit_path = None
             else:
-                oss = get_oss()
-                refs = [
-                    {
-                        "kind": "image" if row.mime.startswith(_IMAGE_PREFIX) else "video",
-                        "url": oss.presign_get(
-                            row.oss_key, expires_sec=settings.provider_input_url_ttl_seconds
-                        ),
-                        "role": (
-                            "reference_image"
-                            if row.mime.startswith(_IMAGE_PREFIX)
-                            else "reference_video"
-                        ),
-                    }
-                    for row in inputs
-                ]
                 submit_path, payload = video_providers.build_payload(
                     target,
                     prompt=prompt,
@@ -1601,17 +1513,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     watermark=watermark,
                 )
             async def submit_and_persist_provider_identity():
-                try:
-                    await consume_spend_approval(approved["spend_approval_id"])
-                except Exception:
-                    await _update_job(
-                        job.id,
-                        status="failed",
-                        error="approved generation call limit is unavailable",
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    await _mark_asset(job.output_asset_id, status="failed")
-                    raise
                 await mark_segment_job(
                     approved["segment_id"],
                     job.id,
@@ -1688,14 +1589,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 },
             )
         except Exception as exc:
-            from video.materials import RealPersonAuthorizationRequired
-
-            if isinstance(exc, RealPersonAuthorizationRequired):
-                return ToolResult(
-                    title="真人授权后才能继续",
-                    output=_public_error(exc),
-                    metadata={"error": True, "authorization_required": True},
-                )
             if "job" in locals() and created:
                 provider_task_id = (
                     str(response.get("id") or "")
@@ -1981,7 +1874,27 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     version = _job_snapshot_version(job)
     still_running = job.status not in _SEGMENT_TERMINAL
     lines.append(f"version={version}")
-    if still_running:
+    polling_paused = bool(
+        is_wait
+        and still_running
+        and args.wait_iteration >= _MAX_INLINE_GENERATION_WAITS
+    )
+    if polling_paused:
+        title = "Video still processing"
+        lines.extend(
+            [
+                "still_running=true",
+                "polling_paused=true",
+                f"next_check_after_seconds={_DEFERRED_PROVIDER_RECHECK_SECONDS}",
+                (
+                    "instruction=stop this assistant run now and report that the durable "
+                    "provider task is still processing; do not call video_generate again "
+                    "in this run, do not cancel, and do not resubmit; resume this exact "
+                    "job_id in a later turn"
+                ),
+            ]
+        )
+    elif still_running:
         lines.extend(
             [
                 "still_running=true",
@@ -1999,20 +1912,29 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "instruction=do_not_resubmit; cancel or obtain operator review before creating a revision",
             ]
         )
+    metadata = {
+        "job_id": job.id,
+        "status": job.status,
+        "asset_id": asset.id if asset and asset.status == "ready" else None,
+        "attached": attached,
+        "ambiguous_submit": ambiguous_submit,
+        "still_running": still_running,
+        "timed_out": timed_out,
+        "version": version,
+        "retry_after_seconds": round(poll_interval_seconds),
+    }
+    if polling_paused:
+        metadata.update(
+            {
+                "polling_paused": True,
+                "next_check_after_seconds": _DEFERRED_PROVIDER_RECHECK_SECONDS,
+                "do_not_resubmit": True,
+            }
+        )
     return ToolResult(
         title=title,
         output="\n".join(lines),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "asset_id": asset.id if asset and asset.status == "ready" else None,
-            "attached": attached,
-            "ambiguous_submit": ambiguous_submit,
-            "still_running": still_running,
-            "timed_out": timed_out,
-            "version": version,
-            "retry_after_seconds": round(poll_interval_seconds),
-        },
+        metadata=metadata,
     )
 
 
@@ -2577,10 +2499,16 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
     if args.action == "submit":
         try:
-            from tool.video_workflow import content_hash, prepare_render_submission
+            from tool.video_workflow import (
+                content_hash,
+                prepare_render_submission,
+                render_idempotency_key,
+            )
 
             approved = await prepare_render_submission(ctx, args.production_id or "")
-            expected_key = f"{approved['production_id']}:render:{approved['scope_hash'][:16]}"
+            expected_key = render_idempotency_key(
+                approved["production_id"], approved["scope_hash"]
+            )
             if args.idempotency_key != expected_key:
                 raise RuntimeError(f"idempotency_key must be the approved render key: {expected_key}")
             if args.segment_assets and args.segment_assets != approved["segment_assets"]:
@@ -2713,6 +2641,11 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
             "job_id": job.id,
             "status": job.status,
             "asset_id": asset.id if asset and asset.status == "ready" else None,
+            "download_url": (
+                _asset_download_url(asset)
+                if asset and asset.status == "ready"
+                else None
+            ),
             "queue_position": queue_position,
             "retry_after_seconds": retry_after,
             "version": version,
@@ -2725,12 +2658,15 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 VIDEO_GENERATE_DESCRIPTION = """\
 Submit, inspect, wait for, or cancel Seedance generation for an approved segment.
 Paid submit requires production_id, segment_id, and the exact idempotency_key.
+Calls for distinct approved segments or jobs may run together; never parallelize
+dependent actions or two mutations of the same segment/job.
 Never replace a task after an ambiguous result; reconcile the same job or key."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
 Submit, inspect, wait for, cancel, or explicitly retry transcription for a
 generated speech segment. It persists actual words, diffs, similarity, and the
-quality verdict; status never retries."""
+quality verdict; status never retries. Distinct segment jobs may run together,
+but dependent actions for one job must remain ordered."""
 
 VIDEO_RENDER_DESCRIPTION = """\
 Submit, inspect, wait for, cancel, or explicitly retry an OSS-backed WUYING
@@ -2743,7 +2679,7 @@ video_generate_tool = define_tool(
     parameters=VideoGenerateArgs,
     execute=execute_generate,
     sandbox_required=False,
-    parallel_safe=False,
+    parallel_safe=True,
 )
 
 
@@ -2753,7 +2689,7 @@ video_transcribe_tool = define_tool(
     parameters=VideoTranscribeArgs,
     execute=execute_transcribe,
     sandbox_required=True,
-    parallel_safe=False,
+    parallel_safe=True,
 )
 
 

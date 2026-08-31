@@ -24,6 +24,7 @@ import httpx
 
 from core.log import create_logger
 from models.container import ContainerInfo, ContainerStatus
+from sandbox.client import USER_SCOPE_HEADER, user_scope_for
 from sandbox.provider import SandboxProvider
 
 log = create_logger("sandbox.wuying")
@@ -146,6 +147,8 @@ class WuyingProvider(SandboxProvider):
     ) -> httpx.Response:
         headers = kwargs.pop("headers", {})
         headers["X-API-Key"] = self._api_keys.get(CONTAINER_ID) or (self._desktop().api_key or "")
+        if user_id:
+            headers[USER_SCOPE_HEADER] = user_scope_for(user_id)
         timeout = kwargs.pop("timeout", 35.0)
         # trust_env=False: see SandboxClient._client — a developer proxy must not
         # intercept traffic to the tunnel endpoint.

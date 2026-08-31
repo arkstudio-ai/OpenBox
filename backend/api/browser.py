@@ -46,7 +46,7 @@ def _existing_client(user_id: str):
     session has touched it in this process would report the browser as missing
     when it is running fine.
     """
-    from sandbox.client import SandboxClient
+    from sandbox.client import SandboxClient, user_scope_for
     from sandbox.manager import sandbox_manager
 
     for key, client in sandbox_manager._clients.items():
@@ -63,6 +63,8 @@ def _existing_client(user_id: str):
             host=container.host or "127.0.0.1",
             port=container.port,
             api_key=container.api_key or "",
+            base_url=getattr(provider, "client_base_url", None),
+            user_scope=user_scope_for(user_id),
         )
     except Exception as e:
         log.debug(f"No existing sandbox to inspect: {e}")

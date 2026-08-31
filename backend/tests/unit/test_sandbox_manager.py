@@ -6,7 +6,7 @@ import pytest
 import httpx
 
 from sandbox.manager import SandboxManager, SandboxInfo, _map_key
-from sandbox.client import SandboxClient
+from sandbox.client import SandboxClient, USER_SCOPE_HEADER, user_scope_for
 
 
 @pytest.fixture
@@ -226,6 +226,8 @@ async def test_acquire_does_not_reuse_other_users_container(manager, sandbox_inf
     # user2 should get their own container, NOT user1's
     assert result.container_id == "user2container"
     assert result.user_id == "user2"
+    user2_client = manager._clients[_map_key("user2", "default")]
+    assert user2_client._headers[USER_SCOPE_HEADER] == user_scope_for("user2")
 
 
 # ── get_client() with dead container ──

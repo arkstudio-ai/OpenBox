@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from core.log import create_logger
 from models.container import ContainerStatus
-from sandbox.client import SandboxClient
+from sandbox.client import SandboxClient, user_scope_for
 from sandbox.provider import build_sandbox_name
 
 log = create_logger("sandbox.manager")
@@ -193,6 +193,7 @@ class SandboxManager:
                         port=sandbox.port,
                         api_key=sandbox.api_key,
                         base_url=sandbox.base_url,
+                        user_scope=user_scope_for(user_id),
                     )
                 async with self._lock:
                     if self._project_map.get(key) is not sandbox:
@@ -259,6 +260,7 @@ class SandboxManager:
                 port=info.port,
                 api_key=info.api_key or "",
                 base_url=getattr(provider, "client_base_url", None),
+                user_scope=user_scope_for(user_id),
             )
 
             async with self._lock:

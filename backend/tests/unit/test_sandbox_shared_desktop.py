@@ -9,6 +9,7 @@ restarted.
 """
 import pytest
 
+from sandbox.client import USER_SCOPE_HEADER, user_scope_for
 from sandbox.wuying import CONTAINER_ID, WuyingProvider
 
 
@@ -55,3 +56,29 @@ def test_it_is_not_evictable_in_the_first_place():
 def test_a_provider_that_makes_its_own_containers_still_forgets_them():
     from sandbox.docker import DockerManager
     assert DockerManager.owns_containers is True
+
+
+@pytest.mark.asyncio
+async def test_forwarded_requests_carry_the_callers_opaque_scope(provider, monkeypatch):
+    observed = {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def request(self, method, url, headers, **_kwargs):
+            observed.update({"method": method, "url": url, "headers": headers})
+            return object()
+
+    monkeypatch.setattr("sandbox.wuying.httpx.AsyncClient", lambda **_kwargs: Client())
+    await provider.forward_to_container(
+        CONTAINER_ID,
+        "GET",
+        "/skills/dev-browser",
+        user_id="user-1",
+    )
+
+    assert observed["headers"][USER_SCOPE_HEADER] == user_scope_for("user-1")

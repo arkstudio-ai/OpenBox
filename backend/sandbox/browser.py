@@ -13,9 +13,9 @@ reach two very different browsers:
 Everything here runs against the desktop's loopback (ports 9333 for Chrome,
 9222 for the relay), so every probe is a `curl` executed *on the desktop* — the
 backend only reaches the desktop through the action-server tunnel and cannot
-open those ports directly. Chrome must run inside the X session as the desktop
-user, not as the root action server, which is why launches go through the
-`obx-x` wrapper and `sudo -u`.
+open those ports directly. Chrome must run inside the X session as its
+permitted desktop user, so launches go through `obx-x` and use `sudo -u` only
+when the action container allows the user switch.
 """
 import asyncio
 import base64
@@ -24,6 +24,7 @@ import shlex
 import time
 
 from core.log import create_logger
+
 from sandbox.desktop import ensure_x_helper, x
 
 log = create_logger("sandbox.browser")
@@ -34,6 +35,7 @@ CHROME_PORT = 9333
 RELAY_PORT = 9222
 
 CHROME_LOG = "/tmp/obx-chrome.log"
+IBUS_LOG = "/tmp/obx-ibus.log"
 RELAY_LOG = "/tmp/obx-relay.log"
 RELAY_PID = "/tmp/obx-relay.pid"
 
@@ -261,10 +263,19 @@ rm -f /tmp/.obx-chrome-policy.json
 def _chrome_launch_script() -> str:
     """Shell that launches a headed, debuggable Chrome as the desktop user.
 
-    Detached with setsid + a log file so it outlives the exec call, and run
-    through `sudo -u` because the action server is root while Chrome must live
-    in the desktop user's X session (DISPLAY/XAUTHORITY are exported into this
-    script by the obx-x wrapper).
+    Detached with setsid + a log file so it outlives the exec call. When the
+    action server may switch users it runs as the X-session owner; restricted
+    containers keep their current isolated user. DISPLAY/XAUTHORITY come from
+    the obx-x wrapper in both cases.
+
+    Wuying's action container shares X11 with the Ubuntu desktop but not its
+    session D-Bus. A Chrome launched with only DISPLAY therefore receives key
+    presses but has no input-method context: pinyin is rendered as raw ASCII,
+    and the Web SDK's local-IME fallback cannot help when the guest agent
+    reports `guestInputState=false`. When Intelligent Pinyin is installed we
+    give Chrome its own D-Bus + IBus session. It starts in English and a lone
+    Shift toggles Chinese/English, which uses ordinary key forwarding and does
+    not depend on the SDK's filtered CapsLock/local-composition path.
     """
     # Chrome 136+ refuses --remote-debugging-port when it is pointed at the
     # DEFAULT user-data-dir, a hardening measure against other local processes
@@ -276,6 +287,22 @@ U=$(ps -o user= -p "$(pgrep -x gnome-shell | head -n1)" 2>/dev/null | tr -d ' ')
 if [ -z "$U" ] || [ "$U" = root ]; then U=$(stat -c %U /tmp/.X11-unix/X* 2>/dev/null | grep -v '^root$' | head -n1); fi
 if [ -z "$U" ]; then U=$(getent passwd 1000 | cut -d: -f1); fi
 H=$(getent passwd "$U" | cut -d: -f6)
+# Production action containers may run as an unprivileged sandbox user with
+# no-new-privileges, so sudo cannot switch to the host X11 socket owner. In
+# that topology the current user is intentionally allowed to use the mounted
+# display; keep its isolated HOME/profile instead. Traditional root action
+# servers retain the sudo path.
+CURRENT_U=$(id -un)
+CURRENT_H=$HOME
+SUDO=""
+if [ "$CURRENT_U" != "$U" ]; then
+  if sudo -n -u "$U" true >/dev/null 2>&1; then
+    SUDO="sudo -u $U -H"
+  else
+    U="$CURRENT_U"
+    H="$CURRENT_H"
+  fi
+fi
 BIN=""
 for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}; done
 [ -n "$BIN" ] || BIN=$(command -v google-chrome || command -v chromium || true)
@@ -299,31 +326,92 @@ for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}
 PROF="$H/{CHROME_PROFILE}"
 PREF="$PROF/Default/Preferences"
 if [ -f "$PREF" ]; then
-  sudo -u "$U" sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREF" 2>/dev/null || true
+  $SUDO sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREF" 2>/dev/null || true
 fi
-sudo -u "$U" rm -rf "$PROF/Default/Sessions" 2>/dev/null || true
-sudo -u "$U" rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" \
+$SUDO rm -rf "$PROF/Default/Sessions" 2>/dev/null || true
+$SUDO rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" \
                    "$PROF/Default/Last Session" "$PROF/Default/Last Tabs" 2>/dev/null || true
-( setsid sudo -u "$U" -H env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
-  DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
-  "$BIN" \\
-  --remote-debugging-port={CHROME_PORT} \\
-  --remote-debugging-address=127.0.0.1 \\
-  --user-data-dir="$H/{CHROME_PROFILE}" \\
-  --no-first-run \\
-  --no-default-browser-check \\
-  --disable-session-crashed-bubble \\
-  --restore-last-session=false \\
-  --disable-features=TranslateUI,MediaRouter \\
-  --disable-notifications \\
-  --deny-permission-prompts \\
-  --disable-infobars \\
-  --no-service-autorun \\
-  --password-store=basic \\
-  --use-mock-keychain \\
-  --start-maximized \\
-  about:blank \\
-  >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+if command -v dbus-run-session >/dev/null 2>&1 \\
+   && command -v ibus-daemon >/dev/null 2>&1 \\
+   && {{ [ -x /usr/libexec/ibus-engine-libpinyin ] \\
+        || [ -x /usr/lib/ibus/ibus-engine-libpinyin ]; }}; then
+  ( setsid $SUDO env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
+    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
+    OPENBOX_CHROME_BIN="$BIN" OPENBOX_CHROME_PROFILE="$H/{CHROME_PROFILE}" \\
+    dbus-run-session -- sh -c '
+      export GTK_IM_MODULE=ibus
+      export QT_IM_MODULE=ibus
+      export XMODIFIERS=@im=ibus
+      export IBUS_ENABLE_SYNC_MODE=1
+      export IBUS_USE_PORTAL=0
+
+      # Keep ordinary typing English by default. The default libpinyin main
+      # switch is Shift; pin it so a stale user setting cannot break the UI
+      # hint shown by DesktopTab.
+      if command -v gsettings >/dev/null 2>&1; then
+        gsettings set org.freedesktop.ibus.general preload-engines "[\\\"libpinyin\\\"]" >/dev/null 2>&1 || true
+        gsettings set org.freedesktop.ibus.general engines-order "[\\\"libpinyin\\\"]" >/dev/null 2>&1 || true
+        gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin init-chinese false >/dev/null 2>&1 || true
+        gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin main-switch "<Shift>" >/dev/null 2>&1 || true
+      fi
+
+      ibus-daemon --replace --xim --panel=disable >{IBUS_LOG} 2>&1 &
+      # Set the global engine after Chrome has opened an input context. Bound
+      # every attempt because IBus otherwise waits 15 seconds when no context
+      # exists yet; this helper must never delay Chrome readiness.
+      (
+        sleep 1
+        n=0
+        while [ "$n" -lt 6 ]; do
+          timeout 2 ibus engine libpinyin >/dev/null 2>&1 && exit 0
+          n=$((n + 1))
+          sleep 0.25
+        done
+      ) &
+
+      exec "$OPENBOX_CHROME_BIN" \\
+        --remote-debugging-port={CHROME_PORT} \\
+        --remote-debugging-address=127.0.0.1 \\
+        --user-data-dir="$OPENBOX_CHROME_PROFILE" \\
+        --gtk-version=3 \\
+        --no-first-run \\
+        --no-default-browser-check \\
+        --disable-session-crashed-bubble \\
+        --restore-last-session=false \\
+        --disable-features=TranslateUI,MediaRouter \\
+        --disable-notifications \\
+        --deny-permission-prompts \\
+        --disable-infobars \\
+        --no-service-autorun \\
+        --password-store=basic \\
+        --use-mock-keychain \\
+        --start-maximized \\
+        about:blank
+    ' >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+else
+  # Minimal/headless images may not carry IBus; retain the existing browser
+  # path so English keyboard and CDP automation still work there.
+  ( setsid $SUDO env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
+    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
+    "$BIN" \\
+    --remote-debugging-port={CHROME_PORT} \\
+    --remote-debugging-address=127.0.0.1 \\
+    --user-data-dir="$H/{CHROME_PROFILE}" \\
+    --no-first-run \\
+    --no-default-browser-check \\
+    --disable-session-crashed-bubble \\
+    --restore-last-session=false \\
+    --disable-features=TranslateUI,MediaRouter \\
+    --disable-notifications \\
+    --deny-permission-prompts \\
+    --disable-infobars \\
+    --no-service-autorun \\
+    --password-store=basic \\
+    --use-mock-keychain \\
+    --start-maximized \\
+    about:blank \\
+    >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+fi
 exit 0
 """
 

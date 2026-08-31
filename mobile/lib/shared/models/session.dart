@@ -21,6 +21,7 @@ class Session {
     required this.agent,
     required this.model,
     required this.status,
+    this.variant,
     required this.createdAt,
     required this.updatedAt,
     this.sandboxId,
@@ -41,6 +42,7 @@ class Session {
         agent: asString(json['agent']) ?? 'build',
         model: asString(json['model']) ?? '',
         status: sessionStatusFrom(asString(json['status'])),
+        variant: asString(json['variant']),
         createdAt: asDate(json['created_at']) ?? DateTime.now(),
         updatedAt: asDate(json['updated_at']) ?? DateTime.now(),
         sandboxId: asString(json['sandbox_id']),
@@ -61,6 +63,10 @@ class Session {
   final String title;
   final String agent;
   final String model;
+
+  /// Persisted reasoning strength; null delegates to the model's default.
+  final String? variant;
+
   final SessionStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -93,6 +99,7 @@ class Session {
         title: title ?? this.title,
         agent: agent,
         model: model,
+        variant: variant,
         status: status ?? this.status,
         createdAt: createdAt,
         updatedAt: updatedAt,

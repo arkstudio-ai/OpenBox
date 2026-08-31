@@ -7,6 +7,7 @@ import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/app_config.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
+import '../../utils/reasoning.dart';
 
 /// Model picker bottom sheet (web `ModelPicker`): checked list from
 /// `GET /api/agent/config`.
@@ -63,6 +64,85 @@ Future<void> showModelPicker(
       ),
     ),
   );
+}
+
+/// Reasoning-strength picker (web `ReasoningPicker`): the levels the active
+/// model declares, plus "default" which clears the conversation override.
+/// Never opened for a model that declares none — the pill is hidden then.
+Future<void> showReasoningPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String sessionKey,
+  required String modelId,
+  required ReasoningChoice choice,
+}) {
+  final t = context.tokens;
+  final i18n = ref.read(i18nProvider);
+  final defaultId = choice.defaultId;
+  final key = reasoningKey(sessionKey, modelId);
+
+  Widget row(BuildContext sheetContext, String? id, String label) => ListTile(
+        dense: true,
+        title: Text(label,
+            style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+        trailing: id == choice.activeId
+            ? Icon(Icons.check, size: 18, color: t.a700)
+            : null,
+        onTap: () {
+          ref.read(pickedVariantProvider(key).notifier).state = Variant(id);
+          Navigator.pop(sheetContext);
+        },
+      );
+
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: Text(
+              i18n.t('chat:reasoning.pick'),
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                fontWeight: FontWeight.w600,
+                color: t.n600,
+              ),
+            ),
+          ),
+          row(
+            sheetContext,
+            null,
+            defaultId == null
+                ? i18n.t('chat:reasoning.default')
+                : i18n.t('chat:reasoning.defaultWithLevel', vars: {
+                    'level': reasoningLevelLabel(i18n, defaultId),
+                  }),
+          ),
+          for (final id in choice.variants)
+            row(sheetContext, id, reasoningLevelLabel(i18n, id)),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Known level ids get a translated label; anything else shows the raw id,
+/// exactly as the web picker does.
+String reasoningLevelLabel(I18nState i18n, String id) {
+  const known = [
+    'off',
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  ];
+  return known.contains(id) ? i18n.t('chat:reasoning.level.$id') : id;
 }
 
 /// Mode/agent picker bottom sheet (web `ModePicker`): build vs plan.

@@ -14,6 +14,7 @@ import '../../api/mention_api.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
 import '../../utils/mention.dart';
+import '../../utils/reasoning.dart';
 import 'context_ring.dart';
 import 'mention_menu.dart';
 import 'picker_sheets.dart';
@@ -315,13 +316,21 @@ class _ComposerState extends ConsumerState<Composer> {
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
     final pickedAgent = ref.watch(pickedAgentProvider(widget.sessionKey));
 
-    final activeModelId = pickedModel ??
-        ((widget.session?.model.isNotEmpty ?? false)
-            ? widget.session!.model
-            : config?.defaultModel ?? '');
-    final activeModel = config?.byId(activeModelId);
+    final modelId = activeModelId(
+      picked: pickedModel,
+      sessionModel: widget.session?.model,
+      defaultModel: config?.defaultModel,
+    );
+    final activeModel = config?.byId(modelId);
     final activeAgent =
         pickedAgent ?? widget.session?.agent ?? config?.defaultAgent ?? 'build';
+    final reasoning = resolveReasoning(
+      model: activeModel,
+      sessionModel: widget.session?.model,
+      sessionVariant: widget.session?.variant,
+      pick: ref.watch(
+          pickedVariantProvider(reasoningKey(widget.sessionKey, modelId))),
+    );
 
     final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
@@ -389,49 +398,83 @@ class _ComposerState extends ConsumerState<Composer> {
             padding: const EdgeInsets.fromLTRB(10, 4, 8, 8),
             child: Row(
               children: [
-                if (widget.resources != null) ...[
-                  IconButton(
-                    onPressed: _showToolsMenu,
-                    icon: Icon(Icons.add, size: 20, color: t.n700),
-                    tooltip: i18n.t('chat:composer.tools'),
-                    visualDensity: VisualDensity.compact,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 32, height: 32),
-                    padding: EdgeInsets.zero,
-                  ),
-                  const SizedBox(width: 2),
-                ],
-                _pill(
-                  t,
-                  label: _agentDisplay(i18n, activeAgent),
-                  icon: Icons.tune,
-                  onTap: () => showModePicker(
-                    context,
-                    ref,
-                    sessionKey: widget.sessionKey,
-                    currentAgent: activeAgent,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                _pill(
-                  t,
-                  label: activeModel?.name ??
-                      (activeModelId.isEmpty ? '…' : activeModelId),
-                  icon: Icons.workspaces_outline,
-                  onTap: () => showModelPicker(
-                    context,
-                    ref,
-                    sessionKey: widget.sessionKey,
-                    currentModel: widget.session?.model,
+                // The controls scroll rather than squeeze: a third picker or
+                // a long model name must not shrink its neighbours to a
+                // zero-width sliver on a narrow phone.
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        if (widget.resources != null) ...[
+                          IconButton(
+                            onPressed: _showToolsMenu,
+                            icon: Icon(Icons.add, size: 20, color: t.n700),
+                            tooltip: i18n.t('chat:composer.tools'),
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints.tightFor(
+                                width: 32, height: 32),
+                            padding: EdgeInsets.zero,
+                          ),
+                          const SizedBox(width: 2),
+                        ],
+                        _pill(
+                          t,
+                          label: _agentDisplay(i18n, activeAgent),
+                          icon: Icons.tune,
+                          onTap: () => showModePicker(
+                            context,
+                            ref,
+                            sessionKey: widget.sessionKey,
+                            currentAgent: activeAgent,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _pill(
+                          t,
+                          label: activeModel?.name ??
+                              (modelId.isEmpty ? '…' : modelId),
+                          icon: Icons.workspaces_outline,
+                          onTap: () => showModelPicker(
+                            context,
+                            ref,
+                            sessionKey: widget.sessionKey,
+                            currentModel: widget.session?.model,
+                          ),
+                        ),
+                        // Only models that declare reasoning levels get the
+                        // picker; the rest own the effort themselves.
+                        if (reasoning.variants.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          _pill(
+                            t,
+                            label: reasoning.activeId == null
+                                ? i18n.t('chat:reasoning.default')
+                                : reasoningLevelLabel(
+                                    i18n, reasoning.activeId!),
+                            icon: Icons.psychology_outlined,
+                            onTap: () => showReasoningPicker(
+                              context,
+                              ref,
+                              sessionKey: widget.sessionKey,
+                              modelId: modelId,
+                              choice: reasoning,
+                            ),
+                          ),
+                        ],
+                        if (widget.session?.tokenUsage != null &&
+                            activeModel != null) ...[
+                          const SizedBox(width: 8),
+                          ContextRing(
+                            used: widget.session!.tokenUsage!.context,
+                            limit: activeModel.contextLimit ?? 0,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (widget.session?.tokenUsage != null && activeModel != null)
-                  ContextRing(
-                    used: widget.session!.tokenUsage!.context,
-                    limit: activeModel.contextLimit ?? 0,
-                  ),
-                const Spacer(),
                 _SendButton(
                   busy: widget.busy,
                   canSend: _canSend,

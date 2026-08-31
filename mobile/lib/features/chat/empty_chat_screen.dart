@@ -15,6 +15,7 @@ import '../../shared/widgets/toast.dart';
 import 'api/chat_api.dart';
 import 'state/chat_session_controller.dart';
 import 'state/config_providers.dart';
+import 'utils/reasoning.dart';
 import 'widgets/composer/composer.dart';
 import 'widgets/composer/resource_slot.dart';
 import 'widgets/empty_state.dart';
@@ -49,10 +50,23 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
     try {
       final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
       final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
+      // The reasoning pick belongs to the model it was made against, and the
+      // conversation stores it at birth (web `useStartChat`). Nothing is
+      // carried onto the new session key: from there the persisted value is
+      // what the picker restores.
+      final config = ref.read(appConfigProvider).valueOrNull;
+      final modelId =
+          activeModelId(picked: model, defaultModel: config?.defaultModel);
+      final variant = resolveReasoning(
+        model: config?.byId(modelId),
+        pick: ref.read(
+            pickedVariantProvider(reasoningKey(draftSessionKey, modelId))),
+      ).value;
       final session = await ref.read(chatApiProvider).createSession(
             projectId: widget.projectId,
             model: model,
             agent: agent,
+            variant: variant,
           );
       // Carry the draft picks onto the real session.
       ref.read(pickedModelProvider(session.id).notifier).state =

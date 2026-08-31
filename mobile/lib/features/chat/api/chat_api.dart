@@ -6,6 +6,7 @@ import '../../../shared/models/app_config.dart';
 import '../../../shared/models/interaction.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/session.dart';
+import '../utils/reasoning.dart';
 
 /// Chat REST calls (web `features/chat/api/*`). Everything the client sends
 /// goes over REST; streaming arrives via WS.
@@ -37,6 +38,7 @@ class ChatApi {
     String? projectId,
     String model = '',
     String agent = 'build',
+    Variant? variant,
   }) async {
     final resp = await _dio.post<Map<String, dynamic>>(
       '/api/agent/session',
@@ -44,18 +46,23 @@ class ChatApi {
         'project_id': ?projectId,
         'model': model,
         'agent': agent,
+        if (variant != null) 'variant': variant.level,
       },
     );
     return Session.fromJson(resp.data ?? const {});
   }
 
   /// `POST …/prompt_async` → `{ok: true}`; output arrives over WS.
+  ///
+  /// [variant] is tri-state: omit it to keep the conversation's stored
+  /// reasoning effort, pass one carrying null to clear the override.
   Future<void> promptAsync(
     String sessionId, {
     required String text,
     required String clientMessageId,
     String? agent,
     String? model,
+    Variant? variant,
     List<String> attachments = const [],
   }) async {
     await _dio.post<dynamic>(
@@ -65,6 +72,7 @@ class ChatApi {
         'client_message_id': clientMessageId,
         'agent': ?agent,
         if (model != null && model.isNotEmpty) 'model': model,
+        if (variant != null) 'variant': variant.level,
         if (attachments.isNotEmpty) 'attachments': attachments,
       },
     );

@@ -804,3 +804,51 @@ POST /v1/video/generations
 
 端点放行后即可切换，`last_frame → first_frame` 衔接随之可用——那是 §14.6
 留下的"场景漂移"唯一未解手段。
+
+## 16. 移动端连线上后端实测（2026-09-01）
+
+`--dart-define=API_BASE=https://ai.ueejavelin.org` 装进 iOS 模拟器，对着 AWS
+那台跑。
+
+### 16.1 线上先补齐
+
+进场时线上落后 6 个后端提交（`ad8d0cf`），且 `config/openbox.json` 的
+`video_generation` 还是上一轮的：没有 `wire_shape`（新代码按它分派报文形状，
+缺了会整体退回 `flat`——正是 wan3 分辨率丢失的那个老毛病）、默认模型为空、
+wan3.0 只挂了 1080p、还留着上游已下线的 `doubao-seedance-1-5-pro-251215`。
+
+对着本地实测过的注册表整体替换（只换 `video_generation` 一节，其余含密钥的
+部分原样不动，改前备份）。现在线上 8 个模型、`wan3.0-video + 720p` 为默认、
+`daily_job_limit` 一致。
+
+只重建了 `openbox-backend` / `openbox-frontend`，postgres、redis 与机器上其他
+无关服务未动。
+
+### 16.2 链路实证
+
+不是"看起来连上了"，是两头都留了痕：
+
+```
+模拟器   POST /api/auth/login → 页面渲染出后端返回的错误
+EC2 日志 backend-1 | "POST /api/auth/login HTTP/1.1" 401 Unauthorized
+```
+
+### 16.3 顺带查出并修掉的一个老问题
+
+负向登录（故意给错密码）时，页面写的是「Your session expired. Please sign in
+again.」——既不是发生的事，也不是该做的事。
+
+根因在后端：登录/注册的 401/409 只给字符串 `detail`。两端客户端都按
+`detail.code` 取文案，取不到退回按状态码取，于是所有 401 都落到会话过期那条。
+而 `AUTH_INVALID_CREDENTIALS` / `AUTH_USER_EXISTS` 在 web 与移动端四份
+`errors.json` 里一直躺着，从来发不出来。
+
+改成与 `auth.quota._quota_error` 同形的结构化 detail，客户端一行没改。修完
+重新部署，同一条负向用例现在渲染「Wrong account or password.」。
+
+与视频改造无关，是这次连线上跑才暴露的。
+
+### 16.4 卡住的一步
+
+线上库里 6 个账号，**没有 `videoqa`，也没有 `devtest`**——那两个是本地联调库
+才有的。要越过登录页测视频选择器，需要本人用线上账号输密码；密码不由我代输。

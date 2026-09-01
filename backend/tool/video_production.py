@@ -111,7 +111,10 @@ class VideoGenerateArgs(BaseModel):
     duration: int | None = Field(default=None, ge=-1, le=300)
     generate_audio: bool | None = None
     watermark: bool | None = None
-    #: Reuse one seed to hold a look steady across separate shots.
+    #: Reuse one seed to hold a look steady across separate shots. 0 means
+    #: "none": models that fill every schema field send 0 for an untouched
+    #: optional int, and refusing that would make every seedless model
+    #: unusable from those callers.
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
     input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8)
     #: Pay twice for a second take of a request already in flight.
@@ -1436,16 +1439,28 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
     model = (args.model or "").strip() or await _session_video_model_id(ctx)
     declared = video_providers.declared_model(model, config) if model else None
 
+    # A caller that populates every schema field sends the zero value for an
+    # optional int it never meant to set. Reading that as a real request makes
+    # the parameter refuse work nobody asked for, so treat it as absent — a
+    # deliberate seed is reused precisely because it is a specific number.
+    seed = args.seed or None
+    duration_arg = args.duration or None
+
     resolution = args.resolution or ""
     if not resolution:
         allowed = list(getattr(declared, "resolutions", None) or [])
         resolution = allowed[0] if len(allowed) == 1 else settings.default_resolution
     ratio = (args.ratio or settings.default_ratio or "9:16").strip()
-    duration = settings.default_duration if args.duration is None else args.duration
+    duration = settings.default_duration if duration_arg is None else duration_arg
     generate_audio = (
         settings.default_generate_audio if args.generate_audio is None else args.generate_audio
     )
     watermark = settings.default_watermark if args.watermark is None else args.watermark
+    dropped: list[str] = []
+    if seed is not None and not getattr(declared, "supports_seed", False):
+        # See validate_request: reproducibility is worth less than the shot.
+        seed = None
+        dropped.append(f"seed (model {model or settings.model} has none)")
     return {
         "production_id": None,
         "segment_id": None,
@@ -1458,10 +1473,11 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         "duration": duration,
         "generate_audio": generate_audio,
         "watermark": watermark,
-        "seed": args.seed,
+        "seed": seed,
         "content_hash": "",
         "plan_hash": "",
         "reconciling_existing": False,
+        "dropped": dropped,
     }
 
 
@@ -1632,7 +1648,6 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             generate_audio=approved["generate_audio"],
             input_mimes=[row.mime for row in inputs],
             declared=video_providers.declared_model(target.model, get_config()),
-            seed=approved["seed"],
             roles=tuple(roles),
         )
     except Exception as exc:
@@ -1653,6 +1668,11 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         f"generate_audio={approved['generate_audio']}  watermark={approved['watermark']}",
         f"inputs={len(inputs)}" + (f" roles={'/'.join(roles)}" if roles else ""),
         f"seed={approved['seed']}" if approved["seed"] is not None else "seed=unset",
+        *(
+            [f"dropped={'; '.join(approved['dropped'])}"]
+            if approved.get("dropped")
+            else []
+        ),
         # Billing is per second of output on this route, so an explicit
         # duration is the whole cost story; there is no per-call price to read.
         f"daily_submits_used={used}" + (f"/{limit}" if limit else " (no limit configured)"),
@@ -1775,7 +1795,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 generate_audio=generate_audio,
                 input_mimes=[row.mime for row in inputs],
                 declared=video_providers.declared_model(target.model, _get_config()),
-                seed=seed,
                 roles=tuple(roles),
             )
             channel = getattr(target, "channel", "ark")
@@ -2011,6 +2030,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 await _mark_asset(job.output_asset_id, status="failed")
                 job = await _owned_job(job.id, ctx, "segment")
             lines = _job_lines(job, asset)
+            if approved.get("dropped"):
+                # Degrading must stay visible: a caller who asked for a seed
+                # deserves to know it was not honoured, even though the shot
+                # itself is exactly what they asked for.
+                lines.append(f"dropped={'; '.join(approved['dropped'])}")
             workspace_path = await _try_materialize(job, ctx)
             if workspace_path:
                 lines.append(f"workspace_path={workspace_path}")

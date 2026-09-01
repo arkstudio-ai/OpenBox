@@ -60,10 +60,7 @@ def test_declared_duration_range_replaces_the_old_seedance_clamp():
         _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p", duration=24)
 
 
-def test_seed_and_frame_roles_are_refused_on_models_that_lack_them():
-    with pytest.raises(RuntimeError, match="does not accept a seed"):
-        _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p", seed=7)
-
+def test_frame_roles_are_refused_on_models_that_lack_them():
     with pytest.raises(RuntimeError, match="first_frame/last_frame"):
         _validate(
             SEEDANCE,
@@ -150,3 +147,52 @@ def test_duplicate_override_is_explicit():
     assert VideoGenerateArgs(action="models").allow_duplicate is False
     with pytest.raises(ValidationError):
         VideoGenerateArgs(action="submit", prompt="x")
+
+
+def test_a_zero_valued_optional_is_read_as_absent():
+    """Some callers populate every schema field, including ones they never set.
+
+    Such a caller sends seed=0 and duration=0 for parameters it has no opinion
+    about. Reading those as real requests made every seedless model refuse work
+    nobody had asked for, and left the caller no way to express "no seed" —
+    it cannot omit a field its own serializer always writes.
+    """
+    args = VideoGenerateArgs(
+        action="submit", prompt="一只猫", idempotency_key="k:1", seed=0, duration=0
+    )
+
+    assert (args.seed or None) is None
+    assert (args.duration or None) is None
+
+
+def test_a_real_seed_still_travels():
+    args = VideoGenerateArgs(
+        action="submit", prompt="一只猫", idempotency_key="k:1", seed=42
+    )
+
+    assert (args.seed or None) == 42
+
+
+def test_an_unusable_seed_is_dropped_rather_than_refusing_the_shot():
+    """A seed the model cannot use is worth less than the generation itself.
+
+    Missing it costs reproducibility; the video is still the one that was
+    asked for. Refusing costs the whole request — and a caller whose
+    serializer always writes every field cannot express "no seed" at all,
+    so the refusal made every seedless model unreachable from it.
+    """
+    _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p")
+
+    import inspect
+    source = inspect.getsource(video_providers._validate_declared)
+    assert "does not accept a seed" not in source
+
+
+def test_content_changing_roles_are_still_refused():
+    """first/last frame and reference audio change what the video IS."""
+    with pytest.raises(RuntimeError, match="first_frame/last_frame"):
+        _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p",
+                  roles=("first_frame",))
+    with pytest.raises(RuntimeError, match="audio reference"):
+        _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p",
+                  roles=("reference_audio",))

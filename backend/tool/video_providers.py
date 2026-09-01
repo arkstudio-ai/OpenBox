@@ -431,7 +431,6 @@ def _validate_declared(
     duration: int,
     has_video_ref: bool,
     has_image_ref: bool,
-    seed: int | None = None,
     roles: tuple[str, ...] = (),
 ) -> None:
     """Refuse what a declared model cannot do, before it costs anything.
@@ -473,8 +472,11 @@ def _validate_declared(
         raise VideoRequestError(f"model {entry.id} does not accept video references")
     if has_image_ref and not entry.supports_reference_image:
         raise VideoRequestError(f"model {entry.id} does not accept image references")
-    if seed is not None and not getattr(entry, "supports_seed", False):
-        raise VideoRequestError(f"model {entry.id} does not accept a seed")
+    # A seed is deliberately NOT a refusal. Missing it costs reproducibility,
+    # not content — the video is still the one that was asked for — whereas
+    # refusing costs the whole generation. The caller is told it was dropped.
+    # Frame roles and reference audio are different: those change what the
+    # video *is*, so they stay refusals below.
     frame_roles = {"first_frame", "last_frame"}
     if frame_roles & set(roles) and not getattr(entry, "supports_first_last_frame", False):
         raise VideoRequestError(
@@ -493,7 +495,6 @@ def validate_request(
     generate_audio: bool,
     input_mimes: list[str],
     declared: Any | None = None,
-    seed: int | None = None,
     roles: tuple[str, ...] = (),
 ) -> None:
     channel = getattr(route, "channel", "ark")
@@ -506,7 +507,6 @@ def validate_request(
             duration=duration,
             has_video_ref=has_video_ref,
             has_image_ref=any(mime.startswith("image/") for mime in input_mimes),
-            seed=seed,
             roles=roles,
         )
     # first_frame / last_frame / reference_audio have no place to live in the

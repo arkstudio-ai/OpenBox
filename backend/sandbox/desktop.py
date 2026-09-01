@@ -308,10 +308,13 @@ _ready: set[str] = set()
 def _install_script(name: str, body: str) -> str:
     """Shell that writes a script to PATH, preferring /usr/local/bin."""
     b64 = base64.b64encode(body.encode()).decode()
+    quoted_name = shlex.quote(name)
     return (
-        f"printf %s {b64} | base64 -d > /tmp/.{name} && chmod +x /tmp/.{name} && "
-        f"(sudo -n install -m755 /tmp/.{name} /usr/local/bin/{name} 2>/dev/null || "
-        f'(mkdir -p "$HOME/.local/bin" && install -m755 /tmp/.{name} "$HOME/.local/bin/{name}"))'
+        f'stage=$(mktemp "${{TMPDIR:-/tmp}}/.{quoted_name}.XXXXXX") && '
+        "trap 'rm -f -- \"$stage\"' EXIT HUP INT TERM && "
+        f'printf %s {b64} | base64 -d > "$stage" && chmod 755 "$stage" && '
+        f'(sudo -n install -m755 "$stage" /usr/local/bin/{quoted_name} 2>/dev/null || '
+        f'(mkdir -p "$HOME/.local/bin" && install -m755 "$stage" "$HOME/.local/bin/{quoted_name}"))'
     )
 
 

@@ -49,11 +49,13 @@ _installed: set[str] = set()
 
 
 def _use_internal_oss(oss: OssClient) -> bool:
-    """Cloud desktops use Alibaba's regional OSS network, not public egress."""
+    """Use OSS intranet endpoints only when the desktop shares its region."""
     from core.config import get_config
 
+    config = get_config()
     return (
-        get_config().sandbox_provider.lower() == "wuying"
+        config.sandbox_provider.lower() == "wuying"
+        and config.wuying_region_id == oss.region
         and oss.internal_host != oss.host
     )
 

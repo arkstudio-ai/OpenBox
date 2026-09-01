@@ -40,12 +40,31 @@ def test_only_wuying_selects_internal_asset_urls(monkeypatch):
     oss = client()
     monkeypatch.setattr(
         "core.config.get_config",
-        lambda: SimpleNamespace(sandbox_provider="wuying"),
+        lambda: SimpleNamespace(
+            sandbox_provider="wuying",
+            wuying_region_id="cn-hangzhou",
+        ),
     )
     assert assets._use_internal_oss(oss) is True
 
     monkeypatch.setattr(
         "core.config.get_config",
-        lambda: SimpleNamespace(sandbox_provider="docker"),
+        lambda: SimpleNamespace(
+            sandbox_provider="docker",
+            wuying_region_id="cn-hangzhou",
+        ),
     )
+    assert assets._use_internal_oss(oss) is False
+
+
+def test_cross_region_wuying_uses_public_oss_endpoint(monkeypatch):
+    oss = client()
+    monkeypatch.setattr(
+        "core.config.get_config",
+        lambda: SimpleNamespace(
+            sandbox_provider="wuying",
+            wuying_region_id="cn-shanghai",
+        ),
+    )
+
     assert assets._use_internal_oss(oss) is False

@@ -20,7 +20,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from core.config import get_config
 from core.oss import get_oss
-from sandbox.assets import ensure_cli
+from sandbox.assets import _use_internal_oss, ensure_cli
 from sandbox.client import SandboxClient
 from sandbox.desktop import (
     SHOT_PATH,
@@ -122,7 +122,7 @@ async def verify_desktop_and_oss() -> dict:
                 key,
                 "image/png",
                 expires_sec=300,
-                internal=True,
+                internal=_use_internal_oss(oss),
             )
             uploaded = await sandbox.execute(
                 f'PATH="$HOME/.local/bin:$PATH" obx-file put '

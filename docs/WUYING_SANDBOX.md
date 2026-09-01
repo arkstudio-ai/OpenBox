@@ -119,8 +119,15 @@ RunCommand`, both of which execute as root over the cloud-assistant channel.
 python backend/scripts/wuying_bootstrap.py \
     --desktop-id ecd-xxxxxxxxxxxxxxxxx \
     --relay root@<relay-public-ip> \
-    --relay-instance i-xxxxxxxxxxxxxxxxx
+    --relay-instance i-xxxxxxxxxxxxxxxxx \
+    --relay-region cn-hangzhou \
+    --tunnel-port 18001
 ```
+
+`--relay-region` is only needed when the relay ECS and desktop are in different
+regions; otherwise it defaults to `--region`. Give every simultaneously active
+desktop its own `--tunnel-port` so their reverse forwards cannot replace one
+another on the relay.
 
 Idempotent — re-run it to repair or upgrade a desktop. It will:
 

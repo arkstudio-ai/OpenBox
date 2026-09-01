@@ -35,7 +35,7 @@
 | 前端启动 | `npm run dev --prefix frontend-v2`（端口 3000） |
 | 数据库 | Docker 容器 `openbox-postgres-1`（postgres:16-alpine，5432）。**宿主机没有 pg_dump**（实测 command not found），一切 pg 工具用 `docker exec openbox-postgres-1 ...` |
 | 后端配置 | `backend/openbox.json`（**gitignored**，本机真实配置）+ `backend/.env`；模板是 `openbox.jsonc.example` |
-| WUYING 沙箱 | `.env` 指向生产桌面（隧道 `127.0.0.1:18000`）；`.env.wuying-dev` 指向 dev 桌面（18001，**已过期不可用**）。隧道脚本 `backend/scripts/wuying_dev.sh` |
+| WUYING 沙箱 | `.env` / `.env.wuying-prod` 仍指向已到期的旧桌面（18000）；`.env.wuying-dev` 指向上海桌面（18001），现由 AWS 线上环境使用。隧道脚本 `backend/scripts/wuying_dev.sh` |
 | 热重载盲区 | `uvicorn --reload` 只看 `.py`；改 `openbox.json` / `skill.yaml` / locale 必须手动重启后端 |
 | 测试基线 | 后端 `cd backend && uv run pytest -q` → **1016 passed**；前端 `npm run test`（vitest，182 例）、`npm run check`（含 tsc）、`npm run lint`（**存在 2 个既有错误**，均在 `content-view.ts`，圈复杂度 27/50——不是你造成的，也不许新增）；移动端 `cd mobile && dart analyze` 零问题 |
 | 浏览器验收账号 | `qa_jobs`，**密码见 `docs/LOCAL_CREDENTIALS.md`**（gitignored，不在仓库里，本机已存在）；历史数据验收会话：`http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8` |

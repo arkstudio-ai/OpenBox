@@ -457,3 +457,68 @@ def test_minimax_keeps_its_own_resolution_vocabulary():
         # An unmapped tier would collapse to the default and bill for a
         # picture nobody chose.
         assert body["size"] != "720x1280" or tier == "720p", (tier, body["size"])
+
+
+def test_duration_is_checked_for_every_declared_model_at_both_bounds():
+    """The check has to run before the channel branches return early.
+
+    validate_request's sd2 branch returns as soon as its own rules pass, so a
+    duration check placed after it would silently cover none of the six models
+    on that channel.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    config = core.config.get_config()
+
+    for model in config.video_generation.models:
+        low, high = model.duration_range
+        route = video_providers.resolve_route(model.id, config)
+        resolution = (model.resolutions or ["720p"])[0]
+        ratio = (model.ratios or ["9:16"])[0]
+
+        def check(duration):
+            video_providers.validate_request(
+                route, resolution=resolution, ratio=ratio, duration=duration,
+                generate_audio=model.supports_generated_audio,
+                input_mimes=[], declared=model,
+            )
+
+        with pytest.raises(RuntimeError):
+            check(low - 1)
+        with pytest.raises(RuntimeError):
+            check(high + 1)
+        check(low)
+        check(high)
+
+        if model.supports_smart_duration:
+            check(-1)
+        else:
+            with pytest.raises(RuntimeError):
+                check(-1)
+
+
+def test_an_undeclared_model_still_gets_a_channel_wide_duration_guard():
+    """Otherwise duration=3600 goes straight to the provider and burns a submit."""
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    route = video_providers.resolve_route("wan3.0-video", core.config.get_config())
+
+    def check(duration):
+        video_providers.validate_request(
+            route, resolution="720p", ratio="9:16", duration=duration,
+            generate_audio=True, input_mimes=[], declared=None,
+        )
+
+    check(5)
+    check(-1)
+    for absurd in (1, 99, 3600):
+        with pytest.raises(RuntimeError, match="not in video_generation.models"):
+            check(absurd)

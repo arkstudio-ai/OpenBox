@@ -531,6 +531,17 @@ def validate_request(
     # Refuse instead of sending a reference the gateway will read as an
     # ordinary one: an undeclared role that silently becomes a plain reference
     # produces a paid take that ignores the continuity the caller asked for.
+    # A model the registry does not describe skips every check above, so an
+    # absurd duration would go straight to the provider and waste the submit.
+    # This is the widest range any model on these channels honours (wan3's
+    # 2-30); a declared model has already been checked against its own.
+    if declared is None and duration != -1 and not 2 <= duration <= 30:
+        raise VideoRequestError(
+            f"{route.model} is not in video_generation.models, so only the "
+            f"channel-wide 2-30s range can be checked; requested {duration}s. "
+            "Declare the model to state its real limits."
+        )
+
     if channel == "sd2" and sd2_native_resolution(route.model) is not None:
         # Only the name-encoded tiers are stuck with the flat body. Everything
         # else on this channel reaches the task adaptor through `metadata`,

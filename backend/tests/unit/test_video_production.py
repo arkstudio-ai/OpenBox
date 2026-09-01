@@ -1491,46 +1491,62 @@ async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
     assert _provider_video_url(status) == "https://result.test/out.mp4"
 
 
-def test_video_skill_preserves_reference_recovery_and_teaching_contract():
-    skill_path = (
-        Path(__file__).resolve().parents[2]
-        / ".openbox"
-        / "skills"
-        / "video-production"
-        / "SKILL.md"
-    )
-    metadata, skill = parse_frontmatter(skill_path.read_text(encoding="utf-8"))
+def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
+    """The skill is knowledge now, so it must read like knowledge.
 
-    assert metadata["allowed-tools"] == [
-        "image_gen",
-        "video_project",
+    It used to restate the server's gates step by step, which made it a manual
+    for a state machine rather than advice about making a video. What it owes
+    the reader is what actually goes wrong and how to avoid it; ownership,
+    billing and idempotency are the tools' job and are not re-litigated here.
+    """
+    skill_dir = (
+        Path(__file__).resolve().parents[2] / ".openbox" / "skills" / "video-production"
+    )
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    metadata, skill = parse_frontmatter(text)
+
+    # A dependency declaration, not a grant: loading a skill never widens the
+    # callable tool set (see docs/SKILL_TOOL_DECOUPLING_PLAN.md).
+    assert set(metadata["allowed-tools"]) == {
         "video_generate",
         "video_transcribe",
-        "video_render",
+        "image_gen",
         "creator_context",
-    ]
-    assert len(skill_path.read_text(encoding="utf-8").splitlines()) <= 90
-    assert "generate it once with `image_gen`" in skill
-    assert "read its ready `asset_id`" in skill
-    assert "`/workspace/...` is inspection-only" in skill
-    assert "never repeat the host" in skill
-    assert "do not stop the turn after this read" in skill
-    assert "A prose-only “if this is okay” question is" in skill
-    assert "native approval card" in skill
-    assert "`spend` approval" in skill
-    assert "accepted actual STT" in skill
-    assert "wait_iteration" in skill
-    assert "returned `version`" in skill
-    assert "A timeout is normal" in skill
-    assert "`recovery_blocked=true`" in skill
-    assert 'role="broll"' in skill
-    assert "`全片一致的画面基底：<anchor>`" in skill
-    assert "`自然肢体动作：...`" in skill
-    assert "recount" in skill
-    assert "Leave `model` unset" in skill
-    assert "`@<exact dialogue>`" in skill
-    assert "`无字幕`" in skill
-    assert "Submit independent planned segments together" in skill
-    assert "Keep dependent actions for one job ordered" in skill
-    assert "`polling_paused=true`" in skill
-    assert "resume that exact job only in a later turn" in skill
+        "share_file",
+        "bash",
+    }
+    assert "video_project" not in text and "video_render" not in text
+
+    # Progressive disclosure: the body stays small, detail lives alongside it.
+    assert len(text.splitlines()) <= 200
+    for name in ("prompt-recipes.md", "model-guide.md", "quality.md"):
+        assert (skill_dir / "references" / name).is_file()
+        assert name in skill
+
+    # The craft it must carry.
+    assert "全片一致的画面基底" in skill or "anchor" in skill
+    assert "无字幕" in skill
+    assert "actual transcript" in skill
+    assert "seed" in skill
+    assert "A timeout is normal, and a paid task is never replaced" in skill
+    assert "polling_paused=true" in skill
+
+    # And the posture: advice that can be departed from.
+    assert "not a pipeline" in skill
+    assert "it advises, it never" in skill
+
+
+def test_video_skill_scripts_are_bundled_for_the_agent_to_run():
+    scripts = (
+        Path(__file__).resolve().parents[2]
+        / ".openbox" / "skills" / "video-production" / "scripts"
+    )
+
+    assert {item.name for item in scripts.iterdir()} >= {
+        "lint_prompt.py",
+        "compare_transcript.py",
+        "build_ass.py",
+        "compose.sh",
+        "extract_audio.sh",
+        "state.py",
+    }

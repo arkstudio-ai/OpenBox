@@ -1,12 +1,10 @@
 """Regression anchor for rebuilding a video turn from ``video_project status``."""
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from jsonschema import Draft202012Validator
 
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
@@ -304,12 +302,10 @@ async def test_status_is_the_complete_recovery_contract():
     assert recovered.metadata["render_idempotency_key"] == render_idempotency_key(
         production_id, scopes["render"]
     )
-    schema_path = (
-        Path(__file__).parents[2]
-        / ".openbox/skills/video-production/references/io-schema.json"
-    )
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    Draft202012Validator(schema).validate(recovered.metadata)
+    # The status payload used to be validated against a JSON Schema bundled
+    # with the skill. That file described the tool, so it lived on the wrong
+    # side of the knowledge/capability line and went with the skill rewrite;
+    # the field-level assertions above and below are the contract.
     assert "spend_budget=" not in recovered.output
     assert f"segment_1_model={first.model}" in recovered.output
     assert f"segment_2_generation_job_id={second_job_id}" in recovered.output

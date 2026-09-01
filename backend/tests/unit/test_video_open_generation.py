@@ -247,3 +247,23 @@ def test_every_supplied_image_gets_named():
     body = _sd2_body("wan3.0-video-prime", two, prompt="@image_file_1 是主播。")
 
     assert "@image_file_2" in body["prompt"]
+
+
+def test_the_shot_number_survives_into_the_attachment_ordinal():
+    """Concurrent shots finish out of order; attach order is completion order.
+
+    Without an explicit ordinal the renderer falls back to array position, so
+    whichever shot finished second is labelled "第 2 段" — observed on a run
+    where the closing shot was displayed as the second one.
+    """
+    args = VideoGenerateArgs(
+        action="submit", prompt="一只猫", idempotency_key="k:1", shot=4
+    )
+
+    assert args.shot == 4
+
+
+def test_shot_is_optional_for_a_one_off_generation():
+    args = VideoGenerateArgs(action="submit", prompt="一只猫", idempotency_key="k:1")
+
+    assert args.shot is None

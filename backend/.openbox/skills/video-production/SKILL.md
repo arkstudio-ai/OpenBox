@@ -37,8 +37,11 @@ makes a talking-head video *good*.
 3. **Split at meaning, then let each line set its own length.** Five shots is a
    good default for 30–60s. Keep a line under ~40 characters: past that the
    model rushes the delivery and the caption needs three lines.
-   Run `python3 "$S/plan_shots.py" --target <asked> --line … --line …` and use
-   the seconds it gives each shot. **Never divide the requested total by the
+   Run `python3 "$S/plan_shots.py" --target <asked> --rate <pace> --line …
+   --line …` and use the seconds it gives each shot. **Choose `--rate` from
+   the piece you just wrote** — a calm bedtime-routine explainer reads near
+   3.4 characters/second, an ordinary how-to near 4.0, a punchy hook or a
+   promo near 4.6. You know the tone; the script cannot infer it. **Never divide the requested total by the
    shot count** — the model fills whatever time it is given: too much and it
    invents words to pad the gap, too little and the delivery races. Both have
    been measured (see `references/quality.md`). If the honest total overshoots
@@ -55,8 +58,10 @@ makes a talking-head video *good*.
    description of what each one accepts; `references/model-guide.md` covers the
    trade-offs. Use `action="estimate"` to validate a shot for free before paying.
 7. **Generate every shot at once.** One `video_generate(action="submit")` per
-   shot, each with a distinct `idempotency_key` (`<slug>:shot<N>:v1`), **all in
-   the same response** — then poll them together. Submitting one, waiting for
+   shot, each with a distinct `idempotency_key` (`<slug>:shot<N>:v1`) **and its
+   `shot=<N>`** — concurrent shots finish out of order, and without that number
+   the chat labels whichever landed second "第 2 段". **All in the same
+   response** — then poll them together. Submitting one, waiting for
    it, then submitting the next multiplies the wait by the number of shots.
    Never pay for a whole-script single take "to see how it looks" and then
    split it up: that is one wasted generation, and its footage duplicates

@@ -27,8 +27,11 @@ import json
 import re
 import sys
 
-#: Characters per second of comfortable Mandarin narration. Broadcast pace is
-#: 280-300 per minute; short-form 口播 sits a little under that.
+#: Characters per second of comfortable Mandarin narration, and only a
+#: default: pace belongs to the piece, not to this file. Broadcast reads at
+#: 280-300/minute (≈4.7-5.0/s); an unhurried explainer sits near 3.4; a
+#: high-energy hook pushes 4.6. The caller knows which one it is writing and
+#: passes --rate; see references/quality.md for the bands.
 NARRATION_RATE = 4.0
 
 #: Lead-in and tail-out. A shot cut flush to the first and last syllable has
@@ -85,7 +88,11 @@ def main() -> int:
     parser.add_argument("--target", type=float, default=0,
                         help="the total the person asked for, in seconds (advisory)")
     parser.add_argument("--rate", type=float, default=NARRATION_RATE,
-                        help=f"spoken characters per second (default {NARRATION_RATE})")
+                        help=(
+                            "spoken characters per second for THIS piece "
+                            f"(default {NARRATION_RATE}; calm 3.4, conversational 4.0, "
+                            "energetic 4.6)"
+                        ))
     parser.add_argument("--max-shot-seconds", type=int, default=30,
                         help="the chosen model's ceiling, from video_generate(action='models')")
     parser.add_argument("--json", action="store_true")

@@ -116,6 +116,10 @@ class VideoGenerateArgs(BaseModel):
     #: optional int, and refusing that would make every seedless model
     #: unusable from those callers.
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+    #: Which shot this is, 1-based. Concurrent shots finish out of order, so
+    #: attach order is completion order; without this the chat labels whichever
+    #: finished second "第 2 段" no matter which shot it actually is.
+    shot: int | None = Field(default=None, ge=1, le=200)
     input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8)
     #: Pay twice for a second take of a request already in flight.
     allow_duplicate: bool = False
@@ -724,7 +728,11 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
                         if segment
                         else ((production.brief or production.title) if production else None)
                     ),
-                    ordinal=segment.ordinal if segment else None,
+                    ordinal=(
+                        segment.ordinal
+                        if segment
+                        else (job.request_data or {}).get("shot")
+                    ),
                     revision=segment.revision if segment else None,
                     metadata={
                         "production_id": job.production_id,
@@ -1478,6 +1486,7 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         "plan_hash": "",
         "reconciling_existing": False,
         "dropped": dropped,
+        "shot": args.shot,
     }
 
 
@@ -1806,6 +1815,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
                 "roles": list(roles),
+                # Which shot this is, so the chat can order concurrent results
+                # by script position rather than by whichever finished first.
+                "shot": approved.get("shot"),
                 "seed": seed,
                 "input_asset_ids": [row.id for row in inputs],
                 "provider_wire_format": target.wire_format,

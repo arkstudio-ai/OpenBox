@@ -54,9 +54,19 @@ words in the audio when the model changed a particle or a phrase.
 
 ## Shot length
 
-A shot's duration is an output of its line, never an input. Mandarin narration
-runs about 4 characters per second (broadcast pace is 280–300/minute) and needs
-a breath at each end, so `plan_shots.py` computes each shot from its own text.
+A shot's duration is an output of its line, never an input. `plan_shots.py`
+computes each shot from its own text, at the pace *you* pass in — the piece
+decides that, not the script:
+
+| pace | chars/s | fits |
+|---|---|---|
+| calm | 3.4 | meditation, bedtime, anything soothing |
+| conversational | 4.0 | the default; how-to, explainer, review |
+| energetic | 4.6 | hooks, promos, countdowns |
+
+Broadcast news reads at 280–300/minute (≈4.7–5.0/s), which is the ceiling for
+comfortable listening. Every shot also needs a breath at each end, which is why
+the planner never packs a line in tight.
 
 Measured 2026-09-01, on a run that divided "30 seconds" by five shots:
 

@@ -259,10 +259,12 @@ def test_the_skill_says_to_fan_out_shots_rather_than_walk_them():
     one of them was a whole-script single take the agent then discarded after
     splitting — a duplicate of shot 1, paid for twice over.
     """
-    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
 
-    assert "all in\n   the same response" in text
-    assert "Split first, then generate" in text
+    assert "All in the same response" in flowed
+    assert "Split first, then generate" in flowed
+    # Concurrent shots finish out of order, so each needs its own number.
+    assert "`shot=<N>`" in flowed
 
 
 def test_the_skill_says_one_current_take_per_shot():
@@ -349,3 +351,32 @@ def test_the_skill_plans_shot_length_from_the_text():
 
     assert "plan_shots.py" in flowed
     assert "Never divide the requested total by the shot count" in flowed
+
+
+def test_pace_is_the_callers_choice_not_a_baked_in_constant():
+    """A meditation script and a promo do not read at the same speed.
+
+    The agent knows which one it just wrote; the script cannot infer it, so
+    --rate is how that judgement reaches the arithmetic.
+    """
+    line = "下班回家，先别刷手机，试试这两个放松的方法，效果很好。"
+
+    calm = _plan(line)["shots"][0]["seconds"]
+    energetic = _plan(line)["shots"][0]["seconds"]
+    assert calm == energetic  # same default
+
+    import json as _json
+    def at(rate):
+        argv = [sys.executable, str(SCRIPTS / "plan_shots.py"), "--json",
+                "--rate", str(rate), "--line", line]
+        return _json.loads(subprocess.run(argv, capture_output=True, text=True,
+                                          check=True).stdout)["total_seconds"]
+
+    assert at(3.4) > at(4.6)
+
+
+def test_the_skill_tells_the_agent_to_pick_a_pace():
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+
+    assert "--rate" in flowed
+    assert "Choose `--rate` from the piece you just wrote" in flowed

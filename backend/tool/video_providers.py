@@ -611,10 +611,17 @@ def _with_image_file_refs(prompt: str, count: int) -> str:
 
 #: Portrait/landscape pixel pairs per resolution tier, for adaptors that take
 #: a `WxH` string rather than a tier name.
+#: Short/long pixel pair per tier name. Includes the tiers only MiniMax uses
+#: (512p, 2k) so a model's own vocabulary survives the trip: its adaptor reads
+#: the numbers back out of the string, so an unmapped tier would silently
+#: become the default one.
 _SIZE_BY_RESOLUTION = {
     "480p": (480, 854),
+    "512p": (512, 912),
     "720p": (720, 1280),
+    "768p": (768, 1344),
     "1080p": (1080, 1920),
+    "2k": (1440, 2560),
 }
 
 

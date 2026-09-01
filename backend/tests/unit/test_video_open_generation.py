@@ -407,3 +407,53 @@ def test_the_budget_line_says_what_is_left_not_what_is_spent():
     assert "daily_submits_remaining" in source
     # The old "used=N/limit" form is what invited the misreading.
     assert not re.search(r"daily_submits_used=\{used\}\"?\s*\+", source)
+
+
+def test_every_model_declares_a_duration_range_it_was_measured_at():
+    """Vendor docs and this deployment disagree, so both were checked.
+
+    通义万相 2.7's public docs say 2-15s, but the endpoint behind this relay
+    honoured 30s exactly (requested 30 → 30.024s), and its adaptor refuses 31.
+    Seedance's docs say -1 picks a length for you, and both its paths here
+    accept it — an earlier guess had that flag off. MiniMax H3's 4-15s matches
+    its docs and the gateway constants.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    models = core.config.get_config().video_generation.models
+
+    for model in models:
+        low, high = model.duration_range or (0, 0)
+        assert low >= 2 and high >= low, model.id
+        assert high <= 30, f"{model.id} claims more than any vendor here allows"
+
+
+def test_minimax_keeps_its_own_resolution_vocabulary():
+    """Its adaptor parses tiers back out of the WxH string it is sent.
+
+    Declaring 720p/1080p put another vendor's names on it; asking for 720p
+    returned 768x1344, the tier it actually rounded to.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    config = core.config.get_config()
+    entry = next(m for m in config.video_generation.models if m.id == "MiniMax-H3")
+
+    assert entry.resolutions == ["480p", "512p", "768p", "2k"]
+    for tier in entry.resolutions:
+        _path, body = video_providers.build_payload(
+            video_providers.resolve_route("MiniMax-H3", config), prompt="猫",
+            refs=[], resolution=tier, ratio="9:16", duration=6,
+            generate_audio=True, watermark=False, seed=None, declared=entry,
+        )
+        # An unmapped tier would collapse to the default and bill for a
+        # picture nobody chose.
+        assert body["size"] != "720x1280" or tier == "720p", (tier, body["size"])

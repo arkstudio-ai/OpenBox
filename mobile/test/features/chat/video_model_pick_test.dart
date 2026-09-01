@@ -1,5 +1,7 @@
 import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:bossip_mobile/shared/models/session.dart';
+import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The video pill mirrors web `VideoModelPicker` + `useVideoModelChoice`.
@@ -47,6 +49,25 @@ void main() {
     expect(config.defaultVideoResolution, '720p');
     expect(resolveTier(config.defaultVideoModel, config.defaultVideoResolution),
         '720p');
+  });
+
+  test('a draft pick survives the hop onto the real session', () {
+    // Mobile creates the session first and sends separately, so the draft
+    // picks have to be copied across by hand — web passes them as options on
+    // the first prompt and never holds them. Dropping the video pick here
+    // generated the first shot with the deployment default, at a different
+    // price from the model the person had selected.
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    container.read(pickedVideoProvider('__draft__').notifier).state =
+        const VideoPick('wan3.0-video', '1080p');
+    container.read(pickedVideoProvider('s-new').notifier).state =
+        container.read(pickedVideoProvider('__draft__'));
+
+    final carried = container.read(pickedVideoProvider('s-new'));
+    expect(carried?.modelId, 'wan3.0-video');
+    expect(carried?.resolution, '1080p');
   });
 
   test('a session carries both halves of the pick', () {

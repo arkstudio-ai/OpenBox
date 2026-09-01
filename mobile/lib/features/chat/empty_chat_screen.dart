@@ -72,6 +72,12 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
       ref.read(pickedModelProvider(session.id).notifier).state =
           model.isEmpty ? null : model;
       ref.read(pickedAgentProvider(session.id).notifier).state = agent;
+      // The video pick too: it is made on the empty screen like the others,
+      // and dropping it here silently generated the first shot with the
+      // deployment default — a different model at a different price from the
+      // one the person had selected.
+      ref.read(pickedVideoProvider(session.id).notifier).state =
+          ref.read(pickedVideoProvider(draftSessionKey));
       await ref
           .read(chatSessionProvider(session.id).notifier)
           .send(text, attachments: attachments);

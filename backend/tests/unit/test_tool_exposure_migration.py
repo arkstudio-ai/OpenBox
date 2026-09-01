@@ -11,7 +11,23 @@ import sqlalchemy as sa
 
 
 PREVIOUS_HEAD = "b6d8f0a2c4e6"
-NEW_HEAD = "f0b2d4e6a8c1"
+
+
+def _current_head() -> str:
+    """Whatever the migration tree currently ends at.
+
+    Pinning a literal here made every later migration fail this test, which
+    checks that upgrading backfills state and leaves ONE head — neither claim
+    is about a particular revision id.
+    """
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.set_main_option(
+        "script_location",
+        str(Path(__file__).resolve().parents[2] / "db" / "migrations"),
+    )
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1, f"expected a single head, found {heads}"
+    return heads[0]
 
 
 def _previous_head_fixture(database_path: Path) -> None:
@@ -135,7 +151,7 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
     assert state == "{}"
-    assert version == NEW_HEAD
+    assert version == _current_head()
     assert "internal_parts" in inspector.get_table_names()
     assert "video_material_groups" not in inspector.get_table_names()
     assert "video_material_assets" not in inspector.get_table_names()
@@ -164,7 +180,7 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
         assert connection.exec_driver_sql(
             "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
         ).scalar_one() is None
-    assert ScriptDirectory.from_config(config).get_heads() == [NEW_HEAD]
+    assert ScriptDirectory.from_config(config).get_heads() == [_current_head()]
     engine.dispose()
 
     # An empty/drained deployment can safely roll the schema back.  The

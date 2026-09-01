@@ -1556,10 +1556,17 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
     seed = args.seed or None
     duration_arg = args.duration or None
 
-    resolution = args.resolution or ""
+    resolution = args.resolution or await _session_video_resolution(ctx)
+    allowed = list(getattr(declared, "resolutions", None) or [])
+    if resolution and allowed and resolution not in allowed:
+        # The composer pick belongs to whichever model was selected with it.
+        # Switching model can strand it, and silently generating at another
+        # tier bills a different price for a different picture.
+        resolution = ""
     if not resolution:
-        allowed = list(getattr(declared, "resolutions", None) or [])
         resolution = allowed[0] if len(allowed) == 1 else settings.default_resolution
+        if allowed and resolution not in allowed:
+            resolution = allowed[0]
     ratio = (args.ratio or settings.default_ratio or "9:16").strip()
     duration = settings.default_duration if duration_arg is None else duration_arg
     generate_audio = (
@@ -1590,6 +1597,27 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         "dropped": dropped,
         "shot": args.shot,
     }
+
+
+async def _session_video_resolution(ctx: ToolContext) -> str:
+    """The resolution tier picked in the composer, if any.
+
+    Like the model pick, a convenience rather than a precondition: any failure
+    to read it falls through to the model's own default.
+    """
+    try:
+        from db.base import get_db_session
+        from db.models.session import Session as SessionORM
+
+        if not ctx.session_id:
+            return ""
+        async with get_db_session() as db:
+            session = await db.get(SessionORM, ctx.session_id)
+        if session and session.user_id == ctx.user_id and session.video_resolution:
+            return session.video_resolution
+        return ""
+    except Exception:
+        return ""
 
 
 async def _session_video_model_id(ctx: ToolContext) -> str:

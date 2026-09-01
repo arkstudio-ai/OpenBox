@@ -246,7 +246,10 @@ class VideoGenerationConfig(BaseModel):
     # channel below because the BossIP relay serves it through ``/v1/videos``
     # (``sd2``), while another gateway may expose the native ``task`` protocol.
     model: str = "wan3.0-video"
-    default_resolution: str = "1080p"
+    # 720p, not 1080p: it is the tier every model offers, and it is what a
+    # vertical short actually needs. Defaulting to the top tier quietly made
+    # every generation the most expensive one available.
+    default_resolution: str = "720p"
     default_ratio: str = "9:16"
     default_duration: int = Field(default=-1, ge=-1, le=30)
     default_generate_audio: bool = True

@@ -9,6 +9,7 @@ export interface StartOpts {
   model?: string
   variant?: string | null
   videoModel?: string
+  videoResolution?: string
   agent?: string
   projectId?: string
   attachments?: string[]
@@ -58,6 +59,7 @@ export function useStartChat(
           model: opts?.model,
           variant: opts?.variant,
           videoModel: opts?.videoModel,
+          videoResolution: opts?.videoResolution,
           agent: opts?.agent,
           attachments: opts?.attachments,
           clientMessageId,

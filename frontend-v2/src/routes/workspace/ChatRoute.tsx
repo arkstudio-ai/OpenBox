@@ -156,6 +156,7 @@ export default function ChatRoute() {
         sessionModel={session.data?.model}
         sessionVariant={session.data?.variant}
         sessionVideoModel={session.data?.video_model}
+        sessionVideoResolution={session.data?.video_resolution}
         sessionKey={sessionId}
         contextTokens={session.data?.token_usage?.context ?? 0}
         contextLimit={session.data?.token_usage?.limit ?? 0}

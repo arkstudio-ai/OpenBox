@@ -83,7 +83,7 @@
   "video_generation": {
     "provider": "bossip",
     "model": "wan3.0-video",
-    "default_resolution": "1080p",
+    "default_resolution": "720p",
     "default_ratio": "9:16",
     "default_duration": -1,
     "default_generate_audio": true,
@@ -128,7 +128,7 @@
     "models": [
       { "id": "wan3.0-video", "name": "Wan 3.0", "channel": "sd2",
         "provider": "newapi", "tier": "标准", "max_duration_seconds": 30,
-        "resolutions": ["1080p"],
+        "resolutions": ["480p", "720p", "1080p"],
         // wan3 refuses 21:9 outright rather than substituting a default,
         // so the accepted set is declared per model rather than globally.
         "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],

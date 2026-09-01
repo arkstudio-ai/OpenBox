@@ -40,6 +40,7 @@ class PromptBody(BaseModel):
     #: video tools can read it when the agent reaches them; a segment then
     #: freezes it at submission, leaving in-flight work untouched.
     video_model: str | None = None
+    video_resolution: str | None = None
     #: Omitted keeps the conversation selection; explicit null clears it and
     #: returns to the selected model's advertised default.
     variant: ReasoningVariant | None = None
@@ -67,6 +68,7 @@ class UpdateSessionBody(BaseModel):
     #: `model`: segments snapshot it at submission, so a switch only reaches
     #: work not yet started.
     video_model: str | None = None
+    video_resolution: str | None = None
 
 
 class CommandBody(BaseModel):
@@ -105,6 +107,20 @@ async def _remember_video_model(session, requested: str | None, user_id: str) ->
     value = requested.strip() or None
     if value != getattr(session, "video_model", None):
         await session_mod.update_session(session.id, video_model=value, user_id=user_id)
+
+
+async def _remember_video_resolution(session, requested: str | None, user_id: str) -> None:
+    """Keep the composer's resolution pick beside its model.
+
+    Not validated against the model here: the pair is checked at submit, where
+    a mismatch can name both halves. Rejecting at the API would also strand a
+    conversation whose model was retired under it.
+    """
+    if requested is None:
+        return
+    value = requested.strip() or None
+    if value != getattr(session, "video_resolution", None):
+        await session_mod.update_session(session.id, video_resolution=value, user_id=user_id)
 
 
 def _checked_variant(model_id: str, requested: str | None) -> str | None:
@@ -309,6 +325,7 @@ async def send_message(
 
     chosen_model = await _remember_model(session, body.model, user_id)
     await _remember_video_model(session, body.video_model, user_id)
+    await _remember_video_resolution(session, body.video_resolution, user_id)
     chosen_variant = await _remember_variant(
         session,
         chosen_model,
@@ -368,6 +385,7 @@ async def send_message_async(
     # attempts five times before failing the turn.
     chosen_model = await _remember_model(session, body.model, user_id)
     await _remember_video_model(session, body.video_model, user_id)
+    await _remember_video_resolution(session, body.video_resolution, user_id)
     chosen_variant = await _remember_variant(
         session,
         chosen_model,
@@ -485,6 +503,7 @@ class RegenerateBody(BaseModel):
     model: str | None = None
     #: Independently switchable — a turn can fail on the video model alone.
     video_model: str | None = None
+    video_resolution: str | None = None
 
 
 @router.get("/session/{session_id}/diff/step")
@@ -583,6 +602,7 @@ async def regenerate_message(
     # Independent of the chat model: a retry may switch only the video model.
     if body:
         await _remember_video_model(session, body.video_model, user_id)
+    await _remember_video_resolution(session, body.video_resolution, user_id)
 
     last_user = await session_mod.delete_messages_from(
         session_id,

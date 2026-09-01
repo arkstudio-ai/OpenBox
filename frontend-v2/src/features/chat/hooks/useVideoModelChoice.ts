@@ -16,6 +16,13 @@ import { useVideoModelChoiceStore, usePickedVideoModel } from "../stores/video-m
 interface Options {
   /** The video model this conversation last used, from the session record. */
   sessionVideoModel?: string
+  /** The resolution chosen with it, likewise from the session record. */
+  sessionVideoResolution?: string
+  /** Deployment default resolution, for a conversation that has not chosen. */
+  resolutionFallback?: string
+  /** Each model's own tiers, so a stale pick is not carried onto a model
+   *  that cannot honour it. */
+  resolutionsByModel?: Record<string, string[] | undefined>
   /** Changes when the user moves to another conversation. */
   sessionKey?: string
   /** Deployment default, for a conversation that has not chosen yet. */
@@ -27,7 +34,14 @@ interface Options {
 // `undefined` as "there is no conversation".
 const NEW_SESSION_KEY = "__new_session__"
 
-export function useVideoModelChoice({ sessionVideoModel, sessionKey, fallback }: Options) {
+export function useVideoModelChoice({
+  sessionVideoModel,
+  sessionVideoResolution,
+  sessionKey,
+  fallback,
+  resolutionFallback,
+  resolutionsByModel,
+}: Options) {
   const key = sessionKey ?? NEW_SESSION_KEY
   const picked = usePickedVideoModel(key)
   const pickInStore = useVideoModelChoiceStore((s) => s.pick)
@@ -38,10 +52,21 @@ export function useVideoModelChoice({ sessionVideoModel, sessionKey, fallback }:
   // reset would wipe the pick made in whichever chat mounted next.
   useEffect(() => () => clear(key), [key, clear])
 
+  const activeId = picked?.modelId ?? (sessionVideoModel || undefined) ?? fallback
+  const chosen = picked?.resolution ?? sessionVideoResolution ?? resolutionFallback
+  // A resolution belongs to the model it was picked with. Switching model can
+  // strand it, and showing a tier the new model does not offer would promise
+  // something the backend then refuses.
+  const tiers = activeId ? resolutionsByModel?.[activeId] : undefined
+  const activeResolution =
+    chosen && (!tiers?.length || tiers.includes(chosen)) ? chosen : tiers?.[0]
+
   return {
-    activeId: picked ?? (sessionVideoModel || undefined) ?? fallback,
+    activeId,
+    activeResolution,
     /** What to send with the next turn: only an actual pick, never the default. */
-    pending: picked,
-    pick: (id: string) => pickInStore(key, id),
+    pending: picked?.modelId,
+    pendingResolution: picked?.resolution,
+    pick: (modelId: string, resolution: string) => pickInStore(key, { modelId, resolution }),
   }
 }

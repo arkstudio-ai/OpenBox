@@ -31,6 +31,7 @@ export interface ComposerSubmit {
   variant?: string | null
   /** Video model, only when the user actually picked one this turn. */
   videoModel?: string
+  videoResolution?: string
   /** The agent to answer as, when the user changed it before sending. */
   agent?: string
   /** OSS asset ids of the message's attachments. */
@@ -65,6 +66,7 @@ interface Props {
   agents?: ChatAgent[]
   /** The video model this conversation generates with. */
   sessionVideoModel?: string
+  sessionVideoResolution?: string
   /** The agent this conversation is on. */
   sessionAgent?: string
   onPickAgent?: (name: string) => void
@@ -116,6 +118,7 @@ export function Composer({
   sessionModel,
   sessionVariant,
   sessionVideoModel,
+  sessionVideoResolution,
   sessionKey,
   contextTokens = 0,
   contextLimit = 0,
@@ -140,6 +143,7 @@ export function Composer({
     sessionModel,
     sessionVariant,
     sessionVideoModel,
+    sessionVideoResolution,
     sessionKey,
   })
   const { activeId, pick } = chat
@@ -207,6 +211,7 @@ export function Composer({
       model: activeId,
       variant: reasoning.value,
       videoModel: video.pending,
+      videoResolution: video.pendingResolution,
       attachments: assetIds,
     })
     if (result && typeof result.then === "function") {
@@ -302,7 +307,12 @@ export function Composer({
             {/* Beside the chat model on purpose — the two are picked
                 independently, and a person setting up a video turn expects to
                 choose both in one place. */}
-            <VideoModelPicker models={videoModels} activeId={video.activeId} onPick={video.pick} />
+            <VideoModelPicker
+              models={videoModels}
+              activeId={video.activeId}
+              activeResolution={video.activeResolution}
+              onPick={video.pick}
+            />
             {/* Beside the picker on purpose: the window it measures belongs to
                 the model named next to it, and both change together. */}
             <ContextRing used={contextTokens} limit={modelContextLimit(activeId, models, contextLimit)} />

@@ -50,6 +50,7 @@ async def get_config():
         "default_agent": default_agent_name(),
         "video_models": _video_models(config),
         "default_video_model": config.video_generation.model,
+        "default_video_resolution": config.video_generation.default_resolution,
     }
 
 

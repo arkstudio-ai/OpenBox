@@ -41,6 +41,15 @@ from core.log import create_logger
 log = create_logger("tool.video_providers")
 
 
+#: Appended to capability refusals. Without it a caller reads "20s rejected"
+#: as an invitation to try 18, then 16 — each attempt a paid submit away from
+#: an answer that was free to look up.
+CAPABILITY_HINT = (
+    " — the full table is video_generate(action=\"models\"); "
+    "action=\"estimate\" checks a request for free"
+)
+
+
 class VideoRequestError(RuntimeError):
     """A request this backend refuses on its own, before any provider call.
 
@@ -456,32 +465,32 @@ def _validate_declared(
     if resolution and allowed and resolution not in allowed:
         raise VideoRequestError(
             f"model {entry.id} supports {'/'.join(allowed)}; requested "
-            f"{resolution} would be silently substituted upstream"
+            f"{resolution} would be silently substituted upstream" + CAPABILITY_HINT
         )
     ratios = list(getattr(entry, "ratios", None) or [])
     if ratio and ratios and ratio not in ratios:
         raise VideoRequestError(
-            f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}"
+            f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}" + CAPABILITY_HINT
         )
     span = getattr(entry, "duration_range", None)
     if duration == -1:
         if not getattr(entry, "supports_smart_duration", True):
             raise VideoRequestError(
-                f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported"
+                f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported" + CAPABILITY_HINT
             )
     elif span is not None:
         low, high = span
         if not low <= duration <= high:
             raise VideoRequestError(
-                f"model {entry.id} accepts {low}-{high}s; requested {duration}s"
+                f"model {entry.id} accepts {low}-{high}s; requested {duration}s" + CAPABILITY_HINT
             )
     cap = entry.max_duration_seconds
     if cap is not None and duration != -1 and duration > cap:
-        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
+        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s" + CAPABILITY_HINT)
     if has_video_ref and not entry.supports_reference_video:
-        raise VideoRequestError(f"model {entry.id} does not accept video references")
+        raise VideoRequestError(f"model {entry.id} does not accept video references" + CAPABILITY_HINT)
     if has_image_ref and not entry.supports_reference_image:
-        raise VideoRequestError(f"model {entry.id} does not accept image references")
+        raise VideoRequestError(f"model {entry.id} does not accept image references" + CAPABILITY_HINT)
     # A seed is deliberately NOT a refusal. Missing it costs reproducibility,
     # not content — the video is still the one that was asked for — whereas
     # refusing costs the whole generation. The caller is told it was dropped.
@@ -490,10 +499,10 @@ def _validate_declared(
     frame_roles = {"first_frame", "last_frame"}
     if frame_roles & set(roles) and not getattr(entry, "supports_first_last_frame", False):
         raise VideoRequestError(
-            f"model {entry.id} does not accept first_frame/last_frame references"
+            f"model {entry.id} does not accept first_frame/last_frame references" + CAPABILITY_HINT
         )
     if "reference_audio" in roles and not getattr(entry, "supports_reference_audio", False):
-        raise VideoRequestError(f"model {entry.id} does not accept an audio reference")
+        raise VideoRequestError(f"model {entry.id} does not accept an audio reference" + CAPABILITY_HINT)
 
 
 def validate_request(

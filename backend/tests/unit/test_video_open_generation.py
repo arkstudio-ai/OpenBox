@@ -522,3 +522,26 @@ def test_an_undeclared_model_still_gets_a_channel_wide_duration_guard():
     for absurd in (1, 99, 3600):
         with pytest.raises(RuntimeError, match="not in video_generation.models"):
             check(absurd)
+
+
+def test_a_capability_refusal_points_at_the_table_not_at_another_guess():
+    """"20s rejected" alone reads as an invitation to try 18, then 16.
+
+    Each of those attempts is a paid submit spent discovering something that
+    `action="models"` publishes for free, so every capability refusal carries
+    the pointer — the skill may not be loaded, and this is then the only
+    guidance the caller gets.
+    """
+    entry = VideoModelConfig(id="video-sd-1080p-pro", channel="sd2",
+                             resolutions=["1080p"], duration_range=(4, 15),
+                             supports_smart_duration=False)
+    route = _route("video-sd-1080p-pro")
+
+    for kwargs in ({"duration": 20}, {"duration": -1}, {"resolution": "480p"}):
+        args = {"resolution": "1080p", "ratio": "9:16", "duration": 6, **kwargs}
+        with pytest.raises(RuntimeError) as caught:
+            video_providers.validate_request(
+                route, generate_audio=True, input_mimes=[], declared=entry, **args
+            )
+        assert 'action="models"' in str(caught.value)
+        assert 'action="estimate"' in str(caught.value)

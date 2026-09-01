@@ -26,7 +26,32 @@ do, refuses a second identical job already in flight, and enforces a daily
 ceiling. Nothing here needs to re-check those. What this skill knows is what
 makes a talking-head video *good*.
 
+## Never probe for parameters
+
+Every limit is published and free to read. **Two calls cost nothing and both
+are exact:**
+
+- `video_generate(action="models")` — every model with its resolutions,
+  ratios, duration range, whether it takes `-1`, and what references it
+  accepts. This is the authority; the numbers in this skill are illustration.
+- `video_generate(action="estimate", …)` — runs the whole validation on a
+  request you are about to pay for and reports the verdict. Free, instant.
+
+So a rejected parameter means you skipped one of them, not that you need
+another attempt with a different number. **Retrying a submit to discover a
+limit spends real money on each guess and the answer was already available.**
+Read the capability line, plan inside it, `estimate` if unsure, then submit
+once.
+
+The limits are also not uniform: resolution tiers, duration ranges and even
+the vocabulary differ per model — MiniMax names its tiers 480p/512p/768P/2K
+while everything else says 480p/720p/1080p. Ask, do not assume.
+
 ## Workflow
+
+0. **Read the menu first.** `video_generate(action="models")` before planning
+   anything. Steps 3 and 6 both need each model's limits, and a plan made
+   without them is a plan that gets refused at submit.
 
 1. **Read the creator.** `creator_context(action="get_user_context")` before
    drafting — voice, audience, boundaries. Empty is normal; carry on.

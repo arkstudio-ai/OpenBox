@@ -443,3 +443,19 @@ def test_the_guide_shows_probed_edges_not_just_a_range():
 
     assert "15.08s" in guide and "30.02s" in guide
     assert "never clamped" in guide
+
+
+def test_the_skill_forbids_probing_and_reads_the_menu_first():
+    """Ordering matters: step 3 needs limits step 6 used to fetch.
+
+    An agent that reaches the planning step without the capability table can
+    only guess, and each guess it validates by submitting costs money.
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    flowed = " ".join(text.split())
+
+    assert "Never probe for parameters" in flowed
+    assert "Read the menu first" in flowed
+    # The no-probe rule has to precede the step that needs the numbers.
+    assert text.index("Never probe") < text.index("Split at meaning")
+    assert "spends real money on each guess" in flowed

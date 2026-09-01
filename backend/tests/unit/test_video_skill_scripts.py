@@ -380,3 +380,23 @@ def test_the_skill_tells_the_agent_to_pick_a_pace():
 
     assert "--rate" in flowed
     assert "Choose `--rate` from the piece you just wrote" in flowed
+
+
+def test_the_planner_respects_a_model_floor():
+    """Seedance refuses anything under 4s, so a 3s plan wastes the submit."""
+    import json as _json
+    argv = [sys.executable, str(SCRIPTS / "plan_shots.py"), "--json",
+            "--min-shot-seconds", "4", "--max-shot-seconds", "15",
+            "--line", "早上好。"]
+    plan = _json.loads(subprocess.run(argv, capture_output=True, text=True,
+                                      check=True).stdout)
+
+    assert plan["shots"][0]["seconds"] >= 4
+
+
+def test_the_skill_takes_both_bounds_from_the_model():
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+
+    assert "--min-shot-seconds" in flowed
+    assert "--max-shot-seconds" in flowed
+    assert "Seedance takes 4–15s, Wan 3.0 takes 2–30s" in flowed

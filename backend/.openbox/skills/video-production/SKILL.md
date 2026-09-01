@@ -37,8 +37,12 @@ makes a talking-head video *good*.
 3. **Split at meaning, then let each line set its own length.** Five shots is a
    good default for 30–60s. Keep a line under ~40 characters: past that the
    model rushes the delivery and the caption needs three lines.
-   Run `python3 "$S/plan_shots.py" --target <asked> --rate <pace> --line …
-   --line …` and use the seconds it gives each shot. **Choose `--rate` from
+   Run `python3 "$S/plan_shots.py" --target <asked> --rate <pace>
+   --min-shot-seconds <model floor> --max-shot-seconds <model ceiling>
+   --line … --line …` and use the seconds it gives each shot. **Both bounds
+   come from `video_generate(action="models")`** — they differ per model and a
+   plan outside them is refused at submit: Seedance takes 4–15s, Wan 3.0 takes
+   2–30s. Pick the model before planning, or plan for the one you will use. **Choose `--rate` from
    the piece you just wrote** — a calm bedtime-routine explainer reads near
    3.4 characters/second, an ordinary how-to near 4.0, a punchy hook or a
    promo near 4.6. You know the tone; the script cannot infer it. **Never divide the requested total by the

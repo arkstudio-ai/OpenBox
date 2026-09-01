@@ -313,11 +313,14 @@ def test_every_declared_model_and_resolution_is_reachable():
 
     failures = []
     for model in config.video_generation.models:
+        # Only Wan 3.0 accepts -1 ("you pick"); the rest need a real number, so
+        # ask each for something inside its own measured range.
+        duration = -1 if model.supports_smart_duration else (model.duration_range or (5, 5))[0]
         for resolution in model.resolutions or ["720p"]:
             try:
                 video_providers.validate_request(
                     video_providers.resolve_route(model.id, config),
-                    resolution=resolution, ratio="9:16", duration=-1,
+                    resolution=resolution, ratio="9:16", duration=duration,
                     generate_audio=model.supports_generated_audio,
                     input_mimes=[], declared=model,
                 )

@@ -47,3 +47,27 @@ Billing on this route is per second of generated video, so an explicit
 right default when you do not care, but a wrong guess is what you pay for.
 The daily ceiling is back-pressure, not permission: if it refuses, tell the
 person rather than retrying.
+
+
+## Shot length per model
+
+Measured 2026-09-01 — the gateway passes duration straight through, so the
+limit is the vendor's and it refuses out-of-range values outright rather than
+clamping them:
+
+| model | seconds | smart (-1) |
+|---|---|---|
+| Seedance 2.0 / 2.0 Fast | 4–15 | no |
+| SD 480p / 720p / 1080p | 4–15 | no |
+| Wan 3.0 / Prime | 2–30 | yes |
+| MiniMax H3 | 4–15 | no |
+
+Two consequences for splitting. A line that needs less than the model's floor
+gets padded up to it — on Seedance a three-character line still occupies 4s,
+so merge it into a neighbour instead. And a line needing more than the ceiling
+has to be split: 15s at 4 chars/second is about 55 spoken characters, which is
+the real upper bound on one Seedance shot.
+
+Wan 3.0's 2–30 range is the widest by far, and it is the only model that
+accepts `-1` for a duration it chooses itself. Prefer it when the script has
+lines of very uneven length.

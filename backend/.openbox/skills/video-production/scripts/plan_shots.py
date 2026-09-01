@@ -40,7 +40,9 @@ NARRATION_RATE = 4.0
 BREATH_SECONDS = 1.2
 
 #: Below this a shot is mostly silence, and the model starts inventing words
-#: to fill it. Merge such a line into a neighbour instead.
+#: to fill it. Merge such a line into a neighbour instead. A model's own floor
+#: (--min-shot-seconds) overrides this when it is higher: Seedance refuses
+#: anything under 4s outright, so planning a 3s shot for it wastes a turn.
 MIN_SHOT_SECONDS = 3
 
 #: Only spoken characters count. Punctuation is not pronounced, and Latin
@@ -57,14 +59,17 @@ def spoken_length(line: str) -> float:
     return len(_SPOKEN.findall(without_latin)) + 2.0 * len(latin_words)
 
 
-def shot_duration(line: str, *, rate: float, max_seconds: int) -> tuple[int, str | None]:
+def shot_duration(
+    line: str, *, rate: float, max_seconds: int, min_seconds: int = MIN_SHOT_SECONDS
+) -> tuple[int, str | None]:
     """Seconds this line needs, and a note when the text has to change."""
+    floor = max(MIN_SHOT_SECONDS, min_seconds)
     length = spoken_length(line)
     if length <= 0:
-        return MIN_SHOT_SECONDS, "no spoken characters — is this line empty?"
+        return floor, "no spoken characters — is this line empty?"
 
     needed = length / rate + BREATH_SECONDS
-    seconds = max(MIN_SHOT_SECONDS, int(needed + 0.999))
+    seconds = max(floor, int(needed + 0.999))
 
     note = None
     if seconds < needed:
@@ -95,13 +100,20 @@ def main() -> int:
                         ))
     parser.add_argument("--max-shot-seconds", type=int, default=30,
                         help="the chosen model's ceiling, from video_generate(action='models')")
+    parser.add_argument("--min-shot-seconds", type=int, default=MIN_SHOT_SECONDS,
+                        help=(
+                            "the chosen model's floor, likewise from `models` — "
+                            "Seedance refuses anything under 4s, so a 3s plan "
+                            "wastes the submit"
+                        ))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     shots = []
     for index, line in enumerate(args.line, start=1):
         seconds, note = shot_duration(
-            line, rate=args.rate, max_seconds=args.max_shot_seconds
+            line, rate=args.rate, max_seconds=args.max_shot_seconds,
+            min_seconds=args.min_shot_seconds,
         )
         shots.append({
             "shot": index,

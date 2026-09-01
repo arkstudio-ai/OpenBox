@@ -695,3 +695,72 @@ nginx 白名单复核（POST 也一样）：只有 `/v1/videos` 前缀可达，`
 | 14 | §14.6 | 本地启动不走代理 | ✅ entrypoint 丢弃 + 3 条单测 |
 
 后端 **1215 passed**；前端与移动端 **0 个文件改动**。
+
+---
+
+## 15. 上线记录（2026-09-01）
+
+`main` = `f86aac4`，已推送 `arkstudio-ai/OpenBox`。
+
+### 15.1 部署
+
+目标 `https://ai.ueejavelin.org/` → EC2 `i-0eaae88c8b67d9bb5`（OpenClaw-NewAPI，
+ap-southeast-1，54.254.36.226）。这台机器还跑着 new-api / caddy / reqlog-proxy
+等无关服务，**本次只动 `openbox-*` 那一组**。
+
+发布方式沿用既有约定：机器上 `/opt/openbox/src` 是 git 检出，直接从 GitHub
+拉取后本地构建，镜像打 `<日期>-<短 sha>`。凭据受限（`claude-temp` 无 ECR、
+无 S3 ListBuckets），所以不走镜像仓库；执行通道用 SSM，无需 SSH 私钥。
+
+```
+构建   openbox-backend:20260901-f86aac4      555MB
+       openbox-frontend-v2:20260901-f86aac4   64.5MB
+切换   OPENBOX_IMAGE_TAG  20260901-ff4b16c → 20260901-f86aac4
+重建   docker compose up -d --no-deps backend frontend
+结果   两个容器 healthy；站点 HTTP 200
+```
+
+### 15.2 线上配置对齐
+
+| 项 | 原 | 现 |
+|---|---|---|
+| `video_generation.models` | 6 | **9**（补 Seedance 2.0 Fast / 1.5 Pro / MiniMax H3，并带实测能力字段） |
+| provider 条目 | `doubao` | `bossip` |
+| `channel_providers` | `{sd2: doubao}` | `{sd2: bossip}` |
+| 环境变量 | `DOUBAO_API_KEY/BASE_URL` | `BOSSIP_API_KEY/BASE_URL` |
+
+两个文件都先备份再改，密钥值只在机器内复制、从未打印。线上后端复验读到
+9 个模型、`provider: bossip`。
+
+### 15.3 线上无影桌面与技能
+
+线上用的是 **`ecd-4zjxaq5g45dr5qr0i`（bossip-slot8，cn-shanghai）**，经中继
+`47.110.66.89` 的 18001 隧道；与本地联调用的 dev 桌面
+（`ecd-8zp47qagrsc95h67t`，18002）是两台。
+
+**该桌面上的技能是旧版**：只有 SKILL.md 和四个描述已退役审批流水线的
+reference，`scripts/` 完全没有——新技能的脚本一个都不在，agent 无从执行。
+已全量替换为新版 11 个文件，并在桌面上直接跑通 `plan_shots.py`。
+
+下发不能走 action server：**prod 桌面是加固形态** —— `/` 挂载为 `ro,nosuid`，
+action server 以非特权 `sandbox` 用户（uid 998）在 `no_new_privs` 下运行，
+`/write_file` 还被 `confined_path_resolve_v1` 限制在 workspace 内。dev 桌面
+则是可写的普通形态。这个差异一度让我误判成"线上技能被我删了"——实际是
+`find -maxdepth 2` 漏看了深度 3 的文件，`rm -rf` 早被只读挡下，线上一个字节
+没动。
+
+正确通道是 ECD `run-command`（以 root 执行），即 `wuying_bootstrap.py` 用的
+那条。为此新增 `backend/scripts/wuying_push_skill.py`：同样的 `Desktop.put`、
+同样的通道，但只做技能下发，不重装运行时与隧道。
+
+```
+python3 scripts/wuying_push_skill.py --env-file .env.wuying-prod
+```
+
+### 15.4 仍待人工
+
+- prod 桌面的 action server 版本（`2026.08.31-run-lease-receipt-v12`）仍带
+  `media_jobs_*` 能力。新架构不再调用它们，多余路由无害，下次桌面重建时
+  自然消失。
+- §10 的两件运维事项未变：给 OpenBox 发专属 relay token（现与
+  `bossip-center` 共用），以及是否放行 task 端点。

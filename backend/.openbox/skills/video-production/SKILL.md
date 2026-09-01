@@ -12,6 +12,11 @@ allowed-tools:
 
 # Spoken video production
 
+The bundled scripts run in the sandbox, at
+`/opt/openbox/skills/video-production/scripts/` — this file is served from the
+backend, so a relative path would not resolve where bash actually runs. Set
+`S=/opt/openbox/skills/video-production/scripts` once and use `$S/...` below.
+
 This is craft knowledge, not a pipeline. Every tool below works on its own; a
 shot that needs to break one of these rules is allowed to. Depart from the
 workflow when the person's request calls for it, and say why.
@@ -30,13 +35,13 @@ makes a talking-head video *good*.
    a plain yes before spending anything.
 3. **Split at meaning, not at length.** Five shots is a good default for 30–60s.
    Keep a line under ~40 characters: past that the model rushes the delivery and
-   the caption needs three lines. `scripts/lint_prompt.py` counts it for you.
+   the caption needs three lines. `$S/lint_prompt.py` counts it for you.
 4. **Fix the presenter once.** One image is the anchor for every shot — a photo
    the person supplied, or one from `image_gen`. Pass it as an input asset on
    every shot with the same visual anchor sentence in every prompt.
    Never anchor a later shot to an *earlier generated frame*: drift compounds.
 5. **Write one prompt per shot** using `references/prompt-recipes.md`. Check each
-   with `scripts/lint_prompt.py`, then read what it says — it advises, it never
+   with `$S/lint_prompt.py`, then read what it says — it advises, it never
    blocks.
 6. **Pick the model deliberately.** `video_generate(action="models")` is the only
    description of what each one accepts; `references/model-guide.md` covers the
@@ -48,19 +53,19 @@ makes a talking-head video *good*.
    `polling_paused=true`, end the turn, report the `job_id`, and resume that same
    id later — never resubmit, never cancel.
 8. **Check what was actually said.** Per shot:
-   `scripts/extract_audio.sh shot1.mp4 shot1.mp3` →
+   `$S/extract_audio.sh shot1.mp4 shot1.mp3` →
    `share_file(file_path="shot1.mp3", attach=false)` →
    `video_transcribe(action="submit", asset_id=...)` →
-   `scripts/compare_transcript.py`. Show the person the video, the intended
+   `$S/compare_transcript.py`. Show the person the video, the intended
    line, the actual words, and the verdict. `suspect` means look, not fail.
 9. **Regenerate only what is wrong.** A bad take gets a new key (`:v2`) and
    leaves the old one alone. Keep every good shot.
 10. **Compose.** Captions come from the **actual transcript**, never the written
     line — otherwise the words on screen drift from the audio.
-    `scripts/build_ass.py` then `scripts/compose.sh`. Hand over the result with
+    `$S/build_ass.py` then `$S/compose.sh`. Hand over the result with
     `share_file`, and verify it has audio and the length you expect.
 
-Keep notes in `/workspace/videos/<slug>/` with `scripts/state.py` so a later
+Keep notes in `/workspace/videos/<slug>/` with `$S/state.py` so a later
 turn can pick this up. It is a notebook, not a gate.
 
 ## What actually goes wrong

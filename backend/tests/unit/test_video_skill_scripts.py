@@ -221,3 +221,18 @@ def test_state_records_shots_without_ordering_them(tmp_path):
     data = json.loads(shown)
     assert [item["index"] for item in data["shots"]] == [1, 3]
     assert data["title"] == "t"
+
+
+def test_skill_points_at_the_sandbox_path_not_a_relative_one():
+    """The scripts run where bash runs, which is not where SKILL.md is served.
+
+    SKILL.md is read from the backend host and wins over any sandbox copy, so
+    a relative `scripts/...` path would resolve against the wrong machine and
+    every invocation would fail with "no such file".
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "S=/opt/openbox/skills/video-production/scripts" in text
+    for name in ("lint_prompt.py", "compare_transcript.py", "build_ass.py", "compose.sh"):
+        assert f"$S/{name}" in text, name
+    assert "`scripts/" not in text

@@ -1,6 +1,7 @@
 # 视频能力原子化——执行手册
 
-> 文档状态：Execution Handbook v1（2026-08-31）<br>
+> 文档状态：Execution Handbook v2（2026-09-01，**已执行完毕**）<br>
+> 执行结果记录在 §14；与本文原计划的偏离及原因一并列在那里。<br>
 > **本文件是执行助手的第一准则。** 你（执行者）没有参与前期讨论，本文即全部上下文；
 > 按顺序执行，不要引入本文之外的目标。行号以 commit `3818ab0` 为基准，动手前先用
 > grep 复核（行号会漂移，符号名不会）。<br>
@@ -395,4 +396,60 @@ deprecation warning，**保留一个版本**后删（PR3 收尾时评估）。�
 6. `test_skill_listing.py`/`test_skill_tool_activation.py` 对技能 frontmatter 有
    断言，重写 SKILL.md 后先跑这两个。
 7. k8s 清单与 `docker-compose*.yml` 里若引用 `DOUBAO_*`，与 §9 同 PR 改，别留
-   半套环境。
+   半套环境。（实测：k8s 无引用，只有 `.env`/`.env.example`/`openbox.json*`。）
+8. **技能脚本必须投递到沙箱。** SKILL.md 由后端宿主机提供且优先级最高，但
+   `bash` 跑在无影桌面——宿主机的 `scripts/` 对 agent 不可见
+   （`tool/skill_tool.py:_host_files` 的注释写明了这点）。SKILL.md 里一律用
+   绝对路径 `/opt/openbox/skills/video-production/scripts/`，并确保部署脚本把
+   整个技能目录推上桌面。这是 PR2 首版漏掉、真机验收时才暴露的缺陷。
+9. 用 pytest import 技能脚本会在 `scripts/__pycache__/` 留下 `.pyc`。已被
+   `.gitignore` 覆盖，但推送到沙箱前要过滤，否则 UTF-8 解码失败。
+10. 前端 vite 代理写死 `localhost:8080`，且 Logto 回调注册在 `localhost:3000`。
+    worktree 联调必须占用这两个标准端口（先停主仓库的 dev server），换端口会
+    导致 SSO 登录失败。
+
+
+---
+
+## 14. 执行记录（2026-09-01）
+
+分支 `feat/video-atomization`，四个提交，净删 7,292 行（+3,174 / −10,466）。
+后端测试 **1188 passed**（基线 1208，差额为退役模块的测试；期间新增 32 例）。
+前端与移动端 **0 个文件改动**。
+
+### 14.1 与计划的偏离（三处，均为执行中发现的更优解）
+
+1. **`tool/video_workflow.py` 不能整体删除后就没有下文。** §8 要求删除它，§11
+   又要求 `api/video_productions.py` 零改动——两者冲突。实际做法：把历史只读
+   路径提取为 `backend/video/productions.py`（领域层），工具文件才整体删除。
+   结果比原计划更干净：领域对象不再寄居在 agent 工具层。
+2. **schema 预算**在 PR1 双模式期临时放宽到 11,500 字符，PR3 删除
+   `video_project`/`video_render` 后已恢复 10,000 并通过。
+3. **`share_file` 进入 video 意图包**（技能用它做安静上传），使它同属
+   delivery/video 两包，`test_tool_exposure` 的归因断言相应放宽并注明原因。
+
+### 14.2 真机验收（无影 dev 桌面 `ecd-8zp47qagrsc95h67t`，隧道 18002）
+
+`docs/DIRECT_PATH_CLEANUP_PLAN.md` 记的「dev 桌面已过期不可用」**已失效**：
+`.env.wuying-dev` 指向上海 dev 桌面，中继 `47.110.66.89` 上 18001/18002 反向
+隧道均在线。
+
+实测通过：
+
+| 项 | 结果 |
+|---|---|
+| ffmpeg / ffprobe / python3 | 4.4.2，齐备 |
+| 中文字体 | 89 个，含 Noto（`build_ass.py` 指定的 `Noto Sans CJK SC` 可用） |
+| `build_ass.py` | 3 段字幕 + 频道水印，共 4 条 Dialogue |
+| `compose.sh` | 3×2s 拼接 → **6.061s**，无失步；h264 + aac |
+| `extract_audio.sh` | 正常产出 mp3 |
+| 烧录目视 | 720×1280 竖屏；中文按 CJK 网格换两行；英文 `SuperResolution` 未被劈开；水印在位；无豆腐块 |
+
+未在真机验证的部分：真实付费生成（需花费，另行安排）。
+
+### 14.3 仍待人工执行（§10，涉及凭据）
+
+1. relay 上给 OpenBox 发**专属 token**（现与 `bossip-center` 共用
+   `center-media-vip`，用量无法按产品归因）；
+2. 决定是否放行 **task 端点**（`/v1/video/generations`）——放行后首尾帧、
+   参考音频、seed 在 wan3 上全量可用；不放行则工具显式报错而非静默降级。

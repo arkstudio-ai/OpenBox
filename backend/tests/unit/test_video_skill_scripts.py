@@ -429,3 +429,17 @@ def test_the_skill_tells_the_agent_to_send_an_explicit_duration():
 
     assert "Always send an explicit duration; do not use `-1`" in flowed
     assert "Use an explicit duration for anything that gets cut together" in guide
+
+
+def test_the_guide_shows_probed_edges_not_just_a_range():
+    """A range copied from docs and one probed at both edges look the same.
+
+    Only one of them tells you the gateway honours it — MiniMax's 4-15 came
+    from constants until 4/7/15 were generated and measured at 4.46/7.30/15.08s.
+    """
+    guide = " ".join(
+        (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "15.08s" in guide and "30.02s" in guide
+    assert "never clamped" in guide

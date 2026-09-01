@@ -51,9 +51,20 @@ person rather than retrying.
 
 ## Shot length per model
 
-Measured 2026-09-01 — the gateway passes duration straight through, so the
-limit is the vendor's and it refuses out-of-range values outright rather than
-clamping them:
+Every range below was probed at both edges and the output file measured — a
+gateway that accepts a value and ignores it looks identical at submit time.
+Out-of-range values are refused outright, never clamped, so a wrong number
+costs a whole submit:
+
+| model | probed | delivered |
+|---|---|---|
+| Seedance 2.0 | 3 ✗ · 4 ✓ · 15 ✓ · 16 ✗ | -1 → 12.05s (model chose) |
+| Wan 3.0 | 2 ✓ · 30 ✓ · 31 ✗ | 20 → 20.04s · 30 → 30.02s |
+| MiniMax H3 | 3 ✗ · 4 ✓ · 7 ✓ · 15 ✓ · 16 ✗ | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s |
+
+Delivered length runs a fraction over the request (encoder rounding), never
+under.
+
 
 | model | seconds | smart (-1) |
 |---|---|---|

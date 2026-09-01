@@ -1,9 +1,14 @@
 """Video generation and speech-to-text: the platform video primitives.
 
-Provider calls and ownership checks live on the backend.  FFmpeg and
-HyperFrames live behind the sandbox action server's durable per-desktop queue.
-The build agent exposes these tools directly; skills provide workflow guidance
-but never change tool availability.
+Each works on its own — a prompt and an idempotency key is the whole contract
+for a video, an owned audio asset is the whole contract for a transcript.
+What stays on the backend is what only the backend can hold: provider
+credentials, ownership, per-request capability limits, and the guards that
+keep one paid generation from being paid for twice. Everything about *making
+a good video* — how to write the lines, how to keep a presenter consistent,
+how to cut and caption the result — is skill knowledge, and editing is the
+agent running ffmpeg in the sandbox. Skills describe workflow; they never
+change which tools exist.
 """
 from __future__ import annotations
 
@@ -28,8 +33,8 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.video_production")
 
 _SEGMENT_TERMINAL = {"completed", "failed", "cancelled"}
-#: Everything that is not terminal for a paid generation. Kept here rather than
-#: imported so the generation tool stands alone once video_workflow is gone.
+#: Everything that is not terminal for a paid generation. A duplicate submit
+#: must be refused across this whole window, the OSS transfer included.
 _IN_FLIGHT_STATUSES = {
     "submitting",
     "queued",

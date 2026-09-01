@@ -210,6 +210,9 @@ class VideoModelConfig(BaseModel):
     supports_reference_audio: bool = False
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
+    #: Free-text provenance for a capability claim — why a flag is set the way
+    #: it is. Measured behaviour beats a vendor's published feature list.
+    note: str = ""
 
     @model_validator(mode="after")
     def _check_duration_range(self):

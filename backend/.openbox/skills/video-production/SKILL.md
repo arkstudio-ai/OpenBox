@@ -36,10 +36,14 @@ makes a talking-head video *good*.
 3. **Split at meaning, not at length.** Five shots is a good default for 30–60s.
    Keep a line under ~40 characters: past that the model rushes the delivery and
    the caption needs three lines. `$S/lint_prompt.py` counts it for you.
-4. **Fix the presenter once.** One image is the anchor for every shot — a photo
-   the person supplied, or one from `image_gen`. Pass it as an input asset on
-   every shot with the same visual anchor sentence in every prompt.
-   Never anchor a later shot to an *earlier generated frame*: drift compounds.
+4. **Fix the presenter once, and pick a model that can hold a face.** One image
+   is the anchor for every shot — a photo the person supplied, or one from
+   `image_gen`. Pass it as an input asset on every shot.
+   **Check `video_generate(action="models")` first: a model marked "NO reference
+   image" cannot hold a face, and will hand you a different person in every
+   shot.** The tool refuses such a request rather than letting that happen, so
+   choose a model that lists reference-image support. Never anchor a later shot
+   to an *earlier generated frame*: drift compounds.
 5. **Write one prompt per shot** using `references/prompt-recipes.md`. Check each
    with `python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "…"
    --anchor "…"`, then read what it says — it advises, it never blocks.
@@ -71,10 +75,13 @@ turn can pick this up. It is a notebook, not a gate.
 
 ## What actually goes wrong
 
-- **The presenter changes between shots.** Same anchor sentence, byte for byte,
-  in every prompt, plus the same reference image. On a model that supports it,
-  reuse one `seed` across shots; `last_frame` of the previous shot as the
-  `first_frame` of the next is stronger still. See `references/model-guide.md`.
+- **The presenter changes between shots.** First check the model can take a
+  reference image at all — that is the whole ballgame, and a model without it
+  produces a stranger no matter how the prompt is written. Then: same reference
+  image on every shot, and describe the *action*, not the person ("画面中的人物
+  自然看向镜头"), because a full description of a face competes with the photo.
+  Reuse one `seed` across shots where the model has one. See
+  `references/model-guide.md`.
 - **The model says something else.** Common and cheap to catch — always step 8.
   Short substitutions (出片 → 出花) keep a high similarity and change the
   meaning, which is exactly why the verdict is not just a number.

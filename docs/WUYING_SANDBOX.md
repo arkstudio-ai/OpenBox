@@ -20,6 +20,7 @@ can be attached to over the WUYING client to see what the agent did.
 - [Operations](#operations)
 - [Troubleshooting](#troubleshooting)
 - [What differs from the Docker and Kubernetes providers](#what-differs-from-the-docker-and-kubernetes-providers)
+- [Per-user desktops (WUYING_MODE=per_user)](#per-user-desktops-wuying_modeper_user)
 
 ---
 
@@ -341,4 +342,51 @@ someone's cloud desktop.
 The shared-desktop model also means **there is no isolation boundary between
 users** beyond the working directory, and the action server does not constrain
 paths — an absolute path escapes the session directory. Treat a WUYING sandbox
-as single-tenant.
+as single-tenant — or switch to per-user desktops, below.
+
+## Per-user desktops (WUYING_MODE=per_user)
+
+`WUYING_MODE=per_user` closes the single-tenant gap: OpenBox provisions **one
+ECD desktop per user** through the ECD OpenAPI, with a dedicated convenience
+EndUser per user, instead of pointing everyone at the shared desktop. The
+implementation is ported from bossip's wuying-bridge and keeps its hard-won
+behaviours (EndUser sync wait before CreateDesktops, tag reads through
+ListTagResources, ghost-desktop hard-delete, environment tagging).
+
+**How it works**
+
+- Identity: each user id derives a stable EndUser (`obx-<sha256[:16]>`) and a
+  salted password (`WUYING_PASSWORD_SALT`). Display names never feed the id.
+- Ownership: desktops carry `openbox-user` / `openbox-eu-id` / `openbox-env`
+  tags. The ticket API verifies the tag before minting a ticket, so one user
+  cannot view another's desktop. `openbox-env` keeps prod and dev sharing one
+  Alibaba Cloud account from adopting or reaping each other's desktops.
+- State: the `cloud_desktops` table records each user's desktop
+  (`backend/db/models/cloud_desktop.py`); a unique partial index enforces one
+  live desktop per user. If the DB forgets a desktop, it is re-adopted by tag.
+- Flow: the 云桌面 tab shows a provisioning opt-in for users without a
+  desktop; `POST /api/desktop/provision` creates (2-3 min) or wakes it, the
+  frontend polls `GET /api/desktop/status`, and the ticket API rides the same
+  202 retry channel while the desktop is creating/starting.
+
+**Extra configuration** (see `.env.example`): `WUYING_IMAGE_ID` (golden image
+— required; there is deliberately no fallback to a community image),
+`WUYING_OFFICE_SITE_ID`, `WUYING_PASSWORD_SALT`, and optionally
+`WUYING_DESKTOP_TYPE` / `WUYING_SYSTEM_DISK_SIZE` / `WUYING_POLICY_GROUP_ID` /
+`WUYING_CHARGE_TYPE` / `WUYING_ENV_TAG`. Build the golden image by
+bootstrapping one desktop with `scripts/wuying_bootstrap.py` and imaging it
+from the ECD console.
+
+**Testing** — `scripts/wuying_provision_smoke.py` exercises the chain in three
+tiers: `check` (read-only: lists office sites, images, OpenBox desktops),
+`enduser` (free: real EndUser create → sync → remove), and `full` (billable:
+provisions a real desktop through the same service the API uses, waits for
+Running, mints a connection ticket, then deletes everything; `--yes` required,
+`--disk` must cover the image size). Unit coverage lives in
+`tests/unit/test_wuying_provisioning.py` with the ECD calls stubbed.
+
+**Not yet wired**: the sandbox execution plane (action server) still uses the
+single `WUYING_ENDPOINT` tunnel — per-desktop connectivity (frpc reverse
+tunnels or per-desktop SSH) is the next step. Until then, per_user mode gives
+each user their own *viewable* desktop while command execution stays on the
+shared one.

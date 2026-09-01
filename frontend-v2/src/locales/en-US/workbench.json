@@ -65,6 +65,12 @@
   },
   "desktop": {
     "loading": "Connecting to the cloud desktop…",
+    "provision": "You don't have a cloud computer yet",
+    "provisionHint": "We'll create a dedicated cloud computer for you; the first setup takes 2-3 minutes",
+    "provisionAction": "Set up my cloud computer",
+    "provisioning": "Preparing your cloud computer — the first setup takes 2-3 minutes…",
+    "provisionFailed": "Cloud computer setup failed",
+    "provisionRetry": "Try again",
     "connected": "Connected",
     "closed": "Connection closed",
     "error": "Unable to connect",

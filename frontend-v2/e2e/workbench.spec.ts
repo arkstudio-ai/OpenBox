@@ -105,3 +105,44 @@ test("cloud desktop tab connects via the ticket API and never shows ids", async 
   expect(ticketCalls).toBeGreaterThan(0)
   await expect(panel).not.toContainText(/ecd-[a-z0-9]{8,}/)
 })
+
+// per_user 模式: a user without a desktop sees the provisioning opt-in, and
+// accepting it kicks POST /provision then rides the creating state. Stubbed —
+// real provisioning bills an ECD desktop.
+test("cloud desktop tab offers per-user provisioning and enters creating state", async ({ page }) => {
+  let provisionCalls = 0
+  let provisioned = false
+  await page.route("**/api/desktop/status", (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        provisioned ? { state: "creating", mode: "per_user" } : { state: "not_provisioned", mode: "per_user" },
+      ),
+    })
+  })
+  await page.route("**/api/desktop/provision", (route) => {
+    provisionCalls += 1
+    provisioned = true
+    void route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ state: "creating", mode: "per_user" }),
+    })
+  })
+
+  await page.goto("/app")
+  await expect(page).toHaveURL(/\/app/, { timeout: 10_000 })
+  await page.getByRole("button", { name: /打开工作面板|Open workspace panel/ }).click()
+
+  const panel = page.locator("section")
+  await panel.getByRole("button", { name: /云桌面|Cloud desktop/ }).click()
+
+  const provisionButton = panel.getByRole("button", { name: /开通云电脑|Set up my cloud computer/ })
+  await expect(provisionButton).toBeVisible({ timeout: 10_000 })
+  await provisionButton.click()
+
+  await expect(panel.getByText(/正在准备你的云电脑|Preparing your cloud computer/)).toBeVisible({ timeout: 10_000 })
+  expect(provisionCalls).toBe(1)
+  await expect(panel).not.toContainText(/ecd-[a-z0-9]{8,}/)
+})

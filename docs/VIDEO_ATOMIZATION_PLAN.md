@@ -445,7 +445,29 @@ deprecation warning，**保留一个版本**后删（PR3 收尾时评估）。�
 | `extract_audio.sh` | 正常产出 mp3 |
 | 烧录目视 | 720×1280 竖屏；中文按 CJK 网格换两行；英文 `SuperResolution` 未被劈开；水印在位；无豆腐块 |
 
-未在真机验证的部分：真实付费生成（需花费，另行安排）。
+脚本在沙箱内直接执行也已验证：`lint_prompt.py` 判通过、`compare_transcript.py`
+对 `出片→出花` 判 `suspect`（相似度 0.875）、`state.py` 正确写入
+`/workspace/videos/<slug>/state.json`。这坐实了 §13.8 的绝对路径修复。
+
+工具层真机验证（真 Postgres + 真无影 + 真配置，未付费）：`action="models"`
+返回 9 个模型及能力元数据；`estimate` 通过合法的 wan3 1080p/9:16/24s/seed
+请求，并分别以明确原因拒绝 21:9、不支持 seed 的模型、超出 4-15s 的时长、
+非音频资产；`daily_submits_used=0/50` 证明背压已接通。
+
+`/api/agent/config` 返回 9 个模型，字段集
+（`id/name/channel/tier/resolutions/max_duration_seconds`）与改造前一致——
+新增的能力字段是纯增量，这正是前端零改动成立的原因。
+
+未在真机验证的部分：真实付费生成（需花费，另行安排）；工作台 UI 需登录，
+见 §14.4。
+
+### 14.4 浏览器验收的前置条件
+
+前端守卫只认 access token，与后端是否启用鉴权无关：把后端切到单用户模式
+（不配 `JWT_SECRET`）后，API 可直连但工作台仍会跳登录页。因此工作台内的
+验收（composer 的 9 个模型选择器、技能加载后脚本调用、历史 production 只读
+渲染）必须由人登录后进行——执行者不得代填密码，也不得用本地签名密钥伪造
+会话绕过登录。
 
 ### 14.3 仍待人工执行（§10，涉及凭据）
 

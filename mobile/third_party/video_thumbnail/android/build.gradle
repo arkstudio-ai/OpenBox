@@ -1,0 +1,43 @@
+// Rewritten from the published 0.5.6 build script, which pinned AGP 4.1.0 and
+// resolved through jcenter() — a repository that no longer exists and a plugin
+// version Gradle 9 will not load beside the app's own AGP 9. Nothing else about
+// the plugin changed: the Java and ObjC sources are the published ones.
+//
+// Versions are read from the app rather than pinned here, so this does not
+// become the next thing to go stale.
+group = "xyz.justsoft.video_thumbnail"
+version = "0.5.6"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "xyz.justsoft.video_thumbnail"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 24
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        disable += "InvalidPackage"
+    }
+}

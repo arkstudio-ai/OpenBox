@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The whole app is a client of the backend, so without this a
+         release build launches and can do nothing. The Flutter template
+         only grants it in the debug and profile manifests, which is why
+         running from the IDE never showed the gap. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="BossIP"
         android:name="${applicationName}"

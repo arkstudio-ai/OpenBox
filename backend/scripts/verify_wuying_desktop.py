@@ -20,9 +20,15 @@ load_environment()
 
 from core.config import get_config
 from core.oss import get_oss
-from sandbox.assets import ensure_cli
+from sandbox.assets import _use_internal_oss, ensure_cli
 from sandbox.client import SandboxClient
-from sandbox.desktop import SHOT_PATH, ensure_desktop_tools, take_screenshot, take_stable_screenshot, x
+from sandbox.desktop import (
+    SHOT_PATH,
+    ensure_desktop_tools,
+    fixed_x,
+    take_screenshot,
+    take_stable_screenshot,
+)
 
 
 def client() -> SandboxClient:
@@ -99,7 +105,7 @@ async def verify_desktop_and_oss() -> dict:
 
             action_started = time.monotonic()
             action = await sandbox.execute(
-                x("xdotool mousemove_relative -- 1 0 mousemove_relative -- -1 0"),
+                fixed_x("xdotool mousemove_relative -- 1 0 mousemove_relative -- -1 0"),
                 timeout=20,
             )
             if action.exit_code != 0:
@@ -116,7 +122,7 @@ async def verify_desktop_and_oss() -> dict:
                 key,
                 "image/png",
                 expires_sec=300,
-                internal=True,
+                internal=_use_internal_oss(oss),
             )
             uploaded = await sandbox.execute(
                 f'PATH="$HOME/.local/bin:$PATH" obx-file put '

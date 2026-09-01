@@ -1,11 +1,11 @@
 """Session routes: CRUD + messages + agent control."""
 import asyncio
 import time
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from auth.middleware import get_current_user
 from auth.quota import check_session_quota, check_concurrent_agents
@@ -18,11 +18,16 @@ _background_tasks = set()  # prevent GC of background tasks
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 _ACTIVE_SESSION_STATUSES = {SessionStatus.BUSY, SessionStatus.COMPACTING}
+ReasoningVariant = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=32),
+]
 
 
 class CreateSessionBody(BaseModel):
     model: str = ""
     agent: str = "build"
+    variant: ReasoningVariant | None = None
     title: str | None = None
     #: Project the session runs in. Accepts an id or a slug; omitting it files
     #: the session under the user's default project.
@@ -37,7 +42,8 @@ class PromptBody(BaseModel):
     #: video tools can read it when the agent reaches them; a segment then
     #: freezes it at submission, leaving in-flight work untouched.
     video_model: str | None = None
-    variant: str | None = None
+    #: Omitted inherits the conversation; explicit null selects the model's default.
+    variant: ReasoningVariant | None = None
     client_message_id: str | None = Field(default=None, max_length=64)
     #: followup waits for the next turn, steer joins the next step of a live
     #: turn, and inject joins that boundary without waking an idle Session.
@@ -71,6 +77,7 @@ class UpdateSessionBody(BaseModel):
     title: str | None = None
     agent: str | None = None
     model: str | None = None
+    variant: ReasoningVariant | None = None
     #: The video model this conversation generates with. Independent of
     #: `model`: segments snapshot it at submission, so a switch only reaches
     #: work not yet started.
@@ -203,6 +210,32 @@ def _resolve_prompt_model(session, requested: str | None) -> str:
     return chosen
 
 
+def _checked_variant(model_id: str, requested: str | None) -> str | None:
+    """Validate a reasoning choice against the exact configured model route."""
+    from agent.llm import validate_reasoning_variant
+
+    try:
+        return validate_reasoning_variant(model_id, requested)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _resolve_prompt_variant(session, body: PromptBody, model_id: str) -> str | None:
+    """Resolve tri-state reasoning without mutating a live Agent generation."""
+    explicit = "variant" in body.model_fields_set
+    selected = body.variant if explicit else getattr(session, "variant", None)
+    if selected is None:
+        return None
+    try:
+        return _checked_variant(model_id, selected)
+    except HTTPException:
+        # An explicit unsupported choice is a client error. An inherited value
+        # from a previous model is safely cleared for this queued turn.
+        if explicit:
+            raise
+        return None
+
+
 async def _accept_prompt(session, body: PromptBody, user_id: str):
     """Commit acceptance before any driver reservation or sandbox wake."""
     from agent.inbox import (
@@ -211,6 +244,8 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
         accept_inbox_item,
     )
 
+    chosen_model = _resolve_prompt_model(session, body.model)
+    chosen_variant = _resolve_prompt_variant(session, body, chosen_model)
     try:
         return await accept_inbox_item(
             session_id=session.id,
@@ -220,13 +255,13 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
             attachments=body.attachments or (),
             client_id=body.client_message_id,
             agent=body.agent or session.agent,
-            model=_resolve_prompt_model(session, body.model),
+            model=chosen_model,
             video_model=(
                 body.video_model.strip() or None
                 if body.video_model is not None
                 else session.video_model
             ),
-            variant=body.variant,
+            variant=chosen_variant,
             output_format=body.format,
         )
     except InboxIdempotencyConflict as exc:
@@ -337,9 +372,11 @@ async def create_session(
     # Validate at birth so a retired model never gets stored in the first place.
     from agent.model_resolve import resolve as resolve_model
     model, _ = resolve_model(body.model, config, context="new session")
+    variant = _checked_variant(model, body.variant)
     session = await session_mod.create_session(
         model=model,
         agent=body.agent,
+        variant=variant,
         title=body.title,
         user_id=user_id,
         project_id=body.project_id,
@@ -386,7 +423,20 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 @router.patch("/session/{session_id}")
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+    current = await _require_session_owned(session_id, user_id)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    target_model = updates.get("model") or current.model
+    if "variant" in body.model_fields_set:
+        # Keep explicit null: unlike the other optional PATCH fields it means
+        # "return to this model's default", not "leave unchanged".
+        updates["variant"] = _checked_variant(target_model, body.variant)
+    elif "model" in body.model_fields_set and current.variant is not None:
+        # A model switch cannot carry an adapter-owned value into a different
+        # family. Preserve it only when the new route advertises the same id.
+        try:
+            updates["variant"] = _checked_variant(target_model, current.variant)
+        except HTTPException:
+            updates["variant"] = None
     session = await session_mod.update_session(session_id, user_id=user_id, **updates)
     if not session:
         raise HTTPException(404, "Session not found")

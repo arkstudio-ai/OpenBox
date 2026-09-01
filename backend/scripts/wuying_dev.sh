@@ -31,11 +31,11 @@ fi
 
 while IFS='=' read -r key value; do
   case "$key" in
-    SANDBOX_PROVIDER|WUYING_ENDPOINT|WUYING_API_KEY|WUYING_DESKTOP_ID|WUYING_RELAY|WUYING_TUNNEL_PORT|WUYING_TUNNEL_KEY|WUYING_REGION_ID|WUYING_END_USER_ID)
+    ALIBABA_CLOUD_PROFILE|SANDBOX_PROVIDER|WUYING_ENDPOINT|WUYING_API_KEY|WUYING_DESKTOP_ID|WUYING_RELAY|WUYING_TUNNEL_PORT|WUYING_TUNNEL_KEY|WUYING_REGION_ID|WUYING_END_USER_ID)
       export "$key=$value"
       ;;
   esac
-done < <(grep -E '^[[:space:]]*(SANDBOX_PROVIDER|WUYING_[A-Z0-9_]+)=' "$DEV_ENV" | sed 's/^[[:space:]]*//')
+done < <(grep -E '^[[:space:]]*(ALIBABA_CLOUD_PROFILE|SANDBOX_PROVIDER|WUYING_[A-Z0-9_]+)=' "$DEV_ENV" | sed 's/^[[:space:]]*//')
 
 mode="${1:-backend}"
 if [ "$#" -gt 0 ]; then

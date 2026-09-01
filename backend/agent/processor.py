@@ -15,6 +15,7 @@ comes back as RETRY with no sleeping and no counter of its own.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -64,11 +65,6 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "task_handoff_id",
     "task_outbox_completed", "questions", "answers",
-    # ``video_identity`` returns only its deliberately public projection here:
-    # the short-lived H5 link/QR may be rendered by the chat UI, while the
-    # provider polling token remains private in the database and never enters
-    # ToolResult metadata.
-    "action", "identity", "identities", "material_asset",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",
@@ -81,6 +77,54 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
 # enough for a near-current recovery snapshot, without a database write per
 # token.
 STREAM_CHECKPOINT_INTERVAL = 0.5
+
+
+async def _run_parallel_safe_groups(
+    items: list,
+    *,
+    supports_parallel,
+    run_one,
+    stop_requested=lambda: False,
+) -> list:
+    """Run ordered calls with unsafe calls acting as full barriers.
+
+    This mirrors Codex's read/write execution gate for a completed provider
+    response: consecutive parallel-safe calls share a group, while each unsafe
+    call waits for the preceding group and blocks the following one. Results
+    stay in provider order even when completion order differs.
+    """
+    results: list = []
+    parallel_group: list = []
+
+    async def flush_parallel_group() -> None:
+        nonlocal parallel_group
+        if not parallel_group:
+            return
+        tasks = [asyncio.create_task(run_one(item)) for item in parallel_group]
+        parallel_group = []
+        try:
+            results.extend(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    for item in items:
+        if stop_requested():
+            break
+        if supports_parallel(item):
+            parallel_group.append(item)
+            continue
+        await flush_parallel_group()
+        if stop_requested():
+            break
+        results.append(await run_one(item))
+
+    if not stop_requested():
+        await flush_parallel_group()
+    return results
 
 
 def persisted_tool_metadata(metadata: dict | None) -> dict:
@@ -1053,13 +1097,18 @@ async def process_step(
 
                 # Test/custom hook compatibility. Production ToolHooks always
                 # uses the staged path above, so permission remains ordered.
+                # Parallel calls must not share the mutable per-call fields on
+                # ToolContext (message/part ids, cleanup callbacks).
+                call_ctx = copy.copy(ctx) if parallel_safe else ctx
+                call_ctx.message_id = assistant_info.id
+
                 async def compatibility_body() -> _ToolCallOutcome:
                     await assert_current()
                     result = await hooks.wrap_execute(
                         str(canonical_tool_id),
                         tool_info.execute,
                         tool_args,
-                        ctx,
+                        call_ctx,
                         part_id=tool_part.id,
                     )
                     return _ToolCallOutcome(

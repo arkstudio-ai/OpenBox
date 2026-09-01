@@ -356,7 +356,7 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 - `video_generate wait` 以 25 秒为硬上限，供应商超时和 OSS 收尾超时返回带
   `version`、`still_running`、`timed_out` 的事实快照；后台收尾 task 按 job 去重并受
   shield 保护，`finalizing` 不再快速空转。
-- `video_project status` 返回审批 scope/decision/hash 是否匹配、剩余付费调用预算、
+- `video_project status` 返回审批 scope/decision/hash 是否匹配、
   每段冻结模型与生成 job、生成/转写/合成幂等键；当前 hash 上的拒绝证据与批准 gate
   分开表达。
 - 浏览器验收时发现两条 8/27 的 TokenSpace 直连任务仍被当前 BossIP relay 路由按分钟

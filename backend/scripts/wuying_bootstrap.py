@@ -182,7 +182,6 @@ install -d -o root -g root -m 0711 /data/skills
 chown -R sandbox:sandbox /workspace
 chmod 0700 /data/mcp
 echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head -1 | cut -d' ' -f3)"
-echo "node 22 is delivered with the local media bundle in stage 2"
 """, timeout=900)
     d.run(desktop_provision_script(), timeout=900)
     d.run(asset_cli_provision_script(), timeout=120)
@@ -192,15 +191,9 @@ echo "node 22 is delivered with the local media bundle in stage 2"
 def install_action_server(d: Desktop) -> None:
     print("[2/5] action server")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
-    d.put(REPO / "container" / "media_jobs.py", "/opt/action_server/media_jobs.py")
-    d.put(REPO / "container" / "media-jobs.json", "/opt/openbox/media/media-jobs.json")
     for local_path in sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file()):
         relative = local_path.relative_to(VIDEO_PRODUCTION_SKILL_DIR)
         d.put(local_path, str(pathlib.PurePosixPath("/opt/openbox/skills/video-production") / relative))
-    d.put(REPO / "container" / "media-runtime" / "package.json", "/opt/openbox/media/package.json")
-    package_lock = REPO / "container" / "media-runtime" / "package-lock.json"
-    if package_lock.exists():
-        d.put(package_lock, "/opt/openbox/media/package-lock.json")
     d.run(r"""
 set -e
 cat > /opt/action_server/requirements.txt <<'EOF'
@@ -218,20 +211,11 @@ EOF
 pip3 install -q --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
      -r /opt/action_server/requirements.txt
 python3 -c "import fastapi,uvicorn,psutil,yaml,sse_starlette,httpx,websockets" && echo "deps ok"
-python3 -m py_compile /opt/action_server/action_server.py /opt/action_server/media_jobs.py
+python3 -m py_compile /opt/action_server/action_server.py
 echo "action server dependencies ok"
 """, timeout=900)
-    # npm never runs on the mainland desktop. Build linux/amd64 locally, use a
-    # short-lived OSS object for transfer, then delete the object after SHA-256
-    # verification and an atomic node_modules swap.
-    from wuying_media_runtime import ensure_local_media_runtime
-
-    ensure_local_media_runtime(d)
-    d.run(
-        "cd /opt/openbox/media && "
-        "node_modules/.bin/hyperframes telemetry disable >/dev/null 2>&1 || true",
-        timeout=120,
-    )
+    # The HyperFrames renderer is gone with the media worker: composition is
+    # now the agent running ffmpeg, which the desktop already has.
 
 
 def install_dev_browser(d: Desktop) -> None:
@@ -256,11 +240,11 @@ npm install --omit=dev --no-audit --no-fund 2>&1 | tail -3
 """, timeout=1200)
 
 
-def install_services(d: Desktop, api_key: str, relay: str) -> str:
+def install_services(d: Desktop, api_key: str, relay: str, tunnel_port: int) -> str:
     print("[4/5] systemd units")
-    pub = d.run(r"""
+    pub = d.run(f"""
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
-[ -f /root/.ssh/openbox_tunnel ] || ssh-keygen -t ed25519 -N "" -C openbox-tunnel -f /root/.ssh/openbox_tunnel -q
+[ -f /root/.ssh/openbox_tunnel ] || ssh-keygen -t ed25519 -N "" -C openbox-tunnel-{d.id} -f /root/.ssh/openbox_tunnel -q
 cat /root/.ssh/openbox_tunnel.pub
 """, timeout=120).strip().splitlines()[-1]
 
@@ -323,7 +307,7 @@ ExecStart=/usr/bin/ssh -N -T \\
   -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes \\
   -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes \\
   -i /root/.ssh/openbox_tunnel \\
-  -R 127.0.0.1:{TUNNEL_PORT}:127.0.0.1:8000 {relay}
+  -R 127.0.0.1:{tunnel_port}:127.0.0.1:8000 {relay}
 Restart=always
 RestartSec=5
 
@@ -344,19 +328,31 @@ curl -s -m 5 http://127.0.0.1:8000/alive
     return pub
 
 
-def authorize_relay(instance: str, region: str, desktop_pub: str) -> None:
+def authorize_relay(
+    instance: str,
+    region: str,
+    desktop_pub: str,
+    tunnel_port: int,
+    desktop_id: str,
+) -> None:
     """Install the desktop's key on the relay, scoped to port forwarding only."""
     print("[5/5] relay authorization")
+    key_fields = desktop_pub.split()
+    if len(key_fields) < 2 or key_fields[0] != "ssh-ed25519":
+        raise SystemExit("desktop returned an invalid tunnel public key")
+    marker = f"openbox-tunnel-{desktop_id}"
+    scoped_pub = f"{key_fields[0]} {key_fields[1]} {marker}"
     out = ecs_run(instance, region, f"""
 set -e
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
-sed -i '/openbox-tunnel/d' /root/.ssh/authorized_keys
+sed -i '/{marker}$/d' /root/.ssh/authorized_keys
+sed -i -e '$a\\' /root/.ssh/authorized_keys
 # restrict = no shell/agent/x11; permitlisten pins it to the one loopback port.
 # Note the explicit port: an empty host in permitlisten means loopback only,
 # which is what we want here, but it silently overrides GatewayPorts.
-echo 'restrict,port-forwarding,permitlisten="{TUNNEL_PORT}" {desktop_pub}' >> /root/.ssh/authorized_keys
-grep -c openbox-tunnel /root/.ssh/authorized_keys
+printf '%s\\n' 'restrict,port-forwarding,permitlisten="{tunnel_port}" {scoped_pub}' >> /root/.ssh/authorized_keys
+grep -c '{marker}$' /root/.ssh/authorized_keys
 """)
     print(f"  authorized_keys entries: {out.strip().splitlines()[-1] if out.strip() else '?'}")
 
@@ -369,9 +365,21 @@ def main() -> int:
     p.add_argument("--region", default="cn-hangzhou")
     p.add_argument("--relay", required=True, help="user@host of the relay ECS, e.g. root@203.0.113.10")
     p.add_argument("--relay-instance", help="ECS instance id; enables automatic authorized_keys install")
+    p.add_argument(
+        "--relay-region",
+        help="region of --relay-instance (defaults to the desktop region)",
+    )
+    p.add_argument(
+        "--tunnel-port",
+        type=int,
+        default=TUNNEL_PORT,
+        help=f"loopback port reserved on the relay (default: {TUNNEL_PORT})",
+    )
     p.add_argument("--api-key", help="SESSION_API_KEY to use (generated when omitted)")
     p.add_argument("--skip-dev-browser", action="store_true", help="skip the browser-automation relay")
     args = p.parse_args()
+    if not 1 <= args.tunnel_port <= 65535:
+        p.error("--tunnel-port must be between 1 and 65535")
 
     api_key = args.api_key or secrets.token_hex(24)
     d = Desktop(args.desktop_id, args.region)
@@ -380,26 +388,32 @@ def main() -> int:
     install_action_server(d)
     if not args.skip_dev_browser:
         install_dev_browser(d)
-    pub = install_services(d, api_key, args.relay)
+    pub = install_services(d, api_key, args.relay, args.tunnel_port)
 
     if args.relay_instance:
-        authorize_relay(args.relay_instance, args.region, pub)
+        authorize_relay(
+            args.relay_instance,
+            args.relay_region or args.region,
+            pub,
+            args.tunnel_port,
+            args.desktop_id,
+        )
     else:
         print("\n  Add this to the relay host's /root/.ssh/authorized_keys:\n")
-        print(f'    restrict,port-forwarding,permitlisten="{TUNNEL_PORT}" {pub}\n')
+        print(f'    restrict,port-forwarding,permitlisten="{args.tunnel_port}" {pub}\n')
 
     print(f"""
 Done. Put this in backend/.env:
 
     SANDBOX_PROVIDER=wuying
-    WUYING_ENDPOINT=http://127.0.0.1:{TUNNEL_PORT}
+    WUYING_ENDPOINT=http://127.0.0.1:{args.tunnel_port}
     WUYING_API_KEY={api_key}
     WUYING_DESKTOP_ID={args.desktop_id}
 
 Then open the laptop-side tunnel and verify:
 
     backend/scripts/wuying_tunnel.sh
-    curl http://127.0.0.1:{TUNNEL_PORT}/alive
+    curl http://127.0.0.1:{args.tunnel_port}/alive
 """)
     return 0
 

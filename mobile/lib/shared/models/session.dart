@@ -38,6 +38,7 @@ class Session {
     required this.agent,
     required this.model,
     required this.status,
+    this.variant,
     required this.createdAt,
     required this.updatedAt,
     this.sandboxId,
@@ -78,6 +79,10 @@ class Session {
   final String title;
   final String agent;
   final String model;
+
+  /// Persisted reasoning strength; null delegates to the model's default.
+  final String? variant;
+
   final SessionStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;

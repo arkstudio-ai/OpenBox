@@ -234,7 +234,7 @@ def test_product_state_and_text_intent_get_distinct_plan_reasons():
             "todo_write",
             "browser_mode",
             "share_file",
-            "video_project",
+            "video_generate",
             "web_search",
         )
     })
@@ -252,15 +252,18 @@ def test_product_state_and_text_intent_get_distinct_plan_reasons():
 
     assert plan.reasons["todo_write"] == "product:planning"
     assert plan.reasons["browser_mode"] == "product:browser"
-    assert plan.reasons["share_file"] == "product:delivery"
-    assert plan.reasons["video_project"] == "product:video"
+    # share_file sits in both the delivery and the video pack: the video
+    # workflow registers intermediate audio through it. With both product
+    # signals lit, whichever pack is evaluated first owns the attribution.
+    assert plan.reasons["share_file"].startswith("product:")
+    assert plan.reasons["video_generate"] == "product:video"
     assert plan.reasons["web_search"] == "intent:research"
 
 
 def test_explicit_video_text_remains_intent_without_recovery_state():
     catalogue = build_eligible_catalog({
         "capability_search": _tool("capability_search"),
-        "video_project": _tool("video_project"),
+        "video_generate": _tool("video_generate"),
     })
     plan = portable_plan(
         catalogue,
@@ -268,17 +271,17 @@ def test_explicit_video_text_remains_intent_without_recovery_state():
         signals=ExposureSignals(user_task_text="生成一段视频"),
     )
 
-    assert plan.reasons["video_project"] == "intent:video"
+    assert plan.reasons["video_generate"] == "intent:video"
 
 
 def test_product_recovery_pack_survives_adversarial_multi_intent_budgeting():
     catalogue = build_eligible_catalog({
         "capability_search": _tool("capability_search"),
-        "video_project": _tool(
-            "video_project", description="Resume project. " + "p" * 300
-        ),
         "video_generate": _tool(
             "video_generate", description="Resume generation. " + "g" * 300
+        ),
+        "video_transcribe": _tool(
+            "video_transcribe", description="Resume transcription. " + "t" * 300
         ),
         "web_search": _tool(
             "web_search", description="Search current sources. " + "s" * 300
@@ -295,10 +298,10 @@ def test_product_recovery_pack_survives_adversarial_multi_intent_budgeting():
             has_active_video_production=True,
         ),
         # Recovery state must outrank historical discovery evidence.
-        revealed_ids={"video_project"},
+        revealed_ids={"video_generate"},
     )
-    assert plan.reasons["video_project"] == "product:video"
     assert plan.reasons["video_generate"] == "product:video"
+    assert plan.reasons["video_transcribe"] == "product:video"
     assert plan.reasons["web_search"] == "intent:research"
     assert plan.reasons["web_fetch"] == "intent:research"
 
@@ -319,7 +322,7 @@ def test_product_recovery_pack_survives_adversarial_multi_intent_budgeting():
         ),
     )
 
-    assert {"video_project", "video_generate"}.issubset(result.plan.direct_ids)
+    assert {"video_generate", "video_transcribe"}.issubset(result.plan.direct_ids)
     assert {"web_search", "web_fetch"}.issubset(result.trimmed_ids)
     assert result.hard_limit_exceeded is True
     assert all(

@@ -138,6 +138,7 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     # expand/backfill/contract sequence.
     "sessions": {
         "tool_exposure_state": "TEXT NOT NULL DEFAULT '{}'",
+        "variant": "VARCHAR(32)",
     },
     "parts": {
         "stream_seq": "INTEGER",
@@ -510,7 +511,7 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
             "lifecycle_generation",
         }
     ),
-    "sessions": frozenset({"tool_exposure_state"}),
+    "sessions": frozenset({"tool_exposure_state", "variant"}),
     "parts": frozenset(
         {
             "stream_seq",

@@ -7,9 +7,9 @@ from video import job_recovery
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 
-DUMMY_TARGET = SimpleNamespace(provider="doubao", model="m", api_key="k", base_url="https://api.example")
+DUMMY_TARGET = SimpleNamespace(provider="bossip", model="m", api_key="k", base_url="https://api.example")
 RELAY_TARGET = SimpleNamespace(
-    provider="doubao",
+    provider="bossip",
     model="m",
     api_key="k",
     base_url="https://relay.example",
@@ -480,36 +480,21 @@ async def test_ambiguous_submitting_untouched(monkeypatch):
     assert (await _fetch(job_id)).status == "submitting"
 
 
-async def test_segment_business_row_updated(monkeypatch):
-    from db.base import get_db_session
-    from db.models.video_production import VideoProduction, VideoSegment
+async def test_recovery_settles_a_paid_job_with_no_production_attached(monkeypatch):
+    """Generation is standalone now, so a stranded job has nothing to mirror.
 
+    The point of the sweep is unchanged and is the only thing that matters:
+    provider output that was already paid for must never be lost because the
+    process that submitted it went away.
+    """
     _patch_provider(monkeypatch, {"status": "succeeded", "video_url": "https://cdn.example/v.mp4"})
     user_id = "u_" + uuid.uuid4().hex[:8]
-    production_id = "prod_" + uuid.uuid4().hex[:8]
-    segment_id = "seg_" + uuid.uuid4().hex[:8]
-    async with get_db_session() as db:
-        db.add(VideoProduction(
-            id=production_id, user_id=user_id, title="t", brief="b",
-            created_at=NOW(), updated_at=NOW(),
-        ))
-        db.add(VideoSegment(
-            id=segment_id, production_id=production_id, ordinal=1,
-            script_text="s", prompt="p", content_hash="h",
-            created_at=NOW(), updated_at=NOW(),
-        ))
-    job_id = await _insert_job(
-        age_seconds=600, user_id=user_id,
-        production_id=production_id, segment_id=segment_id,
-    )
+    job_id = await _insert_job(age_seconds=600, user_id=user_id)
 
     advanced = await job_recovery.sweep()
 
     assert advanced == 1
     job = await _fetch(job_id)
     assert job.status == "completed"
-    async with get_db_session() as db:
-        segment = await db.get(VideoSegment, segment_id)
-    assert segment.status == "generated"
-    assert segment.output_asset_id == job.output_asset_id
-    assert segment.generation_job_id == job_id
+    assert job.output_asset_id
+    assert job.production_id is None and job.segment_id is None

@@ -10,6 +10,8 @@ class ModelInfo {
     this.maxTokens,
     this.contextLimit,
     this.vision = false,
+    this.variants = const [],
+    this.defaultVariant,
   });
 
   factory ModelInfo.fromJson(Map<String, dynamic> json) => ModelInfo(
@@ -19,6 +21,10 @@ class ModelInfo {
         maxTokens: asInt(json['max_tokens']),
         contextLimit: asInt(json['context_limit']),
         vision: asBool(json['vision']) ?? false,
+        variants: [
+          for (final v in asList(json['variants'])) ?asString(v),
+        ],
+        defaultVariant: asString(json['default_variant']),
       );
 
   final String id;
@@ -27,6 +33,13 @@ class ModelInfo {
   final int? maxTokens;
   final int? contextLimit;
   final bool vision;
+
+  /// Reasoning strengths this model accepts, in display order. Empty means
+  /// the route owns the effort and the picker stays hidden.
+  final List<String> variants;
+
+  /// Effective strength when the conversation does not override it.
+  final String? defaultVariant;
 }
 
 class AppConfig {

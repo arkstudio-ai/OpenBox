@@ -15,11 +15,13 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from api.asset_kinds import KINDS, kind_of
-from auth.middleware import get_current_user
+from auth.jwt import decode_asset_download_token
+from auth.middleware import get_current_user, get_optional_current_user
 from core.config import get_config
 from core.identifier import ascending
 from core.log import create_logger
@@ -30,7 +32,7 @@ from project.workspace import asset_sandbox_path
 
 log = create_logger("api.assets")
 
-router = APIRouter(prefix="/api/assets", tags=["assets"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 _MAX_SIZE = 1024 * 1024 * 1024  # 1 GB; OSS handles it, the tunnel never sees it
 _UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
@@ -288,6 +290,28 @@ async def asset_url(asset_id: str, download: bool = False, current_user: dict = 
             "name": row.name,
             "size": row.size,
         }
+
+
+@router.get("/{asset_id}/download")
+async def asset_download(
+    asset_id: str,
+    token: str = "",
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    """Resolve an authenticated or capability URL to a fresh OSS signature."""
+    user_id = str((current_user or {}).get("user_id") or "")
+    if not user_id and token:
+        payload = decode_asset_download_token(token, asset_id)
+        user_id = str((payload or {}).get("sub") or "")
+    if not user_id:
+        raise HTTPException(401, detail="Not authenticated")
+    oss = _oss_or_503()
+    async with get_db_session() as db:
+        row = await _owned_asset(db, asset_id, user_id)
+        if row.status != "ready":
+            raise HTTPException(409, detail="Upload not completed")
+        url = oss.presign_get(row.oss_key, download_name=row.name)
+    return RedirectResponse(url=url, status_code=307)
 
 
 #: Text preview ceiling. Above this the viewer offers a download instead —

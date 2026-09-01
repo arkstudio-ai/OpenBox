@@ -11,6 +11,7 @@ import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
 import '../api/chat_api.dart';
+import '../utils/reasoning.dart';
 import 'config_providers.dart';
 import 'pending_store.dart';
 import 'stream_store.dart';
@@ -151,8 +152,8 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   }
 
   /// Optimistic send (web `useSendChat`): tmp message + busy + prompt_async.
-  /// Model/agent come from the per-session picks, falling back to the
-  /// session's own values.
+  /// Model/agent/reasoning come from the per-session picks, falling back to
+  /// the session's own values.
   ///
   /// Rethrows on rejection so the composer knows the send never happened and
   /// can keep the draft. Swallowing it here left an empty box that read as
@@ -161,6 +162,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     final model = ref.read(pickedModelProvider(_sessionId));
     final agent =
         ref.read(pickedAgentProvider(_sessionId)) ?? state.session?.agent;
+    final variant = _reasoningValue(model);
     final cmid = makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);
     stream.addMessage(
@@ -185,6 +187,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
             clientMessageId: cmid,
             agent: agent,
             model: model,
+            variant: variant,
             attachments: attachments,
           );
     } catch (error) {
@@ -198,6 +201,24 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
           .error(errorText(ref.read(i18nProvider), error));
       rethrow;
     }
+  }
+
+  /// The reasoning field for the next prompt: the unsent pick for this
+  /// conversation/model pair, resolved against what the session stores.
+  Variant? _reasoningValue(String? pickedModel) {
+    final config = ref.read(appConfigProvider).valueOrNull;
+    final session = state.session;
+    final modelId = activeModelId(
+      picked: pickedModel,
+      sessionModel: session?.model,
+      defaultModel: config?.defaultModel,
+    );
+    return resolveReasoning(
+      model: config?.byId(modelId),
+      sessionModel: session?.model,
+      sessionVariant: session?.variant,
+      pick: ref.read(pickedVariantProvider(reasoningKey(_sessionId, modelId))),
+    ).value;
   }
 
   /// Manual retry from the error state.
@@ -244,4 +265,10 @@ final chatSessionProvider =
 /// "keep the session's model".
 final pickedModelProvider = StateProvider.family<String?, String>(
   (ref, sessionId) => null,
+);
+
+/// Unsent reasoning choice, isolated by conversation and model. A null state
+/// means no local override; [Variant.modelDefault] is an explicit reset.
+final pickedVariantProvider = StateProvider.family<Variant?, String>(
+  (ref, key) => null,
 );

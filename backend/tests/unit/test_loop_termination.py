@@ -184,7 +184,7 @@ def test_identical_video_waits_are_not_a_doom_loop():
 
 
 def test_identical_media_status_calls_are_not_a_doom_loop():
-    for tool in ("video_generate", "video_transcribe", "video_render"):
+    for tool in ("video_generate", "video_transcribe"):
         args = {"action": "status", "job_id": "job_123"}
         history = [_part(tool, args)] * (DOOM_LOOP_THRESHOLD - 1)
         assert not is_repeat_of_recent(history, tool, args)

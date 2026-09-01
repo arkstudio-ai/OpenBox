@@ -5,10 +5,9 @@ action is a round trip: xdotool injects input over the desktop's X session,
 `scrot` captures the result, and the screenshot travels desktop → OSS →
 model (never through the tunnel — see sandbox/assets.attach_sandbox_image).
 
-Coordinates are the subtle part. The real screen is 4K; the model is shown a
-downscaled screenshot and aims at THAT, so every coordinate it sends is
-mapped back through the same scale factor the screenshot was taken with.
-Geometry is re-read on each capture rather than assumed.
+Coordinates are the subtle part. Every input transaction restores the X11
+screen to the same fixed XGA mode used by screenshots, so a viewer resize
+cannot move the target between seeing it and clicking it.
 """
 import asyncio
 import shlex
@@ -22,11 +21,11 @@ from sandbox.desktop import (
     SHOT_PATH,
     NoDesktopError,
     ensure_desktop_tools,
+    fixed_x,
     invalidate,
     take_screenshot,
     take_stable_screenshot,
     to_native,
-    x,
 )
 from tool.tool import ToolResult, ToolContext, define_tool
 
@@ -300,7 +299,8 @@ async def _prepare(ctx: ToolContext, key: str) -> None:
     if _probe_valid_until.get(key, 0.0) > now:
         return
     probe = await ctx.sandbox.execute(
-        'PATH="$HOME/.local/bin:$PATH" command -v obx-shot >/dev/null && command -v xdotool >/dev/null'
+        'PATH="$HOME/.local/bin:$PATH" command -v obx-display >/dev/null '
+        '&& command -v obx-shot >/dev/null && command -v xdotool >/dev/null'
         " && echo ok || echo gone",
         timeout=20,
     )
@@ -420,13 +420,13 @@ def _build_batch(args: ComputerArgs, geometry: dict) -> tuple[str, list[Computer
             )
         commands.append(command)
 
-    # obx-x discovers DISPLAY/XAUTHORITY once, while sh performs every action
-    # locally. shlex.quote preserves the validation/quoting done above.
+    # obx-x discovers DISPLAY/XAUTHORITY once, while sh restores XGA and then
+    # performs every action locally. Quoting is handled by fixed_x.
     cleanup = ""
     if any(item.action == "left_mouse_down" for item in actions):
         cleanup = "trap 'xdotool mouseup 1 >/dev/null 2>&1 || true' EXIT; "
     program = f"set -e; {cleanup}" + "; ".join(commands)
-    return x(f"sh -c {shlex.quote(program)}"), actions
+    return fixed_x(program), actions
 
 
 async def _attach_screenshot(ctx: ToolContext, geometry: dict) -> str:
@@ -590,7 +590,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             return command
 
         execute_started = time.monotonic()
-        wrapped = command if action == "batch" else x(command)
+        wrapped = command if action == "batch" else fixed_x(command)
         result = await ctx.sandbox.execute(wrapped, timeout=120 if action == "batch" else 60)
         timings["execute_ms"] = round((time.monotonic() - execute_started) * 1000)
         if result.exit_code != 0:

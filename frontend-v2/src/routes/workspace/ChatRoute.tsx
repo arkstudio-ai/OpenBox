@@ -161,6 +161,7 @@ export default function ChatRoute() {
         onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
         onStop={stop}
         sessionModel={session.data?.model}
+        sessionVariant={session.data?.variant}
         sessionVideoModel={session.data?.video_model}
         sessionKey={sessionId}
         projectId={session.data?.project_id}

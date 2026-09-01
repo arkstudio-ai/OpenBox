@@ -8,10 +8,10 @@ desktop rather than assuming:
    an xauth file at a path that changes every boot (`/tmp/xauth_XXXXXX`).
    `obx-x` discovers both from the running session's own process environment.
 
-2. **The screen is 4K; models cannot aim at 4K.** Vision models are calibrated
-   around ~1024x768–1280x800, so `obx-shot` downscales and reports the exact
-   scale factor, which the tool uses to map model coordinates back to real
-   pixels.
+2. **The viewer used to resize the X screen.** Browser viewport changes made
+   the desktop jump between unrelated coordinate spaces while the model was
+   acting on the previous screenshot. `obx-display` pins X11 to 1024x768
+   before every capture and input transaction.
 
 Both are installed as system-level CLIs (like `obx-file`), so the agent can
 also drive the desktop by hand from the terminal.
@@ -24,11 +24,12 @@ from core.log import create_logger
 
 log = create_logger("sandbox.desktop")
 
-#: Bounding box the screenshot is fitted into before it reaches the model.
-#: 1280x800 is the sweet spot the vendor guidance converges on: bigger burns
-#: tokens and does not improve targeting; smaller loses UI text.
-MODEL_MAX_W = 1280
-MODEL_MAX_H = 800
+#: One coordinate space from Web SDK viewer through X11 to the model. The
+#: official Anthropic Linux/X11 reference implementation recommends XGA.
+DESKTOP_W = 1024
+DESKTOP_H = 768
+MODEL_MAX_W = DESKTOP_W
+MODEL_MAX_H = DESKTOP_H
 
 # Keep clear of the legacy root-owned /tmp/obx-screen.png. The screenshot is
 # written by the isolated runner and consumed immediately under a desktop
@@ -36,7 +37,7 @@ MODEL_MAX_H = 800
 SHOT_PATH = "/tmp/obx-sandbox-screen.png"
 
 #: Packages the desktop tools need. Installed once per container.
-APT_PACKAGES = ["xdotool", "scrot", "x11-utils", "wmctrl"]
+APT_PACKAGES = ["xdotool", "scrot", "x11-utils", "x11-xserver-utils", "wmctrl"]
 
 OBX_X_SCRIPT = """#!/bin/sh
 # obx-x - run a command against the desktop's X session.
@@ -69,6 +70,30 @@ if [ -z "$DISPLAY" ]; then
 fi
 [ -n "$DISPLAY" ] || { echo "obx-x: no X display found" >&2; exit 3; }
 exec "$@"
+"""
+
+OBX_DISPLAY_SCRIPT = """#!/bin/sh
+# obx-display - keep screenshots and injected input in one coordinate space.
+set -eu
+target="1024x768"
+current=$(xdpyinfo 2>/dev/null | awk '/dimensions:/{print $2; exit}')
+[ "$current" = "$target" ] && exit 0
+
+# Wuying exposes more than one ASP-DUMMY output while only one has a CRTC.
+# Selecting an output explicitly can therefore hit "Configure crtc failed";
+# the screen-size form asks XRandR to choose the active CRTC and works across
+# reconnects and dynamically-created viewer modes.
+xrandr -s "$target" >/dev/null
+
+i=0
+while [ "$i" -lt 20 ]; do
+  current=$(xdpyinfo 2>/dev/null | awk '/dimensions:/{print $2; exit}')
+  [ "$current" = "$target" ] && exit 0
+  i=$((i + 1))
+  sleep 0.1
+done
+echo "obx-display: requested $target but X reports ${current:-unknown}" >&2
+exit 5
 """
 
 OBX_SHOT_SCRIPT = '''#!/usr/bin/env python3
@@ -436,7 +461,11 @@ async def ensure_desktop_tools(client, container_key: str) -> None:
             "deploy so the root-only component installer can repair it."
         )
 
-    for name, body in (("obx-x", OBX_X_SCRIPT), ("obx-shot", OBX_SHOT_SCRIPT)):
+    for name, body in (
+        ("obx-x", OBX_X_SCRIPT),
+        ("obx-display", OBX_DISPLAY_SCRIPT),
+        ("obx-shot", OBX_SHOT_SCRIPT),
+    ):
         result = await client.execute(_install_script(name, body), timeout=30)
         if result.exit_code != 0:
             raise RuntimeError(f"{name} install failed: {result.stderr[:200]}")
@@ -449,10 +478,16 @@ def x(command: str) -> str:
     return f'PATH="$HOME/.local/bin:$PATH" obx-x {command}'
 
 
+def fixed_x(command: str) -> str:
+    """Run one desktop transaction only after restoring the fixed XGA mode."""
+    program = f"obx-display && {command}"
+    return x(f"sh -c {shlex.quote(program)}")
+
+
 async def take_screenshot(client, dest: str = SHOT_PATH) -> dict:
     """Capture + downscale on the desktop. Returns geometry metadata."""
     result = await client.execute(
-        x(f"obx-shot {MODEL_MAX_W} {MODEL_MAX_H} {shlex.quote(dest)}"), timeout=90
+        fixed_x(f"obx-shot {MODEL_MAX_W} {MODEL_MAX_H} {shlex.quote(dest)}"), timeout=90
     )
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip()[:300] or "screenshot failed")
@@ -484,7 +519,7 @@ async def take_stable_screenshot(
     interval_ms = max(40, min(500, int(interval_ms)))
     threshold = max(0.0, min(0.05, float(threshold)))
     result = await client.execute(
-        x(
+        fixed_x(
             f"obx-shot {MODEL_MAX_W} {MODEL_MAX_H} {shlex.quote(dest)} "
             f"{timeout_ms} {interval_ms} {threshold:g}"
         ),

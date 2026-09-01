@@ -44,30 +44,15 @@ from pydantic import BaseModel, ConfigDict, Field as PydanticField, StringConstr
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
-# The production service runs this file directly from /opt/action_server, while
-# tests load it with importlib or exec() (the latter intentionally supplies no
-# __file__). Put the directory containing media_jobs.py on sys.path in all
-# three cases so the durable queue is the same code path.
+# The production service runs this file directly from /opt/action_server,
+# while tests load it with importlib or exec() (the latter intentionally
+# supplies no __file__). Keep that directory importable in all three cases.
 if globals().get("__file__"):
     _ACTION_SERVER_DIR = Path(str(globals()["__file__"])).resolve().parent
 else:
-    _ACTION_SERVER_DIR = next(
-        (
-            candidate
-            for candidate in (Path.cwd() / "container", Path.cwd())
-            if (candidate / "media_jobs.py").is_file()
-        ),
-        Path.cwd(),
-    )
+    _ACTION_SERVER_DIR = Path.cwd()
 if str(_ACTION_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_ACTION_SERVER_DIR))
-
-from media_jobs import (  # noqa: E402
-    MediaJobConflict,
-    MediaJobError,
-    MediaJobNotFound,
-    media_job_manager,
-)
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
@@ -142,31 +127,6 @@ class MediaOutputRequest(BaseModel):
     mime: str = PydanticField(default="video/mp4", max_length=128)
     put_url: str = PydanticField(min_length=8, max_length=8192)
 
-
-class MediaJobSubmitRequest(BaseModel):
-    operation: Literal["render", "extract_audio"] = "render"
-    job_id: str = PydanticField(min_length=8, max_length=96)
-    owner: str = PydanticField(min_length=1, max_length=128)
-    session_id: str = PydanticField(default="", max_length=128)
-    idempotency_key: str = PydanticField(min_length=1, max_length=180)
-    inputs: list[MediaInputRequest] = PydanticField(min_length=1, max_length=100)
-    output: MediaOutputRequest
-    captions: list[Annotated[str, StringConstraints(max_length=2000)]] = PydanticField(
-        default_factory=list, max_length=100
-    )
-    subtitles: bool = True
-    channel_name: str = PydanticField(default="", max_length=100)
-    render_engine: Literal["auto", "ffmpeg", "hyperframes"] = "auto"
-    width: int = PydanticField(default=720, ge=320, le=3840)
-    height: int = PydanticField(default=1280, ge=320, le=3840)
-
-
-class MediaJobOwnerRequest(BaseModel):
-    owner: str = PydanticField(min_length=1, max_length=128)
-
-
-class MediaJobRetryRequest(MediaJobOwnerRequest):
-    payload: dict | None = None
 
 class ListFilesRequest(BaseModel):
     path: str = "/workspace"
@@ -607,7 +567,6 @@ async def lifespan(app: FastAPI):
         reconnect_tasks.append(
             asyncio.create_task(mcp_manager.reconnect_configured())
         )
-    await media_job_manager.start()
     try:
         yield
     finally:
@@ -623,7 +582,6 @@ async def lifespan(app: FastAPI):
             seen_managers.add(id(manager))
             await manager.shutdown()
         _scoped_mcp_managers.clear()
-        await media_job_manager.stop()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
 
@@ -888,78 +846,11 @@ async def alive():
             "mcp_desired_state_v1",
             "mcp_supervisor_v1",
             "terminal_project_cwd_v1",
-            "media_jobs_v1",
-            "media_jobs_fastpath_v2",
-            "media_jobs_audio_extract_v3",
         ],
-        "media_jobs": media_job_manager.capabilities(),
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
-
-def _media_http_error(exc: MediaJobError) -> HTTPException:
-    if isinstance(exc, MediaJobNotFound):
-        return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, MediaJobConflict):
-        return HTTPException(status_code=409, detail=str(exc))
-    return HTTPException(status_code=500, detail=str(exc))
-
-
-@app.post("/media/jobs")
-async def submit_media_job(req: MediaJobSubmitRequest):
-    """Idempotently enqueue one HyperFrames/FFmpeg render on this desktop."""
-    try:
-        return await media_job_manager.submit(req.model_dump())
-    except MediaJobError as exc:
-        raise _media_http_error(exc) from exc
-
-
-@app.get("/media/jobs/status")
-async def media_queue_status():
-    return await media_job_manager.queue_status()
-
-
-@app.get("/media/jobs/{job_id}")
-async def get_media_job(job_id: str, owner: str = Query(...)):
-    try:
-        return await media_job_manager.get(job_id, owner)
-    except MediaJobError as exc:
-        raise _media_http_error(exc) from exc
-
-
-@app.get("/media/jobs/{job_id}/wait")
-async def wait_media_job(
-    job_id: str,
-    owner: str = Query(...),
-    after_version: int = Query(0, ge=0),
-    timeout: float = Query(25.0, ge=0, le=25),
-):
-    """Bounded long-poll; callers repeat while queued/in_progress."""
-    try:
-        return await media_job_manager.wait(
-            job_id, owner, after_version=after_version, timeout=timeout
-        )
-    except MediaJobError as exc:
-        raise _media_http_error(exc) from exc
-
-
-@app.post("/media/jobs/{job_id}/cancel")
-async def cancel_media_job(job_id: str, req: MediaJobOwnerRequest):
-    try:
-        return await media_job_manager.cancel(job_id, req.owner)
-    except MediaJobError as exc:
-        raise _media_http_error(exc) from exc
-
-
-@app.post("/media/jobs/{job_id}/retry")
-async def retry_media_job(job_id: str, req: MediaJobRetryRequest):
-    """Requeue a terminal failure while retaining the verified input cache."""
-    try:
-        return await media_job_manager.retry(job_id, req.owner, req.payload)
-    except MediaJobError as exc:
-        raise _media_http_error(exc) from exc
 
 
 @app.post("/desktop/lease/acquire")

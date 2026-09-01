@@ -12,13 +12,59 @@ import sqlalchemy as sa
 
 
 PREVIOUS_HEAD = "b6d8f0a2c4e6"
-NEW_HEAD = "e2b4d6f8a0c3"
+NEW_HEAD = "f0b2d4e6a8c1"
 
 
 def _previous_head_fixture(database_path: Path) -> None:
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql(
+            "CREATE TABLE video_material_groups ("
+            "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
+            "provider VARCHAR(32) NOT NULL, project_name VARCHAR(128) NOT NULL, "
+            "group_type VARCHAR(24) NOT NULL, label VARCHAR(120) NOT NULL, "
+            "provider_group_id VARCHAR(160), status VARCHAR(24) NOT NULL, "
+            "provider_token TEXT, authorization_url TEXT, qr_code TEXT, error TEXT, "
+            "expires_at DATETIME, authorized_at DATETIME, created_at DATETIME NOT NULL, "
+            "updated_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_video_material_groups_user_updated "
+            "ON video_material_groups(user_id, updated_at)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_video_material_groups_status "
+            "ON video_material_groups(status, updated_at)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE video_material_assets ("
+            "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
+            "group_id VARCHAR(64) NOT NULL, source_asset_id VARCHAR(64) NOT NULL, "
+            "provider_asset_id VARCHAR(160), asset_type VARCHAR(16) NOT NULL, "
+            "status VARCHAR(24) NOT NULL, error TEXT, created_at DATETIME NOT NULL, "
+            "updated_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_video_material_assets_user_updated "
+            "ON video_material_assets(user_id, updated_at)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_video_material_assets_source "
+            "ON video_material_assets(source_asset_id)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE video_productions ("
+            "id VARCHAR(64) PRIMARY KEY, "
+            "character_reference_type VARCHAR(24) NOT NULL DEFAULT 'virtual', "
+            "character_identity_id VARCHAR(64))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE video_approvals ("
+            "id VARCHAR(64) PRIMARY KEY, production_id VARCHAR(64) NOT NULL, "
+            "max_calls INTEGER, used_calls INTEGER NOT NULL DEFAULT 0)"
+        )
         connection.exec_driver_sql("CREATE TABLE projects (id VARCHAR(64) PRIMARY KEY)")
         connection.exec_driver_sql(
             "CREATE TABLE sessions ("
@@ -59,6 +105,10 @@ def _previous_head_fixture(database_path: Path) -> None:
         )
         connection.exec_driver_sql("INSERT INTO users(id) VALUES ('old-user')")
         connection.exec_driver_sql("INSERT INTO projects(id) VALUES ('old-project')")
+        connection.exec_driver_sql(
+            "INSERT INTO video_approvals(id, production_id, max_calls, used_calls) "
+            "VALUES ('old-approval', 'old-production', 2, 1)"
+        )
         connection.exec_driver_sql(
             "INSERT INTO sessions(id, user_id, project_id) "
             "VALUES ('old-session', 'old-user', 'old-project')"
@@ -117,6 +167,9 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(
     assert "tool_exposure_state" in {
         column["name"] for column in inspector.get_columns("sessions")
     }
+    assert "variant" in {
+        column["name"] for column in inspector.get_columns("sessions")
+    }
     part_columns = {column["name"] for column in inspector.get_columns("parts")}
     assert {
         "stream_seq",
@@ -148,6 +201,15 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(
             == PREVIOUS_HEAD
         )
     assert "internal_parts" not in inspector.get_table_names()
+    assert "video_material_groups" in inspector.get_table_names()
+    assert "video_material_assets" in inspector.get_table_names()
+    assert {
+        "character_reference_type",
+        "character_identity_id",
+    } <= {column["name"] for column in inspector.get_columns("video_productions")}
+    assert {"max_calls", "used_calls"} <= {
+        column["name"] for column in inspector.get_columns("video_approvals")
+    }
     assert "tool_exposure_state" not in {
         column["name"] for column in inspector.get_columns("sessions")
     }

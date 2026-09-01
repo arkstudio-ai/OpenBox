@@ -12,24 +12,17 @@ from tool.registry import get_tool, register_builtin_tools
 
 
 PERMANENT_MEDIA_TOOLS = (
-    "video_project",
     "video_generate",
     "video_transcribe",
-    "video_render",
-    "video_identity",
     "image_gen",
     "creator_context",
 )
 
 EXPECTED_ACTIONS = {
-    "video_project": {
-        "create", "set_script", "set_segments", "request_approval",
-        "revise_segment", "set_segment_feedback", "status",
+    "video_generate": {
+        "models", "estimate", "submit", "status", "wait", "cancel", "fetch",
     },
-    "video_generate": {"submit", "status", "wait", "cancel"},
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
-    "video_render": {"submit", "status", "wait", "cancel", "retry"},
-    "video_identity": {"create", "status", "list", "add_asset"},
     "creator_context": {
         "get_user_context", "write_memory", "propose_memory",
         "search_memories", "list_active_memories",
@@ -145,24 +138,17 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     assert schemas["image_gen"]["properties"]["n"]["maximum"] == 4
     assert schemas["image_gen"]["properties"]["input_images"]["maxItems"] == 16
 
-    project = schemas["video_project"]["properties"]
-    assert (project["target_duration_seconds"]["minimum"],
-            project["target_duration_seconds"]["maximum"]) == (15, 180)
-    assert project["segments"]["maxItems"] == 100
+    generate = schemas["video_generate"]["properties"]
+    assert (generate["duration"]["minimum"], generate["duration"]["maximum"]) == (-1, 300)
+    assert generate["input_assets"]["maxItems"] == 8
+    assert generate["seed"]["minimum"] == 0
 
-    for name in ("video_generate", "video_transcribe", "video_render"):
+    for name in ("video_generate", "video_transcribe"):
         properties = schemas[name]["properties"]
         assert (properties["wait_seconds"]["minimum"],
                 properties["wait_seconds"]["maximum"]) == (0.0, 25.0)
         assert (properties["idempotency_key"]["minLength"],
                 properties["idempotency_key"]["maxLength"]) == (3, 180)
-
-    render = schemas["video_render"]["properties"]
-    assert (render["width"]["minimum"], render["width"]["maximum"]) == (320, 3840)
-    assert render["segment_assets"]["maxItems"] == 100
-
-    identity = schemas["video_identity"]["properties"]
-    assert (identity["label"]["minLength"], identity["label"]["maxLength"]) == (1, 120)
 
     context = schemas["creator_context"]["properties"]
     assert (context["limit"]["minimum"], context["limit"]["maximum"]) == (1, 100)
@@ -172,8 +158,6 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     # The budget is not permission to erase the non-obvious safety contract.
     assert "idempotency_key" in get_tool("video_generate").description
     assert "ambiguous" in get_tool("video_generate").description
-    assert "real person" in get_tool("video_identity").description
-    assert "virtual" in get_tool("video_identity").description
     assert "confirmation card" in get_tool("creator_context").description
     assert "never crosses users" in get_tool("creator_context").description
 

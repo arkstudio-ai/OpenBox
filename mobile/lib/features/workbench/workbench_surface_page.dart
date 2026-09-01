@@ -39,22 +39,29 @@ class WorkbenchSurfacePage extends ConsumerStatefulWidget {
 class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
   bool _creatingSandbox = false;
 
+  /// The cloud desktop asks for the whole screen in landscape. Dropping the
+  /// app bar here — rather than pushing another route — keeps the WebView in
+  /// the same place in the tree, so the stream survives the transition.
+  bool _immersive = false;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     return Scaffold(
-      backgroundColor: t.bg,
-      appBar: AppBar(
-        title: Text(
-          i18n.t('workbench:tabs.${widget.kind}'),
-          style: TextStyle(
-            fontSize: FontSizes.lg,
-            fontWeight: FontWeight.w500,
-            color: t.ink,
-          ),
-        ),
-      ),
+      backgroundColor: _immersive ? Colors.black : t.bg,
+      appBar: _immersive
+          ? null
+          : AppBar(
+              title: Text(
+                i18n.t('workbench:tabs.${widget.kind}'),
+                style: TextStyle(
+                  fontSize: FontSizes.lg,
+                  fontWeight: FontWeight.w500,
+                  color: t.ink,
+                ),
+              ),
+            ),
       body: switch (widget.kind) {
         'terminal' => _withContainer(
           (containerId) => TerminalTab(
@@ -70,7 +77,9 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
           (containerId) =>
               FilesTab(sessionId: widget.sessionId, containerId: containerId),
         ),
-        'desktop' => const DesktopTab(),
+        'desktop' => DesktopTab(
+          onImmersive: (on) => setState(() => _immersive = on),
+        ),
         'cron' => CronPanelTab(
           projectId: ref
               .watch(sessionProjectIdProvider(widget.sessionId))

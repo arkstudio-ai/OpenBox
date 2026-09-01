@@ -466,6 +466,7 @@ async def fork_session(
         destination_row, new_session = _new_session_record(
             model=source_row.model or "",
             agent=source_row.agent or "build",
+            variant=source_row.variant,
             title=f"Fork: {source_row.title or 'Untitled'}",
             parent_id=None,
             user_id=user_id,

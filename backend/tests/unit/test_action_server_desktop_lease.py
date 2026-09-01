@@ -26,7 +26,6 @@ assert _SPEC and _SPEC.loader
 server = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(server)
 
-from media_jobs import MediaJobConfig, MediaJobManager  # noqa: E402
 
 
 def request(**headers: str) -> Request:
@@ -374,66 +373,3 @@ async def test_run_fence_requires_a_valid_unexpired_database_lease_receipt(
         "epoch": 7,
         "run_id": "run-receipt",
     }
-
-
-@pytest.mark.asyncio
-async def test_authenticated_media_routes_complete_a_durable_job(tmp_path):
-    original_manager = server.media_job_manager
-    original_key = server.SESSION_API_KEY
-    manager = MediaJobManager(
-        MediaJobConfig(state_root=str(tmp_path / "state"), temp_root=str(tmp_path / "temp"))
-    )
-
-    async def fake_render(_job_id, _payload):
-        return {"uploaded": True, "has_audio": True, "duration_seconds": 4.0}
-
-    manager._render = fake_render
-    server.media_job_manager = manager
-    server.SESSION_API_KEY = "route-test-key"
-    await manager.start()
-    try:
-        transport = httpx.ASGITransport(app=server.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://action.test") as client:
-            payload = {
-                "job_id": "render-route-0001",
-                "owner": "user-route",
-                "session_id": "session-route",
-                "idempotency_key": "route-key-v1",
-                "inputs": [{
-                    "name": "segment.mp4",
-                    "mime": "video/mp4",
-                    "size": 10,
-                    "cache_key": "bucket:key:10",
-                    "url": "https://oss.example.test/input.mp4?signature=hidden",
-                }],
-                "output": {
-                    "name": "final.mp4",
-                    "mime": "video/mp4",
-                    "put_url": "https://oss.example.test/output.mp4?signature=hidden",
-                },
-                "captions": ["路由集成测试"],
-            }
-            denied = await client.post("/media/jobs", json=payload)
-            assert denied.status_code == 403
-
-            headers = {"X-API-Key": "route-test-key"}
-            submitted = await client.post("/media/jobs", headers=headers, json=payload)
-            assert submitted.status_code == 200
-            job = submitted.json()
-            for _ in range(100):
-                response = await client.get(
-                    f"/media/jobs/{job['job_id']}",
-                    headers=headers,
-                    params={"owner": "user-route"},
-                )
-                assert response.status_code == 200
-                current = response.json()
-                if current["status"] == "completed":
-                    break
-                await asyncio.sleep(0.01)
-            assert current["status"] == "completed"
-            assert current["result"]["resource_check"]["temp_removed"] is True
-    finally:
-        await manager.stop()
-        server.media_job_manager = original_manager
-        server.SESSION_API_KEY = original_key

@@ -121,18 +121,12 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
     from tool.view_image import view_image_tool
     from tool.share_file import share_file_tool
     from tool.image_gen import image_gen_tool
-    from tool.video_workflow import video_project_tool
-    from tool.video_identity import video_identity_tool
     from tool.computer import computer_tool
     from tool.browser_mode import browser_mode_tool
     from tool.skill_manage import skill_manage_tool
     from tool.creator_context import creator_context_tool
     from tool.capability_search import capability_search_tool
-    from tool.video_production import (
-        video_generate_tool,
-        video_render_tool,
-        video_transcribe_tool,
-    )
+    from tool.video_production import video_generate_tool, video_transcribe_tool
 
     for tool in [
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
@@ -140,8 +134,7 @@ def register_builtin_tools(*, load_custom: bool = True) -> None:
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
         skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
-        video_identity_tool, video_project_tool, video_generate_tool,
-        video_transcribe_tool, video_render_tool,
+        video_generate_tool, video_transcribe_tool,
         computer_tool, browser_mode_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool,
     ]:

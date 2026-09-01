@@ -225,7 +225,6 @@ def test_an_all_agent_is_not_treated_as_a_subagent_only(with_config):
 
 BUILD_ONLY_WORKFLOW_TOOLS = {
     "image_gen",
-    "video_identity",
     "video_project",
     "video_generate",
     "video_transcribe",

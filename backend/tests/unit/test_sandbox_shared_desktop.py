@@ -9,6 +9,7 @@ restarted.
 """
 import pytest
 
+from sandbox.client import USER_SCOPE_HEADER, user_scope_for
 from sandbox.wuying import CONTAINER_ID, WuyingProvider
 
 

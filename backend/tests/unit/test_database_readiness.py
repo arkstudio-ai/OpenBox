@@ -332,7 +332,8 @@ def _create_current_schema(
         f"CREATE TABLE external_effect_evidence ({external_effect_evidence_columns})"
     )
     connection.exec_driver_sql(
-        "CREATE TABLE sessions (id VARCHAR PRIMARY KEY, tool_exposure_state TEXT)"
+        "CREATE TABLE sessions ("
+        "id VARCHAR PRIMARY KEY, tool_exposure_state TEXT, variant VARCHAR(32))"
     )
     connection.exec_driver_sql(
         "CREATE TABLE parts ("

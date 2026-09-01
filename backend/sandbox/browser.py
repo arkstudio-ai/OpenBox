@@ -24,6 +24,7 @@ import shlex
 import time
 
 from core.log import create_logger
+
 from sandbox.desktop import ensure_x_helper, x
 
 log = create_logger("sandbox.browser")
@@ -38,6 +39,7 @@ RELAY_PORT = 9222
 # unprivileged runner could neither truncate the logs nor replace the PID file.
 BROWSER_RUNTIME_DIR = ".cache/openbox/browser"
 CHROME_LOG = "chrome.log"
+IBUS_LOG = "ibus.log"
 RELAY_LOG = "relay.log"
 RELAY_PID = "relay.pid"
 
@@ -340,26 +342,73 @@ fi
 rm -rf "$PROF/Default/Sessions" 2>/dev/null || true
 rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" \
       "$PROF/Default/Last Session" "$PROF/Default/Last Tabs" 2>/dev/null || true
-( setsid env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
-  DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
-  "$BIN" \\
-  --remote-debugging-port={CHROME_PORT} \\
-  --remote-debugging-address=127.0.0.1 \\
-  --user-data-dir="$HOME/{CHROME_PROFILE}" \\
-  --no-first-run \\
-  --no-default-browser-check \\
-  --disable-session-crashed-bubble \\
-  --restore-last-session=false \\
-  --disable-features=TranslateUI,MediaRouter \\
-  --disable-notifications \\
-  --deny-permission-prompts \\
-  --disable-infobars \\
-  --no-service-autorun \\
-  --password-store=basic \\
-  --use-mock-keychain \\
-  --start-maximized \\
-  about:blank \\
-  >"$RUNTIME/{CHROME_LOG}" 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+if command -v dbus-run-session >/dev/null 2>&1 \
+   && command -v ibus-daemon >/dev/null 2>&1 \
+   && {{ [ -x /usr/libexec/ibus-engine-libpinyin ] \
+        || [ -x /usr/lib/ibus/ibus-engine-libpinyin ]; }}; then
+  ( setsid env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \
+    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \
+    OPENBOX_CHROME_BIN="$BIN" OPENBOX_CHROME_PROFILE="$HOME/{CHROME_PROFILE}" \
+    dbus-run-session -- sh -c '
+      export GTK_IM_MODULE=ibus
+      export QT_IM_MODULE=ibus
+      export XMODIFIERS=@im=ibus
+      export IBUS_ENABLE_SYNC_MODE=1
+      export IBUS_USE_PORTAL=0
+      if command -v gsettings >/dev/null 2>&1; then
+        gsettings set org.freedesktop.ibus.general preload-engines "[\"libpinyin\"]" >/dev/null 2>&1 || true
+        gsettings set org.freedesktop.ibus.general engines-order "[\"libpinyin\"]" >/dev/null 2>&1 || true
+        gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin init-chinese false >/dev/null 2>&1 || true
+        gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin main-switch "<Shift>" >/dev/null 2>&1 || true
+      fi
+      ibus-daemon --replace --xim --panel=disable >"$HOME/{BROWSER_RUNTIME_DIR}/{IBUS_LOG}" 2>&1 &
+      ( sleep 1; n=0; while [ "$n" -lt 6 ]; do
+          timeout 2 ibus engine libpinyin >/dev/null 2>&1 && exit 0
+          n=$((n + 1)); sleep 0.25
+        done ) &
+      exec "$OPENBOX_CHROME_BIN" \
+        --remote-debugging-port={CHROME_PORT} \
+        --remote-debugging-address=127.0.0.1 \
+        --user-data-dir="$OPENBOX_CHROME_PROFILE" \
+        --gtk-version=3 \
+        --no-first-run \
+        --no-default-browser-check \
+        --disable-session-crashed-bubble \
+        --restore-last-session=false \
+        --disable-features=TranslateUI,MediaRouter \
+        --disable-notifications \
+        --deny-permission-prompts \
+        --disable-infobars \
+        --no-service-autorun \
+        --password-store=basic \
+        --use-mock-keychain \
+        --start-maximized \
+        about:blank
+    ' >"$RUNTIME/{CHROME_LOG}" 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+else
+  # Minimal/headless images may not carry IBus; retain the direct browser path
+  # so English keyboard and CDP automation still work there.
+  ( setsid env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \
+    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \
+    "$BIN" \
+    --remote-debugging-port={CHROME_PORT} \
+    --remote-debugging-address=127.0.0.1 \
+    --user-data-dir="$HOME/{CHROME_PROFILE}" \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-session-crashed-bubble \
+    --restore-last-session=false \
+    --disable-features=TranslateUI,MediaRouter \
+    --disable-notifications \
+    --deny-permission-prompts \
+    --disable-infobars \
+    --no-service-autorun \
+    --password-store=basic \
+    --use-mock-keychain \
+    --start-maximized \
+    about:blank \
+    >"$RUNTIME/{CHROME_LOG}" 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+fi
 exit 0
 """
 

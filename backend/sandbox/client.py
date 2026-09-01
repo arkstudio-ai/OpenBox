@@ -35,6 +35,15 @@ log = create_logger("sandbox.client")
 #: replaces a useful message with a timeout.
 MCP_CALL_TIMEOUT_SECONDS = 180.0
 CATALOGUE_CACHE_TTL_SECONDS = 2.0
+USER_SCOPE_HEADER = "X-OpenBox-User-Scope"
+_USER_SCOPE_PATTERN = re.compile(r"u-[0-9a-f]{20}")
+
+
+def user_scope_for(user_id: str) -> str:
+    """Derive the opaque tenant namespace required by hardened action servers."""
+    if not isinstance(user_id, str) or not user_id:
+        raise ValueError("A non-empty user id is required for sandbox scope")
+    return f"u-{hashlib.sha256(user_id.encode('utf-8')).hexdigest()[:20]}"
 
 # Request-level callers may add conditional or content headers, but transport
 # identity is owned exclusively by SandboxClient. Clearing the complete set
@@ -338,7 +347,7 @@ class SandboxClient:
         self.user_scope = user_scope
         if user_scope:
             if not re.fullmatch(r"u-[0-9a-f]{20}", user_scope):
-                raise ValueError("invalid sandbox user scope")
+                raise ValueError("Invalid sandbox user scope")
             self._headers["X-OpenBox-User-Scope"] = user_scope
         self._trace: contextvars.ContextVar[RequestTrace] = contextvars.ContextVar(
             f"sandbox_request_trace_{id(self)}", default=RequestTrace()

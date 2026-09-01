@@ -77,8 +77,11 @@
     "controlOn": "You are in control",
     "frameTitle": "Cloud desktop view",
     "clipboard": "Sync clipboard",
+    "imeHint": "Remote IME: Shift",
+    "imeHintDetail": "Keep the local input method in English, then tap Shift in a remote text field to switch Chinese/English. The cloud SDK filters Caps Lock.",
     "upload": "Upload a file to the desktop",
     "fullscreen": "Fullscreen",
-    "exitFullscreen": "Exit fullscreen"
+    "exitFullscreen": "Exit fullscreen",
+    "keyboard": "Keyboard input"
   }
 }

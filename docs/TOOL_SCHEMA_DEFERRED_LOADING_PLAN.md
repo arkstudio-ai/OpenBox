@@ -654,7 +654,7 @@ plan/explore/general 使用各自最小 core：plan 常驻 `plan_exit`；explore
 | delivery | `share_file` | 已有待交付文件或明确下载/导出意图 |
 | automation | `cron` | 定时、周期、提醒、监控意图 |
 | image | `image_gen`, `view_image` | 生成/编辑图片或图片附件 |
-| video | `creator_context`, `image_gen`, `video_identity`, `video_project`, `video_generate`, `video_transcribe`, `video_render` | 明确视频意图或存在 active production/job/approval |
+| video | `creator_context`, `image_gen`, `video_project`, `video_generate`, `video_transcribe`, `video_render` | 明确视频意图或存在 active production/job/approval |
 | skill_admin | `skill_manage`, `share_file` | 创建、导入、导出个人技能 |
 
 视频包整体一次物化，不在第一版逐状态拆成六次搜索。它当前约 2.5K proxy tokens，整体加载

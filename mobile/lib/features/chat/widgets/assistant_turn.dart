@@ -12,7 +12,6 @@ import 'cards/patch_chip.dart';
 import 'cards/plan_card.dart';
 import 'cards/skill_job_receipt.dart';
 import 'cards/todo_card.dart';
-import 'cards/video_identity_card.dart';
 import 'markdown_view.dart';
 import 'result_artifacts.dart';
 import 'step_divider.dart';
@@ -126,10 +125,6 @@ class AssistantTurn extends ConsumerWidget {
           defaultOpen: content.incomplete,
         ),
         SkillJobReceipts(parts: [for (final m in turn.messages) ...m.parts]),
-        VideoIdentityCards(
-          parts: [for (final m in turn.messages) ...m.parts],
-          sessionId: sessionId,
-        ),
         if (streaming && !hasActivity)
           Align(alignment: Alignment.centerLeft, child: ThinkingRow(retry: retry))
         else if (content.hasFinal) ...[

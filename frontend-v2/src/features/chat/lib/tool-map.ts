@@ -38,7 +38,6 @@ const WEB_FETCH: ToolGlyph = { kindKey: "webFetch", glyph: "↗", tone: "accent"
 const TASK: ToolGlyph = { kindKey: "task", glyph: "⚒", tone: "sage" }
 const TODO: ToolGlyph = { kindKey: "todo", glyph: "☑", tone: "sage" }
 const MCP: ToolGlyph = { kindKey: "mcp", glyph: "⚒", tone: "sage" }
-const VIDEO_IDENTITY: ToolGlyph = { kindKey: "videoIdentity", glyph: "◉", tone: "sage" }
 
 const TOOL_TABLE: Record<string, ToolGlyph> = {
   bash: BASH,
@@ -73,7 +72,6 @@ const TOOL_TABLE: Record<string, ToolGlyph> = {
   subtask: TASK,
   todowrite: TODO,
   todo: TODO,
-  video_identity: VIDEO_IDENTITY,
 }
 
 /** Structural layout for a tool's detail column — how its output is composed. */

@@ -7,6 +7,7 @@
 // Composer over the complexity ceiling for no benefit to the reader.
 import type { AppConfig, ModelInfo, VideoModelInfo } from "@/shared/types/api"
 import { useModelChoice } from "./useModelChoice"
+import { useReasoningChoice } from "./useReasoningChoice"
 import { useVideoModelChoice } from "./useVideoModelChoice"
 
 // Stable identities, so a picker is not handed a fresh array on every render.
@@ -16,6 +17,7 @@ const EMPTY_VIDEO_MODELS: VideoModelInfo[] = []
 interface Options {
   config?: AppConfig
   sessionModel?: string
+  sessionVariant?: string | null
   sessionVideoModel?: string
   sessionKey?: string
 }
@@ -23,6 +25,7 @@ interface Options {
 export function useComposerModels({
   config,
   sessionModel,
+  sessionVariant,
   sessionVideoModel,
   sessionKey,
 }: Options) {
@@ -39,6 +42,12 @@ export function useComposerModels({
     sessionKey,
     fallback: config?.default_video_model ?? videoModels[0]?.id,
   })
+  const reasoning = useReasoningChoice({
+    model: models.find((model) => model.id === chat.activeId),
+    sessionModel,
+    sessionVariant,
+    sessionKey,
+  })
 
-  return { models, videoModels, chat, video }
+  return { models, videoModels, chat, video, reasoning }
 }

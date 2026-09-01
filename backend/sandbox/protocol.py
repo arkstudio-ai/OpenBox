@@ -16,7 +16,4 @@ REQUIRED_ACTION_SERVER_CAPABILITIES = frozenset({
     "mcp_desired_state_v1",
     "mcp_supervisor_v1",
     "terminal_project_cwd_v1",
-    "media_jobs_v1",
-    "media_jobs_fastpath_v2",
-    "media_jobs_audio_extract_v3",
 })

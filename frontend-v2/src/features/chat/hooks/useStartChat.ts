@@ -1,13 +1,13 @@
 import { useCallback } from "react"
-import { http } from "@/shared/api/http"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
-import { useCreateSession } from "../api/messages"
+import { sendPromptAsync, useCreateSession } from "../api/messages"
 import { makeClientId, optimisticUserMessage } from "../lib/message"
 import { useStreamStore } from "../stores/stream"
 
 export interface StartOpts {
   model?: string
+  variant?: string | null
   videoModel?: string
   agent?: string
   projectId?: string
@@ -34,6 +34,7 @@ export function useStartChat(
         const session = await create.mutateAsync({
           projectId: opts?.projectId,
           model: opts?.model,
+          variant: opts?.variant,
           agent: opts?.agent,
         })
         sessionId = session.id
@@ -52,13 +53,14 @@ export function useStartChat(
       onSession(sessionId)
 
       try {
-        await http.post(`/api/agent/session/${sessionId}/prompt_async`, {
+        await sendPromptAsync(sessionId, {
           text: trimmed,
           model: opts?.model,
-          video_model: opts?.videoModel,
+          variant: opts?.variant,
+          videoModel: opts?.videoModel,
           agent: opts?.agent,
-          attachments: opts?.attachments?.length ? opts.attachments : undefined,
-          client_message_id: clientMessageId,
+          attachments: opts?.attachments,
+          clientMessageId,
         })
       } catch (err) {
         useStreamStore.getState().setStatus(sessionId, "idle")

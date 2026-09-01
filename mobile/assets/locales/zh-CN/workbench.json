@@ -77,8 +77,11 @@
     "controlOn": "已接管操控",
     "frameTitle": "云桌面画面",
     "clipboard": "剪贴板同步",
+    "imeHint": "云端中/英：Shift",
+    "imeHintDetail": "请让本机输入法保持英文；在云端输入框内单按 Shift 切换中英文。Caps Lock 会被云桌面 SDK 过滤。",
     "upload": "上传文件到云桌面",
     "fullscreen": "全屏观看",
-    "exitFullscreen": "退出全屏"
+    "exitFullscreen": "退出全屏",
+    "keyboard": "键盘输入"
   }
 }

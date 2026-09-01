@@ -69,9 +69,9 @@ SKILL.md frontmatter `allowed-tools`
      （agent/tool_resolution.py:93-129；:124 处默认过滤掉一切 skill_only 工具）
 ```
 
-八个工具注册时自我标记 `skill_only=True`（字段定义 `tool/tool.py:68`）：
+七个工具注册时自我标记 `skill_only=True`（字段定义 `tool/tool.py:68`）：
 `video_generate/transcribe/render`（video_production.py:2753/2764/2775）、
-`video_project`（video_workflow.py:1965）、`video_identity`（:147）、
+`video_project`（video_workflow.py:1965）、
 `image_gen`（:888）、`creator_context`（:243）、`skill_manage`（:225）。
 
 ### 1.2 为什么错（三点，均有源码级市场对照）
@@ -154,9 +154,9 @@ agent 的可调用工具集合。* 内置与用户安装的差别只在"是否�
 
 `activate_skill_tools` 是把工具**绕过 agent 白名单**直接塞进工具表的
 （`resolve_step_tools` 先按 `agent_def.tools` 取正门工具，再叠加激活集）。
-八个门控工具**不在任何 AgentDef.tools 里**。因此拆授予链的同一提交必须把它们
+七个门控工具**不在任何 AgentDef.tools 里**。因此拆授予链的同一提交必须把它们
 写进 `build` agent 白名单（`agent/agent.py:136-141`），追加：
-`"image_gen", "video_identity", "video_project", "video_generate",
+`"image_gen", "video_project", "video_generate",
 "video_transcribe", "video_render", "creator_context", "skill_manage"`。
 `plan`/`explore`/`general` 等其余 agent **不加**（§3 的结构性约束）。
 
@@ -252,7 +252,7 @@ from tool.registry import register_builtin_tools, get_tool
 register_builtin_tools()
 total = 0
 for n in ["video_project","video_generate","video_transcribe","video_render",
-          "video_identity","image_gen","creator_context"]:
+          "image_gen","creator_context"]:
     t = get_tool(n); p = _tool_parameters_schema(t)
     s = len(json.dumps({"name":n,"description":t.description,"parameters":p}, ensure_ascii=False))
     total += s; print(f"{n:16} {s:6,}")

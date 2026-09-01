@@ -26,28 +26,33 @@ export function useMessagesQuery(sessionId: string, live = false) {
 export interface SendMessageVars {
   text: string
   model?: string
+  /** null explicitly clears the conversation override. */
+  variant?: string | null
   /** Video model for this turn; the backend records it on the session. */
   videoModel?: string
   agent?: string
-  variant?: string
   attachments?: string[]
   clientMessageId: string
+}
+
+/** One wire path for both a new conversation's first prompt and later turns. */
+export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
+  return http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/prompt_async`, {
+    text: vars.text,
+    agent: vars.agent,
+    model: vars.model,
+    video_model: vars.videoModel,
+    variant: vars.variant,
+    attachments: vars.attachments?.length ? vars.attachments : undefined,
+    client_message_id: vars.clientMessageId,
+  })
 }
 
 export function useSendMessage(sessionId: string) {
   const qc = useQueryClient()
   const userId = useUserId()
   return useMutation({
-    mutationFn: (vars: SendMessageVars) =>
-      http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/prompt_async`, {
-        text: vars.text,
-        agent: vars.agent,
-        model: vars.model,
-        video_model: vars.videoModel,
-        variant: vars.variant,
-        attachments: vars.attachments?.length ? vars.attachments : undefined,
-        client_message_id: vars.clientMessageId,
-      }),
+    mutationFn: (vars: SendMessageVars) => sendPromptAsync(sessionId, vars),
     // The backend records the chosen model on the session, so the cached copy
     // is stale the moment a send goes out — and it is what restores the picker
     // when the user comes back to this conversation.
@@ -64,6 +69,7 @@ export function useAbortSession(sessionId: string) {
 export interface CreateSessionVars {
   projectId?: string
   model?: string
+  variant?: string | null
   agent?: string
 }
 
@@ -75,6 +81,7 @@ export function useCreateSession() {
       http.post<Session>("/api/agent/session", {
         project_id: vars.projectId,
         model: vars.model,
+        variant: vars.variant,
         agent: vars.agent,
       }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["sessions", userId] }),

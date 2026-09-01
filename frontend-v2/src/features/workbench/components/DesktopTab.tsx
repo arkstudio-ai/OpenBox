@@ -11,13 +11,15 @@ import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
 
 const SDK_URL =
-  "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.12.5-asp3.18.7/WuyingWebSDK/WuyingWebSDK.js"
+  "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/WuyingWebSDK.js"
 const SDK_PATH =
-  "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.12.5-asp3.18.7/WuyingWebSDK/sdk/ASP/container.html"
+  "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/sdk/ASP/container.html"
 const FRAME_ID = "wuying-desktop-frame"
-// The remote surface the SDK draws; everything is scaled from this.
-const REMOTE_W = 1920
-const REMOTE_H = 1080
+// Keep the stream at the desktop's fixed XGA aspect ratio. The iframe itself is
+// laid out at its displayed size: CSS-transforming a 1024px iframe makes the
+// SDK observe a different input coordinate space than the user clicks in.
+const REMOTE_W = 1024
+const REMOTE_H = 768
 
 interface WuyingSession {
   start: () => void
@@ -25,8 +27,10 @@ interface WuyingSession {
   stopConnection?: () => void
   addHandle: (event: string, cb: (data?: { code?: string | number; message?: string }) => void) => void
   enableInput?: (on: boolean) => void
+  enableKeyBoard?: (on: boolean) => void
   setInputEnabled?: (on: boolean) => void
   setTouchEnabled?: (on: boolean) => void
+  setMouseMode?: (mode: "Client" | "Server") => void
   /** Two-way clipboard bridge between this page and the remote desktop. */
   setClipboardEnabled?: (on: boolean) => void
   /** Sends a local file to the desktop; showDialog surfaces remote progress UI. */
@@ -34,7 +38,7 @@ interface WuyingSession {
 }
 
 interface WuyingGlobal {
-  WebSDK?: { createSession: (id: string, opts: Record<string, unknown>) => WuyingSession }
+  WebSDK?: { createSession: (id: string, opts: Record<string, unknown>) => WuyingSession | null }
 }
 
 interface Ticket {
@@ -83,10 +87,36 @@ type Phase = "loading" | "connected" | "error" | "closed"
 
 type Fullscreen = "off" | "native" | "fallback"
 
+/** Prefer the current SDK input API and keep the legacy method as fallback. */
+function setSessionControl(session: WuyingSession | null, on: boolean) {
+  if (!session) return
+  if (session.setInputEnabled) session.setInputEnabled(on)
+  else session.enableInput?.(on)
+  // Wuying exposes keyboard activation separately from the general input
+  // gate. This also activates the SDK's hidden IME proxy used for composed
+  // Chinese text; setInputEnabled alone only controls event forwarding.
+  session.enableKeyBoard?.(on)
+  session.setTouchEnabled?.(on)
+  // Normal desktop interaction needs absolute coordinates; relative (Server)
+  // mode is intended for captured-pointer workloads such as 3D applications.
+  if (on) session.setMouseMode?.("Client")
+}
+
+function focusFrame(frame: HTMLIFrameElement | null) {
+  if (!frame) return
+  try {
+    frame.focus({ preventScroll: true })
+  } catch {
+    // A browser may refuse cross-origin focus outside a user gesture. The next
+    // pointer press inside the iframe will still focus it normally.
+  }
+}
+
 export function DesktopTab() {
   const { t } = useTranslation("workbench")
   const rootRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const sessionRef = useRef<WuyingSession | null>(null)
   const [phase, setPhase] = useState<Phase>("loading")
@@ -111,9 +141,10 @@ export function DesktopTab() {
     const stop = () => {
       const s = sessionRef.current
       sessionRef.current = null
+      frameRef.current = null
       try {
-        s?.stop?.()
-        s?.stopConnection?.()
+        if (s?.stop) s.stop()
+        else s?.stopConnection?.()
       } catch {
         // already gone
       }
@@ -125,15 +156,15 @@ export function DesktopTab() {
         if (!alive || !stage) return
 
         stage.replaceChildren()
-        const wrap = document.createElement("div")
-        wrap.style.cssText = `position:absolute;top:0;left:0;width:${REMOTE_W}px;height:${REMOTE_H}px;transform-origin:0 0;`
         const frame = document.createElement("iframe")
         frame.id = FRAME_ID
         frame.title = t("desktop.frameTitle")
         frame.allow = "clipboard-read; clipboard-write; fullscreen"
-        frame.style.cssText = "width:100%;height:100%;border:0;"
-        wrap.appendChild(frame)
-        stage.appendChild(wrap)
+        frame.allowFullscreen = true
+        frame.tabIndex = 0
+        frame.style.cssText = "position:absolute;display:block;border:0;"
+        frameRef.current = frame
+        stage.appendChild(frame)
 
         const sdk = (window as { Wuying?: WuyingGlobal }).Wuying?.WebSDK
         if (!sdk) throw new Error("sdk")
@@ -145,18 +176,42 @@ export function DesktopTab() {
           connectType: "desktop",
           regionId: ticket.regionId,
           userInfo: { ticket: ticket.ticket },
-          desktopInfo: { desktopId: ticket.desktopId, loginRegionId: ticket.regionId },
-          uiConfig: { toolbar: { visible: false }, exitCheck: false, reconnectType: "simple", resolutionType: "B" },
+          desktopInfo: {
+            desktopId: ticket.desktopId,
+            loginRegionId: ticket.regionId,
+            connConfig: {
+              // Let composition text from macOS/Windows IMEs reach the guest
+              // instead of reducing it to physical key scan codes.
+              useCustomIme: true,
+              disableIME: false,
+              // The agent, screenshots and Wuying policy all use XGA. Never
+              // let a browser resize renegotiate the remote X11 framebuffer.
+              resolutionAdaptive: false,
+              enableAutoSwitchMouseMode: true,
+              // Show media-resume hints without consuming the click that also
+              // targets the remote desktop (1 + 2 + 8 + 16).
+              mediaSuspendedTipFlag: 27,
+            },
+          },
+          uiConfig: {
+            toolbar: { visible: false },
+            exitCheck: false,
+            reconnectType: "simple",
+            // "B" multiplies by devicePixelRatio and changes across clients.
+            // The fixed server-side policy is authoritative.
+            defaultResolution: "A",
+          },
         })
+        if (!session) throw new Error("sdk")
         sessionRef.current = session
         session.addHandle("onConnected", () => {
           if (!alive || sessionRef.current !== session) return
           setPhase("connected")
           const { control: takeOver, clipboard: clip } = togglesRef.current
           try {
-            session.enableInput?.(takeOver)
-            session.setInputEnabled?.(takeOver)
+            setSessionControl(session, takeOver)
             session.setClipboardEnabled?.(clip)
+            if (takeOver) focusFrame(frame)
           } catch {
             // best effort — read-only by default
           }
@@ -186,17 +241,21 @@ export function DesktopTab() {
     }
   }, [attempt, t])
 
-  // Scale the fixed-size remote surface to fit the stage.
+  // Fit the iframe itself to the stage. Avoid transform: the Web SDK measures
+  // its viewport to map mouse coordinates and synthesize IME input.
   useEffect(() => {
     const stage = stageRef.current
     if (!stage || typeof ResizeObserver === "undefined") return
     const apply = () => {
-      const wrap = stage.firstElementChild as HTMLElement | null
-      if (!wrap || !stage.clientWidth) return
+      const frame = frameRef.current
+      if (!frame || !stage.clientWidth || !stage.clientHeight) return
       const scale = Math.min(stage.clientWidth / REMOTE_W, stage.clientHeight / REMOTE_H)
-      const x = (stage.clientWidth - REMOTE_W * scale) / 2
-      const y = (stage.clientHeight - REMOTE_H * scale) / 2
-      wrap.style.transform = `translate(${x}px, ${y}px) scale(${scale})`
+      const width = Math.max(1, Math.floor(REMOTE_W * scale))
+      const height = Math.max(1, Math.floor(REMOTE_H * scale))
+      frame.style.width = `${width}px`
+      frame.style.height = `${height}px`
+      frame.style.left = `${Math.floor((stage.clientWidth - width) / 2)}px`
+      frame.style.top = `${Math.floor((stage.clientHeight - height) / 2)}px`
     }
     const ro = new ResizeObserver(apply)
     ro.observe(stage)
@@ -230,9 +289,8 @@ export function DesktopTab() {
     setControl(on)
     const s = sessionRef.current
     try {
-      s?.enableInput?.(on)
-      s?.setInputEnabled?.(on)
-      s?.setTouchEnabled?.(on)
+      setSessionControl(s, on)
+      if (on) focusFrame(frameRef.current)
     } catch {
       // session mid-teardown
     }
@@ -321,6 +379,11 @@ export function DesktopTab() {
               />
               {t("desktop.clipboard")}
             </label>
+            {control && (
+              <span className="flex-none text-xs text-n500" title={t("desktop.imeHintDetail")}>
+                {t("desktop.imeHint")}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => fileRef.current?.click()}

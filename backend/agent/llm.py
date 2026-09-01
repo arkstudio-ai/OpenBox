@@ -8,6 +8,7 @@ import hmac as _hmac
 import json as _json
 import re as _re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
@@ -26,6 +27,24 @@ OUTPUT_TOKEN_MAX = 32000  # Fallback for unknown models
 THINKING_OUTPUT_RESERVE = 8000
 OPENAI_DEFAULT_API_BASE = "https://api.openai.com/v1"
 RESPONSES_API_VERSION = "2025-03-01-preview"
+
+
+@dataclass(frozen=True)
+class ReasoningProfile:
+    """Selectable effort ids for one exact model route.
+
+    Values are model-owned rather than one global enum: DeepSeek's strongest
+    tier is ``max``, while recent GPT-5 models call the equivalent tier
+    ``xhigh``.  Keeping that distinction here lets the API advertise only
+    values the selected model can actually honor.
+    """
+
+    variants: tuple[str, ...] = ()
+    default_variant: str | None = None
+
+
+_COMMON_REASONING_VARIANTS = ("low", "medium", "high")
+_NO_REASONING = ReasoningProfile()
 
 
 #: What the Responses API actually accepts for an item id: `fc_`, then up to 61
@@ -615,141 +634,217 @@ def _detect_provider(model_id: str) -> str:
     return "unknown"
 
 
+def _bare_model_id(model_id: str) -> str:
+    """Strip only the transport prefix from a configured model id."""
+
+    return model_id.split("/", 1)[1].lower() if "/" in model_id else model_id.lower()
+
+
+def _model_family(model_id: str) -> str:
+    """Return model family independently of its transport/provider prefix."""
+
+    model = _bare_model_id(model_id)
+    if "deepseek" in model:
+        return "deepseek"
+    if "claude" in model or any(name in model for name in ("opus-", "sonnet-")):
+        return "claude"
+    if "gemini" in model:
+        return "gemini"
+    if "qwen" in model:
+        return "qwen"
+    if _re.search(r"(?:^|[-_.])gpt[-_.]?5(?:[-_.]|$)", model):
+        return "gpt5"
+    if _re.search(r"(?:^|[-_.])o[134](?:[-_.]|$)", model):
+        return "openai-reasoning"
+    return ""
+
+
+def reasoning_profile(model_id: str) -> ReasoningProfile:
+    """Return the ordered, selectable reasoning controls for ``model_id``.
+
+    The family is derived after removing a transport prefix.  Deployments use
+    ids such as ``openai/deepseek-v4-flash`` and
+    ``openai/claude-opus-5``; treating ``openai`` as the family would expose
+    GPT-only values that those upstream models reject.
+    """
+
+    model = _bare_model_id(model_id)
+    family = _model_family(model_id)
+    provider = _detect_provider(model_id)
+
+    if family == "deepseek":
+        # DeepSeek's direct adapter owns these ids. `off` is intentionally not
+        # rewritten to OpenAI's `none`; it disables thinking instead of being
+        # sent as a reasoning_effort value.
+        return ReasoningProfile(("off", "low", "high", "max"), "high")
+
+    if family == "claude":
+        # OpenAI-compatible gateways expose the harmonized three-level knob.
+        # Native adaptive-thinking routes use Anthropic's low/medium/high
+        # output_config. Older fixed-budget routes can additionally express a
+        # max tier without asking LiteLLM to translate it.
+        adaptive = any(
+            name in model
+            for name in (
+                "opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6",
+                "opus-4-7", "opus-4.7", "sonnet-4-7", "sonnet-4.7",
+                "opus-5", "sonnet-5",
+            )
+        )
+        variants = (
+            _COMMON_REASONING_VARIANTS
+            if provider == "openai" or adaptive
+            else (*_COMMON_REASONING_VARIANTS, "max")
+        )
+        return ReasoningProfile(variants, "medium")
+
+    if family == "gemini":
+        return ReasoningProfile(_COMMON_REASONING_VARIANTS, "medium")
+
+    if family == "qwen":
+        # DashScope's Qwen 3.8 Max/Flash routes expose three distinct effort
+        # tiers. ``none`` is the OpenAI-compatible spelling for disabling
+        # thinking; aliases such as high/max only collapse to xhigh upstream,
+        # so they are deliberately not duplicated in the picker.
+        if model.startswith(("qwen3.8-max", "qwen3.8-flash")):
+            return ReasoningProfile(("none", "low", "medium", "xhigh"), "xhigh")
+        return _NO_REASONING
+
+    if family == "openai-reasoning":
+        if "deep-research" in model:
+            return ReasoningProfile(("medium",), "medium")
+        return ReasoningProfile(_COMMON_REASONING_VARIANTS, "medium")
+
+    if family != "gpt5":
+        return _NO_REASONING
+
+    if "-chat" in model:
+        match = _re.search(r"gpt[-_.]?5[.-](\d+)", model)
+        return ReasoningProfile(("medium",), "medium") if match else _NO_REASONING
+
+    version_match = _re.search(r"gpt[-_.]?5[.-](\d+)", model)
+    version = int(version_match.group(1)) if version_match else None
+    if "-pro" in model or ".pro" in model:
+        if version is not None and version >= 2:
+            return ReasoningProfile(("medium", "high", "xhigh"), "medium")
+        return ReasoningProfile(("high",), "high")
+
+    # Codex-hosted aliases have an explicit effort default and do not expose a
+    # no-reasoning tier even when their numeric family is newer.
+    if any(alias in model for alias in ("-luna", "-terra", "-sol")):
+        default = "low" if "-sol" in model else "medium"
+        return ReasoningProfile(("low", "medium", "high", "xhigh"), default)
+    if version is not None and version >= 2:
+        return ReasoningProfile(("none", "low", "medium", "high", "xhigh"), "none")
+    if version == 1:
+        return ReasoningProfile(("none", "low", "medium", "high"), "none")
+    return ReasoningProfile(("minimal", "low", "medium", "high"), "medium")
+
+
+def validate_reasoning_variant(model_id: str, variant: str | None) -> str | None:
+    """Validate one explicit model-owned variant before provider I/O."""
+
+    if variant is None:
+        return None
+    value = variant.strip()
+    profile = reasoning_profile(model_id)
+    if not value or value not in profile.variants:
+        supported = ", ".join(profile.variants) if profile.variants else "none"
+        raise ValueError(
+            f"model {model_id!r} does not support reasoning variant {variant!r}; "
+            f"supported variants: {supported}"
+        )
+    return value
+
+
 def _is_thinking_model(model_id: str) -> bool:
-    """Check if a model is a thinking/reasoning model."""
-    model_lower = model_id.lower()
-    return any(x in model_lower for x in (
-        "opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6",  # Claude 4.6
-        "opus-4", "sonnet-4",  # Claude 4
-        "gpt-5",  # GPT-5 family
-        "o1", "o3",  # OpenAI reasoning models
-        # Note: Kimi K2.x has built-in reasoning but does NOT accept reasoning_effort param.
-        # It is handled as a regular model — reasoning_content comes in stream deltas automatically.
-    ))
+    """Check whether a model exposes a selectable reasoning control."""
+
+    return bool(reasoning_profile(model_id).variants)
+
+
+def _reasoning_kwargs(model_id: str, variant: str) -> dict:
+    """Lower a validated model-owned variant to provider request parameters."""
+
+    provider = _detect_provider(model_id)
+    family = _model_family(model_id)
+    model = _bare_model_id(model_id)
+
+    if family == "deepseek":
+        if variant == "off":
+            return {"thinking": {"type": "disabled"}}
+        return {
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": variant,
+        }
+
+    if family == "gemini":
+        budget = {"low": 4096, "medium": 16000, "high": 24576}[variant]
+        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+    if family == "qwen":
+        # This is a non-standard DashScope field and must remain flat in the
+        # OpenAI-compatible request body (the caller routes it via extra_body).
+        return {"reasoning_effort": variant}
+
+    if family == "claude":
+        if provider == "openai":
+            return {"reasoning_effort": variant}
+        adaptive = any(
+            name in model
+            for name in (
+                "opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6",
+                "opus-4-7", "opus-4.7", "sonnet-4-7", "sonnet-4.7",
+                "opus-5", "sonnet-5",
+            )
+        )
+        if adaptive:
+            return {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": variant},
+            }
+        budget = {"low": 1024, "medium": 10000, "high": 16000, "max": 32000}[variant]
+        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+    if family in ("gpt5", "openai-reasoning"):
+        profile = reasoning_profile(model_id)
+        effort = "xhigh" if variant == "max" and "xhigh" in profile.variants else variant
+        return {"reasoning_effort": effort}
+
+    return {}
 
 
 def _get_default_thinking_kwargs(model_id: str) -> dict:
-    """Return default thinking/reasoning parameters for thinking-capable models.
+    """Return the exact model route's default reasoning parameters."""
 
-    Called when no explicit variant is selected. Matches opencode's
-    ProviderTransform.options() — enables thinking by default for models
-    that support it.
-
-    IMPORTANT: The provider prefix (openai/, anthropic/) determines which
-    parameter format to use. Models accessed via OpenAI-compatible proxy
-    (e.g., openai/claude-opus-4-6) use reasoning_effort, not thinking.
-    """
-    provider = _detect_provider(model_id)
-    model_lower = model_id.lower()
-
-    if provider == "openai":
-        # Gemini via proxy: the proxy accepts the Anthropic-style thinking
-        # param and maps it to thinkingConfig with includeThoughts, so thought
-        # summaries stream back as reasoning_content. reasoning_effort alone
-        # does NOT bring thoughts back (verified against the live proxy).
-        if "gemini" in model_lower:
-            return {"thinking": {"type": "enabled", "budget_tokens": 16000}}
-        # Claude 4.6 via proxy: enable reasoning
-        if any(x in model_lower for x in ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")):
-            return {"reasoning_effort": "medium"}
-        # GPT-5.4 / 5.2 / 5.1: default reasoning is "none" per OpenAI docs
-        if any(x in model_lower for x in ("gpt-5.4", "gpt-5.2", "gpt-5.1")):
-            return {"reasoning_effort": "none"}
-        # GPT-5 / 5-mini / 5-nano: default reasoning is "medium"
-        if "gpt-5" in model_lower and "gpt-5-pro" not in model_lower and "gpt-5-chat" not in model_lower:
-            return {"reasoning_effort": "medium"}
-        # o1/o3 models
-        if any(x in model_lower for x in ("o1", "o3")):
-            return {"reasoning_effort": "medium"}
-        return {}
-
-    if provider == "anthropic":
-        # Native Anthropic API: use thinking parameter
-        if any(x in model_lower for x in ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")):
-            return {"thinking": {"type": "adaptive"}}
-        return {}
-
-    if provider == "gemini":
-        return {"thinking": {"type": "enabled", "budget_tokens": 16000}}
-
-    if provider == "deepseek":
-        return {"reasoning_effort": "medium"}
-
-    return {}
+    default = reasoning_profile(model_id).default_variant
+    return _reasoning_kwargs(model_id, default) if default else {}
 
 
 def _get_variant_kwargs(model_id: str, variant: str | None) -> dict:
-    """Map variant to provider-specific LLM parameters.
+    """Map a selected model-owned variant to provider-specific parameters.
 
-    Supported variant values per model family:
-    - GPT-5.4:   none (default), low, medium, high, xhigh
-    - GPT-5.2:   none (default), low, medium, high, xhigh
-    - GPT-5:     minimal, low, medium (default), high
-    - GPT-5-pro: high only
-    - Claude:    low, medium, high, max → thinking budget
-    - Gemini:    low, medium, high → thinking budget
-
-    When no variant is selected, falls back to _get_default_thinking_kwargs().
-    The "max" variant maps to "xhigh" for GPT-5.4/5.2.
+    Invalid historical values are dropped here as a final replay safeguard.
+    New API input is rejected earlier by :func:`validate_reasoning_variant`.
     """
-    if not variant:
-        return _get_default_thinking_kwargs(model_id)
 
-    provider = _detect_provider(model_id)
-    model_lower = model_id.lower()
-
-    if provider == "openai":
-        # Gemini via proxy: thinking budget, same shape as the default kwargs.
-        if "gemini" in model_lower:
-            budget = {"low": 4096, "medium": 16000, "high": 24576}.get(variant)
-            if budget:
-                return {"thinking": {"type": "enabled", "budget_tokens": budget}}
-            return {}
-        # A variant is chosen for one model and survives a switch to another —
-        # it rides on the message, not the model — so it has to be clamped to
-        # what THIS family accepts rather than forwarded verbatim. Only 5.4 and
-        # 5.2 know "xhigh"; plain GPT-5 rejects both "max" and "xhigh".
-        wide = any(x in model_lower for x in ("gpt-5.4", "gpt-5.2"))
-        effort = {"max": "xhigh" if wide else "high"}.get(variant, variant)
-        if not wide and effort == "xhigh":
-            effort = "high"
-        if effort not in ("minimal", "none", "low", "medium", "high", "xhigh"):
+    selected = variant or reasoning_profile(model_id).default_variant
+    if not selected:
+        return {}
+    try:
+        selected = validate_reasoning_variant(model_id, selected)
+    except ValueError:
+        # Old messages may carry the former cross-model `max`/`xhigh` aliases.
+        # Preserve replay without advertising or accepting those aliases on a
+        # new request for a model that calls its strongest tier differently.
+        variants = reasoning_profile(model_id).variants
+        if selected in ("max", "xhigh") and "high" in variants:
+            selected = "xhigh" if "xhigh" in variants else "high"
+        else:
             log.debug(f"dropping unusable reasoning effort {variant!r} for {model_id}")
             return {}
-        return {"reasoning_effort": effort}
-
-    if provider == "anthropic":
-        # Native Anthropic API: use thinking parameter
-        if any(x in model_lower for x in ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")):
-            return {"thinking": {"type": "adaptive"}}
-        if any(x in model_lower for x in ("opus-4", "sonnet-4")):
-            budget = {"low": 1024, "medium": 10000, "high": 16000, "max": 32000}.get(variant, 10000)
-            return {"thinking": {"type": "enabled", "budget_tokens": budget}}
-        budget = {"low": 1024, "medium": 10000, "high": 16000, "max": 32000}.get(variant)
-        if budget:
-            return {"thinking": {"type": "enabled", "budget_tokens": budget}}
-        return {}
-
-    if provider == "gemini":
-        budget = {"low": 4096, "medium": 16000, "high": 24576}.get(variant)
-        if budget:
-            return {"thinking": {"type": "enabled", "budget_tokens": budget}}
-        return {}
-
-    if provider == "deepseek":
-        # Same clamp as the openai branch, and for the same reason: the variant
-        # rides on the message, so a "max" or "xhigh" chosen on a GPT model
-        # arrives here intact when the session later resolves to DeepSeek.
-        # `reasoning_effort` is a parameter DeepSeek supports, so drop_params
-        # will not strip an out-of-range value — it reaches the API and is
-        # rejected there.
-        effort = {"max": "high", "xhigh": "high"}.get(variant, variant)
-        if effort not in ("low", "medium", "high"):
-            log.debug(f"dropping unusable reasoning effort {variant!r} for {model_id}")
-            return {}
-        return {"reasoning_effort": effort}
-
-    return {}
+    assert selected is not None
+    return _reasoning_kwargs(model_id, selected)
 
 
 def _needs_responses_api(model_id: str) -> bool:
@@ -1767,15 +1862,15 @@ async def _stream_litellm_direct(
                 log.info(f"Default thinking for {model_id}: {variant_kwargs}")
 
         # For OpenAI-compatible proxies, pass reasoning params via extra_body
-        # so they go through unmodified. LiteLLM's top-level param handling
-        # transforms reasoning_effort in ways that some proxies don't recognize.
+        # so they go through unmodified. DeepSeek also needs this path: the
+        # LiteLLM 1.81 native transform reduces every non-none effort to merely
+        # `thinking.enabled`, which would make low/high/max indistinguishable.
         provider = _detect_provider(model_id)
         extra_body = {}
         direct_kwargs = {}
-        if provider == "openai" and variant_kwargs:
-            # OpenAI proxy: send reasoning params in extra_body
+        if variant_kwargs and (provider == "openai" or _model_family(model_id) == "deepseek"):
             extra_body = dict(variant_kwargs)
-            log.info(f"Sending via extra_body for OpenAI proxy: {extra_body}")
+            log.info(f"Sending reasoning parameters via extra_body: {extra_body}")
         else:
             # Native providers (Anthropic, etc.): use top-level params
             direct_kwargs = variant_kwargs

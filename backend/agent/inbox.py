@@ -782,6 +782,8 @@ async def _claim_inbox_boundary_once(
         final_row = rows[-1]
         if final_row.model and final_row.model != owner.model:
             owner.model = final_row.model
+        if final_row.variant != owner.variant:
+            owner.variant = final_row.variant
         if final_row.video_model is not None:
             owner.video_model = final_row.video_model.strip() or None
         owner.updated_at = now

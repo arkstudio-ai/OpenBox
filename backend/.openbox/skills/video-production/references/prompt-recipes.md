@@ -29,8 +29,9 @@ Canonical shape:
 无字幕，字幕只能后期合成。
 ```
 
-Check it with `scripts/lint_prompt.py --prompt-file seg1.txt --script "…"
---anchor "…"`. It reports; you decide.
+Check it with `$S/lint_prompt.py --prompt-file seg1.txt --script "…"
+--anchor "…"`
+(`S=/opt/openbox/skills/video-production/scripts`). It reports; you decide.
 
 ## Per role
 

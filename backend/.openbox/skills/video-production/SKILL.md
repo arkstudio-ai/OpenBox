@@ -41,8 +41,8 @@ makes a talking-head video *good*.
    every shot with the same visual anchor sentence in every prompt.
    Never anchor a later shot to an *earlier generated frame*: drift compounds.
 5. **Write one prompt per shot** using `references/prompt-recipes.md`. Check each
-   with `$S/lint_prompt.py`, then read what it says — it advises, it never
-   blocks.
+   with `python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "…"
+   --anchor "…"`, then read what it says — it advises, it never blocks.
 6. **Pick the model deliberately.** `video_generate(action="models")` is the only
    description of what each one accepts; `references/model-guide.md` covers the
    trade-offs. Use `action="estimate"` to validate a shot for free before paying.
@@ -56,8 +56,9 @@ makes a talking-head video *good*.
    `$S/extract_audio.sh shot1.mp4 shot1.mp3` →
    `share_file(file_path="shot1.mp3", attach=false)` →
    `video_transcribe(action="submit", asset_id=...)` →
-   `$S/compare_transcript.py`. Show the person the video, the intended
-   line, the actual words, and the verdict. `suspect` means look, not fail.
+   `python3 "$S/compare_transcript.py" --intended "…" --heard "…"`.
+   Show the person the video, the intended line, the actual words, and the
+   verdict. `suspect` means look, not fail.
 9. **Regenerate only what is wrong.** A bad take gets a new key (`:v2`) and
    leaves the old one alone. Keep every good shot.
 10. **Compose.** Captions come from the **actual transcript**, never the written

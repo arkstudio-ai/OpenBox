@@ -7,10 +7,11 @@ publishable cut and one where the captions do not match the audio.
 Per shot:
 
 ```bash
-scripts/extract_audio.sh shot1.mp4 shot1.mp3
+S=/opt/openbox/skills/video-production/scripts
+"$S/extract_audio.sh" shot1.mp4 shot1.mp3
 # share_file(file_path=".../shot1.mp3", attach=false)  -> asset_id
 # video_transcribe(action="submit", asset_id=..., idempotency_key="<slug>:shot1:stt")
-scripts/compare_transcript.py --intended "本段台词" --heard "转写结果"
+python3 "$S/compare_transcript.py" --intended "本段台词" --heard "转写结果"
 ```
 
 `attach=false` keeps the intermediate audio out of the conversation — the

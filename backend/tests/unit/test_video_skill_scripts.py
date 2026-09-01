@@ -235,4 +235,18 @@ def test_skill_points_at_the_sandbox_path_not_a_relative_one():
     assert "S=/opt/openbox/skills/video-production/scripts" in text
     for name in ("lint_prompt.py", "compare_transcript.py", "build_ass.py", "compose.sh"):
         assert f"$S/{name}" in text, name
-    assert "`scripts/" not in text
+
+    # The references are read in the sandbox too, so a relative path there
+    # fails exactly the same way.
+    for doc in (SCRIPTS.parent / "references").iterdir():
+        body = doc.read_text(encoding="utf-8")
+        assert "`scripts/" not in body, doc.name
+        assert "\nscripts/" not in body, doc.name
+
+
+def test_the_skill_shows_the_flags_each_script_actually_takes():
+    """A usage-error round trip is avoidable: argparse needs the flag names."""
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "--intended" in text and "--heard" in text
+    assert "--prompt-file" in text and "--anchor" in text

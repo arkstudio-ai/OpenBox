@@ -461,13 +461,31 @@ deprecation warning，**保留一个版本**后删（PR3 收尾时评估）。�
 未在真机验证的部分：真实付费生成（需花费，另行安排）；工作台 UI 需登录，
 见 §14.4。
 
-### 14.4 浏览器验收的前置条件
+### 14.4 浏览器验收（工作台，dev 桌面）
 
 前端守卫只认 access token，与后端是否启用鉴权无关：把后端切到单用户模式
-（不配 `JWT_SECRET`）后，API 可直连但工作台仍会跳登录页。因此工作台内的
-验收（composer 的 9 个模型选择器、技能加载后脚本调用、历史 production 只读
-渲染）必须由人登录后进行——执行者不得代填密码，也不得用本地签名密钥伪造
-会话绕过登录。
+（不配 `JWT_SECRET`）后 API 可直连，但工作台仍会跳登录页。验收改用一个
+**自建的一次性夹具账号**（`videoqa`，随机口令，只存在于本地 dev 库）——
+不使用任何既有账号的凭据。
+
+| 项 | 结果 |
+|---|---|
+| composer 视频模型选择器 | 9 项全渲染，含新补的 Seedance 2.0 Fast / 1.5 Pro / MiniMax H3；tier 标签正确；`Wan 3.0` 打勾为默认 |
+| agent 自报可用工具 | `video_generate`、`video_transcribe`、`skill("video-production")`——`video_project` / `video_render` 已不存在 |
+| `action="models"` 端到端 | agent 在真实回合里自主调用，拿回 9 个模型及完整能力元数据 |
+| 技能 + 沙箱脚本 | 技能加载 → agent 按 SKILL.md 的绝对路径在沙箱执行 `compare_transcript.py` → 输出 0.875 / suspect /「片→花」 |
+| `lint_prompt.py` | 一次调对，输出 `ok: true` |
+
+浏览器验收还抓到两处文档缺陷，已修：
+
+1. `references/prompt-recipes.md` 与 `references/quality.md` 仍写相对路径
+   `scripts/…`——它们同样在沙箱里被读，会和 SKILL.md 犯一样的错；
+2. SKILL.md 只写脚本名不写参数，agent 首次用位置参数触发 argparse usage
+   错误后才自纠，白费一个往返。补全 `--intended/--heard`、
+   `--prompt-file/--anchor` 后复测，一次调对。
+
+回归测试把两点都盯住（references 不得含相对路径；SKILL.md 必须出现各脚本
+的参数名）。
 
 ### 14.3 仍待人工执行（§10，涉及凭据）
 

@@ -118,3 +118,51 @@ async def test_ticket_one_time_use(ticket_cache):
 async def test_ticket_invalid(ticket_cache):
     result = await consume_ticket("nonexistent-ticket")
     assert result is None
+
+
+# ── Coded refusals ──
+#
+# The clients pick their copy from `detail.code`; a bare string `detail` leaves
+# them falling back to the status, so a wrong password rendered as "Your session
+# expired. Please sign in again." Both locale catalogs had carried
+# AUTH_INVALID_CREDENTIALS since before that, unreachable, which is exactly what
+# makes this worth pinning rather than trusting to review.
+
+def _auth_refusals():
+    from auth import routes
+    return routes
+
+
+def test_login_refusal_carries_a_code():
+    routes = _auth_refusals()
+    err = routes._coded_error(401, "AUTH_INVALID_CREDENTIALS", "Invalid credentials")
+    assert err.detail["code"] == "AUTH_INVALID_CREDENTIALS"
+    assert err.detail["message"] == "Invalid credentials"
+    assert err.headers["X-Error-Code"] == "AUTH_INVALID_CREDENTIALS"
+
+
+def test_every_auth_code_raised_is_one_the_clients_can_render():
+    """The codes the backend emits and the copy the clients hold must agree.
+
+    Either half alone looks fine: the backend raises something plausible, the
+    catalogs hold something plausible, and the mismatch only shows up as the
+    wrong sentence on someone's screen.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    source = (root / "backend/auth/routes.py").read_text()
+    raised = set(re.findall(r'_coded_error\(\s*\d+,\s*"([A-Z_]+)"', source))
+    assert raised, "no coded refusals found — did the helper get renamed?"
+
+    for catalog in (
+        root / "frontend-v2/src/locales/en-US/errors.json",
+        root / "frontend-v2/src/locales/zh-CN/errors.json",
+        root / "mobile/assets/locales/en-US/errors.json",
+        root / "mobile/assets/locales/zh-CN/errors.json",
+    ):
+        known = set(json.loads(catalog.read_text()))
+        missing = raised - known
+        assert not missing, f"{catalog.name} cannot render {sorted(missing)}"

@@ -21,7 +21,11 @@ validation and costs nothing.
 
 In order of strength:
 
-1. **Same anchor sentence + same reference image, every shot.** Always do this.
+1. **The same reference image on every shot**, and a prompt that describes the
+   *action* rather than re-describing the person. "画面中的人物自然看向镜头"
+   beats a paragraph about her face and clothes — a full description competes
+   with the photo. How the reference travels is the backend's problem: it
+   picks the shape each model actually honours.
 2. **One `seed` reused across shots**, on a model that accepts one. Same seed
    plus same anchor removes most of the remaining drift, for free.
 3. **`last_frame` of shot N as the `first_frame` of shot N+1**, on a model that

@@ -196,3 +196,54 @@ def test_content_changing_roles_are_still_refused():
     with pytest.raises(RuntimeError, match="audio reference"):
         _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p",
                   roles=("reference_audio",))
+
+
+def _sd2_body(model, refs, prompt="她自然看向镜头说话。"):
+    _path, body = video_providers.build_payload(
+        _route(model), prompt=prompt, refs=refs, resolution="1080p",
+        ratio="9:16", duration=5, generate_audio=True, watermark=False,
+    )
+    return body
+
+
+IMG = [{"kind": "image", "url": "https://oss.test/a.png", "role": "reference_image"}]
+
+
+def test_wan3_sends_references_through_the_multi_material_path():
+    """Measured 2026-09-01: wan3 behind this relay ignores image_url.
+
+    image_url, first_frame_url and a doubao content[] each came back as a
+    different person; `images` plus an @image_file_N mention in the prompt is
+    the one shape that actually holds the face. Called adapter-to-adapter,
+    wan3 locks identity perfectly — so this was never the model's limit, only
+    how the request reached it.
+    """
+    body = _sd2_body("wan3.0-video-prime", IMG)
+
+    assert body["images"] == ["https://oss.test/a.png"]
+    assert "image_url" not in body
+    assert "@image_file_1" in body["prompt"]
+
+
+def test_seedance_keeps_the_image_url_path_that_already_works():
+    body = _sd2_body("video-sd-1080p-pro", IMG)
+
+    assert body["image_url"] == "https://oss.test/a.png"
+    assert "images" not in body
+    assert "@image_file" not in body["prompt"]
+
+
+def test_a_prompt_that_already_names_its_material_is_left_alone():
+    body = _sd2_body(
+        "wan3.0-video-prime", IMG, prompt="@image_file_1 是主播，她开口说话。"
+    )
+
+    assert body["prompt"] == "@image_file_1 是主播，她开口说话。"
+
+
+def test_every_supplied_image_gets_named():
+    """An image the prompt never mentions is simply not used by the relay."""
+    two = IMG + [{"kind": "image", "url": "https://oss.test/b.png", "role": "reference_image"}]
+    body = _sd2_body("wan3.0-video-prime", two, prompt="@image_file_1 是主播。")
+
+    assert "@image_file_2" in body["prompt"]

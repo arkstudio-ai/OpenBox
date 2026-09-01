@@ -559,6 +559,31 @@ def validate_request(
 
 # ── payload building ────────────────────────────────────────────────────────
 
+#: Placeholder the relay's multi-material path binds to `images[i]`.
+_IMAGE_FILE_REF = re.compile(r"@image_file_(\d+)")
+
+
+def _with_image_file_refs(prompt: str, count: int) -> str:
+    """Ensure every supplied image is named in the prompt.
+
+    The relay binds `images[i]` to an `@image_file_{i+1}` mention; an image
+    the prompt never mentions is simply not used, which is exactly the
+    "reference ignored, task succeeds" failure this module exists to prevent.
+    A caller that already wrote the placeholders keeps its own wording.
+    """
+    if count <= 0:
+        return prompt
+    mentioned = {int(n) for n in _IMAGE_FILE_REF.findall(prompt)}
+    missing = [index for index in range(1, count + 1) if index not in mentioned]
+    if not missing:
+        return prompt
+    lead = "，".join(f"@image_file_{index}" for index in missing)
+    return (
+        f"{lead} 是本片参考素材，保持其中人物的五官、脸型、发型与服装完全一致。\n"
+        f"{prompt}"
+    )
+
+
 def build_payload(
     route: Any,
     *,
@@ -595,9 +620,19 @@ def build_payload(
         images = [ref["url"] for ref in refs if ref["kind"] == "image"]
         videos = [ref["url"] for ref in refs if ref["kind"] == "video"]
         if images:
-            body["image_url"] = images[0]
-            if images[1:]:
-                body["extra_images"] = images[1:]
+            if is_wan3_model(route.model):
+                # Measured 2026-09-01: wan3 behind this relay ignores
+                # image_url outright — five variants each produced a
+                # different person. `images` plus an @image_file_N mention in
+                # the prompt is the documented multi-material path, and it is
+                # the one that actually locks the face. Seedance accepts
+                # either, so only wan3 is special-cased.
+                body["images"] = images
+                body["prompt"] = _with_image_file_refs(prompt, len(images))
+            else:
+                body["image_url"] = images[0]
+                if images[1:]:
+                    body["extra_images"] = images[1:]
         if videos:
             body["extra_videos"] = videos
         return "/v1/videos", body

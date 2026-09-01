@@ -1814,7 +1814,13 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         ),
         # Billing is per second of output on this route, so an explicit
         # duration is the whole cost story; there is no per-call price to read.
-        f"daily_submits_used={used}" + (f"/{limit}" if limit else " (no limit configured)"),
+        # "used=50/50" was read as "50 remaining" by a caller reporting it to
+        # the person. Say what is left, and only mention the ceiling beside it.
+        (
+            f"daily_submits_remaining={max(0, limit - used)} (of {limit}; {used} used)"
+            if limit
+            else f"daily_submits_used={used} (no limit configured)"
+        ),
         "",
         "Nothing was submitted. Re-send as action=\"submit\" with an idempotency_key to pay for it.",
     ]

@@ -5,6 +5,8 @@ and pay for it without a production, capability limits are enforced from the
 declared registry, and two guards stand in for the credits ledger that will
 eventually price this.
 """
+import inspect
+
 import pytest
 from pydantic import ValidationError
 
@@ -390,3 +392,15 @@ def test_the_size_shape_is_portrait_for_a_vertical_ratio():
 
     assert portrait["size"] == "720x1280"
     assert landscape["size"] == "1280x720"
+
+
+def test_the_budget_line_says_what_is_left_not_what_is_spent():
+    """"used=50/50" was reported to a person as "50 remaining"."""
+    import re
+
+    from tool import video_production
+
+    source = inspect.getsource(video_production._execute_estimate)
+    assert "daily_submits_remaining" in source
+    # The old "used=N/limit" form is what invited the misreading.
+    assert not re.search(r"daily_submits_used=\{used\}\"?\s*\+", source)

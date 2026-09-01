@@ -43,10 +43,11 @@ async def test_the_temp_session_uses_the_jobs_project(captured):
     assert captured[0]["project_id"] == "proj_SNAKE"
     assert captured[0]["kind"] == "cron"
     assert captured[0]["parent_id"] == "session_PARENT"
+    assert captured[0]["strict_project"] is True
 
 
 @pytest.mark.asyncio
-async def test_a_parent_with_no_project_falls_back_to_the_default(captured, monkeypatch):
+async def test_a_job_with_no_project_requests_strict_resolution(captured, monkeypatch):
     import session.session as sess
 
     async def fake_project_id_for(session_id):
@@ -58,8 +59,21 @@ async def test_a_parent_with_no_project_falls_back_to_the_default(captured, monk
         "id": "job1", "user_id": "u1", "session_id": "gone",
         "name": "nightly", "agent": "build", "model": "m",
     })
-    # None means "resolve the default" downstream rather than writing a bad id.
     assert captured[0]["project_id"] is None
+    assert captured[0]["strict_project"] is True
+
+
+@pytest.mark.asyncio
+async def test_strict_internal_session_rejects_a_missing_project():
+    import session.session as sess
+
+    with pytest.raises(LookupError, match="project is missing"):
+        await sess.create_session(
+            user_id="cron-missing-owner",
+            project_id="deleted-project",
+            kind="cron",
+            strict_project=True,
+        )
 
 
 @pytest.mark.asyncio

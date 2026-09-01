@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import PurePosixPath
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -22,15 +23,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.identifier import ascending
+from core.log import create_logger
 from db.base import get_db_session
 from db.models.skill_install import SkillInstall
 from db.models.user import User
 from db.models.user_skill import UserSkill
+from sandbox.client import (
+    SkillArchiveAlreadyExistsError,
+    SkillRestoreFencedError,
+)
 
 
 COMMUNITY_PREFIX = "community:"
 UNPUBLISHED = "unpublished"
 PUBLISHED = "published"
+LIFECYCLE_ACTIVE = "active"
+LIFECYCLE_DELETING = "deleting"
+LIFECYCLE_DELETED = "deleted"
+
+log = create_logger("skill.user_library")
+
+
+class SkillRestoreScopeError(RuntimeError):
+    """The sandbox tenant scope does not match the database owner."""
 
 
 def _now() -> datetime:
@@ -147,6 +162,7 @@ def _snapshot_dict(row: UserSkill, *, include_archive: bool = False) -> dict[str
         "status": publication_status,
         "version": row.version,
         "draft_version": row.version,
+        "lifecycle_generation": row.lifecycle_generation,
         "published_version": row.published_version if published else None,
         "archive_size": row.archive_size,
         "published_archive_size": row.published_archive_size if published else None,
@@ -208,6 +224,7 @@ async def _owned_row(
     identifier: str,
     *,
     for_update: bool = False,
+    include_inactive: bool = False,
 ) -> UserSkill | None:
     """Resolve an owned row deterministically by id, then name, then directory."""
     raw = _row_id(identifier)
@@ -216,9 +233,12 @@ async def _owned_row(
         (UserSkill.name, identifier),
         (UserSkill.install_dir, identifier),
     ):
+        predicates = [UserSkill.owner_id == user_id, column == value]
+        if not include_inactive:
+            predicates.append(UserSkill.lifecycle_state == LIFECYCLE_ACTIVE)
         statement = (
             select(UserSkill)
-            .where(UserSkill.owner_id == user_id, column == value)
+            .where(*predicates)
             .order_by(UserSkill.updated_at.desc(), UserSkill.id.desc())
             .limit(1)
         )
@@ -268,6 +288,26 @@ def _apply_snapshot(
     row.updated_at = now
 
 
+def _reactivate_tombstone(row: UserSkill, now: datetime) -> None:
+    """Start a new lifecycle generation without reviving an old publication."""
+    if row.lifecycle_state == LIFECYCLE_ACTIVE:
+        return
+    row.lifecycle_state = LIFECYCLE_ACTIVE
+    row.lifecycle_generation += 1
+    row.status = UNPUBLISHED
+    row.published_name = None
+    row.published_install_dir = None
+    row.published_description = None
+    row.published_icon = None
+    row.published_version = None
+    row.published_archive_data = None
+    row.published_archive_sha256 = None
+    row.published_archive_size = None
+    row.published_metadata_data = None
+    row.published_at = None
+    row.updated_at = now
+
+
 async def upsert_personal_snapshot(
     user_id: str,
     skill_info: Mapping[str, Any],
@@ -302,8 +342,10 @@ async def upsert_personal_snapshot(
                 UserSkill.owner_id == user_id,
                 UserSkill.name == name,
             )
-            if retry:
-                statement = statement.with_for_update()
+            # Serialize reactivation against a concurrent durable uninstall.
+            # PostgreSQL supplies the row lock; the Action Server generation
+            # fence remains the cross-system arbiter for SQLite and crashes.
+            statement = statement.with_for_update()
             row = (await session.execute(statement)).scalar_one_or_none()
             if row is None:
                 row = UserSkill(
@@ -314,6 +356,8 @@ async def upsert_personal_snapshot(
                     description=description,
                     icon=icon,
                     status=UNPUBLISHED,
+                    lifecycle_state=LIFECYCLE_ACTIVE,
+                    lifecycle_generation=1,
                     version=1,
                     archive_data=archive,
                     archive_sha256=digest,
@@ -334,6 +378,7 @@ async def upsert_personal_snapshot(
                 )
                 session.add(row)
             else:
+                _reactivate_tombstone(row, now)
                 _apply_snapshot(
                     row,
                     install_dir=install_dir,
@@ -384,12 +429,213 @@ async def list_owned_skills(user_id: str) -> list[dict[str, Any]]:
             (
                 await session.execute(
                     select(UserSkill)
-                    .where(UserSkill.owner_id == user_id)
+                    .where(
+                        UserSkill.owner_id == user_id,
+                        UserSkill.lifecycle_state == LIFECYCLE_ACTIVE,
+                    )
                     .order_by(UserSkill.updated_at.desc(), UserSkill.id.desc())
                 )
             ).scalars()
         )
     return [_snapshot_dict(row) for row in rows]
+
+
+async def restore_personal_skills_to_sandbox(
+    user_id: str,
+    sandbox,
+    *,
+    owned_skills: Sequence[Mapping[str, Any]] | None = None,
+    installed_skills: Sequence[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Restore missing owner snapshots before a sandbox catalogue is consumed.
+
+    Both the Agent path and Skill Center call this helper. Archive lookup is
+    owner-filtered again for every upload; caller-provided metadata is only a
+    hint identifying which immutable database row to fetch. A live package
+    with the same name or directory is never overwritten.
+
+    Restoration is best effort at the caller boundary, but corruption and a
+    mismatched tenant-scoped sandbox are hard failures here so neither can turn
+    into a cross-user upload.
+    """
+    user_id = _required_text(user_id, "user_id")
+    if sandbox is None:
+        return [dict(item) for item in (installed_skills or [])]
+
+    # Real WUYING clients carry the pseudonymous filesystem scope derived by
+    # the backend. Test/legacy clients may not expose it, but when present it
+    # must match the database owner before any archive bytes cross the boundary.
+    actual_scope = getattr(sandbox, "user_scope", "")
+    if actual_scope:
+        from project.workspace import user_directory
+
+        expected_scope = PurePosixPath(user_directory(user_id)).name
+        if actual_scope != expected_scope:
+            raise SkillRestoreScopeError(
+                "sandbox user scope does not match skill owner"
+            )
+
+    owned = (
+        [dict(item) for item in owned_skills]
+        if owned_skills is not None
+        else await list_owned_skills(user_id)
+    )
+    if installed_skills is None:
+        live = await sandbox.list_skills()
+        if not isinstance(live, list):
+            raise RuntimeError("sandbox skill catalogue is invalid")
+        installed = [dict(item) for item in live if isinstance(item, Mapping)]
+    else:
+        installed = [dict(item) for item in installed_skills]
+
+    restored = False
+    for owned_hint in owned:
+        owned_dir = owned_hint.get("install_dir")
+        owned_name = owned_hint.get("name")
+        listed_match = next(
+            (
+                item
+                for item in installed
+                if (owned_dir and item.get("install_dir") == owned_dir)
+                or (owned_name and item.get("name") == owned_name)
+            ),
+            None,
+        )
+        listed_live = listed_match is not None
+        if not owned_hint.get("restore_available"):
+            continue
+
+        identifier = owned_hint.get("id") or owned_hint.get("library_id")
+        if not isinstance(identifier, str) or not identifier:
+            continue
+        # A listed match is a non-destructive LKG and must never be overwritten.
+        # When the aggregate view says the path is missing, verify that exact
+        # directory once before upload so a stale negative cannot overwrite a
+        # newer live package. This avoids downloading every live SKILL.md on
+        # every model step while keeping the destructive direction fail-safe.
+        if listed_live:
+            continue
+        get_live = getattr(sandbox, "get_skill", None)
+        if callable(get_live) and (owned_dir or owned_name):
+            verify_name = (
+                (listed_match or {}).get("install_dir")
+                or (listed_match or {}).get("name")
+                or owned_dir
+                or owned_name
+            )
+            try:
+                await get_live(str(verify_name))
+            except Exception as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status != 404 and not isinstance(exc, (FileNotFoundError, LookupError)):
+                    log.debug(
+                        "Could not verify personal skill id=%s error_type=%s",
+                        identifier[:64],
+                        type(exc).__name__,
+                    )
+                    continue
+                listed_live = False
+            else:
+                listed_live = True
+        if listed_live:
+            continue
+        try:
+            conflict = False
+            fenced = False
+            snapshot_name = ""
+            # Hold the owner row lock through the execution-plane claim. If a
+            # restore wins first, uninstall waits then removes it; if uninstall
+            # wins first, this query sees a tombstone. The Action Server fence
+            # supplies the same ordering when SQLite cannot lock the row and
+            # when a backend dies between the two systems.
+            async with get_db_session() as session:
+                row = await _owned_row(
+                    session,
+                    user_id,
+                    identifier,
+                    for_update=True,
+                )
+                if row is None:
+                    continue
+                archive = row.archive_data
+                install_dir = _required_text(row.install_dir, "install_dir")
+                snapshot_name = row.name
+                if not isinstance(archive, bytes) or not archive:
+                    raise ValueError("personal skill archive is unavailable")
+                if sha256(archive).hexdigest() != row.archive_sha256:
+                    raise ValueError("personal skill archive checksum mismatch")
+                try:
+                    result = await sandbox.upload_skill_archive(
+                        archive,
+                        f"{install_dir}.zip",
+                        install_dir,
+                        create_only=True,
+                        restore_generation=row.lifecycle_generation,
+                    )
+                except SkillArchiveAlreadyExistsError:
+                    conflict = True
+                    result = None
+                except SkillRestoreFencedError:
+                    fenced = True
+                    result = None
+
+            if fenced:
+                # A newer durable delete owns this slug. It is intentionally
+                # absent from both the returned catalogue and retry logs.
+                continue
+            if conflict:
+                # Another backend/process won the create-if-absent race. That
+                # is a successful recovery outcome, not a reason to retry with
+                # destructive update semantics. Re-read the live package so
+                # this catalogue can converge without waiting for another step.
+                conflict_live = None
+                if callable(get_live):
+                    try:
+                        conflict_live = await get_live(install_dir)
+                    except Exception as exc:
+                        log.debug(
+                            "Could not read concurrently restored personal skill "
+                            "id=%s error_type=%s",
+                            identifier[:64],
+                            type(exc).__name__,
+                        )
+                if isinstance(conflict_live, Mapping):
+                    installed.append(
+                        {
+                            **dict(conflict_live),
+                            "source": conflict_live.get("source") or "container",
+                        }
+                    )
+                restored = True
+                continue
+            installed.append({
+                **owned_hint,
+                **(result if isinstance(result, dict) else {}),
+                "name": snapshot_name or owned_name or install_dir,
+                "install_dir": install_dir,
+                "source": "container",
+            })
+            restored = True
+        except Exception as exc:
+            # One bad snapshot must not hide unrelated live Skills or stop an
+            # Agent step. The next catalogue build gets another recovery chance.
+            log.warning(
+                "Could not restore personal skill id=%s error_type=%s",
+                identifier[:64],
+                type(exc).__name__,
+            )
+
+    if restored:
+        try:
+            refreshed = await sandbox.list_skills()
+            if isinstance(refreshed, list):
+                return [dict(item) for item in refreshed if isinstance(item, Mapping)]
+        except Exception as exc:
+            log.debug(
+                "Could not refresh sandbox skills after restore error_type=%s",
+                type(exc).__name__,
+            )
+    return installed
 
 
 async def publish_personal_skill(user_id: str, identifier: str) -> dict[str, Any]:
@@ -433,6 +679,7 @@ async def get_published_skill(
                 .join(User, User.id == UserSkill.owner_id)
                 .where(
                     UserSkill.id == row_id,
+                    UserSkill.lifecycle_state == LIFECYCLE_ACTIVE,
                     UserSkill.status == PUBLISHED,
                     UserSkill.published_archive_data.is_not(None),
                     User.is_active.is_(True),
@@ -456,6 +703,7 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
                 .join(User, User.id == UserSkill.owner_id)
                 .where(
                     UserSkill.status == PUBLISHED,
+                    UserSkill.lifecycle_state == LIFECYCLE_ACTIVE,
                     UserSkill.published_archive_data.is_not(None),
                     User.is_active.is_(True),
                     User.is_deleted.is_(False),
@@ -507,7 +755,10 @@ async def annotate_installed_skills(
         personal = list(
             (
                 await session.execute(
-                    select(UserSkill).where(UserSkill.owner_id == user_id)
+                    select(UserSkill).where(
+                        UserSkill.owner_id == user_id,
+                        UserSkill.lifecycle_state == LIFECYCLE_ACTIVE,
+                    )
                 )
             ).scalars()
         )
@@ -620,6 +871,7 @@ async def record_community_installation(
                 .join(User, User.id == UserSkill.owner_id)
                 .where(
                     UserSkill.id == user_skill_id,
+                    UserSkill.lifecycle_state == LIFECYCLE_ACTIVE,
                     UserSkill.status == PUBLISHED,
                     UserSkill.published_archive_data.is_not(None),
                     User.is_active.is_(True),
@@ -687,25 +939,102 @@ async def remove_community_installation(user_id: str, identifier: str) -> bool:
         return bool(result.rowcount)
 
 
-async def delete_owned_skill(user_id: str, identifier: str) -> bool:
-    """Delete one owned library snapshot and all installation provenance.
+def _finalize_owned_skill_tombstone(row: UserSkill, now: datetime) -> None:
+    """Erase package material while retaining slug generation monotonicity."""
+    row.lifecycle_state = LIFECYCLE_DELETED
+    row.status = UNPUBLISHED
+    row.description = ""
+    row.icon = ""
+    row.archive_data = b""
+    row.archive_sha256 = sha256(b"").hexdigest()
+    row.archive_size = 0
+    row.metadata_data = {}
+    row.published_name = None
+    row.published_install_dir = None
+    row.published_description = None
+    row.published_icon = None
+    row.published_version = None
+    row.published_archive_data = None
+    row.published_archive_sha256 = None
+    row.published_archive_size = None
+    row.published_metadata_data = None
+    row.published_at = None
+    row.version += 1
+    row.updated_at = now
 
-    Resolution is owner-scoped before either DELETE runs, so another user's
-    private or public skill can never be removed by guessing its identifier.
+
+async def uninstall_owned_skill(user_id: str, identifier: str, sandbox) -> dict:
+    """Fence, remove, and tombstone one personal Skill as one ordered unit.
+
+    The database row lock is held while the Action Server advances its durable
+    restore fence and removes the package. A transaction failure leaves the
+    prior active row intact; a response-lost server-side delete still leaves a
+    higher execution fence that refuses the stale active generation.
+    """
+    user_id = _required_text(user_id, "user_id")
+    identifier = _required_text(identifier, "identifier")
+    if sandbox is None or not callable(getattr(sandbox, "uninstall_skill", None)):
+        raise RuntimeError("sandbox Skill uninstall is unavailable")
+
+    async with get_db_session() as session:
+        row = await _owned_row(
+            session,
+            user_id,
+            identifier,
+            for_update=True,
+            include_inactive=True,
+        )
+        if row is None:
+            raise LookupError("Personal skill not found")
+        if row.lifecycle_state == LIFECYCLE_DELETED:
+            return {
+                "ok": True,
+                "already_absent": True,
+                "message": f"Skill '{row.install_dir}' was already deleted",
+            }
+        if row.lifecycle_state == LIFECYCLE_ACTIVE:
+            row.lifecycle_state = LIFECYCLE_DELETING
+            row.lifecycle_generation += 1
+            row.updated_at = _now()
+            await session.flush()
+
+        generation = row.lifecycle_generation
+        result = await sandbox.uninstall_skill(
+            row.install_dir,
+            mutation_generation=generation,
+        )
+        await session.execute(
+            delete(SkillInstall).where(SkillInstall.user_skill_id == row.id)
+        )
+        _finalize_owned_skill_tombstone(row, _now())
+        await session.flush()
+        return result if isinstance(result, dict) else {"ok": True}
+
+
+async def delete_owned_skill(user_id: str, identifier: str) -> bool:
+    """Logically delete one owned snapshot while retaining its generation.
+
+    This database-only helper is used after no execution-plane operation is
+    needed. HTTP uninstall uses :func:`uninstall_owned_skill` so the filesystem
+    fence and tombstone are ordered together.
     """
     user_id = _required_text(user_id, "user_id")
     identifier = _required_text(identifier, "identifier")
     async with get_db_session() as session:
-        row = await _owned_row(session, user_id, identifier, for_update=True)
-        if row is None:
+        row = await _owned_row(
+            session,
+            user_id,
+            identifier,
+            for_update=True,
+            include_inactive=True,
+        )
+        if row is None or row.lifecycle_state == LIFECYCLE_DELETED:
             return False
+        if row.lifecycle_state == LIFECYCLE_ACTIVE:
+            row.lifecycle_generation += 1
         await session.execute(
             delete(SkillInstall).where(SkillInstall.user_skill_id == row.id)
         )
-        result = await session.execute(
-            delete(UserSkill).where(
-                UserSkill.id == row.id,
-                UserSkill.owner_id == user_id,
-            )
-        )
-        return bool(result.rowcount)
+        _finalize_owned_skill_tombstone(row, _now())
+        await session.flush()
+        return True

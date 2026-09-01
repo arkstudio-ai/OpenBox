@@ -102,6 +102,7 @@ async def execute_enter(args: PlanEnterArgs, ctx: ToolContext) -> ToolResult:
         model=session.model if session else None,
         synthetic=True,
         user_id=ctx.user_id or "default",
+        run_fence=ctx.run_fence,
     )
 
     return ToolResult(
@@ -124,8 +125,14 @@ plan_enter_tool = define_tool(
 )
 
 
-async def _update_plan_part_status(session_id: str, status: str, message_id: str = "",
-                                   user_id: str = "default") -> None:
+async def _update_plan_part_status(
+    session_id: str,
+    status: str,
+    message_id: str = "",
+    user_id: str = "default",
+    *,
+    run_fence: tuple[str, str, int] | None = None,
+) -> None:
     """Find the most recent PlanPart in the session and update its status.
 
     If no PlanPart exists yet, create one by extracting content from write tool
@@ -148,7 +155,12 @@ async def _update_plan_part_status(session_id: str, status: str, message_id: str
                     session_id=session_id,
                     message_id=part_data.get("message_id", msg.id),
                 )
-                await save_part(plan_part, is_new=False, user_id=user_id)
+                await save_part(
+                    plan_part,
+                    is_new=False,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
                 log.info(f"Updated PlanPart {plan_part.id} status to '{status}'")
                 return
 
@@ -182,7 +194,12 @@ async def _update_plan_part_status(session_id: str, status: str, message_id: str
             session_id=session_id,
             message_id=target_msg_id,
         )
-        await save_part(plan_part, is_new=True, user_id=user_id)
+        await save_part(
+            plan_part,
+            is_new=True,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
         log.info(f"Created PlanPart with status '{status}' from write tool content ({len(content)} chars)")
     else:
         log.warning(f"No PlanPart found in session {session_id} to update status to '{status}'")
@@ -195,8 +212,13 @@ class PlanExitArgs(BaseModel):
 async def execute_exit(args: PlanExitArgs, ctx: ToolContext) -> ToolResult:
     """Mark plan as ready for user review. Does NOT block — user accepts/rejects via PlanCard UI."""
     # Mark plan as ready
-    await _update_plan_part_status(ctx.session_id, "ready", message_id=ctx.message_id,
-                                   user_id=ctx.user_id or "default")
+    await _update_plan_part_status(
+        ctx.session_id,
+        "ready",
+        message_id=ctx.message_id,
+        user_id=ctx.user_id or "default",
+        run_fence=ctx.run_fence,
+    )
 
     return ToolResult(
         title="Plan ready for review",

@@ -10,9 +10,10 @@ import "@xterm/xterm/css/xterm.css"
 
 interface TerminalProps {
   containerId: string
+  sessionId?: string | null
 }
 
-export function Terminal({ containerId }: TerminalProps) {
+export function Terminal({ containerId, sessionId }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -50,8 +51,8 @@ export function Terminal({ containerId }: TerminalProps) {
 
   const [wsUrl, setWsUrl] = useState<string>("")
   useEffect(() => {
-    api.getTerminalWsUrl(containerId).then(setWsUrl)
-  }, [containerId])
+    api.getTerminalWsUrl(containerId, sessionId).then(setWsUrl)
+  }, [containerId, sessionId])
 
   const { connected, connect, disconnect, sendBinary } = useWebSocket({
     url: wsUrl,

@@ -1,4 +1,4 @@
-.PHONY: dev build sandbox-image backend frontend clean up down help deps migrate start stop restart deploy retire-legacy-worker k8s-apply k8s-apply-aks
+.PHONY: dev build backend frontend clean up down help deps migrate start stop restart deploy retire-legacy-worker
 
 BACKEND_ENTRYPOINT := uv run python scripts/backend_entrypoint.py
 FRONTEND_DIR := frontend-v2
@@ -6,9 +6,6 @@ FRONTEND_PORT := 3000
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
-
-sandbox-image: ## Build sandbox container image
-	docker build -t openbox-sandbox:latest ./container
 
 backend: retire-legacy-worker ## Start backend dev server (foreground, with reload)
 	cd backend && $(BACKEND_ENTRYPOINT) --reload --host 0.0.0.0 --port 8080
@@ -64,21 +61,17 @@ deploy: ## Pull latest code and restart backend + V2 frontend
 	git pull
 	$(MAKE) start
 
-build: sandbox-image ## Build all Docker images
-	docker compose build
+build: ## Pull local infrastructure images (Agent execution stays on WUYING)
+	docker compose pull
 
-up: retire-legacy-worker sandbox-image ## Start all services with docker-compose
+up: retire-legacy-worker ## Start local PostgreSQL/Redis/Azurite only
 	docker compose up -d --remove-orphans
 
 down: ## Stop all services (docker-compose)
 	docker compose down --remove-orphans
 
-clean: ## Remove all sandbox containers and stop services
-	docker ps -a --filter "name=openbox-sandbox-" -q | xargs -r docker rm -f
+clean: ## Stop local infrastructure and remove its data volumes
 	docker compose down --volumes --remove-orphans 2>/dev/null || true
-
-clean-containers: ## Force remove ALL sandbox containers (Docker + DB)
-	cd backend && DATABASE_URL=$${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@localhost:5432/openbox} uv run python scripts/cleanup_containers.py
 
 install: ## Install all dependencies
 	cd backend && uv sync --extra test
@@ -101,14 +94,6 @@ retire-legacy-worker: ## Remove this checkout's obsolete SkillJob Compose worker
 		echo "Removing retired SkillJob worker container(s) before migration..."; \
 		docker rm -f $$containers; \
 	fi
-
-k8s-apply: ## Retire the old worker, then apply the GKE/base manifest
-	kubectl -n openbox delete deployment openbox-backend-worker --ignore-not-found=true
-	kubectl apply -f k8s/base.yaml
-
-k8s-apply-aks: ## Retire the old worker, then apply the AKS manifest
-	kubectl -n openbox delete deployment openbox-backend-worker --ignore-not-found=true
-	kubectl apply -f k8s/aks.yaml
 
 test: ## Run backend tests
 	cd backend && uv run pytest tests/ -v

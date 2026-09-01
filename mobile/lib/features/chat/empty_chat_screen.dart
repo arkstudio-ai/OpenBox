@@ -43,20 +43,25 @@ class EmptyChatScreen extends ConsumerStatefulWidget {
 }
 
 class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
-  Future<void> _startChat(String text,
-      [List<String> attachments = const []]) async {
+  Future<void> _startChat(
+    String text, [
+    List<String> attachments = const [],
+  ]) async {
     if (text.trim().isEmpty && attachments.isEmpty) return;
     try {
       final model = ref.read(pickedModelProvider(draftSessionKey)) ?? '';
       final agent = ref.read(pickedAgentProvider(draftSessionKey)) ?? 'build';
-      final session = await ref.read(chatApiProvider).createSession(
+      final session = await ref
+          .read(chatApiProvider)
+          .createSession(
             projectId: widget.projectId,
             model: model,
             agent: agent,
           );
       // Carry the draft picks onto the real session.
-      ref.read(pickedModelProvider(session.id).notifier).state =
-          model.isEmpty ? null : model;
+      ref.read(pickedModelProvider(session.id).notifier).state = model.isEmpty
+          ? null
+          : model;
       ref.read(pickedAgentProvider(session.id).notifier).state = agent;
       await ref
           .read(chatSessionProvider(session.id).notifier)
@@ -94,6 +99,7 @@ class _EmptyChatScreenState extends ConsumerState<EmptyChatScreen> {
           top: false,
           child: Composer(
             sessionKey: draftSessionKey,
+            projectId: widget.projectId,
             busy: false,
             resources: widget.resources,
             onSend: _startChat,
@@ -162,7 +168,10 @@ class _SandboxCardState extends ConsumerState<_SandboxCard> {
                 Text(
                   i18n.t('workspace:sandbox.body'),
                   style: TextStyle(
-                      fontSize: FontSizes.xs, color: t.n600, height: 1.5),
+                    fontSize: FontSizes.xs,
+                    color: t.n600,
+                    height: 1.5,
+                  ),
                 ),
               ],
             ),
@@ -173,8 +182,7 @@ class _SandboxCardState extends ConsumerState<_SandboxCard> {
             style: FilledButton.styleFrom(
               backgroundColor: t.ink,
               foregroundColor: t.bg,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(Radii.full),
               ),

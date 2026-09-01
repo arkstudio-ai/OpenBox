@@ -7,6 +7,16 @@ from core.log import create_logger
 log = create_logger("agent.agent")
 
 
+# A subagent preset has to state which composition fields it can honour.  The
+# Task protocol snapshots this declaration together with the preset itself;
+# absence is not interpreted as support after a worker restart.
+SUBAGENT_BASE_CAPABILITIES = frozenset({"model", "agent_preset", "tool_filter"})
+SUBAGENT_OPTIONAL_CAPABILITIES = frozenset({"reasoning", "persona", "output_schema"})
+SUBAGENT_ALL_CAPABILITIES = (
+    SUBAGENT_BASE_CAPABILITIES | SUBAGENT_OPTIONAL_CAPABILITIES
+)
+
+
 def _with_skill_search_companion(tools: list[str]) -> list[str]:
     """Keep Skill loading and its conditional large-directory search atomic."""
     resolved = [tool for tool in tools if tool != "skill_search"]
@@ -38,6 +48,13 @@ class AgentDef:
     # safe default toolset for compatibility, including capability_search,
     # but inheritance is not consent to leave the shadow rollout.
     portable_opt_in: bool = False
+    # Provider-independent Child-Agent composition features this preset can
+    # preserve exactly.  Built-in subagents declare the complete supported
+    # set below; config-defined agents default to the safe base set unless the
+    # operator explicitly opts in to optional fields.
+    subagent_capabilities: frozenset[str] = field(
+        default_factory=lambda: SUBAGENT_BASE_CAPABILITIES
+    )
     # Each dict: {"permission": "edit", "pattern": "*", "action": "deny"}
 
     def __post_init__(self) -> None:
@@ -221,6 +238,7 @@ AGENTS: dict[str, AgentDef] = {
         tools=["bash", "read", "glob", "grep", "web_fetch", "web_search", "view_image"],
         max_steps=20,
         mode="subagent",
+        subagent_capabilities=SUBAGENT_ALL_CAPABILITIES,
         prompt=PROMPT_EXPLORE,
         permission=[
             {"permission": "todoread", "pattern": "*", "action": "deny"},
@@ -244,6 +262,7 @@ AGENTS: dict[str, AgentDef] = {
         ],
         max_steps=100,
         mode="subagent",
+        subagent_capabilities=SUBAGENT_ALL_CAPABILITIES,
         prompt=PROMPT_GENERAL,
         permission=[
             {"permission": "todoread", "pattern": "*", "action": "deny"},
@@ -338,6 +357,10 @@ def _merged_registry() -> dict[str, AgentDef]:
                 portable_opt_in=(
                     "capability_search" in (getattr(ov, "tools", None) or ())
                 ),
+                subagent_capabilities=frozenset(
+                    getattr(ov, "subagent_capabilities", None)
+                    or SUBAGENT_BASE_CAPABILITIES
+                ),
             )
         agent = apply_agent_overrides(copy.copy(agent), ov)
         registry[name] = agent
@@ -372,13 +395,41 @@ def apply_agent_overrides(agent_def: AgentDef, overrides) -> AgentDef:
         agent_def.hidden = overrides.hidden
     if getattr(overrides, "tools", None) is not None:
         agent_def.tools = _with_skill_search_companion(list(overrides.tools))
+        # A non-build Agent only leaves the shadow rollout when its own
+        # config whitelist explicitly includes the logical discovery slot.
+        # Updating built-ins must follow the same rule as creating a custom
+        # Agent; inherited/default tools are deliberately not consent.
+        agent_def.portable_opt_in = "capability_search" in overrides.tools
     if valid_color(getattr(overrides, "color", None)):
         agent_def.color = overrides.color
+    if getattr(overrides, "subagent_capabilities", None) is not None:
+        requested = frozenset(overrides.subagent_capabilities)
+        unknown = requested - SUBAGENT_ALL_CAPABILITIES
+        if unknown:
+            raise ValueError(
+                "unknown subagent capability: " + ", ".join(sorted(unknown))
+            )
+        if not SUBAGENT_BASE_CAPABILITIES.issubset(requested):
+            raise ValueError(
+                "subagent capabilities must include model, agent_preset, and tool_filter"
+            )
+        agent_def.subagent_capabilities = requested
     return agent_def
 
 
 def get_agent(name: str) -> AgentDef:
     """Get an agent definition by name."""
+    # ``load_subagent_authority`` binds a private descriptor snapshot before a
+    # child Loop resolves its AgentDef. Context-local lookup preserves the
+    # exact accepted preset across hot config reload and cold worker resume.
+    try:
+        from agent.subagent_authority import current_frozen_subagent_agent
+
+        frozen = current_frozen_subagent_agent(name)
+        if frozen is not None:
+            return frozen
+    except ImportError:
+        pass
     agent = _merged_registry().get(name)
     if not agent:
         raise ValueError(f"Unknown agent: {name}")

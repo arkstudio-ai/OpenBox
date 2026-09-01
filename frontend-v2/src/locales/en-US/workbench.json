@@ -3,6 +3,7 @@
     "new": "New tab",
     "review": "Review",
     "terminal": "Terminal",
+    "preview": "Preview",
     "browser": "Browser",
     "files": "Files",
     "desktop": "Cloud desktop",
@@ -15,6 +16,7 @@
     "title": "Workbench",
     "review": "Review",
     "terminal": "Terminal",
+    "preview": "App preview",
     "browser": "Browser",
     "files": "Files",
     "pending_one": "{{count}} pending",
@@ -44,6 +46,24 @@
     "connecting": "Connecting to the terminal…",
     "disconnected": "Terminal disconnected"
   },
+  "preview": {
+    "portLabel": "Local port",
+    "portPlaceholder": "3000",
+    "open": "Open",
+    "refresh": "Refresh preview",
+    "openExternal": "Open preview in a new tab",
+    "detected": "Detected services",
+    "empty": "Open a local service",
+    "emptyHint": "Choose a detected port or enter the port used by your app.",
+    "detecting": "Looking for local services…",
+    "noPorts": "No listening ports detected yet",
+    "loadFailed": "Could not detect local services",
+    "retry": "Retry",
+    "invalidPort": "Enter a port from 1 to 65535.",
+    "authorizeFailed": "Could not authorize this preview. Try again.",
+    "popupBlocked": "The browser blocked the new tab. Allow pop-ups and try again.",
+    "frameTitle": "Preview of local port {{port}}"
+  },
   "browser": {
     "placeholder": "Type a URL and press Enter",
     "empty": "Page view",
@@ -51,6 +71,7 @@
     "failed": "The page failed to load"
   },
   "files": {
+    "projectRoot": "Project files",
     "filter": "Filter files…",
     "fileList": "File list",
     "copyPath": "Copy path",

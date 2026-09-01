@@ -1,5 +1,7 @@
 """Retry logic with exponential backoff."""
 import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import random
 import re
 from typing import Any, Callable, Awaitable
@@ -54,6 +56,51 @@ class MaxRetriesExceeded(Exception):
     pass
 
 
+def _error_status_code(error: Exception) -> int | None:
+    """Best-effort HTTP status extraction across SDK exception shapes."""
+    value = getattr(error, "status_code", None)
+    if value is None:
+        value = getattr(getattr(error, "response", None), "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _error_headers(error: Exception) -> dict[str, str]:
+    """Normalize Retry-After headers from OpenAI/LiteLLM/httpx errors."""
+    candidates = (
+        getattr(error, "headers", None),
+        getattr(getattr(error, "response", None), "headers", None),
+    )
+    normalized: dict[str, str] = {}
+    for headers in candidates:
+        if not headers:
+            continue
+        try:
+            items = headers.items()
+        except AttributeError:
+            continue
+        for key, value in items:
+            normalized[str(key).lower()] = str(value)
+    return normalized
+
+
+def _retry_after_seconds(value: str) -> float | None:
+    """Parse either delta-seconds or the HTTP-date form of Retry-After."""
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def is_context_overflow(message: str) -> bool:
     """Check if an error message indicates context overflow."""
     return any(re.search(p, message, re.IGNORECASE) for p in OVERFLOW_PATTERNS)
@@ -91,11 +138,15 @@ def is_retryable(error: Exception) -> str | None:
 
     msg = str(error).lower()
 
-    if isinstance(error, RetryableError):
-        if error.status_code in (429, 503, 529):
-            return "Rate limited" if error.status_code == 429 else "Service unavailable"
-        if error.status_code == 502:
+    status_code = _error_status_code(error)
+    if status_code in (429, 503, 529):
+        return "Rate limited" if status_code == 429 else "Service unavailable"
+    if status_code in (500, 502, 504, 524):
+        if status_code == 502:
             return "Bad gateway"
+        return "Service unavailable"
+
+    if isinstance(error, RetryableError):
         if "overloaded" in msg:
             return "Provider is overloaded"
         return str(error)
@@ -121,19 +172,26 @@ def retry_delay(attempt: int, error: Exception | None = None, rand: float | None
     """
     if rand is None:
         rand = random.random()
-    if isinstance(error, RetryableError) and error.headers:
-        headers = error.headers
+    headers = _error_headers(error) if error is not None else {}
+    if headers:
         # 1. retry-after-ms
         if "retry-after-ms" in headers:
-            return float(headers["retry-after-ms"]) / 1000.0
+            try:
+                return max(0.0, float(headers["retry-after-ms"]) / 1000.0)
+            except (TypeError, ValueError):
+                pass
         # 2. retry-after (seconds)
         if "retry-after" in headers:
-            try:
-                return float(headers["retry-after"])
-            except ValueError:
-                pass
-        # Has headers but no retry-after, exponential backoff (no cap)
-        return _jitter(RETRY_INITIAL_DELAY * (RETRY_BACKOFF_FACTOR ** (attempt - 1)), rand)
+            seconds = _retry_after_seconds(headers["retry-after"])
+            if seconds is not None:
+                return seconds
+        # Preserve the existing custom RetryableError contract: an API that
+        # supplied headers but omitted Retry-After gets an uncapped schedule.
+        if isinstance(error, RetryableError) and error.headers:
+            return _jitter(
+                RETRY_INITIAL_DELAY * (RETRY_BACKOFF_FACTOR ** (attempt - 1)),
+                rand,
+            )
 
     # No headers, exponential backoff with cap
     return _jitter(
@@ -166,11 +224,17 @@ async def with_retry(
             log.warning(f"Attempt {attempt}/{max_retries} failed: {retry_msg}. Retrying in {delay:.1f}s")
 
             if session_id:
-                bus.publish(SESSION_STATUS, {
+                payload = {
                     "userId": user_id,
                     "sessionId": session_id,
                     "status": "retry",
-                })
+                }
+                from agent.driver import current_run_fence
+
+                fence = current_run_fence()
+                if fence is not None and fence[0] == session_id:
+                    payload["generation"] = fence[2]
+                bus.publish(SESSION_STATUS, payload)
 
             await asyncio.sleep(delay)
 

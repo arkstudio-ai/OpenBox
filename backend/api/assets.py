@@ -26,6 +26,7 @@ from core.log import create_logger
 from core.oss import OssNotConfigured, get_oss
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
+from project.workspace import asset_sandbox_path
 
 log = create_logger("api.assets")
 
@@ -113,7 +114,12 @@ async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_c
     return {
         "id": asset_id,
         "name": name,
-        "sandboxPath": f"/workspace/uploads/{name}",
+        "sandboxPath": asset_sandbox_path(
+            user_id,
+            project_id,
+            name,
+            asset_id=asset_id,
+        ),
         # A 1 GB upload can exceed the old 30-minute URL on a slow connection.
         "putUrl": oss.presign_put(key, mime, expires_sec=_UPLOAD_URL_TTL_SECONDS),
         # The PUT must send exactly what was signed (bossip's hard-won rule).
@@ -153,7 +159,12 @@ def _to_item(row: FileAsset, oss) -> dict:
         "sessionId": row.session_id,
         "status": row.status,
         "createdAt": _utc(row.created_at).isoformat(),
-        "sandboxPath": f"/workspace/uploads/{row.name}",
+        "sandboxPath": asset_sandbox_path(
+            row.user_id,
+            row.project_id,
+            row.name,
+            asset_id=row.id,
+        ),
         "url": oss.presign_get(row.oss_key),
     }
 

@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../../shared/models/container.dart';
 import '../../../shared/widgets/toast.dart';
 import '../state/workbench_providers.dart';
+import '../utils/project_path.dart';
 
 /// Files tab (web `FilesTab`/`FilesTree`/`FileViewer`), mobile single-column:
 /// breadcrumb + one-level listing; tapping a file swaps to the viewer.
@@ -30,51 +32,77 @@ class _FilesTabState extends ConsumerState<FilesTab> {
   String? _openFile;
 
   @override
+  void didUpdateWidget(covariant FilesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionId != widget.sessionId ||
+        oldWidget.containerId != widget.containerId) {
+      _cwd = null;
+      _openFile = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final workdir = ref.watch(sessionWorkdirProvider(widget.sessionId));
+    final workspace = ref.watch(sessionWorkspaceProvider(widget.sessionId));
 
-    return workdir.when(
+    return workspace.when(
       loading: () =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       error: (_, _) => Center(
-        child: Text(i18n.t('workbench:files.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:files.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
-      data: (root) {
+      data: (workspace) {
+        final root = workspace.directory;
         if (root == null || root.isEmpty) {
           return Center(
-            child: Text(i18n.t('workbench:sandbox.none'),
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+            child: Text(
+              i18n.t('workbench:sandbox.none'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+            ),
           );
         }
-        final cwd = _cwd ?? root;
-        if (_openFile != null) {
+        final normalizedRoot = normalizeWorkspacePath(root);
+        final rootLabel = workspace.projectName?.trim().isNotEmpty == true
+            ? workspace.projectName!.trim()
+            : i18n.t('workbench:files.projectRoot');
+        final rememberedCwd = _cwd;
+        final cwd =
+            rememberedCwd != null &&
+                isWithinProjectRoot(normalizedRoot, rememberedCwd)
+            ? normalizeWorkspacePath(rememberedCwd)
+            : normalizedRoot;
+        final openFile = _openFile;
+        if (openFile != null && isWithinProjectRoot(normalizedRoot, openFile)) {
           return _FileViewer(
             containerId: widget.containerId,
-            path: _openFile!,
+            path: openFile,
+            root: normalizedRoot,
+            rootLabel: rootLabel,
             onClose: () => setState(() => _openFile = null),
           );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _breadcrumb(t, root, cwd),
-            Expanded(child: _listing(t, i18n, cwd)),
+            _breadcrumb(t, normalizedRoot, rootLabel, cwd),
+            Expanded(child: _listing(t, i18n, normalizedRoot, cwd)),
           ],
         );
       },
     );
   }
 
-  Widget _breadcrumb(BossipTokens t, String root, String cwd) {
-    final rootName = root.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '/';
-    final relative = cwd == root
-        ? ''
-        : cwd.startsWith(root)
-            ? cwd.substring(root.length)
-            : cwd;
+  Widget _breadcrumb(
+    BossipTokens t,
+    String root,
+    String rootLabel,
+    String cwd,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
@@ -82,8 +110,7 @@ class _FilesTabState extends ConsumerState<FilesTab> {
           if (cwd != root)
             InkWell(
               onTap: () => setState(() {
-                final parent = cwd.substring(0, cwd.lastIndexOf('/'));
-                _cwd = parent.length < root.length ? root : parent;
+                _cwd = projectParentPath(root, cwd);
               }),
               child: Padding(
                 padding: const EdgeInsets.only(right: 8),
@@ -92,14 +119,18 @@ class _FilesTabState extends ConsumerState<FilesTab> {
             ),
           Expanded(
             child: Text(
-              '$rootName$relative',
+              projectDisplayPath(root: root, path: cwd, projectName: rootLabel),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: FontSizes.sm,
                 color: t.n700,
                 fontFamily: 'Menlo',
-                fontFamilyFallback: const ['monospace'],
+                fontFamilyFallback: const [
+                  'PingFang SC',
+                  'Noto Sans CJK SC',
+                  'monospace',
+                ],
               ),
             ),
           ),
@@ -108,56 +139,72 @@ class _FilesTabState extends ConsumerState<FilesTab> {
     );
   }
 
-  Widget _listing(BossipTokens t, I18nState i18n, String cwd) {
+  Widget _listing(BossipTokens t, I18nState i18n, String root, String cwd) {
     final entries = ref.watch(
-        fileListProvider((containerId: widget.containerId, path: cwd)));
+      fileListProvider((containerId: widget.containerId, path: cwd)),
+    );
     return entries.when(
       loading: () =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       error: (_, _) => Center(
-        child: Text(i18n.t('workbench:files.loadFailed'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:files.loadFailed'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
       data: (list) {
-        if (list.isEmpty) {
+        final resolved = <({FileEntry entry, String path})>[];
+        for (final entry in list) {
+          final path = resolveProjectEntryPath(
+            root: root,
+            cwd: cwd,
+            entryPath: entry.path,
+            entryName: entry.name,
+          );
+          if (path != null) resolved.add((entry: entry, path: path));
+        }
+        if (resolved.isEmpty) {
           return Center(
-            child: Text(i18n.t('workbench:files.empty'),
-                style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+            child: Text(
+              i18n.t('workbench:files.empty'),
+              style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+            ),
           );
         }
-        final dirs = list.where((e) => e.isDir).toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
-        final files = list.where((e) => !e.isDir).toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
+        final dirs = resolved.where((e) => e.entry.isDir).toList()
+          ..sort((a, b) => a.entry.name.compareTo(b.entry.name));
+        final files = resolved.where((e) => !e.entry.isDir).toList()
+          ..sort((a, b) => a.entry.name.compareTo(b.entry.name));
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 6),
           children: [
-            for (final entry in [...dirs, ...files])
+            for (final resolvedEntry in [...dirs, ...files])
               ListTile(
                 dense: true,
                 visualDensity: VisualDensity.compact,
-                leading: entry.isDir
+                leading: resolvedEntry.entry.isDir
                     ? Icon(Icons.folder_outlined, size: 18, color: t.n600)
-                    : _fileBadge(t, entry.name),
+                    : _fileBadge(t, resolvedEntry.entry.name),
                 title: Text(
-                  entry.name,
+                  resolvedEntry.entry.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: FontSizes.md,
                     color: t.ink,
                     fontFamily: 'Menlo',
-                    fontFamilyFallback: const ['monospace'],
+                    fontFamilyFallback: const [
+                      'PingFang SC',
+                      'Noto Sans CJK SC',
+                      'monospace',
+                    ],
                   ),
                 ),
                 onTap: () => setState(() {
-                  final path = entry.path.isNotEmpty
-                      ? entry.path
-                      : '$cwd/${entry.name}';
-                  if (entry.isDir) {
-                    _cwd = path;
+                  if (resolvedEntry.entry.isDir) {
+                    _cwd = resolvedEntry.path;
                   } else {
-                    _openFile = path;
+                    _openFile = resolvedEntry.path;
                   }
                 }),
               ),
@@ -194,19 +241,24 @@ class _FileViewer extends ConsumerWidget {
   const _FileViewer({
     required this.containerId,
     required this.path,
+    required this.root,
+    required this.rootLabel,
     required this.onClose,
   });
 
   final String containerId;
   final String path;
+  final String root;
+  final String rootLabel;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final content =
-        ref.watch(fileContentProvider((containerId: containerId, path: path)));
+    final content = ref.watch(
+      fileContentProvider((containerId: containerId, path: path)),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -220,14 +272,22 @@ class _FileViewer extends ConsumerWidget {
               ),
               Expanded(
                 child: Text(
-                  path.split('/').last,
+                  projectDisplayPath(
+                    root: root,
+                    path: path,
+                    projectName: rootLabel,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: FontSizes.sm,
                     color: t.ink,
                     fontFamily: 'Menlo',
-                    fontFamilyFallback: const ['monospace'],
+                    fontFamilyFallback: const [
+                      'PingFang SC',
+                      'Noto Sans CJK SC',
+                      'monospace',
+                    ],
                   ),
                 ),
               ),
@@ -235,7 +295,9 @@ class _FileViewer extends ConsumerWidget {
                 icon: Icon(Icons.copy_outlined, size: 16, color: t.n600),
                 tooltip: i18n.t('workbench:files.copyPath'),
                 onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: path));
+                  await Clipboard.setData(
+                    ClipboardData(text: projectRelativePath(root, path) ?? '.'),
+                  );
                   ref
                       .read(toastProvider.notifier)
                       .info(i18n.t('workbench:files.pathCopied'));
@@ -249,15 +311,18 @@ class _FileViewer extends ConsumerWidget {
             loading: () =>
                 const Center(child: CircularProgressIndicator(strokeWidth: 2)),
             error: (_, _) => Center(
-              child: Text(i18n.t('workbench:files.notSupported'),
-                  style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+              child: Text(
+                i18n.t('workbench:files.notSupported'),
+                style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+              ),
             ),
             data: (file) {
               if (file.content.contains('\u0000')) {
                 return Center(
-                  child: Text(i18n.t('workbench:files.binary'),
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+                  child: Text(
+                    i18n.t('workbench:files.binary'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
                 );
               }
               return SingleChildScrollView(
@@ -271,10 +336,14 @@ class _FileViewer extends ConsumerWidget {
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Text(
-                            i18n.t('workbench:files.tooLarge',
-                                vars: {'limit': fileContentLineLimit}),
+                            i18n.t(
+                              'workbench:files.tooLarge',
+                              vars: {'limit': fileContentLineLimit},
+                            ),
                             style: TextStyle(
-                                fontSize: FontSizes.xs, color: t.n500),
+                              fontSize: FontSizes.xs,
+                              color: t.n500,
+                            ),
                           ),
                         ),
                       SelectableText(
@@ -284,7 +353,11 @@ class _FileViewer extends ConsumerWidget {
                           height: 1.65,
                           color: t.n800,
                           fontFamily: 'Menlo',
-                          fontFamilyFallback: const ['monospace'],
+                          fontFamilyFallback: const [
+                            'PingFang SC',
+                            'Noto Sans CJK SC',
+                            'monospace',
+                          ],
                         ),
                       ),
                     ],

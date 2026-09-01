@@ -1,4 +1,5 @@
 """Previous-head to new-head schema smoke for private exposure state."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,7 +12,7 @@ import sqlalchemy as sa
 
 
 PREVIOUS_HEAD = "b6d8f0a2c4e6"
-NEW_HEAD = "c7d9e1f3a5b7"
+NEW_HEAD = "e2b4d6f8a0c3"
 
 
 def _previous_head_fixture(database_path: Path) -> None:
@@ -35,6 +36,20 @@ def _previous_head_fixture(database_path: Path) -> None:
             "session_id VARCHAR(64) NOT NULL, user_id VARCHAR(64) NOT NULL, "
             "type VARCHAR(32) NOT NULL, data TEXT NOT NULL, created_at DATETIME NOT NULL)"
         )
+        # Both tables predate PREVIOUS_HEAD in the real migration graph. Keep
+        # this intentionally-small fixture sufficient for later additive Cron
+        # migrations as the graph advances beyond the exposure revision.
+        connection.exec_driver_sql(
+            "CREATE TABLE cron_jobs (id VARCHAR(64) PRIMARY KEY)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY, job_id VARCHAR(64))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE user_skills ("
+            "id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL, "
+            "updated_at DATETIME NOT NULL)"
+        )
         connection.exec_driver_sql(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"
         )
@@ -55,7 +70,7 @@ def _previous_head_fixture(database_path: Path) -> None:
         connection.exec_driver_sql(
             "INSERT INTO parts(id, message_id, session_id, user_id, type, data, created_at) "
             "VALUES ('old-part', 'old-message', 'old-session', 'old-user', "
-            "'tool', '{\"type\":\"tool\",\"tool\":\"legacy_alias\"}', CURRENT_TIMESTAMP)"
+            '\'tool\', \'{"type":"tool","tool":"legacy_alias"}\', CURRENT_TIMESTAMP)'
         )
     engine.dispose()
 
@@ -68,7 +83,9 @@ def _config(database_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     return config
 
 
-def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, monkeypatch):
+def test_previous_head_upgrade_backfills_state_and_keeps_single_head(
+    tmp_path, monkeypatch
+):
     database_path = tmp_path / "previous-head.db"
     _previous_head_fixture(database_path)
     config = _config(database_path, monkeypatch)
@@ -87,6 +104,16 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     assert state == "{}"
     assert version == NEW_HEAD
     assert "internal_parts" in inspector.get_table_names()
+    assert "session_surface_events" in inspector.get_table_names()
+    assert "task_handoffs" in inspector.get_table_names()
+    assert "agent_events" in inspector.get_table_names()
+    assert "authority_snapshot" in {
+        column["name"] for column in inspector.get_columns("subagent_descriptors")
+    }
+    assert {
+        "lifecycle_state",
+        "lifecycle_generation",
+    } <= {column["name"] for column in inspector.get_columns("user_skills")}
     assert "tool_exposure_state" in {
         column["name"] for column in inspector.get_columns("sessions")
     }
@@ -99,9 +126,12 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
         "provider_dialect",
     } <= part_columns
     with engine.connect() as connection:
-        assert connection.exec_driver_sql(
-            "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
-        ).scalar_one() is None
+        assert (
+            connection.exec_driver_sql(
+                "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
+            ).scalar_one()
+            is None
+        )
     assert ScriptDirectory.from_config(config).get_heads() == [NEW_HEAD]
     engine.dispose()
 
@@ -111,9 +141,12 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
     with engine.connect() as connection:
-        assert connection.exec_driver_sql(
-            "SELECT version_num FROM alembic_version"
-        ).scalar_one() == PREVIOUS_HEAD
+        assert (
+            connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalar_one()
+            == PREVIOUS_HEAD
+        )
     assert "internal_parts" not in inspector.get_table_names()
     assert "tool_exposure_state" not in {
         column["name"] for column in inspector.get_columns("sessions")
@@ -121,13 +154,20 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     downgraded_part_columns = {
         column["name"] for column in inspector.get_columns("parts")
     }
+    assert (
+        not {
+            "stream_seq",
+            "canonical_tool_id",
+            "wire_tool_name",
+            "provider_binding_digest",
+            "provider_dialect",
+        }
+        & downgraded_part_columns
+    )
     assert not {
-        "stream_seq",
-        "canonical_tool_id",
-        "wire_tool_name",
-        "provider_binding_digest",
-        "provider_dialect",
-    } & downgraded_part_columns
+        "lifecycle_state",
+        "lifecycle_generation",
+    } & {column["name"] for column in inspector.get_columns("user_skills")}
     engine.dispose()
 
 
@@ -141,7 +181,9 @@ def test_downgrade_preflight_refuses_live_private_state(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "UPDATE sessions SET tool_exposure_state = ? WHERE id='old-session'",
-            ('{"v":1,"next_origin_seq":2,"agents":{"build":{}},"provider_fallback":{}}',),
+            (
+                '{"v":1,"next_origin_seq":2,"agents":{"build":{}},"provider_fallback":{}}',
+            ),
         )
     engine.dispose()
 

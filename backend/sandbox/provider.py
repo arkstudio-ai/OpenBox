@@ -1,8 +1,7 @@
-"""SandboxProvider abstract interface — unifies Docker and Kubernetes sandbox backends."""
+"""WUYING sandbox provider contract used by the OpenBox control plane."""
 import hashlib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -37,13 +36,11 @@ def build_sandbox_name(user_id: str, project_id: str = "default") -> str:
 
 
 class SandboxProvider(ABC):
-    """Abstract base class for sandbox container providers.
+    """Abstract control-plane contract for a WUYING-backed sandbox.
 
-    Both DockerManager and KubernetesProvider implement this interface,
-    allowing the rest of the codebase to be agnostic about the runtime.
+    The abstraction remains useful for the future one-user/one-desktop router,
+    but OpenBox deliberately has no Docker or Kubernetes execution provider.
     """
-
-    supports_build: bool = False
 
     # Whether this provider creates and destroys the containers it hands out.
     # False for a pre-provisioned box that outlives the process: callers must
@@ -86,18 +83,11 @@ class SandboxProvider(ABC):
 
     @abstractmethod
     async def reconcile(self) -> None:
-        """Restore in-memory state from the actual runtime (K8s pods / Docker containers)."""
+        """Restore in-memory state from the configured WUYING execution plane."""
 
     @abstractmethod
     async def cleanup_all(self) -> None:
-        """Clean up all sandbox resources (Docker: remove containers, K8s: clear memory state)."""
-
-    # Optional: image build support (Docker only)
-    def image_exists(self, image: str | None = None) -> bool:
-        return False
-
-    async def build_sandbox_image(self) -> AsyncGenerator[dict, None]:
-        yield {"step": "error", "message": "Image build not supported in this provider"}
+        """Release process-local provider resources without deleting desktops."""
 
     def _user_matches(self, owner: str | None, user_id: str) -> bool:
         # Ownership registries must contain the raw tenant id. Treating a

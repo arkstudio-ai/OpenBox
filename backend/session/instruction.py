@@ -5,6 +5,7 @@ These are injected into every LLM call as part of the system prompt,
 providing persistent project-level context across sessions.
 """
 import os
+import posixpath
 from pathlib import Path
 
 import aiofiles
@@ -92,19 +93,41 @@ async def instruction_system() -> list[str]:
     return results
 
 
-async def instruction_system_with_config(config) -> list[str]:
-    """Load instruction files using a pre-loaded config object."""
+async def instruction_system_with_config(
+    config,
+    *,
+    sandbox=None,
+    workdir: str | None = None,
+) -> list[str]:
+    """Load instruction files using a pre-loaded config object.
+
+    A live agent must pass its ``SandboxClient`` and session workdir.  Project
+    files then come exclusively from that sandbox; the backend process' cwd is
+    unrelated to the user's project (and, for WUYING, is a different machine).
+    Omitting ``sandbox`` retains the host-filesystem behaviour for legacy
+    callers that intentionally use this module outside an agent run.
+    """
     paths: set[str] = set()
+    sandbox_paths: set[str] = set()
     results: list[str] = []
 
-    cwd = Path.cwd()
-    project_root = _find_project_root(cwd)
+    if sandbox is not None:
+        sandbox_paths.update(
+            await _sandbox_system_paths(sandbox, workdir or "/workspace")
+        )
+        for p in sorted(sandbox_paths):
+            content = await _read_sandbox_file(sandbox, p)
+            if content:
+                results.append(f"Instructions from: {p}\n{content}")
+    else:
+        cwd = Path.cwd()
+        project_root = _find_project_root(cwd)
 
-    for filename in INSTRUCTION_FILES:
-        found = _find_up(filename, cwd, project_root)
-        if found:
-            paths.update(found)
-            break
+        for filename in INSTRUCTION_FILES:
+            found = _find_up(filename, cwd, project_root)
+            if found:
+                paths.update(found)
+                break
 
     config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
     global_candidates = [
@@ -125,14 +148,27 @@ async def instruction_system_with_config(config) -> list[str]:
                     results.append(f"Instructions from: {instruction}\n{content}")
                 continue
 
-            expanded = os.path.expanduser(instruction)
-            if "*" in expanded or "?" in expanded:
-                import glob
-                for match in glob.glob(expanded, recursive=True):
-                    if os.path.isfile(match):
-                        paths.add(match)
-            elif os.path.isfile(expanded):
-                paths.add(expanded)
+            if sandbox is not None:
+                for match in await _sandbox_config_paths(
+                    sandbox,
+                    instruction,
+                    workdir or "/workspace",
+                ):
+                    if match in sandbox_paths:
+                        continue
+                    sandbox_paths.add(match)
+                    content = await _read_sandbox_file(sandbox, match)
+                    if content:
+                        results.append(f"Instructions from: {match}\n{content}")
+            else:
+                expanded = os.path.expanduser(instruction)
+                if "*" in expanded or "?" in expanded:
+                    import glob
+                    for match in glob.glob(expanded, recursive=True):
+                        if os.path.isfile(match):
+                            paths.add(match)
+                elif os.path.isfile(expanded):
+                    paths.add(expanded)
 
     for p in sorted(paths):
         content = await _read_file(p)
@@ -142,7 +178,13 @@ async def instruction_system_with_config(config) -> list[str]:
     return results
 
 
-async def instruction_resolve(filepath: str, message_id: str) -> list[dict]:
+async def instruction_resolve(
+    filepath: str,
+    message_id: str,
+    *,
+    sandbox=None,
+    workdir: str | None = None,
+) -> list[dict]:
     """Find directory-level instruction files for a given filepath.
 
     Called when the Read tool reads a file. Discovers instruction files
@@ -151,6 +193,14 @@ async def instruction_resolve(filepath: str, message_id: str) -> list[dict]:
 
     Returns list of {"filepath": ..., "content": ...} dicts.
     """
+    if sandbox is not None:
+        return await _instruction_resolve_sandbox(
+            filepath,
+            message_id,
+            sandbox=sandbox,
+            workdir=workdir or "/workspace",
+        )
+
     system_paths = await _get_system_paths()
     already_loaded = _get_loaded(message_id)
 
@@ -212,6 +262,153 @@ def _find_up(filename: str, start: Path, root: Path) -> list[str]:
         if current == root or current == current.parent:
             break
         current = current.parent
+    return results
+
+
+def _sandbox_path(path: str, workdir: str) -> str:
+    """Normalise a path using the sandbox's POSIX path rules."""
+    root = posixpath.normpath(workdir or "/workspace")
+    if not root.startswith("/"):
+        root = posixpath.join("/workspace", root)
+    if not path:
+        return root
+    if path.startswith("/"):
+        return posixpath.normpath(path)
+    return posixpath.normpath(posixpath.join(root, path))
+
+
+async def _sandbox_directory_entries(sandbox, directory: str) -> dict[str, dict]:
+    """Return one remote directory listing keyed by entry name."""
+    try:
+        entries = await sandbox.list_files(directory)
+    except Exception as e:
+        log.debug(f"Could not list sandbox instruction directory {directory}: {e}")
+        return {}
+    return {
+        str(entry.get("name")): entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("name")
+    }
+
+
+async def _sandbox_system_paths(sandbox, workdir: str) -> list[str]:
+    """Discover project-level instructions at the session project root."""
+    root = _sandbox_path(workdir, "/workspace")
+    entries = await _sandbox_directory_entries(sandbox, root)
+    for filename in INSTRUCTION_FILES:
+        entry = entries.get(filename)
+        if entry is not None and not entry.get("is_dir", False):
+            return [posixpath.join(root, filename)]
+    return []
+
+
+async def _sandbox_config_paths(
+    sandbox,
+    instruction: str,
+    workdir: str,
+) -> list[str]:
+    """Resolve config instruction paths inside this session's project."""
+    root = _sandbox_path(workdir, "/workspace")
+    requested = instruction.strip()
+    if not requested:
+        return []
+
+    if requested.startswith("/"):
+        absolute = posixpath.normpath(requested)
+        try:
+            if posixpath.commonpath([root, absolute]) != root:
+                return []
+        except ValueError:
+            return []
+        relative = posixpath.relpath(absolute, root)
+    else:
+        relative = requested
+
+    if "*" in relative or "?" in relative:
+        try:
+            matches = await sandbox.glob(relative, path=root)
+        except Exception as e:
+            log.debug(f"Could not glob sandbox instruction {requested}: {e}")
+            return []
+        safe_matches: set[str] = set()
+        for match in matches:
+            candidate = _sandbox_path(str(match), root)
+            try:
+                if posixpath.commonpath([root, candidate]) == root:
+                    safe_matches.add(candidate)
+            except ValueError:
+                continue
+        return sorted(safe_matches)
+
+    candidate = _sandbox_path(relative, root)
+    try:
+        if posixpath.commonpath([root, candidate]) != root:
+            return []
+    except ValueError:
+        return []
+    entries = await _sandbox_directory_entries(sandbox, posixpath.dirname(candidate))
+    entry = entries.get(posixpath.basename(candidate))
+    if entry is None or entry.get("is_dir", False):
+        return []
+    return [candidate]
+
+
+async def _read_sandbox_file(sandbox, path: str) -> str | None:
+    """Read unnumbered instruction content through the active sandbox."""
+    try:
+        return await sandbox.read_file_raw(path)
+    except Exception as e:
+        log.warning(f"Failed to read sandbox instruction file {path}: {e}")
+        return None
+
+
+async def _instruction_resolve_sandbox(
+    filepath: str,
+    message_id: str,
+    *,
+    sandbox,
+    workdir: str,
+) -> list[dict]:
+    """Resolve directory instructions without touching the backend host."""
+    root = _sandbox_path(workdir, "/workspace")
+    target = _sandbox_path(filepath, root)
+    try:
+        if posixpath.commonpath([root, target]) != root:
+            return []
+    except ValueError:
+        return []
+
+    system_paths = set(await _sandbox_system_paths(sandbox, root))
+    already_loaded = _get_loaded(message_id)
+    results: list[dict] = []
+    current = posixpath.dirname(target)
+
+    while posixpath.commonpath([root, current]) == root:
+        entries = await _sandbox_directory_entries(sandbox, current)
+        for filename in INSTRUCTION_FILES:
+            candidate = posixpath.join(current, filename)
+            entry = entries.get(filename)
+            if (
+                entry is not None
+                and not entry.get("is_dir", False)
+                and candidate not in system_paths
+                and candidate not in already_loaded
+            ):
+                _claim(message_id, candidate)
+                content = await _read_sandbox_file(sandbox, candidate)
+                if content:
+                    results.append({
+                        "filepath": candidate,
+                        "content": f"Instructions from: {candidate}\n{content}",
+                    })
+
+        if current == root:
+            break
+        parent = posixpath.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
     return results
 
 

@@ -6,6 +6,8 @@ import '../models/json.dart';
 import '../ws/ws_client.dart';
 import 'providers.dart';
 
+const _singleUserAccessToken = 'openbox-single-user';
+
 /// Global auth store, mirroring frontend-v2 `shared/api/auth-store.ts`:
 /// access token in memory only (on [AuthSession]); refresh token rides the
 /// cookie jar; `isLoading` is true until the boot refresh settles.
@@ -57,17 +59,18 @@ class AuthController extends Notifier<AuthState> {
   }
 
   /// POST /api/auth/refresh (cookie) → GET /api/auth/me. Returns the new
-  /// access token or null (→ signed out). Wired into [AuthSession] so
-  /// concurrent 401s share one round-trip.
+  /// access token or null (→ signed out). When credential routes are absent,
+  /// the public bootstrap contract may authorize the trusted single-user mode.
+  /// Wired into [AuthSession] so concurrent 401s share one round-trip.
   Future<String?> _doRefresh() async {
     final dio = ref.read(refreshDioProvider);
     try {
-      final refreshResp =
-          await dio.post<Map<String, dynamic>>('/api/auth/refresh');
+      final refreshResp = await dio.post<Map<String, dynamic>>(
+        '/api/auth/refresh',
+      );
       final token = asString(refreshResp.data?['access_token']);
       if (token == null) {
-        clearAuth();
-        return null;
+        return _bootstrapSingleUser(dio);
       }
       final meResp = await dio.get<Map<String, dynamic>>(
         '/api/auth/me',
@@ -79,6 +82,32 @@ class AuthController extends Notifier<AuthState> {
         isLoading: false,
       );
       return token;
+    } on DioException {
+      return _bootstrapSingleUser(dio);
+    }
+  }
+
+  Future<String?> _bootstrapSingleUser(Dio dio) async {
+    try {
+      final response = await dio.get<Map<String, dynamic>>(
+        '/api/auth/bootstrap',
+      );
+      final payload = response.data;
+      final rawUser = payload?['user'];
+      if (asString(payload?['mode']) != 'single_user' ||
+          rawUser is! Map<String, dynamic>) {
+        clearAuth();
+        return null;
+      }
+
+      final user = AuthUser.fromJson(rawUser);
+      if (user.id.isEmpty || user.username.isEmpty) {
+        clearAuth();
+        return null;
+      }
+
+      setAuth(_singleUserAccessToken, user);
+      return _singleUserAccessToken;
     } on DioException {
       clearAuth();
       return null;

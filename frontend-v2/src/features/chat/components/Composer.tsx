@@ -46,6 +46,8 @@ interface Props {
   /** Changes when the user moves to another conversation, which resets the
    *  picker — an unsent choice belongs to the chat it was made in. */
   sessionKey?: string
+  /** Current project scope for file mentions before/after session creation. */
+  projectId?: string
   /** Tokens the next request will carry, for the context ring. Absent on a
    *  chat that does not exist yet, where the answer is simply zero. */
   contextTokens?: number
@@ -77,9 +79,7 @@ const MAX_UPLOAD = 1024 * 1024 * 1024
 const MAX_HEIGHT = 200 // matches max-h-50
 
 /** The single round button that morphs between send and stop. */
-function SendButton({
-  stop, disabled, onClick,
-}: { stop: boolean; disabled: boolean; onClick?: () => void }) {
+function SendButton({ stop, disabled, onClick }: { stop: boolean; disabled: boolean; onClick?: () => void }) {
   const { t } = useTranslation("chat")
   return (
     <button
@@ -98,7 +98,6 @@ function SendButton({
   )
 }
 
-
 /** Design composer: a single focus-owning shell (InputGroup) holding the
  *  attachment strip, the chromeless textarea, and one action row whose sole
  *  round button morphs between send and stop. */
@@ -111,6 +110,7 @@ export function Composer({
   sessionModel,
   sessionVideoModel,
   sessionKey,
+  projectId,
   contextTokens = 0,
   contextLimit = 0,
   agents = EMPTY_AGENTS,
@@ -126,7 +126,7 @@ export function Composer({
   const composing = useRef(false)
 
   const running = useRunningContainer()
-  const attachments = useAttachments(running?.id ?? null)
+  const attachments = useAttachments(running?.id ?? null, sessionKey)
   const shortcut = useSendShortcut()
 
   const { models, videoModels, chat, video } = useComposerModels({
@@ -155,6 +155,8 @@ export function Composer({
     caret,
     textareaRef: taRef,
     containerId: running?.id ?? null,
+    sessionId: sessionKey,
+    projectId,
     onReplace: (nextText, nextCaret) => {
       setText(nextText)
       setCaret(nextCaret)
@@ -258,7 +260,7 @@ export function Composer({
               onCompositionEnd={() => (composing.current = false)}
               placeholder={placeholder}
               className={cn(
-                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 outline-none transition-[height]",
+                "scr text-ink placeholder:text-n700 max-h-50 min-h-12 w-full resize-none border-none bg-transparent px-5 text-lg leading-6 transition-[height] outline-none",
                 attachments.items.length > 0 ? "pt-2" : "pt-4",
               )}
             />
@@ -294,12 +296,20 @@ export function Composer({
             <ContextRing used={contextTokens} limit={modelContextLimit(activeId, models, contextLimit)} />
             <ShortcutPicker shortcut={shortcut.shortcut} onChange={shortcut.setShortcut} />
 
-            <SendButton stop={showStop} disabled={!showStop && !canSend} onClick={showStop ? onStop : submit} />
+            <SendButton
+              stop={showStop}
+              disabled={!showStop && !canSend}
+              onClick={showStop ? onStop : submit}
+            />
           </div>
 
           <div className="flex justify-end px-4 pb-1.5">
             <span className="text-n600 text-2xs">
-              {t(shortcut.shortcut === "mod_enter" ? "composer.sendShortcut.hintModEnter" : "composer.sendShortcut.hintEnter")}
+              {t(
+                shortcut.shortcut === "mod_enter"
+                  ? "composer.sendShortcut.hintModEnter"
+                  : "composer.sendShortcut.hintEnter",
+              )}
             </span>
           </div>
         </InputGroup>

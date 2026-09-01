@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.log import create_logger
 
@@ -15,10 +15,20 @@ log = create_logger("config")
 # Sub-models
 # ---------------------------------------------------------------------------
 
+SubagentProviderCapability = Literal[
+    "model", "tool_filter", "reasoning", "persona", "output_schema",
+]
+
+
 class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     options: dict[str, Any] = {}
+    # Task composition is an acceptance protocol, so optional provider
+    # features are declared instead of inferred from a model name or wire
+    # prefix. Empty means no subagent composition support.
+    subagent_capabilities: list[SubagentProviderCapability] = []
+    subagent_reasoning_variants: list[str] = []
 
 
 class CompactionConfig(BaseModel):
@@ -51,6 +61,11 @@ class ModelConfig(BaseModel):
     # heuristic in agent.vision. Set it explicitly when a gateway exposes a
     # text-only variant of an otherwise multimodal family.
     vision: bool | None = None
+    # A model may explicitly override (and usually narrow) its provider's
+    # Task-composition declaration. ``None`` inherits the provider entry;
+    # an empty list explicitly disables the feature set for this model.
+    subagent_capabilities: list[SubagentProviderCapability] | None = None
+    subagent_reasoning_variants: list[str] | None = None
 
 
 class AgentOverride(BaseModel):
@@ -76,6 +91,15 @@ class AgentOverride(BaseModel):
     tools: list[str] | None = None
     #: Accent colour for the UI, as in opencode.
     color: str | None = None
+    #: Exact composition features a config-defined subagent can preserve.
+    #: The three base features are mandatory whenever this field is present;
+    #: optional features must be explicitly opted into.
+    subagent_capabilities: list[
+        Literal[
+            "model", "agent_preset", "tool_filter",
+            "reasoning", "persona", "output_schema",
+        ]
+    ] | None = None
     #: Remove a built-in agent entirely.
     disable: bool = False
 
@@ -88,9 +112,10 @@ class SkillsConfig(BaseModel):
 class ToolExposureConfig(BaseModel):
     """Tool schema exposure and discovery budgets.
 
-    ``legacy_eager`` remains the safe migration default.  The other modes are
-    explicit so rollout never silently changes when a provider/model name is
-    edited elsewhere in the config.
+    ``portable`` is the provider-independent production default: the build
+    agent sends a bounded resident/intent pack and reveals deferred schemas via
+    OpenBox discovery.  ``legacy_eager`` remains an explicit rollback mode;
+    native search still requires its separate binding-scoped allowlist proof.
     """
 
     mode: Literal[
@@ -99,7 +124,7 @@ class ToolExposureConfig(BaseModel):
         "portable",
         "native_auto",
         "emergency_eager",
-    ] = "legacy_eager"
+    ] = "portable"
     resident_soft_chars: int = Field(default=20_000, ge=1_000, le=128_000)
     resident_hard_chars: int = Field(default=24_000, ge=1_000, le=128_000)
     active_soft_chars: int = Field(default=28_000, ge=1_000, le=128_000)
@@ -279,26 +304,77 @@ class OpenBoxConfig(BaseModel):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
     )
+    # Optional, dedicated public origin for untrusted sandbox applications.
+    # When empty the UI uses an opaque-origin iframe and disables top-level
+    # navigation. A configured origin is a separate, fail-closed preview plane.
+    preview_public_origin: str = ""
+    # Every browser-visible UI/API origin. This is distinct from cors_origins:
+    # same-origin API deployments do not need CORS, but still must not reuse a
+    # preview hostname (cookies are shared across ports).
+    control_public_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("preview_public_origin")
+    @classmethod
+    def validate_preview_public_origin(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        from auth.preview_origin import canonical_http_origin
+
+        origin = canonical_http_origin(value)
+        if not origin.startswith("https://"):
+            raise ValueError("preview_public_origin must use https")
+        return origin
+
+    @model_validator(mode="after")
+    def validate_preview_origin_boundary(self) -> "OpenBoxConfig":
+        if not self.preview_public_origin:
+            return self
+
+        from auth.preview_origin import canonical_http_origin, origin_hostname
+
+        if "*" in self.cors_origins:
+            raise ValueError(
+                "preview_public_origin requires exact cors_origins; wildcard is unsafe"
+            )
+        if not self.cors_origins:
+            raise ValueError(
+                "preview_public_origin requires at least one control/UI cors_origin"
+            )
+        if not self.control_public_origins:
+            raise ValueError(
+                "preview_public_origin requires explicit control_public_origins"
+            )
+        control_origins = [canonical_http_origin(origin) for origin in self.cors_origins]
+        # CORSMiddleware compares literal Origin values. Store the same
+        # canonical strings used by the issuer check so a harmless trailing
+        # slash/default port cannot create contradictory authorization.
+        self.cors_origins = control_origins
+        self.control_public_origins = [
+            canonical_http_origin(origin) for origin in self.control_public_origins
+        ]
+        preview_hostname = origin_hostname(self.preview_public_origin)
+        protected_hostnames = {
+            origin_hostname(origin)
+            for origin in [*control_origins, *self.control_public_origins]
+        }
+        if preview_hostname in protected_hostnames:
+            raise ValueError(
+                "preview_public_origin must use a hostname distinct from every control/UI origin"
+            )
+        return self
 
     # -- Sandbox --
-    sandbox_provider: str = "docker"               # "docker" | "kubernetes" | "wuying"
-    sandbox_image: str = "openbox-sandbox:latest"
-    container_name_prefix: str = "openbox-sandbox-"
-    container_port_range: tuple[int, int] = (10000, 19999)
-    action_server_port: int = 8000
-    container_ready_timeout: int = 30
-    container_ready_interval: float = 0.5
-
-    # -- Kubernetes (GKE) --
-    k8s_namespace: str = "openbox-sandbox"
-    k8s_storage_class: str = "standard-rwo"
-    k8s_storage_size: str = "10Gi"
-    k8s_sandbox_cpu_request: str = "250m"
-    k8s_sandbox_cpu_limit: str = "1000m"
-    k8s_sandbox_memory_request: str = "256Mi"
-    k8s_sandbox_memory_limit: str = "1Gi"
-    k8s_sandbox_service_account: str = ""           # SA for sandbox pods (Workload Identity)
-    sandbox_idle_timeout: int = 1800                # idle reclaim seconds (30 min)
+    # Agent execution is deliberately remote-only. Docker Compose in this
+    # repository is infrastructure (PostgreSQL/Redis/Azurite), never an
+    # implicit fallback execution plane.
+    sandbox_provider: Literal["wuying"] = "wuying"
+    # Trusted host-plugin source/manifest polling. Unchanged digests do not
+    # import code; changes stage a new generation before atomic activation.
+    platform_plugin_watch_interval_seconds: float = Field(
+        default=5.0,
+        ge=0.25,
+        le=3600.0,
+    )
 
     # -- WUYING cloud desktop (sandbox_provider="wuying") --
     # A long-lived Alibaba Cloud desktop running the action server, reached over
@@ -324,7 +400,7 @@ class OpenBoxConfig(BaseModel):
     oss_user_quota_bytes: int = 5 * 1024 * 1024 * 1024
 
     # -- Multi-user infrastructure --
-    database_url: str = "postgresql+asyncpg://openbox:openbox@localhost:5432/openbox"
+    database_url: str = "postgresql+asyncpg://openbox:openbox_dev@localhost:5432/openbox"
     db_pool_size: int = 10
     db_pool_overflow: int = 20
     redis_url: str = "redis://localhost:6379/0"
@@ -338,6 +414,9 @@ class OpenBoxConfig(BaseModel):
     jwt_secret: str = ""
     jwt_access_expire_minutes: int = 15
     jwt_refresh_expire_days: int = 7
+    # Enables a Secure, Path=/, __Host- refresh cookie even without a preview
+    # origin. Dedicated preview mode forces this policy regardless of the flag.
+    auth_cookie_secure: bool = False
     max_containers_per_user: int = 5
     max_sessions_per_user: int = 200
     # Concurrent agent runs per user. One meant a second conversation could not
@@ -527,18 +606,9 @@ def _apply_env_overrides(data: dict) -> dict:
         "host": "HOST",
         "port": "PORT",
         "debug": "DEBUG",
+        "preview_public_origin": "PREVIEW_PUBLIC_ORIGIN",
         "sandbox_provider": "SANDBOX_PROVIDER",
-        "sandbox_image": "SANDBOX_IMAGE",
-        "container_name_prefix": "CONTAINER_NAME_PREFIX",
-        "k8s_namespace": "K8S_NAMESPACE",
-        "k8s_storage_class": "K8S_STORAGE_CLASS",
-        "k8s_storage_size": "K8S_STORAGE_SIZE",
-        "k8s_sandbox_cpu_request": "K8S_SANDBOX_CPU_REQUEST",
-        "k8s_sandbox_cpu_limit": "K8S_SANDBOX_CPU_LIMIT",
-        "k8s_sandbox_memory_request": "K8S_SANDBOX_MEMORY_REQUEST",
-        "k8s_sandbox_memory_limit": "K8S_SANDBOX_MEMORY_LIMIT",
-        "k8s_sandbox_service_account": "K8S_SANDBOX_SERVICE_ACCOUNT",
-        "sandbox_idle_timeout": "SANDBOX_IDLE_TIMEOUT",
+        "platform_plugin_watch_interval_seconds": "PLATFORM_PLUGIN_WATCH_INTERVAL_SECONDS",
         "wuying_endpoint": "WUYING_ENDPOINT",
         "wuying_api_key": "WUYING_API_KEY",
         "wuying_desktop_id": "WUYING_DESKTOP_ID",
@@ -562,6 +632,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "jwt_secret": "JWT_SECRET",
         "jwt_access_expire_minutes": "JWT_ACCESS_EXPIRE_MINUTES",
         "jwt_refresh_expire_days": "JWT_REFRESH_EXPIRE_DAYS",
+        "auth_cookie_secure": "AUTH_COOKIE_SECURE",
         "max_containers_per_user": "MAX_CONTAINERS_PER_USER",
         "max_sessions_per_user": "MAX_SESSIONS_PER_USER",
         "max_concurrent_agents": "MAX_CONCURRENT_AGENTS",
@@ -581,19 +652,37 @@ def _apply_env_overrides(data: dict) -> dict:
         if value is not None:
             if field_name == "port":
                 data[field_name] = int(value)
-            elif field_name == "sandbox_idle_timeout":
-                data[field_name] = int(value)
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
                                 "oss_user_quota_bytes"}:
                 data[field_name] = int(value)
-            elif field_name == "monthly_cost_limit":
+            elif field_name in {
+                "monthly_cost_limit",
+                "platform_plugin_watch_interval_seconds",
+            }:
                 data[field_name] = float(value)
-            elif field_name == "debug":
+            elif field_name in {"debug", "auth_cookie_secure"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value
+
+    for field_name, env_name in (
+        ("cors_origins", "CORS_ORIGINS"),
+        ("control_public_origins", "CONTROL_PUBLIC_ORIGINS"),
+    ):
+        raw_origins = os.environ.get(env_name)
+        if raw_origins is None:
+            continue
+        try:
+            parsed_origins = json.loads(raw_origins)
+        except json.JSONDecodeError:
+            parsed_origins = [item.strip() for item in raw_origins.split(",") if item.strip()]
+        if not isinstance(parsed_origins, list) or not all(
+            isinstance(item, str) for item in parsed_origins
+        ):
+            raise ValueError(f"{env_name} must be a JSON array or comma-separated origins")
+        data[field_name] = parsed_origins
 
     # Agent model
     model_env = os.environ.get("OPENBOX_MODEL")

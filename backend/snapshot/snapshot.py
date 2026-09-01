@@ -7,7 +7,7 @@ This enables:
 - Tracking file changes across the session
 
 The git store lives *outside* the directory it snapshots — one store per
-project, under /workspace/.openbox/snapshots — driven with `--git-dir` and
+tenant/project, under that tenant's internal namespace — driven with `--git-dir` and
 `--work-tree`. Initialising a repo inside the project instead would put a .git
 the agent can see (and commit into) in the middle of the user's files, and
 would collide with whatever repository the agent clones there itself.
@@ -20,7 +20,11 @@ import asyncio
 from dataclasses import dataclass
 
 from core.log import create_logger
-from project.workspace import SNAPSHOT_ROOT, project_directory, slug_for
+from project.workspace import (
+    locator_for,
+    namespaced_project_directory,
+    snapshot_directory,
+)
 
 log = create_logger("snapshot")
 
@@ -56,18 +60,34 @@ class Store:
     workdir: str
 
     def git(self, args: str) -> str:
-        return f"git --git-dir={self.gitdir} --work-tree={self.workdir} {args}"
+        # Git quotes non-ASCII paths as octal escape sequences by default.
+        # Every snapshot consumer expects UTF-8 project-relative paths, so make
+        # the wire format explicit instead of asking each UI to decode Git's
+        # C-style quoting independently.
+        return (
+            "git -c core.quotePath=false "
+            f"--git-dir={self.gitdir} --work-tree={self.workdir} {args}"
+        )
 
 
 async def _store(session_id: str) -> Store:
     """Resolve the snapshot store for a session's project."""
-    slug = "default"
+    user_id = "default"
+    project_id = "default"
     try:
-        from session.session import project_id_for
-        slug = await slug_for(await project_id_for(session_id))
+        from session.session import workspace_identity_for
+        user_id, project_id = await workspace_identity_for(session_id)
     except Exception as e:
         log.debug(f"Could not resolve project for {session_id}: {e}")
-    return Store(gitdir=f"{SNAPSHOT_ROOT}/{slug}", workdir=project_directory(slug))
+    locator = await locator_for(project_id, user_id=user_id)
+    return Store(
+        gitdir=snapshot_directory(locator.user_id, locator.id),
+        workdir=namespaced_project_directory(
+            locator.user_id,
+            locator.id,
+            locator.slug,
+        ),
+    )
 
 
 async def _ensure_store(sandbox, store: Store) -> bool:

@@ -21,7 +21,7 @@ export function PermissionCard({ request }: { request: PermissionRequest }) {
       <div className="flex flex-wrap gap-2.5">
         <button
           type="button"
-          onClick={() => reply.mutate({ requestId: request.id, action: "allow" })}
+          onClick={() => reply.mutate({ requestId: request.id, action: "once" })}
           disabled={reply.isPending}
           className="bg-ink text-bg rounded-full px-4 py-1.5 text-sm disabled:opacity-60"
         >
@@ -29,7 +29,7 @@ export function PermissionCard({ request }: { request: PermissionRequest }) {
         </button>
         <button
           type="button"
-          onClick={() => reply.mutate({ requestId: request.id, action: "allow_always" })}
+          onClick={() => reply.mutate({ requestId: request.id, action: "always" })}
           disabled={reply.isPending}
           className="border-hair text-ink hover:bg-hairsoft rounded-full border px-4 py-1.5 text-sm"
         >

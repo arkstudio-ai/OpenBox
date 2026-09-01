@@ -16,6 +16,8 @@ interface FilesTreeProps {
   containerId: string | null
   /** Top of the browsable tree (the project directory) — crumbs never go above it. */
   root: string
+  /** User-facing project name; the physical namespaced root is never rendered. */
+  rootLabel: string
   initialCwd: string
   openFile: string | null
   onOpenFile: (path: string) => void
@@ -32,35 +34,33 @@ function sortNodes(nodes: FileNode[]): FileNode[] {
 }
 
 export function FilesTree(props: FilesTreeProps) {
-  const { containerId, root, initialCwd, openFile, onOpenFile, width, narrow, onStartDrag } = props
+  const { containerId, root, rootLabel, initialCwd, openFile, onOpenFile, width, narrow, onStartDrag } = props
   const { t } = useTranslation("workbench")
   const [cwd, setCwd] = useState(initialCwd)
   const [filter, setFilter] = useState("")
-  const { data } = useFileListQuery(containerId, cwd)
+  const safeCwd = cwd === root || cwd.startsWith(`${root}/`) ? cwd : root
+  const { data } = useFileListQuery(containerId, safeCwd)
 
   const nodes = sortNodes(data ?? []).filter((n) =>
     filter ? n.name.toLowerCase().includes(filter.toLowerCase()) : true,
   )
   // Crumbs start at the project root, not "/": the first crumb is the root
   // directory itself, then only the segments inside it — browsing never climbs
-  // above the project. A cwd outside the root (a file opened from
-  // /workspace/uploads, say) falls back to its own full path so that one
-  // location stays navigable.
-  const inRoot = cwd === root || cwd.startsWith(`${root}/`)
-  const base = inRoot ? root : ""
-  const rel = inRoot ? cwd.slice(root.length) : cwd
+  // above the project. The physical tenant/project hash remains an API detail;
+  // only the project display name and its relative descendants are rendered.
+  const rel = safeCwd.slice(root.length)
   const segments = [
-    ...(inRoot ? [{ label: root.split("/").pop() || root, target: root }] : []),
+    { label: rootLabel, target: root },
     ...rel
       .split("/")
       .filter(Boolean)
-      .map((seg, i, all) => ({ label: seg, target: `${base}/${all.slice(0, i + 1).join("/")}` })),
+      .map((seg, i, all) => ({ label: seg, target: `${root}/${all.slice(0, i + 1).join("/")}` })),
   ]
 
   return (
     <div
       className={cn(
-        "relative flex min-h-0 flex-col rounded-2xl border border-hair bg-card",
+        "border-hair bg-card relative flex min-h-0 flex-col rounded-2xl border",
         narrow ? "flex-1" : "flex-none",
       )}
       style={narrow ? undefined : { width }}
@@ -76,10 +76,10 @@ export function FilesTree(props: FilesTreeProps) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder={t("files.filter")}
-          className="h-7.5 w-full rounded-full border border-hair bg-transparent px-3 text-xs outline-none"
+          className="border-hair h-7.5 w-full rounded-full border bg-transparent px-3 text-xs outline-none"
         />
       </div>
-      <div className="flex flex-none flex-wrap items-center gap-0.5 px-3 pb-1.5 text-xs text-n600">
+      <div className="text-n600 flex flex-none flex-wrap items-center gap-0.5 px-3 pb-1.5 text-xs">
         {segments.map((seg, i) => (
           <span key={seg.target} className="flex items-center gap-0.5">
             {i > 0 && <ChevronRight size={11} strokeWidth={2.4} className="text-n500" />}
@@ -91,7 +91,7 @@ export function FilesTree(props: FilesTreeProps) {
       </div>
       <div className="scr flex min-h-0 flex-1 flex-col gap-px overflow-auto px-2 pb-2.5">
         {nodes.map((n) => {
-          const path = `${cwd}/${n.name}`
+          const path = `${safeCwd}/${n.name}`
           const badge = n.is_dir ? null : fileBadge(n.name)
           const selected = !n.is_dir && openFile === path
           return (
@@ -105,10 +105,16 @@ export function FilesTree(props: FilesTreeProps) {
               )}
             >
               {n.is_dir ? (
-                <ChevronRight size={12} strokeWidth={2.6} className="flex-none text-n500" />
+                <ChevronRight size={12} strokeWidth={2.6} className="text-n500 flex-none" />
               ) : (
                 badge && (
-                  <span className={cn("flex h-4.5 w-5.5 flex-none items-center justify-center rounded-sm font-mono text-2xs font-semibold", toneBg(badge.tone), toneFg(badge.tone))}>
+                  <span
+                    className={cn(
+                      "text-2xs flex h-4.5 w-5.5 flex-none items-center justify-center rounded-sm font-mono font-semibold",
+                      toneBg(badge.tone),
+                      toneFg(badge.tone),
+                    )}
+                  >
                     {badge.text}
                   </span>
                 )

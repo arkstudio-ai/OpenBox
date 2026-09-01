@@ -2,7 +2,7 @@
  * WebSocket event subscriptions — replaces useSSE.
  * Same event names, same store actions, but using wsClient instead of sseClient.
  */
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { wsClient } from "@/services/ws"
 import { api } from "@/services/api"
@@ -15,10 +15,12 @@ import type {
   MessageWithParts, MessagePart, SessionStatus, TokenUsage,
   PermissionRequest, QuestionRequest,
 } from "@/types"
+import { EventGenerationGate } from "@/services/eventGeneration"
 
 export function useWS() {
   const { addToast } = useToast()
   const queryClient = useQueryClient()
+  const generationGate = useRef(new EventGenerationGate()).current
 
   useEffect(() => {
     const unsubscribers: Array<() => void> = []
@@ -50,11 +52,13 @@ export function useWS() {
 
     // Session status
     unsubscribers.push(wsClient.on("session.status", (data: unknown) => {
-      const d = data as { sessionId: string; status: SessionStatus }
+      const d = data as { sessionId: string; status: SessionStatus; generation?: number }
+      if (!generationGate.acceptStatus(d.sessionId, d.generation, d.status)) return
       useSessionStore.getState().updateSessionStatus(d.sessionId, d.status)
     }))
     unsubscribers.push(wsClient.on("session.finalizing", (data: unknown) => {
-      const d = data as { sessionId: string }
+      const d = data as { sessionId: string; generation?: number }
+      if (!generationGate.acceptStatus(d.sessionId, d.generation, "finalizing")) return
       useSessionStore.getState().updateSessionStatus(d.sessionId, "finalizing")
     }))
 
@@ -64,7 +68,8 @@ export function useWS() {
     }))
 
     unsubscribers.push(wsClient.on("session.updated", (data: unknown) => {
-      const d = data as { sessionId: string; token_usage?: TokenUsage; agent?: string; planUpdated?: boolean }
+      const d = data as { sessionId: string; generation?: number; token_usage?: TokenUsage; agent?: string; planUpdated?: boolean }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       if (d.token_usage) {
         useSessionStore.getState().updateSessionTokens(d.sessionId, d.token_usage)
       }
@@ -77,7 +82,8 @@ export function useWS() {
     }))
 
     unsubscribers.push(wsClient.on("session.error", (data: unknown) => {
-      const d = data as { sessionId: string; error: { message: string } }
+      const d = data as { sessionId: string; generation?: number; error: { message: string } }
+      if (!generationGate.acceptStatus(d.sessionId, d.generation, "error")) return
       useSessionStore.getState().updateSessionStatus(d.sessionId, "error")
       addToast("error", d.error?.message || "Session error")
     }))
@@ -89,43 +95,52 @@ export function useWS() {
 
     // Messages
     unsubscribers.push(wsClient.on("message.created", (data: unknown) => {
-      const d = data as { sessionId: string; message: MessageWithParts }
+      const d = data as { sessionId: string; generation?: number; message: MessageWithParts }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().addMessage(d.sessionId, d.message)
     }))
     unsubscribers.push(wsClient.on("message.updated", (data: unknown) => {
-      const d = data as { sessionId: string; message: MessageWithParts }
+      const d = data as { sessionId: string; generation?: number; message: MessageWithParts }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().updateMessage(d.sessionId, d.message)
     }))
     unsubscribers.push(wsClient.on("message.text_delta", (data: unknown) => {
-      const d = data as { sessionId: string; messageId: string; partId: string; text: string }
+      const d = data as { sessionId: string; generation?: number; messageId: string; partId: string; text: string }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().appendTextDelta(d.sessionId, d.messageId, d.partId, d.text)
     }))
 
     // Parts
     unsubscribers.push(wsClient.on("part.created", (data: unknown) => {
-      const d = data as { sessionId: string; messageId: string; part: MessagePart }
+      const d = data as { sessionId: string; generation?: number; messageId: string; part: MessagePart }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().addPart(d.sessionId, d.messageId, d.part)
     }))
     unsubscribers.push(wsClient.on("part.updated", (data: unknown) => {
-      const d = data as { sessionId: string; messageId: string; part: MessagePart }
+      const d = data as { sessionId: string; generation?: number; messageId: string; part: MessagePart }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().updatePart(d.sessionId, d.messageId, d.part)
     }))
     unsubscribers.push(wsClient.on("part.delta", (data: unknown) => {
-      const d = data as { sessionId: string; messageId: string; partId: string; delta: string }
+      const d = data as { sessionId: string; generation?: number; messageId: string; partId: string; delta: string }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().appendPartDelta(d.sessionId, d.messageId, d.partId, d.delta)
     }))
 
     // Tools
     unsubscribers.push(wsClient.on("tool.running", (data: unknown) => {
-      const d = data as { sessionId: string; partId: string; tool: string; input: Record<string, unknown> }
+      const d = data as { sessionId: string; generation?: number; partId: string; tool: string; input: Record<string, unknown> }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().updateToolStatus(d.sessionId, d.partId, "running", d)
     }))
     unsubscribers.push(wsClient.on("tool.completed", (data: unknown) => {
-      const d = data as { sessionId: string; partId: string; output: string; title?: string }
+      const d = data as { sessionId: string; generation?: number; partId: string; output: string; title?: string }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().updateToolStatus(d.sessionId, d.partId, "completed", d)
     }))
     unsubscribers.push(wsClient.on("tool.error", (data: unknown) => {
-      const d = data as { sessionId: string; partId: string; error: string }
+      const d = data as { sessionId: string; generation?: number; partId: string; error: string }
+      if (!generationGate.accept(d.sessionId, d.generation)) return
       useSessionStore.getState().updateToolStatus(d.sessionId, d.partId, "error", d)
     }))
 

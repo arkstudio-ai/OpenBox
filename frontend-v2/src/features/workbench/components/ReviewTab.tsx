@@ -10,6 +10,7 @@ import { useDiffQuery } from "@/features/workbench/api/diff"
 import { Spinner } from "@/shared/ui/Spinner"
 import { EmptyState } from "./EmptyState"
 import type { DiffEntry, DiffHunk, DiffLine } from "@/shared/types/api"
+import { projectScopedDisplayPath } from "@/shared/lib/project-path"
 
 type Row = { kind: "gap"; count: number } | { kind: "line"; line: DiffLine }
 
@@ -141,7 +142,10 @@ export function ReviewTab({ sessionId }: ReviewTabProps) {
   const reviewFile = usePanelStore((s) => s.reviewFile)
   const openKind = usePanelStore((s) => s.openKind)
   const { data, isLoading } = useDiffQuery(sessionId)
-  const entries = data ?? []
+  const entries = (data ?? []).map((entry) => ({
+    ...entry,
+    path: projectScopedDisplayPath(entry.path),
+  }))
 
   if (isLoading) return <ReviewSkeleton title={t("review.lastChanges")} />
   if (entries.length === 0) {

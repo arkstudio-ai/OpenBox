@@ -1,12 +1,17 @@
 import argparse
 import asyncio
+import contextvars
 import fcntl
 import hashlib
+import hmac
+import inspect
 import json
 import logging
 import os
 import platform
 import pty
+import random
+import re
 import select
 import shutil
 import signal
@@ -14,10 +19,15 @@ import secrets
 import stat
 import struct
 import sys
+import tarfile
 import termios
 import time
+import unicodedata
 import zipfile
-from contextlib import asynccontextmanager
+import zlib
+from collections.abc import MutableMapping
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -25,6 +35,7 @@ from typing import Annotated, Literal
 
 import subprocess
 
+import anyio
 import psutil
 import yaml
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, WebSocket, Query
@@ -60,7 +71,7 @@ from media_jobs import (  # noqa: E402
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.08.30-catalogue-projection-v1"
+ACTION_SERVER_VERSION = "2026.08.31-run-lease-receipt-v12"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -69,6 +80,30 @@ _ACTION_SERVER_BOOT_ID = hashlib.sha256(
 # systemd service. A standalone child logger inherited the root WARNING level
 # and silently discarded the very traces this feature exists to preserve.
 trace_log = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def _same_task_timeout(delay: float):
+    """Apply a timeout without moving transport work into another task.
+
+    The WUYING image currently ships Python 3.10, which predates
+    ``asyncio.timeout``. MCP transports also require enter/use/exit to stay in
+    the same task, so ``asyncio.wait_for`` is not a safe compatibility shim.
+    AnyIO's cancel scope has the required same-task semantics on Python 3.10.
+    """
+    timeout_factory = getattr(asyncio, "timeout", None)
+    if timeout_factory is not None:
+        async with timeout_factory(delay):
+            yield
+        return
+    try:
+        with anyio.fail_after(delay):
+            yield
+    except TimeoutError as exc:
+        # Python 3.10 still has a distinct ``asyncio.TimeoutError`` class.
+        # Normalize the compatibility path so existing asyncio callers catch
+        # the deadline instead of treating it as a broken MCP transport.
+        raise asyncio.TimeoutError from exc
 
 # --- Models ---
 class ExecuteRequest(BaseModel):
@@ -140,6 +175,19 @@ class WriteFileRequest(BaseModel):
     path: str
     content: str
 
+class DeleteFileRequest(BaseModel):
+    path: str
+
+class ResolvePathTargetRequest(BaseModel):
+    path: Annotated[str, StringConstraints(min_length=1, max_length=8192)]
+    allow_missing: bool = False
+    allow_scoped_skills: bool = False
+
+class ResolvePathsRequest(BaseModel):
+    targets: list[ResolvePathTargetRequest] = PydanticField(
+        min_length=1, max_length=100
+    )
+
 class ReadFileRequest(BaseModel):
     path: str
     offset: int = 0  # 0-based line offset
@@ -148,15 +196,335 @@ class ReadFileRequest(BaseModel):
 class GlobRequest(BaseModel):
     pattern: str
     path: str = "/workspace"
+    include_sensitive: bool = False
 
 class GrepRequest(BaseModel):
     pattern: str
     path: str = "/workspace"
     type: str | None = None  # file type filter, e.g. "py", "js"
     max_results: int = 100
+    include_sensitive: bool = False
 
 # --- API Key ---
 SESSION_API_KEY = os.environ.get("SESSION_API_KEY", "")
+
+
+def _api_key_matches(supplied: str) -> bool:
+    """Fail closed when the execution-plane credential is not configured."""
+    return bool(SESSION_API_KEY) and secrets.compare_digest(
+        supplied, SESSION_API_KEY
+    )
+
+# User commands run with a different OS identity from the root-owned Action
+# Server.  Besides limiting filesystem damage, this prevents a command from
+# reading the server's API key or MCP credentials through /proc/<parent>/environ.
+RUNNER_USER = os.environ.get("OPENBOX_RUNNER_USER", "sandbox")
+REQUIRE_RUNNER = os.environ.get("OPENBOX_REQUIRE_RUNNER", "0") == "1"
+WORKSPACE_ROOT = Path(os.environ.get("OPENBOX_WORKSPACE_ROOT", "/workspace")).resolve()
+RUNNER_HOME = Path(
+    os.environ.get("OPENBOX_RUNNER_HOME", str(WORKSPACE_ROOT / ".openbox-home"))
+)
+
+# A shared WUYING desktop is an acceptance topology, not the eventual SaaS
+# topology (production assigns one desktop to one user).  Until then, every
+# catalogue request carries the same pseudonymous segment already used by the
+# backend workspace namespace.  It is deliberately narrow enough to be safe as
+# one path component and never contains a raw user id.
+USER_SCOPE_HEADER = "X-OpenBox-User-Scope"
+_USER_SCOPE_PATTERN = re.compile(r"^u-[0-9a-f]{20}$")
+_request_user_scope: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "openbox_request_user_scope", default=""
+)
+REQUIRE_USER_SCOPE = os.environ.get("OPENBOX_REQUIRE_USER_SCOPE", "0") == "1"
+
+
+def _current_user_scope() -> str:
+    return _request_user_scope.get()
+
+
+def _contained_scope_root(root: Path, scope: str, label: str) -> Path:
+    """Join a validated scope without following a tenant-controlled symlink."""
+    if not _USER_SCOPE_PATTERN.fullmatch(scope):
+        raise HTTPException(status_code=400, detail="Invalid user scope")
+    root_resolved = root.resolve()
+    candidate = root / scope
+    if candidate.is_symlink():
+        raise HTTPException(status_code=409, detail=f"{label} scope cannot be a symlink")
+    resolved = candidate.resolve()
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        raise HTTPException(status_code=403, detail=f"{label} scope escapes its data root")
+    return candidate
+
+
+def _scoped_skill_root() -> Path:
+    scope = _current_user_scope()
+    return _contained_scope_root(SKILLS_DIR, scope, "Skill") if scope else SKILLS_DIR
+
+
+def _scoped_export_root() -> Path:
+    scope = _current_user_scope()
+    if not scope:
+        return SKILL_EXPORTS_DIR
+    namespace = WORKSPACE_ROOT / "openbox" / "users"
+    namespace_resolved = namespace.resolve()
+    workspace_resolved = WORKSPACE_ROOT.resolve()
+    if (
+        namespace_resolved != workspace_resolved
+        and workspace_resolved not in namespace_resolved.parents
+    ):
+        raise HTTPException(status_code=403, detail="Export namespace escapes workspace")
+    user_root = _contained_scope_root(namespace, scope, "Export")
+    return user_root / ".openbox" / "exports"
+
+
+def _scoped_mcp_config_path(scope: str | None = None) -> Path:
+    selected = _current_user_scope() if scope is None else scope
+    if not selected:
+        return MCP_CONFIG_PATH
+    scoped_root = _contained_scope_root(MCP_CONFIG_PATH.parent, selected, "MCP")
+    return scoped_root / MCP_CONFIG_PATH.name
+
+
+def _scope_required_path(path: str) -> bool:
+    return path == "/catalog" or path.startswith(("/catalog/", "/skills", "/mcp/"))
+
+
+def _runner_account():
+    try:
+        import pwd
+
+        return pwd.getpwnam(RUNNER_USER)
+    except KeyError:
+        if REQUIRE_RUNNER:
+            raise RuntimeError(f"Required command runner user does not exist: {RUNNER_USER}")
+        return None
+
+
+def _demote_to_runner() -> None:
+    account = _runner_account()
+    if account is None or os.geteuid() != 0:
+        return
+    os.initgroups(account.pw_name, account.pw_gid)
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+
+
+def _runner_argv(argv: list[str]) -> list[str]:
+    """Wrap a subprocess so untrusted code cannot retain server privileges."""
+    account = _runner_account()
+    if account is None or os.geteuid() != 0:
+        return argv
+    setpriv = shutil.which("setpriv")
+    if not setpriv:
+        if REQUIRE_RUNNER:
+            raise RuntimeError("setpriv is required for isolated command execution")
+        return argv
+    return [
+        setpriv,
+        f"--reuid={account.pw_uid}",
+        f"--regid={account.pw_gid}",
+        "--init-groups",
+        "--no-new-privs",
+        "--",
+        *argv,
+    ]
+
+
+def _runner_shell_argv(command: str) -> list[str]:
+    """Run one model-provided command without desktop-wide login hooks.
+
+    The WUYING image's ``/etc/profile`` configures GNOME input sources with
+    ``gsettings``.  Agent commands are intentionally headless, so a login
+    shell only emits a misleading dconf/DBus warning before every command.
+    Runtime paths and locale are already supplied by :func:`_runner_env`.
+    """
+    return _runner_argv([
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        command,
+    ])
+
+
+def _runner_env(
+    extra: dict[str, str] | None = None,
+    *,
+    user_scope: str | None = None,
+) -> dict[str, str]:
+    account = _runner_account()
+    home = str(RUNNER_HOME) if account is not None else os.environ.get("HOME", "/tmp")
+    scope = _current_user_scope() if user_scope is None else user_scope
+    if account is not None and scope:
+        scoped_home = _scoped_runner_home(scope)
+        _ensure_runner_directory(scoped_home)
+        home = str(scoped_home)
+    # Explicit allowlist: provider/API/MCP credentials held by the control
+    # process never enter an arbitrary shell command.
+    env = {
+        "HOME": home,
+        "USER": account.pw_name if account is not None else RUNNER_USER,
+        "LOGNAME": account.pw_name if account is not None else RUNNER_USER,
+        "PATH": os.environ.get(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ),
+        # PTY frames carry bytes, so both ends must agree on UTF-8.  Empty
+        # inherited locale variables are not useful defaults and can garble
+        # CJK filenames in readline/prompt rendering.
+        "LANG": os.environ.get("LANG") or "C.UTF-8",
+        "LC_ALL": os.environ.get("LC_ALL") or os.environ.get("LANG") or "C.UTF-8",
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+        "SHELL": "/bin/bash",
+        "XDG_CACHE_HOME": str(Path(home) / ".cache"),
+        "NPM_CONFIG_CACHE": str(Path(home) / ".npm"),
+    }
+    for name in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
+    if extra:
+        env.update(extra)
+    return {key: value for key, value in env.items() if value != ""}
+
+
+def _chown_runner_path(path: Path) -> None:
+    """Give the command identity ownership without following a caller symlink."""
+    account = _runner_account()
+    if account is None or os.geteuid() != 0:
+        return
+    try:
+        os.chown(path, account.pw_uid, account.pw_gid, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+
+
+def _ensure_runner_directory(path: Path) -> None:
+    missing: list[Path] = []
+    cursor = path
+    while not cursor.exists():
+        missing.append(cursor)
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+    path.mkdir(parents=True, exist_ok=True)
+    # pathlib creates every missing parent as the privileged Action Server.
+    # Chown the whole newly-created chain, not only the leaf, or the sandbox
+    # identity cannot traverse a root-owned 0750 tenant namespace.
+    for created in reversed(missing):
+        _chown_runner_path(created)
+    if not missing:
+        _chown_runner_path(path)
+
+
+def _scoped_runner_home(user_scope: str) -> Path:
+    return (
+        WORKSPACE_ROOT
+        / "openbox"
+        / "users"
+        / user_scope
+        / ".openbox"
+        / "home"
+    )
+
+
+def _chown_runner_tree(root: Path) -> None:
+    """Give a completed tenant package to the runner without following links."""
+    _chown_runner_path(root)
+    for current, dirnames, filenames in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        for name in [*dirnames, *filenames]:
+            _chown_runner_path(current_path / name)
+
+
+def _workspace_path(
+    raw_path: str,
+    *,
+    must_exist: bool = False,
+    allow_scoped_skills: bool = False,
+) -> Path:
+    """Resolve an API path and reject symlink/``..`` escapes.
+
+    File writes remain workspace-only. Read/list/search calls may opt into the
+    current tenant's Skill package root so loaded skills can reference bundled
+    files without exposing another tenant's packages.
+    """
+    if not raw_path or "\x00" in raw_path:
+        raise HTTPException(status_code=400, detail="Invalid workspace path")
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = WORKSPACE_ROOT / candidate
+    try:
+        resolved = candidate.resolve(strict=must_exist)
+    except (FileNotFoundError, OSError) as exc:
+        raise HTTPException(status_code=404, detail=f"Path not found: {raw_path}") from exc
+    allowed_roots = [WORKSPACE_ROOT]
+    if allow_scoped_skills and _current_user_scope():
+        allowed_roots.append(_scoped_skill_root().resolve())
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        raise HTTPException(status_code=403, detail="Path escapes the OpenBox workspace")
+    return resolved
+
+
+def _terminal_workspace_path(workdir: str, user_scope: str) -> Path:
+    """Validate a terminal cwd against both workspace and tenant namespace."""
+    if not _USER_SCOPE_PATTERN.fullmatch(user_scope or ""):
+        raise HTTPException(status_code=400, detail="Invalid terminal user scope")
+    target = _workspace_path(workdir, must_exist=False)
+    tenant_root = _contained_scope_root(
+        WORKSPACE_ROOT / "openbox" / "users",
+        user_scope,
+        "Terminal",
+    ).resolve()
+    if target != tenant_root and tenant_root not in target.parents:
+        raise HTTPException(
+            status_code=403,
+            detail="Terminal directory is outside the tenant workspace",
+        )
+    # Project creation is intentionally available while a desktop is offline.
+    # The first terminal connection therefore owns the safe, authenticated
+    # repair path for a missing project directory and runner HOME.  Both must
+    # be created while the Action Server is still root; the PTY child drops to
+    # the runner identity before building its environment.
+    _ensure_runner_directory(target)
+    _ensure_runner_directory(_scoped_runner_home(user_scope))
+    resolved = _workspace_path(str(target), must_exist=True)
+    if resolved != tenant_root and tenant_root not in resolved.parents:
+        raise HTTPException(
+            status_code=403,
+            detail="Terminal directory is outside the tenant workspace",
+        )
+    return resolved
+
+
+def _workspace_glob_pattern(pattern: str) -> str:
+    if not pattern or "\x00" in pattern or Path(pattern).is_absolute():
+        raise HTTPException(status_code=400, detail="Invalid workspace glob pattern")
+    if ".." in PurePosixPath(pattern).parts:
+        raise HTTPException(status_code=403, detail="Glob pattern escapes the workspace")
+    return pattern
+
+
+def _is_sensitive_workspace_path(path: Path) -> bool:
+    """Classify search results hidden from broad, unapproved discovery."""
+    try:
+        parts = path.relative_to(WORKSPACE_ROOT).parts
+    except ValueError:
+        parts = path.parts
+    for part in parts:
+        lowered = part.casefold()
+        if lowered.startswith(".env"):
+            return True
+        if lowered == ".ssh" or "credentials" in lowered:
+            return True
+    return False
+
+
+_GREP_ENV_EXCLUDE = ".[eE][nN][vV]*"
+_GREP_SSH_EXCLUDE = ".[sS][sS][hH]"
+_GREP_CREDENTIALS_EXCLUDE = (
+    "*[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL][sS]*"
+)
 
 # --- Protected command detection ---
 # The action_server is the ONLY communication channel between the backend and the
@@ -204,26 +572,57 @@ def _is_protected_command(command: str) -> str | None:
 # --- Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # /workspace/skills → /data/skills/ convenience symlink for agent scripts
+    if not SESSION_API_KEY:
+        raise RuntimeError("SESSION_API_KEY is required for the Action Server")
+    reconnect_tasks: list[asyncio.Task] = []
+    # A global /workspace/skills link exposes every scoped directory on a
+    # shared desktop. Keep it only for explicit legacy/single-tenant mode.
     skills_link = Path("/workspace/skills")
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    if not skills_link.exists():
-        try:
-            skills_link.symlink_to(SKILLS_DIR)
-        except OSError:
-            pass
-    # Create name-based symlinks for user-installed skills (skill packs, etc.)
-    _ensure_skill_symlinks()
+    if REQUIRE_USER_SCOPE:
+        if skills_link.is_symlink():
+            skills_link.unlink()
+        elif skills_link.exists():
+            raise RuntimeError(
+                "Tenant-scoped mode refuses the legacy /workspace/skills directory"
+            )
+    else:
+        if not skills_link.exists():
+            try:
+                skills_link.symlink_to(SKILLS_DIR)
+            except OSError:
+                pass
+        _ensure_skill_symlinks()
     # MCP config outlives the container but connections do not, so a restart
-    # used to leave every configured server listed as disconnected with its
-    # tools silently missing from the agent. Reconnect in the background: a
-    # server that is slow or gone must not delay the container coming up.
-    reconnect_task = asyncio.create_task(mcp_manager.reconnect_configured())
+    # used to leave every enabled server listed as disconnected with its tools
+    # silently missing from the agent. Reconnect enabled servers in the
+    # background: a server that is slow or gone must not delay startup. A
+    # user's explicit disconnect is persisted and is never undone here.
+    if REQUIRE_USER_SCOPE:
+        reconnect_tasks.extend(
+            asyncio.create_task(manager.reconnect_configured())
+            for manager in _persisted_scoped_mcp_managers()
+        )
+    else:
+        reconnect_tasks.append(
+            asyncio.create_task(mcp_manager.reconnect_configured())
+        )
     await media_job_manager.start()
     try:
         yield
     finally:
-        reconnect_task.cancel()
+        for reconnect_task in reconnect_tasks:
+            reconnect_task.cancel()
+        if reconnect_tasks:
+            await asyncio.gather(*reconnect_tasks, return_exceptions=True)
+        managers = [mcp_manager, *_scoped_mcp_managers.values()]
+        seen_managers: set[int] = set()
+        for manager in managers:
+            if id(manager) in seen_managers:
+                continue
+            seen_managers.add(id(manager))
+            await manager.shutdown()
+        _scoped_mcp_managers.clear()
         await media_job_manager.stop()
 
 app = FastAPI(title="OpenBox Sandbox Action Server", lifespan=lifespan)
@@ -240,6 +639,132 @@ def _trace_value(request: Request, name: str, limit: int = 120) -> str:
     return "".join(ch for ch in value if 32 <= ord(ch) < 127)[:limit]
 
 
+# Backend database fencing continues at the execution boundary. Without this
+# durable high-water mark, a stale backend that lost PostgreSQL connectivity
+# could still execute a shell/write/MCP side effect on the shared desktop.
+_RUN_FENCE_PATH = Path(
+    os.environ.get("OPENBOX_RUN_FENCE_PATH", "/data/openbox_run_fences.json")
+)
+_run_fence_lock = asyncio.Lock()
+_RUN_LEASE_MAX_FUTURE_MS = 65_000
+
+
+def _run_lease_signature(
+    session_id: str,
+    run_id: str,
+    epoch: int,
+    expires_at_ms: int,
+) -> str:
+    payload = f"{session_id}\n{run_id}\n{epoch}\n{expires_at_ms}".encode("utf-8")
+    return hmac.new(
+        SESSION_API_KEY.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _load_run_fences() -> dict[str, dict[str, object]]:
+    try:
+        raw = json.loads(_RUN_FENCE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict[str, object]] = {}
+    for session_id, value in raw.items():
+        if not isinstance(session_id, str) or not isinstance(value, dict):
+            continue
+        try:
+            epoch = int(value.get("epoch", 0))
+        except (TypeError, ValueError):
+            continue
+        run_id = value.get("run_id")
+        if epoch > 0 and isinstance(run_id, str) and run_id:
+            result[session_id] = {"epoch": epoch, "run_id": run_id}
+    return result
+
+
+_run_fences = _load_run_fences()
+
+
+def _persist_run_fences() -> None:
+    _RUN_FENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _RUN_FENCE_PATH.with_name(
+        f".{_RUN_FENCE_PATH.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    temporary.write_text(
+        json.dumps(_run_fences, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, _RUN_FENCE_PATH)
+
+
+async def _validate_run_fence(request: Request) -> None:
+    """Reject expired receipts, then advance one session epoch atomically.
+
+    The durable epoch prevents an older generation after a newer request has
+    reached this desktop. The signed database-lease expiry closes the earlier
+    gap as well: after PostgreSQL permits takeover, a paused old worker cannot
+    issue its *first* late request while the remote high-water mark is still on
+    the previous generation.
+    """
+    session_id = _trace_value(request, "X-OpenBox-Session")
+    run_id = _trace_value(request, "X-OpenBox-Run")
+    raw_epoch = _trace_value(request, "X-OpenBox-Run-Epoch", 24)
+    raw_expires = _trace_value(request, "X-OpenBox-Run-Lease-Expires", 24)
+    signature = _trace_value(request, "X-OpenBox-Run-Lease-Signature", 80)
+    if not any((run_id, raw_epoch, raw_expires, signature)):
+        return  # non-Agent control-plane/readiness operation
+    if not all((session_id, run_id, raw_epoch, raw_expires, signature)):
+        raise HTTPException(status_code=400, detail="Incomplete OpenBox run fence")
+    try:
+        epoch = int(raw_epoch)
+        expires_at_ms = int(raw_expires)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid OpenBox run lease") from exc
+    if epoch <= 0 or expires_at_ms <= 0 or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise HTTPException(status_code=400, detail="Invalid OpenBox run lease")
+    expected_signature = _run_lease_signature(
+        session_id,
+        run_id,
+        epoch,
+        expires_at_ms,
+    )
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(status_code=403, detail="Invalid OpenBox run lease signature")
+    now_ms = int(time.time() * 1000)
+    if expires_at_ms <= now_ms:
+        raise HTTPException(status_code=409, detail="Expired OpenBox agent run lease")
+    if expires_at_ms - now_ms > _RUN_LEASE_MAX_FUTURE_MS:
+        raise HTTPException(status_code=400, detail="Invalid OpenBox run lease lifetime")
+    async with _run_fence_lock:
+        current = _run_fences.get(session_id)
+        if current is not None:
+            current_epoch = int(current["epoch"])
+            current_run = str(current["run_id"])
+            if epoch < current_epoch or (epoch == current_epoch and run_id != current_run):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Stale OpenBox agent run fence",
+                )
+            if epoch == current_epoch:
+                return
+        previous = current
+        _run_fences[session_id] = {"epoch": epoch, "run_id": run_id}
+        try:
+            _persist_run_fences()
+        except OSError as exc:
+            if previous is None:
+                _run_fences.pop(session_id, None)
+            else:
+                _run_fences[session_id] = previous
+            raise HTTPException(
+                status_code=503,
+                detail="OpenBox run fence store unavailable",
+            ) from exc
+
+
 def _lease_is_live(now: float | None = None) -> bool:
     return bool(_desktop_lease and _desktop_lease["expires_at"] > (now or time.monotonic()))
 
@@ -251,7 +776,10 @@ def _desktop_command_kind(command: str) -> str:
         return "desktop_input"
     if "obx-shot" in lowered or "scrot" in lowered:
         return "desktop_capture"
-    if "/tmp/obx-screen.png" in lowered and "obx-file" in lowered:
+    if "obx-file" in lowered and any(
+        path in lowered
+        for path in ("/tmp/obx-screen.png", "/tmp/obx-sandbox-screen.png")
+    ):
         return "desktop_oss_upload"
     if "obx-x" in lowered:
         return "desktop_session"
@@ -295,6 +823,8 @@ def _emit_execute_trace(
             "request": _trace_value(request, "X-OpenBox-Request"),
             "instance": _trace_value(request, "X-OpenBox-Instance"),
             "session": _trace_value(request, "X-OpenBox-Session"),
+            "run": _trace_value(request, "X-OpenBox-Run"),
+            "run_epoch": _trace_value(request, "X-OpenBox-Run-Epoch", 24),
             "tool_call": _trace_value(request, "X-OpenBox-Tool-Call"),
             "operation": _trace_value(request, "X-OpenBox-Operation", 48),
             "kind": _desktop_command_kind(command),
@@ -307,12 +837,34 @@ def _emit_execute_trace(
 # --- API Key 中间件 ---
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
-    if request.url.path in ("/alive", "/docs", "/openapi.json", "/terminal"):
+    if request.url.path == "/alive":
         return await call_next(request)
     api_key = request.headers.get("X-API-Key", "")
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not SESSION_API_KEY:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Action Server API key is not configured"},
+        )
+    if not _api_key_matches(api_key):
         return JSONResponse(status_code=403, content={"detail": "Invalid API Key"})
-    return await call_next(request)
+    supplied_scope = request.headers.get(USER_SCOPE_HEADER, "").strip()
+    if supplied_scope and not _USER_SCOPE_PATTERN.fullmatch(supplied_scope):
+        return JSONResponse(status_code=400, content={"detail": "Invalid user scope"})
+    if REQUIRE_USER_SCOPE and _scope_required_path(request.url.path) and not supplied_scope:
+        return JSONResponse(
+            status_code=428,
+            content={"detail": "A tenant scope is required for catalogue access"},
+        )
+    scope_token = _request_user_scope.set(supplied_scope)
+    try:
+        await _validate_run_fence(request)
+    except HTTPException as exc:
+        _request_user_scope.reset(scope_token)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    try:
+        return await call_next(request)
+    finally:
+        _request_user_scope.reset(scope_token)
 
 # --- 健康检查 ---
 @app.get("/alive")
@@ -323,7 +875,19 @@ async def alive():
         "capabilities": [
             "desktop_lease_v1",
             "execution_trace_v1",
+            "run_fencing_v1",
+            "run_lease_receipt_v2",
             "catalogue_projection_v1",
+            "tenant_catalogue_scopes_v1",
+            "skill_archive_create_only_v1",
+            "skill_restore_fence_v1",
+            "skill_archive_bounded_v1",
+            "confined_file_delete_v1",
+            "sensitive_search_filter_v1",
+            "confined_path_resolve_v1",
+            "mcp_desired_state_v1",
+            "mcp_supervisor_v1",
+            "terminal_project_cwd_v1",
             "media_jobs_v1",
             "media_jobs_fastpath_v2",
             "media_jobs_audio_extract_v3",
@@ -508,6 +1072,18 @@ def _kill_process_tree_by_pid(pid: int):
         pass
 
 
+async def _terminate_process_tree(process) -> bool:
+    """Kill and reap a still-running subprocess after a canceled stream."""
+    if process.returncode is not None:
+        return False
+    _kill_process_tree(process)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2)
+    except (asyncio.TimeoutError, OSError, ProcessLookupError):
+        pass
+    return True
+
+
 # --- Kill endpoint ---
 @app.post("/kill")
 async def kill_command(req: KillRequest):
@@ -532,14 +1108,15 @@ async def execute(req: ExecuteRequest, request: Request):
     if blocked:
         _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
         return ExecuteResponse(exit_code=exit_code, stdout="", stderr=f"[BLOCKED] {blocked}")
-    workdir = req.workdir or "/workspace"
+    workdir = _workspace_path(req.workdir or "/workspace", must_exist=True)
     try:
-        process = await asyncio.create_subprocess_shell(
-            req.command,
+        process = await asyncio.create_subprocess_exec(
+            *_runner_shell_argv(req.command),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=workdir,
+            cwd=str(workdir),
             start_new_session=True,
+            env=_runner_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -569,12 +1146,16 @@ async def execute(req: ExecuteRequest, request: Request):
 # --- 上传文件 ---
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), destination: str = Form("/workspace")):
-    dest_path = Path(destination)
-    dest_path.mkdir(parents=True, exist_ok=True)
-    file_path = dest_path / file.filename
+    dest_path = _workspace_path(destination)
+    _ensure_runner_directory(dest_path)
+    filename = file.filename or "upload.bin"
+    if Path(filename).name != filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Unsafe upload filename")
+    file_path = _workspace_path(str(dest_path / filename))
     try:
         content = await file.read()
         file_path.write_bytes(content)
+        _chown_runner_path(file_path)
         return {"message": "File uploaded", "path": str(file_path), "size": len(content)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -582,9 +1163,7 @@ async def upload_file(file: UploadFile = File(...), destination: str = Form("/wo
 # --- 下载文件 ---
 @app.get("/download")
 async def download_file(path: str):
-    file_path = Path(path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+    file_path = _workspace_path(path, must_exist=True)
     if file_path.is_file():
         return StreamingResponse(
             open(file_path, "rb"),
@@ -595,7 +1174,10 @@ async def download_file(path: str):
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in file_path.rglob("*"):
+            if f.is_symlink():
+                continue
             if f.is_file():
+                _workspace_path(str(f), must_exist=True)
                 zf.write(f, f.relative_to(file_path))
     buffer.seek(0)
     return StreamingResponse(
@@ -607,14 +1189,20 @@ async def download_file(path: str):
 # --- 列出文件 ---
 @app.post("/list_files")
 async def list_files(req: ListFilesRequest):
-    target = Path(req.path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {req.path}")
+    target = _workspace_path(req.path, must_exist=True, allow_scoped_skills=True)
     if not target.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {req.path}")
     entries = []
     for item in sorted(target.iterdir()):
         try:
+            if item.is_symlink():
+                entries.append({
+                    "name": item.name,
+                    "is_dir": False,
+                    "size": None,
+                    "modified": None,
+                })
+                continue
             stat = item.stat()
             entries.append({
                 "name": item.name,
@@ -640,22 +1228,86 @@ async def system_info():
         "platform": platform.platform(),
     }
 
+# --- Canonical path permission preflight ---
+@app.post("/resolve_paths")
+async def resolve_paths(req: ResolvePathsRequest):
+    """Resolve permission targets inside the execution plane's path boundary.
+
+    This closes static symlink aliases before backend policy evaluation. It is
+    intentionally only a preflight snapshot; callers must not treat it as a
+    lock or as protection against a path being replaced after this response.
+    """
+    resolved_targets = []
+    for target in req.targets:
+        resolved = _workspace_path(
+            target.path,
+            must_exist=not target.allow_missing,
+            allow_scoped_skills=(
+                target.allow_scoped_skills and not target.allow_missing
+            ),
+        )
+        try:
+            workspace_relative = resolved.relative_to(WORKSPACE_ROOT).as_posix()
+        except ValueError:
+            workspace_relative = None
+        resolved_targets.append({
+            "canonical_path": str(resolved),
+            "workspace_relative": workspace_relative,
+        })
+    return {"targets": resolved_targets}
+
+
 # --- Write File ---
 @app.post("/write_file")
 async def write_file(req: WriteFileRequest):
     """Write content to a file. Creates parent directories if needed."""
-    file_path = Path(req.path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path = _workspace_path(req.path)
+    _ensure_runner_directory(file_path.parent)
     file_path.write_text(req.content, encoding="utf-8")
+    _chown_runner_path(file_path)
     return {"message": "File written", "path": str(file_path), "size": len(req.content)}
+
+# --- Delete File ---
+@app.post("/delete_file")
+async def delete_file(req: DeleteFileRequest):
+    """Delete one regular workspace file without invoking a shell."""
+    candidate = Path(req.path)
+    if not candidate.is_absolute():
+        candidate = WORKSPACE_ROOT / candidate
+    if candidate.name in {"", ".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    # Resolve and validate the parent, then use dir_fd operations for the final
+    # component. This never follows a final symlink and closes the usual
+    # lstat/unlink path-replacement race.
+    parent = _workspace_path(str(candidate.parent), must_exist=True)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(parent, flags)
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="File parent is unavailable") from exc
+    try:
+        try:
+            target_stat = os.stat(candidate.name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return {"message": "File deleted", "path": str(candidate), "deleted": False}
+        if stat.S_ISLNK(target_stat.st_mode):
+            raise HTTPException(status_code=409, detail="File path cannot be a symlink")
+        if not stat.S_ISREG(target_stat.st_mode):
+            raise HTTPException(status_code=400, detail="Path is not a regular file")
+        try:
+            os.unlink(candidate.name, dir_fd=descriptor)
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="File could not be deleted") from exc
+    finally:
+        os.close(descriptor)
+    return {"message": "File deleted", "path": str(candidate), "deleted": True}
 
 # --- Read File ---
 @app.post("/read_file")
 async def read_file(req: ReadFileRequest):
     """Read file content with line numbers (cat -n format)."""
-    file_path = Path(req.path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {req.path}")
+    file_path = _workspace_path(req.path, must_exist=True, allow_scoped_skills=True)
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail=f"Not a file: {req.path}")
 
@@ -688,14 +1340,22 @@ async def read_file(req: ReadFileRequest):
 @app.post("/glob")
 async def glob_files(req: GlobRequest):
     """Find files matching a glob pattern, sorted by modification time (newest first)."""
-    base = Path(req.path)
-    if not base.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {req.path}")
+    base = _workspace_path(req.path, must_exist=True, allow_scoped_skills=True)
+    pattern = _workspace_glob_pattern(req.pattern)
+    pattern_sensitive = _is_sensitive_workspace_path(Path(pattern))
+    allow_sensitive = req.include_sensitive and (
+        _is_sensitive_workspace_path(base) or pattern_sensitive
+    )
 
     matches = []
     try:
-        for p in base.glob(req.pattern):
+        for p in base.glob(pattern):
+            if p.is_symlink():
+                continue
             if p.is_file():
+                _workspace_path(str(p), must_exist=True, allow_scoped_skills=True)
+                if not allow_sensitive and _is_sensitive_workspace_path(p):
+                    continue
                 try:
                     mtime = p.stat().st_mtime
                 except OSError:
@@ -714,7 +1374,21 @@ async def glob_files(req: GlobRequest):
 @app.post("/grep")
 async def grep_files(req: GrepRequest):
     """Search file contents using grep."""
+    search_path = _workspace_path(req.path, must_exist=True, allow_scoped_skills=True)
+    target_sensitive = _is_sensitive_workspace_path(search_path)
+    allow_sensitive = req.include_sensitive and target_sensitive
+    if not allow_sensitive and target_sensitive:
+        return {"output": "", "exit_code": 0, "error": ""}
     cmd_parts = ["grep", "-rn", "--color=never"]
+
+    if not allow_sensitive:
+        cmd_parts.extend([
+            "--exclude", _GREP_ENV_EXCLUDE,
+            "--exclude", _GREP_CREDENTIALS_EXCLUDE,
+            "--exclude-dir", _GREP_ENV_EXCLUDE,
+            "--exclude-dir", _GREP_SSH_EXCLUDE,
+            "--exclude-dir", _GREP_CREDENTIALS_EXCLUDE,
+        ])
 
     # Add file type filter
     if req.type:
@@ -730,13 +1404,14 @@ async def grep_files(req: GrepRequest):
         glob_pattern = ext_map.get(req.type, f"*.{req.type}")
         cmd_parts.extend(["--include", glob_pattern])
 
-    cmd_parts.extend(["-m", str(req.max_results), "--", req.pattern, req.path])
+    cmd_parts.extend(["-m", str(req.max_results), "--", req.pattern, str(search_path)])
 
     try:
         process = await asyncio.create_subprocess_exec(
-            *cmd_parts,
+            *_runner_argv(cmd_parts),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_runner_env(),
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
         output = stdout.decode("utf-8", errors="replace")
@@ -767,16 +1442,17 @@ async def execute_stream(req: ExecuteRequest, request: Request):
                 "exit_code": 1, "timed_out": False,
             })}
         return EventSourceResponse(blocked_gen())
-    workdir = req.workdir or "/workspace"
+    workdir = _workspace_path(req.workdir or "/workspace", must_exist=True)
 
     async def event_generator():
         try:
-            process = await asyncio.create_subprocess_shell(
-                req.command,
+            process = await asyncio.create_subprocess_exec(
+                *_runner_shell_argv(req.command),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=workdir,
+                cwd=str(workdir),
                 start_new_session=True,
+                env=_runner_env(),
             )
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
@@ -907,6 +1583,12 @@ async def execute_stream(req: ExecuteRequest, request: Request):
             exit_code = -1
         finally:
             timeout_task.cancel()
+            # Closing the SSE connection (for example when the user presses
+            # Stop) cancels this generator.  The shell otherwise survives on
+            # the desktop until its timeout or the idle judge notices it.
+            # Always terminate the process group before letting the generator
+            # unwind; normal completions already have a return code and no-op.
+            await _terminate_process_tree(process)
 
         if timed_out_flag:
             exit_code = -1
@@ -1023,11 +1705,39 @@ def _blocking_read(fd: int, size: int = 4096) -> bytes | None:
 
 
 @app.websocket("/terminal")
-async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
+async def terminal_ws(
+    ws: WebSocket,
+    api_key: str = Query(""),
+    workdir: str = Query(""),
+    user_scope: str = Query(""),
+    prompt_label: str = Query(""),
+):
     # Authenticate via query parameter (WebSocket doesn't go through HTTP middleware)
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not _api_key_matches(api_key):
         await ws.accept()
-        await ws.close(code=4003, reason="Invalid API Key")
+        reason = (
+            "Action Server API key is not configured"
+            if not SESSION_API_KEY
+            else "Invalid API Key"
+        )
+        await ws.close(code=4003, reason=reason)
+        return
+
+    try:
+        terminal_workdir = _terminal_workspace_path(workdir, user_scope)
+        account = _runner_account()
+        if REQUIRE_RUNNER and account is None:
+            raise RuntimeError("required terminal runner is unavailable")
+    except HTTPException as exc:
+        await ws.accept()
+        await ws.close(
+            code=4003 if exc.status_code == 403 else 4000,
+            reason=str(exc.detail)[:120],
+        )
+        return
+    except RuntimeError as exc:
+        await ws.accept()
+        await ws.close(code=1011, reason=str(exc)[:120])
         return
 
     await ws.accept()
@@ -1054,27 +1764,24 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
         if slave_fd > 2:
             os.close(slave_fd)
 
-        # Switch to sandbox user
-        try:
-            import pwd
-            pw = pwd.getpwnam("sandbox")
-            os.setgid(pw.pw_gid)
-            os.setuid(pw.pw_uid)
-            home = pw.pw_dir
-        except (KeyError, PermissionError):
-            home = os.environ.get("HOME", "/root")
+        _demote_to_runner()
+        env = _runner_env(user_scope=user_scope)
+        # The physical cwd contains pseudonymous tenant/project segments. Keep
+        # it authoritative for execution while presenting the user-facing
+        # project name in the prompt. Restrict characters because Bash expands
+        # command substitutions inside PS1 when promptvars is enabled.
+        safe_prompt_label = "".join(
+            char if (char.isalnum() or char in " ._-") else "-"
+            for char in str(prompt_label or "")[:80]
+        ).strip() or "project"
+        env["PS1"] = f"\\u@\\h:{safe_prompt_label}\\$ "
 
-        env = {
-            "TERM": "xterm-256color",
-            "HOME": home,
-            "USER": os.environ.get("USER", "sandbox"),
-            "LANG": "C.UTF-8",
-            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "SHELL": "/bin/bash",
-        }
-
-        os.chdir("/workspace")
-        os.execve("/bin/bash", ["bash", "--login"], env)
+        os.chdir(str(terminal_workdir))
+        # A login shell executes desktop-wide /etc/profile hooks (including
+        # GUI dconf commands) even though this PTY is intentionally headless.
+        # A clean interactive shell avoids those warnings and still inherits
+        # the explicit, credential-free runtime environment above.
+        os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "-i"], env)
 
     # Parent process
     os.close(slave_fd)
@@ -1192,11 +1899,12 @@ async def dev_browser_start():
 
     try:
         _dev_browser_process = subprocess.Popen(
-            ["npm", "run", "start-relay"],
+            _runner_argv(["npm", "run", "start-relay"]),
             cwd=str(relay_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env={**os.environ, "HOST": "127.0.0.1", "PORT": "9222"},
+            env=_runner_env({"HOST": "127.0.0.1", "PORT": "9222"}),
+            start_new_session=True,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start relay: {e}")
@@ -1266,9 +1974,14 @@ async def dev_browser_status():
 async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
     """WebSocket proxy: forwards extension traffic to the relay server at localhost:9222."""
     # Authenticate
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not _api_key_matches(api_key):
         await ws.accept()
-        await ws.close(code=4003, reason="Invalid API Key")
+        reason = (
+            "Action Server API key is not configured"
+            if not SESSION_API_KEY
+            else "Invalid API Key"
+        )
+        await ws.close(code=4003, reason=reason)
         return
 
     await ws.accept()
@@ -1331,6 +2044,10 @@ async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
 SKILLS_DIR = Path("/data/skills")            # User-installed skills (bind-mounted, persistent)
 BUILTIN_SKILLS_DIR = Path("/opt/openbox/skills")  # System built-in skills (baked into image)
 SKILL_EXPORTS_DIR = Path("/workspace/exports")
+SKILL_PUBLISH_LOCKS_DIR = Path(
+    os.environ.get("OPENBOX_SKILL_PUBLISH_LOCKS_DIR", "/tmp/openbox-skill-publish-locks")
+)
+SKILL_MUTATION_STATE_DIR = os.environ.get("OPENBOX_SKILL_MUTATION_STATE_DIR", "")
 
 
 #: URL schemes accepted for skill installation.
@@ -1339,6 +2056,203 @@ SKILL_EXPORTS_DIR = Path("/workspace/exports")
 #: download. Clones additionally pass -c protocol.ext.allow=never as defence in
 #: depth for redirects and submodules.
 _SKILL_URL_SCHEMES = ("https://", "http://", "git://", "ssh://", "git@")
+
+
+def _skill_mutation_key(skills_dir: Path, skill_name: str) -> str:
+    return hashlib.sha256(
+        f"{skills_dir.resolve()}\0{skill_name}".encode("utf-8")
+    ).hexdigest()
+
+
+@contextmanager
+def _skill_publish_lock(skills_dir: Path, skill_name: str):
+    """Serialize publication of one tenant Skill across server processes.
+
+    The lock lives outside the runner-owned Skill tree, so sandbox commands
+    cannot unlink a held lock and split future publishers into two lock
+    domains. The resolved tenant root is part of the digest: two users may
+    install the same slug without blocking one another, while uvicorn workers
+    targeting the same user and slug share one advisory lock.
+    """
+    lock_root = SKILL_PUBLISH_LOCKS_DIR
+    try:
+        lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if lock_root.is_symlink() or not lock_root.is_dir():
+            raise OSError("Skill publication lock root is not a directory")
+        lock_root_stat = lock_root.stat()
+        if lock_root_stat.st_uid != os.geteuid():
+            raise OSError("Skill publication lock root has an unexpected owner")
+        os.chmod(lock_root, 0o700)
+        lock_key = _skill_mutation_key(skills_dir, skill_name)
+        flags = os.O_CREAT | os.O_RDWR
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(lock_root / f"{lock_key}.lock", flags, 0o600)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Skill publication lock is unavailable",
+        ) from exc
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _skill_exists_conflict(skill_name: str) -> HTTPException:
+    """Return the stable wire error for create-if-absent conflicts."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "skill_already_exists",
+            "name": skill_name,
+            "message": f"Skill '{skill_name}' already exists",
+        },
+    )
+
+
+def _skill_mutation_state_path(skills_dir: Path, skill_name: str) -> Path:
+    """Return a root-owned durable restore-fence record for one scoped slug."""
+    root = (
+        Path(SKILL_MUTATION_STATE_DIR)
+        if SKILL_MUTATION_STATE_DIR
+        else SKILLS_DIR.parent / ".openbox-skill-mutations"
+    )
+    try:
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if root.is_symlink() or not root.is_dir():
+            raise OSError("Skill mutation state root is not a directory")
+        root_stat = root.stat()
+        if root_stat.st_uid != os.geteuid():
+            raise OSError("Skill mutation state root has an unexpected owner")
+        os.chmod(root, 0o700)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Skill mutation state is unavailable",
+        ) from exc
+    return root / f"{_skill_mutation_key(skills_dir, skill_name)}.json"
+
+
+def _skill_restore_fence_generation(skills_dir: Path, skill_name: str) -> int:
+    state_path = _skill_mutation_state_path(skills_dir, skill_name)
+    if not state_path.exists():
+        return 0
+    try:
+        if state_path.is_symlink():
+            raise OSError("Skill mutation state cannot be a symlink")
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        generation = payload.get("fenced_through_generation")
+        if not isinstance(generation, int) or generation < 0:
+            raise ValueError("invalid Skill mutation generation")
+        return generation
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        # Corrupt fencing state must fail closed; treating it as generation 1
+        # could allow an already-deleted snapshot to recreate the package.
+        raise HTTPException(
+            status_code=503,
+            detail="Skill mutation state is invalid",
+        ) from exc
+
+
+def _advance_skill_restore_generation(
+    skills_dir: Path,
+    skill_name: str,
+    generation: int,
+) -> int:
+    current = _skill_restore_fence_generation(skills_dir, skill_name)
+    advanced = max(current, generation)
+    if advanced == current:
+        return current
+    state_path = _skill_mutation_state_path(skills_dir, skill_name)
+    temporary = state_path.parent / f".{state_path.name}.{secrets.token_hex(6)}.tmp"
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump({"fenced_through_generation": advanced}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, state_path)
+        os.chmod(state_path, 0o600)
+        directory_fd = os.open(
+            state_path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Skill mutation state could not be persisted",
+        ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+    return advanced
+
+
+def _skill_restore_fenced_conflict(
+    skill_name: str,
+    fenced_through_generation: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "skill_restore_fenced",
+            "name": skill_name,
+            "fenced_through_generation": fenced_through_generation,
+            "message": "A newer durable uninstall fenced this Skill restore",
+        },
+    )
+
+
+def _publish_skill_staging(
+    skills_dir: Path,
+    skill_name: str,
+    staging: Path,
+    *,
+    create_only: bool,
+    restore_generation: int | None = None,
+) -> Path:
+    """Atomically publish a validated staging directory under one name lock."""
+    target = skills_dir / skill_name
+    with _skill_publish_lock(skills_dir, skill_name):
+        if restore_generation is not None:
+            fenced_through_generation = _skill_restore_fence_generation(
+                skills_dir,
+                skill_name,
+            )
+            if restore_generation <= fenced_through_generation:
+                raise _skill_restore_fenced_conflict(
+                    skill_name,
+                    fenced_through_generation,
+                )
+        if create_only and (target.exists() or target.is_symlink()):
+            # This branch is deliberately non-destructive. In particular, it
+            # must never share the explicit-update rmtree below.
+            raise _skill_exists_conflict(skill_name)
+        if not create_only and target.exists():
+            shutil.rmtree(target)
+        try:
+            staging.replace(target)
+        except OSError as exc:
+            # Defence in depth for a non-cooperating writer. All Action Server
+            # upload workers take the lock, but create-only still fails closed
+            # if another process creates the target by some other route.
+            if create_only and (target.exists() or target.is_symlink()):
+                raise _skill_exists_conflict(skill_name) from exc
+            raise
+    return target
 
 
 def _safe_skill_name(name: str) -> str:
@@ -1356,10 +2270,11 @@ def _safe_skill_name(name: str) -> str:
         raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
     if "/" in cleaned or "\\" in cleaned or "\x00" in cleaned:
         raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
-    # Belt and braces: confirm the join really lands inside the skills tree.
+    # Belt and braces: confirm the join really lands inside this tenant's tree.
+    skills_dir = _scoped_skill_root()
     try:
-        resolved = (SKILLS_DIR / cleaned).resolve()
-        if not resolved.is_relative_to(SKILLS_DIR.resolve()):
+        resolved = (skills_dir / cleaned).resolve()
+        if not resolved.is_relative_to(skills_dir.resolve()):
             raise HTTPException(status_code=400, detail=f"Invalid skill name: {name!r}")
     except HTTPException:
         raise
@@ -1395,9 +2310,10 @@ def _run_skill_install_script(target: Path) -> str:
         return ""
     try:
         result = subprocess.run(
-            ["bash", str(install_sh)],
+            _runner_argv(["bash", str(install_sh)]),
             capture_output=True, text=True, timeout=120,
             cwd=str(target),
+            env=_runner_env(),
         )
         log = result.stdout + result.stderr
         if result.returncode != 0:
@@ -1439,6 +2355,19 @@ _CREATED_SKILL_MAX_TOTAL_BYTES = 2 * 1024 * 1024
 _CREATED_SKILL_MAX_PATH_BYTES = 240
 _SKILL_ARCHIVE_MAX_FILES = 1_000
 _SKILL_ARCHIVE_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+_SKILL_ARCHIVE_POLICY_VERSION = "bounded-zip-v1"
+_SKILL_ARCHIVE_MAX_COMPRESSED_BYTES = 50 * 1024 * 1024
+_SKILL_ARCHIVE_MAX_FILE_BYTES = 10 * 1024 * 1024
+_SKILL_ARCHIVE_MAX_RATIO = 200
+_SKILL_ARCHIVE_RATIO_MIN_BYTES = 1024 * 1024
+_SKILL_ARCHIVE_MAX_PATH_BYTES = 512
+_SKILL_ARCHIVE_MAX_DEPTH = 32
+_SKILL_ARCHIVE_READ_CHUNK_BYTES = 64 * 1024
+_SKILL_ARCHIVE_ALLOWED_COMPRESSION = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+_SKILL_ARCHIVE_EOCD_SIGNATURE = b"PK\x05\x06"
+_SKILL_ARCHIVE_CENTRAL_FILE_SIGNATURE = b"PK\x01\x02"
+_SKILL_ARCHIVE_EOCD_FIXED_BYTES = 22
+_SKILL_ARCHIVE_CENTRAL_FILE_FIXED_BYTES = 46
 _STRICT_SKILL_SLUG = _re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 _SECRET_SKILL_FILENAMES = {
@@ -1464,6 +2393,462 @@ _SECRET_SKILL_STEMS = {
     "service-account", "token", "tokens",
 }
 _SECRET_SKILL_DIRNAMES = {"credentials", "keys", "private-keys", "secrets"}
+
+
+def _skill_archive_reject(code: str, message: str, *, status_code: int = 400) -> None:
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
+    )
+
+
+def _preflight_skill_zip_central_directory(content: bytes) -> None:
+    """Bound raw central records before ``zipfile`` creates ZipInfo objects."""
+    search_start = max(
+        0,
+        len(content) - (_SKILL_ARCHIVE_EOCD_FIXED_BYTES + 0xFFFF),
+    )
+    search_end = len(content)
+    eocd_offset = -1
+    while search_end > search_start:
+        candidate = content.rfind(
+            _SKILL_ARCHIVE_EOCD_SIGNATURE,
+            search_start,
+            search_end,
+        )
+        if candidate < 0:
+            break
+        if candidate + _SKILL_ARCHIVE_EOCD_FIXED_BYTES <= len(content):
+            comment_size = struct.unpack_from("<H", content, candidate + 20)[0]
+            if candidate + _SKILL_ARCHIVE_EOCD_FIXED_BYTES + comment_size == len(content):
+                eocd_offset = candidate
+                break
+        search_end = candidate
+    if eocd_offset < 0:
+        _skill_archive_reject(
+            "invalid_zip",
+            "Skill ZIP has no valid end-of-directory record",
+        )
+
+    (
+        _signature,
+        disk_number,
+        central_disk,
+        entries_on_disk,
+        total_entries,
+        central_size,
+        central_offset,
+        _comment_size,
+    ) = struct.unpack_from("<4s4H2LH", content, eocd_offset)
+    if disk_number != 0 or central_disk != 0 or entries_on_disk != total_entries:
+        _skill_archive_reject("multi_disk", "Multi-disk Skill ZIPs are not supported")
+    if (
+        total_entries == 0xFFFF
+        or central_size == 0xFFFFFFFF
+        or central_offset == 0xFFFFFFFF
+    ):
+        _skill_archive_reject("zip64", "ZIP64 Skill archives are not supported")
+    if total_entries > _SKILL_ARCHIVE_MAX_FILES:
+        _skill_archive_reject("too_many_entries", "Skill ZIP contains too many entries")
+
+    concatenated_prefix = eocd_offset - central_size - central_offset
+    central_start = central_offset + concatenated_prefix
+    central_end = central_start + central_size
+    if central_start < 0 or central_end != eocd_offset:
+        _skill_archive_reject(
+            "invalid_zip",
+            "Skill ZIP central directory has invalid bounds",
+        )
+    count = 0
+    cursor = central_start
+    while cursor < central_end:
+        if (
+            cursor + _SKILL_ARCHIVE_CENTRAL_FILE_FIXED_BYTES > central_end
+            or content[cursor : cursor + 4] != _SKILL_ARCHIVE_CENTRAL_FILE_SIGNATURE
+        ):
+            _skill_archive_reject(
+                "invalid_zip",
+                "Skill ZIP central directory is malformed",
+            )
+        name_size, extra_size, comment_size = struct.unpack_from(
+            "<3H", content, cursor + 28
+        )
+        if name_size > _SKILL_ARCHIVE_MAX_PATH_BYTES:
+            _skill_archive_reject(
+                "path_too_long",
+                "Skill ZIP path exceeds the safety limit",
+            )
+        cursor += (
+            _SKILL_ARCHIVE_CENTRAL_FILE_FIXED_BYTES
+            + name_size
+            + extra_size
+            + comment_size
+        )
+        if cursor > central_end:
+            _skill_archive_reject(
+                "invalid_zip",
+                "Skill ZIP central directory is truncated",
+            )
+        count += 1
+        if count > _SKILL_ARCHIVE_MAX_FILES:
+            _skill_archive_reject(
+                "too_many_entries",
+                "Skill ZIP contains too many entries",
+            )
+    if cursor != central_end or count != total_entries:
+        _skill_archive_reject(
+            "invalid_zip",
+            "Skill ZIP central-directory count is inconsistent",
+        )
+
+
+def _safe_skill_archive_parts(name: str) -> tuple[str, ...]:
+    """Return one unambiguous relative archive path or reject the package."""
+    if not isinstance(name, str) or not name or "\x00" in name:
+        _skill_archive_reject("unsafe_path", "Skill archive contains an invalid path")
+    if "\\" in name or name.startswith("/"):
+        _skill_archive_reject(
+            "unsafe_path",
+            "Skill archive paths must be relative POSIX paths",
+        )
+    try:
+        encoded_size = len(name.encode("utf-8"))
+    except UnicodeEncodeError:
+        _skill_archive_reject("unsafe_path", "Skill archive path is not valid UTF-8 text")
+    if encoded_size > _SKILL_ARCHIVE_MAX_PATH_BYTES:
+        _skill_archive_reject("path_too_long", "Skill archive path exceeds the safety limit")
+
+    raw_parts = name.split("/")
+    if raw_parts[-1] == "":
+        raw_parts = raw_parts[:-1]
+    if not raw_parts or any(part in {"", ".", ".."} for part in raw_parts):
+        _skill_archive_reject("unsafe_path", "Skill archive contains an ambiguous path")
+    if len(raw_parts) > _SKILL_ARCHIVE_MAX_DEPTH:
+        _skill_archive_reject("path_too_deep", "Skill archive nesting exceeds the safety limit")
+    if raw_parts[0].endswith(":"):
+        _skill_archive_reject("unsafe_path", "Skill archive contains a drive-qualified path")
+
+    normalized = tuple(unicodedata.normalize("NFC", part) for part in raw_parts)
+    if tuple(raw_parts) != normalized:
+        _skill_archive_reject(
+            "ambiguous_path",
+            "Skill archive paths must use NFC Unicode normalization",
+        )
+    if PurePosixPath(*normalized).as_posix() != "/".join(normalized):
+        _skill_archive_reject("unsafe_path", "Skill archive contains an ambiguous path")
+    return normalized
+
+
+def _register_skill_archive_member(
+    seen: dict[str, str],
+    explicit: set[str],
+    parts: tuple[str, ...],
+    *,
+    is_dir: bool,
+) -> None:
+    """Reject duplicates and order-independent file/directory collisions."""
+    keys = ["/".join(parts[:index]).casefold() for index in range(1, len(parts) + 1)]
+    key = keys[-1]
+    if key in explicit:
+        _skill_archive_reject("duplicate_path", "Skill archive contains a duplicate path")
+    for parent in keys[:-1]:
+        if seen.get(parent) == "file":
+            _skill_archive_reject(
+                "path_collision",
+                "Skill archive path traverses an archived file",
+            )
+        seen.setdefault(parent, "dir")
+    kind = "dir" if is_dir else "file"
+    existing = seen.get(key)
+    if existing is not None and existing != kind:
+        _skill_archive_reject(
+            "path_collision",
+            "Skill archive contains a file/directory collision",
+        )
+    if not is_dir and any(candidate.startswith(key + "/") for candidate in seen):
+        _skill_archive_reject(
+            "path_collision",
+            "Skill archive file shadows an archived directory",
+        )
+    seen[key] = kind
+    explicit.add(key)
+
+
+def _preflight_skill_zip(
+    zf: zipfile.ZipFile,
+) -> tuple[list[tuple[zipfile.ZipInfo, tuple[str, ...]]], int]:
+    infos = zf.infolist()
+    if not infos:
+        _skill_archive_reject("empty_archive", "Skill ZIP is empty")
+    if len(infos) > _SKILL_ARCHIVE_MAX_FILES:
+        _skill_archive_reject("too_many_entries", "Skill ZIP contains too many entries")
+
+    seen: dict[str, str] = {}
+    explicit: set[str] = set()
+    members: list[tuple[zipfile.ZipInfo, tuple[str, ...]]] = []
+    total_size = 0
+    total_compressed = 0
+    regular_files = 0
+    for info in infos:
+        if info.orig_filename != info.filename:
+            _skill_archive_reject(
+                "unsafe_path",
+                "Skill ZIP path contains a NUL byte",
+            )
+        is_dir = info.is_dir()
+        parts = _safe_skill_archive_parts(info.filename)
+        _register_skill_archive_member(seen, explicit, parts, is_dir=is_dir)
+        if len(seen) > _SKILL_ARCHIVE_MAX_FILES:
+            _skill_archive_reject(
+                "too_many_entries",
+                "Skill ZIP expands to too many filesystem entries",
+            )
+
+        if info.flag_bits & 0x1:
+            _skill_archive_reject("encrypted_entry", "Encrypted Skill ZIP entries are not supported")
+        if info.compress_type not in _SKILL_ARCHIVE_ALLOWED_COMPRESSION:
+            _skill_archive_reject(
+                "unsupported_compression",
+                "Skill ZIP uses an unsupported compression method",
+            )
+        unix_mode = (info.external_attr >> 16) & 0xFFFF
+        file_type = stat.S_IFMT(unix_mode)
+        if info.create_system == 3:
+            if is_dir and file_type not in {0, stat.S_IFDIR}:
+                _skill_archive_reject(
+                    "special_entry",
+                    "Skill ZIP directory has an unsafe file type",
+                )
+            if not is_dir and file_type not in {0, stat.S_IFREG}:
+                _skill_archive_reject(
+                    "special_entry",
+                    "Skill ZIP links and special files are not allowed",
+                )
+        if is_dir:
+            if info.file_size != 0:
+                _skill_archive_reject(
+                    "invalid_directory",
+                    "Skill ZIP directory carries file data",
+                )
+            members.append((info, parts))
+            continue
+
+        regular_files += 1
+        if info.file_size < 0 or info.compress_size < 0:
+            _skill_archive_reject("invalid_size", "Skill ZIP contains an invalid entry size")
+        if info.file_size > _SKILL_ARCHIVE_MAX_FILE_BYTES:
+            _skill_archive_reject(
+                "file_too_large",
+                "Skill ZIP contains a file that exceeds the safety limit",
+                status_code=413,
+            )
+        total_size += info.file_size
+        total_compressed += info.compress_size
+        if total_size > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
+            _skill_archive_reject(
+                "archive_too_large",
+                "Skill ZIP expands beyond the total safety limit",
+                status_code=413,
+            )
+        if (
+            info.file_size >= _SKILL_ARCHIVE_RATIO_MIN_BYTES
+            and (
+                info.compress_size == 0
+                or info.file_size > info.compress_size * _SKILL_ARCHIVE_MAX_RATIO
+            )
+        ):
+            _skill_archive_reject(
+                "compression_ratio",
+                "Skill ZIP entry has an unsafe compression ratio",
+                status_code=413,
+            )
+        members.append((info, parts))
+
+    if regular_files == 0:
+        _skill_archive_reject("empty_archive", "Skill ZIP contains no regular files")
+    if (
+        total_size >= _SKILL_ARCHIVE_RATIO_MIN_BYTES
+        and (
+            total_compressed == 0
+            or total_size > total_compressed * _SKILL_ARCHIVE_MAX_RATIO
+        )
+    ):
+        _skill_archive_reject(
+            "compression_ratio",
+            "Skill ZIP has an unsafe aggregate compression ratio",
+            status_code=413,
+        )
+    return members, total_size
+
+
+def _extract_bounded_skill_zip(content: bytes, destination_root: Path) -> None:
+    """Preflight, CRC-check, and stream one ZIP into a new private directory."""
+    if len(content) > _SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+        _skill_archive_reject(
+            "compressed_too_large",
+            "Skill ZIP exceeds the compressed size limit",
+            status_code=413,
+        )
+    try:
+        _preflight_skill_zip_central_directory(content)
+        with zipfile.ZipFile(BytesIO(content), mode="r") as zf:
+            members, expected_total = _preflight_skill_zip(zf)
+            actual_total = 0
+            for info, parts in members:
+                destination = destination_root.joinpath(*parts)
+                if info.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                actual_file = 0
+                with zf.open(info, mode="r") as source, destination.open("xb") as output:
+                    while chunk := source.read(_SKILL_ARCHIVE_READ_CHUNK_BYTES):
+                        actual_file += len(chunk)
+                        actual_total += len(chunk)
+                        if actual_file > _SKILL_ARCHIVE_MAX_FILE_BYTES:
+                            _skill_archive_reject(
+                                "file_too_large",
+                                "Skill ZIP stream exceeds the per-file limit",
+                                status_code=413,
+                            )
+                        if actual_total > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
+                            _skill_archive_reject(
+                                "archive_too_large",
+                                "Skill ZIP stream exceeds the total limit",
+                                status_code=413,
+                            )
+                        output.write(chunk)
+                if actual_file != info.file_size:
+                    _skill_archive_reject(
+                        "size_mismatch",
+                        "Skill ZIP entry size does not match its directory record",
+                    )
+            if actual_total != expected_total:
+                _skill_archive_reject(
+                    "size_mismatch",
+                    "Skill ZIP total size does not match its directory record",
+                )
+    except HTTPException:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, zlib.error):
+        _skill_archive_reject(
+            "invalid_zip",
+            "Skill ZIP is corrupt or cannot be safely decoded",
+        )
+
+
+def _preflight_skill_tar(
+    tf: tarfile.TarFile,
+    *,
+    compressed_bytes: int,
+    compressed: bool,
+) -> list[tarfile.TarInfo]:
+    """Bound a TAR before extraction and reject all links/special entries."""
+    members: list[tarfile.TarInfo] = []
+    seen: dict[str, str] = {}
+    explicit: set[str] = set()
+    total_size = 0
+    regular_files = 0
+    for member in tf:
+        members.append(member)
+        if len(members) > _SKILL_ARCHIVE_MAX_FILES:
+            _skill_archive_reject(
+                "too_many_entries",
+                "Skill archive contains too many entries",
+            )
+        is_dir = member.isdir()
+        parts = _safe_skill_archive_parts(member.name + ("/" if is_dir and not member.name.endswith("/") else ""))
+        _register_skill_archive_member(seen, explicit, parts, is_dir=is_dir)
+        if len(seen) > _SKILL_ARCHIVE_MAX_FILES:
+            _skill_archive_reject(
+                "too_many_entries",
+                "Skill archive expands to too many filesystem entries",
+            )
+        if is_dir:
+            continue
+        if not member.isfile():
+            _skill_archive_reject(
+                "special_entry",
+                "Skill archive links and special files are not allowed",
+            )
+        regular_files += 1
+        if member.size < 0 or member.size > _SKILL_ARCHIVE_MAX_FILE_BYTES:
+            _skill_archive_reject(
+                "file_too_large",
+                "Skill archive contains a file that exceeds the safety limit",
+                status_code=413,
+            )
+        total_size += member.size
+        if total_size > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
+            _skill_archive_reject(
+                "archive_too_large",
+                "Skill archive expands beyond the total safety limit",
+                status_code=413,
+            )
+    if not members or regular_files == 0:
+        _skill_archive_reject("empty_archive", "Skill archive contains no regular files")
+    if (
+        compressed
+        and total_size >= _SKILL_ARCHIVE_RATIO_MIN_BYTES
+        and (
+            compressed_bytes == 0
+            or total_size > compressed_bytes * _SKILL_ARCHIVE_MAX_RATIO
+        )
+    ):
+        _skill_archive_reject(
+            "compression_ratio",
+            "Skill archive has an unsafe compression ratio",
+            status_code=413,
+        )
+    return members
+
+
+def _validate_extracted_skill_tree(root: Path) -> tuple[int, int]:
+    """Postcondition for legacy extractors: only a bounded regular tree survives."""
+    entries = 0
+    total_size = 0
+    seen: dict[str, str] = {}
+    explicit: set[str] = set()
+    for current, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in sorted(dirnames):
+            path = current_path / name
+            if path.is_symlink():
+                _skill_archive_reject("special_entry", "Skill archive links are not allowed")
+            parts = _safe_skill_archive_parts(path.relative_to(root).as_posix() + "/")
+            _register_skill_archive_member(seen, explicit, parts, is_dir=True)
+            entries += 1
+        for name in sorted(filenames):
+            path = current_path / name
+            entry_stat = path.lstat()
+            if not stat.S_ISREG(entry_stat.st_mode):
+                _skill_archive_reject(
+                    "special_entry",
+                    "Skill archive special files are not allowed",
+                )
+            parts = _safe_skill_archive_parts(path.relative_to(root).as_posix())
+            _register_skill_archive_member(seen, explicit, parts, is_dir=False)
+            entries += 1
+            if entry_stat.st_size > _SKILL_ARCHIVE_MAX_FILE_BYTES:
+                _skill_archive_reject(
+                    "file_too_large",
+                    "Skill archive contains a file that exceeds the safety limit",
+                    status_code=413,
+                )
+            total_size += entry_stat.st_size
+            if total_size > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
+                _skill_archive_reject(
+                    "archive_too_large",
+                    "Skill archive expands beyond the total safety limit",
+                    status_code=413,
+                )
+        if entries > _SKILL_ARCHIVE_MAX_FILES:
+            _skill_archive_reject(
+                "too_many_entries",
+                "Skill archive contains too many entries",
+                status_code=413,
+            )
+    return entries, total_size
 
 
 def _strict_skill_slug(name: str) -> str:
@@ -1666,9 +3051,10 @@ def _ensure_skill_symlinks() -> None:
 
     This makes paths like "skills/ui-ux-pro-max/scripts/search.py" work from /workspace/.
     """
-    if not SKILLS_DIR.exists():
+    skills_dir = _scoped_skill_root()
+    if not skills_dir.exists():
         return
-    for skill_dir in SKILLS_DIR.iterdir():
+    for skill_dir in skills_dir.iterdir():
         if not skill_dir.is_dir():
             continue
         for skill_md in _find_skill_mds(skill_dir):
@@ -1677,7 +3063,7 @@ def _ensure_skill_symlinks() -> None:
             skill_name = meta.get("name") or skill_data_dir.name
             # If the name differs from the install dir, create a convenience symlink
             if skill_name != skill_dir.name:
-                link_path = SKILLS_DIR / skill_name
+                link_path = skills_dir / skill_name
                 if not link_path.exists():
                     try:
                         link_path.symlink_to(skill_data_dir)
@@ -1799,7 +3185,7 @@ def _scan_skills() -> list[dict]:
     If same name exists in both, user version takes precedence.
     """
     builtin = _scan_skills_in_dir(BUILTIN_SKILLS_DIR, source="builtin")
-    user = _scan_skills_in_dir(SKILLS_DIR, source="container")
+    user = _scan_skills_in_dir(_scoped_skill_root(), source="container")
 
     # Merge: user skills take precedence over builtin with same name
     seen_names = set()
@@ -1928,7 +3314,7 @@ def _catalogue_json_response(request: Request, payload, generation: str) -> Resp
 def _user_skill_directory(name: str) -> tuple[str, Path]:
     """Resolve a chat-created user skill, never a builtin or alias."""
     skill_name = _strict_skill_slug(name)
-    target = SKILLS_DIR / skill_name
+    target = _scoped_skill_root() / skill_name
     skill_md = target / "SKILL.md"
     if (
         target.is_symlink()
@@ -1960,6 +3346,8 @@ def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
     target_root = target.resolve()
     files: list[tuple[Path, bytes]] = []
     total_size = 0
+    # Every stored filename is prefixed with the implicit top-level Skill dir.
+    tree_entries = 1
 
     for current, dirnames, filenames in os.walk(target, topdown=True, followlinks=False):
         current_path = Path(current)
@@ -1970,6 +3358,9 @@ def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
             if child.is_symlink() or _skip_skill_archive_path(relative):
                 continue
             kept_dirs.append(dirname)
+            tree_entries += 1
+            if tree_entries > _SKILL_ARCHIVE_MAX_FILES:
+                raise HTTPException(status_code=413, detail="Skill contains too many entries to archive")
         dirnames[:] = kept_dirs
 
         for filename in sorted(filenames):
@@ -1996,14 +3387,17 @@ def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
                 if not stat.S_ISREG(file_stat.st_mode):
                     continue
                 size = file_stat.st_size
-                if len(files) + 1 > _SKILL_ARCHIVE_MAX_FILES:
-                    raise HTTPException(status_code=413, detail="Skill contains too many files to archive")
+                tree_entries += 1
+                if tree_entries > _SKILL_ARCHIVE_MAX_FILES:
+                    raise HTTPException(status_code=413, detail="Skill contains too many entries to archive")
+                if size > _SKILL_ARCHIVE_MAX_FILE_BYTES:
+                    raise HTTPException(status_code=413, detail="Skill contains a file that is too large to archive")
                 if total_size + size > _SKILL_ARCHIVE_MAX_TOTAL_BYTES:
                     raise HTTPException(status_code=413, detail="Skill is too large to archive")
                 with os.fdopen(descriptor, "rb", closefd=True) as input_file:
                     descriptor = None
                     content = input_file.read(size + 1)
-                if len(content) > size:
+                if len(content) != size:
                     raise HTTPException(status_code=409, detail="Skill changed while it was being archived")
             except OSError:
                 continue
@@ -2026,11 +3420,26 @@ def _skill_archive_bytes(name: str) -> tuple[str, bytes]:
             # unchanged files twice must yield the same checksum, otherwise a
             # harmless download looks like a new unpublished version.
             entry = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
-            entry.compress_type = zipfile.ZIP_DEFLATED
+            compressed = zlib.compress(content, 6)
+            entry.compress_type = (
+                zipfile.ZIP_STORED
+                if len(content) >= _SKILL_ARCHIVE_RATIO_MIN_BYTES
+                and len(content) > max(1, len(compressed)) * _SKILL_ARCHIVE_MAX_RATIO
+                else zipfile.ZIP_DEFLATED
+            )
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
             bundle.writestr(entry, content, compresslevel=6)
-    return skill_name, archive.getvalue()
+    result = archive.getvalue()
+    if len(result) > _SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+        raise HTTPException(status_code=413, detail="Skill archive exceeds the compressed size limit")
+    # The producer must never emit a snapshot that its restore path rejects.
+    # Reuse both bounded directory preflights before persistence; CRC streaming
+    # is unnecessary here because these bytes were generated in this process.
+    _preflight_skill_zip_central_directory(result)
+    with zipfile.ZipFile(BytesIO(result), mode="r") as bundle:
+        _preflight_skill_zip(bundle)
+    return skill_name, result
 
 
 @app.get("/skills")
@@ -2055,12 +3464,11 @@ async def create_skill(req: CreateSkillRequest):
     if total_size > _CREATED_SKILL_MAX_TOTAL_BYTES:
         raise HTTPException(status_code=400, detail="Skill package is too large")
 
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    target = SKILLS_DIR / skill_name
-    if target.exists() or target.is_symlink():
-        raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+    skills_dir = _scoped_skill_root()
+    _ensure_runner_directory(skills_dir)
+    target = skills_dir / skill_name
 
-    staging = SKILLS_DIR / f".{skill_name}.{secrets.token_hex(6)}.incoming"
+    staging = skills_dir / f".{skill_name}.{secrets.token_hex(6)}.incoming"
     try:
         staging.mkdir(mode=0o700)
         (staging / "SKILL.md").write_text(req.skill_md, encoding="utf-8")
@@ -2069,27 +3477,30 @@ async def create_skill(req: CreateSkillRequest):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8")
 
-        # The staging directory lives beside the destination, so rename is an
-        # atomic publication of a completely validated package. Creation never
-        # overwrites an existing install.
-        staging.replace(target)
-    except FileExistsError:
-        raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+        _chown_runner_tree(staging)
+
+        target = _publish_skill_staging(
+            skills_dir,
+            skill_name,
+            staging,
+            create_only=True,
+        )
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
     created = next(
         (
-            skill for skill in _scan_skills_in_dir(SKILLS_DIR, source="container")
+            skill for skill in _scan_skills_in_dir(skills_dir, source="container")
             if skill.get("install_dir") == skill_name and skill.get("name") == skill_name
         ),
         None,
     )
     if not created:
         # This should be unreachable because the request was validated before
-        # publication, but do not report success for an undiscoverable skill.
-        shutil.rmtree(target, ignore_errors=True)
+        # publication. Do not delete here: a concurrent explicit update may
+        # have legitimately replaced this generation after the name lock was
+        # released, and cleanup must never remove that newer package.
         raise HTTPException(status_code=500, detail="Created skill could not be discovered")
     return {**created, "created": True}
 
@@ -2123,15 +3534,16 @@ async def download_skill_archive(name: str):
 async def export_skill_archive(name: str):
     """Write a clean ZIP snapshot into the user's workspace exports folder."""
     skill_name, content = _skill_archive_bytes(name)
-    if SKILL_EXPORTS_DIR.is_symlink():
+    exports_dir = _scoped_export_root()
+    if exports_dir.is_symlink():
         raise HTTPException(status_code=400, detail="Skill export directory cannot be a symlink")
-    SKILL_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    if not SKILL_EXPORTS_DIR.is_dir():
+    _ensure_runner_directory(exports_dir)
+    if not exports_dir.is_dir():
         raise HTTPException(status_code=500, detail="Skill export directory is unavailable")
 
     filename = f"{skill_name}.zip"
-    destination = SKILL_EXPORTS_DIR / filename
-    staging = SKILL_EXPORTS_DIR / f".{filename}.{secrets.token_hex(6)}.tmp"
+    destination = exports_dir / filename
+    staging = exports_dir / f".{filename}.{secrets.token_hex(6)}.tmp"
     try:
         with staging.open("xb") as output:
             output.write(content)
@@ -2148,7 +3560,8 @@ async def export_skill_archive(name: str):
 @app.post("/skills/install")
 async def install_skill(req: InstallSkillRequest):
     """Install a skill from URL (git clone) or from pasted content."""
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    skills_dir = _scoped_skill_root()
+    _ensure_runner_directory(skills_dir)
 
     install_log = ""
 
@@ -2163,23 +3576,24 @@ async def install_skill(req: InstallSkillRequest):
                 url_path = url_path[:-4]
             skill_name = url_path.split("/")[-1] or "unnamed-skill"
         skill_name = _safe_skill_name(skill_name)
-        target = SKILLS_DIR / skill_name
+        target = skills_dir / skill_name
         # Clone into a staging directory and swap it in only once it is whole.
         # Removing the old copy up front meant a failed clone left the user with
         # neither the new skill nor the one they already had.
-        staging = SKILLS_DIR / f".{skill_name}.incoming"
+        staging = skills_dir / f".{skill_name}.{secrets.token_hex(6)}.incoming"
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         try:
             result = subprocess.run(
-                [
+                _runner_argv([
                     "git",
                     # ext:: hands the URL to a shell; no skill install needs it.
                     "-c", "protocol.ext.allow=never",
                     "-c", "protocol.file.allow=never",
                     "clone", "--depth=1", "--", url, str(staging),
-                ],
+                ]),
                 capture_output=True, text=True, timeout=60,
+                env=_runner_env(),
             )
             if result.returncode != 0:
                 shutil.rmtree(staging, ignore_errors=True)
@@ -2194,9 +3608,13 @@ async def install_skill(req: InstallSkillRequest):
             if not _find_skill_mds(staging):
                 shutil.rmtree(staging, ignore_errors=True)
                 raise HTTPException(status_code=400, detail="No SKILL.md found after install")
-            if target.exists():
-                shutil.rmtree(target)
-            staging.replace(target)
+            _chown_runner_tree(staging)
+            target = _publish_skill_staging(
+                skills_dir,
+                skill_name,
+                staging,
+                create_only=False,
+            )
         except subprocess.TimeoutExpired:
             shutil.rmtree(staging, ignore_errors=True)
             raise HTTPException(status_code=504, detail="git clone timed out")
@@ -2214,9 +3632,11 @@ async def install_skill(req: InstallSkillRequest):
             meta = _parse_skill_frontmatter(req.content)
             skill_name = meta.get("name") or "unnamed-skill"
         skill_name = _safe_skill_name(skill_name)
-        target = SKILLS_DIR / skill_name
-        target.mkdir(parents=True, exist_ok=True)
-        (target / "SKILL.md").write_text(req.content, encoding="utf-8")
+        target = skills_dir / skill_name
+        with _skill_publish_lock(skills_dir, skill_name):
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "SKILL.md").write_text(req.content, encoding="utf-8")
+            _chown_runner_tree(target)
     else:
         raise HTTPException(status_code=400, detail="Provide either 'url' or 'content'")
 
@@ -2246,16 +3666,21 @@ async def install_skill(req: InstallSkillRequest):
 
 
 @app.post("/skills/upload")
-async def upload_skill_archive(file: UploadFile = File(...), name: str = Form("")):
-    """Install a skill from an uploaded archive (zip/tar/tar.gz/tgz/rar).
+async def upload_skill_archive(
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    create_only: bool = Form(False),
+    restore_generation: int | None = Form(None),
+):
+    """Install a bounded skill archive (zip/tar/tar.gz/tgz/rar).
 
-    Extracts the archive, validates it contains SKILL.md in a standard layout,
-    and installs to /data/skills/{name}/.
+    Every native archive is preflighted before extraction. ZIPs are then
+    decoded member-by-member with an independently enforced byte budget; this
+    keeps automatic personal-Skill restore safe even if a durable snapshot or
+    a caller has forged its central directory.
     """
-    import zipfile
-    import tarfile
-
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    skills_dir = _scoped_skill_root()
+    _ensure_runner_directory(skills_dir)
 
     filename = file.filename or "archive"
     ext = filename.lower()
@@ -2272,10 +3697,16 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported archive format: {filename}. Use zip, tar, tar.gz, tgz, or rar.")
 
-    # Read file content
-    content_bytes = await file.read()
-    if len(content_bytes) > 50 * 1024 * 1024:  # 50MB limit
-        raise HTTPException(status_code=400, detail="Archive too large (max 50MB)")
+    # Read at most one byte beyond the wire budget. UploadFile is disk-spooled,
+    # but an unbounded read would still copy an attacker-controlled body into
+    # the Action Server process before the old size check ran.
+    content_bytes = await file.read(_SKILL_ARCHIVE_MAX_COMPRESSED_BYTES + 1)
+    if len(content_bytes) > _SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+        _skill_archive_reject(
+            "compressed_too_large",
+            "Skill archive exceeds the compressed size limit",
+            status_code=413,
+        )
 
     # Determine skill name
     skill_name = name.strip() if name.strip() else filename.rsplit(".", 1)[0]
@@ -2286,56 +3717,81 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
     # Both the explicit name and the uploaded filename are caller-controlled and
     # end up joined onto SKILLS_DIR, where the existing copy is rmtree'd.
     skill_name = _safe_skill_name(skill_name)
+    if restore_generation is not None and (
+        not create_only or restore_generation < 1
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="restore_generation requires create_only and must be positive",
+        )
 
     # Extract to temp dir first for validation
-    tmp_dir = Path(f"/tmp/skill_upload_{skill_name}_{os.getpid()}")
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
+    scope_label = _current_user_scope() or "legacy"
+    tmp_dir = Path("/tmp") / (
+        f"skill_upload_{scope_label}_{skill_name}_{secrets.token_hex(6)}"
+    )
     tmp_dir.mkdir(parents=True)
 
+    staging: Path | None = None
     try:
         # Extract archive
         if archive_type == "zip":
-            import io
-            with zipfile.ZipFile(io.BytesIO(content_bytes)) as zf:
-                # Security: check for path traversal
-                for member in zf.namelist():
-                    if ".." in member or member.startswith("/"):
-                        raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member}")
-                zf.extractall(tmp_dir)
+            _extract_bounded_skill_zip(content_bytes, tmp_dir)
 
         elif archive_type in ("tar", "tar.gz"):
-            import io
             mode = "r:gz" if archive_type == "tar.gz" else "r:"
-            with tarfile.open(fileobj=io.BytesIO(content_bytes), mode=mode) as tf:
-                # Security: check for path traversal
-                for member in tf.getmembers():
-                    if ".." in member.name or member.name.startswith("/"):
-                        raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member.name}")
-                # The name check above cannot see a link escape: an archive can
-                # carry `link -> /` and then `link/etc/x`, and no member name
-                # contains "..". filter="data" is what refuses absolute and
-                # upward links, plus devices and setuid bits, during extraction.
-                try:
-                    tf.extractall(tmp_dir, filter="data")
-                except tarfile.TarError as e:
-                    raise HTTPException(status_code=400, detail=f"Unsafe archive rejected: {e}")
+            try:
+                with tarfile.open(fileobj=BytesIO(content_bytes), mode=mode) as tf:
+                    tar_members = _preflight_skill_tar(
+                        tf,
+                        compressed_bytes=len(content_bytes),
+                        compressed=archive_type == "tar.gz",
+                    )
+                    # filter="data" remains defense in depth after links and
+                    # special entries were rejected during bounded preflight.
+                    tf.extractall(tmp_dir, members=tar_members, filter="data")
+            except HTTPException:
+                raise
+            except (tarfile.TarError, OSError, EOFError):
+                _skill_archive_reject(
+                    "invalid_archive",
+                    "Skill archive is corrupt or cannot be safely decoded",
+                )
 
         elif archive_type == "rar":
-            # Write to temp file for rarfile/unrar
+            # RAR has no decoder in Python's standard library. Keep legacy
+            # compatibility, but run quietly under a short wall-clock budget
+            # and enforce the same filesystem postcondition before publication.
+            # Personal snapshots and restores are always the fully preflighted
+            # ZIP format above.
             tmp_file = tmp_dir / "archive.rar"
             tmp_file.write_bytes(content_bytes)
             try:
                 result = subprocess.run(
-                    ["unrar", "x", "-y", str(tmp_file), str(tmp_dir) + "/"],
+                    _runner_argv([
+                        "unrar", "x", "-y", "-idq", str(tmp_file), str(tmp_dir) + "/",
+                    ]),
                     capture_output=True, text=True, timeout=30,
+                    env=_runner_env(),
                 )
                 if result.returncode != 0:
-                    raise HTTPException(status_code=400, detail=f"RAR extraction failed: {result.stderr.strip()}")
+                    raise HTTPException(status_code=400, detail=f"RAR extraction failed: {result.stderr.strip()[:500]}")
             except FileNotFoundError:
                 raise HTTPException(status_code=400, detail="RAR not supported: 'unrar' not installed in container")
             finally:
                 tmp_file.unlink(missing_ok=True)
+
+        _entries, extracted_bytes = _validate_extracted_skill_tree(tmp_dir)
+        if (
+            archive_type == "rar"
+            and extracted_bytes >= _SKILL_ARCHIVE_RATIO_MIN_BYTES
+            and extracted_bytes > len(content_bytes) * _SKILL_ARCHIVE_MAX_RATIO
+        ):
+            _skill_archive_reject(
+                "compression_ratio",
+                "Skill archive has an unsafe compression ratio",
+                status_code=413,
+            )
 
         # If archive extracted into a single subdirectory, use that as root
         entries = list(tmp_dir.iterdir())
@@ -2355,16 +3811,22 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
         # Validation passed — move to skills directory. Stage the new copy
         # beside the target first so a failed move cannot leave the user with
         # the old skill deleted and nothing in its place.
-        target = SKILLS_DIR / skill_name
-        staging = SKILLS_DIR / f".{skill_name}.incoming"
+        staging = skills_dir / f".{skill_name}.{secrets.token_hex(6)}.incoming"
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         shutil.move(str(extract_root), str(staging))
-        if target.exists():
-            shutil.rmtree(target)
-        staging.replace(target)
+        _chown_runner_tree(staging)
+        target = _publish_skill_staging(
+            skills_dir,
+            skill_name,
+            staging,
+            create_only=create_only,
+            restore_generation=restore_generation,
+        )
 
     finally:
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -2410,7 +3872,10 @@ async def upload_skill_archive(file: UploadFile = File(...), name: str = Form(""
 
 
 @app.delete("/skills/{name}")
-async def uninstall_skill(name: str):
+async def uninstall_skill(
+    name: str,
+    mutation_generation: int | None = None,
+):
     """Uninstall a user-installed skill. Builtin skills cannot be deleted."""
     # Check if it's a builtin skill — reject deletion
     builtin_skills = _scan_skills_in_dir(BUILTIN_SKILLS_DIR, source="builtin")
@@ -2421,37 +3886,73 @@ async def uninstall_skill(name: str):
     # Direct match by directory name in user skills. The name is joined onto
     # SKILLS_DIR and handed to rmtree, so it has to be checked first.
     name = _safe_skill_name(name)
-    target = SKILLS_DIR / name
-    if target.exists() and not target.is_symlink():
-        shutil.rmtree(target)
-        # Also remove any symlinks that pointed into this directory
-        _cleanup_broken_symlinks()
-        return {"ok": True, "message": f"Skill '{name}' uninstalled"}
+    if mutation_generation is not None and mutation_generation < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="mutation_generation must be positive",
+        )
+    skills_dir = _scoped_skill_root()
+    target = skills_dir / name
+    with _skill_publish_lock(skills_dir, name):
+        applied_generation = None
+        if mutation_generation is not None:
+            # Persist the fence before deletion. A stale restore either
+            # publishes first and is removed below, or arrives later and is
+            # rejected while holding this same name lock.
+            applied_generation = _advance_skill_restore_generation(
+                skills_dir,
+                name,
+                mutation_generation,
+            )
+        if target.exists() and not target.is_symlink():
+            shutil.rmtree(target)
+            _cleanup_broken_symlinks()
+            return {
+                "ok": True,
+                "message": f"Skill '{name}' uninstalled",
+                "mutation_generation": applied_generation,
+            }
 
-    # If it's a symlink (alias), remove the symlink
-    if target.is_symlink():
-        target.unlink()
-        return {"ok": True, "message": f"Skill alias '{name}' removed"}
+        # If it's a symlink (alias), remove the symlink.
+        if target.is_symlink():
+            target.unlink()
+            return {
+                "ok": True,
+                "message": f"Skill alias '{name}' removed",
+                "mutation_generation": applied_generation,
+            }
+
+        # A fenced deletion is idempotent. The durable tombstone must still be
+        # allowed to commit when the live package was already absent.
+        if mutation_generation is not None:
+            return {
+                "ok": True,
+                "message": f"Skill '{name}' was already absent",
+                "already_absent": True,
+                "mutation_generation": applied_generation,
+            }
 
     # Search by skill name (from frontmatter) in user skills only
-    user_skills = _scan_skills_in_dir(SKILLS_DIR, source="container")
+    user_skills = _scan_skills_in_dir(skills_dir, source="container")
     for skill in user_skills:
         if skill["name"] == name:
             install_dir = skill.get("install_dir")
             if install_dir:
-                t = SKILLS_DIR / install_dir
-                if t.exists():
-                    shutil.rmtree(t)
-                    _cleanup_broken_symlinks()
-                    return {"ok": True, "message": f"Skill '{name}' uninstalled"}
+                t = skills_dir / install_dir
+                with _skill_publish_lock(skills_dir, install_dir):
+                    if t.exists():
+                        shutil.rmtree(t)
+                        _cleanup_broken_symlinks()
+                        return {"ok": True, "message": f"Skill '{name}' uninstalled"}
     raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
 def _cleanup_broken_symlinks():
     """Remove broken symlinks in SKILLS_DIR after a skill directory is deleted."""
-    if not SKILLS_DIR.exists():
+    skills_dir = _scoped_skill_root()
+    if not skills_dir.exists():
         return
-    for entry in SKILLS_DIR.iterdir():
+    for entry in skills_dir.iterdir():
         if entry.is_symlink() and not entry.exists():
             entry.unlink()
 
@@ -2470,6 +3971,14 @@ MCP_CONFIG_PATH = Path("/data/mcp/config.json")
 #: does should be able to reach the account that owns the sandbox.
 _MCP_ENV_DENYLIST = frozenset({
     "SESSION_API_KEY",
+    # Runtime identity/caches are selected by the tenant scope. Letting a
+    # package redirect them can collide with or inspect another tenant's state
+    # on the shared acceptance desktop.
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "XDG_CACHE_HOME",
+    "NPM_CONFIG_CACHE",
     # Model provider keys bill to whoever owns the account, so an MCP server
     # that can read one can spend real money. Verified reachable: an
     # `@modelcontextprotocol/server-everything` child listed ANTHROPIC_AUTH_TOKEN
@@ -2535,7 +4044,14 @@ class RawStreamableHttpSession:
     on servers like Tavily that use Streamable HTTP transport.
     """
 
-    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: int = 60):
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: int = 60,
+        *,
+        notification_handler=None,
+    ):
         self.url = url
         self._session_id: str | None = None
         self._request_id = 0
@@ -2543,6 +4059,14 @@ class RawStreamableHttpSession:
         self._client: "httpx.AsyncClient | None" = None
         self._extra_headers = headers or {}
         self._timeout = timeout
+        self._notification_handler = notification_handler
+        self._notification_context = None
+        self._notification_response = None
+        self._notification_iterator = None
+        self._notification_data_lines: list[str] = []
+        self._notification_receiver_live = False
+        self._notification_receiver_error: str | None = None
+        self._closing = False
 
     def _next_id(self) -> int:
         self._request_id += 1
@@ -2552,6 +4076,19 @@ class RawStreamableHttpSession:
         if self._client is None:
             import httpx
             self._client = httpx.AsyncClient(timeout=float(self._timeout))
+
+    def _request_headers(self) -> dict[str, str]:
+        """Build one authenticated header set for requests and notifications."""
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            **self._extra_headers,
+        }
+        if self._session_id:
+            # The negotiated server value is authoritative; configured custom
+            # headers must not pin a stale transport session.
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
 
     async def _send_request(self, method: str, params: dict | None = None) -> dict:
         """Send a JSON-RPC request and return the result."""
@@ -2566,15 +4103,11 @@ class RawStreamableHttpSession:
         if params is not None:
             payload["params"] = params
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            **self._extra_headers,
-        }
-        if self._session_id:
-            headers["Mcp-Session-Id"] = self._session_id
-
-        resp = await self._client.post(self.url, json=payload, headers=headers)
+        resp = await self._client.post(
+            self.url,
+            json=payload,
+            headers=self._request_headers(),
+        )
         resp.raise_for_status()
 
         # Store session ID from response
@@ -2585,16 +4118,18 @@ class RawStreamableHttpSession:
 
         if "text/event-stream" in content_type:
             # Parse SSE response to extract JSON-RPC result
-            return self._parse_sse_response(resp.text, req_id)
+            return await self._parse_sse_response(resp.text, req_id)
         else:
             # Direct JSON response
             data = resp.json()
+            await self._dispatch_notification(data)
             if "error" in data:
                 raise Exception(f"MCP error: {data['error']}")
             return data.get("result", {})
 
-    def _parse_sse_response(self, text: str, expected_id: int) -> dict:
+    async def _parse_sse_response(self, text: str, expected_id: int) -> dict:
         """Parse SSE text to find the JSON-RPC response matching our request ID."""
+        response: dict | None = None
         for line in text.split("\n"):
             line = line.strip()
             if line.startswith("data:"):
@@ -2603,13 +4138,163 @@ class RawStreamableHttpSession:
                     continue
                 try:
                     data = json.loads(data_str)
+                    await self._dispatch_notification(data)
                     if data.get("id") == expected_id:
                         if "error" in data:
                             raise Exception(f"MCP error: {data['error']}")
-                        return data.get("result", {})
+                        response = data.get("result", {})
                 except json.JSONDecodeError:
                     continue
-        raise Exception("No matching JSON-RPC response found in SSE stream")
+        if response is None:
+            raise Exception("No matching JSON-RPC response found in SSE stream")
+        return response
+
+    async def _dispatch_notification(self, message) -> None:
+        """Forward protocol list-changed notifications to the owner task."""
+        if not isinstance(message, dict) or "id" in message:
+            return
+        method = str(message.get("method") or "")
+        if method not in {
+            "notifications/tools/list_changed",
+            "notifications/resources/list_changed",
+            "notifications/prompts/list_changed",
+        }:
+            return
+        if self._notification_handler is None:
+            return
+        result = self._notification_handler(method)
+        if inspect.isawaitable(result):
+            await result
+
+    def supports_list_changed(self, kind: str) -> bool:
+        capabilities = self._server_info.get("capabilities") or {}
+        section = capabilities.get(kind) if isinstance(capabilities, dict) else None
+        if not isinstance(section, dict):
+            return False
+        value = section.get("listChanged", section.get("list_changed", False))
+        return bool(value)
+
+    @property
+    def notification_receiver_live(self) -> bool:
+        return self._notification_receiver_live
+
+    @property
+    def notification_receiver_error(self) -> str | None:
+        return self._notification_receiver_error
+
+    async def start_notification_receiver(self) -> bool:
+        """Open the Streamable HTTP server-to-client GET channel when offered.
+
+        Streamable HTTP notifications are delivered on a long-lived GET using
+        the negotiated session id. The configured authentication headers are
+        deliberately rebuilt for this request just like they are for POST
+        requests and the initialized notification.
+        """
+        if self._notification_handler is None:
+            return False
+        if not any(
+            self.supports_list_changed(kind)
+            for kind in ("tools", "resources", "prompts")
+        ):
+            return False
+        await self._ensure_client()
+        if not hasattr(self._client, "stream"):
+            self._notification_receiver_error = "HTTP client has no streaming GET support"
+            return False
+        context = self._client.stream(
+            "GET",
+            self.url,
+            headers=self._request_headers(),
+        )
+        try:
+            async with _same_task_timeout(float(self._timeout)):
+                response = await context.__aenter__()
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "text/event-stream" not in content_type:
+                raise RuntimeError(
+                    "MCP notification GET did not return text/event-stream"
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._notification_receiver_error = (
+                str(exc).strip() or type(exc).__name__
+            )
+            try:
+                async with _same_task_timeout(float(self._timeout)):
+                    await context.__aexit__(type(exc), exc, exc.__traceback__)
+            except Exception:
+                pass
+            return False
+        self._notification_context = context
+        self._notification_response = response
+        self._notification_iterator = response.aiter_lines().__aiter__()
+        self._notification_data_lines.clear()
+        self._notification_receiver_error = None
+        self._notification_receiver_live = True
+        return True
+
+    async def receive_notification(self, timeout: float) -> bool:
+        """Read at most one SSE line in the current MCP owner task.
+
+        The owner checks its command queue between reads, so a persistent GET
+        never starves tool calls. ``asyncio.timeout`` cancels this coroutine in
+        place rather than wrapping the transport receive in a different task.
+        """
+        if not self._notification_receiver_live or self._notification_iterator is None:
+            return False
+        try:
+            async with _same_task_timeout(max(0.001, float(timeout))):
+                line = await anext(self._notification_iterator)
+        except asyncio.TimeoutError:
+            return False
+        except asyncio.CancelledError:
+            raise
+        except StopAsyncIteration:
+            self._notification_receiver_error = "MCP notification stream ended"
+            await self.stop_notification_receiver()
+            return False
+        except Exception as exc:
+            self._notification_receiver_error = (
+                str(exc).strip() or type(exc).__name__
+            )
+            await self.stop_notification_receiver()
+            return False
+
+        if not line:
+            if self._notification_data_lines:
+                try:
+                    await self._dispatch_notification(
+                        json.loads("\n".join(self._notification_data_lines))
+                    )
+                except json.JSONDecodeError:
+                    pass
+                self._notification_data_lines.clear()
+            return True
+        if line.startswith("data:"):
+            self._notification_data_lines.append(line[5:].lstrip())
+        return True
+
+    async def stop_notification_receiver(self) -> None:
+        context = self._notification_context
+        self._notification_receiver_live = False
+        self._notification_context = None
+        self._notification_response = None
+        self._notification_iterator = None
+        self._notification_data_lines.clear()
+        if context is None:
+            return
+        try:
+            async with _same_task_timeout(float(self._timeout)):
+                await context.__aexit__(None, None, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self._notification_receiver_error is None:
+                self._notification_receiver_error = (
+                    str(exc).strip() or type(exc).__name__
+                )
 
     async def _send_notification(self, method: str, params: dict | None = None):
         """Send a JSON-RPC notification (no id, no response expected)."""
@@ -2622,14 +4307,11 @@ class RawStreamableHttpSession:
         if params is not None:
             payload["params"] = params
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        if self._session_id:
-            headers["Mcp-Session-Id"] = self._session_id
-
-        resp = await self._client.post(self.url, json=payload, headers=headers)
+        resp = await self._client.post(
+            self.url,
+            json=payload,
+            headers=self._request_headers(),
+        )
         # Notifications may return 200 or 204
         if resp.status_code not in (200, 202, 204):
             resp.raise_for_status()
@@ -2648,9 +4330,13 @@ class RawStreamableHttpSession:
         # Send initialized notification
         await self._send_notification("notifications/initialized")
 
+    async def list_tools_page(self, cursor: str | None = None) -> dict:
+        params = {"cursor": cursor} if cursor else {}
+        return await self._send_request("tools/list", params)
+
     async def list_tools(self) -> list[dict]:
         """List available tools from the MCP server."""
-        result = await self._send_request("tools/list", {})
+        result = await self.list_tools_page()
         return result.get("tools", [])
 
     async def call_tool(self, tool_name: str, arguments: dict) -> dict:
@@ -2661,18 +4347,26 @@ class RawStreamableHttpSession:
         })
         return result
 
+    async def list_resources_page(self, cursor: str | None = None) -> dict:
+        params = {"cursor": cursor} if cursor else {}
+        return await self._send_request("resources/list", params)
+
     async def list_resources(self) -> list[dict]:
         """List available resources from the MCP server."""
-        result = await self._send_request("resources/list", {})
+        result = await self.list_resources_page()
         return result.get("resources", [])
 
     async def read_resource(self, uri: str) -> dict:
         """Read a specific resource by URI."""
         return await self._send_request("resources/read", {"uri": uri})
 
+    async def list_prompts_page(self, cursor: str | None = None) -> dict:
+        params = {"cursor": cursor} if cursor else {}
+        return await self._send_request("prompts/list", params)
+
     async def list_prompts(self) -> list[dict]:
         """List available prompts from the MCP server."""
-        result = await self._send_request("prompts/list", {})
+        result = await self.list_prompts_page()
         return result.get("prompts", [])
 
     async def get_prompt(self, name: str, arguments: dict | None = None) -> dict:
@@ -2684,8 +4378,11 @@ class RawStreamableHttpSession:
 
     async def close(self):
         """Close the HTTP client."""
+        self._closing = True
+        await self.stop_notification_receiver()
         if self._client:
-            await self._client.aclose()
+            async with _same_task_timeout(float(self._timeout)):
+                await self._client.aclose()
             self._client = None
 
 
@@ -2708,45 +4405,447 @@ def _mcp_attr(obj, *names, default=None):
     return default
 
 
-class ContainerMcpManager:
-    """Manages MCP servers reachable from the container.
+@dataclass(frozen=True)
+class _McpCatalogueGeneration:
+    """One immutable, all-or-nothing server catalogue generation."""
 
-    Sessions are opened per operation rather than held open across requests.
+    tools: tuple[dict, ...] = ()
+    resources: tuple[dict, ...] = ()
+    prompts: tuple[dict, ...] = ()
+    generation: str = ""
+    list_changed: dict[str, str] = field(default_factory=dict)
 
-    The SDK's stdio_client / sse_client and ClientSession are all built on
-    ``anyio.create_task_group()``, and anyio requires a task group to be exited
-    by the same task that entered it. A manager that opened a transport inside
-    the POST /connect request, stashed the context manager, and closed it later
-    from POST /disconnect violated that rule outright. It also never entered
-    ClientSession at all, so BaseSession._receive_loop never ran and the very
-    first initialize() blocked forever waiting for a reply nobody was reading.
 
-    Opening and closing inside one ``async with`` keeps every task group inside
-    a single task, which is the only shape anyio supports here. ``connect`` is
-    therefore a probe: it dials the server, caches the tool/resource/prompt
-    listing, and hangs up. Each later call redials. For stdio that costs one
-    process spawn per call, which is the price of a transport that cannot be
-    parked between requests.
+class _McpCatalogueKindView(MutableMapping):
+    """Compatibility mapping backed by the manager's atomic generations.
 
-    Remote streamable-HTTP keeps using RawStreamableHttpSession, which is
-    stateless httpx and has no task-group constraint.
+    A few focused tests and older extensions inject fixture catalogues through
+    ``manager._tools[name]``. Keeping that small surface avoids a flag day,
+    while production refreshes publish all three kinds with one pointer swap.
     """
 
-    #: Seconds allowed for initialize() before a server is declared unreachable.
-    #: A stdio server that never speaks used to hang the request forever.
-    DEFAULT_TIMEOUT = 60
+    def __init__(self, manager: "ContainerMcpManager", kind: str):
+        self._manager = manager
+        self._kind = kind
 
-    def __init__(self):
-        self._servers: dict[str, dict] = {}  # name -> {"status", "error"}
-        self._tools: dict[str, list[dict]] = {}  # name -> list of tool dicts
-        self._resources: dict[str, list[dict]] = {}  # name -> list of resource dicts
-        self._prompts: dict[str, list[dict]] = {}  # name -> list of prompt dicts
-        #: Remote servers whose raw HTTP probe failed, so call paths skip
-        #: straight to the SSE transport instead of paying the failure twice.
-        self._remote_transport: dict[str, str] = {}  # name -> "raw" | "sse"
-        # Explicit mutations bump this even when a refresh returns byte-for-byte
-        # identical metadata. We cannot claim list_changed support while MCP
-        # sessions are per-operation; only operations observed here advance it.
+    def __getitem__(self, key):
+        generation = self._manager._catalogue_state[key]
+        return list(getattr(generation, self._kind))
+
+    def __setitem__(self, key, value):
+        self._manager._replace_catalogue_kind(str(key), self._kind, value)
+
+    def __delitem__(self, key):
+        self._manager._replace_catalogue_kind(str(key), self._kind, None)
+
+    def __iter__(self):
+        return iter(self._manager._catalogue_state)
+
+    def __len__(self):
+        return len(self._manager._catalogue_state)
+
+    def pop(self, key, default=None):
+        if key not in self._manager._catalogue_state:
+            return default
+        old = self[key]
+        self._manager._replace_catalogue_kind(str(key), self._kind, None)
+        return old
+
+
+@dataclass
+class _McpOwnerCommand:
+    operation: str
+    args: tuple
+    future: asyncio.Future
+
+
+class _McpServerOwner:
+    """The sole task allowed to own and operate one MCP transport session."""
+
+    def __init__(self, manager: "ContainerMcpManager", name: str):
+        self.manager = manager
+        self.name = name
+        self.queue: asyncio.Queue[_McpOwnerCommand] = asyncio.Queue(
+            maxsize=manager.command_queue_size
+        )
+        loop = asyncio.get_running_loop()
+        self.ready: asyncio.Future = loop.create_future()
+        self.refresh_requested = asyncio.Event()
+        self.stop_requested = asyncio.Event()
+        self.task = asyncio.create_task(
+            self._run(),
+            name=f"openbox-mcp-owner:{manager.user_scope or 'legacy'}:{name}",
+        )
+        self._active_command: _McpOwnerCommand | None = None
+
+    def request_stop(self) -> None:
+        self.stop_requested.set()
+        if not self.task.done():
+            # Cancellation is the stop fence for a slow initialize, request or
+            # refresh. The task's finally block still exits the transport in
+            # this same owner task and completes every queued waiter.
+            self.task.cancel()
+
+    async def stop(self) -> None:
+        self.request_stop()
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+
+    async def submit(self, operation: str, *args):
+        if self.task.done() or self.stop_requested.is_set():
+            raise RuntimeError(f"MCP server '{self.name}' supervisor is stopped")
+        future = asyncio.get_running_loop().create_future()
+        command = _McpOwnerCommand(operation=operation, args=args, future=future)
+        try:
+            self.queue.put_nowait(command)
+        except asyncio.QueueFull as exc:
+            raise RuntimeError(
+                f"MCP server '{self.name}' request queue is full"
+            ) from exc
+        return await future
+
+    def list_changed(self, _method: str = "") -> None:
+        # Event.set is idempotent, so a notification burst results in one full
+        # refresh and can never publish a tools/resources/prompts mixed state.
+        self.refresh_requested.set()
+
+    async def _sleep_backoff(self, failures: int) -> None:
+        base = min(
+            self.manager.backoff_max_seconds,
+            self.manager.backoff_initial_seconds * (2 ** max(0, failures - 1)),
+        )
+        jitter = base * self.manager.backoff_jitter_ratio
+        delay = max(0.0, base + random.uniform(-jitter, jitter))
+        if delay:
+            await asyncio.sleep(delay)
+
+    async def _run(self) -> None:
+        failures = 0
+        connected_since: float | None = None
+        try:
+            while self.manager._connection_still_desired(self.name):
+                self.manager._set_server_state(
+                    self.name,
+                    status="connecting" if failures == 0 else "reconnecting",
+                    error=None if failures == 0 else (
+                        self.manager._servers.get(self.name, {}).get("error")
+                    ),
+                    consecutive_failures=failures,
+                    reconnect_exhausted=False,
+                )
+                try:
+                    session_factory = self.manager._session
+                    try:
+                        supports_handler = "notification_handler" in inspect.signature(
+                            session_factory
+                        ).parameters
+                    except (TypeError, ValueError):
+                        supports_handler = True
+                    session_context = (
+                        session_factory(
+                            self.name,
+                            notification_handler=self.list_changed,
+                        )
+                        if supports_handler
+                        else session_factory(self.name)
+                    )
+                    async with session_context as session:
+                        timeout = self.manager._timeout(
+                            self.manager._server_config(self.name)
+                        )
+                        async with _same_task_timeout(timeout):
+                            discovered = await self.manager._discover(
+                                self.name, session
+                            )
+                        if not self.manager._connection_still_desired(self.name):
+                            if not self.ready.done():
+                                self.ready.set_result(False)
+                            return
+                        modes = await self.manager._notification_modes(session)
+                        if isinstance(discovered, _McpCatalogueGeneration):
+                            discovered = _McpCatalogueGeneration(
+                                tools=discovered.tools,
+                                resources=discovered.resources,
+                                prompts=discovered.prompts,
+                                generation=discovered.generation,
+                                list_changed=modes,
+                            )
+                            self.manager._publish_catalogue(self.name, discovered)
+                        elif self.name not in self.manager._catalogue_state:
+                            # Compatibility for a monkeypatched discovery hook
+                            # that intentionally publishes through the legacy
+                            # views but returned no value.
+                            self.manager._publish_catalogue(
+                                self.name,
+                                _McpCatalogueGeneration(list_changed=modes),
+                            )
+                        else:
+                            self.manager._set_catalogue_modes(self.name, modes)
+
+                        connected_since = time.monotonic()
+                        self.manager._set_server_state(
+                            self.name,
+                            status="connected",
+                            error=None,
+                            consecutive_failures=0,
+                            reconnect_exhausted=False,
+                            connected_at=datetime.now(timezone.utc).isoformat(),
+                            list_changed=modes,
+                            catalogue_generation=(
+                                self.manager._catalogue_state[self.name].generation
+                            ),
+                        )
+                        if not self.ready.done():
+                            self.ready.set_result(True)
+                        await self._serve(session, modes)
+                        if self.stop_requested.is_set():
+                            return
+                        raise ConnectionError("MCP session ended unexpectedly")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if not self.manager._connection_still_desired(self.name):
+                        if not self.ready.done():
+                            self.ready.set_result(False)
+                        return
+                    if (
+                        connected_since is not None
+                        and time.monotonic() - connected_since
+                        >= self.manager.stable_window_seconds
+                    ):
+                        failures = 0
+                    connected_since = None
+                    failures += 1
+                    error = str(exc).strip() or type(exc).__name__
+                    exhausted = failures >= self.manager.reconnect_failure_budget
+                    self.manager._set_server_state(
+                        self.name,
+                        status="error" if exhausted else "reconnecting",
+                        error=error,
+                        consecutive_failures=failures,
+                        reconnect_exhausted=exhausted,
+                        last_failure_at=datetime.now(timezone.utc).isoformat(),
+                        last_known_good=self.name in self.manager._catalogue_state,
+                    )
+                    if not self.ready.done():
+                        self.ready.set_exception(exc)
+                    if exhausted:
+                        return
+                    await self._sleep_backoff(failures)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if not self.ready.done():
+                self.ready.set_result(False)
+            stopped = RuntimeError(f"MCP server '{self.name}' supervisor stopped")
+            if self._active_command is not None:
+                self._finish_future(self._active_command.future, error=stopped)
+                self._active_command = None
+            while True:
+                try:
+                    command = self.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                self._finish_future(command.future, error=stopped)
+                self.queue.task_done()
+
+    @staticmethod
+    def _finish_future(future: asyncio.Future, *, result=None, error=None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    async def _serve(self, session, modes: dict[str, str]) -> None:
+        poll_needed = any(value == "poll" for value in modes.values())
+        next_poll = time.monotonic() + self.manager.notification_poll_seconds
+        while not self.stop_requested.is_set():
+            if isinstance(session, RawStreamableHttpSession):
+                if (
+                    any(value == "notification" for value in modes.values())
+                    and not session.notification_receiver_live
+                ):
+                    # A receiver can fail after its initial scheduling turn.
+                    # Downgrade only the capabilities that claimed listChanged;
+                    # polling remains coalesced through the same refresh event.
+                    modes = {
+                        kind: ("poll" if value == "notification" else value)
+                        for kind, value in modes.items()
+                    }
+                    poll_needed = any(value == "poll" for value in modes.values())
+                    self.manager._set_catalogue_modes(self.name, modes)
+                    self.manager._set_server_state(
+                        self.name,
+                        list_changed=modes,
+                        notification_error=session.notification_receiver_error,
+                    )
+
+            now = time.monotonic()
+            if self.refresh_requested.is_set() or (poll_needed and now >= next_poll):
+                self.refresh_requested.clear()
+                await self._refresh(session, modes, notify_waiter=None)
+                next_poll = time.monotonic() + self.manager.notification_poll_seconds
+                continue
+
+            timeout = self.manager.owner_tick_seconds
+            if poll_needed:
+                timeout = min(timeout, max(0.01, next_poll - now))
+            if (
+                isinstance(session, RawStreamableHttpSession)
+                and session.notification_receiver_live
+            ):
+                try:
+                    command = self.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await session.receive_notification(timeout)
+                    continue
+            else:
+                try:
+                    async with _same_task_timeout(timeout):
+                        command = await self.queue.get()
+                except asyncio.TimeoutError:
+                    continue
+            self._active_command = command
+            try:
+                if command.future.cancelled():
+                    continue
+                if command.operation == "refresh":
+                    await self._refresh(session, modes, notify_waiter=command.future)
+                else:
+                    cfg = self.manager._server_config(self.name)
+                    async with _same_task_timeout(self.manager._timeout(cfg)):
+                        result = await self.manager._dispatch_session_operation(
+                            session, command.operation, command.args
+                        )
+                    self._finish_future(command.future, result=result)
+            except asyncio.CancelledError:
+                self._finish_future(
+                    command.future,
+                    error=RuntimeError(
+                        f"MCP server '{self.name}' supervisor stopped"
+                    ),
+                )
+                raise
+            except Exception as exc:
+                self._finish_future(command.future, error=exc)
+                if self.manager._is_transport_failure(exc):
+                    raise
+                # A protocol/tool error does not prove that a persistent
+                # transport died. Subsequent commands may still be valid.
+            finally:
+                self._active_command = None
+                self.queue.task_done()
+
+    async def _refresh(self, session, modes, notify_waiter: asyncio.Future | None):
+        old = self.manager._catalogue_state.get(self.name)
+        try:
+            cfg = self.manager._server_config(self.name)
+            async with _same_task_timeout(self.manager._timeout(cfg)):
+                discovered = await self.manager._discover(self.name, session)
+            if not self.manager._connection_still_desired(self.name):
+                raise RuntimeError(f"MCP server '{self.name}' is no longer enabled")
+            if isinstance(discovered, _McpCatalogueGeneration):
+                discovered = _McpCatalogueGeneration(
+                    tools=discovered.tools,
+                    resources=discovered.resources,
+                    prompts=discovered.prompts,
+                    generation=discovered.generation,
+                    list_changed=dict(modes),
+                )
+                self.manager._publish_catalogue(self.name, discovered)
+            current = self.manager._catalogue_state.get(self.name)
+            self.manager._set_server_state(
+                self.name,
+                status="connected",
+                error=None,
+                catalogue_generation=current.generation if current else "",
+                last_refresh_at=datetime.now(timezone.utc).isoformat(),
+            )
+            result = {
+                "tools": len(current.tools) if current else 0,
+                "resources": len(current.resources) if current else 0,
+                "prompts": len(current.prompts) if current else 0,
+                "tools_changed": bool(
+                    old is None or current is None or old.tools != current.tools
+                ),
+            }
+            if notify_waiter is not None:
+                self._finish_future(notify_waiter, result=result)
+            return result
+        except Exception as exc:
+            # Never clear or partially update the last-known-good generation.
+            self.manager._set_server_state(
+                self.name,
+                status="connected",
+                error=None,
+                refresh_error=str(exc).strip() or type(exc).__name__,
+                last_refresh_failure_at=datetime.now(timezone.utc).isoformat(),
+                last_known_good=old is not None,
+            )
+            if notify_waiter is not None:
+                self._finish_future(notify_waiter, error=exc)
+                return None
+            return None
+
+
+class ContainerMcpManager:
+    """Persistent, tenant-scoped MCP connection supervisor.
+
+    Each configured server has exactly one owner task. That task enters the
+    transport, initializes the SDK session, serves every request from a bounded
+    queue, and exits the transport. This satisfies anyio's same-task context
+    manager requirement while avoiding a subprocess or handshake per tool
+    call. Catalogue discovery is paginated into a temporary generation and
+    published with one pointer swap only after all advertised kinds succeed.
+    """
+
+    DEFAULT_TIMEOUT = 60
+    DEFAULT_QUEUE_SIZE = 64
+    DEFAULT_RECONNECT_FAILURE_BUDGET = 5
+    DEFAULT_BACKOFF_INITIAL_SECONDS = 0.25
+    DEFAULT_BACKOFF_MAX_SECONDS = 10.0
+    DEFAULT_BACKOFF_JITTER_RATIO = 0.20
+    DEFAULT_STABLE_WINDOW_SECONDS = 30.0
+    DEFAULT_NOTIFICATION_POLL_SECONDS = 30.0
+    DEFAULT_OWNER_TICK_SECONDS = 0.25
+
+    def __init__(
+        self,
+        config_path: Path | None = None,
+        *,
+        user_scope: str = "",
+        command_queue_size: int = DEFAULT_QUEUE_SIZE,
+        reconnect_failure_budget: int = DEFAULT_RECONNECT_FAILURE_BUDGET,
+        backoff_initial_seconds: float = DEFAULT_BACKOFF_INITIAL_SECONDS,
+        backoff_max_seconds: float = DEFAULT_BACKOFF_MAX_SECONDS,
+        backoff_jitter_ratio: float = DEFAULT_BACKOFF_JITTER_RATIO,
+        stable_window_seconds: float = DEFAULT_STABLE_WINDOW_SECONDS,
+        notification_poll_seconds: float = DEFAULT_NOTIFICATION_POLL_SECONDS,
+        owner_tick_seconds: float = DEFAULT_OWNER_TICK_SECONDS,
+    ):
+        self.config_path = config_path or MCP_CONFIG_PATH
+        self.user_scope = user_scope
+        self.command_queue_size = max(1, int(command_queue_size))
+        self.reconnect_failure_budget = max(1, int(reconnect_failure_budget))
+        self.backoff_initial_seconds = max(0.0, float(backoff_initial_seconds))
+        self.backoff_max_seconds = max(
+            self.backoff_initial_seconds, float(backoff_max_seconds)
+        )
+        self.backoff_jitter_ratio = min(1.0, max(0.0, float(backoff_jitter_ratio)))
+        self.stable_window_seconds = max(0.0, float(stable_window_seconds))
+        self.notification_poll_seconds = max(0.01, float(notification_poll_seconds))
+        self.owner_tick_seconds = max(0.01, float(owner_tick_seconds))
+        self._servers: dict[str, dict] = {}
+        self._catalogue_state: dict[str, _McpCatalogueGeneration] = {}
+        self._tools = _McpCatalogueKindView(self, "tools")
+        self._resources = _McpCatalogueKindView(self, "resources")
+        self._prompts = _McpCatalogueKindView(self, "prompts")
+        self._remote_transport: dict[str, str] = {}
+        self._owners: dict[str, _McpServerOwner] = {}
         self._catalogue_revision = 0
 
     @property
@@ -2756,27 +4855,186 @@ class ContainerMcpManager:
     def _bump_catalogue_revision(self) -> None:
         self._catalogue_revision += 1
 
+    def _set_server_state(self, name: str, **changes) -> None:
+        current = dict(self._servers.get(name) or {})
+        was_exhausted = bool(current.get("reconnect_exhausted"))
+        current.update(changes)
+        self._servers[name] = current
+        # The cached generation remains useful diagnostics while a server is
+        # offline, but an exhausted owner cannot execute any advertised item.
+        # Treat exhaustion as a live-catalogue visibility generation change so
+        # backend caches promptly withdraw (and later re-publish) those items.
+        is_exhausted = bool(current.get("reconnect_exhausted"))
+        if (
+            was_exhausted != is_exhausted
+            and name in self._catalogue_state
+        ):
+            self._bump_catalogue_revision()
+
+    def _catalogue_is_visible(self, name: str, cfg: dict | None) -> bool:
+        """Whether one last-known-good generation is executable/model-visible."""
+        state = self._servers.get(name) or {}
+        if state.get("reconnect_exhausted"):
+            return False
+        if cfg is None:
+            return state.get("status") == "connected"
+        return self._desired_enabled(cfg)
+
+    @staticmethod
+    def _is_transport_failure(exc: Exception) -> bool:
+        """Separate broken channels from ordinary MCP tool/protocol errors."""
+        if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
+            return True
+        names = {base.__name__ for base in type(exc).__mro__}
+        return bool(names & {
+            "BrokenResourceError",
+            "ClosedResourceError",
+            "EndOfStream",
+            "ConnectError",
+            "ConnectTimeout",
+            "NetworkError",
+            "ReadError",
+            "ReadTimeout",
+            "RemoteProtocolError",
+            "WriteError",
+            "WriteTimeout",
+        })
+
+    @staticmethod
+    def _catalogue_digest(
+        name: str,
+        tools: tuple[dict, ...],
+        resources: tuple[dict, ...],
+        prompts: tuple[dict, ...],
+    ) -> str:
+        return _stable_catalogue_digest({
+            "server": name,
+            "tools": tools,
+            "resources": resources,
+            "prompts": prompts,
+        })
+
+    def _replace_catalogue_kind(self, name: str, kind: str, value) -> None:
+        old = self._catalogue_state.get(name) or _McpCatalogueGeneration()
+        values = {
+            "tools": old.tools,
+            "resources": old.resources,
+            "prompts": old.prompts,
+        }
+        values[kind] = tuple(_catalogue_json_value(value or []))
+        if value is None and not any(values.values()):
+            updated = dict(self._catalogue_state)
+            updated.pop(name, None)
+            self._catalogue_state = updated
+            return
+        generation = self._catalogue_digest(
+            name, values["tools"], values["resources"], values["prompts"]
+        )
+        updated = dict(self._catalogue_state)
+        updated[name] = _McpCatalogueGeneration(
+            tools=values["tools"],
+            resources=values["resources"],
+            prompts=values["prompts"],
+            generation=generation,
+            list_changed=dict(old.list_changed),
+        )
+        self._catalogue_state = updated
+
+    def _publish_catalogue(
+        self, name: str, generation: _McpCatalogueGeneration
+    ) -> None:
+        if not self._connection_still_desired(name):
+            return
+        updated = dict(self._catalogue_state)
+        updated[name] = generation
+        self._catalogue_state = updated
+        self._bump_catalogue_revision()
+
+    def _set_catalogue_modes(self, name: str, modes: dict[str, str]) -> None:
+        current = self._catalogue_state.get(name)
+        if current is None:
+            return
+        updated = dict(self._catalogue_state)
+        updated[name] = _McpCatalogueGeneration(
+            tools=current.tools,
+            resources=current.resources,
+            prompts=current.prompts,
+            generation=current.generation,
+            list_changed=dict(modes),
+        )
+        self._catalogue_state = updated
+
     # -- config persistence --
 
     def _load_config(self) -> dict:
         """Load MCP config from persistent storage."""
-        if MCP_CONFIG_PATH.exists():
+        if self.config_path.is_symlink() or self.config_path.parent.is_symlink():
+            raise ValueError("MCP config path cannot be a symlink")
+        if self.config_path.exists():
             try:
-                return json.loads(MCP_CONFIG_PATH.read_text())
+                return json.loads(self.config_path.read_text())
             except (json.JSONDecodeError, OSError):
                 pass
         return {"servers": {}}
 
     def _save_config(self, config: dict):
-        """Save MCP config to persistent storage."""
-        MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MCP_CONFIG_PATH.write_text(json.dumps(config, indent=2))
+        """Atomically save one tenant's MCP config with control-plane-only mode."""
+        parent = self.config_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        if parent.is_symlink() or self.config_path.is_symlink():
+            raise ValueError("MCP config path cannot be a symlink")
+        temporary = parent / f".{self.config_path.name}.{secrets.token_hex(6)}.tmp"
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(config, stream, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.config_path)
+            self.config_path.chmod(0o600)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _server_config(self, name: str) -> dict:
         cfg = self._load_config().get("servers", {}).get(name)
         if not cfg:
             raise KeyError(f"MCP server '{name}' not configured")
         return cfg
+
+    @staticmethod
+    def _desired_enabled(cfg: dict) -> bool:
+        """Return the durable desired state, preserving legacy config behavior.
+
+        Config files created before desired-state persistence have no
+        ``enabled`` field. They used to reconnect on every startup, so absence
+        remains enabled. Invalid non-boolean values also fail compatibility-
+        safe (enabled); every write below normalizes the field to a bool.
+        """
+        value = cfg.get("enabled", True)
+        return value if isinstance(value, bool) else True
+
+    def _set_desired_enabled(self, name: str, enabled: bool) -> None:
+        """Persist one server's desired state before changing runtime state."""
+        full_config = self._load_config()
+        servers = full_config.get("servers", {})
+        if name not in servers:
+            raise KeyError(f"MCP server '{name}' not configured")
+        cfg = dict(servers[name])
+        # Explicit connects migrate legacy entries even though their effective
+        # default is already enabled. This leaves an unambiguous durable intent.
+        if isinstance(cfg.get("enabled"), bool) and cfg["enabled"] is enabled:
+            return
+        cfg["enabled"] = enabled
+        servers[name] = cfg
+        self._save_config(full_config)
+
+    def _connection_still_desired(self, name: str) -> bool:
+        """Recheck state after an awaited probe so a later disconnect wins."""
+        try:
+            return self._desired_enabled(self._server_config(name))
+        except KeyError:
+            # Removal racing a startup probe must not resurrect the server.
+            return False
 
     def _timeout(self, cfg: dict) -> float:
         try:
@@ -2792,15 +5050,25 @@ class ContainerMcpManager:
             state = self._servers.get(name) or {}
             status = state.get("status", "disconnected")
             error = state.get("error")
-            connected = status == "connected"
+            generation = self._catalogue_state.get(name)
+            visible = generation is not None and self._catalogue_is_visible(name, cfg)
             result.append({
                 "name": name,
                 "type": cfg.get("type", "stdio"),
+                "enabled": self._desired_enabled(cfg),
                 "status": status,
-                "tools": self._tools.get(name, []) if connected else [],
-                "resources": self._resources.get(name, []) if connected else [],
-                "prompts": self._prompts.get(name, []) if connected else [],
+                "tools": list(generation.tools) if visible else [],
+                "resources": list(generation.resources) if visible else [],
+                "prompts": list(generation.prompts) if visible else [],
                 "error": error,
+                "refresh_error": state.get("refresh_error"),
+                "last_known_good": bool(generation),
+                "catalogue_generation": generation.generation if generation else "",
+                "list_changed": (
+                    dict(generation.list_changed) if generation else {}
+                ),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "reconnect_exhausted": bool(state.get("reconnect_exhausted")),
                 "command": cfg.get("command"),
                 "args": cfg.get("args"),
                 "url": cfg.get("url"),
@@ -2810,32 +5078,42 @@ class ContainerMcpManager:
     def add_server(self, name: str, config: dict):
         """Add a new MCP server configuration."""
         full_config = self._load_config()
-        full_config.setdefault("servers", {})[name] = config
+        normalized = dict(config)
+        normalized["enabled"] = self._desired_enabled(normalized)
+        full_config.setdefault("servers", {})[name] = normalized
         self._save_config(full_config)
         self._bump_catalogue_revision()
 
     def remove_server(self, name: str):
-        """Remove an MCP server configuration."""
+        """Durably remove a server and synchronously erect its stop fence."""
         full_config = self._load_config()
         servers = full_config.get("servers", {})
         if name not in servers:
             raise KeyError(f"MCP server '{name}' not found")
         del servers[name]
         self._save_config(full_config)
+        owner = self._owners.get(name)
+        if owner is not None:
+            owner.request_stop()
         self._forget(name)
         self._bump_catalogue_revision()
 
+    async def remove_server_and_stop(self, name: str) -> None:
+        self.remove_server(name)
+        await self._stop_owner(name)
+
     def _forget(self, name: str) -> None:
         self._servers.pop(name, None)
-        self._tools.pop(name, None)
-        self._resources.pop(name, None)
-        self._prompts.pop(name, None)
+        if name in self._catalogue_state:
+            updated = dict(self._catalogue_state)
+            updated.pop(name, None)
+            self._catalogue_state = updated
         self._remote_transport.pop(name, None)
 
     # -- session helpers: every one opens and closes within a single task --
 
     @asynccontextmanager
-    async def _stdio_session(self, cfg: dict):
+    async def _stdio_session(self, cfg: dict, notification_handler=None):
         """Open a stdio MCP session for the duration of the block."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
@@ -2848,20 +5126,46 @@ class ContainerMcpManager:
         # it has no business seeing. SESSION_API_KEY authenticates every caller
         # of this server, so handing it to an arbitrary npx package would let
         # that package impersonate the backend.
-        env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
-        env.update(cfg.get("env") or {})
+        requested_env = cfg.get("env") or {}
+        protected = {key for key in requested_env if key in _MCP_ENV_DENYLIST}
+        if protected:
+            raise ValueError(
+                "MCP environment contains protected control-plane variables: "
+                + ", ".join(sorted(protected))
+            )
+        env = _runner_env(requested_env)
+        if self.user_scope:
+            mcp_home = (
+                WORKSPACE_ROOT / "openbox" / "users" / self.user_scope
+                / ".openbox" / "mcp-home"
+            )
+            _ensure_runner_directory(mcp_home)
+            env.update({
+                "HOME": str(mcp_home),
+                "XDG_CACHE_HOME": str(mcp_home / ".cache"),
+                "NPM_CONFIG_CACHE": str(mcp_home / ".npm"),
+            })
+        argv = _runner_argv([command, *(cfg.get("args") or [])])
 
         params = StdioServerParameters(
-            command=command, args=cfg.get("args") or [], env=env,
+            command=argv[0], args=argv[1:], env=env,
         )
         timeout = self._timeout(cfg)
         async with stdio_client(params) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await asyncio.wait_for(session.initialize(), timeout=timeout)
+            session, registered = self._new_sdk_session(
+                ClientSession, read_stream, write_stream, notification_handler
+            )
+            async with session:
+                async with _same_task_timeout(timeout):
+                    initialized = await session.initialize()
+                session._openbox_server_capabilities = _mcp_attr(
+                    initialized, "capabilities", default={}
+                )
+                session._openbox_notification_handler_registered = registered
                 yield session
 
     @asynccontextmanager
-    async def _sse_session(self, cfg: dict):
+    async def _sse_session(self, cfg: dict, notification_handler=None):
         """Open an SSE MCP session for the duration of the block."""
         from mcp import ClientSession
         from mcp.client.sse import sse_client
@@ -2870,19 +5174,72 @@ class ContainerMcpManager:
         headers = cfg.get("headers") or None
         timeout = self._timeout(cfg)
         async with sse_client(url, headers=headers) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await asyncio.wait_for(session.initialize(), timeout=timeout)
+            session, registered = self._new_sdk_session(
+                ClientSession, read_stream, write_stream, notification_handler
+            )
+            async with session:
+                async with _same_task_timeout(timeout):
+                    initialized = await session.initialize()
+                session._openbox_server_capabilities = _mcp_attr(
+                    initialized, "capabilities", default={}
+                )
+                session._openbox_notification_handler_registered = registered
                 yield session
 
+    @staticmethod
+    def _new_sdk_session(
+        session_type, read_stream, write_stream, notification_handler
+    ):
+        """Register SDK notification delivery only when that SDK supports it."""
+        registered = False
+        kwargs = {}
+        try:
+            parameters = inspect.signature(session_type).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if notification_handler is not None and "message_handler" in parameters:
+            async def handle(message):
+                method = ContainerMcpManager._notification_method(message)
+                if method:
+                    result = notification_handler(method)
+                    if inspect.isawaitable(result):
+                        await result
+
+            kwargs["message_handler"] = handle
+            registered = True
+        return session_type(read_stream, write_stream, **kwargs), registered
+
+    @staticmethod
+    def _notification_method(message) -> str:
+        candidates = [message, getattr(message, "root", None)]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            if isinstance(candidate, dict):
+                method = candidate.get("method")
+            else:
+                method = getattr(candidate, "method", None)
+            if method in {
+                "notifications/tools/list_changed",
+                "notifications/resources/list_changed",
+                "notifications/prompts/list_changed",
+            }:
+                return str(method)
+        return ""
+
     @asynccontextmanager
-    async def _raw_session(self, cfg: dict):
+    async def _raw_session(self, cfg: dict, notification_handler=None):
         """Open a raw streamable-HTTP MCP session for the duration of the block."""
         url = cfg.get("url", "")
         session = RawStreamableHttpSession(
-            url, headers=cfg.get("headers") or {}, timeout=int(self._timeout(cfg)),
+            url,
+            headers=cfg.get("headers") or {},
+            timeout=int(self._timeout(cfg)),
+            notification_handler=notification_handler,
         )
         try:
-            await asyncio.wait_for(session.initialize(), timeout=self._timeout(cfg))
+            async with _same_task_timeout(self._timeout(cfg)):
+                await session.initialize()
             yield session
         finally:
             try:
@@ -2891,7 +5248,7 @@ class ContainerMcpManager:
                 pass
 
     @asynccontextmanager
-    async def _session(self, name: str):
+    async def _session(self, name: str, notification_handler=None):
         """Open a session to ``name`` using whichever transport it needs.
 
         Remote servers try raw streamable HTTP first and fall back to SSE. The
@@ -2902,7 +5259,7 @@ class ContainerMcpManager:
         server_type = cfg.get("type", "stdio")
 
         if server_type == "stdio":
-            async with self._stdio_session(cfg) as session:
+            async with self._stdio_session(cfg, notification_handler) as session:
                 yield session
             return
 
@@ -2914,19 +5271,19 @@ class ContainerMcpManager:
 
         preferred = self._remote_transport.get(name)
         if preferred == "sse":
-            async with self._sse_session(cfg) as session:
+            async with self._sse_session(cfg, notification_handler) as session:
                 yield session
             return
 
         try:
-            cm = self._raw_session(cfg)
+            cm = self._raw_session(cfg, notification_handler)
             session = await cm.__aenter__()
         except Exception as e:
             # The raw probe failed before yielding, so nothing needs unwinding
             # here and SSE is still worth a try.
             print(f"[MCP] Raw HTTP failed for '{name}': {e}, trying SDK SSE...")
             self._remote_transport[name] = "sse"
-            async with self._sse_session(cfg) as session:
+            async with self._sse_session(cfg, notification_handler) as session:
                 yield session
             return
 
@@ -2942,7 +5299,7 @@ class ContainerMcpManager:
     # -- discovery --
 
     @staticmethod
-    def _tools_from(session, name: str, raw: list | object) -> list[dict]:
+    def _tools_from(session, name: str, raw: list) -> list[dict]:
         if isinstance(session, RawStreamableHttpSession):
             return [
                 {"name": t.get("name", ""), "description": t.get("description", "") or "",
@@ -2952,48 +5309,107 @@ class ContainerMcpManager:
         return [
             {"name": t.name, "description": t.description or "",
              "input_schema": _mcp_attr(t, "input_schema", "inputSchema", default={}) or {}, "server": name}
-            for t in raw.tools
+            for t in raw
         ]
 
-    async def _discover(self, name: str, session) -> None:
-        """Cache the tool/resource/prompt listing for ``name``."""
+    @staticmethod
+    def _capability_value(session, kind: str, field_name: str | None = None):
+        if isinstance(session, RawStreamableHttpSession):
+            capabilities = session._server_info.get("capabilities") or {}
+        else:
+            capabilities = getattr(session, "_openbox_server_capabilities", {})
+        if isinstance(capabilities, dict):
+            section = capabilities.get(kind)
+        else:
+            section = getattr(capabilities, kind, None)
+        if field_name is None:
+            return section
+        if isinstance(section, dict):
+            return section.get(field_name, section.get("listChanged"))
+        return _mcp_attr(section, field_name, "listChanged", default=False)
+
+    async def _notification_modes(self, session) -> dict[str, str]:
+        advertised = {
+            kind: bool(self._capability_value(session, kind, "list_changed"))
+            for kind in ("tools", "resources", "prompts")
+        }
+        receiver = False
+        if isinstance(session, RawStreamableHttpSession):
+            receiver = await session.start_notification_receiver()
+        else:
+            receiver = bool(
+                getattr(session, "_openbox_notification_handler_registered", False)
+            )
+        return {
+            kind: ("notification" if receiver else "poll") if supported else "unsupported"
+            for kind, supported in advertised.items()
+        }
+
+    async def _list_all(self, session, kind: str) -> list:
+        items: list = []
+        cursor: str | None = None
+        seen: set[str] = set()
+        for _ in range(1000):
+            if isinstance(session, RawStreamableHttpSession):
+                response = await getattr(session, f"list_{kind}_page")(cursor)
+                page = response.get(kind, []) if isinstance(response, dict) else []
+                next_cursor = (
+                    response.get("nextCursor") or response.get("next_cursor")
+                    if isinstance(response, dict) else None
+                )
+            else:
+                method = getattr(session, f"list_{kind}")
+                response = await method(cursor=cursor) if cursor else await method()
+                page = getattr(response, kind, []) or []
+                next_cursor = _mcp_attr(
+                    response, "next_cursor", "nextCursor", default=None
+                )
+            items.extend(page or [])
+            if not next_cursor:
+                return items
+            cursor = str(next_cursor)
+            if cursor in seen:
+                raise RuntimeError(f"MCP {kind} pagination repeated cursor")
+            seen.add(cursor)
+        raise RuntimeError(f"MCP {kind} pagination exceeded 1000 pages")
+
+    async def _discover(self, name: str, session) -> _McpCatalogueGeneration:
+        """Build a complete generation without mutating the live catalogue."""
         is_raw = isinstance(session, RawStreamableHttpSession)
+        raw_tools = await self._list_all(session, "tools")
+        tools = self._tools_from(session, name, raw_tools)
 
-        raw_tools = await (session.list_tools() if is_raw else session.list_tools())
-        self._tools[name] = self._tools_from(session, name, raw_tools)
-
-        # Resources and prompts are optional in the protocol; a server that does
-        # not implement them answers with an error, which is not a connect
-        # failure. Tools have already been cached by this point.
-        try:
-            res = await session.list_resources()
+        resources: list[dict] = []
+        resource_capability = self._capability_value(session, "resources")
+        if resource_capability is not None:
+            res = await self._list_all(session, "resources")
             if is_raw:
-                self._resources[name] = [
+                resources = [
                     {"uri": r.get("uri", ""), "name": r.get("name", ""),
                      "description": r.get("description", ""),
                      "mimeType": r.get("mimeType", ""), "server": name}
-                    for r in (res or [])
+                    for r in res
                 ]
             else:
-                self._resources[name] = [
+                resources = [
                     {"uri": str(r.uri), "name": r.name or "",
                      "description": getattr(r, "description", "") or "",
                      "mimeType": _mcp_attr(r, "mime_type", "mimeType", default="") or "", "server": name}
-                    for r in res.resources
+                    for r in res
                 ]
-        except Exception:
-            self._resources[name] = []
 
-        try:
-            pr = await session.list_prompts()
+        prompts: list[dict] = []
+        prompt_capability = self._capability_value(session, "prompts")
+        if prompt_capability is not None:
+            pr = await self._list_all(session, "prompts")
             if is_raw:
-                self._prompts[name] = [
+                prompts = [
                     {"name": p.get("name", ""), "description": p.get("description", ""),
                      "arguments": p.get("arguments", []), "server": name}
-                    for p in (pr or [])
+                    for p in pr
                 ]
             else:
-                self._prompts[name] = [
+                prompts = [
                     {"name": p.name, "description": p.description or "",
                      "arguments": [
                          {"name": a.name, "description": getattr(a, "description", "") or "",
@@ -3001,72 +5417,138 @@ class ContainerMcpManager:
                          for a in (p.arguments or [])
                      ],
                      "server": name}
-                    for p in pr.prompts
+                    for p in pr
                 ]
-        except Exception:
-            self._prompts[name] = []
 
-    async def connect(self, name: str):
-        """Probe an MCP server and cache what it offers.
+        detached_tools = tuple(_catalogue_json_value(tools))
+        detached_resources = tuple(_catalogue_json_value(resources))
+        detached_prompts = tuple(_catalogue_json_value(prompts))
+        return _McpCatalogueGeneration(
+            tools=detached_tools,
+            resources=detached_resources,
+            prompts=detached_prompts,
+            generation=self._catalogue_digest(
+                name, detached_tools, detached_resources, detached_prompts
+            ),
+        )
 
-        Nothing stays open afterwards — 'connected' means the last probe
-        succeeded and the cached listing is usable.
-        """
-        self._server_config(name)  # raises KeyError when unknown
+    async def connect(self, name: str, *, persist_desired: bool = True) -> bool:
+        """Start the persistent owner and wait for its first full generation."""
+        if persist_desired:
+            self._set_desired_enabled(name, True)
+        elif not self._connection_still_desired(name):
+            self._forget(name)
+            return False
+        owner = self._ensure_owner(name)
         try:
-            async with self._session(name) as session:
-                await self._discover(name, session)
-            self._servers[name] = {"status": "connected", "error": None}
-        except asyncio.TimeoutError:
-            self._servers[name] = {
-                "status": "error",
-                "error": "Timed out waiting for the MCP server to initialize",
-            }
-            self._tools.pop(name, None)
+            return bool(await owner.ready)
+        except asyncio.CancelledError:
+            if not self._connection_still_desired(name):
+                return False
             raise
-        except Exception as e:
-            self._servers[name] = {"status": "error", "error": str(e)}
-            self._tools.pop(name, None)
-            raise
-        finally:
-            self._bump_catalogue_revision()
+
+    def _ensure_owner(self, name: str) -> _McpServerOwner:
+        owner = self._owners.get(name)
+        if owner is not None and not owner.task.done():
+            return owner
+        owner = _McpServerOwner(self, name)
+        self._owners[name] = owner
+        return owner
+
+    async def _stop_owner(self, name: str) -> None:
+        owner = self._owners.pop(name, None)
+        if owner is not None:
+            await owner.stop()
 
     async def disconnect(self, name: str):
-        """Drop a server's cached listing and mark it disconnected.
+        """Persist disabled intent, then drop the server's cached listing.
 
-        No live resources are held between requests, so there is nothing to
-        close here.
+        Persistence happens first so a failed disk write cannot claim success.
+        The owner is then cancelled and awaited, guaranteeing its transport is
+        disposed before the cached generation is forgotten.
         """
+        self._set_desired_enabled(name, False)
+        await self._stop_owner(name)
         self._forget(name)
         self._bump_catalogue_revision()
 
     def get_all_tools(self) -> list[dict]:
         """Get all tools from all connected servers."""
         all_tools = []
-        for name, tools in self._tools.items():
-            if (self._servers.get(name) or {}).get("status") == "connected":
-                all_tools.extend(tools)
+        snapshot = self._catalogue_state
+        config = self._load_config().get("servers", {})
+        for name, generation in snapshot.items():
+            cfg = config.get(name)
+            if not self._catalogue_is_visible(name, cfg):
+                continue
+            all_tools.extend(generation.tools)
         return all_tools
 
     def _require_connected(self, name: str) -> None:
-        if (self._servers.get(name) or {}).get("status") != "connected":
+        owner = self._owners.get(name)
+        if (
+            (self._servers.get(name) or {}).get("status") != "connected"
+            or owner is None
+            or owner.task.done()
+        ):
             raise KeyError(f"MCP server '{name}' is not connected")
 
     async def call_tool(self, server_name: str, tool_name: str, arguments: dict) -> dict:
         """Call a tool on a connected MCP server."""
         self._require_connected(server_name)
-        async with self._session(server_name) as session:
-            if isinstance(session, RawStreamableHttpSession):
-                result = await session.call_tool(tool_name, arguments)
-                content_parts = []
-                for part in result.get("content", []):
-                    if isinstance(part, dict):
-                        content_parts.append(part)
-                    else:
-                        content_parts.append({"type": "text", "text": str(part)})
-                return {"content": content_parts, "isError": result.get("isError", False)}
+        owner = self._owners[server_name]
+        return await owner.submit("call_tool", tool_name, arguments)
 
+    def get_all_resources(self) -> list[dict]:
+        """Get all resources from all connected servers."""
+        all_res = []
+        snapshot = self._catalogue_state
+        config = self._load_config().get("servers", {})
+        for name, generation in snapshot.items():
+            cfg = config.get(name)
+            if not self._catalogue_is_visible(name, cfg):
+                continue
+            all_res.extend(generation.resources)
+        return all_res
+
+    async def read_resource(self, server_name: str, uri: str) -> dict:
+        """Read a resource from a connected MCP server."""
+        self._require_connected(server_name)
+        return await self._owners[server_name].submit("read_resource", uri)
+
+    def get_all_prompts(self) -> list[dict]:
+        """Get all prompts from all connected servers."""
+        all_pr = []
+        snapshot = self._catalogue_state
+        config = self._load_config().get("servers", {})
+        for name, generation in snapshot.items():
+            cfg = config.get(name)
+            if not self._catalogue_is_visible(name, cfg):
+                continue
+            all_pr.extend(generation.prompts)
+        return all_pr
+
+    async def get_prompt(self, server_name: str, prompt_name: str, arguments: dict | None = None) -> dict:
+        """Get a prompt from a connected MCP server."""
+        self._require_connected(server_name)
+        return await self._owners[server_name].submit(
+            "get_prompt", prompt_name, arguments
+        )
+
+    async def _dispatch_session_operation(self, session, operation: str, args: tuple):
+        if operation == "call_tool":
+            tool_name, arguments = args
             result = await session.call_tool(tool_name, arguments)
+            if isinstance(session, RawStreamableHttpSession):
+                content_parts = [
+                    part if isinstance(part, dict)
+                    else {"type": "text", "text": str(part)}
+                    for part in result.get("content", [])
+                ]
+                return {
+                    "content": content_parts,
+                    "isError": result.get("isError", False),
+                }
             content_parts = []
             for part in result.content:
                 if hasattr(part, "text"):
@@ -3075,99 +5557,169 @@ class ContainerMcpManager:
                     content_parts.append({"type": "resource", "data": str(part.data)})
                 else:
                     content_parts.append({"type": "unknown", "value": str(part)})
-            return {"content": content_parts,
-                    "isError": bool(_mcp_attr(result, "is_error", "isError", default=False))}
-
-    def get_all_resources(self) -> list[dict]:
-        """Get all resources from all connected servers."""
-        all_res = []
-        for name, res in self._resources.items():
-            if (self._servers.get(name) or {}).get("status") == "connected":
-                all_res.extend(res)
-        return all_res
-
-    async def read_resource(self, server_name: str, uri: str) -> dict:
-        """Read a resource from a connected MCP server."""
-        self._require_connected(server_name)
-        async with self._session(server_name) as session:
+            return {
+                "content": content_parts,
+                "isError": bool(
+                    _mcp_attr(result, "is_error", "isError", default=False)
+                ),
+            }
+        if operation == "read_resource":
+            result = await session.read_resource(args[0])
             if isinstance(session, RawStreamableHttpSession):
-                return await session.read_resource(uri)
-            result = await session.read_resource(uri)
+                return result
             contents = []
             for part in result.contents:
                 if hasattr(part, "text"):
-                    contents.append({"uri": str(part.uri), "text": part.text,
-                                     "mimeType": _mcp_attr(part, "mime_type", "mimeType", default="")})
+                    contents.append({
+                        "uri": str(part.uri),
+                        "text": part.text,
+                        "mimeType": _mcp_attr(
+                            part, "mime_type", "mimeType", default=""
+                        ),
+                    })
                 elif hasattr(part, "blob"):
-                    contents.append({"uri": str(part.uri), "blob": part.blob,
-                                     "mimeType": _mcp_attr(part, "mime_type", "mimeType", default="")})
+                    contents.append({
+                        "uri": str(part.uri),
+                        "blob": part.blob,
+                        "mimeType": _mcp_attr(
+                            part, "mime_type", "mimeType", default=""
+                        ),
+                    })
                 else:
                     contents.append({"uri": str(part.uri), "text": str(part)})
             return {"contents": contents}
-
-    def get_all_prompts(self) -> list[dict]:
-        """Get all prompts from all connected servers."""
-        all_pr = []
-        for name, pr in self._prompts.items():
-            if (self._servers.get(name) or {}).get("status") == "connected":
-                all_pr.extend(pr)
-        return all_pr
-
-    async def get_prompt(self, server_name: str, prompt_name: str, arguments: dict | None = None) -> dict:
-        """Get a prompt from a connected MCP server."""
-        self._require_connected(server_name)
-        async with self._session(server_name) as session:
+        if operation == "get_prompt":
+            result = await session.get_prompt(args[0], args[1])
             if isinstance(session, RawStreamableHttpSession):
-                return await session.get_prompt(prompt_name, arguments)
-            result = await session.get_prompt(prompt_name, arguments)
+                return result
             messages = []
             for msg in result.messages:
                 parts = []
                 content = msg.content
                 if isinstance(content, list):
-                    for p in content:
-                        if hasattr(p, "text"):
-                            parts.append({"type": "text", "text": p.text})
+                    for part in content:
+                        if hasattr(part, "text"):
+                            parts.append({"type": "text", "text": part.text})
                 elif hasattr(content, "text"):
                     parts.append({"type": "text", "text": content.text})
                 messages.append({"role": msg.role, "content": parts})
             return {"messages": messages}
+        raise ValueError(f"Unknown MCP owner operation: {operation}")
 
     async def refresh_server(self, name: str) -> dict:
         """Re-fetch tools/resources/prompts from a connected server."""
+        owner = self._owners.get(name)
+        if owner is None and (self._servers.get(name) or {}).get("status") == "connected":
+            # Compatibility path for isolated fixture managers that inject a
+            # connected state without starting the production supervisor.
+            old = self._catalogue_state.get(name)
+            async with self._session(name) as session:
+                discovered = await self._discover(name, session)
+            if isinstance(discovered, _McpCatalogueGeneration):
+                self._publish_catalogue(name, discovered)
+            else:
+                self._bump_catalogue_revision()
+            current = self._catalogue_state.get(name)
+            return {
+                "tools": len(current.tools) if current else 0,
+                "resources": len(current.resources) if current else 0,
+                "prompts": len(current.prompts) if current else 0,
+                "tools_changed": bool(
+                    old is None or current is None or old.tools != current.tools
+                ),
+            }
         self._require_connected(name)
-        old_tools = len(self._tools.get(name, []))
-        async with self._session(name) as session:
-            await self._discover(name, session)
-        self._bump_catalogue_revision()
-        return {
-            "tools": len(self._tools.get(name, [])),
-            "resources": len(self._resources.get(name, [])),
-            "prompts": len(self._prompts.get(name, [])),
-            "tools_changed": old_tools != len(self._tools.get(name, [])),
-        }
+        return await owner.submit("refresh")
 
     async def reconnect_configured(self) -> None:
-        """Reconnect every configured server, as a background startup task.
+        """Reconnect desired-enabled servers as a background startup task.
 
         Runs after the app is serving rather than inside lifespan setup: a
         server that is slow or gone must not hold the container's startup, and
-        each failure is recorded for the UI instead of raised.
+        each failure is recorded for the UI instead of raised. Desired state
+        is re-read immediately before each probe, so a disconnect that arrives
+        while an earlier server is starting is respected.
         """
         names = list(self._load_config().get("servers", {}).keys())
         if not names:
             return
-        print(f"[MCP] Reconnecting {len(names)} configured server(s)...")
+        enabled_count = sum(
+            1
+            for name in names
+            if self._connection_still_desired(name)
+        )
+        if not enabled_count:
+            return
+        print(f"[MCP] Reconnecting {enabled_count} enabled server(s)...")
         for name in names:
+            if not self._connection_still_desired(name):
+                continue
             try:
-                await self.connect(name)
-                print(f"[MCP] Reconnected '{name}' ({len(self._tools.get(name, []))} tools)")
+                connected = await self.connect(name, persist_desired=False)
+                if connected:
+                    print(f"[MCP] Reconnected '{name}' ({len(self._tools.get(name, []))} tools)")
             except Exception as e:
                 print(f"[MCP] Reconnect failed for '{name}': {e}")
+
+    async def shutdown(self) -> None:
+        """Stop every owner and dispose all process-local runtime projections."""
+        owners = list(self._owners.values())
+        self._owners.clear()
+        for owner in owners:
+            owner.request_stop()
+        if owners:
+            await asyncio.gather(
+                *(owner.stop() for owner in owners), return_exceptions=True
+            )
+        had_catalogue = bool(self._catalogue_state)
+        self._catalogue_state = {}
+        self._servers.clear()
+        self._remote_transport.clear()
+        if had_catalogue:
+            self._bump_catalogue_revision()
 
 
 # Singleton MCP manager
 mcp_manager = ContainerMcpManager()
+_scoped_mcp_managers: dict[str, ContainerMcpManager] = {}
+
+
+def _active_mcp_manager() -> ContainerMcpManager:
+    """Return the request tenant's stateful MCP runtime and config store."""
+    scope = _current_user_scope()
+    if not scope:
+        return mcp_manager
+    manager = _scoped_mcp_managers.get(scope)
+    if manager is None:
+        manager = ContainerMcpManager(
+            _scoped_mcp_config_path(scope),
+            user_scope=scope,
+        )
+        _scoped_mcp_managers[scope] = manager
+    return manager
+
+
+def _persisted_scoped_mcp_managers() -> list[ContainerMcpManager]:
+    """Discover scoped configs at startup without treating names as identity."""
+    root = MCP_CONFIG_PATH.parent
+    if not root.is_dir():
+        return []
+    managers: list[ContainerMcpManager] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.is_symlink():
+            continue
+        scope = child.name
+        if not _USER_SCOPE_PATTERN.fullmatch(scope):
+            continue
+        path = child / MCP_CONFIG_PATH.name
+        if not path.is_file() or path.is_symlink():
+            continue
+        manager = _scoped_mcp_managers.get(scope)
+        if manager is None:
+            manager = ContainerMcpManager(path, user_scope=scope)
+            _scoped_mcp_managers[scope] = manager
+        managers.append(manager)
+    return managers
 
 
 def _catalogue_json_value(value):
@@ -3177,15 +5729,21 @@ def _catalogue_json_value(value):
 
 def _mcp_catalogue_projection(manager: ContainerMcpManager | None = None) -> dict:
     """Return connected MCP definition metadata, never resource bodies."""
-    active = manager or mcp_manager
+    active = manager or _active_mcp_manager()
     config = active._load_config()
     servers = []
     for name, server_config in sorted(config.get("servers", {}).items()):
         state = active._servers.get(name) or {}
+        catalogue = active._catalogue_state.get(name)
         servers.append({
             "name": str(name),
             "type": str(server_config.get("type") or "stdio"),
+            "enabled": active._desired_enabled(server_config),
             "status": str(state.get("status") or "disconnected"),
+            "list_changed": dict(catalogue.list_changed) if catalogue else {},
+            "catalogue_generation": catalogue.generation if catalogue else "",
+            "last_known_good": catalogue is not None,
+            "reconnect_exhausted": bool(state.get("reconnect_exhausted")),
         })
 
     tools = []
@@ -3260,7 +5818,7 @@ def _catalogue_version_payload(skills: dict, mcp: dict) -> dict:
 
 def _build_catalogue_projection() -> dict:
     skills = _skill_catalogue_projection()
-    mcp = _mcp_catalogue_projection()
+    mcp = _mcp_catalogue_projection(_active_mcp_manager())
     version = _catalogue_version_payload(skills, mcp)
     return {
         **version,
@@ -3275,7 +5833,7 @@ def _build_catalogue_projection() -> dict:
 async def get_catalogue_version(request: Request):
     """Publish stable sandbox boot and directory generations."""
     skills = _skill_catalogue_projection()
-    mcp = _mcp_catalogue_projection()
+    mcp = _mcp_catalogue_projection(_active_mcp_manager())
     payload = _catalogue_version_payload(skills, mcp)
     return _catalogue_json_response(request, payload, payload["generation"])
 
@@ -3290,7 +5848,7 @@ async def get_catalogue_projection(request: Request):
 @app.get("/mcp/servers")
 async def list_mcp_servers():
     """List all configured MCP servers and their status."""
-    return mcp_manager.list_servers()
+    return _active_mcp_manager().list_servers()
 
 
 @app.post("/mcp/servers")
@@ -3311,7 +5869,7 @@ async def add_mcp_server(req: AddMcpServerRequest):
             config["headers"] = req.headers
     else:
         raise HTTPException(status_code=400, detail=f"Unknown type: {req.type}")
-    mcp_manager.add_server(req.name, config)
+    _active_mcp_manager().add_server(req.name, config)
     return {"ok": True, "message": f"MCP server '{req.name}' added"}
 
 
@@ -3319,9 +5877,7 @@ async def add_mcp_server(req: AddMcpServerRequest):
 async def remove_mcp_server(name: str):
     """Remove an MCP server configuration."""
     try:
-        # remove_server drops the cached listing too; nothing is held open
-        # between requests, so there is no session to close first.
-        mcp_manager.remove_server(name)
+        await _active_mcp_manager().remove_server_and_stop(name)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     return {"ok": True, "message": f"MCP server '{name}' removed"}
@@ -3331,7 +5887,7 @@ async def remove_mcp_server(name: str):
 async def connect_mcp_server(name: str):
     """Start and connect to an MCP server."""
     try:
-        await mcp_manager.connect(name)
+        await _active_mcp_manager().connect(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -3342,17 +5898,21 @@ async def connect_mcp_server(name: str):
 @app.post("/mcp/servers/{name}/disconnect")
 async def disconnect_mcp_server(name: str):
     """Disconnect from an MCP server."""
-    await mcp_manager.disconnect(name)
+    try:
+        await _active_mcp_manager().disconnect(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True, "message": f"Disconnected from '{name}'"}
 
 
 @app.get("/mcp/tools")
 async def list_mcp_tools(request: Request):
     """List all tools from all connected MCP servers."""
-    projection = _mcp_catalogue_projection()
+    manager = _active_mcp_manager()
+    projection = _mcp_catalogue_projection(manager)
     return _catalogue_json_response(
         request,
-        mcp_manager.get_all_tools(),
+        manager.get_all_tools(),
         projection["generation"],
     )
 
@@ -3361,7 +5921,7 @@ async def list_mcp_tools(request: Request):
 async def call_mcp_tool(server_name: str, tool_name: str, req: CallMcpToolRequest):
     """Call a tool on a connected MCP server."""
     try:
-        result = await mcp_manager.call_tool(server_name, tool_name, req.arguments)
+        result = await _active_mcp_manager().call_tool(server_name, tool_name, req.arguments)
         return result
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -3393,10 +5953,11 @@ async def call_mcp_tool(server_name: str, tool_name: str, req: CallMcpToolReques
 @app.get("/mcp/resources")
 async def list_mcp_resources(request: Request):
     """List all resources from all connected MCP servers."""
-    projection = _mcp_catalogue_projection()
+    manager = _active_mcp_manager()
+    projection = _mcp_catalogue_projection(manager)
     return _catalogue_json_response(
         request,
-        mcp_manager.get_all_resources(),
+        manager.get_all_resources(),
         projection["generation"],
     )
 
@@ -3405,7 +5966,7 @@ async def list_mcp_resources(request: Request):
 async def read_mcp_resource(req: ReadMcpResourceRequest):
     """Read a specific resource from a connected MCP server."""
     try:
-        return await mcp_manager.read_resource(req.server, req.uri)
+        return await _active_mcp_manager().read_resource(req.server, req.uri)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -3415,14 +5976,14 @@ async def read_mcp_resource(req: ReadMcpResourceRequest):
 @app.get("/mcp/prompts")
 async def list_mcp_prompts():
     """List all prompts from all connected MCP servers."""
-    return mcp_manager.get_all_prompts()
+    return _active_mcp_manager().get_all_prompts()
 
 
 @app.post("/mcp/prompts/get")
 async def get_mcp_prompt(req: GetMcpPromptRequest):
     """Get a specific prompt from a connected MCP server."""
     try:
-        return await mcp_manager.get_prompt(req.server, req.name, req.arguments)
+        return await _active_mcp_manager().get_prompt(req.server, req.name, req.arguments)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -3433,7 +5994,7 @@ async def get_mcp_prompt(req: GetMcpPromptRequest):
 async def refresh_mcp_server(name: str):
     """Re-fetch tools/resources/prompts from a connected MCP server."""
     try:
-        return await mcp_manager.refresh_server(name)
+        return await _active_mcp_manager().refresh_server(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

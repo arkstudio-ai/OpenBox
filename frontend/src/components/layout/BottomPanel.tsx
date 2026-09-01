@@ -7,9 +7,10 @@ import type { ContainerInfo } from "@/types"
 
 interface BottomPanelProps {
   containers: ContainerInfo[]
+  sessionId?: string | null
 }
 
-export function BottomPanel({ containers }: BottomPanelProps) {
+export function BottomPanel({ containers, sessionId }: BottomPanelProps) {
   const bottomPanelOpen = useUIStore((s) => s.bottomPanelOpen)
   const bottomPanelHeight = useUIStore((s) => s.bottomPanelHeight)
   const setBottomPanelHeight = useUIStore((s) => s.setBottomPanelHeight)
@@ -84,6 +85,7 @@ export function BottomPanel({ containers }: BottomPanelProps) {
           tabs={tabs.map((t) => ({ containerId: t.containerId, containerName: t.containerName }))}
           activeTab={tabs.find((t) => t.id === activeTabId)?.containerId || null}
           containers={containers}
+          sessionId={sessionId}
           onSelectTab={(containerId) => {
             const tab = tabs.find((t) => t.containerId === containerId)
             if (tab) setActive(tab.id)

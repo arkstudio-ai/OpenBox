@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from tool.tool import ToolContext, ToolResult, define_tool
 from video.materials import (
+    MaterialProviderError,
     create_liveness_session,
     ensure_material_asset,
     get_identity,
@@ -120,11 +121,42 @@ async def execute_video_identity(args: VideoIdentityArgs, ctx: ToolContext) -> T
             ),
             metadata={"action": args.action, "identities": enriched},
         )
+    except MaterialProviderError as exc:
+        outcome_unknown = exc.code == "material_outcome_unknown"
+        return ToolResult(
+            title="真人素材操作失败",
+            output=(
+                str(exc)[:1000]
+                if getattr(exc, "public_message", False)
+                else "TokenSpace 素材服务请求失败；详细供应商响应未向会话公开。"
+            ),
+            metadata={
+                "action": args.action,
+                "failed": True,
+                "error": True,
+                "failure_code": exc.code,
+                "retryable": exc.retryable,
+                **(
+                    {
+                        "outcome_unknown": True,
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    }
+                    if outcome_unknown
+                    else {}
+                ),
+            },
+        )
     except Exception as exc:
         return ToolResult(
             title="真人素材操作失败",
             output=(str(exc) or exc.__class__.__name__)[:1000],
-            metadata={"action": args.action, "failed": True, "error": True},
+            metadata={
+                "action": args.action,
+                "failed": True,
+                "error": True,
+                "failure_code": "video_identity_failed",
+            },
         )
 
 

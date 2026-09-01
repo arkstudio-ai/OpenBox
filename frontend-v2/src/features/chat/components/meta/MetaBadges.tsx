@@ -16,7 +16,6 @@ import { formatCost, formatDuration, formatNumber } from "@/shared/lib/format"
 import { Tooltip } from "@/shared/ui/Tooltip"
 import type { TokenUsage } from "@/shared/types/api"
 import { useConfigQuery } from "../../api/config"
-import { useSessionQuery } from "../../api/message-actions"
 import { ModelLogo } from "../ModelLogo"
 import { modelLabel } from "../../lib/model"
 
@@ -26,11 +25,10 @@ const BADGE =
 /** Vendor mark + model name. The badge shows the name a human picked in the composer;
  *  the routing id it resolved to stays in the tooltip, where it is useful for
  *  debugging and harmless everywhere else. */
-export function ModelBadge({ sessionId }: { sessionId: string }) {
+export function ModelBadge({ model: rawModel }: { model?: string | null }) {
   const { t } = useTranslation("chat")
-  const { data } = useSessionQuery(sessionId)
   const { data: config } = useConfigQuery()
-  const model = data?.model?.trim()
+  const model = rawModel?.trim()
   if (!model) return null
   return (
     <Tooltip label={model}>

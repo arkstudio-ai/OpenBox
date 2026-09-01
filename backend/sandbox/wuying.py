@@ -1,7 +1,7 @@
 """WUYING (无影云电脑) sandbox provider.
 
-Unlike the Docker and Kubernetes providers, this one does not own a container
-lifecycle. The sandbox is a long-lived Alibaba Cloud WUYING cloud desktop that
+The provider does not own a container lifecycle. The sandbox is a long-lived
+Alibaba Cloud WUYING cloud desktop that
 was provisioned out of band; the action server runs there as a systemd unit and
 is reached over a tunnel endpoint (``wuying_endpoint``).
 
@@ -11,9 +11,9 @@ Consequences that matter:
 * ``delete_container`` / ``stop_container`` are deliberate no-ops. The session
   manager destroys a container once its last session is released; doing that to
   someone's cloud desktop would be destructive and is never what we want here.
-* Isolation between sessions is by working directory only
-  (``/workspace/sessions/<id>``), the same as the shared-container path the
-  Docker provider already takes. There is no per-session boundary beyond that.
+* Normal project I/O is routed through a user/project namespaced working
+  directory. This prevents accidental collisions but is not a hostile-tenant
+  boundary: arbitrary commands still share one desktop and Unix identity.
 """
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ CONTAINER_ID = "wuying-desktop"
 class WuyingProvider(SandboxProvider):
     """Points every session at a single pre-provisioned WUYING cloud desktop."""
 
-    supports_build = False
     owns_containers = False
 
     def __init__(self) -> None:

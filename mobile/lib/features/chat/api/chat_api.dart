@@ -14,8 +14,11 @@ class ChatApi {
 
   final Dio _dio;
 
-  Future<List<ChatMessage>> listMessages(String sessionId,
-      {int offset = 0, int limit = 200}) async {
+  Future<List<ChatMessage>> listMessages(
+    String sessionId, {
+    int offset = 0,
+    int limit = 200,
+  }) async {
     final resp = await _dio.get<List<dynamic>>(
       '/api/agent/session/$sessionId/message',
       queryParameters: {'offset': offset, 'limit': limit},
@@ -26,9 +29,37 @@ class ChatApi {
         .toList();
   }
 
+  /// Load the complete transcript from the API's newest-first pagination.
+  /// Each page is chronological, but offset 0 is the newest page, so older
+  /// pages are prepended. Busy polling deliberately keeps using listMessages;
+  /// this full walk is only for initial/recovery loads.
+  Future<List<ChatMessage>> listAllMessages(
+    String sessionId, {
+    int pageSize = 200,
+  }) async {
+    if (pageSize <= 0) {
+      throw ArgumentError.value(pageSize, 'pageSize', 'must be positive');
+    }
+    final all = <ChatMessage>[];
+    var offset = 0;
+    while (true) {
+      final page = await listMessages(
+        sessionId,
+        offset: offset,
+        limit: pageSize,
+      );
+      if (page.isEmpty) break;
+      all.insertAll(0, page);
+      offset += page.length;
+      if (page.length < pageSize) break;
+    }
+    return all;
+  }
+
   Future<Session> getSession(String sessionId) async {
-    final resp = await _dio
-        .get<Map<String, dynamic>>('/api/agent/session/$sessionId');
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/agent/session/$sessionId',
+    );
     return Session.fromJson(resp.data ?? const {});
   }
 
@@ -40,11 +71,7 @@ class ChatApi {
   }) async {
     final resp = await _dio.post<Map<String, dynamic>>(
       '/api/agent/session',
-      data: {
-        'project_id': ?projectId,
-        'model': model,
-        'agent': agent,
-      },
+      data: {'project_id': ?projectId, 'model': model, 'agent': agent},
     );
     return Session.fromJson(resp.data ?? const {});
   }
@@ -74,8 +101,11 @@ class ChatApi {
     await _dio.post<dynamic>('/api/agent/session/$sessionId/abort');
   }
 
-  Future<void> regenerate(String sessionId, String messageId,
-      {String? model}) async {
+  Future<void> regenerate(
+    String sessionId,
+    String messageId, {
+    String? model,
+  }) async {
     await _dio.post<dynamic>(
       '/api/agent/session/$sessionId/regenerate/$messageId',
       data: {'model': ?model},
@@ -83,12 +113,16 @@ class ChatApi {
   }
 
   Future<void> dismissMessage(String sessionId, String messageId) async {
-    await _dio
-        .delete<dynamic>('/api/agent/session/$sessionId/message/$messageId');
+    await _dio.delete<dynamic>(
+      '/api/agent/session/$sessionId/message/$messageId',
+    );
   }
 
   Future<void> setReaction(
-      String sessionId, String messageId, String? reaction) async {
+    String sessionId,
+    String messageId,
+    String? reaction,
+  ) async {
     await _dio.post<dynamic>(
       '/api/agent/session/$sessionId/message/$messageId/reaction',
       data: {'reaction': reaction},
@@ -106,8 +140,11 @@ class ChatApi {
   }
 
   /// Insert a user task into the list (web `useAddTodoItem`).
-  Future<void> addTodoItem(String sessionId, String subject,
-      {String? afterId}) async {
+  Future<void> addTodoItem(
+    String sessionId,
+    String subject, {
+    String? afterId,
+  }) async {
     await _dio.post<dynamic>(
       '/api/agent/session/$sessionId/todo/items',
       data: {'subject': subject, 'after_id': ?afterId},
@@ -115,8 +152,9 @@ class ChatApi {
   }
 
   Future<void> removeTodoItem(String sessionId, String itemId) async {
-    await _dio
-        .delete<dynamic>('/api/agent/session/$sessionId/todo/items/$itemId');
+    await _dio.delete<dynamic>(
+      '/api/agent/session/$sessionId/todo/items/$itemId',
+    );
   }
 
   Future<void> acceptPlan(String sessionId) async {
@@ -150,8 +188,10 @@ class ChatApi {
 
   /// Backend-native actions: `once` | `always` | `reject`.
   Future<void> replyPermission(String requestId, String action) async {
-    await _dio.post<dynamic>('/api/agent/permission/$requestId',
-        data: {'action': action});
+    await _dio.post<dynamic>(
+      '/api/agent/permission/$requestId',
+      data: {'action': action},
+    );
   }
 
   Future<List<QuestionRequest>> listQuestions() async {
@@ -163,9 +203,14 @@ class ChatApi {
   }
 
   /// One label-array per question, in order (nested array shape).
-  Future<void> replyQuestion(String requestId, List<List<String>> answers) async {
-    await _dio.post<dynamic>('/api/agent/question/$requestId',
-        data: {'answers': answers});
+  Future<void> replyQuestion(
+    String requestId,
+    List<List<String>> answers,
+  ) async {
+    await _dio.post<dynamic>(
+      '/api/agent/question/$requestId',
+      data: {'answers': answers},
+    );
   }
 
   Future<void> rejectQuestion(String requestId) async {
@@ -173,5 +218,6 @@ class ChatApi {
   }
 }
 
-final chatApiProvider =
-    Provider<ChatApi>((ref) => ChatApi(ref.watch(apiDioProvider)));
+final chatApiProvider = Provider<ChatApi>(
+  (ref) => ChatApi(ref.watch(apiDioProvider)),
+);

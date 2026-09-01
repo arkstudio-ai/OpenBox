@@ -46,11 +46,16 @@ function withNames(files: File[]): File[] {
 }
 
 /** Legacy route: chunked upload through the backend into the sandbox. */
-async function uploadViaSandbox(containerId: string, file: File): Promise<{ path: string }> {
+async function uploadViaSandbox(
+  containerId: string,
+  file: File,
+  sessionId?: string | null,
+): Promise<{ path: string }> {
   const form = new FormData()
   form.append("file", file)
   const token = useAuthStore.getState().accessToken
-  const res = await fetch(`${env.apiBase}/api/containers/${containerId}/files/upload`, {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""
+  const res = await fetch(`${env.apiBase}/api/containers/${containerId}/files/upload${query}`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
@@ -105,7 +110,7 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
             // 503 = OSS transfer not configured → legacy sandbox upload.
             if (err instanceof ApiError && err.status === 503 && containerId) {
               try {
-                const data = await uploadViaSandbox(containerId, file)
+                const data = await uploadViaSandbox(containerId, file, sessionId)
                 patch({ status: "done", progress: 1, path: data.path })
                 return
               } catch {
@@ -152,7 +157,13 @@ export function useAttachments(containerId: string | null, sessionId?: string | 
 
   /** Appends landed sandbox paths to the outgoing message text. */
   const decorate = useCallback((text: string): string => {
-    const paths = itemsRef.current.filter((a) => a.status === "done" && a.path).map((a) => a.path)
+    // Durable OSS assets are attached as FileParts by the backend after it
+    // resolves the destination session/project. Their picker path may point at
+    // a source project, so only legacy direct-to-sandbox uploads belong in the
+    // raw message text.
+    const paths = itemsRef.current
+      .filter((a) => a.status === "done" && a.path && !a.assetId)
+      .map((a) => a.path)
     if (paths.length === 0) return text
     return `${text}\n\n[attachments]\n${paths.map((p) => `- ${p}`).join("\n")}`
   }, [])

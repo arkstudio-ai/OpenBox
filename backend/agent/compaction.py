@@ -134,7 +134,9 @@ async def is_overflow(tokens: TokenUsage | None, model_id: str = "") -> bool:
 
 
 async def create_compaction(session_id: str, auto: bool = True, user_id: str = "default",
-                            messages: list | None = None, model_id: str = "") -> None:
+                            messages: list | None = None, model_id: str = "",
+                            run_fence: tuple[str, str, int] | None = None,
+                            bind_trigger: bool = False):
     """Create a compaction request (special user message with compaction part).
 
     When `messages` is supplied, a tail of recent history is marked to survive
@@ -146,17 +148,12 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
     from core.identifier import ascending
 
     log.info(f"Creating compaction request for session {session_id} auto={auto}")
-    bus.publish(SESSION_COMPACTION_START, {"userId": user_id, "sessionId": session_id})
+    start_payload = {"userId": user_id, "sessionId": session_id}
+    if run_fence is not None:
+        start_payload["generation"] = run_fence[2]
+    bus.publish(SESSION_COMPACTION_START, start_payload)
 
     try:
-        msg = await create_user_message(
-            session_id=session_id,
-            text="",
-            agent="compaction",
-            user_id=user_id,
-        )
-        log.info(f"Created compaction user message: {msg.id}")
-
         # Decide how much recent history survives verbatim.
         tail_start_id = None
         if messages:
@@ -177,19 +174,36 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
                 # the summary-only path still keeps the session alive.
                 log.warning(f"Could not compute compaction tail: {e}")
 
-        # Add compaction part
+        # The empty synthetic message and its boundary descriptor are one
+        # transaction. A takeover/crash can never strand a user message that
+        # recovery cannot recognise as a compaction request.
+        message_id = ascending("message")
         part = CompactionPart(
             id=ascending("part"),
             auto=auto,
             session_id=session_id,
-            message_id=msg.id,
+            message_id=message_id,
             tail_start_id=tail_start_id,
         )
-        from session.session import save_part
-        await save_part(part, is_new=True, user_id=user_id)
-        log.info(f"Saved compaction part: {part.id} for message {msg.id}")
+        msg = await create_user_message(
+            session_id=session_id,
+            text="",
+            agent="compaction",
+            user_id=user_id,
+            run_fence=run_fence,
+            bind_trigger=bind_trigger,
+            message_id=message_id,
+            additional_parts=(part,),
+        )
+        log.info(f"Created atomic compaction request: {msg.id}/{part.id}")
+        return msg
     except Exception as e:
+        from agent.driver import LeaseLostError
+
+        if isinstance(e, LeaseLostError):
+            raise
         log.error(f"Failed to create compaction: {e}", exc_info=True)
+        return None
 
 
 CHUNK_SUMMARY_PROMPT = (
@@ -284,6 +298,7 @@ async def process_compaction(
     model_id: str,
     auto: bool = True,
     user_id: str = "default",
+    run_fence: tuple[str, str, int] | None = None,
 ) -> str:
     """Execute compaction: summarize conversation with LLM.
 
@@ -324,39 +339,59 @@ async def process_compaction(
         model_id=model_id,
         agent="compaction",
         user_id=user_id,
+        run_fence=run_fence,
     )
 
-    # Force prune old tool outputs BEFORE building compaction messages.
-    # This dramatically reduces token count before sending to the compaction LLM.
-    await prune_tool_outputs(session_id, user_id=user_id, aggressive=True, protect_from_id=tail_start_id)
-
-    # Re-fetch messages after pruning (tool outputs now cleared)
-    from session.session import get_messages as _get_msgs
-    messages = await _get_msgs(session_id)
-
-    # IMPORTANT: filter out messages before the last compaction boundary.
-    # Without this, we'd send the ENTIRE history to the compaction LLM,
-    # defeating the purpose of compaction.
-    from session.compaction import filter_compacted
-    messages = await filter_compacted(messages)
-
-    # Summarize only the head. The tail from tail_start_id onward is replayed
-    # verbatim after this summary, so describing it here would both duplicate it
-    # and spend the summarizer's context on messages that are not being lost.
-    if tail_start_id:
-        for i, m in enumerate(messages):
-            if m.id == tail_start_id:
-                if i > 0:
-                    log.info(f"Summarizing {i} messages, preserving {len(messages) - i} verbatim")
-                    messages = messages[:i]
-                break
+    # Freeze the original immutable source before deriving a compact provider
+    # view. Provider failure or CAS drift must never permanently prune the live
+    # transcript merely because a replacement was attempted.
+    # projection. The requested tail may land inside a turn; the stable range
+    # moves it back to the first message after the last completely closed turn.
+    # No Session lock survives this call into the provider.
+    from session.event_range import (
+        StableEventRangeError,
+        freeze_compaction_event_range,
+    )
+    try:
+        compaction_range = await freeze_compaction_event_range(
+            session_id,
+            user_id=user_id,
+            compaction_user_id=compaction_user_id,
+            requested_tail_start_id=tail_start_id,
+            run_fence=run_fence,
+        )
+    except StableEventRangeError as exc:
+        log.warning(f"Compaction has no stable source range: {exc}")
+        assistant.summary = True
+        assistant.error = {"message": f"Compaction source range is unstable: {exc}"}
+        await update_message_info(
+            assistant,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
+        complete_payload = {"userId": user_id, "sessionId": session_id}
+        if run_fence is not None:
+            complete_payload["generation"] = run_fence[2]
+        bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
+        return "stop"
+    messages = compaction_range.source.messages()
+    tail_start_id = compaction_range.tail_start_id
+    messages = prune_tool_outputs_view(messages, aggressive=True)
+    log.info(
+        f"Frozen compaction Event range "
+        f"{compaction_range.source.start_sequence}..{compaction_range.source.end_sequence} "
+        f"covering {len(messages)} messages; tail={tail_start_id or '(none)'}"
+    )
 
     # Build messages using the full LLM message builder (includes tool calls/results)
     from agent.loop import _to_llm_messages
     compaction_messages = _to_llm_messages(messages)
 
     # Estimate total tokens
-    estimated_tokens = sum(token_estimate(str(m.get("content", ""))) for m in compaction_messages)
+    import json as _json
+    estimated_tokens = token_estimate(
+        _json.dumps(compaction_messages, ensure_ascii=False, sort_keys=True, default=str)
+    )
     context_limit = get_model_context_limit(model_id)
     # Safe limit = context - compaction prompt (~300 tokens) - output buffer (~4K)
     # Single compaction can handle up to this amount; beyond it we chunk.
@@ -375,6 +410,12 @@ async def process_compaction(
             {"role": "user", "content": "Here are summaries of the conversation so far:\n\n" + "\n\n---\n\n".join(chunk_summaries)},
         ]
 
+    # Price the exact detached source payload the final provider call receives
+    # (excluding the compaction instruction itself). Chunking, when used, has
+    # already replaced the original list at this point.
+    source_token_count = token_estimate(
+        _json.dumps(compaction_messages, ensure_ascii=False, sort_keys=True, default=str)
+    )
     # Append the compaction prompt as the final user message
     compaction_messages.append({"role": "user", "content": COMPACTION_PROMPT})
 
@@ -386,10 +427,20 @@ async def process_compaction(
         session_id=session_id,
         message_id=assistant.id,
     )
-    await save_part(text_part, is_new=True, user_id=user_id)
+    await save_part(
+        text_part,
+        is_new=True,
+        user_id=user_id,
+        run_fence=run_fence,
+    )
 
     # Call LLM with no tools
-    ctx = ToolContext(session_id=session_id)
+    ctx = ToolContext(
+        session_id=session_id,
+        run_id=run_fence[1] if run_fence else "",
+        run_generation=run_fence[2] if run_fence else 0,
+        user_id=user_id,
+    )
     summary_text = ""
     stream_usage: dict = {}
     llm_error = False
@@ -406,13 +457,16 @@ async def process_compaction(
             if event["type"] == "text_delta":
                 summary_text += event["text"]
                 # Stream to frontend in real-time
-                bus.publish(MESSAGE_TEXT_DELTA, {
+                delta_payload = {
                     "userId": user_id,
                     "sessionId": session_id,
                     "messageId": assistant.id,
                     "partId": text_part_id,
                     "text": event["text"],
-                })
+                }
+                if run_fence is not None:
+                    delta_payload["generation"] = run_fence[2]
+                bus.publish(MESSAGE_TEXT_DELTA, delta_payload)
             elif event["type"] == "finish":
                 stream_usage = event.get("usage", {})
             elif event["type"] == "error":
@@ -423,11 +477,11 @@ async def process_compaction(
         log.error(f"Compaction stream error for session {session_id}: {e}")
         llm_error = True
 
-    # Save final text part
-    text_part.text = summary_text or ""
-    await save_part(text_part, user_id=user_id)
-
     if llm_error or not summary_text:
+        # Partial provider output is useful diagnostics, but without the CAS
+        # replacement event it is never a compaction boundary.
+        text_part.text = summary_text or ""
+        await save_part(text_part, user_id=user_id, run_fence=run_fence)
         # Don't create a compaction boundary on failure (matching opencode:
         # filterCompacted requires both summary=True AND finish to be set).
         # Leave finish unset so this doesn't become a boundary.
@@ -435,22 +489,85 @@ async def process_compaction(
         assistant.summary = True  # Mark as summary attempt
         # assistant.finish deliberately NOT set — prevents bad boundary
         assistant.error = {"message": "Compaction failed to produce a summary"}
-        await update_message_info(assistant, user_id=user_id)
-        bus.publish(SESSION_COMPACTION_COMPLETE, {"userId": user_id, "sessionId": session_id})
+        await update_message_info(
+            assistant,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
+        complete_payload = {"userId": user_id, "sessionId": session_id}
+        if run_fence is not None:
+            complete_payload["generation"] = run_fence[2]
+        bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
         return "stop"
 
-    # Success: mark assistant message as completed summary boundary
-    assistant.summary = True
-    assistant.finish = "stop"
-    # Record compaction step's token usage on the message
-    if stream_usage:
-        assistant.tokens = TokenUsage(
-            input=stream_usage.get("input", 0),
-            output=stream_usage.get("output", 0),
-            cache=stream_usage.get("cache", 0),
-            total=stream_usage.get("total", 0),
+    # The provider ran without a DB lock. Reacquire the exact owner/fence and
+    # CAS the frozen range before committing the text, summary boundary,
+    # CompactionPart descriptor, and immutable replacement event together.
+    from session.event_range import (
+        StableEventRangeDriftError,
+        SummaryNotCompactError,
+        finalize_compaction_replacement,
+    )
+    summary_token_count = token_estimate(summary_text)
+    try:
+        await finalize_compaction_replacement(
+            frozen=compaction_range.source,
+            user_id=user_id,
+            compaction_user_id=compaction_user_id,
+            assistant_message_id=assistant.id,
+            text_part_id=text_part_id,
+            summary_text=summary_text,
+            tail_start_id=tail_start_id,
+            source_token_count=source_token_count,
+            summary_token_count=summary_token_count,
+            model_id=model_id,
+            usage=stream_usage,
+            run_fence=run_fence,
         )
-    await update_message_info(assistant, user_id=user_id)
+    except (StableEventRangeDriftError, SummaryNotCompactError) as exc:
+        log.warning(f"Compaction replacement rejected: {exc}")
+        text_part.text = summary_text
+        await save_part(text_part, user_id=user_id, run_fence=run_fence)
+        assistant.summary = True
+        assistant.error = {"message": str(exc)}
+        # finish deliberately remains unset: filter_compacted cannot mistake
+        # this diagnostic attempt for a committed replacement.
+        await update_message_info(
+            assistant,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
+        complete_payload = {"userId": user_id, "sessionId": session_id}
+        if run_fence is not None:
+            complete_payload["generation"] = run_fence[2]
+        bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
+        return "stop"
+
+    # The atomic helper bypasses the convenience writers, so publish the same
+    # compatible finish notification after its transaction commits. Text was
+    # already streamed as deltas; reconnects read the committed Part.
+    from bus.events import MESSAGE_UPDATED
+    message_payload = {
+        "userId": user_id,
+        "sessionId": session_id,
+        "message": {
+            "id": assistant.id,
+            "role": "assistant",
+            "finish": "stop",
+            "summary": True,
+            "model": model_id,
+        },
+    }
+    if stream_usage:
+        message_payload["message"]["tokens"] = {
+            "input": stream_usage.get("input", 0),
+            "output": stream_usage.get("output", 0),
+            "cache": stream_usage.get("cache", 0),
+            "total": stream_usage.get("total", 0),
+        }
+    if run_fence is not None:
+        message_payload["generation"] = run_fence[2]
+    bus.publish(MESSAGE_UPDATED, message_payload)
 
     # Reset session token_usage after compaction.
     # The cumulative totals are reset to zero so the progress bar reflects
@@ -467,17 +584,28 @@ async def process_compaction(
         limit=context_limit,
         context=stream_usage.get("total", 0) or (stream_usage.get("input", 0) + stream_usage.get("output", 0)),
     )
-    await update_session(session_id, token_usage=compaction_tokens, user_id=user_id)
+    await update_session(
+        session_id,
+        token_usage=compaction_tokens,
+        user_id=user_id,
+        run_fence=run_fence,
+    )
 
     # Broadcast updated token_usage so frontend refreshes
     from bus.events import SESSION_UPDATED
-    bus.publish(SESSION_UPDATED, {
+    updated_payload = {
         "userId": user_id,
         "sessionId": session_id,
         "token_usage": compaction_tokens.model_dump(),
-    })
+    }
+    if run_fence is not None:
+        updated_payload["generation"] = run_fence[2]
+    bus.publish(SESSION_UPDATED, updated_payload)
 
-    bus.publish(SESSION_COMPACTION_COMPLETE, {"userId": user_id, "sessionId": session_id})
+    complete_payload = {"userId": user_id, "sessionId": session_id}
+    if run_fence is not None:
+        complete_payload["generation"] = run_fence[2]
+    bus.publish(SESSION_COMPACTION_COMPLETE, complete_payload)
 
     # F10: Toast notification
     try:
@@ -493,6 +621,7 @@ async def process_compaction(
             text="Context was compacted. Continue working on the current task.",
             synthetic=True,
             user_id=user_id,
+            run_fence=run_fence,
         )
         return "continue"
 
@@ -500,8 +629,122 @@ async def process_compaction(
     return "stop"
 
 
+def _prune_enabled() -> bool:
+    try:
+        from core.config import get_config
+
+        config = get_config()
+        return config.compaction.prune is not False
+    except Exception:
+        return True
+
+
+def _select_prunable_tool_outputs(
+    msgs: list,
+    *,
+    aggressive: bool,
+    protect_from_id: str | None,
+) -> tuple[list[tuple[str, str, dict]], int]:
+    total = 0
+    pruned = 0
+    to_prune: list[tuple[str, str, dict]] = []
+    turns = 0
+    in_tail = protect_from_id is not None and any(
+        message.id == protect_from_id for message in msgs
+    )
+    for msg in reversed(msgs):
+        if in_tail:
+            if msg.id == protect_from_id:
+                in_tail = False
+            continue
+        role = msg.role if isinstance(msg.role, str) else msg.role.value
+        if role == "user":
+            turns += 1
+        if turns < 2:
+            continue
+        if role == "assistant" and msg.summary and getattr(msg, "agent", None) == "compaction":
+            break
+        for part in msg.parts or []:
+            value = part if isinstance(part, dict) else (
+                part.model_dump() if hasattr(part, "model_dump") else {}
+            )
+            if not isinstance(value, dict):
+                continue
+            status = getattr(value.get("status"), "value", value.get("status"))
+            if value.get("type") != "tool" or status != "completed":
+                continue
+            if value.get("tool", "") in PRUNE_PROTECTED_TOOLS:
+                continue
+            state = value.get("state", {})
+            if isinstance(state, dict):
+                time_info = state.get("time", {})
+                if isinstance(time_info, dict) and time_info.get("compacted"):
+                    break
+            estimate = token_estimate(value.get("output", "") or "")
+            total += estimate
+            protect_limit = 10_000 if aggressive else PRUNE_PROTECT
+            if total > protect_limit:
+                pruned += estimate
+                to_prune.append((
+                    value.get("message_id", "") or msg.id,
+                    value.get("id", ""),
+                    value,
+                ))
+    return to_prune, pruned
+
+
+def _mark_tool_outputs_compacted(
+    selected: list[tuple[str, str, dict]],
+    *,
+    compacted_at: float,
+) -> None:
+    for _, _, part_data in selected:
+        if not isinstance(part_data.get("state"), dict):
+            part_data["state"] = {}
+        if not isinstance(part_data["state"].get("time"), dict):
+            part_data["state"]["time"] = {}
+        part_data["state"]["time"]["compacted"] = compacted_at
+
+
+def prune_tool_outputs_view(
+    messages: list,
+    *,
+    aggressive: bool = True,
+    protect_from_id: str | None = None,
+) -> list:
+    """Return a detached, model-only pruned view without persistence/events."""
+    from copy import deepcopy
+    import time as time_mod
+
+    detached = deepcopy(messages)
+    # Pydantic ``model_dump()`` returns a new dict. Normalize detached Parts to
+    # dicts first so the compacted marker selected below is applied to the
+    # provider view itself, never merely to a throwaway serialization.
+    for message in detached:
+        message.parts = [
+            part if isinstance(part, dict) else (
+                part.model_dump() if hasattr(part, "model_dump") else deepcopy(part)
+            )
+            for part in message.parts or []
+        ]
+    if not _prune_enabled():
+        return detached
+    selected, pruned = _select_prunable_tool_outputs(
+        detached,
+        aggressive=aggressive,
+        protect_from_id=protect_from_id,
+    )
+    if pruned > (0 if aggressive else PRUNE_MINIMUM):
+        _mark_tool_outputs_compacted(
+            selected,
+            compacted_at=time_mod.time() * 1000,
+        )
+    return detached
+
+
 async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggressive: bool = False,
-                             protect_from_id: str | None = None) -> None:
+                             protect_from_id: str | None = None,
+                             run_fence: tuple[str, str, int] | None = None) -> None:
     """Prune old tool outputs to reduce token usage.
 
     Scans from newest to oldest, protects the most recent PRUNE_PROTECT tokens
@@ -519,73 +762,27 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
                     the problem the tail exists to solve — an agent that has to
                     re-read the file it just read.
     """
-    # Check config
-    try:
-        from core.config import get_config
-        config = get_config()
-        if config.compaction.prune is False:
-            return
-    except Exception:
-        pass
+    if not _prune_enabled():
+        return
 
-    from session.session import get_messages
+    from session.agent_event_log import load_canonical_model_surface
 
-    msgs = await get_messages(session_id, user_id=user_id)
+    # Cleanup must inspect the same canonical transcript authority as the
+    # provider loop. SQL Parts are the mutation target, never a context
+    # fallback if the event prefix is missing or corrupt.
+    surface = await load_canonical_model_surface(
+        session_id,
+        user_id=user_id or "default",
+        run_fence=run_fence,
+        repair_tail=False,
+    )
+    msgs = list(surface.messages)
 
-    total = 0
-    pruned = 0
-    to_prune = []  # list of (message_id, part_id, part_dict)
-    turns = 0
-
-    # Newest-to-oldest, so the tail comes first and is skipped outright — it is
-    # not counted toward the protection budget either, which would otherwise
-    # spend the whole budget before reaching anything prunable.
-    in_tail = protect_from_id is not None and any(m.id == protect_from_id for m in msgs)
-
-    # Scan from newest to oldest
-    for msg in reversed(msgs):
-        if in_tail:
-            if msg.id == protect_from_id:
-                in_tail = False
-            continue
-
-        role = msg.role if isinstance(msg.role, str) else msg.role.value
-        if role == "user":
-            turns += 1
-        if turns < 2:
-            continue
-
-        # Stop at compaction boundary
-        if role == "assistant" and msg.summary:
-            break
-
-        for part in (msg.parts or []):
-            p = part if isinstance(part, dict) else (part.model_dump() if hasattr(part, "model_dump") else {})
-            if not isinstance(p, dict):
-                continue
-
-            if p.get("type") == "tool" and p.get("status") == "completed":
-                tool_name = p.get("tool", "")
-                if tool_name in PRUNE_PROTECTED_TOOLS:
-                    continue
-
-                # Check if already compacted
-                state = p.get("state", {})
-                if isinstance(state, dict):
-                    time_info = state.get("time", {})
-                    if isinstance(time_info, dict) and time_info.get("compacted"):
-                        break  # Already pruned, stop
-
-                output = p.get("output", "") or ""
-                estimate = token_estimate(output)
-                total += estimate
-
-                protect_limit = 10_000 if aggressive else PRUNE_PROTECT
-                if total > protect_limit:
-                    pruned += estimate
-                    part_id = p.get("id", "")
-                    msg_id = p.get("message_id", "") or msg.id
-                    to_prune.append((msg_id, part_id, p))
+    to_prune, pruned = _select_prunable_tool_outputs(
+        msgs,
+        aggressive=aggressive,
+        protect_from_id=protect_from_id,
+    )
 
     # Only persist if enough to prune (skip threshold in aggressive mode)
     if pruned > (0 if aggressive else PRUNE_MINIMUM):
@@ -595,17 +792,24 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
 
         from session.session import update_part_data
 
-        for msg_id, part_id, part_data in to_prune:
-            # Set the compacted timestamp
-            if "state" not in part_data or not isinstance(part_data.get("state"), dict):
-                part_data["state"] = {}
-            if "time" not in part_data["state"] or not isinstance(part_data["state"].get("time"), dict):
-                part_data["state"]["time"] = {}
-            part_data["state"]["time"]["compacted"] = compacted_ts
+        _mark_tool_outputs_compacted(to_prune, compacted_at=compacted_ts)
 
+        for msg_id, part_id, part_data in to_prune:
             # Persist to database
             if part_id and msg_id:
                 try:
-                    await update_part_data(part_id, part_data)
+                    if run_fence is None:
+                        await update_part_data(part_id, part_data)
+                    else:
+                        await update_part_data(
+                            part_id,
+                            part_data,
+                            user_id=user_id or "default",
+                            run_fence=run_fence,
+                        )
                 except Exception as e:
+                    from agent.driver import LeaseLostError
+
+                    if isinstance(e, LeaseLostError):
+                        raise
                     log.warning(f"Failed to persist pruned part {part_id}: {e}")

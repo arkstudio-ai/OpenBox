@@ -1,129 +1,235 @@
-"""Injector: busy queueing, silent-flush consumption, localized scaffolding."""
+"""Cron injector consumes only atomically claimed session outbox rows."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 import cron.injector as injector
-from cron.i18n import SILENT_SENTINEL
+from cron.outbox import stable_delivery_id
 
 
-class FakeSession:
-    def __init__(self, status="idle"):
-        self.status = status
-        self.token_usage = None
-        self.model = "m"
-
-
-async def test_busy_session_queues_instead_of_injecting(monkeypatch):
-    import session.session as sess
-
-    async def busy(sid, user_id=None, **kw):
-        return FakeSession(status="busy")
-
-    monkeypatch.setattr(sess, "get_session", busy)
-
-    job = {"session_id": "s1", "user_id": "u1", "id": "j1", "name": "n", "task_prompt": "p"}
-    assert await injector.try_inject_result("run1", job, "result") is False
-
-
-async def test_missing_session_does_not_inject(monkeypatch):
-    import session.session as sess
-
-    async def nobody(sid, user_id=None, **kw):
-        return None
-
-    monkeypatch.setattr(sess, "get_session", nobody)
-    job = {"session_id": "gone", "user_id": "u1", "id": "j1", "name": "n", "task_prompt": "p"}
-    assert await injector.try_inject_result("run1", job, "result") is False
-
-
-async def _insert_run(session_id: str, summary: str | None) -> str:
+async def _pending_session_delivery(*, status: str = "idle"):
     from db.base import get_db_session
-    from db.models.cron import CronRun
+    from db.models.cron import CronDeliveryOutbox, CronRun
+    from db.models.project import Project
+    from db.models.session import Session
+    from db.models.user import User
 
-    run_id = "cron_run_" + uuid.uuid4().hex[:10]
+    suffix = uuid.uuid4().hex[:10]
+    user_id = f"u_{suffix}"
+    project_id = f"proj_{suffix}"
+    session_id = f"sess_{suffix}"
+    job_id = f"cron_{suffix}"
+    run_id = f"cron_run_{suffix}"
+    delivery_id = stable_delivery_id(run_id, "session")
+    now = datetime.now(timezone.utc)
+    payload = {
+        "session_id": session_id,
+        "job_name": "daily",
+        "occurred_at": now.isoformat(),
+        "user_message_id": f"message_{uuid.uuid4().hex[:26]}",
+        "user_part_id": f"part_{uuid.uuid4().hex[:26]}",
+        "assistant_message_id": f"message_{uuid.uuid4().hex[:26]}",
+        "assistant_part_id": f"part_{uuid.uuid4().hex[:26]}",
+        "user_text": "scheduled report",
+        "result_text": "done",
+    }
     async with get_db_session() as db:
+        db.add(User(
+            id=user_id,
+            username=user_id,
+            created_at=now,
+            updated_at=now,
+        ))
+        db.add(Project(
+            id=project_id,
+            user_id=user_id,
+            name="p",
+            slug=project_id,
+            created_at=now,
+            updated_at=now,
+        ))
+        db.add(Session(
+            id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            title="main",
+            status=status,
+            kind="normal",
+            token_usage={},
+            created_at=now,
+            updated_at=now,
+        ))
         db.add(CronRun(
             id=run_id,
-            job_id="cron_j_" + uuid.uuid4().hex[:6],
-            user_id="u1",
+            job_id=job_id,
+            user_id=user_id,
+            project_id=project_id,
             session_id=session_id,
             status="ok",
-            summary_text=summary,
+            summary_text="done",
             injected=False,
-            started_at=datetime.now(timezone.utc),
+            started_at=now,
+            ended_at=now,
         ))
-    return run_id
+        db.add(CronDeliveryOutbox(
+            id=delivery_id,
+            run_id=run_id,
+            job_id=job_id,
+            user_id=user_id,
+            project_id=project_id,
+            session_id=session_id,
+            kind="session",
+            payload=payload,
+            state="pending",
+            attempts=0,
+            available_at=now - timedelta(seconds=2),
+            created_at=now,
+            updated_at=now,
+        ))
+    return user_id, session_id, run_id, delivery_id
 
 
-async def _run_injected(run_id: str) -> bool:
+async def test_flush_injects_once_and_marks_run():
     from db.base import get_db_session
-    from db.models.cron import CronRun
-    from sqlalchemy import select
+    from db.models.cron import CronDeliveryOutbox, CronRun
+    from db.models.message import Message
+    from sqlalchemy import func, select
+
+    user_id, session_id, run_id, delivery_id = await _pending_session_delivery()
+    assert await injector.flush_pending_cron_results(session_id, user_id) == 1
+    assert await injector.flush_pending_cron_results(session_id, user_id) == 0
 
     async with get_db_session() as db:
-        row = (await db.execute(select(CronRun).where(CronRun.id == run_id))).scalar_one()
-    return row.injected
+        message_count = (await db.execute(
+            select(func.count()).select_from(Message).where(
+                Message.session_id == session_id
+            )
+        )).scalar_one()
+        run = (await db.execute(
+            select(CronRun).where(CronRun.id == run_id)
+        )).scalar_one()
+        delivery = (await db.execute(
+            select(CronDeliveryOutbox).where(
+                CronDeliveryOutbox.id == delivery_id
+            )
+        )).scalar_one()
+    assert message_count == 2
+    assert run.injected is True
+    assert delivery.state == "delivered"
 
 
-async def test_overflow_triggers_compaction_before_injection(monkeypatch):
-    import agent.compaction as compaction
-    import session.session as sess
-    from models.message import TokenUsage
+async def test_busy_session_releases_claim_without_writing_messages():
+    from db.base import get_db_session
+    from db.models.cron import CronDeliveryOutbox
+    from db.models.message import Message
+    from sqlalchemy import func, select
 
-    class FullSession:
-        model = "m"
-        token_usage = TokenUsage(input=0, output=0, total=0, limit=1000, context=990)
+    user_id, session_id, _run_id, delivery_id = await _pending_session_delivery(
+        status="busy"
+    )
+    assert await injector.flush_pending_cron_results(session_id, user_id) == 0
+    async with get_db_session() as db:
+        count = (await db.execute(
+            select(func.count()).select_from(Message).where(
+                Message.session_id == session_id
+            )
+        )).scalar_one()
+        delivery = (await db.execute(
+            select(CronDeliveryOutbox).where(
+                CronDeliveryOutbox.id == delivery_id
+            )
+        )).scalar_one()
+    assert count == 0
+    assert delivery.state == "pending"
 
-    async def full(sid, user_id=None, **kw):
-        return FullSession()
 
-    compactions = []
+async def test_flush_rejects_a_fence_for_another_session():
+    with pytest.raises(ValueError, match="another session"):
+        await injector.flush_pending_cron_results(
+            "session-a",
+            "user-a",
+            run_fence=("session-b", "run", 1),
+        )
 
-    async def fake_create(sid, auto=False, user_id=None, **kw):
-        compactions.append(sid)
 
-    async def fake_process(*a, **kw):
+async def test_compatibility_try_has_nothing_to_do_before_settlement():
+    job = {
+        "session_id": f"sess_{uuid.uuid4().hex[:8]}",
+        "user_id": f"u_{uuid.uuid4().hex[:8]}",
+    }
+    assert await injector.try_inject_result("missing-run", job, "result") is False
+
+
+async def test_overflow_compaction_and_injection_share_a_reserved_fence(
+    monkeypatch,
+):
+    from cron import outbox
+    import agent.driver as driver
+    import session.session as session_mod
+    from bus import bus
+
+    calls = []
+
+    class Lease:
+        run_id = "compaction-run"
+        generation = 17
+
+        async def release(self, *, session_status=None):
+            calls.append(("release", session_status))
+            return True
+
+    async def reserve(session_id, user_id, **kwargs):
+        calls.append(("reserve", session_id, user_id, kwargs))
+        return Lease()
+
+    async def needs(*args):
+        return True
+
+    async def compact(session_id, user_id, *, run_fence):
+        calls.append(("compact", run_fence))
+
+    async def inject(session_id, user_id, **kwargs):
+        calls.append(("inject", kwargs["run_fence"]))
+        return True
+
+    async def publish(*args, **kwargs):
         return None
 
-    async def fake_messages(sid, user_id=None, **kw):
-        return []
+    monkeypatch.setattr(driver, "reserve_run", reserve)
+    monkeypatch.setattr(outbox, "_session_delivery_needs_compaction", needs)
+    monkeypatch.setattr(outbox, "_compact_before_session_delivery", compact)
+    monkeypatch.setattr(session_mod, "inject_cron_message_pair_once", inject)
+    monkeypatch.setattr(bus, "publish_confirmed", publish)
 
-    monkeypatch.setattr(sess, "get_session", full)
-    monkeypatch.setattr(sess, "get_messages", fake_messages)
-    monkeypatch.setattr(compaction, "create_compaction", fake_create)
-    monkeypatch.setattr(compaction, "process_compaction", fake_process)
-
-    await injector._check_and_compact_if_needed("s1", "u1", "job", "x" * 400)
-    assert compactions == ["s1"]
-
-    # Far from the limit: no compaction
-    FullSession.token_usage = TokenUsage(input=0, output=0, total=0, limit=100000, context=10)
-    await injector._check_and_compact_if_needed("s1", "u1", "job", "tiny")
-    assert compactions == ["s1"]
-
-
-async def test_flush_consumes_silent_results_without_messages(monkeypatch):
-    session_id = "sess_" + uuid.uuid4().hex[:8]
-    silent_run = await _insert_run(session_id, SILENT_SENTINEL)
-    empty_run = await _insert_run(session_id, "")
-    loud_run = await _insert_run(session_id, "real result")
-
-    injected_messages = []
-
-    async def fake_inject_messages(sid, uid, job_id, job_name, task_prompt, result_text):
-        injected_messages.append(result_text)
-
-    async def no_compact(*a, **kw):
-        return None
-
-    monkeypatch.setattr(injector, "_inject_messages", fake_inject_messages)
-    monkeypatch.setattr(injector, "_check_and_compact_if_needed", no_compact)
-
-    count = await injector.flush_pending_cron_results(session_id, "u1")
-
-    # Only the loud run creates messages, but every run is consumed.
-    assert injected_messages == ["real result"]
-    assert count == 1
-    assert await _run_injected(silent_run) is True
-    assert await _run_injected(empty_run) is True
-    assert await _run_injected(loud_run) is True
+    now = datetime.now(timezone.utc)
+    claim = outbox.DeliveryClaim(
+        delivery_id="delivery-overflow",
+        run_id="run-overflow",
+        job_id="job-overflow",
+        user_id="user-overflow",
+        project_id="project-overflow",
+        session_id="session-overflow",
+        kind="session",
+        payload={
+            "session_id": "session-overflow",
+            "job_name": "large result",
+            "occurred_at": now.isoformat(),
+            "user_message_id": "message-user",
+            "user_part_id": "part-user",
+            "assistant_message_id": "message-assistant",
+            "assistant_part_id": "part-assistant",
+            "user_text": "task",
+            "result_text": "result",
+        },
+        attempts=1,
+        token="claim-token",
+        owner_id="delivery-worker",
+        lease_expires_at=now + timedelta(minutes=1),
+    )
+    outcome = await outbox._deliver_session(claim, run_fence=None)
+    expected = ("session-overflow", "compaction-run", 17)
+    assert outcome.success is True
+    assert ("compact", expected) in calls
+    assert ("inject", expected) in calls
+    assert calls[-1] == ("release", "idle")

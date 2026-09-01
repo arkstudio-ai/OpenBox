@@ -1,5 +1,8 @@
 """Bash tool: execute shell commands in the sandbox with real-time output streaming."""
+import asyncio
 import re
+from collections.abc import AsyncIterator
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -8,6 +11,52 @@ from sandbox.client import IdleNotification
 from tool.tool import ToolResult, ToolContext, define_tool
 
 log = create_logger("tool.bash")
+
+
+class _BashAborted(RuntimeError):
+    """The owning Agent run stopped while its command stream was open."""
+
+
+async def _iter_until_abort(stream: AsyncIterator[Any], abort: asyncio.Event):
+    """Yield stream items while making a user Stop close the HTTP stream.
+
+    The generic tool scheduler deliberately drains already-dispatched external
+    effects.  A shell process is locally cancellable, so waiting for it would
+    make the Stop button appear broken.  Canceling the pending ``__anext__``
+    closes SandboxClient's response; Action Server then kills the exact process
+    group in its generator cleanup.
+    """
+    iterator = stream.__aiter__()
+    abort_task = asyncio.create_task(abort.wait())
+    next_task: asyncio.Task | None = None
+    try:
+        while True:
+            if abort.is_set():
+                raise _BashAborted
+            next_task = asyncio.create_task(anext(iterator))
+            done, _ = await asyncio.wait(
+                {next_task, abort_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if abort_task in done:
+                next_task.cancel()
+                await asyncio.gather(next_task, return_exceptions=True)
+                raise _BashAborted
+            try:
+                yield next_task.result()
+            except StopAsyncIteration:
+                return
+            finally:
+                next_task = None
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+            await asyncio.gather(next_task, return_exceptions=True)
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            await close()
+        abort_task.cancel()
+        await asyncio.gather(abort_task, return_exceptions=True)
 
 
 class BashArgs(BaseModel):
@@ -125,12 +174,13 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
         exit_code = 0
         idle_judge_count = 0
 
-        async for chunk in ctx.sandbox.execute_stream(
+        stream = ctx.sandbox.execute_stream(
             command=args.command,
             timeout=MAX_TIMEOUT,
             idle_timeout=IDLE_TIMEOUT,
             workdir=ctx.workdir,
-        ):
+        )
+        async for chunk in _iter_until_abort(stream, ctx.abort):
             if isinstance(chunk, IdleNotification):
                 idle_judge_count += 1
 
@@ -183,6 +233,18 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
             metadata={"exit_code": exit_code},
         )
 
+    except _BashAborted:
+        output = collected_output + "\n[Process stopped before completion]\n"
+        await ctx.update_output(output)
+        return ToolResult(
+            title="command stopped",
+            output=output,
+            metadata={
+                "exit_code": -9,
+                "error": True,
+                "failure_code": "tool_aborted",
+            },
+        )
     except Exception:
         # Fallback to non-streaming execution if streaming fails
         result = await ctx.sandbox.execute(

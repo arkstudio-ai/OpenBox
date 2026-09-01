@@ -1,4 +1,6 @@
 """Read tool: read files from the sandbox."""
+import shlex
+
 from pydantic import BaseModel, Field
 
 from core.log import create_logger
@@ -16,8 +18,19 @@ class ReadArgs(BaseModel):
 async def execute(args: ReadArgs, ctx: ToolContext) -> ToolResult:
     """Read a file from the sandbox with line numbers."""
     try:
+        execution_path = ctx.resolve_file_path(
+            args.file_path,
+            allow_user_scope=True,
+        )
+    except ValueError as exc:
+        return ToolResult(
+            title=f"Error reading {args.file_path}",
+            output=str(exc),
+        )
+
+    try:
         content = await ctx.sandbox.read_file(
-            path=args.file_path,
+            path=execution_path,
             offset=args.offset,
             limit=args.limit,
         )
@@ -25,7 +38,12 @@ async def execute(args: ReadArgs, ctx: ToolContext) -> ToolResult:
         # F1: Inject directory-level instruction files (AGENTS.md / CLAUDE.md)
         try:
             from session.instruction import instruction_resolve
-            instructions = await instruction_resolve(args.file_path, ctx.message_id)
+            instructions = await instruction_resolve(
+                execution_path,
+                ctx.message_id,
+                sandbox=ctx.sandbox,
+                workdir=ctx.workdir,
+            )
             if instructions:
                 extra = "\n\n".join(
                     f"[Directory instructions from: {inst['filepath']}]\n{inst['content']}"
@@ -39,11 +57,13 @@ async def execute(args: ReadArgs, ctx: ToolContext) -> ToolResult:
         try:
             from tool.filetime import get_tracker
             stat_result = await ctx.sandbox.execute(
-                f"stat -c %Y {args.file_path} 2>/dev/null", timeout=5
+                f"stat -c %Y -- {shlex.quote(execution_path)} 2>/dev/null",
+                timeout=5,
+                workdir=ctx.workdir,
             )
             if stat_result.exit_code == 0 and stat_result.stdout.strip():
                 mtime = float(stat_result.stdout.strip())
-                get_tracker(ctx.session_id).record(args.file_path, mtime)
+                get_tracker(ctx.session_id).record(execution_path, mtime)
         except Exception:
             pass  # Best-effort
 

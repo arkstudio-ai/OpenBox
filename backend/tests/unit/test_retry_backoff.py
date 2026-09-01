@@ -3,6 +3,8 @@
 The delay is what stands between a rate limit and a stampede, so the schedule
 is asserted directly. `rand` is injected everywhere to keep these deterministic.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from agent.retry import (
@@ -12,6 +14,7 @@ from agent.retry import (
     RETRY_JITTER_FACTOR,
     RETRY_MAX_DELAY,
     RetryableError,
+    is_retryable,
     retry_delay,
 )
 
@@ -71,6 +74,16 @@ def test_retry_after_seconds_is_honoured_verbatim():
     assert retry_delay(1, err, rand=0.0) == pytest.approx(7.0)
 
 
+def test_litellm_response_retry_after_is_honoured_verbatim():
+    err = RuntimeError("rate limited")
+    err.response = SimpleNamespace(
+        status_code=429,
+        headers={"Retry-After": "17"},
+    )
+    assert retry_delay(1, err, rand=0.0) == pytest.approx(17.0)
+    assert is_retryable(err) == "Rate limited"
+
+
 def test_retry_after_is_not_capped():
     """A server asking for two minutes means two minutes; capping it at
     RETRY_MAX_DELAY would hammer a provider that just told us to back off."""
@@ -108,11 +121,6 @@ def test_non_retryable_error_uses_plain_backoff():
 # The failures that actually reach us come through OpenAI-compatible gateways,
 # which wrap the real cause in their own prose. Matching a few substrings missed
 # most of them, so these pin the shapes seen in practice.
-
-import pytest
-
-from agent.retry import is_retryable
-
 
 @pytest.mark.parametrize("message", [
     "429 Too Many Requests",

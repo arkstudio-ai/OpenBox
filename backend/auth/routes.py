@@ -9,6 +9,7 @@ from auth.jwt import create_access_token, create_refresh_token, decode_refresh_t
 from auth.password import hash_password, verify_password, validate_password_strength
 from auth.ticket import create_ticket
 from auth.middleware import get_current_user
+from auth.preview_token import revoke_preview_tokens
 from core.identifier import generate_id
 from core.log import create_logger
 from db.repository.user_repo import PgUserRepo
@@ -18,6 +19,9 @@ log = create_logger("auth.routes")
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
+_LEGACY_REFRESH_COOKIE = "refresh_token"
+_HOST_REFRESH_COOKIE = "__Host-openbox_refresh_token"
+
 _user_repo = PgUserRepo()
 _pref_repo = PgPreferenceRepo()
 _cache = None  # Set by init
@@ -26,6 +30,70 @@ _cache = None  # Set by init
 def init_auth_routes(cache):
     global _cache
     _cache = cache
+
+
+def _refresh_cookie_policy() -> tuple[str, bool, str]:
+    """Return (name, secure, path) for the active deployment boundary."""
+    from core.config import get_config
+
+    config = get_config()
+    secure = bool(
+        getattr(config, "preview_public_origin", "")
+        or getattr(config, "auth_cookie_secure", False)
+    )
+    if secure:
+        return _HOST_REFRESH_COOKIE, True, "/"
+    return _LEGACY_REFRESH_COOKIE, False, "/api/auth"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    name, secure, path = _refresh_cookie_policy()
+    response.set_cookie(
+        key=name,
+        value=token,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+        path=path,
+    )
+
+
+def _get_refresh_cookie(request: Request) -> str | None:
+    name, _secure, _path = _refresh_cookie_policy()
+    # In dedicated-preview mode the legacy name is deliberately ignored: a
+    # sibling preview hostname can create a parent-Domain cookie with that
+    # unprefixed name, but browsers will not accept a Domain __Host- cookie.
+    return request.cookies.get(name)
+
+
+def _clear_refresh_cookies(response: Response) -> None:
+    name, secure, path = _refresh_cookie_policy()
+    response.delete_cookie(
+        name,
+        path=path,
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+    # Clear the old host-only cookie during a deployment-mode transition. It
+    # remains ignored in __Host mode even if a sibling keeps injecting a
+    # parent-Domain cookie that this host cannot delete.
+    if name != _LEGACY_REFRESH_COOKIE:
+        response.delete_cookie(
+            _LEGACY_REFRESH_COOKIE,
+            path="/api/auth",
+            httponly=True,
+            samesite="lax",
+        )
+    else:
+        response.delete_cookie(
+            _HOST_REFRESH_COOKIE,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
 
 
 # ── Request/Response models ──
@@ -117,10 +185,7 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     # Issue tokens
     access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
-    response.set_cookie(
-        key="refresh_token", value=refresh, httponly=True, secure=False,
-        samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
-    )
+    _set_refresh_cookie(response, refresh)
 
     user = await _user_repo.get(user_id)
     return TokenResponse(access_token=access, user=_safe_user(user))
@@ -160,10 +225,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
     access = create_access_token(user["id"], user.get("role", "user"))
     refresh = create_refresh_token(user["id"])
-    response.set_cookie(
-        key="refresh_token", value=refresh, httponly=True, secure=False,
-        samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
-    )
+    _set_refresh_cookie(response, refresh)
 
     return TokenResponse(access_token=access, user=_safe_user(user))
 
@@ -242,16 +304,13 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
 
     access = create_access_token(user["id"], user.get("role", "user"))
     refresh_token = create_refresh_token(user["id"])
-    response.set_cookie(
-        key="refresh_token", value=refresh_token, httponly=True, secure=False,
-        samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
-    )
+    _set_refresh_cookie(response, refresh_token)
     return TokenResponse(access_token=access, user=_safe_user(user))
 
 
 @router.post("/refresh")
 async def refresh(request: Request, response: Response):
-    token = request.cookies.get("refresh_token")
+    token = _get_refresh_cookie(request)
     if not token:
         raise HTTPException(status_code=401, detail="No refresh token")
 
@@ -270,10 +329,7 @@ async def refresh(request: Request, response: Response):
 
     access = create_access_token(user_id, user.get("role", "user"))
     new_refresh = create_refresh_token(user_id)
-    response.set_cookie(
-        key="refresh_token", value=new_refresh, httponly=True, secure=False,
-        samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
-    )
+    _set_refresh_cookie(response, new_refresh)
 
     return {"access_token": access, "token_type": "bearer"}
 
@@ -281,7 +337,7 @@ async def refresh(request: Request, response: Response):
 @router.post("/logout")
 async def logout(request: Request, response: Response, current_user: dict = Depends(get_current_user)):
     # Blacklist the refresh token if present
-    refresh_token = request.cookies.get("refresh_token")
+    refresh_token = _get_refresh_cookie(request)
     if refresh_token and _cache:
         from auth.jwt import decode_refresh_token
         payload = decode_refresh_token(refresh_token)
@@ -292,7 +348,8 @@ async def logout(request: Request, response: Response, current_user: dict = Depe
             ttl = max(int(exp - time.time()), 1)
             await _cache.set(_blacklist_key(refresh_token), "1", ttl=ttl)
 
-    response.delete_cookie("refresh_token", path="/api/auth")
+    await revoke_preview_tokens(current_user["user_id"])
+    _clear_refresh_cookies(response)
     return {"ok": True}
 
 

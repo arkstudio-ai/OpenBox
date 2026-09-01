@@ -19,6 +19,22 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     if len(args.invocations) > 25:
         return ToolResult(title="Error", output="Maximum 25 parallel invocations allowed.")
 
+    # Production ToolHooks install the canonical staged nested runtime. It
+    # persists one ToolPart/Event per invocation, prepares permission in model
+    # order, overlaps only reviewed bodies, and commits in the same order.
+    runtime = ctx._nested_tool_runtime
+    if runtime is not None:
+        results = await runtime.execute_batch([
+            (inv.tool, inv.parameters) for inv in args.invocations
+        ])
+        return ToolResult(
+            title=f"Batch: {len(args.invocations)} tools executed",
+            output="\n\n---\n\n".join(
+                f"[{inv.tool}] {result.title}\n{result.output}"
+                for inv, result in zip(args.invocations, results, strict=True)
+            ),
+        )
+
     from tool.registry import get_tool
 
     async def run_one(inv: Invocation) -> str:
@@ -29,7 +45,7 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
         tool = get_tool(inv.tool)
         if not tool:
             return f"[{inv.tool}] Error: Tool not found"
-        if not tool.parallel_safe:
+        if tool.parallel_safe is not True:
             guidance = (
                 " Use computer(action='batch', actions=[...]) for ordered desktop actions."
                 if inv.tool == "computer" else ""

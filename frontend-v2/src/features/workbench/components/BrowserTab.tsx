@@ -1,14 +1,12 @@
-// Dev-browser tab: address bar + a live screenshot stream over
-// `/ws/dev-browser/auto`. Skin follows the design reference.
+// Cloud-browser tab: address bar + a live screenshot stream over the dedicated
+// `/ws/browser-view/auto` UI protocol. The Agent's `/ws/dev-browser/auto`
+// extension/CDP relay is intentionally separate.
 //
-// PROTOCOL NOTE: v1 shipped no screenshot-stream client (its DevBrowserPanel is
-// only a relay-enable control panel), so the frame/event wire format below is an
-// assumption, not ported code:
+// Protocol:
 //   • binary frames  → a JPEG/PNG image of the current page (rendered as-is);
 //   • text frames    → JSON, `{type:"url"|"navigated", url}` updates the bar;
 //   • client→server  → JSON: navigate/back/reload + click/scroll/key events;
 //   • close code 4004 → no running sandbox.
-// If the backend settles on a different shape, only this file needs to change.
 import {
   useCallback,
   useEffect,
@@ -21,7 +19,7 @@ import {
 import { useTranslation } from "react-i18next"
 import { ChevronLeft, RotateCw } from "lucide-react"
 import { useCreateContainer, useRunningContainer } from "@/features/workbench/api/containers"
-import { devBrowserWsUrl, fetchWsTicket } from "@/features/workbench/utils/ws"
+import { browserViewWsUrl, fetchWsTicket } from "@/features/workbench/utils/ws"
 import { EmptyState } from "./EmptyState"
 
 type Phase = "connecting" | "streaming" | "failed" | "noSandbox"
@@ -49,6 +47,7 @@ function BrowserStream({ onCreate, creating }: StreamProps) {
   const [phase, setPhase] = useState<Phase>("connecting")
   const [urlInput, setUrlInput] = useState("")
   const imgRef = useRef<HTMLImageElement>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
   const frameUrlRef = useRef<string | null>(null)
 
@@ -71,20 +70,21 @@ function BrowserStream({ onCreate, creating }: StreamProps) {
         setPhase("failed")
         return
       }
-      ws = new WebSocket(devBrowserWsUrl(ticket))
+      ws = new WebSocket(browserViewWsUrl(ticket))
       ws.binaryType = "arraybuffer"
       socketRef.current = ws
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
-          const url = URL.createObjectURL(new Blob([ev.data], { type: "image/jpeg" }))
+          const url = URL.createObjectURL(new Blob([ev.data], { type: "image/png" }))
           clearFrame()
           frameUrlRef.current = url
           if (imgRef.current) imgRef.current.src = url
           setPhase((p) => (p === "streaming" ? p : "streaming"))
         } else {
           try {
-            const m = JSON.parse(ev.data as string) as { type?: string; url?: string }
+            const m = JSON.parse(ev.data as string) as { type?: string; code?: string; url?: string }
             if ((m.type === "url" || m.type === "navigated") && m.url) setUrlInput(m.url)
+            if (m.type === "error" && m.code === "stream_failed") setPhase("failed")
           } catch {
             /* ignore non-JSON text */
           }
@@ -121,9 +121,11 @@ function BrowserStream({ onCreate, creating }: StreamProps) {
 
   const onImgClick = (e: ReactMouseEvent<HTMLImageElement>) => {
     if (!imgRef.current) return
+    surfaceRef.current?.focus()
     send({ type: "click", ...frameCoords(imgRef.current, e.clientX, e.clientY), button: e.button })
   }
   const onImgWheel = (e: ReactWheelEvent<HTMLImageElement>) => {
+    e.preventDefault()
     send({ type: "scroll", dx: Math.round(e.deltaX), dy: Math.round(e.deltaY) })
   }
   const onKeyDown = (e: ReactKeyboardEvent) => {
@@ -162,6 +164,7 @@ function BrowserStream({ onCreate, creating }: StreamProps) {
         </button>
       </div>
       <div
+        ref={surfaceRef}
         tabIndex={0}
         onKeyDown={onKeyDown}
         className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-hair bg-card outline-none"

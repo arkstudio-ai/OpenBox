@@ -1,17 +1,18 @@
 """Agent loop: the core orchestration engine."""
 import asyncio
+import copy
 import time
-import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
 
 from agent.agent import get_agent, AgentDef
-from agent.caching import apply_caching, session_cache_key
+from agent.caching import session_cache_key
 from agent.compaction import is_overflow, create_compaction, process_compaction, prune_tool_outputs, get_model_context_limit
 from agent.hooks import ToolHooks
-from agent.processor import StepOutcome, process_step
+from agent.processor import StepOutcome, StepResult, process_step
 from agent.structured_output import (
     SYSTEM_PROMPT as STRUCTURED_OUTPUT_SYSTEM_PROMPT,
     TOOL_NAME as STRUCTURED_OUTPUT_TOOL,
@@ -28,7 +29,7 @@ from agent.llm import (
     stream_llm,
     tool_dialect_for_model,
 )
-from agent.tool_payload import measure_tool_definitions
+from agent.tool_payload import build_tool_definitions, measure_tool_definitions
 from agent.tool_runtime import (
     assemble_tool_runtime,
     effective_exposure_mode,
@@ -43,16 +44,14 @@ from bus.events import (
     SESSION_STATUS, SESSION_ERROR, SESSION_DIFF, SESSION_UPDATED,
     SESSION_FINALIZING, MESSAGE_CREATED, MESSAGE_TEXT_DELTA,
 )
-from session.compaction import filter_compacted
 from models.message import (
     SessionStatus, MessageWithParts, TextPart, ReasoningPart, ToolPartData, ToolStatus,
-    StepStartPart, StepFinishPart, TokenUsage, PlanPart, PatchPart, PatchFile,
+    StepStartPart, StepFinishPart, RetryPart, TokenUsage, PlanPart, PatchPart, PatchFile,
 )
 from session.session import (
     get_session, update_session, set_session_status, set_session_title,
-    create_assistant_message, update_message_info, save_part, get_messages,
+    create_assistant_message, update_message_info, save_part,
 )
-from session.status import register_run, clear_abort
 from snapshot import snapshot
 from tool.tool import ToolContext, ToolResult
 from core.identifier import ascending
@@ -65,6 +64,318 @@ log = create_logger("agent.loop")
 # work: it must not keep the loop alive, and it must not be treated as a tool
 # call the model is still waiting on.
 ABORTED_TOOL_ERROR = "Tool execution aborted"
+MAX_PROVIDER_PREFIX_REBUILDS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenProviderAttempt:
+    """Owned request arguments proven against one canonical Event prefix."""
+
+    system: list[str]
+    llm_messages: list[dict]
+    tools: dict
+    model_id: str
+    tool_choice: str | None
+    user_variant: str | None
+    prompt_cache_key: str
+    tool_schema_digest: str
+    prompt_shape_digest: str
+    event_sequence: int
+    event_digest: str
+    native_plan: Any | None = None
+    native_portable_tools: dict | None = None
+    native_portable_system: list[str] | None = None
+
+
+def _freeze_provider_tools(tools: Mapping[str, Any] | None) -> dict | None:
+    """Detach provider-visible definitions while preserving execute callables."""
+    if tools is None:
+        return None
+    frozen: dict[str, Any] = {}
+    for name, tool in tools.items():
+        clone = copy.copy(tool)
+        if hasattr(clone, "raw_schema") and getattr(clone, "raw_schema") is not None:
+            clone.raw_schema = copy.deepcopy(clone.raw_schema)
+        frozen[str(name)] = clone
+    return frozen
+
+
+async def _prepare_checkpointed_provider_attempt(
+    *,
+    load_surface: Callable[[], Awaitable[Any]],
+    build_messages: Callable[[Any], Awaitable[list[dict]]],
+    checkpoint: Callable[[Any, str, str], Awaitable[Any]],
+    system: Sequence[str],
+    tools: Mapping[str, Any],
+    model_id: str,
+    provider_binding_digest: str,
+    payload_dialect: str,
+    tool_choice: str | None,
+    user_variant: str | None,
+    prompt_cache_key: str = "",
+    native_plan: Any | None = None,
+    native_portable_tools: Mapping[str, Any] | None = None,
+    native_portable_system: Sequence[str] | None = None,
+    max_prefix_rebuilds: int = MAX_PROVIDER_PREFIX_REBUILDS,
+) -> FrozenProviderAttempt:
+    """Build, hash and CAS one request; rebuild instead of sending on drift."""
+    from session.agent_event_log import (
+        AgentEventPrefixDriftError,
+        model_prompt_shape_digest,
+        model_tool_definition_digest,
+    )
+
+    if max_prefix_rebuilds < 1:
+        raise ValueError("max_prefix_rebuilds must be positive")
+    for _rebuild in range(max_prefix_rebuilds):
+        candidate = await load_surface()
+
+        # Everything below is owned by this attempt. No Todo, image, system,
+        # tool-schema or Event read is allowed after the checkpoint succeeds.
+        built_messages = await build_messages(candidate)
+        frozen_system = copy.deepcopy(list(system))
+        frozen_messages = copy.deepcopy(list(built_messages))
+        frozen_tools = _freeze_provider_tools(tools) or {}
+        frozen_native_plan = copy.deepcopy(native_plan)
+        frozen_portable_tools = _freeze_provider_tools(native_portable_tools)
+        frozen_portable_system = (
+            copy.deepcopy(list(native_portable_system))
+            if native_portable_system is not None
+            else None
+        )
+
+        if frozen_native_plan is not None:
+            primary_definitions = copy.deepcopy(list(frozen_native_plan.tools))
+        else:
+            primary_definitions = build_tool_definitions(
+                frozen_tools,
+                payload_dialect,
+                include_noop=(
+                    payload_dialect == "litellm"
+                    and not frozen_tools
+                    and history_has_tool_calls(frozen_messages)
+                ),
+            )
+
+        alternate_definitions: list[list[dict]] = []
+        alternate_prompt_digests: list[str] = []
+        if frozen_native_plan is not None and frozen_portable_tools is not None:
+            portable_definitions = build_tool_definitions(
+                frozen_portable_tools,
+                "responses",
+            )
+            alternate_definitions.append(portable_definitions)
+            portable_schema_digest = model_tool_definition_digest(
+                portable_definitions,
+            )
+            alternate_prompt_digests.append(model_prompt_shape_digest(
+                system=(
+                    frozen_portable_system
+                    if frozen_portable_system is not None
+                    else frozen_system
+                ),
+                messages=[
+                    message for message in frozen_messages
+                    if "_responses_input_items" not in message
+                ],
+                model_id=model_id,
+                provider_binding_digest=provider_binding_digest,
+                tool_schema_digest=portable_schema_digest,
+                tool_choice=tool_choice,
+                variant=user_variant,
+                prompt_cache_key=prompt_cache_key,
+            ))
+
+        tool_schema_digest = model_tool_definition_digest(
+            primary_definitions,
+            alternate_definitions=alternate_definitions,
+        )
+        prompt_shape_digest = model_prompt_shape_digest(
+            system=frozen_system,
+            messages=frozen_messages,
+            model_id=model_id,
+            provider_binding_digest=provider_binding_digest,
+            tool_schema_digest=tool_schema_digest,
+            tool_choice=tool_choice,
+            variant=user_variant,
+            prompt_cache_key=prompt_cache_key,
+            alternate_prompt_shape_digests=alternate_prompt_digests,
+        )
+        prepared = FrozenProviderAttempt(
+            system=frozen_system,
+            llm_messages=frozen_messages,
+            tools=frozen_tools,
+            model_id=model_id,
+            tool_choice=tool_choice,
+            user_variant=user_variant,
+            prompt_cache_key=prompt_cache_key,
+            tool_schema_digest=tool_schema_digest,
+            prompt_shape_digest=prompt_shape_digest,
+            event_sequence=int(candidate.event_sequence),
+            event_digest=str(candidate.event_digest),
+            native_plan=frozen_native_plan,
+            native_portable_tools=frozen_portable_tools,
+            native_portable_system=frozen_portable_system,
+        )
+        try:
+            await checkpoint(candidate, tool_schema_digest, prompt_shape_digest)
+        except AgentEventPrefixDriftError:
+            continue
+        return prepared
+
+    raise AgentEventPrefixDriftError(
+        "Agent event prefix did not stabilize before model dispatch after "
+        f"{max_prefix_rebuilds} rebuilds"
+    )
+
+
+async def _acknowledge_dispatched_todo_notices(
+    *,
+    session_id: str,
+    notices: Sequence[str],
+    result: StepResult,
+    abort: asyncio.Event,
+    acknowledge: Callable[[str, list[str]], Awaitable[bool]],
+) -> bool | None:
+    """Ack once only after a complete, non-retry provider response."""
+    if (
+        not notices
+        or result.outcome is not StepOutcome.CONTINUE
+        or result.finish_reason in {None, "unknown", "aborted"}
+        or abort.is_set()
+    ):
+        return None
+    return await acknowledge(session_id, list(notices))
+
+
+async def _run_provider_attempts(
+    attempt,
+    on_retry,
+    *,
+    max_retries: int,
+    sleep=asyncio.sleep,
+    delay_for=retry_delay,
+    abort: asyncio.Event | None = None,
+    before_attempt=None,
+):
+    """Retry one *persisted* Assistant step without creating retry ghosts.
+
+    ``run_loop`` creates the Assistant Message and its ``step-start`` before
+    entering this helper.  Every transport retry therefore belongs to that
+    same logical step.  The previous outer-loop retry recreated the Message on
+    every pre-stream 429/503, leaving a row containing only ``step-start`` for
+    each attempt and eventually publishing idle over an open transcript.
+
+    ``on_retry`` is the durable/UI checkpoint: callers append a ``RetryPart``
+    and publish the retry status before sleeping.  The final failed attempt is
+    returned to the caller so it can close the one Assistant Message honestly.
+    """
+    retries = 0
+    while True:
+        if abort is not None and abort.is_set():
+            return StepResult(
+                outcome=StepOutcome.CONTINUE,
+                finish_reason="aborted",
+            ), retries
+        if before_attempt is not None:
+            await before_attempt()
+        result = await attempt()
+        if result.outcome is not StepOutcome.RETRY or retries >= max_retries:
+            return result, retries
+        retries += 1
+        delay = delay_for(retries, getattr(result, "retry_error", None))
+        await on_retry(retries, max_retries, delay, result)
+        if abort is None:
+            await sleep(delay)
+            continue
+
+        # Stop must interrupt even a long server-supplied Retry-After. The
+        # next provider request is fenced again at the top of this loop, so a
+        # takeover that wins while sleeping cannot dispatch a stale request.
+        sleep_task = asyncio.create_task(sleep(delay))
+        abort_task = asyncio.create_task(abort.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {sleep_task, abort_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if abort_task in done and abort.is_set():
+                return StepResult(
+                    outcome=StepOutcome.CONTINUE,
+                    finish_reason="aborted",
+                ), retries
+            await sleep_task
+        finally:
+            for task in (sleep_task, abort_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(sleep_task, abort_task, return_exceptions=True)
+
+
+async def _close_failed_provider_step(
+    assistant_info,
+    *,
+    session_id: str,
+    user_id: str,
+    run_fence,
+    step: int,
+    start_snapshot: str | None,
+    duration: float,
+    code: str,
+    message: str,
+) -> dict[str, str]:
+    """Persist one honest terminal boundary for a failed provider step."""
+    public_error = {"code": code, "message": message}
+    assistant_info.error = public_error
+    assistant_info.finish = "error"
+    await update_message_info(
+        assistant_info,
+        user_id=user_id,
+        run_fence=run_fence,
+    )
+    await _finish_step_gateway(
+        session_id=session_id,
+        message_id=assistant_info.id,
+        user_id=user_id,
+        run_fence=run_fence,
+        step=step,
+        snapshot_id=start_snapshot,
+        usage={},
+        duration=duration,
+    )
+    return public_error
+
+
+async def _finish_step_gateway(
+    *,
+    session_id: str,
+    message_id: str,
+    user_id: str,
+    run_fence,
+    step: int,
+    snapshot_id: str | None,
+    usage: Mapping[str, Any],
+    duration: float,
+) -> StepFinishPart:
+    """Persist the one terminal StepPart and its Event under the run fence."""
+    part = StepFinishPart(
+        id=ascending("part"),
+        step=step,
+        input_tokens=usage.get("input", 0),
+        output_tokens=usage.get("output", 0),
+        cost=usage.get("cost", 0.0),
+        duration=duration,
+        session_id=session_id,
+        message_id=message_id,
+        snapshot=snapshot_id,
+    )
+    await save_part(
+        part,
+        is_new=True,
+        user_id=user_id,
+        run_fence=run_fence,
+    )
+    return part
 
 
 def _part_as_dict(part) -> dict:
@@ -82,7 +393,13 @@ def is_orphaned_interrupted_tool(part) -> bool:
     p = _part_as_dict(part)
     status = p.get("status")
     status = getattr(status, "value", status)
-    return status == "error" and p.get("error") == ABORTED_TOOL_ERROR
+    if status != "error":
+        return False
+    if p.get("error") == ABORTED_TOOL_ERROR:
+        return True
+    from agent.recovery import is_recovered_tool_part
+
+    return is_recovered_tool_part(p)
 
 
 def has_live_tool_calls(message) -> bool:
@@ -214,6 +531,7 @@ async def _upsert_plan_part(
     sandbox,
     session,
     user_id: str = "default",
+    run_fence: tuple[str, str, int] | None = None,
 ) -> None:
     """Create or update a PlanPart on the current assistant message.
 
@@ -221,13 +539,24 @@ async def _upsert_plan_part(
     Only creates a PlanPart if the current message contains a write tool
     that wrote to the plan file. Updates existing PlanParts with fresh content.
     """
-    from session.session import plan_path_for as _plan_path, get_messages, get_parts_for_message
+    from session.session import plan_path_for as _plan_path
+    from session.agent_event_log import load_canonical_model_surface
 
     plan_file = await _plan_path(session)
     content = None
 
-    # Scan current message parts for write tool calls that wrote to a plan file
-    existing_parts = await get_parts_for_message(message_id)
+    surface = await load_canonical_model_surface(
+        session_id,
+        user_id=user_id,
+        run_fence=run_fence,
+        repair_tail=False,
+    )
+    messages = list(surface.messages)
+    current = next((message for message in messages if message.id == message_id), None)
+    existing_parts = [
+        part if isinstance(part, dict) else part.model_dump()
+        for part in (current.parts if current is not None else [])
+    ]
     existing_plan_part = None
     for part_data in existing_parts:
         if not part_data:
@@ -258,12 +587,16 @@ async def _upsert_plan_part(
                 session_id=session_id,
                 message_id=message_id,
             )
-            await save_part(plan_part, is_new=False, user_id=user_id)
+            await save_part(
+                plan_part,
+                is_new=False,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
         return
 
     # Check if a PlanPart already exists on another message in this session.
     # If so, don't create a duplicate — just update that one with fresh content.
-    messages = await get_messages(session_id, user_id=user_id)
     for msg in reversed(messages):
         for part in reversed(msg.parts):
             pd = part if isinstance(part, dict) else (part.model_dump() if hasattr(part, "model_dump") else part)
@@ -277,7 +610,12 @@ async def _upsert_plan_part(
                         session_id=session_id,
                         message_id=pd.get("message_id", msg.id),
                     )
-                    await save_part(plan_part, is_new=False, user_id=user_id)
+                    await save_part(
+                        plan_part,
+                        is_new=False,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
                 return  # PlanPart exists elsewhere, don't create a new one
 
     # No PlanPart exists anywhere — only create one if we have content
@@ -303,11 +641,90 @@ async def _upsert_plan_part(
         session_id=session_id,
         message_id=message_id,
     )
-    await save_part(plan_part, is_new=True, user_id=user_id)
+    await save_part(
+        plan_part,
+        is_new=True,
+        user_id=user_id,
+        run_fence=run_fence,
+    )
     log.info(f"[PlanPart] Created PlanPart for message {message_id[:12]}")
 
 
-async def run_loop(session_id: str, user_id: str = "default") -> MessageWithParts | None:
+def _publish_session_status(
+    session_id: str,
+    user_id: str,
+    status: SessionStatus,
+    generation: int,
+) -> None:
+    """Publish a status whose database transition already committed."""
+    bus.publish(SESSION_STATUS, {
+        "userId": user_id,
+        "sessionId": session_id,
+        "status": status.value,
+        "generation": generation,
+    })
+
+
+async def _settle_run_status(
+    lease,
+    *,
+    session_id: str,
+    user_id: str,
+    status: SessionStatus,
+) -> None:
+    """Atomically clear a live driver and publish its terminal Session state."""
+    matched = await lease.release(session_status=status.value)
+    if not matched:
+        from agent.driver import LeaseLostError
+
+        raise LeaseLostError(
+            f"agent lease lost while settling {session_id} "
+            f"generation {lease.generation}"
+        )
+    _publish_session_status(session_id, user_id, status, lease.generation)
+
+
+async def _preserve_failed_run(
+    lease,
+    *,
+    session_id: str,
+    user_id: str,
+) -> bool:
+    """Atomically expose ERROR and retain the exact run as a repair marker.
+
+    A second cancellation must not interrupt the marker transaction halfway.
+    Shielding a child task lets the settlement finish before cancellation is
+    propagated back through ``run_loop``.
+    """
+    task = asyncio.create_task(
+        lease.preserve_for_recovery(session_status=SessionStatus.ERROR.value),
+        name=f"agent-preserve:{session_id}:{lease.generation}",
+    )
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    matched = task.result()
+    if matched:
+        _publish_session_status(
+            session_id,
+            user_id,
+            SessionStatus.ERROR,
+            lease.generation,
+        )
+    if cancelled:
+        raise asyncio.CancelledError
+    return matched
+
+
+async def run_loop(
+    session_id: str,
+    user_id: str = "default",
+    *,
+    lease,
+) -> MessageWithParts | None:
     """Run the agent loop for a session.
 
     This is the core orchestration function. It:
@@ -318,14 +735,40 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
     5. Records snapshots at step start/finish
     6. Prunes old tool outputs when done
     """
-    session = await get_session(session_id, user_id=user_id)
-    if not session:
-        log.error(f"Session {session_id} not found")
-        return None
+    from agent.driver import (
+        LeaseLostError,
+        bind_current_lease,
+        reset_current_lease,
+    )
 
-    abort = register_run(session_id)
+    abort = lease.abort
+    lease_context = None
 
     try:
+        # Establish lease ownership before the first Session read. A transient
+        # failure here used to escape the loop's finally block while the lease
+        # monitor renewed forever.
+        lease_context = bind_current_lease(lease)
+        session = await get_session(session_id, user_id=user_id)
+        if not session:
+            log.error(f"Session {session_id} not found")
+            await _settle_run_status(
+                lease,
+                session_id=session_id,
+                user_id=user_id,
+                status=SessionStatus.IDLE,
+            )
+            return None
+
+        # A Task child never derives its ceiling from its current AgentDef
+        # alone.  The immutable descriptor snapshot survives worker takeover,
+        # cold resume, Agent switches, and continuable follow-ups.
+        from agent.subagent_authority import load_subagent_authority
+
+        inherited_authority = await load_subagent_authority(session)
+
+        await lease.set_phase("running")
+        run_fence = (session_id, lease.run_id, lease.generation)
         # F2: Load persisted permission rules (once per user)
         try:
             from permission.permission import load_persisted_rules
@@ -333,13 +776,24 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         except Exception as e:
             log.debug(f"Could not load persisted permissions: {e}")
 
-        await set_session_status(session_id, SessionStatus.BUSY, user_id=user_id)
+        await set_session_status(
+            session_id,
+            SessionStatus.BUSY,
+            user_id=user_id,
+            generation=lease.generation,
+            run_fence=run_fence,
+        )
 
         # Get sandbox client
         from sandbox import sandbox_manager
         sandbox = await sandbox_manager.get_client(session_id, user_id=user_id)
         # A project created while the sandbox was down has no directory yet.
-        await ensure_directory(sandbox, await slug_for(session.project_id))
+        await ensure_directory(
+            sandbox,
+            await slug_for(session.project_id),
+            user_id=user_id,
+            project_id=session.project_id,
+        )
 
         step = 0
         llm_retry_count = 0
@@ -352,47 +806,137 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         # A session's stored model can outlive the provider that served it.
         # Honour it only while the deployment still offers it, and write the
         # replacement back so the fallback happens once rather than every step.
-        from agent.model_resolve import resolve as resolve_model
-        model_id, replaced_from = resolve_model(session.model, config, context=f"session {session_id}")
+        from agent.model_resolve import resolve as resolve_model, resolve_step_model
+        session_model_id, replaced_from = resolve_model(
+            session.model,
+            config,
+            context=f"session {session_id}",
+        )
+        # Keep a durable base separate from the per-step effective model.  A
+        # temporary AgentDef.model override must not become the next step's
+        # implicit session choice when control changes agents.
+        model_id = session_model_id
         if replaced_from:
             log.warning(
                 f"Session {session_id} was on {replaced_from!r}, which this deployment no "
-                f"longer offers; continuing on {model_id!r}"
+                f"longer offers; continuing on {session_model_id!r}"
             )
             try:
                 # user_id is required: update_session scopes by owner, and the
                 # default would silently match nothing.
-                await update_session(session_id, user_id=user_id, model=model_id)
+                await update_session(
+                    session_id,
+                    user_id=user_id,
+                    model=session_model_id,
+                    run_fence=run_fence,
+                )
+            except LeaseLostError:
+                raise
             except Exception as e:
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
-        run_id = uuid.uuid4().hex
-        compact_fail_count = 0  # Consecutive compaction failure counter
-        finish_reason_prev = ""  # Previous step's finish reason
+        run_id = lease.run_id
+        # Cleanup is scoped to this generation.  A legacy overlapping worker
+        # must never mark another generation's pending tool cards as aborted.
+        run_message_ids: set[str] = set()
+        compact_fail_count = 0  # Consecutive proactive compaction failures
+        provider_compact_fail_count = 0
         last_step_info = None  # Persists an explicit aborted boundary between steps.
+        from agent.inbox import run_has_claimed_turn
+
+        # A logical turn consumes at most one next-turn item. The wake path may
+        # already have materialized it; direct regenerate/command triggers also
+        # own their turn and therefore must not absorb a queued followup.
+        inbox_turn_boundary_closed = await run_has_claimed_turn(lease)
 
         while True:
             if abort.is_set():
+                await lease.assert_current()
                 log.info(f"Session {session_id} aborted")
                 if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):
                     last_step_info.finish = "aborted"
-                    await update_message_info(last_step_info, user_id=user_id)
+                    await update_message_info(
+                        last_step_info,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
                 break
 
-            # Load messages and apply compaction boundary filtering
-            all_msgs = await get_messages(session_id, user_id=user_id)
-            if not all_msgs:
+            # Fence each step before it can dispatch another model request or
+            # tool side effect.  Heartbeats keep healthy long steps alive;
+            # takeover makes this worker stale and therefore silent.
+            await lease.assert_current()
+
+            # Inbox materialization is the step boundary: claim, Message,
+            # FileParts, lifecycle evidence and Driver trigger all commit under
+            # this exact fence before context is read or another model/tool is
+            # dispatched. Only the first boundary may consume one next-turn;
+            # every boundary drains bounded next-step input first.
+            from agent.inbox import (
+                InboxAttachmentError,
+                cancel_inbox_items,
+                claim_inbox_boundary,
+            )
+
+            try:
+                await claim_inbox_boundary(
+                    lease,
+                    step=max(step + 1, 1),
+                    include_next_turn=not inbox_turn_boundary_closed,
+                    deliver_attachments=True,
+                )
+            except InboxAttachmentError as exc:
+                await cancel_inbox_items(
+                    session_id=session_id,
+                    user_id=user_id,
+                    item_ids=exc.item_ids,
+                    reason=str(exc),
+                )
+                continue
+            inbox_turn_boundary_closed = True
+
+            # Agent context is built only from one canonical Event prefix.
+            # This load also seeds legacy Sessions and conservatively repairs
+            # an older interrupted tail without touching this exact run.
+            from session.agent_event_log import load_canonical_model_surface
+
+            model_surface = await load_canonical_model_surface(
+                session_id,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
+            msgs = list(model_surface.messages)
+            if not msgs:
                 break
-            msgs = await filter_compacted(all_msgs)
 
             # Check for pending compaction parts in the last user message
             compaction_pending = _find_pending_compaction(msgs)
             if compaction_pending:
                 msg_with_compaction, compaction_part = compaction_pending
                 auto = compaction_part.get("auto", True) if isinstance(compaction_part, dict) else getattr(compaction_part, "auto", True)
-                await set_session_status(session_id, SessionStatus.COMPACTING, user_id=user_id)
-                result = await process_compaction(session_id, msgs, model_id, auto=auto, user_id=user_id)
-                await set_session_status(session_id, SessionStatus.BUSY, user_id=user_id)
+                await set_session_status(
+                    session_id,
+                    SessionStatus.COMPACTING,
+                    user_id=user_id,
+                    generation=lease.generation,
+                    run_fence=run_fence,
+                )
+                result = await process_compaction(
+                    session_id,
+                    msgs,
+                    model_id,
+                    auto=auto,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+                await lease.assert_current()
+                await set_session_status(
+                    session_id,
+                    SessionStatus.BUSY,
+                    user_id=user_id,
+                    generation=lease.generation,
+                    run_fence=run_fence,
+                )
                 if result == "continue":
                     continue  # Auto compaction: keep executing the task
                 else:
@@ -415,14 +959,17 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                     bus.publish(SESSION_ERROR, {
                         "userId": user_id,
                         "sessionId": session_id,
+                        "generation": lease.generation,
                         "error": {"message": "Context too large and compaction failed. Please start a new session."},
                     })
                     break
                 log.info(f"Proactive compaction triggered for session {session_id} (attempt {compact_fail_count})")
                 await create_compaction(session_id, auto=True, user_id=user_id,
-                                        messages=msgs, model_id=model_id)
+                                        messages=msgs, model_id=model_id,
+                                        run_fence=run_fence)
                 last_finished_tokens = None
                 continue
+            compact_fail_count = 0
 
             scan = scan_messages(msgs)
             last_user, last_assistant, last_finished = (
@@ -467,13 +1014,19 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 # omitting it wrote against the literal user "default" and
                 # matched nothing. The switch out of plan mode has been
                 # silently failing to stick for every real account.
-                await update_session(session_id, user_id=user_id, agent=agent_name)
+                await update_session(
+                    session_id,
+                    user_id=user_id,
+                    agent=agent_name,
+                    run_fence=run_fence,
+                )
                 session = await get_session(session_id, user_id=user_id)
                 # Notify frontend of agent change via SSE
                 from bus.events import SESSION_UPDATED
                 bus.publish(SESSION_UPDATED, {
                     "userId": user_id,
                     "sessionId": session_id,
+                    "generation": lease.generation,
                     "agent": agent_name,
                 })
 
@@ -481,28 +1034,76 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             agent_def = copy.copy(get_agent(agent_name))
             agent_def.permission = list(agent_def.permission)  # Deep copy the mutable list
 
+            step_model = resolve_step_model(
+                agent_model=agent_def.model,
+                message_model=getattr(last_user, "model", None),
+                session_model=session_model_id,
+                config=config,
+                context=f"session {session_id} step {step} agent {agent_name}",
+            )
+            model_id = step_model.model_id
+            if step_model.replaced_from:
+                log.warning(
+                    "Step model %r from %s is unavailable; using %r",
+                    step_model.replaced_from,
+                    step_model.source,
+                    model_id,
+                )
+
             # Per-agent config is already folded in by get_agent(); applying
             # it again here appended the config's permission rules a second
             # time.
 
             config_rules = _get_permission_rules(config)
+            platform_guard_rules = _get_platform_guard_rules(config)
             requested_exposure_mode = config.tool_exposure.mode
             exposure_mode = effective_exposure_mode(
                 requested_exposure_mode,
                 agent_name,
                 portable_opt_in=agent_def.portable_opt_in,
             )
+            if inherited_authority is not None:
+                # Apply static inheritance before resolution so a child cannot
+                # trigger setup side effects for a declared capability (for
+                # example personal Skill restore) that its parent never had.
+                # Dynamic sandbox entries are intersected again below.
+                agent_def.tools = [
+                    tool_id
+                    for tool_id in agent_def.tools
+                    if tool_id in inherited_authority.tool_ids
+                ]
+            # Skill discovery is project/workdir scoped. Resolve the session
+            # directory before tool materialization and pass it explicitly;
+            # providers must never infer a long-lived backend process cwd.
+            session_workdir = await workdir_for_session(session)
             resolved_step_tools = await resolve_step_tools(
                 agent_def,
                 sandbox,
                 config_rules,
+                user_id=user_id,
+                project_id=session.project_id or "",
+                workdir=session_workdir,
                 include_discovery=exposure_mode
                 in {"shadow", "portable", "native_auto"},
                 return_catalogue_state=True,
             )
-            eligible_tools = resolved_step_tools.tools
+            from agent.subagent_authority import (
+                compose_subagent_authority,
+                restrict_tools,
+            )
+
+            eligible_tools = restrict_tools(
+                resolved_step_tools.tools,
+                inherited_authority,
+            )
             sandbox_catalogue_availability = (
                 resolved_step_tools.catalogue_availability
+            )
+            effective_authority = compose_subagent_authority(
+                tool_ids=eligible_tools,
+                permission_rules=[*config_rules, *agent_def.permission],
+                guard_rules=platform_guard_rules,
+                inherited=inherited_authority,
             )
 
             # Structured output is a synthetic tool rather than a provider
@@ -577,16 +1178,17 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
 
             # Sessions run in their project's directory, so a follow-up
             # conversation lands on the files the last one left behind.
-            session_workdir = await workdir_for_session(session)
             ctx = ToolContext(
                 session_id=session_id,
                 run_id=run_id,
+                run_generation=lease.generation,
                 user_id=user_id,
                 project_id=session.project_id or "",
                 agent_id=agent_name,
                 sandbox=sandbox,
                 bus=bus,
                 abort=abort,
+                _assert_current=lease.assert_current,
                 workdir=session_workdir,
                 available_tools=runtime.step_executable_ids,
                 _capability_catalog=runtime.eligible_catalog,
@@ -600,6 +1202,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 _capability_max_result_chars=(
                     config.tool_exposure.max_search_result_chars_per_step
                 ),
+                _subagent_authority_snapshot=effective_authority.to_json(),
             )
 
             # Create hooks with config permission rules + agent permission rules
@@ -608,6 +1211,16 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 user_id=user_id,
                 config_rules=config_rules,
                 agent_rules=agent_def.permission,
+                guard_rules=platform_guard_rules,
+                authority_rule_planes=(
+                    inherited_authority.permission_planes
+                    if inherited_authority is not None else ()
+                ),
+                authority_guard_planes=(
+                    inherited_authority.guard_planes
+                    if inherited_authority is not None else ()
+                ),
+                workdir=session_workdir,
             )
             ctx._authorize_tool = hooks.authorize_tool
 
@@ -662,6 +1275,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 workdir=session_workdir,
                 user_id=user_id,
                 project_id=session.project_id or "",
+                sandbox=sandbox,
             )
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
@@ -830,79 +1444,77 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             current_wire_by_canonical = _wire_by_canonical(
                 replay_provider_to_canonical
             )
-            history_tool_names = await _resolve_history_tool_names(
-                msgs,
-                session_id=session_id,
-                user_id=user_id,
-                current_binding_digest=provider_binding_digest,
-                current_provider_dialect=payload_dialect,
-                current_wire_by_canonical=current_wire_by_canonical,
-                legacy_aliases=_legacy_tool_aliases(
-                    replay_provider_to_canonical,
-                    runtime.execution_lookup,
-                ),
-            )
-            provider_replay_by_message: dict[str, list[dict]] = {}
-            if native_plan is not None:
-                from collections import defaultdict
-
-                from agent.native_tool_search import build_openai_native_replay_sequence
-                from session.internal_parts import (
-                    get_provider_replay_parts_for_binding,
-                )
-
-                grouped_replay = defaultdict(list)
-                for record in await get_provider_replay_parts_for_binding(
-                    session_id=session_id,
-                    user_id=user_id,
-                    binding=provider_binding,
-                    capability_key_digest=capability_key.digest(),
-                ):
-                    grouped_replay[record.message_id].append(
-                        {
-                            "stream_seq": record.stream_seq,
-                            "data": record.data,
-                        }
-                    )
-                provider_replay_by_message = {
-                    message_id: build_openai_native_replay_sequence(records)
-                    for message_id, records in grouped_replay.items()
-                }
-            llm_messages = _to_llm_messages(
-                msgs,
-                user_id=user_id,
-                tool_replay_names=history_tool_names,
-                provider_replay_by_message=provider_replay_by_message,
-            )
-            # Fetch the image bytes only here, on the path that actually calls
-            # a vision model — token counting and cron never need them.
-            llm_messages = await resolve_images(llm_messages, model_id)
-
             # Determine previous assistant agent for transition detection
             prev_assistant_agent = None
             if last_assistant and last_assistant.agent:
                 prev_assistant_agent = last_assistant.agent
 
-            # Insert system-reminder tags
-            # Always insert for plan/transition modes; for build mode only on step > 1
-            if step > 1 or agent_def.name == "plan" or (agent_def.name == "build" and prev_assistant_agent == "plan"):
-                finished_id = last_finished.id if last_finished else None
-                llm_messages = await _insert_reminders(
-                    llm_messages, agent_def,
-                    last_finished_id=finished_id if step > 1 else None,
-                    session=session,
-                    prev_agent=prev_assistant_agent,
-                    sandbox=sandbox,
-                    last_user_msg_id=last_user.id,
+            async def _build_projected_llm_messages(
+                frozen_surface,
+                *,
+                todo_notices: Sequence[str] = (),
+            ) -> list[dict]:
+                """Build the provider payload from the exact frozen prefix."""
+                projected_messages = list(frozen_surface.messages)
+                history_tool_names = await _resolve_history_tool_names(
+                    projected_messages,
+                    session_id=session_id,
                     user_id=user_id,
+                    current_binding_digest=provider_binding_digest,
+                    current_provider_dialect=payload_dialect,
+                    current_wire_by_canonical=current_wire_by_canonical,
+                    legacy_aliases=_legacy_tool_aliases(
+                        replay_provider_to_canonical,
+                        runtime.execution_lookup,
+                    ),
                 )
+                provider_replay_by_message: dict[str, list[dict]] = {}
+                if native_plan is not None:
+                    from agent.native_tool_search import build_openai_native_replay_sequence
 
-            # Todo edits are announced on every step, including the first:
-            # unlike the reminders above, this is the only moment the model
-            # learns the user touched its list, and the first step of a run
-            # is exactly when an edit made while idle is waiting.
-            llm_messages = await _insert_todo_notices(llm_messages, session_id)
-            llm_messages = await _insert_todo_pacing(llm_messages, session_id)
+                    grouped_replay = frozen_surface.provider_replay_for(
+                        capability_key.digest()
+                    )
+                    provider_replay_by_message = {
+                        message_id: build_openai_native_replay_sequence(records)
+                        for message_id, records in grouped_replay.items()
+                    }
+                result = _to_llm_messages(
+                    projected_messages,
+                    user_id=user_id,
+                    tool_replay_names=history_tool_names,
+                    provider_replay_by_message=provider_replay_by_message,
+                )
+                # Reminder persistence (plan transitions) happens before the
+                # final checkpoint on the sizing pass below. Re-running this
+                # builder against the checkpointed prefix is then read-only.
+                if step > 1 or agent_def.name == "plan" or (
+                    agent_def.name == "build" and prev_assistant_agent == "plan"
+                ):
+                    finished_id = last_finished.id if last_finished else None
+                    result = await _insert_reminders(
+                        result,
+                        agent_def,
+                        last_finished_id=finished_id if step > 1 else None,
+                        session=session,
+                        prev_agent=prev_assistant_agent,
+                        sandbox=sandbox,
+                        last_user_msg_id=last_user.id,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
+                result = _insert_todo_notice_snapshot(result, todo_notices)
+                result = await _insert_todo_pacing(result, session_id)
+                if step >= agent_def.max_steps:
+                    result.append({"role": "user", "content": MAX_STEPS_PROMPT})
+                # Fetch image bytes only for the actual provider-shaped path.
+                return await resolve_images(result, model_id)
+
+            # Preflight/sizing also persists any one-time plan reminder before
+            # the model.requested checkpoint is frozen.
+            llm_messages = await _build_projected_llm_messages(
+                model_surface,
+            )
 
             payload_sources = {}
             revealed_provider_names: set[str] = set()
@@ -1016,29 +1628,32 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 _tu = session.token_usage.model_dump() if session.token_usage else {}
                 _tu["context"] = _ctx_estimate
                 _tu["limit"] = _ctx_limit
-                await update_session(session_id, user_id=user_id, token_usage=_tu)
+                await update_session(
+                    session_id,
+                    user_id=user_id,
+                    token_usage=_tu,
+                    run_fence=run_fence,
+                )
                 bus.publish(SESSION_UPDATED, {
                     "userId": user_id,
                     "sessionId": session_id,
+                    "generation": lease.generation,
                     "token_usage": _tu,
                 })
+            except LeaseLostError:
+                raise
             except Exception:
                 pass
 
-            # Apply prompt caching for supported providers
-            llm_messages = apply_caching(
-                llm_messages,
-                model_id,
-                cache_key=session_cache_key(
-                    secret=config.jwt_secret,
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
+            # Final provider adapters own cache serialization because the wire
+            # shape differs between Responses, OpenAI Chat, Anthropic and
+            # Bedrock. The orchestration layer supplies only a non-reversible
+            # tenant/session affinity key.
+            prompt_cache_key = session_cache_key(
+                secret=config.jwt_secret,
+                user_id=user_id,
+                session_id=session_id,
             )
-
-            # Add max steps prompt if at limit
-            if step >= agent_def.max_steps:
-                llm_messages.append({"role": "user", "content": MAX_STEPS_PROMPT})
 
             # Create assistant message with agent tracking
             assistant_info = await create_assistant_message(
@@ -1047,7 +1662,9 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 model_id=model_id,
                 agent=agent_name,
                 user_id=user_id,
+                run_fence=run_fence,
             )
+            run_message_ids.add(assistant_info.id)
             last_step_info = assistant_info
 
             # Step start with snapshot
@@ -1059,128 +1676,298 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 message_id=assistant_info.id,
                 snapshot=start_snapshot,
             )
-            await save_part(step_start, is_new=True, user_id=user_id)
-
-            # Stream LLM response
-            # Track consecutive compaction failures to prevent infinite loops
-            if step > 1 and finish_reason_prev == "compact":
-                compact_fail_count += 1
-                if compact_fail_count >= 3:
-                    log.error(f"Session {session_id}: compaction failed {compact_fail_count} times, aborting to prevent infinite loop")
-                    bus.publish(SESSION_ERROR, {
-                        "userId": user_id,
-                        "sessionId": session_id,
-                        "error": {"message": "Context too large and compaction failed. Please start a new session."},
-                    })
-                    break
-            else:
-                compact_fail_count = 0
+            await save_part(
+                step_start,
+                is_new=True,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
 
             # Read variant from last user message (matching opencode)
             user_variant = getattr(last_user, "variant", None)
 
-            result = await process_step(
-                session_id=session_id,
-                user_id=user_id,
-                session=session,
-                agent_def=agent_def,
-                system=system,
-                llm_messages=llm_messages,
-                tools=tools,
-                model_id=model_id,
-                ctx=ctx,
-                hooks=hooks,
-                assistant_info=assistant_info,
-                sandbox=sandbox,
-                abort=abort,
-                doom_loop_history=doom_loop_history,
-                user_variant=user_variant,
-                execution_lookup=runtime.execution_lookup,
-                step_executable_ids=runtime.step_executable_ids,
-                provider_to_canonical=runtime.provider_to_canonical,
-                provider_binding_digest=provider_binding_digest,
-                provider_dialect=payload_dialect,
-                # "required" makes the model pick some tool; the system prompt
-                # names which one. Left unset otherwise so ordinary turns can
-                # still answer in plain text.
-                tool_choice="required" if output_schema else None,
+            from session.agent_event_log import (
+                checkpoint_model_request,
+                load_canonical_model_surface,
             )
+            from session.todo import acknowledge_notices, pending_notices
 
-            # Retry policy lives here, not in the step: the step only reports
-            # that the failure was transient.
-            if result.outcome is StepOutcome.RETRY:
-                if llm_retry_count < MAX_LLM_RETRIES:
-                    llm_retry_count += 1
-                    delay = retry_delay(llm_retry_count, None)
-                    log.warning(
-                        f"Retryable LLM error in session {session_id} "
-                        f"(attempt {llm_retry_count}/{MAX_LLM_RETRIES}): "
-                        f"{result.retry_reason}. Retrying in {delay:.1f}s"
+            provider_attempt_number = 0
+            prepared_attempt: FrozenProviderAttempt | None = None
+            todo_notice_snapshot = tuple(await pending_notices(session_id))
+            provider_tool_choice = "required" if output_schema else None
+
+            async def _prepare_provider_attempt() -> None:
+                """Freeze the complete request, then CAS its Event prefix."""
+                nonlocal provider_attempt_number, prepared_attempt
+                await lease.assert_current()
+                provider_attempt_number += 1
+                request_id = f"{assistant_info.id}:{provider_attempt_number}"
+
+                async def _load_candidate():
+                    await lease.assert_current()
+                    return await load_canonical_model_surface(
+                        session_id,
+                        user_id=user_id,
+                        run_fence=run_fence,
                     )
-                    # Carry the attempt so the waiting turn can say which try
-                    # it is on. A silent "retry" status is indistinguishable
-                    # from a slow model, and a run can spend a minute here.
-                    bus.publish(SESSION_STATUS, {
-                        "userId": user_id, "sessionId": session_id, "status": "retry",
-                        "attempt": llm_retry_count, "maxAttempts": MAX_LLM_RETRIES,
-                    })
-                    await asyncio.sleep(delay)
-                    step -= 1  # a retried attempt is not a step
-                    continue
-                log.error(f"LLM error in session {session_id} after {llm_retry_count} retries: {result.error}")
+
+                async def _build_candidate(candidate):
+                    return await _build_projected_llm_messages(
+                        candidate,
+                        todo_notices=todo_notice_snapshot,
+                    )
+
+                async def _checkpoint_candidate(
+                    candidate,
+                    tool_schema_digest: str,
+                    prompt_shape_digest: str,
+                ):
+                    await lease.assert_current()
+                    return await checkpoint_model_request(
+                        session_id,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                        request_id=request_id,
+                        model_id=model_id,
+                        provider_binding_digest=provider_binding_digest,
+                        tool_schema_digest=tool_schema_digest,
+                        prompt_shape_digest=prompt_shape_digest,
+                        expected_event_sequence=candidate.event_sequence,
+                        expected_event_digest=candidate.event_digest,
+                        turn_id=last_user.id,
+                        step_id=f"{run_id}:{lease.generation}:{step}",
+                        message_id=assistant_info.id,
+                    )
+
+                prepared_attempt = await _prepare_checkpointed_provider_attempt(
+                    load_surface=_load_candidate,
+                    build_messages=_build_candidate,
+                    checkpoint=_checkpoint_candidate,
+                    system=system,
+                    tools=tools,
+                    model_id=model_id,
+                    provider_binding_digest=provider_binding_digest,
+                    payload_dialect=payload_dialect,
+                    tool_choice=provider_tool_choice,
+                    user_variant=user_variant,
+                    prompt_cache_key=prompt_cache_key,
+                    native_plan=native_plan,
+                    native_portable_tools=ctx._native_portable_tools,
+                    native_portable_system=ctx._native_portable_system,
+                )
+
+            async def _attempt_provider_step():
+                if prepared_attempt is None:
+                    raise RuntimeError("provider attempt was not checkpointed")
+                ctx._native_tool_plan = prepared_attempt.native_plan
+                ctx._native_portable_tools = prepared_attempt.native_portable_tools
+                ctx._native_portable_system = prepared_attempt.native_portable_system
+                result = await process_step(
+                    session_id=session_id,
+                    user_id=user_id,
+                    session=session,
+                    agent_def=agent_def,
+                    system=prepared_attempt.system,
+                    llm_messages=prepared_attempt.llm_messages,
+                    tools=prepared_attempt.tools,
+                    model_id=prepared_attempt.model_id,
+                    ctx=ctx,
+                    hooks=hooks,
+                    assistant_info=assistant_info,
+                    sandbox=sandbox,
+                    abort=abort,
+                    doom_loop_history=doom_loop_history,
+                    user_variant=prepared_attempt.user_variant,
+                    execution_lookup=runtime.execution_lookup,
+                    step_executable_ids=runtime.step_executable_ids,
+                    provider_to_canonical=runtime.provider_to_canonical,
+                    provider_binding_digest=provider_binding_digest,
+                    provider_dialect=payload_dialect,
+                    prompt_cache_key=prepared_attempt.prompt_cache_key,
+                    # "required" makes the model pick some tool; the system
+                    # prompt names which one. Left unset otherwise so ordinary
+                    # turns can still answer in plain text.
+                    tool_choice=prepared_attempt.tool_choice,
+                )
+                try:
+                    acknowledged = await _acknowledge_dispatched_todo_notices(
+                        session_id=session_id,
+                        notices=todo_notice_snapshot,
+                        result=result,
+                        abort=abort,
+                        acknowledge=acknowledge_notices,
+                    )
+                    if (
+                        todo_notice_snapshot
+                        and result.outcome is StepOutcome.CONTINUE
+                        and acknowledged is False
+                        and not abort.is_set()
+                    ):
+                        log.warning(
+                            "Todo notice snapshot changed before acknowledgement; "
+                            "retaining notices for a later provider step"
+                        )
+                except Exception:
+                    # Todo notices are ephemeral presentation hints. A failed
+                    # ack must be at-least-once (repeat later), never
+                    # at-most-once (silently lost before a provider retry).
+                    log.warning("Could not acknowledge Todo notices", exc_info=True)
+                return result
+
+            async def _checkpoint_provider_retry(
+                attempt_number: int,
+                max_attempts: int,
+                delay: float,
+                retry_result,
+            ) -> None:
+                await lease.assert_current()
+                log.warning(
+                    "Retryable LLM error in session %s (attempt %s/%s): %s. "
+                    "Retrying in %.1fs",
+                    session_id,
+                    attempt_number,
+                    max_attempts,
+                    retry_result.retry_reason,
+                    delay,
+                )
+                # This is a persisted part of the same Assistant step, not a
+                # new empty Assistant Message for each transport attempt.
+                await save_part(
+                    RetryPart(
+                        id=ascending("part"),
+                        attempt=attempt_number,
+                        reason=retry_result.retry_reason,
+                        session_id=session_id,
+                        message_id=assistant_info.id,
+                    ),
+                    is_new=True,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+                bus.publish(SESSION_STATUS, {
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "status": "retry",
+                    "generation": lease.generation,
+                    "attempt": attempt_number,
+                    "maxAttempts": max_attempts,
+                })
+
+            retry_started_at = time.monotonic()
+            result, llm_retry_count = await _run_provider_attempts(
+                _attempt_provider_step,
+                _checkpoint_provider_retry,
+                max_retries=MAX_LLM_RETRIES,
+                abort=abort,
+                before_attempt=_prepare_provider_attempt,
+            )
+            await lease.assert_current()
+
+            # The retry budget is exhausted. Close the one logical Assistant
+            # step before settling the Session so reconnect/recovery never sees
+            # idle paired with an open tail.
+            if result.outcome in (StepOutcome.RETRY, StepOutcome.ERROR):
+                exhausted = result.outcome is StepOutcome.RETRY
+                public_error = await _close_failed_provider_step(
+                    assistant_info,
+                    session_id=session_id,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                    step=step,
+                    start_snapshot=start_snapshot,
+                    duration=time.monotonic() - retry_started_at,
+                    code="LLM_UNAVAILABLE" if exhausted else "LLM_ERROR",
+                    message=(
+                        result.error
+                        or (
+                            "LLM request failed"
+                            if exhausted
+                            else "LLM response failed"
+                        )
+                    ),
+                )
+                log.error(
+                    "LLM error in session %s after %s retries: %s",
+                    session_id,
+                    llm_retry_count,
+                    result.error,
+                )
                 bus.publish(SESSION_ERROR, {
-                    "userId": user_id, "sessionId": session_id,
-                    "error": {
-                        "code": "LLM_UNAVAILABLE",
-                        # Kept for the log and for support, but the client shows
-                        # copy chosen from the code — a raw
-                        # "litellm.ServiceUnavailableError: OpenAIException ..."
-                        # is a stack trace wearing a message's clothes.
-                        "message": result.error or "LLM request failed",
-                    },
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "generation": lease.generation,
+                    "error": public_error,
                 })
                 break
 
-            if result.outcome is StepOutcome.ERROR:
-                break
+            # A successful response starts a fresh consecutive-retry budget
+            # for the next provider step in this run.
+            llm_retry_count = 0
 
-            # The structured answer arrived — the run is done, whatever the
-            # model would have said next.
-            if "value" in structured:
+            structured_complete = "value" in structured
+            if structured_complete:
                 assistant_info.structured = structured["value"]
-                assistant_info.finish = assistant_info.finish or "stop"
-                await update_message_info(assistant_info, user_id=user_id)
-                last_assistant_msg = assistant_info
-                break
 
-            finish_reason = result.finish_reason
+            # Structured output is a successful terminal response even though
+            # it arrived through a synthetic tool call. It must pass through
+            # the same StepFinish gateway as ordinary stop/tool-call results.
+            finish_reason = "stop" if structured_complete else result.finish_reason
             if abort.is_set() and finish_reason != "stop":
                 finish_reason = "aborted"
+            if finish_reason == "compact":
+                provider_compact_fail_count += 1
+                if provider_compact_fail_count >= 3:
+                    public_error = {
+                        "code": "COMPACTION_FAILED",
+                        "message": (
+                            "Context too large and compaction failed. "
+                            "Please start a new session."
+                        ),
+                    }
+                    assistant_info.error = public_error
+                    finish_reason = "error"
+                    log.error(
+                        "Session %s: compaction failed %s times, aborting to "
+                        "prevent infinite loop",
+                        session_id,
+                        provider_compact_fail_count,
+                    )
+                    bus.publish(SESSION_ERROR, {
+                        "userId": user_id,
+                        "sessionId": session_id,
+                        "generation": lease.generation,
+                        "error": public_error,
+                    })
+            else:
+                provider_compact_fail_count = 0
             collected_text = result.text
             total_usage = result.usage
             step_duration = result.duration
             doom_loop_history.extend(result.completed_tool_parts)
             # Step finish with snapshot
             end_snapshot = await snapshot.track(session_id, sandbox)
-            step_finish = StepFinishPart(
-                id=ascending("part"),
-                step=step,
-                input_tokens=total_usage.get("input", 0),
-                output_tokens=total_usage.get("output", 0),
-                cost=total_usage.get("cost", 0.0),
-                duration=step_duration,
+            await _finish_step_gateway(
                 session_id=session_id,
                 message_id=assistant_info.id,
-                snapshot=end_snapshot,
+                user_id=user_id,
+                run_fence=run_fence,
+                step=step,
+                snapshot_id=end_snapshot,
+                usage=total_usage,
+                duration=step_duration,
             )
-            await save_part(step_finish, is_new=True, user_id=user_id)
 
             # Notify frontend of file changes if snapshots differ, and record
             # which files this step touched as a patch part so the chat can
             # show a per-turn change card (the session diff alone can't say
             # which turn made a change).
             if start_snapshot and end_snapshot and start_snapshot != end_snapshot:
-                bus.publish(SESSION_DIFF, {"userId": user_id, "sessionId": session_id})
+                bus.publish(SESSION_DIFF, {
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "generation": lease.generation,
+                })
                 try:
                     changed = await snapshot.diff(
                         start_snapshot, end_snapshot, sandbox, session_id=session_id
@@ -1205,7 +1992,10 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                             ),
                             is_new=True,
                             user_id=user_id,
+                            run_fence=run_fence,
                         )
+                except LeaseLostError:
+                    raise
                 except Exception as e:
                     log.warning(f"Failed to record patch part: {e}")
 
@@ -1215,9 +2005,17 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 bus.publish(SESSION_UPDATED, {
                     "userId": user_id,
                     "sessionId": session_id,
+                    "generation": lease.generation,
                     "planUpdated": True,
                 })
-                await _upsert_plan_part(session_id, assistant_info.id, sandbox, session, user_id=user_id)
+                await _upsert_plan_part(
+                    session_id,
+                    assistant_info.id,
+                    sandbox,
+                    session,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
 
             # Update assistant message metadata
             assistant_info.finish = finish_reason
@@ -1229,14 +2027,30 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 cost=total_usage.get("cost", 0.0),
             )
             assistant_info.tokens = last_finished_tokens
-            await update_message_info(assistant_info, user_id=user_id)
+            await update_message_info(
+                assistant_info,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
 
             # Accumulate into session-level token_usage for ContextPanel
             from session.session import update_session_tokens
-            await update_session_tokens(session_id, last_finished_tokens, user_id=user_id)
+            await update_session_tokens(
+                session_id,
+                last_finished_tokens,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
 
             # Check result
             log.info(f"Step {step} finished: reason={finish_reason}, tool_calls={len(result.completed_tool_parts)}, text={len(collected_text)} chars")
+            if structured_complete:
+                last_assistant_msg = assistant_info
+                from agent.inbox import has_pending_next_step
+
+                if await has_pending_next_step(session_id, user_id=user_id):
+                    continue
+                break
             if finish_reason == "stop":
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(
@@ -1246,29 +2060,40 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                     parts=[],
                     created_at=id_to_iso(assistant_info.id),
                 )
+                from agent.inbox import has_pending_next_step
+
+                if await has_pending_next_step(session_id, user_id=user_id):
+                    continue
                 break
             elif finish_reason == "aborted":
                 break
+            elif finish_reason == "error":
+                break
             elif finish_reason == "compact":
-                finish_reason_prev = "compact"
                 continue
             # "tool_calls" -> loop continues.
-            finish_reason_prev = finish_reason
 
         # Flush pending cron results BEFORE setting IDLE (no race with prompt_async)
         try:
             from cron.injector import flush_pending_cron_results
-            flushed = await flush_pending_cron_results(session_id, user_id)
+            flushed = await flush_pending_cron_results(
+                session_id,
+                user_id,
+                run_fence=run_fence,
+            )
             if flushed:
                 log.info(f"Flushed {flushed} pending cron result(s) for session {session_id}")
+        except LeaseLostError:
+            raise
         except Exception as e:
             log.debug(f"Cron flush skipped: {e}")
 
+        await lease.set_phase("finalizing")
         bus.publish(SESSION_FINALIZING, {
             "userId": user_id,
             "sessionId": session_id,
+            "generation": lease.generation,
         })
-        await set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
 
         # F1: Clear instruction file claims
         try:
@@ -1280,8 +2105,18 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         async def _post_loop_cleanup() -> None:
             # Clean up any pending/running tool parts (matching opencode's processor cleanup)
             try:
-                final_msgs = await get_messages(session_id, user_id=user_id)
+                from session.agent_event_log import load_canonical_model_surface
+
+                final_surface = await load_canonical_model_surface(
+                    session_id,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                    repair_tail=False,
+                )
+                final_msgs = list(final_surface.messages)
                 for msg in final_msgs:
+                    if msg.id not in run_message_ids:
+                        continue
                     role = msg.role if isinstance(msg.role, str) else msg.role.value
                     if role != "assistant":
                         continue
@@ -1299,7 +2134,15 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                                     # that this row stops spinning. Without the
                                     # event the store keeps the stale running
                                     # copy and the composer stays busy.
-                                    await update_part_data(part_id, p, publish=True, user_id=user_id)
+                                    await update_part_data(
+                                        part_id,
+                                        p,
+                                        publish=True,
+                                        user_id=user_id,
+                                        run_fence=run_fence,
+                                    )
+            except LeaseLostError:
+                raise
             except Exception as cleanup_err:
                 log.warning(f"Tool cleanup error: {cleanup_err}")
 
@@ -1312,32 +2155,166 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             try:
                 from session.abort import settle_running_todos
 
-                await settle_running_todos(session_id, user_id)
+                await settle_running_todos(
+                    session_id,
+                    user_id,
+                    assert_current=lease.assert_current,
+                    generation=lease.generation,
+                )
+            except LeaseLostError:
+                raise
             except Exception as todo_err:
                 log.warning(f"Todo settle error: {todo_err}")
 
             # Post-loop: prune old tool outputs
             try:
-                await prune_tool_outputs(session_id, user_id=user_id)
+                await prune_tool_outputs(
+                    session_id,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+            except LeaseLostError:
+                raise
             except Exception as prune_err:
                 log.warning(f"Tool prune error: {prune_err}")
 
-        task = asyncio.create_task(_post_loop_cleanup())
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+        # Finalization is part of the run's ownership window.  Publishing IDLE
+        # before this settled let a new turn start while the old cleanup was
+        # still scanning the same transcript; it could then mark the new
+        # turn's pending tool cards as interrupted.  Keep the session in the
+        # explicit finalizing phase until every read-model cleanup is durable.
+        await lease.assert_current()
+        await _post_loop_cleanup()
+        await lease.assert_current()
+        from agent.inbox import settle_claimed_inbox_items
+
+        inbox_error = getattr(last_step_info, "error", None) if last_step_info else None
+        last_finish = getattr(last_step_info, "finish", None) if last_step_info else None
+        if abort.is_set() or last_finish == "aborted":
+            inbox_outcome = "aborted"
+        elif inbox_error is not None or last_finish == "error":
+            inbox_outcome = "error"
+        else:
+            inbox_outcome = "succeeded"
+        inbox_result_id = (
+            getattr(last_assistant_msg, "id", None)
+            or getattr(last_step_info, "id", None)
+        )
+        await settle_claimed_inbox_items(
+            lease,
+            result_message_id=inbox_result_id,
+            outcome=inbox_outcome,
+            error=inbox_error if isinstance(inbox_error, dict) else None,
+        )
+        await _settle_run_status(
+            lease,
+            session_id=session_id,
+            user_id=user_id,
+            status=SessionStatus.IDLE,
+        )
+        # Release first; the dispatcher can then reserve the next generation.
+        # The periodic recovery scan provides the durable fallback if this
+        # process exits in the small release-to-schedule window.
+        from agent.inbox import schedule_inbox_wake
+
+        schedule_inbox_wake(session_id, user_id)
         return last_assistant_msg
 
+    except LeaseLostError as e:
+        # A newer generation owns status and transcript now.  A stale worker
+        # must not write ERROR/IDLE over that run's public state.
+        log.warning("Stale agent driver stopped session=%s error=%s", session_id, e)
+        return None
+    except asyncio.CancelledError:
+        try:
+            await _preserve_failed_run(
+                lease,
+                session_id=session_id,
+                user_id=user_id,
+            )
+        except asyncio.CancelledError:
+            # A repeated cancellation is re-raised below after the shielded
+            # marker transaction finishes.
+            pass
+        except Exception:
+            # The still-owned identity was never cleared. Its existing lease
+            # deadline remains a durable recovery path when the DB is down.
+            log.exception(
+                "Could not preserve cancelled agent marker session=%s",
+                session_id,
+            )
+        raise
     except Exception as e:
         log.error(f"Agent loop error for session {session_id}: {e}")
-        bus.publish(SESSION_ERROR, {
-            "userId": user_id,
-            "sessionId": session_id,
-            "error": {"message": str(e)},
-        })
-        await set_session_status(session_id, SessionStatus.ERROR, user_id=user_id)
+        try:
+            preserved = await _preserve_failed_run(
+                lease,
+                session_id=session_id,
+                user_id=user_id,
+            )
+        except Exception:
+            # A failed preserve does not clear the driver identity. The
+            # original deadline makes it recoverable without publishing a
+            # Session state that was not committed atomically.
+            log.exception(
+                "Could not preserve failed agent marker session=%s",
+                session_id,
+            )
+        else:
+            if not preserved:
+                return None
+            bus.publish(SESSION_ERROR, {
+                "userId": user_id,
+                "sessionId": session_id,
+                "generation": lease.generation,
+                "error": {"message": str(e)},
+            })
         return None
     finally:
-        clear_abort(session_id, abort)
+        try:
+            if lease_context is not None:
+                reset_current_lease(lease_context)
+        finally:
+            # Idempotent after a successful release/preserve. On stale-owner
+            # paths it retires only the exact old identity; on an earlier
+            # preserve failure it is the last safe atomic error settlement.
+            # Normal success/preserve paths are already closed, while a stale
+            # generation cannot match and therefore cannot overwrite status.
+            try:
+                matched = await lease.release(
+                    session_status=SessionStatus.ERROR.value,
+                )
+                if matched:
+                    _publish_session_status(
+                        session_id,
+                        user_id,
+                        SessionStatus.ERROR,
+                        lease.generation,
+                    )
+            except Exception:
+                log.exception(
+                    "Could not release agent lease in finalizer session=%s",
+                    session_id,
+                )
+                try:
+                    preserved = await lease.preserve_for_recovery(
+                        session_status=SessionStatus.ERROR.value,
+                    )
+                    if preserved:
+                        _publish_session_status(
+                            session_id,
+                            user_id,
+                            SessionStatus.ERROR,
+                            lease.generation,
+                        )
+                except Exception:
+                    # The existing expiry remains the final durable fallback;
+                    # preserve retires the local activity even when its own
+                    # database transaction cannot commit.
+                    log.exception(
+                        "Could not preserve final agent marker session=%s",
+                        session_id,
+                    )
 
 
 async def _build_system_prompt(
@@ -1346,6 +2323,7 @@ async def _build_system_prompt(
     workdir: str = "/workspace",
     user_id: str = "",
     project_id: str = "",
+    sandbox=None,
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -1361,7 +2339,15 @@ async def _build_system_prompt(
     # Agent-specific prompt:
     # - Build/plan agents use model-specific prompts (routed by model_id)
     # - Other agents (explore, title, compaction) use their own static prompts
-    if agent_def.name in ("build", "plan"):
+    from agent.subagent_authority import current_frozen_subagent_agent
+
+    frozen_subagent = current_frozen_subagent_agent(agent_def.name)
+    if frozen_subagent is not None and frozen_subagent.prompt:
+        # A descriptor-bound Task preset is already the exact accepted system
+        # prompt plus persona overlay. Names such as build/plan must not route
+        # around that durable composition on a cold worker.
+        parts.append(frozen_subagent.prompt)
+    elif agent_def.name in ("build", "plan"):
         from agent.prompts.system import get_system_prompt
         parts.append(get_system_prompt(model_id))
     elif agent_def.prompt:
@@ -1375,27 +2361,26 @@ async def _build_system_prompt(
         from session.instruction import instruction_system_with_config
         from core.config import get_config
         config = get_config()
-        instructions = await instruction_system_with_config(config)
+        if sandbox is None:
+            # Compatibility for prompt builders used outside a live run.
+            instructions = await instruction_system_with_config(config)
+        else:
+            instructions = await instruction_system_with_config(
+                config,
+                sandbox=sandbox,
+                workdir=workdir,
+            )
         parts.extend(instructions)
     except Exception as e:
         log.debug(f"Could not load instruction files: {e}")
 
     # Environment info (separate part for cache control purposes)
-    sandbox_provider = str(
-        getattr(config, "sandbox_provider", "docker") or "docker"
-    ).lower()
-    if sandbox_provider == "wuying":
-        platform = "linux (Alibaba Cloud Wuying workstation)"
-        access = "action-server managed workspace access"
-        package_managers = "pip and npm/npx; system packages depend on workspace policy"
-    elif sandbox_provider == "kubernetes":
-        platform = "linux (Kubernetes sandbox)"
-        access = "sandbox-scoped user access"
-        package_managers = "pip and npm/npx; system packages depend on the sandbox image"
-    else:
-        platform = "linux (Docker sandbox)"
-        access = "sandbox-scoped user access"
-        package_managers = "apt-get, pip, npm/npx (subject to sandbox policy)"
+    # WUYING is the only supported execution plane. Keeping Docker/Kubernetes
+    # prompt branches here made a stale or partially loaded config describe an
+    # environment that OpenBox can no longer create.
+    platform = "linux (Alibaba Cloud Wuying workstation)"
+    access = "action-server managed workspace access"
+    package_managers = "pip and npm/npx; system packages depend on workspace policy"
 
     env_info = (
         f"You are powered by the model {model_id}.\n"
@@ -1485,15 +2470,16 @@ async def _resolve_history_tool_names(
     current_wire_by_canonical: Mapping[str, str],
     legacy_aliases: Mapping[str, str | tuple[str, ...]],
 ) -> dict[str, str]:
-    """Resolve provider wire names for public history via private DB columns."""
+    """Resolve provider wire names solely from canonical Event sidecars."""
 
-    from session.tool_part_identity import resolve_tool_part_for_replay
+    from session.tool_part_identity import resolve_projected_tool_part_for_replay
 
     resolved: dict[str, str] = {}
     for msg in msgs:
         role = msg.role if isinstance(msg.role, str) else msg.role.value
         if role != "assistant" or getattr(msg, "error", None) is not None:
             continue
+        legacy_sequence = 0
         for part in msg.parts or []:
             if isinstance(part, dict):
                 data = part
@@ -1506,16 +2492,16 @@ async def _resolve_history_tool_names(
             part_id = str(data.get("id") or "")
             if not part_id:
                 raise RuntimeError("historical ToolPart has no persisted identity key")
-            replay = await resolve_tool_part_for_replay(
-                part_id=part_id,
-                session_id=session_id,
-                user_id=user_id,
+            replay = resolve_projected_tool_part_for_replay(
+                part=part,
                 current_binding_digest=current_binding_digest,
                 current_provider_dialect=current_provider_dialect,
                 current_wire_by_canonical=current_wire_by_canonical,
                 legacy_aliases=legacy_aliases,
+                legacy_stream_seq=legacy_sequence,
             )
             resolved[part_id] = replay.wire_tool_name
+            legacy_sequence += 1
     return resolved
 
 
@@ -2016,6 +3002,7 @@ async def _insert_reminders(
     sandbox=None,
     last_user_msg_id: str | None = None,
     user_id: str = "default",
+    run_fence: tuple[str, str, int] | None = None,
 ) -> list[dict]:
     """Insert system-reminder tags into user messages.
 
@@ -2091,7 +3078,12 @@ async def _insert_reminders(
                         session_id=session.id,
                         message_id=last_user_msg_id,
                     )
-                    await save_part(reminder_part, is_new=True, user_id=user_id)
+                    await save_part(
+                        reminder_part,
+                        is_new=True,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
 
             for i in range(len(result) - 1, -1, -1):
                 if result[i].get("role") == "user":
@@ -2145,7 +3137,12 @@ async def _insert_reminders(
                     session_id=session.id,
                     message_id=last_user_msg_id,
                 )
-                await save_part(reminder_part, is_new=True, user_id=user_id)
+                await save_part(
+                    reminder_part,
+                    is_new=True,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
 
         # Still modify in-memory content for THIS iteration
         for i in range(len(result) - 1, -1, -1):
@@ -2172,10 +3169,16 @@ async def _insert_todo_notices(messages: list[dict], session_id: str) -> list[di
     """
     from session.todo import take_notices
 
-    if not messages:
-        return messages
     notices = await take_notices(session_id)
-    if not notices:
+    return _insert_todo_notice_snapshot(messages, notices)
+
+
+def _insert_todo_notice_snapshot(
+    messages: list[dict],
+    notices: Sequence[str],
+) -> list[dict]:
+    """Insert a non-destructive notice snapshot into one frozen request."""
+    if not messages or not notices:
         return messages
 
     body = "\n".join(notices)
@@ -2354,15 +3357,16 @@ async def _generate_title_with_llm(user_text: str) -> str | None:
 def _get_permission_rules(config) -> list:
     """Build permission rules from config.
 
-    Defaults are designed for Docker sandbox mode:
-    - Allow all tools by default (sandbox is the protection)
+    Defaults are designed for the remote WUYING execution plane:
+    - Allow ordinary non-shell sandbox tools by default
+    - Ask before every Bash command; shell syntax is too expressive for a
+      sensitive-path substring matcher to be a security boundary
     - Ask before reading .env files (secrets shouldn't leak casually)
     - Ask on doom loop detection
     """
     from permission.permission import Rule
 
-    # Start with sandbox defaults (matching opencode's agent defaults,
-    # adapted for Docker sandbox where external_directory isn't needed)
+    # Start with sandbox defaults (matching opencode's agent defaults).
     rules = [
         Rule(permission="*", pattern="*", action="allow"),
         Rule(permission="doom_loop", pattern="*", action="ask"),
@@ -2370,13 +3374,45 @@ def _get_permission_rules(config) -> list:
         Rule(permission="question", pattern="*", action="deny"),
         Rule(permission="plan_enter", pattern="*", action="deny"),
         Rule(permission="plan_exit", pattern="*", action="deny"),
-        # .env protection: mirrors github.com/github/gitignore Node.gitignore pattern
-        Rule(permission="read", pattern="*.env", action="ask"),
-        Rule(permission="read", pattern="*.env.*", action="ask"),
-        Rule(permission="read", pattern="*.env.example", action="allow"),
+        # ``read`` receives an absolute or project-relative path, so use ** to
+        # keep the guard effective below nested directories as well as at root.
+        Rule(permission="read", pattern="**.env**", action="ask"),
+        Rule(permission="read", pattern="**.env.example", action="allow"),
+        Rule(permission="read", pattern=".ssh", action="ask"),
+        Rule(permission="read", pattern=".ssh/**", action="ask"),
+        Rule(permission="read", pattern="**/.ssh", action="ask"),
+        Rule(permission="read", pattern="**/.ssh/**", action="ask"),
+        Rule(permission="read", pattern="**credentials**", action="ask"),
+        # Bash is always interactive by default. The narrower entries remain
+        # explicit documentation of the secret classes covered by this floor.
+        Rule(permission="bash", pattern="*", action="ask"),
+        Rule(permission="bash", pattern="**.env**", action="ask"),
+        Rule(permission="bash", pattern="**.ssh", action="ask"),
+        Rule(permission="bash", pattern="**.ssh/**", action="ask"),
+        Rule(permission="bash", pattern="**/.ssh/**", action="ask"),
+        Rule(permission="bash", pattern="**credentials**", action="ask"),
     ]
 
-    # Parse config permission rules (user config overrides defaults)
+    rules.extend(_get_platform_guard_rules(config))
+    return rules
+
+
+def _get_platform_guard_rules(config) -> list:
+    """Build platform policy separately from user approvals.
+
+    The complete ordered list still supports a broad deny followed by a
+    narrow platform exception. Its final effective deny is checked before
+    Agent policy, and its effective ask is a minimum confirmation floor. Thus
+    Agent overrides cannot widen the deployment boundary; an authenticated
+    user once/always reply may still resolve an ask.
+    """
+    from permission.permission import Rule
+
+    # Shell syntax can construct a sensitive path without ever containing its
+    # literal spelling, so substring guards cannot safely distinguish ordinary
+    # from secret-reading Bash. Deployment config may append an explicit
+    # exception, but Agent-authored rules cannot lower this default floor.
+    rules = [Rule(permission="bash", pattern="*", action="ask")]
     perm_config = config.permission or {}
     for perm_name, rule_data in perm_config.items():
         if isinstance(rule_data, str):

@@ -62,6 +62,19 @@ async def test_an_unfinished_compaction_is_not_a_boundary():
 
 
 @pytest.mark.asyncio
+async def test_partial_modern_replacement_metadata_fails_closed():
+    # Once a descriptor advertises the Event-range protocol, all provenance
+    # fields are required. A torn/partial write cannot discard older history.
+    broken = Msg("c0", "user", [{
+        "type": "compaction",
+        "auto": True,
+        "source_event_start": 1,
+    }])
+    msgs = [user("u0"), assistant("a0"), broken, summary("s0", "c0")]
+    assert ids(await filter_compacted(msgs)) == ["u0", "a0", "c0", "s0"]
+
+
+@pytest.mark.asyncio
 async def test_history_before_the_boundary_is_dropped():
     msgs = [user("u0"), assistant("a0"), user("u1"), assistant("a1"),
             compact_request("c0"), summary("s0", "c0"), user("u2")]

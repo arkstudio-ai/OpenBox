@@ -47,6 +47,22 @@ interface SegmentRecord {
   sttSimilarity?: number
 }
 
+type ArtifactDraft = Omit<ArtifactGroup, "kind" | "parts"> & { part: FilePart }
+
+interface ArtifactContext {
+  toolsById: Map<string, ToolPart>
+  toolsByAsset: Map<string, ToolPart>
+  segmentRecords: Map<string, SegmentRecord>
+}
+
+interface ArtifactIdentity {
+  part: FilePart
+  sourceTool: ToolPart | null
+  artifactKind: string
+  segmentId: string | null
+  productionId: string | null
+}
+
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
@@ -118,7 +134,21 @@ function metadataAssetIds(tool: ToolPart): string[] {
   return ids
 }
 
-function parseSegmentRecords(tools: ToolPart[]): Map<string, SegmentRecord> {
+function applySegmentField(record: SegmentRecord, field: string, rawValue: string): void {
+  const value = rawValue.trim()
+  if (field === "id") record.id = value
+  else if (field === "revision") record.revision = Number(value) || undefined
+  else if (field === "script") record.script = value
+  else if (field === "transcript") record.transcript = value
+  else if (field === "stt") {
+    const [verdict, similarity] = value.split(":", 2)
+    record.sttVerdict = verdict || undefined
+    const score = Number(similarity)
+    if (Number.isFinite(score)) record.sttSimilarity = score
+  }
+}
+
+function projectSegmentRecords(tools: ToolPart[]): Map<number, SegmentRecord> {
   const byOrdinal = new Map<number, SegmentRecord>()
   for (const tool of tools) {
     if (tool.tool !== "video_project" || !tool.output) continue
@@ -127,27 +157,14 @@ function parseSegmentRecords(tools: ToolPart[]): Map<string, SegmentRecord> {
       if (!match) continue
       const ordinal = Number(match[1])
       const record = byOrdinal.get(ordinal) ?? { ordinal }
-      const value = match[3]
-      if (match[2] === "id") record.id = value.trim()
-      if (match[2] === "revision") record.revision = Number(value) || undefined
-      if (match[2] === "script") record.script = value.trim()
-      if (match[2] === "transcript") record.transcript = value.trim()
-      if (match[2] === "stt") {
-        const [verdict, similarity] = value.split(":", 2)
-        record.sttVerdict = verdict || undefined
-        const score = Number(similarity)
-        if (Number.isFinite(score)) record.sttSimilarity = score
-      }
+      applySegmentField(record, match[2], match[3])
       byOrdinal.set(ordinal, record)
     }
   }
-  const records = new Map<string, SegmentRecord>()
-  for (const record of byOrdinal.values()) {
-    records.set(`ordinal:${record.ordinal}`, record)
-    if (record.id) records.set(record.id, record)
-  }
-  // STT happens after the video file was attached.  Its later tool result is
-  // therefore the freshest QA source for both old and new transcript rows.
+  return byOrdinal
+}
+
+function mergeTranscriptionRecords(records: Map<string, SegmentRecord>, tools: ToolPart[]): void {
   for (const tool of tools) {
     if (tool.tool !== "video_transcribe") continue
     const segmentId = asString(tool.input?.segment_id) ?? outputValue(tool.output, "segment_id")
@@ -160,6 +177,18 @@ function parseSegmentRecords(tools: ToolPart[]): Map<string, SegmentRecord> {
     if (Number.isFinite(similarity)) record.sttSimilarity = similarity
     records.set(segmentId, record)
   }
+}
+
+function parseSegmentRecords(tools: ToolPart[]): Map<string, SegmentRecord> {
+  const byOrdinal = projectSegmentRecords(tools)
+  const records = new Map<string, SegmentRecord>()
+  for (const record of byOrdinal.values()) {
+    records.set(`ordinal:${record.ordinal}`, record)
+    if (record.id) records.set(record.id, record)
+  }
+  // STT happens after the video file was attached.  Its later tool result is
+  // therefore the freshest QA source for both old and new transcript rows.
+  mergeTranscriptionRecords(records, tools)
   return records
 }
 
@@ -233,9 +262,7 @@ function captionFor(
   return null
 }
 
-function groupArtifacts(
-  items: Array<Omit<ArtifactGroup, "kind" | "parts"> & { part: FilePart }>,
-): ArtifactGroup[] {
+function groupArtifacts(items: ArtifactDraft[]): ArtifactGroup[] {
   const groups = new Map<string, ArtifactGroup>()
   for (const item of items) {
     const existing = groups.get(item.id)
@@ -268,6 +295,110 @@ function resultOrder(group: ArtifactGroup): number {
   return 2
 }
 
+function artifactGroupId(identity: ArtifactIdentity): string {
+  const { part, sourceTool, artifactKind, segmentId, productionId } = identity
+  const declared = asString(part.relation?.group_id)
+  if (declared) return declared
+  if (artifactKind === "video_segment" && segmentId) {
+    return `video:${productionId ?? "unknown"}:segment:${segmentId}`
+  }
+  if (artifactKind === "video_final" && productionId) return `video:${productionId}:final`
+  if (sourceTool) return `tool:${sourceTool.id}`
+  return `file:${part.id}`
+}
+
+function enrichedMetadata(part: FilePart, segment: SegmentRecord | null): Record<string, unknown> {
+  const metadata = { ...(part.relation?.metadata ?? {}) }
+  if (segment?.transcript && metadata.transcript == null) metadata.transcript = segment.transcript
+  if (segment?.sttVerdict && metadata.stt_verdict == null) metadata.stt_verdict = segment.sttVerdict
+  if (segment?.sttSimilarity != null && metadata.stt_similarity == null) {
+    metadata.stt_similarity = segment.sttSimilarity
+  }
+  return metadata
+}
+
+function artifactSourceIds(
+  metadata: Record<string, unknown>,
+  sourceTool: ToolPart | null,
+): { segmentId: string | null; productionId: string | null } {
+  return {
+    segmentId:
+      asString(metadata.segment_id) ??
+      asString(sourceTool?.input?.segment_id) ??
+      outputValue(sourceTool?.output, "segment_id"),
+    productionId:
+      asString(metadata.production_id) ??
+      asString(sourceTool?.input?.production_id) ??
+      outputValue(sourceTool?.output, "production_id"),
+  }
+}
+
+function artifactDraft(
+  part: FilePart,
+  order: number,
+  precedingTools: ToolPart[],
+  context: ArtifactContext,
+): ArtifactDraft {
+  const sourceTool = sourceForFile(part, precedingTools, context.toolsById, context.toolsByAsset)
+  const artifactKind = inferKind(part, sourceTool)
+  const role = inferRole(part, artifactKind)
+  const segment = segmentFor(part, sourceTool, context.segmentRecords)
+  const metadata = enrichedMetadata(part, segment)
+  const { segmentId, productionId } = artifactSourceIds(metadata, sourceTool)
+
+  return {
+    id: artifactGroupId({ part, sourceTool, artifactKind, segmentId, productionId }),
+    order,
+    artifactKind,
+    role,
+    label: asString(part.relation?.label) ?? sourceTool?.title ?? null,
+    caption: captionFor(part, sourceTool, artifactKind, segment),
+    ordinal: asNumber(part.relation?.ordinal) ?? segment?.ordinal ?? null,
+    revision: asNumber(part.relation?.revision) ?? segment?.revision ?? null,
+    metadata,
+    sourceTool,
+    part,
+  }
+}
+
+function collectWorkContent(
+  messages: MessageWithParts[],
+  finalIndex: number,
+  context: ArtifactContext,
+): { progress: WorkNarration[]; artifacts: ArtifactDraft[] } {
+  const progress: WorkNarration[] = []
+  const artifacts: ArtifactDraft[] = []
+  let order = 0
+
+  messages.forEach((message, messageIndex) => {
+    const precedingTools: ToolPart[] = []
+    for (const part of message.parts) {
+      order += 1
+      if (part.type === "tool") precedingTools.push(part)
+      if (part.type === "text") {
+        const isFinalPart =
+          messageIndex === finalIndex && part.channel !== "commentary" && !isToolStepFinish(message.finish)
+        if (!isFinalPart && part.text.trim()) {
+          progress.push({ kind: "narration", id: part.id, order, text: part.text })
+        }
+      } else if (part.type === "file") {
+        artifacts.push(artifactDraft(part, order, precedingTools, context))
+      }
+    }
+  })
+
+  return { progress, artifacts }
+}
+
+function compareResultGroups(a: ArtifactGroup, b: ArtifactGroup): number {
+  const byRole = resultOrder(a) - resultOrder(b)
+  if (byRole !== 0) return byRole
+  if (a.artifactKind === "video_segment" && b.artifactKind === "video_segment") {
+    return (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
+  }
+  return a.order - b.order
+}
+
 export function buildAssistantContentView(
   messages: MessageWithParts[],
   streaming: boolean,
@@ -290,79 +421,17 @@ export function buildAssistantContentView(
   }
   const segmentRecords = parseSegmentRecords(tools)
 
-  const progress: WorkNarration[] = []
-  const artifacts: Array<Omit<ArtifactGroup, "kind" | "parts"> & { part: FilePart }> = []
-  let order = 0
-  messages.forEach((message, messageIndex) => {
-    const precedingTools: ToolPart[] = []
-    for (const part of message.parts) {
-      order += 1
-      if (part.type === "tool") precedingTools.push(part)
-      if (part.type === "text") {
-        const isFinalPart =
-          messageIndex === finalIndex && part.channel !== "commentary" && !isToolStepFinish(message.finish)
-        if (!isFinalPart && part.text.trim()) {
-          progress.push({ kind: "narration", id: part.id, order, text: part.text })
-        }
-      }
-      if (part.type !== "file") continue
-
-      const sourceTool = sourceForFile(part, precedingTools, toolsById, toolsByAsset)
-      const artifactKind = inferKind(part, sourceTool)
-      const role = inferRole(part, artifactKind)
-      const segment = segmentFor(part, sourceTool, segmentRecords)
-      const metadata = { ...(part.relation?.metadata ?? {}) }
-      if (segment?.transcript && metadata.transcript == null) metadata.transcript = segment.transcript
-      if (segment?.sttVerdict && metadata.stt_verdict == null) metadata.stt_verdict = segment.sttVerdict
-      if (segment?.sttSimilarity != null && metadata.stt_similarity == null) {
-        metadata.stt_similarity = segment.sttSimilarity
-      }
-      const segmentId =
-        asString(metadata.segment_id) ??
-        asString(sourceTool?.input?.segment_id) ??
-        outputValue(sourceTool?.output, "segment_id")
-      const productionId =
-        asString(metadata.production_id) ??
-        asString(sourceTool?.input?.production_id) ??
-        outputValue(sourceTool?.output, "production_id")
-      const groupId =
-        asString(part.relation?.group_id) ??
-        (artifactKind === "video_segment" && segmentId
-          ? `video:${productionId ?? "unknown"}:segment:${segmentId}`
-          : artifactKind === "video_final" && productionId
-            ? `video:${productionId}:final`
-            : sourceTool
-              ? `tool:${sourceTool.id}`
-              : `file:${part.id}`)
-
-      artifacts.push({
-        id: groupId,
-        order,
-        artifactKind,
-        role,
-        label: asString(part.relation?.label) ?? sourceTool?.title ?? null,
-        caption: captionFor(part, sourceTool, artifactKind, segment),
-        ordinal: asNumber(part.relation?.ordinal) ?? segment?.ordinal ?? null,
-        revision: asNumber(part.relation?.revision) ?? segment?.revision ?? null,
-        metadata,
-        sourceTool,
-        part,
-      })
-    }
+  const { progress, artifacts } = collectWorkContent(messages, finalIndex, {
+    toolsById,
+    toolsByAsset,
+    segmentRecords,
   })
 
   const groups = groupArtifacts(artifacts)
   const evidence = groups.filter((group) => group.role === "evidence")
   const results = groups
     .filter((group) => group.role !== "evidence" && group.role !== "input")
-    .sort((a, b) => {
-      const role = resultOrder(a) - resultOrder(b)
-      if (role !== 0) return role
-      if (a.artifactKind === "video_segment" && b.artifactKind === "video_segment") {
-        return (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
-      }
-      return a.order - b.order
-    })
+    .sort(compareResultGroups)
 
   // Computer-use produces one screenshot per action.  Keep checkpoints in
   // the work log, but surface the last frame as final verification only when

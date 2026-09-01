@@ -183,6 +183,48 @@ describe("how long a call took", () => {
 })
 
 describe("merging messages into turns", () => {
+  it("keeps each completed turn's recorded model after the Session switches", () => {
+    const turns = mergeTurns([
+      {
+        id: "user-luna",
+        session_id: "s",
+        role: "user",
+        model: "openai/gpt-5.6-luna",
+        parts: [],
+        created_at: "",
+      },
+      {
+        id: "assistant-luna",
+        session_id: "s",
+        role: "assistant",
+        model: "openai/gpt-5.6-luna",
+        parts: [],
+        created_at: "",
+      },
+      {
+        id: "user-deepseek",
+        session_id: "s",
+        role: "user",
+        model: "openai/deepseek-v4-flash",
+        parts: [],
+        created_at: "",
+      },
+      {
+        id: "assistant-deepseek",
+        session_id: "s",
+        role: "assistant",
+        model: "openai/deepseek-v4-flash",
+        parts: [],
+        created_at: "",
+      },
+    ])
+    const assistants = turns.filter((turn) => turn.kind === "assistant")
+    expect(assistants.map((turn) => turn.meta.model)).toEqual([
+      "openai/gpt-5.6-luna",
+      "openai/deepseek-v4-flash",
+    ])
+  })
+
   it("keeps a turn's error when a later message carries none", () => {
     const turns = mergeTurns([
       { id: "1", session_id: "s", role: "assistant", parts: [], created_at: "", error: { m: 1 } },

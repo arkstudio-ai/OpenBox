@@ -1,6 +1,6 @@
 """Projects as the unit a workspace is organised around.
 
-A project is a named directory under /workspace that sessions run inside. Two
+A project is a named directory in a tenant namespace that sessions run inside. Two
 sessions in the same project share the directory and see each other's edits —
 the same thing that happens when you open two terminals in one repository.
 
@@ -12,7 +12,9 @@ agent puts one there.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -26,9 +28,14 @@ from db.models.project import Project as ProjectORM
 log = create_logger("project.workspace")
 
 WORKSPACE_ROOT = "/workspace"
-#: Everything OpenBox keeps for itself lives here, so a project directory
-#: contains only the user's files. Snapshots in particular must stay outside
-#: the tree they are snapshotting.
+#: Shared WUYING desktops are used for development acceptance.  Every runtime
+#: path is nevertheless tenant/project namespaced so two users choosing the
+#: same slug cannot see or overwrite one another's files by accident.  These
+#: hashed segments are collision-resistant identifiers, not an authorization
+#: boundary; production still assigns one desktop to one user.
+NAMESPACE_ROOT = f"{WORKSPACE_ROOT}/openbox/users"
+#: Legacy roots retained for compatibility/reclaim of pre-namespace desktops.
+#: New runtime state uses user_internal_directory() and its derived helpers.
 INTERNAL_ROOT = f"{WORKSPACE_ROOT}/.openbox"
 TRASH_ROOT = f"{INTERNAL_ROOT}/trash"
 SNAPSHOT_ROOT = f"{INTERNAL_ROOT}/snapshots"
@@ -50,6 +57,7 @@ class ProjectError(Exception):
 @dataclass
 class ProjectInfo:
     id: str
+    user_id: str
     name: str
     slug: str
     description: str | None = None
@@ -60,7 +68,7 @@ class ProjectInfo:
 
     @property
     def directory(self) -> str:
-        return project_directory(self.slug)
+        return namespaced_project_directory(self.user_id, self.id, self.slug)
 
     def to_dict(self) -> dict:
         return {
@@ -76,8 +84,92 @@ class ProjectInfo:
 
 
 def project_directory(slug: str) -> str:
-    """Where a project's files live inside the sandbox."""
+    """Legacy ``/workspace/<slug>`` facade.
+
+    Kept for import compatibility and migration tooling only.  Runtime code
+    must use :func:`namespaced_project_directory`; a slug is not tenant-unique.
+    """
     return f"{WORKSPACE_ROOT}/{slug}"
+
+
+def _stable_segment(kind: str, value: str) -> str:
+    """Return a shell/path-safe stable pseudonymous segment.
+
+    User and project ids can contain e-mail addresses, slashes, Unicode, or
+    other untrusted data.  They are never interpolated into sandbox paths.
+    The digest deliberately has no claim of anonymity; access control remains
+    in the API and, in production, the one-user-one-desktop boundary.
+    """
+    raw = (value or "default").encode("utf-8", errors="surrogatepass")
+    digest = hashlib.sha256(
+        b"openbox-workspace-v1\0" + kind.encode() + b"\0" + raw
+    ).hexdigest()[:20]
+    return f"{kind}-{digest}"
+
+
+def user_scope_for_identity(user_id: str) -> str:
+    """Stable pseudonymous tenant segment shared with the Action Server.
+
+    The raw user id must never cross the execution-plane boundary or become a
+    directory name.  Keeping this derivation next to the workspace namespace
+    also prevents terminal, catalogue, and file paths from drifting apart.
+    """
+    return _stable_segment("u", user_id)
+
+
+def user_directory(user_id: str) -> str:
+    return f"{NAMESPACE_ROOT}/{user_scope_for_identity(user_id)}"
+
+
+def user_internal_directory(user_id: str) -> str:
+    return f"{user_directory(user_id)}/.openbox"
+
+
+def _safe_display_slug(slug: str) -> str:
+    candidate = (slug or "").strip().lower()
+    try:
+        return validate_slug(candidate)
+    except ProjectError:
+        return DEFAULT_SLUG
+
+
+def project_key(project_id: str) -> str:
+    """Stable project segment without including the user-facing slug."""
+    return _stable_segment("p", project_id)
+
+
+def namespaced_project_directory(user_id: str, project_id: str, slug: str) -> str:
+    """Canonical working tree for one tenant project."""
+    return (
+        f"{user_directory(user_id)}/projects/"
+        f"{project_key(project_id)}-{_safe_display_slug(slug)}"
+    )
+
+
+def upload_directory(user_id: str, project_id: str | None) -> str:
+    """Canonical attachment landing directory for a tenant/project."""
+    project = project_key(project_id) if project_id else "unfiled"
+    return f"{user_internal_directory(user_id)}/uploads/{project}"
+
+
+def asset_sandbox_path(
+    user_id: str,
+    project_id: str | None,
+    name: str,
+    asset_id: str | None = None,
+) -> str:
+    """Path for a filename already cleaned by the asset API."""
+    safe_name = re.sub(r"[^\w.\u4e00-\u9fff-]", "_", name or "file").strip("._") or "file"
+    asset = f"/{_stable_segment('a', asset_id)}" if asset_id else ""
+    return f"{upload_directory(user_id, project_id)}{asset}/{safe_name[:200]}"
+
+
+def snapshot_directory(user_id: str, project_id: str) -> str:
+    return f"{user_internal_directory(user_id)}/snapshots/{project_key(project_id)}"
+
+
+def trash_directory(user_id: str) -> str:
+    return f"{user_internal_directory(user_id)}/trash"
 
 
 def slugify(name: str) -> str:
@@ -108,6 +200,7 @@ def validate_slug(slug: str) -> str:
 def _row_to_info(row: ProjectORM) -> ProjectInfo:
     return ProjectInfo(
         id=row.id,
+        user_id=row.user_id,
         name=row.name,
         slug=row.slug or row.id,
         description=row.description,
@@ -124,46 +217,85 @@ def _row_to_info(row: ProjectORM) -> ProjectInfo:
 # is renamed or deleted — both of which invalidate here.
 # ---------------------------------------------------------------------------
 
-_slug_cache: dict[str, str] = {}
+@dataclass(frozen=True)
+class ProjectLocator:
+    id: str
+    user_id: str
+    slug: str
 
 
-def _cache_put(project_id: str, slug: str) -> None:
-    _slug_cache[project_id] = slug
+_locator_cache: dict[str, ProjectLocator] = {}
+
+
+def _cache_put(project_id: str, slug: str, user_id: str = "default") -> None:
+    _locator_cache[project_id] = ProjectLocator(
+        id=project_id or "default",
+        user_id=user_id or "default",
+        slug=slug or DEFAULT_SLUG,
+    )
 
 
 def invalidate_slug(project_id: str) -> None:
-    _slug_cache.pop(project_id, None)
+    _locator_cache.pop(project_id, None)
+
+
+async def locator_for(project_id: str, user_id: str | None = None) -> ProjectLocator:
+    """Resolve all identity needed to build a canonical project path.
+
+    A project id is globally opaque, but the optional owner assertion prevents
+    a stale/mistyped id from selecting another tenant's cached locator.
+    """
+    fallback = ProjectLocator(
+        id=project_id or "default",
+        user_id=user_id or "default",
+        slug=DEFAULT_SLUG,
+    )
+    if not project_id:
+        return fallback
+    cached = _locator_cache.get(project_id)
+    if cached and (not user_id or cached.user_id == user_id):
+        return cached
+    try:
+        conditions = [ProjectORM.id == project_id]
+        if user_id:
+            conditions.append(ProjectORM.user_id == user_id)
+        async with get_db_session() as db:
+            row = (await db.execute(select(ProjectORM).where(*conditions))).scalar_one_or_none()
+    except Exception as e:
+        log.warning(f"Could not resolve project {project_id}: {e}")
+        return fallback
+    if not row:
+        return fallback
+    locator = ProjectLocator(
+        id=row.id,
+        user_id=row.user_id or user_id or "default",
+        slug=row.slug or DEFAULT_SLUG,
+    )
+    _locator_cache[project_id] = locator
+    return locator
 
 
 async def slug_for(project_id: str) -> str:
     """The directory name for a project id, defaulting to `default`.
 
     Never raises: a session pointing at a project that has gone away still has
-    to run somewhere, and failing the whole turn over a missing directory name
-    would be worse than putting it in the default project.
+    to run somewhere. Its opaque project id remains part of the namespace so
+    missing records do not collapse into one shared directory.
     """
-    if not project_id:
-        return DEFAULT_SLUG
-    cached = _slug_cache.get(project_id)
-    if cached:
-        return cached
-    try:
-        async with get_db_session() as db:
-            row = (await db.execute(
-                select(ProjectORM).where(ProjectORM.id == project_id)
-            )).scalar_one_or_none()
-    except Exception as e:
-        log.warning(f"Could not resolve project {project_id}: {e}")
-        return DEFAULT_SLUG
-    if not row or not row.slug:
-        return DEFAULT_SLUG
-    _cache_put(project_id, row.slug)
-    return row.slug
+    return (await locator_for(project_id)).slug
+
+
+async def workdir_for_identity(user_id: str, project_id: str) -> str:
+    locator = await locator_for(project_id, user_id=user_id)
+    return namespaced_project_directory(locator.user_id, locator.id, locator.slug)
 
 
 async def workdir_for_session(session) -> str:
     """The directory a session's tools run in."""
-    return project_directory(await slug_for(getattr(session, "project_id", "") or ""))
+    return await workdir_for_identity(
+        getattr(session, "user_id", "") or "default",
+        getattr(session, "project_id", "") or "default",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +313,7 @@ async def list_projects(user_id: str) -> list[ProjectInfo]:
     out = []
     for r in rows:
         info = _row_to_info(r)
-        _cache_put(info.id, info.slug)
+        _cache_put(info.id, info.slug, info.user_id)
         out.append(info)
     return out
 
@@ -250,9 +382,9 @@ async def create_project(
             updated_at=now,
         ))
 
-    _cache_put(project_id, candidate)
+    _cache_put(project_id, candidate, user_id)
     info = ProjectInfo(
-        id=project_id, name=name, slug=candidate, description=description,
+        id=project_id, user_id=user_id, name=name, slug=candidate, description=description,
         created_at=now.isoformat(), updated_at=now.isoformat(),
     )
     log.info(f"Created project {candidate} ({project_id}) for user {user_id}")
@@ -316,16 +448,26 @@ async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
                 CronJob.user_id == user_id,
                 CronJob.is_deleted == False,  # noqa: E712
             )
-            .values(enabled=False, is_deleted=True, updated_at=now)
+            .values(
+                enabled=False,
+                is_deleted=True,
+                running_at=None,
+                run_token=None,
+                run_owner=None,
+                lease_expires_at=None,
+                heartbeat_at=None,
+                updated_at=now,
+            )
         )
     invalidate_slug(project_id)
 
     if sandbox is not None:
         stamp = now.strftime("%Y%m%d-%H%M%S")
-        target = f"{TRASH_ROOT}/{info.slug}-{stamp}"
+        tenant_trash = trash_directory(user_id)
+        target = f"{tenant_trash}/{project_key(project_id)}-{info.slug}-{stamp}"
         try:
             await sandbox.execute(
-                f"mkdir -p {TRASH_ROOT} && "
+                f"mkdir -p {tenant_trash} && "
                 f"[ -d {info.directory} ] && mv {info.directory} {target} || true",
                 timeout=60,
             )
@@ -371,7 +513,7 @@ async def ensure_default_project(user_id: str) -> ProjectInfo:
     """The project a session lands in when the user did not pick one."""
     existing = await get_by_slug(DEFAULT_SLUG, user_id)
     if existing:
-        _cache_put(existing.id, existing.slug)
+        _cache_put(existing.id, existing.slug, existing.user_id)
         return existing
     return await create_project(user_id, DEFAULT_NAME, slug=DEFAULT_SLUG)
 
@@ -396,17 +538,27 @@ async def resolve_for_session(project_id: str | None, user_id: str) -> str:
 # Sandbox side
 # ---------------------------------------------------------------------------
 
-async def ensure_directory(sandbox, slug: str) -> str:
+async def ensure_directory(
+    sandbox,
+    slug: str,
+    *,
+    user_id: str = "default",
+    project_id: str = "default",
+) -> str:
     """Create the project directory if it is not there yet.
 
     Called on the path that starts a run, so a project created while the
     sandbox was down still works the first time it is used.
     """
-    directory = project_directory(slug)
+    directory = namespaced_project_directory(user_id, project_id, slug)
     if sandbox is None:
         return directory
-    try:
-        await sandbox.execute(f"mkdir -p {directory}", timeout=30)
-    except Exception as e:
-        log.warning(f"Could not create {directory}: {e}")
+    result = await sandbox.execute(
+        f"mkdir -p -- {shlex.quote(directory)}",
+        timeout=30,
+        workdir=WORKSPACE_ROOT,
+    )
+    if result.exit_code != 0:
+        detail = (result.stderr or result.stdout or "mkdir failed").strip()[:500]
+        raise RuntimeError(f"Could not create project directory: {detail}")
     return directory

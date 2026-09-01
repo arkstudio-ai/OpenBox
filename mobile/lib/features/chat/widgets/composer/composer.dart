@@ -29,6 +29,7 @@ class Composer extends ConsumerStatefulWidget {
     required this.busy,
     required this.onSend,
     this.session,
+    this.projectId,
     this.onStop,
     this.autofocus = false,
     this.resources,
@@ -38,6 +39,7 @@ class Composer extends ConsumerStatefulWidget {
   final String sessionKey;
 
   final Session? session;
+  final String? projectId;
   final bool busy;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
@@ -93,8 +95,7 @@ class _ComposerState extends ConsumerState<Composer> {
 
   void _onComposerChanged() {
     final caret = _controller.selection.baseOffset;
-    final trigger =
-        caret < 0 ? null : resolveTrigger(_controller.text, caret);
+    final trigger = caret < 0 ? null : resolveTrigger(_controller.text, caret);
     if (trigger?.key != _trigger?.key) {
       setState(() => _trigger = trigger);
       _kickFileSearch(trigger);
@@ -116,7 +117,14 @@ class _ComposerState extends ConsumerState<Composer> {
       try {
         final files = await ref
             .read(containersApiProvider)
-            .searchFiles(containerId, query);
+            .searchFiles(
+              containerId,
+              query,
+              sessionId: widget.sessionKey == 'draft'
+                  ? null
+                  : widget.sessionKey,
+              projectId: widget.projectId ?? widget.session?.projectId,
+            );
         if (mounted && _trigger?.query.trim() == query) {
           setState(() {
             _fileQuery = query;
@@ -164,7 +172,10 @@ class _ComposerState extends ConsumerState<Composer> {
           ],
         ),
         MentionSectionData(
-            kind: 'skills', loading: skills.isLoading, items: skillItems),
+          kind: 'skills',
+          loading: skills.isLoading,
+          items: skillItems,
+        ),
       ];
     }
     final commands = ref.watch(mentionCommandsProvider);
@@ -184,7 +195,10 @@ class _ComposerState extends ConsumerState<Composer> {
         ],
       ),
       MentionSectionData(
-          kind: 'skills', loading: skills.isLoading, items: skillItems),
+        kind: 'skills',
+        loading: skills.isLoading,
+        items: skillItems,
+      ),
     ];
   }
 
@@ -195,7 +209,8 @@ class _ComposerState extends ConsumerState<Composer> {
     final trigger = _trigger;
     final text = _controller.text;
     if (trigger != null) {
-      final next = text.substring(0, trigger.start) + text.substring(trigger.end);
+      final next =
+          text.substring(0, trigger.start) + text.substring(trigger.end);
       _controller.value = TextEditingValue(
         text: next,
         selection: TextSelection.collapsed(offset: trigger.start),
@@ -255,15 +270,19 @@ class _ComposerState extends ConsumerState<Composer> {
             ListTile(
               dense: true,
               leading: Icon(Icons.layers_outlined, size: 18, color: t.n600),
-              title: Text(i18n.t('chat:composer.resourceCenter'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                i18n.t('chat:composer.resourceCenter'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () => Navigator.pop(sheetContext, 'resources'),
             ),
             ListTile(
               dense: true,
               leading: Icon(Icons.upload_outlined, size: 18, color: t.n600),
-              title: Text(i18n.t('chat:composer.uploadFile'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                i18n.t('chat:composer.uploadFile'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () => Navigator.pop(sheetContext, 'upload'),
             ),
           ],
@@ -315,7 +334,8 @@ class _ComposerState extends ConsumerState<Composer> {
     final pickedModel = ref.watch(pickedModelProvider(widget.sessionKey));
     final pickedAgent = ref.watch(pickedAgentProvider(widget.sessionKey));
 
-    final activeModelId = pickedModel ??
+    final activeModelId =
+        pickedModel ??
         ((widget.session?.model.isNotEmpty ?? false)
             ? widget.session!.model
             : config?.defaultModel ?? '');
@@ -371,17 +391,17 @@ class _ComposerState extends ConsumerState<Composer> {
               textInputAction: TextInputAction.newline,
               onChanged: (_) => setState(() {}),
               style: TextStyle(
-                  fontSize: FontSizes.lg, height: 1.5, color: t.ink),
+                fontSize: FontSizes.lg,
+                height: 1.5,
+                color: t.ink,
+              ),
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: widget.busy
                     ? i18n.t('chat:composer.placeholderRunning')
                     : i18n.t('chat:composer.placeholder'),
-                hintStyle: TextStyle(
-                  fontSize: FontSizes.base,
-                  color: t.n700,
-                ),
+                hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
               ),
             ),
           ),
@@ -395,8 +415,10 @@ class _ComposerState extends ConsumerState<Composer> {
                     icon: Icon(Icons.add, size: 20, color: t.n700),
                     tooltip: i18n.t('chat:composer.tools'),
                     visualDensity: VisualDensity.compact,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 32, height: 32),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
                     padding: EdgeInsets.zero,
                   ),
                   const SizedBox(width: 2),
@@ -415,7 +437,8 @@ class _ComposerState extends ConsumerState<Composer> {
                 const SizedBox(width: 6),
                 _pill(
                   t,
-                  label: activeModel?.name ??
+                  label:
+                      activeModel?.name ??
                       (activeModelId.isEmpty ? '…' : activeModelId),
                   icon: Icons.workspaces_outline,
                   onTap: () => showModelPicker(
@@ -591,13 +614,16 @@ class _AttachmentStrip extends StatelessWidget {
                         width: 26,
                         height: 26,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Icon(
-                            Icons.image_outlined, size: 15, color: t.n600),
+                        errorBuilder: (_, _, _) =>
+                            Icon(Icons.image_outlined, size: 15, color: t.n600),
                       ),
                     )
                   else
-                    Icon(Icons.insert_drive_file_outlined,
-                        size: 15, color: t.n600),
+                    Icon(
+                      Icons.insert_drive_file_outlined,
+                      size: 15,
+                      color: t.n600,
+                    ),
                   const SizedBox(width: 7),
                   Flexible(
                     child: Column(
@@ -617,7 +643,9 @@ class _AttachmentStrip extends StatelessWidget {
                         Text(
                           formatBytes(resource.size),
                           style: TextStyle(
-                              fontSize: FontSizes.xs2, color: t.n600),
+                            fontSize: FontSizes.xs2,
+                            color: t.n600,
+                          ),
                         ),
                       ],
                     ),
@@ -626,8 +654,10 @@ class _AttachmentStrip extends StatelessWidget {
                     onPressed: () => onRemove(resource),
                     icon: Icon(Icons.close, size: 13, color: t.n600),
                     visualDensity: VisualDensity.compact,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 26, height: 26),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 26,
+                      height: 26,
+                    ),
                     padding: EdgeInsets.zero,
                   ),
                 ],

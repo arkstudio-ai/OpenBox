@@ -3,6 +3,7 @@
     "new": "新标签",
     "review": "审阅",
     "terminal": "终端",
+    "preview": "预览",
     "browser": "浏览器",
     "files": "文件",
     "desktop": "云桌面",
@@ -15,6 +16,7 @@
     "title": "工作面板",
     "review": "审阅",
     "terminal": "终端",
+    "preview": "应用预览",
     "browser": "浏览器",
     "files": "文件",
     "pending_one": "{{count}} 处待审",
@@ -44,6 +46,24 @@
     "connecting": "正在连接终端…",
     "disconnected": "终端连接已断开"
   },
+  "preview": {
+    "portLabel": "本地端口",
+    "portPlaceholder": "3000",
+    "open": "打开",
+    "refresh": "刷新预览",
+    "openExternal": "在新标签中打开预览",
+    "detected": "已发现服务",
+    "empty": "打开本地服务",
+    "emptyHint": "选择已发现的端口，或输入应用正在使用的端口。",
+    "detecting": "正在查找本地服务…",
+    "noPorts": "暂未发现监听端口",
+    "loadFailed": "无法检测本地服务",
+    "retry": "重试",
+    "invalidPort": "请输入 1 到 65535 之间的端口。",
+    "authorizeFailed": "无法授权此预览，请重试。",
+    "popupBlocked": "浏览器拦截了新标签，请允许弹窗后重试。",
+    "frameTitle": "本地端口 {{port}} 的预览"
+  },
   "browser": {
     "placeholder": "输入网址后回车",
     "empty": "网页画面",
@@ -51,6 +71,7 @@
     "failed": "页面加载失败"
   },
   "files": {
+    "projectRoot": "项目文件",
     "filter": "筛选文件…",
     "fileList": "文件列表",
     "copyPath": "复制路径",

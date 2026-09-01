@@ -39,6 +39,19 @@ _BOSSIP_RELAY_MODELS = {
 }
 _SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
 _SEGMENT_FINALIZATION_STALE_SECONDS = 300
+_FINALIZATION_HEARTBEAT_SECONDS = 20
+_EXPECTED_PROVIDER_UNSET = object()
+
+
+def _ctx_persist_guard(ctx: ToolContext):
+    guard = getattr(ctx, "assert_run_current", None)
+    return guard if callable(guard) else None
+
+
+async def _assert_ctx_current(ctx: ToolContext) -> None:
+    guard = _ctx_persist_guard(ctx)
+    if guard is not None:
+        await guard()
 
 
 class VideoGenerateArgs(BaseModel):
@@ -512,6 +525,7 @@ async def _create_pending_job(
     from sandbox.assets import _session_project
 
     async with get_db_session() as db:
+        await _assert_effect_fence_locked(db, ctx)
         existing = (
             await db.execute(
                 select(VideoJob).where(
@@ -539,6 +553,7 @@ async def _create_pending_job(
     key = f"assets/{ctx.user_id}/{asset_id}/{name}"
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
+        await _assert_effect_fence_locked(db, ctx)
         project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
         asset = FileAsset(
             id=asset_id,
@@ -584,6 +599,7 @@ async def _create_pending_job(
             await db.rollback()
 
     async with get_db_session() as db:
+        await _assert_effect_fence_locked(db, ctx)
         existing = (
             await db.execute(
                 select(VideoJob).where(
@@ -617,18 +633,72 @@ async def _owned_job(job_id: str, ctx: ToolContext, kind: str):
         ).scalar_one_or_none()
 
 
-async def _update_job(job_id: str, **values) -> None:
+async def _assert_effect_fence_locked(db, ctx: ToolContext | None) -> None:
+    """Fence a media read-model write in the same transaction as the write.
+
+    Provider receipts use their own job CAS because they must remain durable
+    after a paid request has been accepted.  All ordinary Agent-owned status
+    and asset projections use this fence so a replaced generation cannot
+    publish a late success/cancellation.
+    """
+    run_fence = getattr(ctx, "run_fence", None) if ctx is not None else None
+    if run_fence is None:
+        return
+    from agent.driver import assert_run_fence_locked
+
+    session_id, run_id, generation = run_fence
+    await assert_run_fence_locked(
+        db,
+        session_id=session_id,
+        user_id=ctx.user_id,
+        run_id=run_id,
+        generation=generation,
+    )
+
+
+async def _update_job(
+    job_id: str,
+    *,
+    ctx: ToolContext | None = None,
+    expected_statuses: set[str] | tuple[str, ...] | list[str] | None = None,
+    expected_provider_task_id: str | None | object = _EXPECTED_PROVIDER_UNSET,
+    **values,
+) -> bool:
     from db.base import get_db_session
     from db.models.video_job import VideoJob
 
     values["updated_at"] = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        await db.execute(update(VideoJob).where(VideoJob.id == job_id).values(**values))
+        await _assert_effect_fence_locked(db, ctx)
+        conditions = [VideoJob.id == job_id]
+        if ctx is not None and ctx.user_id:
+            conditions.append(VideoJob.user_id == ctx.user_id)
+        if expected_statuses is not None:
+            conditions.append(VideoJob.status.in_(tuple(expected_statuses)))
+        if expected_provider_task_id is not _EXPECTED_PROVIDER_UNSET:
+            conditions.append(
+                VideoJob.provider_task_id.is_(None)
+                if expected_provider_task_id is None
+                else VideoJob.provider_task_id == expected_provider_task_id
+            )
+        result = await db.execute(
+            update(VideoJob)
+            .where(*conditions)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
 
 
-async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = None) -> None:
+async def _mark_asset(
+    asset_id: str | None,
+    *,
+    status: str,
+    size: int | None = None,
+    ctx: ToolContext | None = None,
+) -> bool:
     if not asset_id:
-        return
+        return False
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
 
@@ -636,7 +706,132 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
     if size is not None:
         values["size"] = size
     async with get_db_session() as db:
-        await db.execute(update(FileAsset).where(FileAsset.id == asset_id).values(**values))
+        await _assert_effect_fence_locked(db, ctx)
+        conditions = [FileAsset.id == asset_id]
+        if ctx is not None and ctx.user_id:
+            conditions.append(FileAsset.user_id == ctx.user_id)
+        result = await db.execute(
+            update(FileAsset)
+            .where(*conditions)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
+
+
+async def _persist_video_submit_receipt(
+    job,
+    *,
+    user_id: str,
+    task_id: str,
+    stored_state: str,
+) -> None:
+    """Durably bind a paid provider task without overwriting a newer owner.
+
+    The ordinary path advances ``submitting`` to the provider state. If a
+    cancellation/takeover changed the job after the POST was sent, only the
+    immutable provider receipt is filled in; the newer state is preserved.
+    """
+    from sqlalchemy import or_
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        advanced = await db.execute(
+            update(VideoJob)
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.user_id == user_id,
+                VideoJob.status == "submitting",
+                or_(
+                    VideoJob.provider_task_id.is_(None),
+                    VideoJob.provider_task_id == task_id,
+                ),
+            )
+            .values(
+                provider_task_id=task_id,
+                status=stored_state,
+                attempt=1,
+                started_at=now,
+                error=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if advanced.rowcount == 1:
+            return
+        receipt_only = await db.execute(
+            update(VideoJob)
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.user_id == user_id,
+                VideoJob.provider_task_id.is_(None),
+            )
+            .values(provider_task_id=task_id, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if receipt_only.rowcount == 1:
+            return
+        current = await db.get(VideoJob, job.id)
+        if not current or current.user_id != user_id or current.provider_task_id != task_id:
+            raise RuntimeError("provider receipt conflicts with the durable video job")
+
+
+async def _settle_job_and_asset(
+    job,
+    ctx: ToolContext,
+    *,
+    job_status: str,
+    asset_status: str,
+    error: str | None,
+    expected_statuses: set[str] | tuple[str, ...] | list[str],
+    result_data: dict[str, Any] | None = None,
+    size: int | None = None,
+) -> bool:
+    """Atomically settle the job and its reserved asset under one run fence."""
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from db.models.video_job import VideoJob
+
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        await _assert_effect_fence_locked(db, ctx)
+        changed = await db.execute(
+            update(VideoJob)
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.user_id == ctx.user_id,
+                VideoJob.status.in_(tuple(expected_statuses)),
+            )
+            .values(
+                status=job_status,
+                error=error,
+                result_data=result_data if result_data is not None else job.result_data,
+                completed_at=(now if job_status in _SEGMENT_TERMINAL | _RENDER_TERMINAL else None),
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if changed.rowcount != 1:
+            return False
+        if job.output_asset_id:
+            asset_values: dict[str, Any] = {"status": asset_status}
+            if size is not None:
+                asset_values["size"] = size
+            asset_changed = await db.execute(
+                update(FileAsset)
+                .where(
+                    FileAsset.id == job.output_asset_id,
+                    FileAsset.user_id == ctx.user_id,
+                )
+                .values(**asset_values)
+                .execution_options(synchronize_session=False)
+            )
+            if asset_changed.rowcount != 1:
+                raise RuntimeError("reserved media asset disappeared during settlement")
+        return True
 
 
 async def _attach_completed(job, ctx: ToolContext) -> bool:
@@ -647,13 +842,20 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
     from db.models.video_production import VideoProduction, VideoSegment
     from db.models.video_job import VideoJob
     from models.message import FilePart, FileRelation
+    from project.workspace import asset_sandbox_path
     from session.session import save_part
 
     claimed = False
     async with get_db_session() as db:
+        await _assert_effect_fence_locked(db, ctx)
         result = await db.execute(
             update(VideoJob)
-            .where(VideoJob.id == job.id, VideoJob.attached_message_id.is_(None))
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.user_id == ctx.user_id,
+                VideoJob.status == "completed",
+                VideoJob.attached_message_id.is_(None),
+            )
             .values(attached_message_id=ctx.message_id, updated_at=datetime.now(timezone.utc))
         )
         claimed = result.rowcount == 1
@@ -669,14 +871,20 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             else None
         )
     if not claimed:
-        return True
+        current = await _owned_job(job.id, ctx, job.kind)
+        return bool(current and current.attached_message_id)
     if not asset:
-        await _update_job(job.id, attached_message_id=None)
+        await _update_job(job.id, ctx=ctx, attached_message_id=None)
         return False
     try:
         await save_part(
             FilePart(
-                path=f"/workspace/generated_videos/{asset.name}",
+                path=asset_sandbox_path(
+                    asset.user_id,
+                    asset.project_id,
+                    asset.name,
+                    asset_id=asset.id,
+                ),
                 mime_type=asset.mime,
                 asset_id=asset.id,
                 oss_key=asset.oss_key,
@@ -723,10 +931,18 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             ),
             is_new=True,
             user_id=ctx.user_id,
+            run_fence=ctx.run_fence,
         )
         return True
-    except Exception:
-        await _update_job(job.id, attached_message_id=None)
+    except Exception as exc:
+        from agent.driver import LeaseLostError
+
+        if isinstance(exc, LeaseLostError):
+            # Never turn a failed fenced projection into an apparent success.
+            # The attachment marker is intentionally left for operator/local
+            # reconciliation because VideoJob has no generation claim column.
+            raise
+        await _update_job(job.id, ctx=ctx, attached_message_id=None)
         log.warning("video asset saved but chat attachment failed", exc_info=True)
         return False
 
@@ -746,6 +962,25 @@ def _public_error(exc: Exception) -> str:
         reason = str(getattr(response, "reason_phrase", "") or "request failed")
         return f"HTTP {response.status_code}: {reason}"[:200]
     return f"{exc.__class__.__name__}: operation failed"
+
+
+def _failure_result(
+    title: str,
+    error: Exception | str,
+    *,
+    failure_code: str,
+    **metadata: Any,
+) -> ToolResult:
+    output = _public_error(error) if isinstance(error, Exception) else str(error)[:800]
+    return ToolResult(
+        title=title,
+        output=output,
+        metadata={
+            "error": True,
+            "failure_code": failure_code,
+            **metadata,
+        },
+    )
 
 
 async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
@@ -811,29 +1046,42 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
 
 
 async def _dashscope_transcribe(
-    target: VideoTranscriptionTarget, audio_url: str
+    target: VideoTranscriptionTarget,
+    audio_url: str,
+    *,
+    task_id: str | None = None,
+    operation_key: str | None = None,
+    receipt_callback=None,
 ) -> dict[str, Any]:
     import httpx
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
-        submitted = await client.post(
-            f"{target.base_url}/api/v1/services/audio/asr/transcription",
-            headers={
+        if not task_id:
+            submit_headers = {
                 "Authorization": _auth_header(target.api_key),
                 "Content-Type": "application/json",
                 "X-DashScope-Async": "enable",
-            },
-            json={
-                "model": target.model,
-                "input": {"file_urls": [audio_url]},
-                "parameters": {"channel_id": [0], "language_hints": ["zh"]},
-            },
-        )
-        submitted.raise_for_status()
-        submitted_data = submitted.json()
-        task_id = str((submitted_data.get("output") or {}).get("task_id") or "")
-        if not task_id:
-            raise RuntimeError("DashScope transcription response did not include a task_id")
+            }
+            if operation_key:
+                # Correlation only. DashScope does not document this header as
+                # an idempotency guarantee, so unknown POST outcomes still stop.
+                submit_headers["X-Client-Request-Id"] = operation_key
+            submitted = await client.post(
+                f"{target.base_url}/api/v1/services/audio/asr/transcription",
+                headers=submit_headers,
+                json={
+                    "model": target.model,
+                    "input": {"file_urls": [audio_url]},
+                    "parameters": {"channel_id": [0], "language_hints": ["zh"]},
+                },
+            )
+            submitted.raise_for_status()
+            submitted_data = submitted.json()
+            task_id = str((submitted_data.get("output") or {}).get("task_id") or "")
+            if not task_id:
+                raise RuntimeError("DashScope transcription response did not include a task_id")
+            if receipt_callback is not None:
+                await receipt_callback(task_id)
 
         deadline = asyncio.get_running_loop().time() + target.timeout_seconds
         finished: dict[str, Any] | None = None
@@ -892,16 +1140,35 @@ async def _dashscope_transcribe(
     }
 
 
-async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str) -> dict[str, Any]:
+async def _provider_transcribe(
+    target: VideoTranscriptionTarget,
+    audio_url: str,
+    *,
+    task_id: str | None = None,
+    operation_key: str | None = None,
+    receipt_callback=None,
+) -> dict[str, Any]:
     if target.engine == "dashscope":
-        return await _dashscope_transcribe(target, audio_url)
+        return await _dashscope_transcribe(
+            target,
+            audio_url,
+            task_id=task_id,
+            operation_key=operation_key,
+            receipt_callback=receipt_callback,
+        )
 
     import httpx
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
+        headers = {
+            "Authorization": _auth_header(target.api_key),
+            "Content-Type": "application/json",
+        }
+        if operation_key:
+            headers["X-Client-Request-Id"] = operation_key
         response = await client.post(
             f"{target.base_url}/v1/audio/transcriptions",
-            headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
+            headers=headers,
             json={
                 "model": target.model,
                 "audio_url": audio_url,
@@ -962,11 +1229,25 @@ def _provider_video_url(data: dict[str, Any], route: Any = None) -> str:
     return ""
 
 
-async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -> int:
+async def _copy_provider_video_to_oss(
+    url: str,
+    oss,
+    key: str,
+    max_bytes: int,
+    *,
+    heartbeat=None,
+) -> int:
+    import hashlib
     import httpx
 
     put_url = oss.presign_put(key, "video/mp4", expires_sec=3600)
     total = 0
+    source_complete = False
+    digest = hashlib.md5(usedforsecurity=False)
+    last_heartbeat = 0.0
+    if heartbeat is not None:
+        await heartbeat()
+        last_heartbeat = asyncio.get_running_loop().time()
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=1800.0), follow_redirects=True) as source:
         async with source.stream("GET", url) as response:
             response.raise_for_status()
@@ -975,26 +1256,110 @@ async def _copy_provider_video_to_oss(url: str, oss, key: str, max_bytes: int) -
                 raise RuntimeError("provider video exceeds configured output size limit")
 
             async def chunks():
-                nonlocal total
+                nonlocal total, last_heartbeat, source_complete
                 async for chunk in response.aiter_bytes(1024 * 1024):
                     total += len(chunk)
+                    digest.update(chunk)
                     if total > max_bytes:
                         raise RuntimeError("provider video exceeds configured output size limit")
+                    if (
+                        heartbeat is not None
+                        and asyncio.get_running_loop().time() - last_heartbeat
+                        >= _FINALIZATION_HEARTBEAT_SECONDS
+                    ):
+                        await heartbeat()
+                        last_heartbeat = asyncio.get_running_loop().time()
                     yield chunk
+                source_complete = True
 
             headers = {"Content-Type": "video/mp4"}
             if declared:
                 headers["Content-Length"] = str(declared)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, write=1800.0)) as sink:
-                uploaded = await sink.put(put_url, content=chunks(), headers=headers)
-            if uploaded.status_code not in (200, 201, 204):
-                raise RuntimeError(f"OSS upload returned HTTP {uploaded.status_code}")
+            upload_error: Exception | None = None
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, write=1800.0)) as sink:
+                    uploaded = await sink.put(put_url, content=chunks(), headers=headers)
+                if uploaded.status_code not in (200, 201, 204):
+                    upload_error = RuntimeError(
+                        f"OSS upload returned HTTP {uploaded.status_code}"
+                    )
+            except Exception as exc:
+                # A lost PUT response is not proof the object was not committed.
+                upload_error = exc
+            if heartbeat is not None:
+                await heartbeat()
+            if upload_error is not None:
+                head = await oss.head(key)
+                expected = declared or total
+                etag = str((head or {}).get("etag") or "").strip('"').casefold()
+                if (
+                    not source_complete
+                    or not head
+                    or expected <= 0
+                    or int(head.get("size") or 0) != expected
+                    or not re.fullmatch(r"[0-9a-f]{32}", etag)
+                    or etag != digest.hexdigest()
+                ):
+                    raise upload_error
     if total <= 0:
         raise RuntimeError("provider returned an empty video")
     head = await oss.head(key)
     if not head:
         raise RuntimeError("video is missing from OSS after upload")
+    etag = str(head.get("etag") or "").strip('"').casefold()
+    if re.fullmatch(r"[0-9a-f]{32}", etag) and etag != digest.hexdigest():
+        raise RuntimeError("video OSS digest does not match the provider output")
     return head["size"] or total
+
+
+async def _copy_provider_video_with_heartbeat(
+    url: str,
+    oss,
+    key: str,
+    max_bytes: int,
+    heartbeat,
+) -> int:
+    import inspect
+
+    kwargs = {}
+    if "heartbeat" in inspect.signature(_copy_provider_video_to_oss).parameters:
+        kwargs["heartbeat"] = heartbeat
+
+    # A provider or OSS socket may stop yielding bytes for longer than the
+    # stale-finalization window. Keep ownership alive independently of stream
+    # progress, and abort the old transfer immediately if its lease/CAS is
+    # rejected so recovery can never overlap it after 300 seconds.
+    transfer = asyncio.create_task(
+        _copy_provider_video_to_oss(url, oss, key, max_bytes, **kwargs),
+        name=f"video-oss-transfer:{key}",
+    )
+
+    async def keep_alive() -> None:
+        while True:
+            await asyncio.sleep(_FINALIZATION_HEARTBEAT_SECONDS)
+            await heartbeat()
+
+    watchdog = asyncio.create_task(
+        keep_alive(),
+        name=f"video-oss-heartbeat:{key}",
+    )
+    try:
+        done, _pending = await asyncio.wait(
+            {transfer, watchdog}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if watchdog in done:
+            # The watchdog is intentionally infinite, so completion means its
+            # heartbeat failed (including lease loss or a lost job CAS).
+            error = watchdog.exception()
+            transfer.cancel()
+            await asyncio.gather(transfer, return_exceptions=True)
+            if error is not None:
+                raise error
+            raise RuntimeError("video finalization heartbeat stopped unexpectedly")
+        return transfer.result()
+    finally:
+        watchdog.cancel()
+        await asyncio.gather(watchdog, return_exceptions=True)
 
 
 async def _finalize_segment(
@@ -1020,6 +1385,9 @@ async def _finalize_segment(
     claimed = False
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
+        await _assert_effect_fence_locked(
+            db, ctx if persist_guard is not None else None
+        )
         result = await db.execute(
             update(VideoJob)
             .where(
@@ -1038,37 +1406,70 @@ async def _finalize_segment(
         return await _owned_job(job.id, ctx, "segment")
     if not asset:
         raise RuntimeError("reserved output asset is missing")
+
+    async def heartbeat() -> None:
+        if persist_guard is not None:
+            await persist_guard()
+        touched = await _update_job(
+            job.id,
+            ctx=ctx if persist_guard is not None else None,
+            expected_statuses={"finalizing"},
+            status="finalizing",
+        )
+        if not touched:
+            raise RuntimeError("video finalization ownership was lost")
+
     try:
-        size = await _copy_provider_video_to_oss(
-            source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
+        size = await _copy_provider_video_with_heartbeat(
+            source_url,
+            get_oss(),
+            asset.oss_key,
+            settings.max_provider_output_bytes,
+            heartbeat,
         )
     except Exception as exc:
         # The paid provider task already succeeded. Keep this recoverable so a
         # later wait can fetch a fresh result URL and retry only OSS transfer.
         if persist_guard is not None:
             await persist_guard()
-        await _update_job(
+        moved_to_transfer_failed = await _update_job(
             job.id,
+            ctx=ctx if persist_guard is not None else None,
+            expected_statuses={"finalizing"},
             status="transfer_failed",
             error=_public_error(exc),
             result_data={"provider_status": data.get("status")},
         )
-        await _mark_asset(job.output_asset_id, status="pending")
+        if moved_to_transfer_failed:
+            await _mark_asset(
+                job.output_asset_id,
+                status="pending",
+                ctx=ctx if persist_guard is not None else None,
+            )
         return await _owned_job(job.id, ctx, "segment")
     if persist_guard is not None:
         await persist_guard()
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-    await _mark_asset(job.output_asset_id, status="ready", size=size)
-    await _update_job(
-        job.id,
-        status="completed",
-        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size},
+    settled = await _settle_job_and_asset(
+        job,
+        ctx,
+        job_status="completed",
+        asset_status="ready",
         error=None,
-        completed_at=datetime.now(timezone.utc),
+        expected_statuses={"finalizing"},
+        result_data={
+            "usage": usage,
+            "provider_status": data.get("status"),
+            "bytes": size,
+        },
+        size=size,
     )
+    if not settled:
+        return await _owned_job(job.id, ctx, "segment")
     if getattr(job, "segment_id", None):
         from tool.video_workflow import mark_segment_job
 
+        await _assert_ctx_current(ctx)
         await mark_segment_job(
             job.segment_id,
             job.id,
@@ -1105,11 +1506,18 @@ def _job_lines(
     if retry_after is not None and job.status not in _SEGMENT_TERMINAL | _RENDER_TERMINAL:
         lines.append(f"retry_after_seconds={retry_after}")
     if asset and asset.status == "ready":
+        from project.workspace import asset_sandbox_path
+
         lines.extend(
             [
                 f"asset_id={asset.id}",
                 f"name={asset.name}",
-                f"path=/workspace/generated_videos/{asset.name}",
+                "path=" + asset_sandbox_path(
+                    asset.user_id,
+                    asset.project_id,
+                    asset.name,
+                    asset_id=asset.id,
+                ),
                 f"bytes={asset.size}",
             ]
         )
@@ -1198,6 +1606,36 @@ async def _provider_route_blocked_result(
     )
 
 
+async def _provider_outcome_unknown_result(
+    job,
+    *,
+    title: str = "Video provider outcome needs operator review",
+    failure_code: str = "video_effect_outcome_unknown",
+) -> ToolResult:
+    """Expose the durable recovery identity without inviting a paid retry."""
+    asset = await _job_asset(job)
+    lines = _job_lines(job, asset, retry_after=None)
+    lines.extend(
+        [
+            "recovery=outcome_unknown",
+            "instruction=do_not_resubmit; retain this job_id for operator review or explicit revision",
+        ]
+    )
+    return ToolResult(
+        title=title,
+        output="\n".join(lines),
+        metadata={
+            "error": True,
+            "failure_code": failure_code,
+            "job_id": job.id,
+            "status": job.status,
+            "outcome_unknown": True,
+            "manual_review": True,
+            "do_not_retry": True,
+        },
+    )
+
+
 def _is_timeout_error(exc: Exception) -> bool:
     """Whether a provider probe exhausted time rather than failed semantically."""
     if isinstance(exc, TimeoutError):
@@ -1225,13 +1663,23 @@ def _forget_segment_finalization(job_id: str, task: asyncio.Task[Any]) -> None:
         )
 
 
+async def _call_finalize_segment(job, data, ctx, settings, target):
+    """Invoke the finalizer with fencing while preserving extension test doubles."""
+    import inspect
+
+    kwargs = {}
+    if "persist_guard" in inspect.signature(_finalize_segment).parameters:
+        kwargs["persist_guard"] = _ctx_persist_guard(ctx)
+    return await _finalize_segment(job, data, ctx, settings, target, **kwargs)
+
+
 def _start_segment_finalization(job, data, ctx, settings, target) -> asyncio.Task[Any]:
     """Keep OSS finalization alive when a bounded wait or client is cancelled."""
     existing = _SEGMENT_FINALIZATION_TASKS.get(job.id)
     if existing is not None and not existing.done():
         return existing
     task = asyncio.create_task(
-        _finalize_segment(job, data, ctx, settings, target),
+        _call_finalize_segment(job, data, ctx, settings, target),
         name=f"video-finalize:{job.id}",
     )
     _SEGMENT_FINALIZATION_TASKS[job.id] = task
@@ -1320,31 +1768,77 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
     from core.oss import get_oss
     from tool.video_workflow import mark_segment_job
 
+    await _assert_ctx_current(ctx)
     asset = await _job_asset(job)
     if not asset:
         return None
+    oss = get_oss()
+    copy_response_unknown = False
     try:
-        head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
+        head = await oss.copy(source_asset.oss_key, asset.oss_key)
     except Exception:
-        head = None
-    if not head or not head.get("size"):
+        # COPY may have committed even when its response was lost.
+        copy_response_unknown = True
+        try:
+            head = await oss.head(asset.oss_key)
+        except Exception:
+            head = None
+    if head is None:
+        copy_response_unknown = True
+        try:
+            head = await oss.head(asset.oss_key)
+        except Exception:
+            head = None
+    expected_size = int(getattr(source_asset, "size", 0) or 0)
+    if (
+        not head
+        or int(head.get("size") or 0) <= 0
+        or (expected_size > 0 and int(head.get("size") or 0) != expected_size)
+    ):
         return None
+    if copy_response_unknown:
+        # Size is always available from the durable source asset. Compare ETag
+        # as an additional digest when the OSS exposes one on both objects.
+        try:
+            source_head = await oss.head(source_asset.oss_key)
+        except Exception:
+            source_head = None
+        source_etag = str((source_head or {}).get("etag") or "").strip('"')
+        dest_etag = str(head.get("etag") or "").strip('"')
+        if source_etag and dest_etag and source_etag != dest_etag:
+            return None
+    await _assert_ctx_current(ctx)
     now = datetime.now(timezone.utc)
-    await _mark_asset(job.output_asset_id, status="ready", size=head["size"])
-    await _update_job(
-        job.id,
-        status="completed",
+    settled = await _settle_job_and_asset(
+        job,
+        ctx,
+        job_status="completed",
+        asset_status="ready",
+        error=None,
+        expected_statuses={job.status},
         # Audit only: the source identifiers stay in result_data and are never
         # printed in tool output (they can belong to another user).
         result_data={"reuse": True, "reused_from_job": source_job.id, "bytes": head["size"]},
+        size=int(head["size"]),
+    )
+    if not settled:
+        return None
+    await _update_job(
+        job.id,
+        ctx=ctx,
+        expected_statuses={"completed"},
         attempt=1,
         started_at=now,
         completed_at=now,
-        error=None,
     )
     if job.segment_id:
+        await _assert_ctx_current(ctx)
         await mark_segment_job(
-            job.segment_id, job.id, status="completed", output_asset_id=job.output_asset_id
+            job.segment_id,
+            job.id,
+            user_id=ctx.user_id,
+            status="completed",
+            output_asset_id=job.output_asset_id,
         )
     return await _owned_job(job.id, ctx, "segment")
 
@@ -1502,6 +1996,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             )
             if not created:
                 if job.status == "completed":
+                    await _assert_ctx_current(ctx)
                     await mark_segment_job(
                         approved["segment_id"],
                         job.id,
@@ -1519,6 +2014,25 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             "instruction=do_not_resubmit; cancel or obtain operator review before creating a revision",
                         ]
                     )
+                metadata = {
+                    "job_id": job.id,
+                    "status": job.status,
+                    "idempotent_reuse": True,
+                    "ambiguous_submit": ambiguous_submit,
+                }
+                if ambiguous_submit or job.status == "outcome_unknown":
+                    metadata.update(
+                        error=True,
+                        failure_code="video_submit_outcome_unknown",
+                        outcome_unknown=True,
+                        manual_review=True,
+                        do_not_retry=True,
+                    )
+                elif job.status in {"failed", "cancelled"}:
+                    metadata.update(
+                        error=True,
+                        failure_code=f"video_provider_{job.status}",
+                    )
                 return ToolResult(
                     title=(
                         "Existing video submission needs operator review"
@@ -1526,12 +2040,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                         else "Existing video generation job"
                     ),
                     output="\n".join(lines),
-                    metadata={
-                        "job_id": job.id,
-                        "status": job.status,
-                        "idempotent_reuse": True,
-                        "ambiguous_submit": ambiguous_submit,
-                    },
+                    metadata=metadata,
                 )
 
             if prompt_hash:
@@ -1601,16 +2110,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     watermark=watermark,
                 )
             async def submit_and_persist_provider_identity():
+                await _assert_ctx_current(ctx)
                 try:
                     await consume_spend_approval(approved["spend_approval_id"])
                 except Exception:
                     await _update_job(
                         job.id,
+                        ctx=ctx,
+                        expected_statuses={"submitting"},
                         status="failed",
                         error="approved generation call limit is unavailable",
                         completed_at=datetime.now(timezone.utc),
                     )
-                    await _mark_asset(job.output_asset_id, status="failed")
+                    await _mark_asset(job.output_asset_id, status="failed", ctx=ctx)
                     raise
                 await mark_segment_job(
                     approved["segment_id"],
@@ -1618,6 +2130,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     user_id=ctx.user_id,
                     status="submitting",
                 )
+                await _assert_ctx_current(ctx)
                 if submit_path is None:
                     submitted = await _provider_submit(target, payload)
                 else:
@@ -1633,14 +2146,34 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 # in OSS, so retain an in-progress state until finalization wins
                 # the database claim and completes that transfer.
                 stored_state = "in_progress" if submitted_state == "completed" else submitted_state
-                await _update_job(
+                # Provider receipt persistence is a job-local CAS and remains
+                # allowed if the Agent lease turns over after the paid POST.
+                task_id = video_providers.extract_task_id(target, submitted)
+                if not task_id:
+                    raise RuntimeError("video provider response did not include a durable task id")
+                # Keep the ordinary transition on the long-standing update
+                # seam used by callers/tests. A real update returns ``False``
+                # only when another owner changed the row after the POST; in
+                # that case, fill just the immutable receipt without changing
+                # the newer state. (Legacy adapters may return ``None`` after
+                # applying the update, so only literal ``False`` falls back.)
+                advanced = await _update_job(
                     job.id,
-                    provider_task_id=video_providers.extract_task_id(target, submitted),
+                    expected_statuses={"submitting"},
+                    expected_provider_task_id=(getattr(job, "provider_task_id", None) or None),
+                    provider_task_id=task_id,
                     status=stored_state,
                     attempt=1,
                     started_at=datetime.now(timezone.utc),
                     error=None,
                 )
+                if advanced is False:
+                    await _persist_video_submit_receipt(
+                        job,
+                        user_id=ctx.user_id,
+                        task_id=task_id,
+                        stored_state=stored_state,
+                    )
                 return submitted, submitted_state
 
             try:
@@ -1658,7 +2191,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             job = await _owned_job(job.id, ctx, "segment")
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
-                job = await _finalize_segment(job, response, ctx, settings, target)
+                job = await _call_finalize_segment(
+                    job, response, ctx, settings, target
+                )
                 asset = await _job_asset(job)
                 await _attach_completed(job, ctx)
             elif state in {"failed", "cancelled"}:
@@ -1666,10 +2201,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 message = detail.get("message") if isinstance(detail, dict) else str(detail or state)
                 await _update_job(
                     job.id,
+                    ctx=ctx,
+                    expected_statuses={job.status},
                     error=message[:1000],
                     completed_at=datetime.now(timezone.utc),
                 )
-                await _mark_asset(job.output_asset_id, status="failed")
+                await _mark_asset(job.output_asset_id, status="failed", ctx=ctx)
+                await _assert_ctx_current(ctx)
                 await mark_segment_job(
                     approved["segment_id"],
                     job.id,
@@ -1677,24 +2215,46 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     status=state,
                 )
                 job = await _owned_job(job.id, ctx, "segment")
+            metadata = {
+                "job_id": job.id,
+                "status": job.status,
+                "asset_id": asset.id if asset and asset.status == "ready" else None,
+                "retry_after_seconds": 5,
+            }
+            if job.status == "outcome_unknown":
+                metadata.update(
+                    error=True,
+                    failure_code="video_submit_outcome_unknown",
+                    outcome_unknown=True,
+                    manual_review=True,
+                    do_not_retry=True,
+                )
+            elif job.status in {"failed", "cancelled"}:
+                metadata.update(
+                    error=True,
+                    failure_code=f"video_provider_{job.status}",
+                )
             return ToolResult(
                 title=("Video segment ready" if job.status == "completed" else "Video generation submitted"),
                 output="\n".join(_job_lines(job, asset)),
-                metadata={
-                    "job_id": job.id,
-                    "status": job.status,
-                    "asset_id": asset.id if asset and asset.status == "ready" else None,
-                    "retry_after_seconds": 5,
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             from video.materials import RealPersonAuthorizationRequired
+            from agent.driver import LeaseLostError
+
+            if isinstance(exc, LeaseLostError):
+                raise
 
             if isinstance(exc, RealPersonAuthorizationRequired):
                 return ToolResult(
                     title="真人授权后才能继续",
                     output=_public_error(exc),
-                    metadata={"error": True, "authorization_required": True},
+                    metadata={
+                        "error": True,
+                        "failure_code": "real_person_authorization_required",
+                        "authorization_required": True,
+                    },
                 )
             if "job" in locals() and created:
                 provider_task_id = (
@@ -1707,9 +2267,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     # the paid task reconcilable instead of converting a local
                     # persistence/transfer failure into an unrecoverable bill.
                     current = await _owned_job(job.id, ctx, "segment")
-                    if current and current.status != "completed":
+                    if current and current.status in {"submitting", "queued", "in_progress"}:
                         await _update_job(
                             job.id,
+                            expected_statuses={current.status},
+                            expected_provider_task_id=(current.provider_task_id or None),
                             provider_task_id=provider_task_id,
                             status="in_progress",
                             attempt=max(1, current.attempt or 0),
@@ -1731,30 +2293,66 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                                 "retry_after_seconds": 5,
                             },
                         )
-                await _update_job(
-                    job.id,
-                    status="failed",
-                    error=(
-                        "Submission outcome may be ambiguous; do not automatically submit a second paid task. "
-                        + _public_error(exc)
-                    ),
-                    completed_at=datetime.now(timezone.utc),
-                )
-                await _mark_asset(job.output_asset_id, status="failed")
-                if job.segment_id:
-                    from tool.video_workflow import mark_segment_job
-
-                    await mark_segment_job(
-                        job.segment_id,
+                current = await _owned_job(job.id, ctx, "segment")
+                if current and current.status not in _SEGMENT_TERMINAL:
+                    quarantined = await _update_job(
                         job.id,
-                        user_id=ctx.user_id,
-                        status="failed",
+                        expected_statuses={current.status},
+                        status="outcome_unknown",
+                        error=(
+                            "Submission outcome may be ambiguous; automatic paid resubmission is disabled. "
+                            + _public_error(exc)
+                        ),
                     )
-            return ToolResult(title="Video generation submit failed", output=_public_error(exc))
+                    if quarantined and current.segment_id:
+                        from tool.video_workflow import mark_segment_job
+
+                        await _assert_ctx_current(ctx)
+                        await mark_segment_job(
+                            current.segment_id,
+                            current.id,
+                            user_id=ctx.user_id,
+                            status="outcome_unknown",
+                        )
+            if "job" in locals():
+                current = await _owned_job(job.id, ctx, "segment")
+                if current and current.status == "outcome_unknown":
+                    return await _provider_outcome_unknown_result(
+                        current,
+                        title="Video generation submit needs operator review",
+                        failure_code="video_submit_outcome_unknown",
+                    )
+            return _failure_result(
+                "Video generation submit failed",
+                exc,
+                failure_code="video_submit_outcome_unknown",
+                **(
+                    {
+                        "job_id": job.id,
+                        "outcome_unknown": True,
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    }
+                    if "job" in locals()
+                    else {}
+                ),
+            )
 
     job = await _owned_job(args.job_id or "", ctx, "segment")
     if not job:
         return ToolResult(title="Video job not found", output="No owned segment job has that job_id.")
+    if job.status == "outcome_unknown":
+        if job.segment_id:
+            from tool.video_workflow import mark_segment_job
+
+            await _assert_ctx_current(ctx)
+            await mark_segment_job(
+                job.segment_id,
+                job.id,
+                user_id=ctx.user_id,
+                status="outcome_unknown",
+            )
+        return await _provider_outcome_unknown_result(job)
     if args.action == "cancel" and job.status in _SEGMENT_TERMINAL:
         asset = await _job_asset(job)
         return ToolResult(
@@ -1767,6 +2365,66 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             title="Video finalization in progress",
             output="The provider task has completed and its output is being secured in OSS; it can no longer be cancelled.",
             metadata={"job_id": job.id, "status": job.status},
+        )
+    if args.action == "cancel" and job.status == "submitting" and not job.provider_task_id:
+        await _assert_ctx_current(ctx)
+        quarantined = await _update_job(
+            job.id,
+            ctx=ctx,
+            expected_statuses={"submitting"},
+            expected_provider_task_id=None,
+            status="outcome_unknown",
+            error=(
+                "Cancellation was requested while provider submission may be in flight and no "
+                "receipt is durable; no remote DELETE was guessed. Manual review is required."
+            ),
+        )
+        if quarantined:
+            if job.segment_id:
+                from tool.video_workflow import mark_segment_job
+
+                await _assert_ctx_current(ctx)
+                await mark_segment_job(
+                    job.segment_id,
+                    job.id,
+                    user_id=ctx.user_id,
+                    status="outcome_unknown",
+                )
+            return _failure_result(
+                "Video cancellation needs operator review",
+                "The provider submit/cancel outcome cannot be proven without a durable task receipt.",
+                failure_code="video_cancel_without_receipt",
+                job_id=job.id,
+                status="outcome_unknown",
+                outcome_unknown=True,
+                manual_review=True,
+                do_not_retry=True,
+            )
+        job = await _owned_job(job.id, ctx, "segment")
+        if not job:
+            return _failure_result(
+                "Video cancellation not applied",
+                "The video job changed before cancellation could be claimed.",
+                failure_code="video_cancel_state_changed",
+            )
+        if job.status not in {"queued", "in_progress"} or not job.provider_task_id:
+            return _failure_result(
+                "Video cancellation not applied",
+                "The video job changed while its provider receipt was being reconciled.",
+                failure_code="video_cancel_state_changed",
+                job_id=job.id,
+                status=job.status,
+            )
+    if args.action == "cancel" and job.status == "outcome_unknown":
+        return _failure_result(
+            "Video cancellation needs operator review",
+            "A previous cancellation request has an unknown provider outcome; it will not be sent again automatically.",
+            failure_code="video_cancel_outcome_unknown",
+            job_id=job.id,
+            status=job.status,
+            outcome_unknown=True,
+            manual_review=True,
+            do_not_retry=True,
         )
 
     provider_route_required = job.status not in _SEGMENT_TERMINAL | {"finalizing"}
@@ -1804,23 +2462,90 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         return await _provider_route_blocked_result(job, reason=route_block_reason)
     poll_interval_seconds = float(getattr(settings, "poll_interval_seconds", 5))
     if args.action == "cancel":
+        await _assert_ctx_current(ctx)
+        claimed = await _update_job(
+            job.id,
+            ctx=ctx,
+            expected_statuses={job.status},
+            expected_provider_task_id=(job.provider_task_id or None),
+            status="cancelling",
+            error=None,
+        )
+        if not claimed:
+            current = await _owned_job(job.id, ctx, "segment")
+            return _failure_result(
+                "Video cancellation not applied",
+                "The video job changed before cancellation could be claimed.",
+                failure_code="video_cancel_state_changed",
+                job_id=job.id,
+                status=getattr(current, "status", "unknown"),
+            )
         if job.provider_task_id and job.status != "transfer_failed":
             try:
+                # This is the last possible ownership check before the
+                # irreversible third-party DELETE.
+                await _assert_ctx_current(ctx)
                 await _provider_cancel(target, job.provider_task_id)
             except Exception as exc:
-                return ToolResult(title="Video cancellation failed", output=_public_error(exc))
+                from agent.driver import LeaseLostError
+
+                if isinstance(exc, LeaseLostError):
+                    raise
+                quarantined = await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={"cancelling"},
+                    expected_provider_task_id=job.provider_task_id,
+                    status="outcome_unknown",
+                    error="Provider cancellation outcome is unknown; operator reconciliation required.",
+                )
+                if quarantined and job.segment_id:
+                    from tool.video_workflow import mark_segment_job
+
+                    await _assert_ctx_current(ctx)
+                    await mark_segment_job(
+                        job.segment_id,
+                        job.id,
+                        user_id=ctx.user_id,
+                        status="outcome_unknown",
+                    )
+                return _failure_result(
+                    "Video cancellation outcome unknown",
+                    exc,
+                    failure_code="video_cancel_outcome_unknown",
+                    job_id=job.id,
+                    status="outcome_unknown",
+                    outcome_unknown=True,
+                    manual_review=True,
+                    do_not_retry=True,
+                )
         cancel_note = (
             "cancelled locally; the gateway channel has no upstream cancel and the provider task may still complete"
             if getattr(target, "channel", "ark") != "ark"
             else "cancelled"
         )
-        await _update_job(
-            job.id, status="cancelled", completed_at=datetime.now(timezone.utc), error=cancel_note
+        await _assert_ctx_current(ctx)
+        settled = await _settle_job_and_asset(
+            job,
+            ctx,
+            job_status="cancelled",
+            asset_status="failed",
+            error=cancel_note,
+            expected_statuses={"cancelling"},
         )
-        await _mark_asset(job.output_asset_id, status="failed")
+        if not settled:
+            return _failure_result(
+                "Video cancellation settlement lost",
+                "The provider request returned, but the current job state no longer accepts this cancellation receipt.",
+                failure_code="video_cancel_settlement_conflict",
+                job_id=job.id,
+                outcome_unknown=True,
+                manual_review=True,
+            )
         if job.segment_id:
             from tool.video_workflow import mark_segment_job
 
+            await _assert_ctx_current(ctx)
             await mark_segment_job(
                 job.segment_id,
                 job.id,
@@ -1846,6 +2571,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if recover_stale_finalization:
                 await _update_job(
                     job.id,
+                    ctx=ctx,
+                    expected_statuses={"finalizing"},
                     status="transfer_failed",
                     error="recovering a stale OSS finalization",
                 )
@@ -1872,8 +2599,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     timed_out = True
                     job = await _owned_job(job.id, ctx, "segment")
                     break
-                return ToolResult(
-                    title="Video status check failed", output=_public_error(exc)
+                return _failure_result(
+                    "Video status check failed",
+                    exc,
+                    failure_code="video_status_failed",
+                    job_id=job.id,
                 )
             version = _job_snapshot_version(job)
             continue
@@ -1926,16 +2656,18 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     if isinstance(detail, dict)
                     else (failure_detail(target, data) or str(detail or state))
                 )
-                await _update_job(
-                    job.id,
-                    status=state,
+                settled = await _settle_job_and_asset(
+                    job,
+                    ctx,
+                    job_status=state,
+                    asset_status="failed",
                     error=message[:1000],
-                    completed_at=datetime.now(timezone.utc),
+                    expected_statuses={job.status},
                 )
-                await _mark_asset(job.output_asset_id, status="failed")
-                if job.segment_id:
+                if settled and job.segment_id:
                     from tool.video_workflow import mark_segment_job
 
+                    await _assert_ctx_current(ctx)
                     await mark_segment_job(
                         job.segment_id,
                         job.id,
@@ -1945,7 +2677,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 job = await _owned_job(job.id, ctx, "segment")
             else:
                 if state != job.status or getattr(job, "error", None):
-                    await _update_job(job.id, status=state, error=None)
+                    await _update_job(
+                        job.id,
+                        ctx=ctx,
+                        expected_statuses={job.status},
+                        status=state,
+                        error=None,
+                    )
                     job = await _owned_job(job.id, ctx, "segment")
             version = _job_snapshot_version(job)
         except Exception as exc:
@@ -1953,7 +2691,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 timed_out = True
                 job = await _owned_job(job.id, ctx, "segment")
                 break
-            return ToolResult(title="Video status check failed", output=_public_error(exc))
+            return _failure_result(
+                "Video status check failed",
+                exc,
+                failure_code="video_status_failed",
+                job_id=job.id,
+            )
         if not is_wait or job.status in _SEGMENT_TERMINAL:
             break
         if args.after_version and version > args.after_version:
@@ -1999,21 +2742,31 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 "instruction=do_not_resubmit; cancel or obtain operator review before creating a revision",
             ]
         )
-    return ToolResult(
-        title=title,
-        output="\n".join(lines),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "asset_id": asset.id if asset and asset.status == "ready" else None,
-            "attached": attached,
-            "ambiguous_submit": ambiguous_submit,
-            "still_running": still_running,
-            "timed_out": timed_out,
-            "version": version,
-            "retry_after_seconds": round(poll_interval_seconds),
-        },
-    )
+    metadata = {
+        "job_id": job.id,
+        "status": job.status,
+        "asset_id": asset.id if asset and asset.status == "ready" else None,
+        "attached": attached,
+        "ambiguous_submit": ambiguous_submit,
+        "still_running": still_running,
+        "timed_out": timed_out,
+        "version": version,
+        "retry_after_seconds": round(poll_interval_seconds),
+    }
+    if ambiguous_submit:
+        metadata.update(
+            error=True,
+            failure_code="video_submit_outcome_unknown",
+            outcome_unknown=True,
+            manual_review=True,
+            do_not_retry=True,
+        )
+    elif job.status in {"failed", "cancelled"}:
+        metadata.update(
+            error=True,
+            failure_code=f"video_provider_{job.status}",
+        )
+    return ToolResult(title=title, output="\n".join(lines), metadata=metadata)
 
 
 async def _transcription_payload(job, ctx: ToolContext, video_settings, oss) -> dict[str, Any]:
@@ -2068,12 +2821,103 @@ async def _dispatch_transcription(
         await persist_guard()
     await _update_job(
         job.id,
+        ctx=ctx if persist_guard is not None else None,
+        expected_statuses={"dispatching", "dispatch_unknown"},
         sandbox_job_id=remote["job_id"],
         status=remote["status"],
         error=None,
         started_at=datetime.now(timezone.utc) if remote["status"] == "in_progress" else None,
     )
     return await _owned_job(job.id, ctx, "stt"), remote
+
+
+async def _persist_stt_receipt(
+    job,
+    *,
+    task_id: str,
+    operation_key: str,
+    extraction_result: dict[str, Any],
+) -> None:
+    """Persist a provider handle with a job-local CAS, independent of run lease.
+
+    Once DashScope returned its task id, retaining that receipt is safer than
+    discarding it when the Agent generation changes.  The immutable VideoJob
+    identity/idempotency key scopes this write; it cannot publish chat output
+    or settle the asset.
+    """
+    from sqlalchemy import or_
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    effect = {
+        "operation_key": operation_key,
+        "provider": "dashscope",
+        "state": "receipt_persisted",
+        "task_id": task_id,
+    }
+    async with get_db_session() as db:
+        result = await db.execute(
+            update(VideoJob)
+            .where(
+                VideoJob.id == job.id,
+                VideoJob.user_id == job.user_id,
+                VideoJob.kind == "stt",
+                or_(
+                    VideoJob.provider_task_id.is_(None),
+                    VideoJob.provider_task_id == task_id,
+                ),
+                VideoJob.status.in_(["transcribing", "extraction_completed"]),
+            )
+            .values(
+                provider_task_id=task_id,
+                status="transcribing",
+                result_data={"extraction": extraction_result, "stt_effect": effect},
+                error=None,
+                updated_at=datetime.now(timezone.utc),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            current = (
+                await db.execute(
+                    select(VideoJob)
+                    .where(
+                        VideoJob.id == job.id,
+                        VideoJob.user_id == job.user_id,
+                        VideoJob.kind == "stt",
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if not current or current.provider_task_id not in {None, task_id}:
+                raise RuntimeError("STT provider receipt conflicts with the durable job")
+            if current.provider_task_id == task_id:
+                return
+
+            # A recovery worker can quarantine a receipt-less ``transcribing``
+            # row while the original POST is returning. The late task id is an
+            # immutable provider fact, so retain it and make that specific
+            # no-receipt quarantine pollable again without publishing success.
+            current_result = (
+                dict(current.result_data)
+                if isinstance(current.result_data, dict)
+                else {}
+            )
+            current_effect = (
+                dict(current_result.get("stt_effect"))
+                if isinstance(current_result.get("stt_effect"), dict)
+                else {}
+            )
+            current_effect.update(effect)
+            current_result.setdefault("extraction", extraction_result)
+            current_result["stt_effect"] = current_effect
+            current.provider_task_id = task_id
+            current.result_data = current_result
+            if current.status == "outcome_unknown":
+                current.status = "transcribing"
+                current.error = None
+            current.updated_at = datetime.now(timezone.utc)
 
 
 async def _finalize_transcription(
@@ -2086,6 +2930,7 @@ async def _finalize_transcription(
     persist_guard=None,
     durable_recovery: bool = False,
 ) -> Any:
+    from agent.driver import LeaseLostError
     from db.base import get_db_session
     from db.models.video_job import VideoJob
     from tool.video_workflow import record_segment_transcript
@@ -2095,14 +2940,21 @@ async def _finalize_transcription(
     if persist_guard is not None:
         await persist_guard()
     if not audio or not head:
-        await _update_job(
-            job.id,
-            status="failed",
+        await _settle_job_and_asset(
+            job,
+            ctx,
+            job_status="failed",
+            asset_status="failed",
             error="sandbox reported audio extraction complete but the OSS audio is missing",
-            completed_at=datetime.now(timezone.utc),
+            expected_statuses={job.status},
         )
         return await _owned_job(job.id, ctx, "stt")
-    await _mark_asset(audio.id, status="ready", size=head["size"] or 0)
+    await _mark_asset(
+        audio.id,
+        status="ready",
+        size=head["size"] or 0,
+        ctx=ctx if persist_guard is not None else None,
+    )
     existing_result = job.result_data if isinstance(job.result_data, dict) else {}
     transcript = (
         existing_result.get("transcript")
@@ -2110,25 +2962,92 @@ async def _finalize_transcription(
         else None
     )
     if transcript is None:
+        effect = (
+            existing_result.get("stt_effect")
+            if isinstance(existing_result.get("stt_effect"), dict)
+            else {}
+        )
+        operation_key = str(
+            effect.get("operation_key")
+            or f"openbox:stt:{job.id}:{job.request_hash[:16]}"
+        )
+        task_id = str(job.provider_task_id or effect.get("task_id") or "")
+
+        # A legacy/incomplete transcribing row has crossed the irreversible
+        # POST boundary without a durable receipt. Never turn age into evidence
+        # that a second paid request is safe.
+        if job.status == "transcribing" and not task_id:
+            await _update_job(
+                job.id,
+                ctx=ctx if persist_guard is not None else None,
+                expected_statuses={"transcribing"},
+                status="outcome_unknown",
+                result_data={
+                    "extraction": extraction_result,
+                    "stt_effect": {
+                        "operation_key": operation_key,
+                        "provider": target.engine,
+                        "state": "outcome_unknown",
+                    },
+                },
+                error="STT POST may have been accepted without a durable receipt; manual review required.",
+            )
+            return await _owned_job(job.id, ctx, "stt")
+
         now = datetime.now(timezone.utc)
         async with get_db_session() as db:
+            await _assert_effect_fence_locked(
+                db, ctx if persist_guard is not None else None
+            )
             claimed = await db.execute(
                 update(VideoJob)
                 .where(
                     VideoJob.id == job.id,
-                    VideoJob.status.in_(["queued", "in_progress", "extraction_completed"]),
+                    VideoJob.status.in_([
+                        "queued",
+                        "in_progress",
+                        "extraction_completed",
+                        "transcribing",
+                    ]),
                 )
-                .values(status="transcribing", error=None, updated_at=now)
+                .values(
+                    status="transcribing",
+                    result_data={
+                        "extraction": extraction_result,
+                        "stt_effect": {
+                            "operation_key": operation_key,
+                            "provider": target.engine,
+                            "state": "receipt_persisted" if task_id else "submitting",
+                            **({"task_id": task_id} if task_id else {}),
+                        },
+                    },
+                    error=None,
+                    updated_at=now,
+                )
             )
             if claimed.rowcount != 1:
                 return await _owned_job(job.id, ctx, "stt")
         try:
             await ctx.update_output("Audio extracted; running segment speech-to-text QA…")
+
+            async def persist_receipt(received_task_id: str) -> None:
+                await _persist_stt_receipt(
+                    job,
+                    task_id=received_task_id,
+                    operation_key=operation_key,
+                    extraction_result=extraction_result,
+                )
+
             transcript = await _provider_transcribe(
                 target,
                 oss.presign_get(audio.oss_key, expires_sec=1800),
+                task_id=task_id or None,
+                operation_key=operation_key,
+                receipt_callback=persist_receipt,
             )
         except Exception as exc:
+            if isinstance(exc, LeaseLostError):
+                raise
             if persist_guard is not None:
                 await persist_guard()
             # Provider exceptions may embed the presigned audio URL. Keep the
@@ -2137,25 +3056,29 @@ async def _finalize_transcription(
                 "segment transcription provider failed: %s",
                 type(exc).__name__,
             )
-            if durable_recovery:
-                # The synchronous adapter exposes no provider handle. A
-                # timeout therefore has an unknown external outcome; preserve
-                # `transcribing` so the Skill handler enters operator review
-                # instead of making a later call look like a safe retry.
-                await _update_job(
-                    job.id,
-                    status="transcribing",
-                    result_data={"extraction": extraction_result},
-                    error="STT provider outcome is ambiguous; operator reconciliation required.",
-                )
-            else:
-                await _update_job(
-                    job.id,
-                    status="failed",
-                    result_data={"extraction": extraction_result},
-                    error="STT provider request failed; the extracted audio is retained for an explicit retry.",
-                    completed_at=datetime.now(timezone.utc),
-                )
+            current = await _owned_job(job.id, ctx, "stt")
+            receipt = str(getattr(current, "provider_task_id", None) or task_id or "")
+            state = "receipt_persisted" if receipt else "outcome_unknown"
+            await _update_job(
+                job.id,
+                ctx=ctx if persist_guard is not None else None,
+                expected_statuses={"transcribing"},
+                status="transcribing" if receipt else "outcome_unknown",
+                result_data={
+                    "extraction": extraction_result,
+                    "stt_effect": {
+                        "operation_key": operation_key,
+                        "provider": target.engine,
+                        "state": state,
+                        **({"task_id": receipt} if receipt else {}),
+                    },
+                },
+                error=(
+                    "STT receipt is durable; provider polling can resume without resubmission."
+                    if receipt
+                    else "STT provider outcome is unknown; operator reconciliation required and automatic resubmission is disabled."
+                ),
+            )
             return await _owned_job(job.id, ctx, "stt")
 
         # Persist the provider output before the domain comparison. If the
@@ -2163,13 +3086,27 @@ async def _finalize_transcription(
         # transcript instead of making another provider call.
         if persist_guard is not None:
             await persist_guard()
-        if durable_recovery:
-            await _update_job(
-                job.id,
-                status="transcript_ready",
-                result_data={"extraction": extraction_result, "transcript": transcript},
-                error=None,
-            )
+        await _update_job(
+            job.id,
+            ctx=ctx if persist_guard is not None else None,
+            expected_statuses={"transcribing"},
+            status="transcript_ready",
+            result_data={
+                "extraction": extraction_result,
+                "transcript": transcript,
+                "stt_effect": {
+                    "operation_key": operation_key,
+                    "provider": target.engine,
+                    "state": "response_persisted",
+                    **(
+                        {"task_id": str(transcript.get("task_id") or task_id)}
+                        if transcript.get("task_id") or task_id
+                        else {}
+                    ),
+                },
+            },
+            error=None,
+        )
 
     try:
         comparison = await record_segment_transcript(
@@ -2178,20 +3115,34 @@ async def _finalize_transcription(
             transcript,
             user_id=ctx.user_id,
             threshold=target.similarity_threshold,
+            session_id=ctx.session_id,
+            run_fence=ctx.run_fence,
         )
         if persist_guard is not None:
             await persist_guard()
         await _update_job(
             job.id,
+            ctx=ctx if persist_guard is not None else None,
+            expected_statuses={"transcript_ready", "transcribing"},
             status="completed",
             result_data={
                 "extraction": extraction_result,
                 "transcript": transcript,
                 "comparison": comparison,
+                "stt_effect": {
+                    **(
+                        existing_result.get("stt_effect")
+                        if isinstance(existing_result.get("stt_effect"), dict)
+                        else {}
+                    ),
+                    "state": "completed",
+                },
             },
             error=None,
             completed_at=datetime.now(timezone.utc),
         )
+    except LeaseLostError:
+        raise
     except Exception as exc:
         if persist_guard is not None:
             await persist_guard()
@@ -2202,6 +3153,8 @@ async def _finalize_transcription(
         if durable_recovery:
             await _update_job(
                 job.id,
+                ctx=ctx if persist_guard is not None else None,
+                expected_statuses={"transcript_ready", "transcribing"},
                 status="transcript_ready",
                 result_data={"extraction": extraction_result, "transcript": transcript},
                 error="Transcript is durable; retrying the local QA/domain commit only.",
@@ -2209,6 +3162,8 @@ async def _finalize_transcription(
         else:
             await _update_job(
                 job.id,
+                ctx=ctx if persist_guard is not None else None,
+                expected_statuses={"transcript_ready", "transcribing"},
                 status="failed",
                 result_data={"extraction": extraction_result},
                 error="STT provider request failed; the extracted audio is retained for an explicit retry.",
@@ -2240,12 +3195,14 @@ def _transcription_lines(job, asset=None, *, remote: dict[str, Any] | None = Non
         lines.append(f"audio_asset_id={asset.id}")
     if job.error:
         lines.append(f"error={job.error}")
-    if job.status not in {"completed", "failed", "cancelled"}:
+    if job.status not in {"completed", "failed", "cancelled", "outcome_unknown"}:
         lines.append("retry_after_seconds=5")
     return lines
 
 
 async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
+    from agent.driver import LeaseLostError
+
     if not ctx.sandbox:
         return ToolResult(title="Sandbox unavailable", output="Video transcription requires the user's WUYING sandbox.")
     try:
@@ -2295,13 +3252,37 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 transient=True,
             )
             if not created:
+                metadata = {
+                    "job_id": job.id,
+                    "status": job.status,
+                    "idempotent_reuse": True,
+                }
+                if job.status == "outcome_unknown":
+                    metadata.update(
+                        error=True,
+                        failure_code="stt_outcome_unknown",
+                        outcome_unknown=True,
+                        manual_review=True,
+                        do_not_retry=True,
+                    )
+                elif job.status in {"failed", "cancelled"}:
+                    metadata.update(
+                        error=True,
+                        failure_code=f"stt_{job.status}",
+                    )
                 return ToolResult(
                     title="Existing transcription job",
                     output="\n".join(_transcription_lines(job, audio)),
-                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
+                    metadata=metadata,
                 )
             await ctx.update_output("Queueing FFmpeg audio extraction on WUYING…")
-            job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
+            job, remote = await _dispatch_transcription(
+                job,
+                ctx,
+                video_settings,
+                oss,
+                persist_guard=_ctx_persist_guard(ctx),
+            )
             return ToolResult(
                 title="Segment transcription queued",
                 output="\n".join(_transcription_lines(job, audio, remote=remote)),
@@ -2313,9 +3294,22 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 },
             )
         except Exception as exc:
+            if isinstance(exc, LeaseLostError):
+                raise
             if "job" in locals() and created:
-                await _update_job(job.id, status="dispatch_unknown", error=_public_error(exc))
-            return ToolResult(title="Segment transcription submit failed", output=_public_error(exc))
+                await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={"dispatching"},
+                    status="dispatch_unknown",
+                    error=_public_error(exc),
+                )
+            return _failure_result(
+                "Segment transcription submit failed",
+                exc,
+                failure_code="stt_extraction_dispatch_failed",
+                **({"job_id": job.id} if "job" in locals() else {}),
+            )
 
     job = await _owned_job(args.job_id or "", ctx, "stt")
     if not job:
@@ -2327,11 +3321,28 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             output="\n".join(_transcription_lines(job, audio)),
             metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
         )
+    if job.status == "outcome_unknown":
+        return _failure_result(
+            "Transcription outcome needs operator review",
+            job.error or "The STT POST may have been accepted without a durable provider receipt.",
+            failure_code="stt_outcome_unknown",
+            job_id=job.id,
+            status=job.status,
+            outcome_unknown=True,
+            manual_review=True,
+            do_not_retry=True,
+        )
     if job.status in {"failed", "cancelled"} and args.action not in {"retry", "cancel"}:
         return ToolResult(
             title="Segment transcription status",
             output="\n".join(_transcription_lines(job, audio)),
-            metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
+            metadata={
+                "error": True,
+                "failure_code": f"stt_{job.status}",
+                "job_id": job.id,
+                "status": job.status,
+                "segment_id": job.segment_id,
+            },
         )
     if args.action == "cancel":
         if job.status == "transcribing":
@@ -2341,11 +3352,24 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             )
         if job.sandbox_job_id and job.status not in {"failed", "cancelled"}:
             try:
+                await _assert_ctx_current(ctx)
                 remote = await ctx.sandbox.cancel_media_job(job.sandbox_job_id, ctx.user_id)
             except Exception as exc:
-                return ToolResult(title="Transcription cancellation failed", output=_public_error(exc))
-        await _update_job(job.id, status="cancelled", error="cancelled", completed_at=datetime.now(timezone.utc))
-        await _mark_asset(job.output_asset_id, status="failed")
+                return _failure_result(
+                    "Transcription cancellation failed",
+                    exc,
+                    failure_code="stt_cancel_failed",
+                    job_id=job.id,
+                )
+        await _assert_ctx_current(ctx)
+        await _settle_job_and_asset(
+            job,
+            ctx,
+            job_status="cancelled",
+            asset_status="failed",
+            error="cancelled",
+            expected_statuses={job.status},
+        )
         job = await _owned_job(job.id, ctx, "stt")
         return ToolResult(title="Transcription cancelled", output="\n".join(_transcription_lines(job)))
 
@@ -2355,39 +3379,82 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             if job.status != "failed":
                 return ToolResult(title="Retry not available", output="Only a failed transcription can be retried.")
             if audio and audio.status == "ready":
-                await _update_job(job.id, status="extraction_completed", error=None, completed_at=None)
+                await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={"failed"},
+                    status="extraction_completed",
+                    error=None,
+                    completed_at=None,
+                )
                 job = await _owned_job(job.id, ctx, "stt")
                 job = await _finalize_transcription(
-                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
+                    job,
+                    ctx,
+                    target,
+                    oss,
+                    (job.result_data or {}).get("extraction") or {},
+                    persist_guard=_ctx_persist_guard(ctx),
+                    durable_recovery=True,
                 )
             else:
                 replacement = await _transcription_payload(job, ctx, video_settings, oss)
+                await _assert_ctx_current(ctx)
                 remote = await ctx.sandbox.retry_media_job(
                     job.sandbox_job_id or job.id,
                     ctx.user_id,
                     replacement_payload=replacement,
                 )
-                await _mark_asset(job.output_asset_id, status="pending", size=0)
-                await _update_job(job.id, status=remote["status"], error=None, completed_at=None)
+                await _assert_ctx_current(ctx)
+                await _mark_asset(
+                    job.output_asset_id,
+                    status="pending",
+                    size=0,
+                    ctx=ctx,
+                )
+                await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={"failed"},
+                    status=remote["status"],
+                    error=None,
+                    completed_at=None,
+                )
                 job = await _owned_job(job.id, ctx, "stt")
         elif job.status == "transcribing":
-            updated = job.updated_at
-            if updated and updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc)
-            if updated and (datetime.now(timezone.utc) - updated).total_seconds() > 300:
-                await _update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
-                job = await _owned_job(job.id, ctx, "stt")
-                job = await _finalize_transcription(
-                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
-                )
-        elif job.status == "extraction_completed":
+            # Resume only by a persisted provider receipt. The finalizer turns
+            # receipt-less legacy rows into explicit outcome_unknown.
             job = await _finalize_transcription(
-                job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
+                job,
+                ctx,
+                target,
+                oss,
+                (job.result_data or {}).get("extraction") or {},
+                persist_guard=_ctx_persist_guard(ctx),
+                durable_recovery=True,
+            )
+        elif job.status in {"extraction_completed", "transcript_ready"}:
+            job = await _finalize_transcription(
+                job,
+                ctx,
+                target,
+                oss,
+                (job.result_data or {}).get("extraction") or {},
+                persist_guard=_ctx_persist_guard(ctx),
+                durable_recovery=True,
             )
         else:
             if job.status in {"dispatch_unknown", "dispatching"} and not job.sandbox_job_id:
                 try:
-                    job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
+                    job, remote = await _dispatch_transcription(
+                        job,
+                        ctx,
+                        video_settings,
+                        oss,
+                        persist_guard=_ctx_persist_guard(ctx),
+                    )
+                except LeaseLostError:
+                    raise
                 except Exception:
                     remote = await ctx.sandbox.get_media_job(job.id, ctx.user_id)
             elif args.action == "wait":
@@ -2404,41 +3471,87 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             if state == "completed":
                 await _update_job(
                     job.id,
+                    ctx=ctx,
+                    expected_statuses={job.status},
                     status="extraction_completed",
                     result_data={"extraction": remote.get("result") or {}},
                     error=None,
                 )
                 job = await _owned_job(job.id, ctx, "stt")
                 job = await _finalize_transcription(
-                    job, ctx, target, oss, remote.get("result") or {}
+                    job,
+                    ctx,
+                    target,
+                    oss,
+                    remote.get("result") or {},
+                    persist_guard=_ctx_persist_guard(ctx),
+                    durable_recovery=True,
                 )
             elif state in {"failed", "cancelled"}:
-                await _mark_asset(job.output_asset_id, status="failed")
-                await _update_job(
-                    job.id,
-                    status=state,
+                await _settle_job_and_asset(
+                    job,
+                    ctx,
+                    job_status=state,
+                    asset_status="failed",
                     error=str(remote.get("error") or state)[:1200],
-                    completed_at=datetime.now(timezone.utc),
+                    expected_statuses={job.status},
                 )
                 job = await _owned_job(job.id, ctx, "stt")
             else:
-                await _update_job(job.id, status=state, error=None)
+                await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={job.status},
+                    status=state,
+                    error=None,
+                )
                 job = await _owned_job(job.id, ctx, "stt")
+    except LeaseLostError:
+        raise
     except Exception as exc:
-        return ToolResult(title="Transcription status check failed", output=_public_error(exc))
+        return _failure_result(
+            "Transcription status check failed",
+            exc,
+            failure_code="stt_status_failed",
+            job_id=job.id,
+        )
 
     audio = await _job_asset(job)
+    if job.status == "outcome_unknown":
+        return _failure_result(
+            "Transcription outcome needs operator review",
+            job.error or "STT outcome is unknown.",
+            failure_code="stt_outcome_unknown",
+            job_id=job.id,
+            status=job.status,
+            outcome_unknown=True,
+            manual_review=True,
+            do_not_retry=True,
+        )
+    if job.status == "transcribing" and job.error:
+        return _failure_result(
+            "Transcription polling failed; receipt retained",
+            job.error,
+            failure_code="stt_poll_failed_receipt_safe",
+            job_id=job.id,
+            status=job.status,
+            receipt_retained=bool(job.provider_task_id),
+            retry_poll_only=bool(job.provider_task_id),
+        )
     title = "Segment transcription ready" if job.status == "completed" else "Segment transcription status"
+    metadata = {
+        "job_id": job.id,
+        "status": job.status,
+        "segment_id": job.segment_id,
+        "version": int((remote or {}).get("version") or 0),
+        "retry_after_seconds": int((remote or {}).get("retry_after_seconds") or 5),
+    }
+    if job.status in {"failed", "cancelled"}:
+        metadata.update(error=True, failure_code=f"stt_{job.status}")
     return ToolResult(
         title=title,
         output="\n".join(_transcription_lines(job, audio, remote=remote)),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "segment_id": job.segment_id,
-            "version": int((remote or {}).get("version") or 0),
-            "retry_after_seconds": int((remote or {}).get("retry_after_seconds") or 5),
-        },
+        metadata=metadata,
     )
 
 
@@ -2501,6 +3614,8 @@ async def _dispatch_render(
         await persist_guard()
     await _update_job(
         job.id,
+        ctx=ctx if persist_guard is not None else None,
+        expected_statuses={"dispatching", "dispatch_unknown"},
         sandbox_job_id=remote["job_id"],
         status=remote["status"],
         error=None,
@@ -2528,17 +3643,22 @@ async def _sync_render(
             status = "failed"
             remote["error"] = "sandbox reported completion but the OSS output is missing"
         else:
-            await _mark_asset(job.output_asset_id, status="ready", size=head["size"] or 0)
-            await _update_job(
-                job.id,
-                status="completed",
-                result_data=result,
+            settled = await _settle_job_and_asset(
+                job,
+                ctx,
+                job_status="completed",
+                asset_status="ready",
                 error=None,
-                completed_at=datetime.now(timezone.utc),
+                expected_statuses={job.status},
+                result_data=result,
+                size=head["size"] or 0,
             )
+            if not settled:
+                return await _owned_job(job.id, ctx, "render")
             if getattr(job, "production_id", None) and job.output_asset_id:
                 from tool.video_workflow import mark_render_complete
 
+                await _assert_ctx_current(ctx)
                 await mark_render_complete(
                     job.production_id,
                     job.output_asset_id,
@@ -2548,20 +3668,29 @@ async def _sync_render(
     if persist_guard is not None:
         await persist_guard()
     if status in {"failed", "cancelled"}:
-        await _mark_asset(job.output_asset_id, status="failed")
-        await _update_job(
-            job.id,
-            status=status,
-            result_data=result,
+        await _settle_job_and_asset(
+            job,
+            ctx,
+            job_status=status,
+            asset_status="failed",
             error=str(remote.get("error") or status)[:1200],
-            completed_at=datetime.now(timezone.utc),
+            expected_statuses={job.status},
+            result_data=result,
         )
     else:
-        await _update_job(job.id, status=status, result_data={"progress": remote.get("progress") or {}})
+        await _update_job(
+            job.id,
+            ctx=ctx if persist_guard is not None else None,
+            expected_statuses={job.status},
+            status=status,
+            result_data={"progress": remote.get("progress") or {}},
+        )
     return await _owned_job(job.id, ctx, "render")
 
 
 async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
+    from agent.driver import LeaseLostError
+
     if not ctx.sandbox:
         return ToolResult(title="Sandbox unavailable", output="Video rendering requires the user's WUYING sandbox.")
     try:
@@ -2617,13 +3746,35 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
             if not created:
                 if job.status == "completed":
                     await _attach_completed(job, ctx)
+                metadata = {
+                    "job_id": job.id,
+                    "status": job.status,
+                    "idempotent_reuse": True,
+                }
+                if job.status == "dispatch_unknown":
+                    metadata.update(
+                        error=True,
+                        failure_code="render_dispatch_unknown",
+                        outcome_unknown=True,
+                    )
+                elif job.status in {"failed", "cancelled"}:
+                    metadata.update(
+                        error=True,
+                        failure_code=f"render_{job.status}",
+                    )
                 return ToolResult(
                     title="Existing render job",
                     output="\n".join(_job_lines(job, asset)),
-                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
+                    metadata=metadata,
                 )
             await ctx.update_output("Queueing the HyperFrames/FFmpeg render on WUYING…")
-            job, remote = await _dispatch_render(job, ctx, settings, oss)
+            job, remote = await _dispatch_render(
+                job,
+                ctx,
+                settings,
+                oss,
+                persist_guard=_ctx_persist_guard(ctx),
+            )
             return ToolResult(
                 title="Video render queued",
                 output="\n".join(
@@ -2642,9 +3793,22 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
                 },
             )
         except Exception as exc:
+            if isinstance(exc, LeaseLostError):
+                raise
             if "job" in locals() and created:
-                await _update_job(job.id, status="dispatch_unknown", error=_public_error(exc))
-            return ToolResult(title="Video render dispatch failed", output=_public_error(exc))
+                await _update_job(
+                    job.id,
+                    ctx=ctx,
+                    expected_statuses={"dispatching"},
+                    status="dispatch_unknown",
+                    error=_public_error(exc),
+                )
+            return _failure_result(
+                "Video render dispatch failed",
+                exc,
+                failure_code="render_dispatch_failed",
+                **({"job_id": job.id} if "job" in locals() else {}),
+            )
 
     job = await _owned_job(args.job_id or "", ctx, "render")
     if not job:
@@ -2653,19 +3817,42 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
     try:
         if args.action == "retry":
             replacement = await _render_payload(job, ctx, settings, oss)
+            await _assert_ctx_current(ctx)
             remote = await ctx.sandbox.retry_media_job(
                 job.sandbox_job_id or job.id,
                 ctx.user_id,
                 replacement_payload=replacement,
             )
-            await _mark_asset(job.output_asset_id, status="pending", size=0)
-            await _update_job(job.id, status=remote["status"], error=None, completed_at=None)
+            await _assert_ctx_current(ctx)
+            await _mark_asset(
+                job.output_asset_id,
+                status="pending",
+                size=0,
+                ctx=ctx,
+            )
+            await _update_job(
+                job.id,
+                ctx=ctx,
+                expected_statuses={job.status},
+                status=remote["status"],
+                error=None,
+                completed_at=None,
+            )
         elif args.action == "cancel":
+            await _assert_ctx_current(ctx)
             remote = await ctx.sandbox.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
         else:
             if job.status in {"dispatch_unknown", "dispatching"} and not job.sandbox_job_id:
                 try:
-                    job, remote = await _dispatch_render(job, ctx, settings, oss)
+                    job, remote = await _dispatch_render(
+                        job,
+                        ctx,
+                        settings,
+                        oss,
+                        persist_guard=_ctx_persist_guard(ctx),
+                    )
+                except LeaseLostError:
+                    raise
                 except Exception:
                     remote = await ctx.sandbox.get_media_job(job.id, ctx.user_id)
             elif args.action == "wait":
@@ -2678,9 +3865,22 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
                 )
             else:
                 remote = await ctx.sandbox.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
-        job = await _sync_render(job, remote, ctx, oss)
+        job = await _sync_render(
+            job,
+            remote,
+            ctx,
+            oss,
+            persist_guard=_ctx_persist_guard(ctx),
+        )
+    except LeaseLostError:
+        raise
     except Exception as exc:
-        return ToolResult(title="Render status check failed", output=_public_error(exc))
+        return _failure_result(
+            "Render status check failed",
+            exc,
+            failure_code="render_status_failed",
+            job_id=job.id,
+        )
 
     asset = await _job_asset(job)
     attached = await _attach_completed(job, ctx) if job.status == "completed" else False
@@ -2706,19 +3906,28 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
     resource_check = (remote.get("result") or {}).get("resource_check")
     if resource_check:
         lines.append(f"resource_check={resource_check}")
+    metadata = {
+        "job_id": job.id,
+        "status": job.status,
+        "asset_id": asset.id if asset and asset.status == "ready" else None,
+        "queue_position": queue_position,
+        "retry_after_seconds": retry_after,
+        "version": version,
+        "attached": attached,
+        "resource_check": resource_check,
+    }
+    if job.status in {"failed", "cancelled"}:
+        metadata.update(error=True, failure_code=f"render_{job.status}")
+    elif job.status == "dispatch_unknown":
+        metadata.update(
+            error=True,
+            failure_code="render_dispatch_unknown",
+            outcome_unknown=True,
+        )
     return ToolResult(
         title="Rendered video ready" if job.status == "completed" else "Video render status",
         output="\n".join(lines),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "asset_id": asset.id if asset and asset.status == "ready" else None,
-            "queue_position": queue_position,
-            "retry_after_seconds": retry_after,
-            "version": version,
-            "attached": attached,
-            "resource_check": resource_check,
-        },
+        metadata=metadata,
     )
 
 

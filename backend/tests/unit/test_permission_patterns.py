@@ -53,7 +53,18 @@ def test_the_existing_extractors_still_hold():
     assert patterns("bash", {"command": "ls -la"}) == ["ls -la"]
     assert patterns("read", {"file_path": "/etc/passwd"}) == ["/etc/passwd"]
     assert patterns("edit", {"file_path": "/tmp/x"}) == ["/tmp/x"]
-    assert patterns("grep", {"pattern": "TODO"}) == ["TODO"]
+    assert patterns("grep", {"pattern": "TODO"}) == [
+        "/workspace",
+        "/workspace/**",
+    ]
+    assert patterns("grep", {"pattern": "TODO", "path": "src", "type": "py"}) == [
+        "src",
+        "src/**",
+        "src/**/*.py",
+    ]
+    assert patterns("glob", {"pattern": "**/*.py", "path": "src"}) == [
+        "src/**/*.py"
+    ]
 
 
 def test_tools_without_a_meaningful_subject_stay_wildcard():

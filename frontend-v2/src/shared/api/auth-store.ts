@@ -26,6 +26,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
 // ── Refresh with mutex: concurrent 401s trigger exactly one refresh ──
 let refreshPromise: Promise<string | null> | null = null
+const SINGLE_USER_ACCESS_TOKEN = "openbox-single-user"
 
 export function refreshAccessToken(): Promise<string | null> {
   refreshPromise ??= doRefresh().finally(() => {
@@ -41,6 +42,24 @@ async function doRefresh(): Promise<string | null> {
       credentials: "include",
     })
     if (!resp.ok) {
+      // Desktop/single-user deployments intentionally omit all credential
+      // routes, so /refresh is a 404 rather than a missing-cookie 401.  The
+      // public bootstrap contract is authoritative and returns user data only
+      // when authentication is disabled; SaaS deployments report multi_user.
+      const bootstrapResp = await fetch(`${env.apiBase}/api/auth/bootstrap`, {
+        credentials: "include",
+      })
+      if (bootstrapResp.ok) {
+        const bootstrap = (await bootstrapResp.json()) as {
+          mode: "single_user" | "multi_user"
+          user?: AuthUser
+        }
+        if (bootstrap.mode === "single_user" && bootstrap.user) {
+          const user = bootstrap.user
+          useAuthStore.getState().setAuth(SINGLE_USER_ACCESS_TOKEN, user)
+          return SINGLE_USER_ACCESS_TOKEN
+        }
+      }
       useAuthStore.getState().clearAuth()
       return null
     }

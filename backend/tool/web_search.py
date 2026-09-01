@@ -343,4 +343,5 @@ Usage tips:
     parameters=WebSearchArgs,
     execute=execute,
     sandbox_required=False,
+    parallel_safe=True,
 )

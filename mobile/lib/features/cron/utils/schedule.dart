@@ -6,8 +6,8 @@ library;
 
 import '../../../shared/models/cron.dart';
 
-typedef Translate = String Function(String key,
-    {Map<String, Object?>? vars, int? count});
+typedef Translate =
+    String Function(String key, {Map<String, Object?>? vars, int? count});
 
 const scheduleModes = ['daily', 'weekly', 'interval', 'custom'];
 
@@ -57,6 +57,9 @@ class ScheduleForm {
     this.every = 30,
     this.unit = 'minutes',
     this.expr = '0 9 * * *',
+    this.anchorMs,
+    this.timezone,
+    this.at,
   });
 
   final String mode;
@@ -69,6 +72,9 @@ class ScheduleForm {
   final int every;
   final String unit;
   final String expr;
+  final int? anchorMs;
+  final String? timezone;
+  final String? at;
 
   ScheduleForm copyWith({
     String? mode,
@@ -77,15 +83,20 @@ class ScheduleForm {
     int? every,
     String? unit,
     String? expr,
-  }) =>
-      ScheduleForm(
-        mode: mode ?? this.mode,
-        time: time ?? this.time,
-        weekday: weekday ?? this.weekday,
-        every: every ?? this.every,
-        unit: unit ?? this.unit,
-        expr: expr ?? this.expr,
-      );
+    int? anchorMs,
+    String? timezone,
+    String? at,
+  }) => ScheduleForm(
+    mode: mode ?? this.mode,
+    time: time ?? this.time,
+    weekday: weekday ?? this.weekday,
+    every: every ?? this.every,
+    unit: unit ?? this.unit,
+    expr: expr ?? this.expr,
+    anchorMs: anchorMs ?? this.anchorMs,
+    timezone: timezone ?? this.timezone,
+    at: at ?? this.at,
+  );
 }
 
 int intervalMs(int every, String unit) =>
@@ -102,25 +113,37 @@ int intervalMs(int every, String unit) =>
 
 /// null means the form is invalid (empty expr, bad time, sub-min interval).
 CronSchedule? buildSchedule(ScheduleForm form, String tz) {
+  if (form.mode == 'at') {
+    final at = form.at?.trim() ?? '';
+    return at.isEmpty ? null : CronScheduleAt(at: at);
+  }
   if (form.mode == 'interval') {
     if (form.every <= 0) return null;
     if (intervalMs(form.every, form.unit) < minIntervalMinutes * 60000) {
       return null;
     }
-    return CronScheduleEvery(everyMs: intervalMs(form.every, form.unit));
+    return CronScheduleEvery(
+      everyMs: intervalMs(form.every, form.unit),
+      anchorMs: form.anchorMs,
+    );
   }
+  final effectiveTz = (form.timezone?.trim().isNotEmpty ?? false)
+      ? form.timezone!.trim()
+      : tz;
   if (form.mode == 'custom') {
     final expr = form.expr.trim();
     if (expr.split(RegExp(r'\s+')).length < 5) return null;
-    return CronScheduleCron(expr: expr, tz: tz);
+    return CronScheduleCron(expr: expr, tz: effectiveTz);
   }
   final time = _parseTime(form.time);
   if (time == null) return null;
   if (form.mode == 'weekly') {
     return CronScheduleCron(
-        expr: '${time.m} ${time.h} * * ${form.weekday}', tz: tz);
+      expr: '${time.m} ${time.h} * * ${form.weekday}',
+      tz: effectiveTz,
+    );
   }
-  return CronScheduleCron(expr: '${time.m} ${time.h} * * *', tz: tz);
+  return CronScheduleCron(expr: '${time.m} ${time.h} * * *', tz: effectiveTz);
 }
 
 final _dailyRe = RegExp(r'^(\d{1,2}) (\d{1,2}) \* \* \*$');
@@ -131,22 +154,29 @@ String _pad(int n) => n.toString().padLeft(2, '0');
 /// Reconstruct the form model from a stored schedule (for the edit dialog).
 ScheduleForm scheduleToForm(CronSchedule schedule) {
   switch (schedule) {
-    case CronScheduleEvery(:final everyMs):
+    case CronScheduleEvery(:final everyMs, :final anchorMs):
       if (everyMs % 3600000 == 0) {
         return ScheduleForm(
-            mode: 'interval', every: everyMs ~/ 3600000, unit: 'hours');
+          mode: 'interval',
+          every: everyMs ~/ 3600000,
+          unit: 'hours',
+          anchorMs: anchorMs,
+        );
       }
       return ScheduleForm(
-          mode: 'interval',
-          every: (everyMs / 60000).round(),
-          unit: 'minutes');
-    case CronScheduleCron(:final expr):
+        mode: 'interval',
+        every: (everyMs / 60000).round(),
+        unit: 'minutes',
+        anchorMs: anchorMs,
+      );
+    case CronScheduleCron(:final expr, :final tz):
       final daily = _dailyRe.firstMatch(expr);
       if (daily != null) {
         return ScheduleForm(
           mode: 'daily',
           time:
               '${_pad(int.parse(daily.group(2)!))}:${_pad(int.parse(daily.group(1)!))}',
+          timezone: tz,
         );
       }
       final weekly = _weeklyRe.firstMatch(expr);
@@ -156,11 +186,12 @@ ScheduleForm scheduleToForm(CronSchedule schedule) {
           time:
               '${_pad(int.parse(weekly.group(2)!))}:${_pad(int.parse(weekly.group(1)!))}',
           weekday: int.parse(weekly.group(3)!),
+          timezone: tz,
         );
       }
-      return ScheduleForm(mode: 'custom', expr: expr);
-    case CronScheduleAt():
-      return const ScheduleForm();
+      return ScheduleForm(mode: 'custom', expr: expr, timezone: tz);
+    case CronScheduleAt(:final at):
+      return ScheduleForm(mode: 'at', at: at);
   }
 }
 
@@ -177,18 +208,24 @@ String describeSchedule(CronSchedule schedule, Translate t) {
     case CronScheduleCron(:final expr):
       final daily = _dailyRe.firstMatch(expr);
       if (daily != null) {
-        return t('cron:describe.daily', vars: {
-          'time':
-              '${_pad(int.parse(daily.group(2)!))}:${_pad(int.parse(daily.group(1)!))}',
-        });
+        return t(
+          'cron:describe.daily',
+          vars: {
+            'time':
+                '${_pad(int.parse(daily.group(2)!))}:${_pad(int.parse(daily.group(1)!))}',
+          },
+        );
       }
       final weekly = _weeklyRe.firstMatch(expr);
       if (weekly != null) {
-        return t('cron:describe.weekly', vars: {
-          'weekday': t(weekdayKeys[int.parse(weekly.group(3)!)]!),
-          'time':
-              '${_pad(int.parse(weekly.group(2)!))}:${_pad(int.parse(weekly.group(1)!))}',
-        });
+        return t(
+          'cron:describe.weekly',
+          vars: {
+            'weekday': t(weekdayKeys[int.parse(weekly.group(3)!)]!),
+            'time':
+                '${_pad(int.parse(weekly.group(2)!))}:${_pad(int.parse(weekly.group(1)!))}',
+          },
+        );
       }
       return t('cron:describe.cron', vars: {'expr': expr});
   }
@@ -205,6 +242,5 @@ bool isSilentResult(String? summary) {
       .trim()
       .replaceAll(RegExp(r'^[*_`]+'), '')
       .replaceAll(RegExp(r'[*_`.。!!\s]+$'), '');
-  return head == silentSentinel &&
-      stripped.length <= silentSentinel.length + 8;
+  return head == silentSentinel && stripped.length <= silentSentinel.length + 8;
 }

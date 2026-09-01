@@ -79,10 +79,11 @@ def install_bundle_via_oss(desktop, bundle: pathlib.Path) -> None:
     if str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
 
-    from dotenv import load_dotenv
     import httpx
 
-    load_dotenv(backend / ".env")
+    from wuying_env import load_environment
+
+    load_environment()
     from core.oss import get_oss
 
     oss = get_oss()

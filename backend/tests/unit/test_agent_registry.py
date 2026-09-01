@@ -157,6 +157,32 @@ def test_tools_are_replaced_not_widened(with_config):
     assert mod.get_agent("build").tools == ["read"]
 
 
+def test_built_in_non_build_agent_can_explicitly_opt_into_portable(with_config):
+    with_config({
+        "plan": AgentOverride(tools=["capability_search", "read"]),
+    })
+    plan = mod.get_agent("plan")
+
+    assert plan.portable_opt_in is True
+    assert effective_exposure_mode(
+        "portable",
+        plan.name,
+        portable_opt_in=plan.portable_opt_in,
+    ) == "portable"
+
+
+def test_built_in_non_build_agent_without_discovery_stays_in_shadow(with_config):
+    with_config({"plan": AgentOverride(tools=["read"])})
+    plan = mod.get_agent("plan")
+
+    assert plan.portable_opt_in is False
+    assert effective_exposure_mode(
+        "portable",
+        plan.name,
+        portable_opt_in=plan.portable_opt_in,
+    ) == "shadow"
+
+
 def test_a_built_in_agent_honours_an_explicit_empty_tool_allowlist(with_config):
     with_config({"build": AgentOverride(tools=[])})
 

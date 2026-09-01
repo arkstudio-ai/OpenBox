@@ -3,7 +3,7 @@
 // openKind/togglePanel semantics are ported from the design reference.
 import { create } from "zustand"
 
-export type TabKind = "menu" | "review" | "terminal" | "browser" | "files" | "desktop" | "cron"
+export type TabKind = "menu" | "review" | "terminal" | "preview" | "browser" | "files" | "desktop" | "cron"
 
 export interface PanelTab {
   id: string

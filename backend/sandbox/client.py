@@ -3,6 +3,8 @@ import asyncio
 import base64
 import copy
 import contextvars
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -18,6 +20,11 @@ from urllib.parse import quote
 import httpx
 
 from core.log import create_logger
+from skill.archive import (
+    SKILL_ARCHIVE_MAX_COMPRESSED_BYTES,
+    SkillArchiveValidationError,
+    validate_skill_zip,
+)
 
 log = create_logger("sandbox.client")
 
@@ -28,6 +35,38 @@ log = create_logger("sandbox.client")
 #: replaces a useful message with a timeout.
 MCP_CALL_TIMEOUT_SECONDS = 180.0
 CATALOGUE_CACHE_TTL_SECONDS = 2.0
+
+# Request-level callers may add conditional or content headers, but transport
+# identity is owned exclusively by SandboxClient. Clearing the complete set
+# before each send prevents an old/spoofed run header from surviving when the
+# current context intentionally has no Agent lease.
+_PROTECTED_REQUEST_HEADER_NAMES = (
+    "X-API-Key",
+    "X-OpenBox-User-Scope",
+    "X-OpenBox-Instance",
+    "X-OpenBox-Request",
+    "X-OpenBox-Session",
+    "X-OpenBox-Tool-Call",
+    "X-OpenBox-Operation",
+    "X-OpenBox-Desktop-Lease",
+    "X-OpenBox-Run",
+    "X-OpenBox-Run-Epoch",
+    "X-OpenBox-Run-Lease-Expires",
+    "X-OpenBox-Run-Lease-Signature",
+)
+
+
+def _run_lease_signature(
+    api_key: str,
+    session_id: str,
+    run_id: str,
+    generation: int,
+    expires_at_ms: int,
+) -> str:
+    payload = (
+        f"{session_id}\n{run_id}\n{generation}\n{expires_at_ms}"
+    ).encode("utf-8")
+    return hmac.new(api_key.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
 # Older long-lived WUYING desktops expose the generic file/execute API and the
@@ -43,12 +82,17 @@ import secrets
 import stat
 import sys
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
 ROOT = Path("/data/skills")
 EXPORTS = Path("/workspace/exports")
 MAX_FILES = 1000
+MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_BYTES = 50 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+MAX_RATIO = 200
+RATIO_MIN_BYTES = 1024 * 1024
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".cache"}
 SECRET_NAMES = {"credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa", "password", "passwords", "secret", "secrets", "token", "tokens"}
 SECRET_DIRS = {"credentials", "keys", "private-keys", "secrets"}
@@ -85,6 +129,8 @@ if skill_md.is_symlink() or not skill_md.is_file():
 target_root = target.resolve()
 files = []
 total = 0
+# The archive adds ``name/`` as an implicit top-level directory.
+entries = 1
 for current, dirs, names in os.walk(target, topdown=True, followlinks=False):
     current_path = Path(current)
     kept = []
@@ -93,6 +139,9 @@ for current, dirs, names in os.walk(target, topdown=True, followlinks=False):
         relative = child.relative_to(target)
         if not child.is_symlink() and not skipped(relative):
             kept.append(dirname)
+            entries += 1
+            if entries > MAX_FILES:
+                raise SystemExit("skill archive exceeds safety limits")
     dirs[:] = kept
     for filename in sorted(names):
         source = current_path / filename
@@ -111,7 +160,8 @@ for current, dirs, names in os.walk(target, topdown=True, followlinks=False):
             if not stat.S_ISREG(opened.st_mode):
                 continue
             size = opened.st_size
-            if len(files) + 1 > MAX_FILES or total + size > MAX_BYTES:
+            entries += 1
+            if size > MAX_FILE_BYTES or entries > MAX_FILES or total + size > MAX_BYTES:
                 raise SystemExit("skill archive exceeds safety limits")
             with os.fdopen(descriptor, "rb", closefd=True) as stream:
                 descriptor = None
@@ -134,10 +184,18 @@ try:
         for relative, content in files:
             archive_name = (PurePosixPath(name) / PurePosixPath(relative.as_posix())).as_posix()
             entry = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
-            entry.compress_type = zipfile.ZIP_DEFLATED
+            compressed = zlib.compress(content, 6)
+            entry.compress_type = (
+                zipfile.ZIP_STORED
+                if len(content) >= RATIO_MIN_BYTES
+                and len(content) > max(1, len(compressed)) * MAX_RATIO
+                else zipfile.ZIP_DEFLATED
+            )
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
             bundle.writestr(entry, content, compresslevel=6)
+    if temporary.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise SystemExit("skill archive exceeds compressed safety limit")
     os.replace(temporary, destination)
 finally:
     try:
@@ -174,6 +232,23 @@ class IdleNotification:
     idle_seconds: int
     total_seconds: int
     pid: int
+
+
+@dataclass(frozen=True)
+class PathResolveTarget:
+    """One execution-plane path that must be resolved before authorization."""
+
+    path: str
+    allow_missing: bool = False
+    allow_scoped_skills: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedPath:
+    """Canonical path projections returned by the confined resolver."""
+
+    canonical_path: str
+    workspace_relative: str | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +289,26 @@ class _CatalogueLoad:
     snapshot: dict
 
 
+class SkillArchiveAlreadyExistsError(FileExistsError):
+    """A create-only archive upload found a live package at its install path."""
+
+    def __init__(self, install_dir: str, message: str | None = None):
+        self.install_dir = install_dir
+        super().__init__(message or f"Skill '{install_dir}' already exists")
+
+
+class SkillRestoreFencedError(RuntimeError):
+    """A durable uninstall generation rejected a stale snapshot restore."""
+
+    def __init__(self, install_dir: str, fenced_through_generation: int):
+        self.install_dir = install_dir
+        self.fenced_through_generation = fenced_through_generation
+        super().__init__(
+            f"Skill '{install_dir}' restore is fenced through generation "
+            f"{fenced_through_generation}"
+        )
+
+
 class SandboxClient:
     """HTTP client for the Action Server running inside a sandbox container.
 
@@ -227,6 +322,7 @@ class SandboxClient:
         api_key: str,
         base_url: str | None = None,
         *,
+        user_scope: str = "",
         catalogue_ttl_seconds: float = CATALOGUE_CACHE_TTL_SECONDS,
         catalogue_clock: Callable[[], float] | None = None,
     ):
@@ -235,6 +331,15 @@ class SandboxClient:
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
         self.api_key = api_key
         self._headers = {"X-API-Key": api_key}
+        # The shared WUYING acceptance desktop has one Action Server but may be
+        # reached by more than one backend tenant.  Only a backend-derived,
+        # pseudonymous segment crosses that boundary; raw user ids never do.
+        # The Action Server validates this value before using it in a path.
+        self.user_scope = user_scope
+        if user_scope:
+            if not re.fullmatch(r"u-[0-9a-f]{20}", user_scope):
+                raise ValueError("invalid sandbox user scope")
+            self._headers["X-OpenBox-User-Scope"] = user_scope
         self._trace: contextvars.ContextVar[RequestTrace] = contextvars.ContextVar(
             f"sandbox_request_trace_{id(self)}", default=RequestTrace()
         )
@@ -243,6 +348,18 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
+        # Skill provider lifecycle is owned by this tenant-scoped client, not
+        # by a process-global registry. It is created lazily by
+        # skill.provider.skill_registry_for().
+        self._openbox_skill_registry = None
+        self._action_server_capabilities: frozenset[str] | None = None
+        # Capability discovery itself uses this client's request hook.  Mark
+        # that one nested /alive request so the critical run-receipt gate does
+        # not recursively try to discover capabilities again.
+        self._capability_probe: contextvars.ContextVar[bool] = contextvars.ContextVar(
+            f"sandbox_capability_probe_{id(self)}", default=False
+        )
+        self._tenant_scope_capable: bool | None = None
 
     @staticmethod
     def _header_value(value: str, limit: int = 120) -> str:
@@ -263,7 +380,64 @@ class SandboxClient:
             headers["X-OpenBox-Operation"] = self._header_value(trace.operation, 48)
         if trace.lease_token:
             headers["X-OpenBox-Desktop-Lease"] = self._header_value(trace.lease_token, 160)
+        # Database fencing must continue across the WUYING transport boundary.
+        # A backend worker that lost its generation may still have network
+        # access; the Action Server rejects its next side-effect by epoch.
+        # Do not downgrade an import/context failure to an unfenced request.
+        # A legitimate control-plane caller receives ``None`` from this helper;
+        # an unexpected failure must stop transport before a stale write escapes.
+        from agent.driver import current_run_transport_lease
+
+        transport_lease = current_run_transport_lease()
+        if transport_lease is not None:
+            fence_session, run_id, generation, expires_at = transport_lease
+            # The database lease is authoritative. A nested request context is
+            # useful for tool-call metadata, but must not re-key a run fence to
+            # a different session on the Action Server.
+            headers["X-OpenBox-Session"] = self._header_value(fence_session)
+            headers["X-OpenBox-Run"] = self._header_value(run_id)
+            headers["X-OpenBox-Run-Epoch"] = str(generation)
+            expires_at_ms = int(expires_at.timestamp() * 1000)
+            headers["X-OpenBox-Run-Lease-Expires"] = str(expires_at_ms)
+            headers["X-OpenBox-Run-Lease-Signature"] = _run_lease_signature(
+                self.api_key,
+                fence_session,
+                run_id,
+                generation,
+                expires_at_ms,
+            )
         return headers
+
+    async def _merge_request_headers(self, request: httpx.Request) -> None:
+        """Attach protected transport identity immediately before each send.
+
+        ``httpx`` merges client and request headers before request hooks run.
+        Writing the protected headers here therefore preserves unrelated
+        business headers (conditional GETs, multipart content types, and so on)
+        while preventing a per-request header mapping from replacing the API
+        key, tenant scope, trace identity, or the current database run fence.
+
+        The fence is deliberately read for every request rather than when the
+        AsyncClient is created. A client can issue several requests and the
+        active context may change between them; forwarding a cached generation
+        would reintroduce the stale-worker write window this boundary closes.
+        """
+        from agent.driver import current_run_transport_lease
+
+        transport_lease = current_run_transport_lease()
+        if transport_lease is not None and not self._capability_probe.get():
+            capabilities = await self._load_action_server_capabilities()
+            if "run_lease_receipt_v2" not in capabilities:
+                raise RuntimeError(
+                    "Action Server does not enforce signed Agent run lease receipts"
+                )
+
+        for name in _PROTECTED_REQUEST_HEADER_NAMES:
+            if name in request.headers:
+                del request.headers[name]
+        protected = {**self._headers, **self._request_headers()}
+        for name, value in protected.items():
+            request.headers[name] = value
 
     @asynccontextmanager
     async def request_context(
@@ -318,7 +492,6 @@ class SandboxClient:
             async with self._client(timeout=wait_timeout + 15) as client:
                 response = await client.post(
                     "/desktop/lease/acquire",
-                    headers=self._request_headers(),
                     json={
                         "owner": owner,
                         "wait_timeout": wait_timeout,
@@ -342,7 +515,6 @@ class SandboxClient:
                     async with self._client(timeout=10) as client:
                         response = await client.post(
                             "/desktop/lease/release",
-                            headers=self._request_headers(),
                             json={"token": lease["token"]},
                         )
                         response.raise_for_status()
@@ -367,7 +539,71 @@ class SandboxClient:
             headers=self._headers,
             timeout=timeout,
             trust_env=False,
+            event_hooks={"request": [self._merge_request_headers]},
         )
+
+    async def _load_action_server_capabilities(self) -> frozenset[str]:
+        """Load a successful /alive capability set once for protocol gating."""
+        if self._action_server_capabilities is not None:
+            return self._action_server_capabilities
+        probe_token = self._capability_probe.set(True)
+        try:
+            async with self._client(timeout=5.0) as client:
+                response = await client.get("/alive")
+                response.raise_for_status()
+                capabilities = response.json().get("capabilities", [])
+            if not isinstance(capabilities, list) or not all(
+                isinstance(item, str) for item in capabilities
+            ):
+                raise RuntimeError("Action Server returned invalid capabilities")
+        except Exception:
+            # A transport outage is retryable; do not permanently cache it as a
+            # protocol downgrade. The caller still fails before a side effect.
+            raise
+        finally:
+            self._capability_probe.reset(probe_token)
+        self._action_server_capabilities = frozenset(capabilities)
+        return self._action_server_capabilities
+
+    async def _require_tenant_scope_support(self) -> None:
+        """Fail closed before a scoped client talks to an older global server."""
+        if not self.user_scope or self._tenant_scope_capable is True:
+            return
+        if self._tenant_scope_capable is False:
+            raise RuntimeError("Action Server does not support tenant-scoped catalogues")
+        capabilities = await self._load_action_server_capabilities()
+        supported = "tenant_catalogue_scopes_v1" in capabilities
+        self._tenant_scope_capable = supported
+        if not supported:
+            raise RuntimeError("Action Server does not support tenant-scoped catalogues")
+
+    async def _require_skill_archive_create_only_support(self) -> None:
+        """Never send create-only recovery to a server that could ignore it."""
+        capabilities = await self._load_action_server_capabilities()
+        if "skill_archive_create_only_v1" not in capabilities:
+            raise RuntimeError(
+                "Action Server does not support create-only Skill archive uploads"
+            )
+
+    async def _require_skill_restore_fence_support(self) -> None:
+        """Require the execution-plane half of durable uninstall ordering."""
+        capabilities = await self._load_action_server_capabilities()
+        if "skill_restore_fence_v1" not in capabilities:
+            raise RuntimeError(
+                "Action Server does not support durable Skill restore fencing"
+            )
+
+    async def _require_filesystem_capability(
+        self,
+        capability: str,
+        operation: str,
+    ) -> None:
+        """Fail closed when an older server could ignore a safety contract."""
+        capabilities = await self._load_action_server_capabilities()
+        if capability not in capabilities:
+            raise RuntimeError(
+                f"Action Server does not support safe {operation}"
+            )
 
     async def execute(
         self,
@@ -377,7 +613,7 @@ class SandboxClient:
     ) -> ExecuteResult:
         """Execute a command in the sandbox."""
         async with self._client(timeout=timeout + 10) as client:
-            resp = await client.post("/execute", headers=self._request_headers(), json={
+            resp = await client.post("/execute", json={
                 "command": command,
                 "timeout": timeout,
                 "workdir": workdir,
@@ -395,7 +631,6 @@ class SandboxClient:
         async with self._client(timeout=30.0) as client:
             response = await client.post(
                 "/media/jobs",
-                headers=self._request_headers(),
                 json=payload,
             )
             response.raise_for_status()
@@ -405,7 +640,6 @@ class SandboxClient:
         async with self._client(timeout=15.0) as client:
             response = await client.get(
                 f"/media/jobs/{job_id}",
-                headers=self._request_headers(),
                 params={"owner": owner},
             )
             response.raise_for_status()
@@ -424,7 +658,6 @@ class SandboxClient:
         async with self._client(timeout=bounded + 15.0) as client:
             response = await client.get(
                 f"/media/jobs/{job_id}/wait",
-                headers=self._request_headers(),
                 params={
                     "owner": owner,
                     "after_version": max(0, int(after_version)),
@@ -438,7 +671,6 @@ class SandboxClient:
         async with self._client(timeout=15.0) as client:
             response = await client.post(
                 f"/media/jobs/{job_id}/cancel",
-                headers=self._request_headers(),
                 json={"owner": owner},
             )
             response.raise_for_status()
@@ -453,7 +685,6 @@ class SandboxClient:
         async with self._client(timeout=15.0) as client:
             response = await client.post(
                 f"/media/jobs/{job_id}/retry",
-                headers=self._request_headers(),
                 json=body,
             )
             response.raise_for_status()
@@ -463,7 +694,6 @@ class SandboxClient:
         async with self._client(timeout=15.0) as client:
             response = await client.get(
                 "/media/jobs/status",
-                headers=self._request_headers(),
             )
             response.raise_for_status()
             return response.json()
@@ -483,7 +713,7 @@ class SandboxClient:
         """
         pid = 0
         async with self._client(timeout=timeout + 10) as client:
-            async with client.stream("POST", "/execute_stream", headers=self._request_headers(), json={
+            async with client.stream("POST", "/execute_stream", json={
                 "command": command,
                 "timeout": timeout,
                 "idle_timeout": idle_timeout,
@@ -547,12 +777,107 @@ class SandboxClient:
             })
             resp.raise_for_status()
 
-    async def glob(self, pattern: str, path: str = "/workspace") -> list[str]:
+    async def download_file_bytes(
+        self,
+        path: str,
+        *,
+        max_bytes: int = 8 * 1024 * 1024,
+    ) -> bytes:
+        """Download one workspace file through a strict wire-size budget."""
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        async with self._client(timeout=30.0) as client:
+            async with client.stream("GET", "/download", params={"path": path}) as resp:
+                resp.raise_for_status()
+                declared = resp.headers.get("content-length")
+                if declared:
+                    try:
+                        declared_size = int(declared)
+                    except ValueError as exc:
+                        raise RuntimeError("Sandbox returned an invalid file size") from exc
+                    if declared_size < 0 or declared_size > max_bytes:
+                        raise RuntimeError("Sandbox file exceeds the download limit")
+                content = bytearray()
+                if resp.is_stream_consumed:
+                    content.extend(resp.content)
+                else:
+                    async for chunk in resp.aiter_raw():
+                        content.extend(chunk)
+                        if len(content) > max_bytes:
+                            raise RuntimeError("Sandbox file exceeds the download limit")
+                if len(content) > max_bytes:
+                    raise RuntimeError("Sandbox file exceeds the download limit")
+                return bytes(content)
+
+    async def delete_file(self, path: str) -> None:
+        """Delete one workspace file through the server's confined path API."""
+        await self._require_filesystem_capability(
+            "confined_file_delete_v1", "workspace file deletion"
+        )
+        async with self._client() as client:
+            resp = await client.post("/delete_file", json={"path": path})
+            resp.raise_for_status()
+
+    async def resolve_paths(
+        self,
+        targets: list[PathResolveTarget],
+    ) -> list[ResolvedPath]:
+        """Resolve static filesystem targets before permission evaluation."""
+        if not targets:
+            return []
+        await self._require_filesystem_capability(
+            "confined_path_resolve_v1", "canonical path resolution"
+        )
+        async with self._client() as client:
+            resp = await client.post("/resolve_paths", json={
+                "targets": [
+                    {
+                        "path": target.path,
+                        "allow_missing": target.allow_missing,
+                        "allow_scoped_skills": target.allow_scoped_skills,
+                    }
+                    for target in targets
+                ],
+            })
+            resp.raise_for_status()
+            data = resp.json()
+        raw_targets = data.get("targets")
+        if not isinstance(raw_targets, list) or len(raw_targets) != len(targets):
+            raise RuntimeError("Action Server returned invalid resolved paths")
+        resolved: list[ResolvedPath] = []
+        for item in raw_targets:
+            if not isinstance(item, dict):
+                raise RuntimeError("Action Server returned invalid resolved paths")
+            canonical = item.get("canonical_path")
+            relative = item.get("workspace_relative")
+            if not isinstance(canonical, str) or not canonical.startswith("/"):
+                raise RuntimeError("Action Server returned invalid resolved paths")
+            if relative is not None and not isinstance(relative, str):
+                raise RuntimeError("Action Server returned invalid resolved paths")
+            resolved.append(
+                ResolvedPath(
+                    canonical_path=canonical,
+                    workspace_relative=relative,
+                )
+            )
+        return resolved
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/workspace",
+        *,
+        include_sensitive: bool = False,
+    ) -> list[str]:
         """Find files matching a glob pattern in the sandbox."""
+        await self._require_filesystem_capability(
+            "sensitive_search_filter_v1", "filesystem search filtering"
+        )
         async with self._client() as client:
             resp = await client.post("/glob", json={
                 "pattern": pattern,
                 "path": path,
+                "include_sensitive": include_sensitive,
             })
             resp.raise_for_status()
             data = resp.json()
@@ -564,14 +889,20 @@ class SandboxClient:
         path: str = "/workspace",
         file_type: str | None = None,
         max_results: int = 100,
+        *,
+        include_sensitive: bool = False,
     ) -> str:
         """Search file contents in the sandbox."""
+        await self._require_filesystem_capability(
+            "sensitive_search_filter_v1", "filesystem search filtering"
+        )
         async with self._client() as client:
             resp = await client.post("/grep", json={
                 "pattern": pattern,
                 "path": path,
                 "type": file_type,
                 "max_results": max_results,
+                "include_sensitive": include_sensitive,
             })
             resp.raise_for_status()
             data = resp.json()
@@ -614,6 +945,8 @@ class SandboxClient:
 
     async def _get(self, path: str, timeout: float = 15.0):
         """Generic GET request to action server."""
+        if path.startswith(("/skills", "/mcp/", "/catalog")):
+            await self._require_tenant_scope_support()
         async with self._client(timeout=timeout) as client:
             resp = await client.get(path)
             resp.raise_for_status()
@@ -621,6 +954,8 @@ class SandboxClient:
 
     async def _post(self, path: str, timeout: float = 30.0, **kwargs):
         """Generic POST request to action server."""
+        if path.startswith(("/skills", "/mcp/", "/catalog")):
+            await self._require_tenant_scope_support()
         async with self._client(timeout=timeout) as client:
             resp = await client.post(path, **kwargs)
             resp.raise_for_status()
@@ -628,6 +963,8 @@ class SandboxClient:
 
     async def _delete(self, path: str, timeout: float = 15.0):
         """Generic DELETE request to action server."""
+        if path.startswith(("/skills", "/mcp/", "/catalog")):
+            await self._require_tenant_scope_support()
         async with self._client(timeout=timeout) as client:
             resp = await client.request("DELETE", path)
             resp.raise_for_status()
@@ -648,6 +985,25 @@ class SandboxClient:
         # lets the next caller load the post-mutation generation immediately;
         # the epoch guard prevents the old task from repopulating the cache.
         self._catalogue_inflight = None
+        registry = self._openbox_skill_registry
+        if registry is not None:
+            # Mutation invalidation is the primary freshness signal. Provider
+            # TTLs remain only a bounded fallback for changes made elsewhere.
+            try:
+                registry.invalidate("wuying-scoped")
+                registry.invalidate("personal-user-library")
+            except Exception as exc:
+                log.debug(
+                    "Could not invalidate Skill provider cache error_type=%s",
+                    type(exc).__name__,
+                )
+
+    async def dispose_skill_registry(self) -> None:
+        """Dispose this client's scoped Skill providers and in-flight reads."""
+        registry = self._openbox_skill_registry
+        self._openbox_skill_registry = None
+        if registry is not None:
+            await registry.dispose()
 
     @staticmethod
     def _resource_metadata(resources) -> list[dict]:
@@ -686,10 +1042,9 @@ class SandboxClient:
 
     async def _legacy_catalogue_projection(self, client: httpx.AsyncClient) -> dict:
         """Build an equivalent snapshot from an older Action Server."""
-        headers = self._request_headers()
         responses = []
         for path in ("/skills", "/mcp/tools", "/mcp/resources"):
-            response = await client.get(path, headers=headers)
+            response = await client.get(path)
             response.raise_for_status()
             responses.append(response.json())
         skills, tools, resources = responses
@@ -717,15 +1072,16 @@ class SandboxClient:
         }
 
     async def _reload_catalogue_projection(self) -> _CatalogueLoad:
+        await self._require_tenant_scope_support()
         load_epoch = self._catalogue_epoch
         previous = self._catalogue_cache
         availability: Literal["available", "stale"] = "available"
         try:
             async with self._client(timeout=15.0) as client:
-                headers = self._request_headers()
+                headers = {}
                 if previous is not None and previous.etag:
                     headers["If-None-Match"] = previous.etag
-                response = await client.get("/catalog", headers=headers)
+                response = await client.get("/catalog", headers=headers or None)
 
                 if response.status_code == 304:
                     if previous is None or not previous.etag:
@@ -898,6 +1254,10 @@ class SandboxClient:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {404, 405}:
                 raise
+            if self.user_scope:
+                raise RuntimeError(
+                    "Scoped skill creation requires the current Action Server"
+                ) from exc
 
         if len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
             raise ValueError("invalid skill slug")
@@ -960,6 +1320,8 @@ class SandboxClient:
         return {**created, "created": True}
 
     async def _legacy_export_skill_archive(self, name: str) -> dict:
+        if self.user_scope:
+            raise RuntimeError("Legacy global skill export is disabled for scoped clients")
         encoded_script = base64.b64encode(
             _LEGACY_SKILL_EXPORT_SCRIPT.encode("utf-8")
         ).decode("ascii")
@@ -976,26 +1338,79 @@ class SandboxClient:
         except (IndexError, json.JSONDecodeError) as exc:
             raise RuntimeError("WUYING skill export returned an invalid response") from exc
 
+    @staticmethod
+    async def _validated_skill_archive_response(resp: httpx.Response) -> bytes:
+        """Read one identity-encoded ZIP response through the wire-size budget."""
+        encoding = resp.headers.get("content-encoding", "identity").strip().casefold()
+        if encoding not in {"", "identity"}:
+            raise SkillArchiveValidationError(
+                "http_encoding",
+                "Compressed HTTP encoding is not allowed for Skill ZIPs",
+            )
+        declared = resp.headers.get("content-length")
+        if declared:
+            try:
+                declared_size = int(declared)
+            except ValueError as exc:
+                raise SkillArchiveValidationError(
+                    "invalid_size",
+                    "Skill ZIP response has an invalid Content-Length",
+                ) from exc
+            if declared_size < 0 or declared_size > SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+                raise SkillArchiveValidationError(
+                    "compressed_too_large",
+                    "Skill ZIP exceeds the compressed size limit",
+                )
+
+        archive = bytearray()
+        if resp.is_stream_consumed:
+            archive.extend(resp.content)
+        else:
+            async for chunk in resp.aiter_raw():
+                archive.extend(chunk)
+                if len(archive) > SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+                    raise SkillArchiveValidationError(
+                        "compressed_too_large",
+                        "Skill ZIP exceeds the compressed size limit",
+                    )
+        if len(archive) > SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+            raise SkillArchiveValidationError(
+                "compressed_too_large",
+                "Skill ZIP exceeds the compressed size limit",
+            )
+        result = bytes(archive)
+        await asyncio.to_thread(validate_skill_zip, result)
+        return result
+
     async def download_skill_archive(self, name: str) -> bytes:
         """Download a user skill as a ZIP archive."""
+        await self._require_tenant_scope_support()
         encoded_name = quote(name, safe="")
         try:
             async with self._client(timeout=60.0) as client:
-                resp = await client.get(f"/skills/{encoded_name}/archive")
-                resp.raise_for_status()
-                return resp.content
+                async with client.stream(
+                    "GET",
+                    f"/skills/{encoded_name}/archive",
+                ) as resp:
+                    resp.raise_for_status()
+                    return await self._validated_skill_archive_response(resp)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in {404, 405}:
                 raise
 
         exported = await self._legacy_export_skill_archive(name)
         async with self._client(timeout=60.0) as client:
-            resp = await client.get("/download", params={"path": exported["path"]})
-            resp.raise_for_status()
-            return resp.content
+            async with client.stream(
+                "GET",
+                "/download",
+                params={"path": exported["path"]},
+            ) as resp:
+                resp.raise_for_status()
+                return await self._validated_skill_archive_response(resp)
 
     async def export_skill_archive(self, name: str) -> dict:
         """Export a user skill ZIP into the sandbox workspace."""
+        await self._require_tenant_scope_support()
         encoded_name = quote(name, safe="")
         try:
             return await self._post(f"/skills/{encoded_name}/export", timeout=60.0)
@@ -1019,24 +1434,112 @@ class SandboxClient:
         self._invalidate_catalogue_cache()
         return installed
 
-    async def upload_skill_archive(self, file_bytes: bytes, filename: str, name: str = "") -> dict:
-        """Upload a skill archive (zip/tar/tar.gz/rar) to the container."""
-        import httpx
+    async def upload_skill_archive(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        name: str = "",
+        *,
+        create_only: bool = False,
+        restore_generation: int | None = None,
+    ) -> dict:
+        """Upload a Skill archive, optionally with atomic create-only semantics."""
+        await self._require_tenant_scope_support()
+        # Durable personal snapshots are ZIPs. Validate them before any bytes
+        # cross the trust boundary; the Action Server repeats the same checks
+        # immediately before extraction so neither a corrupt database row nor
+        # a bypassing API client can consume unbounded execution-plane space.
+        if filename.casefold().endswith(".zip"):
+            await asyncio.to_thread(validate_skill_zip, file_bytes)
+        if restore_generation is not None:
+            if not create_only or restore_generation < 1:
+                raise ValueError(
+                    "restore_generation requires create_only and must be positive"
+                )
+            await self._require_skill_restore_fence_support()
+        if create_only:
+            await self._require_skill_archive_create_only_support()
         files = {"file": (filename, file_bytes)}
-        data = {"name": name or ""}
-        async with httpx.AsyncClient(timeout=90.0, trust_env=False) as client:
-            url = f"{self.base_url}/skills/upload"
-            resp = await client.post(url, files=files, data=data, headers=self._headers)
+        data = {
+            "name": name or "",
+            "create_only": "true" if create_only else "false",
+        }
+        if restore_generation is not None:
+            data["restore_generation"] = str(restore_generation)
+        async with self._client(timeout=90.0) as client:
+            resp = await client.post(
+                "/skills/upload",
+                files=files,
+                data=data,
+            )
             if resp.status_code != 200:
-                detail = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+                detail = (
+                    resp.json().get("detail", resp.text)
+                    if resp.headers.get("content-type", "").startswith("application/json")
+                    else resp.text
+                )
+                if (
+                    create_only
+                    and resp.status_code == 409
+                    and isinstance(detail, dict)
+                    and detail.get("code") == "skill_already_exists"
+                ):
+                    conflict_name = detail.get("name")
+                    message = detail.get("message")
+                    # The conflicting package may have been published by a
+                    # different backend process after our cached negative.
+                    # Force the caller's convergence read past that stale view.
+                    self._invalidate_catalogue_cache()
+                    raise SkillArchiveAlreadyExistsError(
+                        conflict_name if isinstance(conflict_name, str) else name,
+                        message if isinstance(message, str) else None,
+                    )
+                if (
+                    create_only
+                    and resp.status_code == 409
+                    and isinstance(detail, dict)
+                    and detail.get("code") == "skill_restore_fenced"
+                ):
+                    conflict_name = detail.get("name")
+                    fenced_through = detail.get("fenced_through_generation")
+                    self._invalidate_catalogue_cache()
+                    raise SkillRestoreFencedError(
+                        conflict_name if isinstance(conflict_name, str) else name,
+                        (
+                            fenced_through
+                            if isinstance(fenced_through, int)
+                            else restore_generation or 1
+                        ),
+                    )
                 raise Exception(detail)
             installed = resp.json()
         self._invalidate_catalogue_cache()
         return installed
 
-    async def uninstall_skill(self, name: str) -> dict:
+    async def uninstall_skill(
+        self,
+        name: str,
+        *,
+        mutation_generation: int | None = None,
+    ) -> dict:
         """Uninstall a skill from the container."""
-        removed = await self._delete(f"/skills/{name}")
+        if mutation_generation is not None:
+            if mutation_generation < 1:
+                raise ValueError("mutation_generation must be positive")
+            await self._require_skill_restore_fence_support()
+        encoded_name = quote(name, safe="")
+        async with self._client(timeout=15.0) as client:
+            removed_response = await client.request(
+                "DELETE",
+                f"/skills/{encoded_name}",
+                params=(
+                    {"mutation_generation": mutation_generation}
+                    if mutation_generation is not None
+                    else None
+                ),
+            )
+            removed_response.raise_for_status()
+            removed = removed_response.json()
         self._invalidate_catalogue_cache()
         return removed
 

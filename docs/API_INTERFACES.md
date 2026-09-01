@@ -263,13 +263,36 @@ POST /api/agent/session/:sessionId/message
 **Request Body**:
 ```typescript
 {
-  text: string
+  text: string                    // 1..65536 chars
+  delivery?: "followup" | "steer" | "inject" // default followup
+  client_message_id?: string      // stable idempotency key, max 64 chars
+  attachments?: string[]          // ready file_asset ids, max 32
+  agent?: string
+  model?: string
+  video_model?: string
+  variant?: string
+  format?: Record<string, unknown>
 }
 ```
+
+同步入口先持久化 Inbox item，再等待该 item 自身的 `settled/canceled`
+终态；不会把另一个并发 Prompt 的最新 Message 当作本请求结果。
 
 **Response** `200`:
 ```typescript
 MessageWithParts
+```
+
+空闲 Session 的 `delivery="inject"` 不会主动 wake，也不会无限等待；返回
+`202 Accepted`：
+
+```typescript
+{
+  ok: true
+  inboxId: string
+  state: "accepted" | "claimed"
+  runId: string | null
+}
 ```
 
 ---
@@ -281,6 +304,8 @@ POST /api/agent/session/:sessionId/prompt_async
 ```
 
 > 发送后立即返回，后续通过 SSE 推送流式响应。
+> Session 忙时普通 `followup` 只排队，不中断当前 Agent；`steer` 在下一步
+> 边界进入上下文；`inject` 不主动唤醒空闲 Session。
 
 **Request Body**:
 ```typescript
@@ -289,12 +314,26 @@ POST /api/agent/session/:sessionId/prompt_async
   agent?: string         // 指定 agent，如 "build", "explore"
   model?: string         // 指定模型，如 "anthropic/claude-sonnet-4"
   variant?: string       // 模型变体
+  delivery?: "followup" | "steer" | "inject"
+  client_message_id?: string
+  attachments?: string[]
 }
 ```
 
 **Response** `200`:
 ```typescript
-{ ok: boolean }
+{
+  ok: boolean
+  inboxId: string
+  state: "accepted" | "claimed" | "canceled" | "settled"
+  runId: string | null
+}
+```
+
+取消尚未 claim 的输入：
+
+```text
+DELETE /api/agent/session/:sessionId/inbox/:itemId
 ```
 
 ---
@@ -305,7 +344,17 @@ POST /api/agent/session/:sessionId/prompt_async
 POST /api/agent/session/:sessionId/abort
 ```
 
-**Response** `200`: `void`
+Stop 会取消尚未 claim 的 Inbox 输入，并对取消提交后观察到的 exact durable
+Driver generation 发出 CAS abort，避免 idle→claim 竞态把停止变成 no-op。
+
+**Response** `200`:
+```typescript
+{
+  ok: true
+  marked: boolean
+  canceledInbox: number
+}
+```
 
 ---
 

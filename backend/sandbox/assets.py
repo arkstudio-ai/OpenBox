@@ -9,15 +9,16 @@ terminal, grep-style):
     obx-file get <presigned-url> <dest>   # OSS → sandbox
     obx-file put <src> <presigned-url>    # sandbox → OSS (empty-CT signing)
 """
+
+import asyncio
 import base64
 import shlex
+from typing import Sequence
 
 from core.log import create_logger
 from core.oss import OssClient
 
 log = create_logger("sandbox.assets")
-
-UPLOAD_DIR = "/workspace/uploads"
 
 OBX_FILE_SCRIPT = """#!/bin/sh
 # obx-file - move files between OSS and this sandbox via presigned URLs.
@@ -48,12 +49,44 @@ esac
 _installed: set[str] = set()
 
 
+class AssetDeliveryError(RuntimeError):
+    """Strict delivery could not land every expected durable asset."""
+
+    def __init__(
+        self,
+        *,
+        expected_asset_ids: Sequence[str],
+        missing_asset_ids: Sequence[str],
+        code: str = "delivery_failed",
+        retryable: bool = True,
+    ):
+        self.expected_asset_ids = tuple(expected_asset_ids)
+        self.missing_asset_ids = tuple(missing_asset_ids)
+        self.code = code
+        self.retryable = retryable
+        super().__init__(
+            "attachment delivery incomplete; missing="
+            + ",".join(self.missing_asset_ids)
+        )
+
+
 def _use_internal_oss(oss: OssClient) -> bool:
-    """Cloud desktops use Alibaba's regional OSS network, not public egress."""
+    """Use OSS intranet only when the desktop and bucket share a region.
+
+    Alibaba's ``*-internal`` endpoints are regional.  A Shanghai WUYING
+    desktop cannot reach a Hangzhou bucket through the Hangzhou intranet
+    hostname; selecting it merely because both services are Alibaba leaves an
+    otherwise valid asset in OSS without its workspace copy.
+    """
     from core.config import get_config
 
+    config = get_config()
+    desktop_region = str(getattr(config, "wuying_region_id", "") or "").strip().lower()
+    bucket_region = str(getattr(oss, "region", "") or "").strip().lower()
     return (
-        get_config().sandbox_provider.lower() == "wuying"
+        config.sandbox_provider.lower() == "wuying"
+        and bool(desktop_region)
+        and desktop_region == bucket_region
         and oss.internal_host != oss.host
     )
 
@@ -61,30 +94,60 @@ def _use_internal_oss(oss: OssClient) -> bool:
 async def ensure_cli(client, container_key: str) -> None:
     """Install obx-file into the sandbox (idempotent, cached per container).
 
-    /usr/local/bin when passwordless sudo allows it, else ~/.local/bin; the
-    caller runs it through `PATH="$HOME/.local/bin:$PATH"` so both work.
+    Production WUYING deploys install the helper system-wide. Development
+    sandboxes fall back to the runner's own bin directory without sudo or a
+    predictable shared /tmp filename.
     """
     if container_key in _installed:
         return
     b64 = base64.b64encode(OBX_FILE_SCRIPT.encode()).decode()
-    cmd = (
-        f"printf %s {b64} | base64 -d > /tmp/.obx-file && chmod +x /tmp/.obx-file && "
-        "(sudo -n install -m755 /tmp/.obx-file /usr/local/bin/obx-file 2>/dev/null || "
-        '(mkdir -p "$HOME/.local/bin" && install -m755 /tmp/.obx-file "$HOME/.local/bin/obx-file"))'
-    )
+    cmd = f"""set -e
+if ! command -v obx-file >/dev/null 2>&1; then
+  install -d -m 0750 "$HOME/.local/bin"
+  tmp=$(mktemp "${{TMPDIR:-/tmp}}/.openbox-obx-file.XXXXXX")
+  trap 'rm -f "$tmp"' EXIT HUP INT TERM
+  printf %s {b64} | base64 -d > "$tmp"
+  chmod 0755 "$tmp"
+  install -m 0755 "$tmp" "$HOME/.local/bin/obx-file"
+fi
+"""
     result = await client.execute(cmd, timeout=30)
     if result.exit_code != 0:
         raise RuntimeError(f"obx-file install failed: {result.stderr[:200]}")
     _installed.add(container_key)
 
 
-async def deliver(client, container_key: str, oss: OssClient, assets: list) -> list[str]:
-    """Pull each ready asset into /workspace/uploads. Returns landed paths.
+def asset_cli_provision_script() -> str:
+    """Return the root-only WUYING installer for the OSS transfer helper."""
+    payload = base64.b64encode(OBX_FILE_SCRIPT.encode()).decode()
+    return f"""set -e
+tmp=$(mktemp /usr/local/bin/.obx-file.XXXXXX)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+printf %s {payload} | base64 -d > "$tmp"
+chmod 0755 "$tmp"
+chown root:root "$tmp"
+mv -f "$tmp" /usr/local/bin/obx-file
+command -v obx-file >/dev/null
+"""
+
+
+async def deliver(
+    client,
+    container_key: str,
+    oss: OssClient,
+    assets: list,
+    *,
+    user_id: str,
+    project_id: str,
+) -> list[str]:
+    """Pull each ready asset into its tenant/project namespace.
 
     A failed download is logged and skipped — the agent still gets the other
     files plus the message text, which beats failing the whole prompt.
     """
     await ensure_cli(client, container_key)
+    from project.workspace import asset_sandbox_path
+
     landed: list[str] = []
     for asset in assets:
         url = oss.presign_get(
@@ -92,7 +155,12 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
             expires_sec=1800,
             internal=_use_internal_oss(oss),
         )
-        dest = f"{UPLOAD_DIR}/{asset.name}"
+        dest = asset_sandbox_path(
+            user_id,
+            project_id,
+            asset.name,
+            asset_id=asset.id,
+        )
         cmd = f'PATH="$HOME/.local/bin:$PATH" obx-file get {shlex.quote(url)} {shlex.quote(dest)}'
         try:
             result = await client.execute(cmd, timeout=120)
@@ -103,6 +171,137 @@ async def deliver(client, container_key: str, oss: OssClient, assets: list) -> l
         except Exception as e:
             log.warning(f"Asset {asset.id} download failed: {e}")
     return landed
+
+
+async def deliver_asset_ids(
+    session_id: str,
+    user_id: str,
+    asset_ids: list[str],
+    *,
+    strict: bool = False,
+    expected_asset_ids: Sequence[str] | None = None,
+    max_attempts: int = 3,
+) -> list[str]:
+    """Resolve owned durable asset ids and deliver them to this Session's sandbox.
+
+    Existing callers keep best-effort partial semantics. Inbox/recovery callers
+    opt into ``strict`` and provide the exact durable ids their claimed Parts
+    reference; those calls retry a bounded number of times and fail closed
+    until every expected path has landed.
+    """
+    if not asset_ids:
+        if strict and expected_asset_ids:
+            raise AssetDeliveryError(
+                expected_asset_ids=expected_asset_ids,
+                missing_asset_ids=expected_asset_ids,
+                code="asset_unavailable",
+                retryable=False,
+            )
+        return []
+    requested = list(dict.fromkeys(asset_ids))
+    expected = list(
+        dict.fromkeys(requested if expected_asset_ids is None else expected_asset_ids)
+    )
+    if strict:
+        if set(expected) != set(requested):
+            raise ValueError("strict attachment expectation must match requested ids")
+        if max_attempts < 1 or max_attempts > 5:
+            raise ValueError("strict attachment attempts must be between 1 and 5")
+    from sqlalchemy import select
+
+    from core.oss import get_oss
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from sandbox.manager import sandbox_manager
+
+    async with get_db_session() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(FileAsset).where(
+                        FileAsset.id.in_(asset_ids),
+                        FileAsset.user_id == user_id,
+                        FileAsset.status == "ready",
+                        FileAsset.is_deleted.is_(False),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by_id = {row.id: row for row in rows}
+    ordered = [by_id[asset_id] for asset_id in requested if asset_id in by_id]
+    if strict:
+        missing_rows = [asset_id for asset_id in expected if asset_id not in by_id]
+        if missing_rows:
+            raise AssetDeliveryError(
+                expected_asset_ids=expected,
+                missing_asset_ids=missing_rows,
+                code="asset_unavailable",
+                retryable=False,
+            )
+    if not ordered:
+        return []
+    from session.session import workspace_identity_for
+
+    owner_id, project_id = await workspace_identity_for(session_id)
+    if owner_id != user_id:
+        raise PermissionError("Attachment session ownership mismatch")
+    client = await sandbox_manager.get_client(session_id, user_id=user_id)
+    if not strict:
+        return await deliver(
+            client,
+            f"{user_id}:{session_id}",
+            get_oss(),
+            ordered,
+            user_id=user_id,
+            project_id=project_id,
+        )
+
+    from project.workspace import asset_sandbox_path
+
+    expected_paths = {
+        asset.id: asset_sandbox_path(
+            user_id,
+            project_id,
+            asset.name,
+            asset_id=asset.id,
+        )
+        for asset in ordered
+    }
+    landed: set[str] = set()
+    remaining = list(ordered)
+    for attempt in range(max_attempts):
+        try:
+            landed.update(
+                await deliver(
+                    client,
+                    f"{user_id}:{session_id}",
+                    get_oss(),
+                    remaining,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+            )
+        except Exception:
+            log.exception(
+                "Strict asset delivery attempt failed session=%s attempt=%s",
+                session_id,
+                attempt + 1,
+            )
+        remaining = [
+            asset for asset in remaining if expected_paths[asset.id] not in landed
+        ]
+        if not remaining:
+            return [expected_paths[asset_id] for asset_id in expected]
+        if attempt + 1 < max_attempts:
+            await asyncio.sleep(min(0.1 * (2**attempt), 0.5))
+    raise AssetDeliveryError(
+        expected_asset_ids=expected,
+        missing_asset_ids=[asset.id for asset in remaining],
+        code="delivery_failed",
+        retryable=True,
+    )
 
 
 async def _session_project(db, session_id: str | None, user_id: str) -> str | None:
@@ -161,7 +360,9 @@ async def attach_sandbox_image(
 
     # Keyed by the machine, not the conversation: obx-file is a property of
     # the container, so a new chat must not reinstall it.
-    await ensure_cli(ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id)
+    await ensure_cli(
+        ctx.sandbox, getattr(ctx.sandbox, "base_url", "") or ctx.session_id
+    )
     put_url = oss.presign_put(
         key,
         mime,
@@ -211,7 +412,8 @@ async def attach_sandbox_image(
             transient=transient,
             relation=FileRelation(
                 source_part_id=ctx.part_id or None,
-                group_id=relation_group_id or (f"tool:{ctx.part_id}" if ctx.part_id else None),
+                group_id=relation_group_id
+                or (f"tool:{ctx.part_id}" if ctx.part_id else None),
                 role=relation_role,
                 kind=relation_kind,
                 label=relation_label,
@@ -222,5 +424,6 @@ async def attach_sandbox_image(
         ),
         is_new=True,
         user_id=ctx.user_id,
+        run_fence=ctx.run_fence,
     )
     return asset_id, verified

@@ -28,6 +28,95 @@ async def test_webhook_to_private_address_is_refused_at_send_time():
     assert "private or local" in (result.error or "")
 
 
+async def test_webhook_carries_stable_receiver_dedupe_receipt(monkeypatch):
+    captured = {}
+
+    class Response:
+        is_success = True
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            captured.update(url=url, json=json, headers=headers)
+            return Response()
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    result = await dispatch_delivery(
+        {"mode": "webhook", "webhook_url": "https://8.8.8.8/hook"},
+        job_name="daily",
+        job_id="job-1",
+        status="ok",
+        summary_text="done",
+        duration_ms=9,
+        delivery_id="delivery-stable-1",
+        occurred_at="2026-08-31T01:02:03+00:00",
+    )
+    assert result.success is True
+    assert captured["headers"]["Idempotency-Key"] == "delivery-stable-1"
+    assert captured["headers"]["X-OpenBox-Delivery-ID"] == "delivery-stable-1"
+    assert captured["json"]["delivery_id"] == "delivery-stable-1"
+    assert captured["json"]["timestamp"] == "2026-08-31T01:02:03+00:00"
+
+
+async def test_webhook_http_error_retry_classification(monkeypatch):
+    class Response:
+        def __init__(self, status_code, headers=None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self.is_success = 200 <= status_code < 300
+
+    responses = iter([
+        Response(400),
+        Response(429, {"Retry-After": "17"}),
+        Response(503),
+    ])
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return next(responses)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    config = {"mode": "webhook", "webhook_url": "https://8.8.8.8/hook"}
+    common = dict(
+        job_name="daily",
+        job_id="job-http-classification",
+        status="ok",
+        summary_text="done",
+        duration_ms=1,
+    )
+
+    bad_request = await dispatch_delivery(config, **common)
+    assert bad_request.success is False and bad_request.terminal is True
+
+    rate_limited = await dispatch_delivery(config, **common)
+    assert rate_limited.terminal is False
+    assert rate_limited.retry_delay_seconds == 17
+
+    unavailable = await dispatch_delivery(config, **common)
+    assert unavailable.terminal is False
+    assert unavailable.retry_delay_seconds is None
+
+
 class FakeCtx:
     def __init__(self, session_id):
         self.session_id = session_id

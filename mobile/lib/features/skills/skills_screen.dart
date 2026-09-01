@@ -37,13 +37,15 @@ class SkillsScreen extends ConsumerStatefulWidget {
 class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   SkillFilters _filters = const SkillFilters();
 
-  String? get _actionError => ref.read(skillsErrorProvider);
+  String? get _userId => ref.read(skillsAccountProvider);
+
+  String? get _actionError => ref.read(skillsErrorProvider(_userId));
 
   void _setBusy(bool value) =>
-      ref.read(skillsBusyProvider.notifier).state = value;
+      ref.read(skillsBusyProvider(_userId).notifier).state = value;
 
   void _setError(String? value) =>
-      ref.read(skillsErrorProvider.notifier).state = value;
+      ref.read(skillsErrorProvider(_userId).notifier).state = value;
 
   bool _matches(String query, List<String?> fields) {
     final q = query.trim().toLowerCase();
@@ -53,24 +55,33 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
 
   void _report(Object error) {
     if (!mounted) return;
-    final message = errorText(ref.read(i18nProvider), error);
+    final message = error is McpCatalogInstallException
+        ? error.message
+        : errorText(ref.read(i18nProvider), error);
     _setError(message);
     ref.read(toastProvider.notifier).error(message);
   }
 
   /// Run one write and refresh every list — an install moves more than one.
   Future<bool> _run(Future<void> Function() action) async {
+    final operationUserId = _userId;
     _setError(null);
     _setBusy(true);
     try {
       await action();
-      if (mounted) bumpSkills(ref);
+      if (!mounted || _userId != operationUserId) return false;
+      bumpSkills(ref);
       return true;
     } catch (error) {
-      _report(error);
+      if (mounted && _userId == operationUserId) {
+        // Configuration is committed before the backend attempts the MCP
+        // connection. Refresh that partial state while keeping the sheet open.
+        if (error is McpCatalogInstallException) bumpSkills(ref);
+        _report(error);
+      }
       return false;
     } finally {
-      if (mounted) _setBusy(false);
+      if (mounted && _userId == operationUserId) _setBusy(false);
     }
   }
 
@@ -78,8 +89,8 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
 
   List<SkillDependency> _unmetFor(InstalledSkill skill) => unmetDependencies(
         skill.requiresMcp,
-        ref.read(mcpServersProvider).valueOrNull ?? const [],
-        ref.read(skillCatalogProvider).valueOrNull?.mcp ?? const [],
+        ref.read(mcpServersProvider(_userId)).valueOrNull ?? const [],
+        ref.read(skillCatalogProvider(_userId)).valueOrNull?.mcp ?? const [],
       );
 
   // ---------------------------------------------------------------- flows
@@ -137,10 +148,10 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   /// sandbox unpacked — the caller never had it.
   Future<void> _finishSkillInstall(Future<void> Function() install) async {
     if (!await _run(install)) return;
-    final fresh = await ref.refresh(installedSkillsProvider.future);
+    final fresh = await ref.refresh(installedSkillsProvider(_userId).future);
     // Both lists have to be current before the gaps are computed: a server
     // installed moments ago must not still read as missing.
-    await ref.refresh(mcpServersProvider.future).catchError(
+    await ref.refresh(mcpServersProvider(_userId).future).catchError(
           (Object _) => const <McpServer>[],
         );
     if (!mounted) return;
@@ -150,7 +161,7 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   }
 
   Future<void> _openInstall(CatalogEntry entry) async {
-    final catalog = ref.read(skillCatalogProvider).valueOrNull;
+    final catalog = ref.read(skillCatalogProvider(_userId)).valueOrNull;
     await _showSheet(
       (sheetContext, busy, error) => InstallSheet(
         entry: entry,
@@ -210,7 +221,7 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   }
 
   Future<void> _openCreate() async {
-    final projects = await ref.read(skillProjectsProvider.future);
+    final projects = await ref.read(skillProjectsProvider(_userId).future);
     if (!mounted) return;
     await _showSheet(
       (sheetContext, busy, error) => CreateSkillSheet(
@@ -321,11 +332,14 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
         // otherwise the confirm button would never say "安装中…" and a
         // failure would never reach the sheet that caused it.
         builder: (sheetContext) => Consumer(
-          builder: (context, ref, _) => builder(
-            sheetContext,
-            ref.watch(skillsBusyProvider),
-            ref.watch(skillsErrorProvider),
-          ),
+          builder: (context, ref, _) {
+            final userId = ref.watch(skillsAccountProvider);
+            return builder(
+              sheetContext,
+              ref.watch(skillsBusyProvider(userId)),
+              ref.watch(skillsErrorProvider(userId)),
+            );
+          },
         ),
       );
 
@@ -335,11 +349,12 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final skills = ref.watch(installedSkillsProvider);
-    final servers = ref.watch(mcpServersProvider);
-    final catalog = ref.watch(skillCatalogProvider);
-    final busy = ref.watch(skillsBusyProvider);
-    final actionError = ref.watch(skillsErrorProvider);
+    final userId = ref.watch(skillsAccountProvider);
+    final skills = ref.watch(installedSkillsProvider(userId));
+    final servers = ref.watch(mcpServersProvider(userId));
+    final catalog = ref.watch(skillCatalogProvider(userId));
+    final busy = ref.watch(skillsBusyProvider(userId));
+    final actionError = ref.watch(skillsErrorProvider(userId));
     final query = _filters.query;
     final mine = _filters.tab == 'mine';
     final loading = mine

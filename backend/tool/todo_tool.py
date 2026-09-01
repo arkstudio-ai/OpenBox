@@ -63,6 +63,7 @@ async def _publish_todo_part(ctx: ToolContext, items: list) -> None:
         # leaving it at the default delivers the live update to nobody and
         # the card only turns up on the next reload.
         user_id=ctx.user_id or "default",
+        run_fence=ctx.run_fence,
     )
 
 
@@ -176,4 +177,5 @@ todo_read_tool = define_tool(
     parameters=TodoReadArgs,
     execute=execute_read,
     sandbox_required=False,
+    parallel_safe=True,
 )

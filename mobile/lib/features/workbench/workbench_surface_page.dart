@@ -57,18 +57,25 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
       ),
       body: switch (widget.kind) {
         'terminal' => _withContainer(
-            (containerId) => TerminalTab(containerId: containerId)),
-        'browser' => _withContainer((_) => const BrowserTab()),
-        'files' => _withContainer(
-            (containerId) =>
-                FilesTab(sessionId: widget.sessionId, containerId: containerId),
-          ),
-        'desktop' => const DesktopTab(),
-        'cron' => CronPanelTab(
+          (containerId) => TerminalTab(
+            containerId: containerId,
+            sessionId: widget.sessionId,
             projectId: ref
                 .watch(sessionProjectIdProvider(widget.sessionId))
                 .valueOrNull,
           ),
+        ),
+        'browser' => _withContainer((_) => const BrowserTab()),
+        'files' => _withContainer(
+          (containerId) =>
+              FilesTab(sessionId: widget.sessionId, containerId: containerId),
+        ),
+        'desktop' => const DesktopTab(),
+        'cron' => CronPanelTab(
+          projectId: ref
+              .watch(sessionProjectIdProvider(widget.sessionId))
+              .valueOrNull,
+        ),
         _ => ReviewTab(sessionId: widget.sessionId),
       },
     );
@@ -84,8 +91,10 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
       loading: () =>
           const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       error: (_, _) => Center(
-        child: Text(i18n.t('workbench:sandbox.none'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:sandbox.none'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       ),
       data: (info) {
         if (info == null) {
@@ -93,8 +102,10 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(i18n.t('workbench:sandbox.none'),
-                    style: TextStyle(fontSize: FontSizes.base, color: t.n700)),
+                Text(
+                  i18n.t('workbench:sandbox.none'),
+                  style: TextStyle(fontSize: FontSizes.base, color: t.n700),
+                ),
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: _creatingSandbox ? null : _createSandbox,

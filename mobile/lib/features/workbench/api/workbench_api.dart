@@ -23,19 +23,36 @@ class WorkbenchApi {
         .toList();
   }
 
-  /// The session's project workdir (`directory` on `GET /session/{id}`),
-  /// used as the files-tab root (web D.4.7 — never climb above it).
-  Future<String?> sessionDirectory(String sessionId) async {
-    final resp = await _dio
-        .get<Map<String, dynamic>>('/api/agent/session/$sessionId');
-    return asString(resp.data?['directory']);
-  }
-
-  /// The session's owning project (the cron tab scopes to it).
-  Future<String?> sessionProjectId(String sessionId) async {
-    final resp = await _dio
-        .get<Map<String, dynamic>>('/api/agent/session/$sessionId');
-    return asString(resp.data?['project_id']);
+  /// The session's project identity and physical workdir.
+  ///
+  /// Only [SessionWorkspace.directory] is sent back to file APIs. The UI uses
+  /// [SessionWorkspace.projectName], never the physical namespace basename.
+  /// The project-list fallback keeps this correct during a rolling backend
+  /// deployment where `project_name` is not present on the session response.
+  Future<SessionWorkspace> sessionWorkspace(String sessionId) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/agent/session/$sessionId',
+    );
+    final data = resp.data ?? const <String, dynamic>{};
+    final projectId = asString(data['project_id']);
+    var projectName = asString(data['project_name']);
+    if ((projectName == null || projectName.isEmpty) &&
+        projectId != null &&
+        projectId.isNotEmpty) {
+      final projects = await _dio.get<List<dynamic>>('/api/agent/project');
+      for (final raw in projects.data ?? const <dynamic>[]) {
+        if (raw is! Map<String, dynamic>) continue;
+        if (asString(raw['id']) == projectId) {
+          projectName = asString(raw['name']);
+          break;
+        }
+      }
+    }
+    return SessionWorkspace(
+      directory: asString(data['directory']),
+      projectId: projectId,
+      projectName: projectName,
+    );
   }
 
   Future<List<FileEntry>> listFiles(String containerId, String path) async {
@@ -55,5 +72,18 @@ class WorkbenchApi {
   }
 }
 
-final workbenchApiProvider =
-    Provider<WorkbenchApi>((ref) => WorkbenchApi(ref.watch(apiDioProvider)));
+class SessionWorkspace {
+  const SessionWorkspace({
+    required this.directory,
+    required this.projectId,
+    required this.projectName,
+  });
+
+  final String? directory;
+  final String? projectId;
+  final String? projectName;
+}
+
+final workbenchApiProvider = Provider<WorkbenchApi>(
+  (ref) => WorkbenchApi(ref.watch(apiDioProvider)),
+);

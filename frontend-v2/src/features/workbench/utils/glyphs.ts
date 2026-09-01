@@ -7,6 +7,7 @@ export const TAB_GLYPH: Record<TabKind, string> = {
   menu: "≡",
   review: "±",
   terminal: "›_",
+  preview: "◇",
   browser: "⊕",
   files: "▤",
   desktop: "▣",
@@ -37,9 +38,40 @@ export function toneFg(tone: Tone): string {
 
 const DOC_EXT = new Set(["md", "markdown", "mdx", "txt", "rst"])
 const CODE_EXT = new Set([
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "rs", "java", "kt", "c", "h",
-  "cpp", "cc", "hpp", "css", "scss", "less", "json", "yml", "yaml", "toml", "sh",
-  "bash", "zsh", "rb", "php", "sql", "html", "vue", "svelte", "swift", "dart",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "py",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "c",
+  "h",
+  "cpp",
+  "cc",
+  "hpp",
+  "css",
+  "scss",
+  "less",
+  "json",
+  "yml",
+  "yaml",
+  "toml",
+  "sh",
+  "bash",
+  "zsh",
+  "rb",
+  "php",
+  "sql",
+  "html",
+  "vue",
+  "svelte",
+  "swift",
+  "dart",
 ])
 
 export function fileExt(path: string): string {
@@ -53,7 +85,10 @@ export function isDocPath(path: string): boolean {
 }
 
 /** Uppercase 2–3 char badge + tone: docs→sage, code→accent, deleted→red, else grey. */
-export function fileBadge(path: string, status?: "added" | "modified" | "deleted"): {
+export function fileBadge(
+  path: string,
+  status?: "added" | "modified" | "deleted",
+): {
   text: string
   tone: Tone
 } {

@@ -228,7 +228,7 @@ async def test_stable_capture_requests_local_sampling_and_parses_metadata():
         threshold=0.004,
     )
 
-    assert "obx-shot 1280 800 /tmp/obx-screen.png 900 100 0.004" in client.command
+    assert "obx-shot 1280 800 /tmp/obx-sandbox-screen.png 900 100 0.004" in client.command
     assert observed["stable"] is True
     assert observed["settle_ms"] == 240
 

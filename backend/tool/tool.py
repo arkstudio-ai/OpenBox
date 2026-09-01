@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import posixpath
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
@@ -34,17 +35,30 @@ class ToolContext:
     # Stable for the complete Agent run, including all tool-result steps and
     # compaction. In-memory budgets must not reset with every assistant message.
     run_id: str = ""
+    run_generation: int = 0
     agent_id: str = ""
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
     available_tools: frozenset[str] | None = None
+    # Exact ToolInfo objects selected for this provider step. Composite tools
+    # execute through this immutable lookup instead of re-reading the global
+    # registry after a plugin/catalogue generation has changed.
+    _tool_execution_lookup: Any = None
     # Permission callback installed by the processor for nested tool calls.
     # It returns a ToolResult when execution must be blocked, else None.
     _authorize_tool: Any = None
+    # Staged nested-tool lifecycle installed by ToolHooks for composite tools.
+    # Production ``batch`` must use this instead of calling registry executors
+    # directly; direct tool unit tests may omit it.
+    _nested_tool_runtime: Any = None
     _authorized_tool_id: str = ""
     _authorized_tool_args_key: str = ""
     _on_output: Any = None  # Callback: async fn(output: str) for incremental output updates
+    # Exact Agent ownership callback. Agent-loop contexts install the current
+    # RunLease method; Cron/compaction/direct tool contexts intentionally leave
+    # it unset because they are not owned by an Agent Driver generation.
+    _assert_current: Any = None
     # Portable capability discovery. The catalogue has already passed the
     # agent allowlist and whole-tool permission filter. Only the reviewed
     # capability_search implementation invokes the typed commit callback;
@@ -61,6 +75,10 @@ class ToolContext:
     _capability_max_search_calls: int = 2
     _capability_max_reveals: int = 5
     _capability_max_result_chars: int = 2_000
+    # Versioned, JSON-safe effective authority that Task persists on a child
+    # descriptor.  It is built by the loop after tool resolution and includes
+    # every inherited must-pass permission plane.
+    _subagent_authority_snapshot: dict[str, Any] | None = None
     # Provider-native discovery is populated only after endpoint/model/account
     # binding and catalogue gates pass.  The portable slot remains resident in
     # the logical catalogue but is removed from the native provider wire.
@@ -78,6 +96,85 @@ class ToolContext:
         if self._on_output:
             await self._on_output(output)
 
+    async def assert_run_current(self) -> None:
+        """Fence a provider/tool commit when this context belongs to a run."""
+        if self._assert_current is not None:
+            await self._assert_current()
+
+    @property
+    def run_fence(self) -> tuple[str, str, int] | None:
+        if not self.session_id or not self.run_id or self.run_generation <= 0:
+            return None
+        return self.session_id, self.run_id, self.run_generation
+
+    def resolve_file_path(
+        self,
+        raw_path: str,
+        *,
+        allow_user_scope: bool = False,
+    ) -> str:
+        """Resolve one model path against the Session project directory.
+
+        Models historically learned that ``/workspace`` was their project
+        root.  On a shared WUYING desktop the real root is now a stable
+        user/project namespace, so both relative paths and that legacy facade
+        must be rebased before a file request crosses the execution boundary.
+        Public tool payloads stay project-relative; only the private request
+        carries the canonical path.
+
+        Mutating tools are confined to ``workdir``.  Read-like callers may opt
+        into the same user's attachment/internal roots and scoped Skill root,
+        but never another tenant's namespace.
+        """
+        value = str(raw_path or "").strip()
+        if not value or "\x00" in value:
+            raise ValueError("file path is empty or invalid")
+
+        workspace_root = "/workspace"
+        workdir = posixpath.normpath(str(self.workdir or workspace_root))
+        if not posixpath.isabs(workdir):
+            raise ValueError("Session workdir is not absolute")
+        workspace_backed = workdir == workspace_root or workdir.startswith(
+            f"{workspace_root}/"
+        )
+
+        normalized_input = posixpath.normpath(value)
+        if value == workspace_root and workspace_backed:
+            candidate = workdir
+        elif value.startswith(f"{workspace_root}/") and workspace_backed:
+            if normalized_input == workdir or normalized_input.startswith(
+                f"{workdir}/"
+            ):
+                candidate = normalized_input
+            elif normalized_input.startswith(f"{workspace_root}/openbox/users/"):
+                candidate = normalized_input
+            else:
+                candidate = posixpath.join(
+                    workdir,
+                    normalized_input[len(workspace_root) + 1 :],
+                )
+        elif value.startswith("/"):
+            candidate = normalized_input
+        else:
+            candidate = posixpath.join(workdir, value)
+        candidate = posixpath.normpath(candidate)
+
+        if candidate == workdir or candidate.startswith(f"{workdir}/"):
+            return candidate
+        if allow_user_scope:
+            from project.workspace import user_directory, user_scope_for_identity
+
+            user_root = posixpath.normpath(user_directory(self.user_id or "default"))
+            skill_root = f"/data/skills/{user_scope_for_identity(self.user_id or 'default')}"
+            if (
+                candidate == user_root
+                or candidate.startswith(f"{user_root}/")
+                or candidate == skill_root
+                or candidate.startswith(f"{skill_root}/")
+            ):
+                return candidate
+        raise ValueError("file path escapes the current project")
+
 
 @dataclass
 class ToolInfo:
@@ -91,7 +188,7 @@ class ToolInfo:
     never_prune: bool = False  # Whether output should never be pruned
     # False for tools that mutate one shared state machine and therefore must
     # never be launched by the generic parallel batch dispatcher.
-    parallel_safe: bool = True
+    parallel_safe: bool = False
     # A JSON Schema to advertise verbatim instead of deriving one from
     # `parameters`. Needed for tools whose shape is only known at runtime —
     # structured output builds its schema from what the caller asked for.
@@ -116,7 +213,7 @@ def define_tool(
     execute: Callable[..., Awaitable[ToolResult]],
     sandbox_required: bool = True,
     never_prune: bool = False,
-    parallel_safe: bool = True,
+    parallel_safe: bool = False,
     raw_schema: dict | None = None,
     source: str = "builtin",
     plane: str = "platform",

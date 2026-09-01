@@ -10,6 +10,10 @@ export interface Session {
   updated_at: string
   slug?: string
   project_id?: string
+  /** Physical sandbox workdir; API-only input for project-scoped file calls. */
+  directory?: string
+  /** User-facing project label returned by the session detail endpoint. */
+  project_name?: string
   additions?: number
   deletions?: number
   files_changed?: number

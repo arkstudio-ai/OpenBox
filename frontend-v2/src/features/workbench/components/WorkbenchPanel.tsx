@@ -9,6 +9,7 @@ import { PanelTabBar } from "./PanelTabBar"
 import { MenuTab } from "./MenuTab"
 import { ReviewTab } from "./ReviewTab"
 import { TerminalTab } from "./TerminalTab"
+import { PreviewTab } from "./PreviewTab"
 import { BrowserTab } from "./BrowserTab"
 import { DesktopTab } from "./DesktopTab"
 import { FilesTab } from "./FilesTab"
@@ -19,12 +20,21 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 
 interface WorkbenchPanelProps {
   sessionId: string | null
+  projectId: string | null
+  projectName: string | null
+  projectDirectory: string | null
   /** Cron tab content, injected by the assembly layer — the workbench owns the
    *  tab chrome but must not import the cron feature (ENGINEERING_SPEC §4). */
   cronTab?: React.ReactNode
 }
 
-export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
+export function WorkbenchPanel({
+  sessionId,
+  projectId,
+  projectName,
+  projectDirectory,
+  cronTab,
+}: WorkbenchPanelProps) {
   const open = usePanelStore((s) => s.open)
   const width = usePanelStore((s) => s.width)
   const tabs = usePanelStore((s) => s.tabs)
@@ -77,17 +87,25 @@ export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
       className={cn(
         "flex min-h-0 flex-col",
         overlay
-          ? "fixed end-2.5 top-2.5 bottom-2.5 z-40 rounded-xl border border-hair bg-card shadow-pop"
-          : "border-hair relative flex-none border-s bg-rail",
+          ? "border-hair bg-card shadow-pop fixed end-2.5 top-2.5 bottom-2.5 z-40 rounded-xl border"
+          : "border-hair bg-rail relative flex-none border-s",
       )}
     >
       <div onMouseDown={startDrag} className="absolute top-0 bottom-0 -left-1.5 z-10 w-2 cursor-col-resize" />
       <PanelTabBar />
-      {kind === "menu" && <MenuTab sessionId={sessionId} />}
+      {kind === "menu" && <MenuTab sessionId={sessionId} projectName={projectName} />}
       {kind === "review" && <ReviewTab sessionId={sessionId} />}
-      {kind === "terminal" && <TerminalTab />}
+      {kind === "terminal" && <TerminalTab sessionId={sessionId} projectId={projectId} />}
+      {kind === "preview" && <PreviewTab />}
       {kind === "browser" && <BrowserTab />}
-      {kind === "files" && <FilesTab narrow={narrow} sessionId={sessionId} />}
+      {kind === "files" && (
+        <FilesTab
+          narrow={narrow}
+          sessionId={sessionId}
+          projectName={projectName}
+          projectDirectory={projectDirectory}
+        />
+      )}
       {kind === "desktop" && <DesktopTab />}
       {kind === "cron" && cronTab}
     </section>

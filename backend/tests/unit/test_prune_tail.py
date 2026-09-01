@@ -6,6 +6,7 @@ and costs exactly what the tail exists to buy: not re-reading the file you
 just read.
 """
 import pytest
+from types import SimpleNamespace
 
 import agent.compaction as compaction
 
@@ -72,14 +73,15 @@ async def test_an_unknown_tail_id_does_not_disable_pruning(monkeypatch):
 async def _run(monkeypatch, msgs, **kwargs):
     pruned: list[str] = []
 
-    async def fake_get_messages(session_id, *a, **k):
-        return msgs
+    async def fake_load_surface(session_id, *a, **k):
+        return SimpleNamespace(messages=tuple(msgs))
 
     async def fake_update_part_data(part_id, data):
         pruned.append(part_id)
 
+    import session.agent_event_log as event_log
     import session.session as sess
-    monkeypatch.setattr(sess, "get_messages", fake_get_messages)
+    monkeypatch.setattr(event_log, "load_canonical_model_surface", fake_load_surface)
     monkeypatch.setattr(sess, "update_part_data", fake_update_part_data)
     await compaction.prune_tool_outputs("s", **kwargs)
     return pruned

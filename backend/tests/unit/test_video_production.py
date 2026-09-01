@@ -145,6 +145,43 @@ def test_generation_wait_schema_and_runtime_share_the_optional_iteration_default
 
 
 @pytest.mark.asyncio
+async def test_outcome_unknown_result_exposes_the_durable_job_and_forbids_resubmit(
+    monkeypatch,
+):
+    job = SimpleNamespace(
+        id="video_unknown_1",
+        kind="segment",
+        status="outcome_unknown",
+        production_id="production_1",
+        segment_id="segment_1",
+        request_data={},
+        provider_task_id=None,
+        sandbox_job_id=None,
+        error="HTTP 502: Bad Gateway",
+    )
+    monkeypatch.setattr(
+        video_mod,
+        "_job_asset",
+        lambda _job: asyncio.sleep(0, result=None),
+    )
+
+    result = await video_mod._provider_outcome_unknown_result(job)
+
+    assert result.metadata == {
+        "error": True,
+        "failure_code": "video_effect_outcome_unknown",
+        "job_id": job.id,
+        "status": "outcome_unknown",
+        "outcome_unknown": True,
+        "manual_review": True,
+        "do_not_retry": True,
+    }
+    assert f"job_id={job.id}" in result.output
+    assert "status=outcome_unknown" in result.output
+    assert "instruction=do_not_resubmit" in result.output
+
+
+@pytest.mark.asyncio
 async def test_generation_wait_timeout_returns_a_versioned_running_snapshot(monkeypatch):
     updated_at = datetime.now(timezone.utc)
     version = int(updated_at.timestamp() * 1_000_000)

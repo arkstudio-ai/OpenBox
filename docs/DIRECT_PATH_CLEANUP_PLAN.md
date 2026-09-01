@@ -35,9 +35,9 @@
 | 前端启动 | `npm run dev --prefix frontend-v2`（端口 3000） |
 | 数据库 | Docker 容器 `openbox-postgres-1`（postgres:16-alpine，5432）。**宿主机没有 pg_dump**（实测 command not found），一切 pg 工具用 `docker exec openbox-postgres-1 ...` |
 | 后端配置 | `backend/openbox.json`（**gitignored**，本机真实配置）+ `backend/.env`；模板是 `openbox.jsonc.example` |
-| WUYING 沙箱 | `.env` 指向生产桌面（隧道 `127.0.0.1:18000`）；`.env.wuying-dev` 指向 dev 桌面（18001，**已过期不可用**）。隧道脚本 `backend/scripts/wuying_dev.sh` |
+| WUYING 沙箱 | `.env` 指向生产桌面（隧道 `127.0.0.1:18000`）；`.env.wuying-dev` 指向隔离 dev 桌面 `ecd-4zjxaq5g45dr5qr0i`（18001，2026-08-31 已通过阿里云控制面确认 Running）。隧道脚本 `backend/scripts/wuying_dev.sh` |
 | 热重载盲区 | `uvicorn --reload` 只看 `.py`；改 `openbox.json` / `skill.yaml` / locale 必须手动重启后端 |
-| 测试基线 | 后端 `cd backend && uv run pytest -q` → **1016 passed**；前端 `npm run test`（vitest，182 例）、`npm run check`（含 tsc）、`npm run lint`（**存在 2 个既有错误**，均在 `content-view.ts`，圈复杂度 27/50——不是你造成的，也不许新增）；移动端 `cd mobile && dart analyze` 零问题 |
+| 测试基线 | 2026-08-31 当前稳定树：后端 `cd backend && uv run --with psutil pytest -q` → **2036 passed, 1 skipped**；frontend-v2 `npm run check && npm run build` → **217 tests passed**、0 lint errors（21 warnings）且 production build 通过；移动端 `flutter analyze && flutter test` → **33 tests passed**、零 analyze 问题；Alembic `heads/current/check` 一致 |
 | 浏览器验收账号 | `qa_jobs`，**密码见 `docs/LOCAL_CREDENTIALS.md`**（gitignored，不在仓库里，本机已存在）；历史数据验收会话：`http://localhost:3000/app/s/session_7YBYRVD9SKGYEGNXHXHCXDXPG8` |
 | ⚠️ 仓库可见性 | `origin` = `github.com/arkstudio-ai/OpenBox`，**公开仓库**。任何入库内容都会被公开发布且 git 历史永久留存——**绝不把密码、token、API key 写进任何被跟踪的文件**（包括本手册） |
 | 提交规范 | 中文 commit message、`类型(范围): 摘要` + 正文讲清 why；每个 PR 单独提交并 push `origin main` |

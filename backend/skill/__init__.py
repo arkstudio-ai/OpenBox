@@ -1,0 +1,41 @@
+"""Skill discovery, provider and lifecycle public surface."""
+
+from skill.provider import (
+    HostFilesystemSkillProvider,
+    PersonalLibrarySkillProvider,
+    SandboxCatalogueSkillProvider,
+    ScopeKey,
+    SkillCandidate,
+    SkillCatalogSnapshot,
+    SkillCatalogueUnavailable,
+    SkillDefinition,
+    SkillDiagnostic,
+    SkillProvider,
+    SkillProviderSnapshot,
+    SkillRegistry,
+    SkillScopeMismatch,
+    SkillSnapshotStale,
+    create_default_skill_registry,
+    dispose_skill_registry_for,
+    skill_registry_for,
+)
+
+__all__ = [
+    "HostFilesystemSkillProvider",
+    "PersonalLibrarySkillProvider",
+    "SandboxCatalogueSkillProvider",
+    "ScopeKey",
+    "SkillCandidate",
+    "SkillCatalogSnapshot",
+    "SkillCatalogueUnavailable",
+    "SkillDefinition",
+    "SkillDiagnostic",
+    "SkillProvider",
+    "SkillProviderSnapshot",
+    "SkillRegistry",
+    "SkillScopeMismatch",
+    "SkillSnapshotStale",
+    "create_default_skill_registry",
+    "dispose_skill_registry_for",
+    "skill_registry_for",
+]

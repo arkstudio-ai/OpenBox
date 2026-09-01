@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "@/shared/ui/Toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { wsClient } from "@/shared/ws/client"
+import { interactionRequestId } from "@/shared/ws/events"
 import { chatKeys } from "../api/keys"
 import { useUserId } from "../api/messages"
 import { usePendingStore } from "../stores/pending"
@@ -42,22 +43,38 @@ export function useChatEvents(sessionId: string): void {
 
     const stream = useStreamStore.getState()
     const pending = usePendingStore.getState()
+    const accept = (d: { sessionId: string; generation?: number }) =>
+      stream.acceptEventGeneration(d.sessionId, d.generation)
     const offs: Array<() => void> = [
-      wsClient.on("message.created", (d) => stream.addMessage(d.sessionId, d.message)),
-      wsClient.on("message.updated", (d) => stream.updateMessage(d.sessionId, d.message)),
-      wsClient.on("message.text_delta", (d) =>
-        stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.text),
-      ),
-      wsClient.on("part.created", (d) => stream.addPart(d.sessionId, d.messageId, d.part)),
-      wsClient.on("part.updated", (d) => stream.updatePart(d.sessionId, d.messageId, d.part)),
-      wsClient.on("part.delta", (d) => stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.delta)),
-      wsClient.on("tool.running", (d) => stream.updateToolStatus(d.sessionId, d.partId, "running", d.data)),
-      wsClient.on("tool.completed", (d) =>
-        stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data),
-      ),
-      wsClient.on("tool.error", (d) => stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)),
+      wsClient.on("message.created", (d) => {
+        if (accept(d)) stream.addMessage(d.sessionId, d.message)
+      }),
+      wsClient.on("message.updated", (d) => {
+        if (accept(d)) stream.updateMessage(d.sessionId, d.message)
+      }),
+      wsClient.on("message.text_delta", (d) => {
+        if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.text)
+      }),
+      wsClient.on("part.created", (d) => {
+        if (accept(d)) stream.addPart(d.sessionId, d.messageId, d.part)
+      }),
+      wsClient.on("part.updated", (d) => {
+        if (accept(d)) stream.updatePart(d.sessionId, d.messageId, d.part)
+      }),
+      wsClient.on("part.delta", (d) => {
+        if (accept(d)) stream.appendPartDelta(d.sessionId, d.messageId, d.partId, d.delta)
+      }),
+      wsClient.on("tool.running", (d) => {
+        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "running", d.data)
+      }),
+      wsClient.on("tool.completed", (d) => {
+        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "completed", d.data)
+      }),
+      wsClient.on("tool.error", (d) => {
+        if (accept(d)) stream.updateToolStatus(d.sessionId, d.partId, "error", d.data)
+      }),
       wsClient.on("session.status", (d) => {
-        stream.setStatus(d.sessionId, d.status)
+        if (!stream.applyStatusEvent(d.sessionId, d.status, d.generation)) return
         // A fresh run supersedes whatever the last one failed with.
         if (d.status === "busy") stream.clearRunError(d.sessionId)
         if (d.status === "retry" && d.attempt) {
@@ -72,9 +89,11 @@ export function useChatEvents(sessionId: string): void {
           void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
         }
       }),
-      wsClient.on("session.finalizing", (d) => stream.setStatus(d.sessionId, "finalizing")),
+      wsClient.on("session.finalizing", (d) => {
+        stream.applyStatusEvent(d.sessionId, "finalizing", d.generation)
+      }),
       wsClient.on("session.error", (d) => {
-        stream.setStatus(d.sessionId, "error")
+        if (!stream.applyStatusEvent(d.sessionId, "error", d.generation)) return
         // Say it twice, deliberately. The toast is what someone sees if they
         // are looking; the line above the composer is what remains for someone
         // who was not, or who dismissed the toast — without it, a failed run
@@ -89,6 +108,7 @@ export function useChatEvents(sessionId: string): void {
       // whenever the model enters or leaves plan mode. Without this the
       // picker kept claiming the old mode until something else refetched.
       wsClient.on("session.updated", (d) => {
+        if (!accept(d)) return
         void qc.invalidateQueries({ queryKey: ["sessions", userId] })
         if (d.sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, d.sessionId] })
       }),
@@ -97,10 +117,10 @@ export function useChatEvents(sessionId: string): void {
         (d) => void qc.invalidateQueries({ queryKey: chatKeys.todo(userId, d.sessionId) }),
       ),
       wsClient.on("permission.asked", (d) => pending.addPermission(d)),
-      wsClient.on("permission.replied", (d) => pending.removePermission(d.request_id)),
+      wsClient.on("permission.replied", (d) => pending.removePermission(interactionRequestId(d))),
       wsClient.on("question.asked", (d) => pending.addQuestion(d)),
-      wsClient.on("question.replied", (d) => pending.removeQuestion(d.request_id)),
-      wsClient.on("question.rejected", (d) => pending.removeQuestion(d.request_id)),
+      wsClient.on("question.replied", (d) => pending.removeQuestion(interactionRequestId(d))),
+      wsClient.on("question.rejected", (d) => pending.removeQuestion(interactionRequestId(d))),
       wsClient.on("__connected", () => {
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
         if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })

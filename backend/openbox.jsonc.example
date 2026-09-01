@@ -36,7 +36,13 @@
     },
     "openai": {
       "api_key": "{env:OPENAI_API_KEY}",
-      "base_url": null
+      "base_url": null,
+      // Task composition fails closed unless these features are declared.
+      // Declare only variants your exact gateway preserves without remapping.
+      "subagent_capabilities": [
+        "model", "tool_filter", "reasoning", "persona", "output_schema"
+      ],
+      "subagent_reasoning_variants": ["low", "medium", "high"]
     },
     "doubao": {
       "api_key": "{env:DOUBAO_API_KEY}",

@@ -5,6 +5,7 @@ Core loop: arm_timer → on_timer → collect_runnable → execute → apply_res
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from datetime import datetime, timezone, timedelta
@@ -13,11 +14,24 @@ from typing import Any
 from core.log import create_logger
 from cron.types import (
     BACKOFF_SCHEDULE_MS, MAX_TIMER_DELAY_MS, MIN_REFIRE_GAP_MS,
-    STUCK_RUN_MS, TRANSIENT_PATTERNS, CronJobStatus,
+    TRANSIENT_PATTERNS, CronJobStatus,
 )
 from cron.schedule import compute_next_run_at
+from cron.lease import (
+    _database_legacy_cutoff,
+    _database_now,
+    CronLease,
+    CronLeaseLost,
+    claim_job,
+    claimed_job_payload,
+    claimable_clause,
+    live_claim_clause,
+    run_with_heartbeat,
+)
 
 log = create_logger("cron.timer")
+
+TIMER_HEARTBEAT_SECONDS = 30
 
 
 class TimerState:
@@ -93,6 +107,10 @@ async def on_timer(state: TimerState) -> None:
     state.running = True
     state.last_tick_at_ms = _now_ms()
     _arm_watchdog(state)
+    heartbeat_stop = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _timer_liveness_heartbeat(state, heartbeat_stop)
+    )
 
     try:
         async with state.lock:
@@ -101,27 +119,9 @@ async def on_timer(state: TimerState) -> None:
         if not due_jobs:
             return
 
-        # Claim jobs atomically: a conditional per-row UPDATE means a second
-        # scheduler (another replica, or a manual run racing the timer) loses
-        # the claim instead of executing the same job twice.
-        claimed = []
-        for job in due_jobs:
-            if await _claim_job(job["id"]):
-                claimed.append(job)
-        if not claimed:
-            return
-        due_jobs = claimed
-
-        # Execute with concurrency control
-        results = await _execute_jobs_concurrent(state, due_jobs)
-
-        # Apply results
-        async with state.lock:
-            for job_id, result in results:
-                try:
-                    await _apply_job_result(state, job_id, result)
-                except Exception as e:
-                    log.error(f"Failed to apply result for job {job_id}: {e}")
+        # Workers claim only when they are ready to start. Claiming a large
+        # queue up front would let waiting leases expire without heartbeats.
+        await _execute_jobs_concurrent(state, due_jobs)
 
     except Exception as e:
         log.error(f"on_timer error: {e}")
@@ -146,6 +146,10 @@ async def on_timer(state: TimerState) -> None:
         except Exception as e:
             log.debug(f"Video job recovery sweep error: {e}")
 
+        heartbeat_stop.set()
+        heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat
         state.running = False
         arm_timer(state)
 
@@ -163,6 +167,22 @@ def stop_timer(state: TimerState) -> None:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+async def _timer_liveness_heartbeat(
+    state: TimerState,
+    stop: asyncio.Event,
+) -> None:
+    """Keep readiness fresh while a legitimate long Cron job is executing."""
+    while not stop.is_set():
+        state.last_tick_at_ms = _now_ms()
+        try:
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=TIMER_HEARTBEAT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            pass
 
 
 def _cancel_timer(state: TimerState) -> None:
@@ -219,24 +239,23 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
     from core.config import get_config
     from db.base import get_db_session
     from db.models.cron import CronJob
-    from sqlalchemy import or_, select
+    from sqlalchemy import select
 
     now = datetime.now(timezone.utc)
-    stuck_cutoff = now - timedelta(milliseconds=STUCK_RUN_MS)
 
     async with get_db_session() as db:
+        database_now = _database_now(db)
+        legacy_cutoff = _database_legacy_cutoff(db)
         result = await db.execute(
             select(CronJob)
             .where(
                 CronJob.enabled == True,
                 CronJob.is_deleted == False,
                 CronJob.next_run_at <= now,
-                # A running marker older than STUCK_RUN_MS belongs to a run
-                # that died without reporting (crash, lost worker); reclaim it
-                # instead of blocking the job until the next process restart.
-                or_(
-                    CronJob.running_at.is_(None),
-                    CronJob.running_at < stuck_cutoff,
+                claimable_clause(
+                    CronJob,
+                    database_now,
+                    legacy_cutoff=legacy_cutoff,
                 ),
             )
             .order_by(CronJob.next_run_at.asc())
@@ -248,9 +267,17 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
 
     # Count already-running (non-stuck) jobs per user
     async with get_db_session() as db:
+        database_now = _database_now(db)
+        legacy_cutoff = _database_legacy_cutoff(db)
         running_result = await db.execute(
             select(CronJob.user_id)
-            .where(CronJob.running_at.isnot(None), CronJob.running_at >= stuck_cutoff)
+            .where(
+                live_claim_clause(
+                    CronJob,
+                    database_now,
+                    legacy_cutoff=legacy_cutoff,
+                )
+            )
         )
         for r in running_result.all():
             user_running_count[r[0]] = user_running_count.get(r[0], 0) + 1
@@ -268,6 +295,7 @@ async def _collect_runnable_jobs(state: TimerState) -> list[dict]:
         due.append({
             "id": row.id,
             "user_id": row.user_id,
+            "project_id": row.project_id,
             "session_id": row.session_id,
             "name": row.name,
             "schedule": row.schedule,
@@ -302,35 +330,11 @@ def _is_in_backoff(job) -> bool:
 
 
 async def _claim_job(job_id: str) -> bool:
-    """Atomically claim a job for execution.
-
-    The conditional UPDATE either wins the row (rowcount 1) or loses it to a
-    concurrent claimer (rowcount 0) — the single-statement write is what makes
-    running two backend replicas safe. A stale marker past STUCK_RUN_MS counts
-    as claimable so a crashed run cannot pin its job forever.
-    """
-    from db.base import get_db_session
-    from db.models.cron import CronJob
-    from sqlalchemy import or_, update
-
-    now = datetime.now(timezone.utc)
-    stuck_cutoff = now - timedelta(milliseconds=STUCK_RUN_MS)
-
-    async with get_db_session() as db:
-        result = await db.execute(
-            update(CronJob)
-            .where(
-                CronJob.id == job_id,
-                CronJob.enabled == True,  # noqa: E712
-                CronJob.is_deleted == False,  # noqa: E712
-                or_(
-                    CronJob.running_at.is_(None),
-                    CronJob.running_at < stuck_cutoff,
-                ),
-            )
-            .values(running_at=now)
-        )
-    return result.rowcount == 1
+    """Compatibility wrapper for tests and older internal callers."""
+    return await claim_job(
+        job_id,
+        due_before=datetime.now(timezone.utc),
+    ) is not None
 
 
 async def _execute_jobs_concurrent(
@@ -350,23 +354,99 @@ async def _execute_jobs_concurrent(
                 idx = cursor
                 cursor += 1
 
-            job = jobs[idx]
+            queued_job = jobs[idx]
+            claim = CronLease.from_payload(queued_job.get("_cron_claim"))
+            if claim is None:
+                try:
+                    claim = await claim_job(
+                        queued_job["id"],
+                        due_before=datetime.now(timezone.utc),
+                    )
+                except Exception as exc:
+                    log.error(
+                        "Failed to claim Cron job %s: %s",
+                        queued_job["id"],
+                        exc,
+                    )
+                    continue
+            if claim is None:
+                continue
+
+            # Collection can be arbitrarily old while workers are busy. Read
+            # project/prompt/model/schedule again under the acquired fence.
+            job = await claimed_job_payload(claim)
+            if job is None:
+                log.warning(
+                    "Cron claim vanished before execution job=%s generation=%s",
+                    queued_job["id"],
+                    claim.generation,
+                )
+                continue
             start = time.time()
+            lease_lost = False
             try:
                 if state.execute_job:
-                    result = await asyncio.wait_for(
-                        state.execute_job(job),
-                        timeout=job.get("timeout_seconds", 1800),
-                    )
+                    if claim is not None:
+                        result = await run_with_heartbeat(
+                            claim,
+                            lambda: state.execute_job(job),
+                            timeout=job.get("timeout_seconds", 1800),
+                        )
+                    else:
+                        result = await asyncio.wait_for(
+                            state.execute_job(job),
+                            timeout=job.get("timeout_seconds", 1800),
+                        )
                 else:
                     result = {"status": "error", "error": "No executor configured"}
             except asyncio.TimeoutError:
                 result = {"status": "error", "error": "Job execution timed out"}
+            except CronLeaseLost as exc:
+                lease_lost = True
+                result = {"status": "error", "error": str(exc)}
             except Exception as e:
                 result = {"status": "error", "error": str(e)}
 
             result["duration_ms"] = int((time.time() - start) * 1000)
+            # execute_cron_job records these identities on the claimed payload
+            # before cancellation can interrupt it.  A timer timeout therefore
+            # still finalizes the exact CronRun in the settlement transaction.
+            result.setdefault("run_id", job.get("_cron_run_id"))
+            result.setdefault(
+                "temp_session_id", job.get("_cron_temp_session_id")
+            )
+            result.setdefault("started_at", job.get("_cron_started_at"))
+            result.setdefault("ended_at", datetime.now(timezone.utc))
+            result.setdefault("locale", job.get("_cron_locale") or "zh-CN")
+            result.setdefault(
+                "context_summary", job.get("_cron_context_summary")
+            )
+            result.setdefault("tokens", job.get("_cron_tokens") or {})
+            result.setdefault("silent", False)
             results.append((job["id"], result))
+            if lease_lost:
+                log.warning(
+                    "Discarded stale Cron result job=%s generation=%s",
+                    job["id"],
+                    claim.generation if claim else "legacy",
+                )
+                continue
+            try:
+                async with state.lock:
+                    applied = await _apply_job_result(
+                        state,
+                        job["id"],
+                        result,
+                        claim=claim,
+                    )
+                if not applied:
+                    log.warning(
+                        "Discarded fenced Cron result job=%s generation=%s",
+                        job["id"],
+                        claim.generation if claim else "legacy",
+                    )
+            except Exception as exc:
+                log.error(f"Failed to apply result for job {job['id']}: {exc}")
 
     concurrency = min(state.max_concurrent_jobs, len(jobs))
     workers = [asyncio.create_task(worker()) for _ in range(concurrency)]
@@ -375,10 +455,16 @@ async def _execute_jobs_concurrent(
     return results
 
 
-async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> None:
-    """Apply execution result to job state in DB."""
+async def _apply_job_result(
+    state: TimerState,
+    job_id: str,
+    result: dict,
+    *,
+    claim: CronLease | None = None,
+) -> bool:
+    """Atomically settle the exact claim, CronRun, and delivery outbox."""
     from db.base import get_db_session
-    from db.models.cron import CronJob
+    from db.models.cron import CronJob, CronRun
     from sqlalchemy import select, update
 
     now = datetime.now(timezone.utc)
@@ -386,16 +472,66 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
     error = result.get("error")
     duration_ms = result.get("duration_ms", 0)
 
+    deliveries_created = False
     async with get_db_session() as db:
+        database_now = _database_now(db)
+        ownership = [
+            CronJob.id == job_id,
+            CronJob.is_deleted == False,  # noqa: E712
+        ]
+        if claim is None:
+            # Compatibility for old rows/tests must never bypass a modern
+            # owner's token.
+            ownership.append(CronJob.run_token.is_(None))
+        else:
+            ownership.extend([
+                CronJob.run_token == claim.token,
+                CronJob.run_generation == claim.generation,
+                CronJob.run_owner == claim.owner_id,
+                # Ownership expires even when no replacement has claimed yet.
+                # This prevents a paused replica from committing late state.
+                CronJob.lease_expires_at.isnot(None),
+                CronJob.lease_expires_at >= database_now,
+            ])
         row = await db.execute(
-            select(CronJob).where(CronJob.id == job_id)
+            select(CronJob).where(*ownership).with_for_update()
         )
         job = row.scalar_one_or_none()
         if not job:
-            return
+            return False
+
+        run_id = result.get("run_id")
+        run_predicates = [CronRun.job_id == job_id]
+        if run_id:
+            run_predicates.append(CronRun.id == run_id)
+        else:
+            run_predicates.append(CronRun.status == "running")
+        if claim is not None:
+            run_predicates.extend([
+                CronRun.claim_token == claim.token,
+                CronRun.claim_generation == claim.generation,
+                CronRun.claim_owner == claim.owner_id,
+            ])
+        run = (
+            await db.execute(
+                select(CronRun)
+                .where(*run_predicates)
+                .order_by(CronRun.started_at.desc())
+                .limit(1)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        # A production executor that advertised a run receipt must not settle
+        # a different/missing audit row and manufacture delivery side effects.
+        if run_id and run is None:
+            return False
 
         values: dict = {
             "running_at": None,
+            "run_token": None,
+            "run_owner": None,
+            "lease_expires_at": None,
+            "heartbeat_at": None,
             "last_run_at": now,
             "last_status": status,
             "last_duration_ms": duration_ms,
@@ -472,9 +608,50 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
         if schedule_kind == "at" and job.delete_after_run and status == "ok":
             values["is_deleted"] = True
 
-        await db.execute(
-            update(CronJob).where(CronJob.id == job_id).values(**values)
+        updated = await db.execute(
+            update(CronJob)
+            .where(*ownership)
+            .values(**values)
+            .execution_options(synchronize_session=False)
         )
+        if updated.rowcount != 1:
+            return False
+
+        if run is not None:
+            from cron.i18n import is_silent
+
+            tokens = result.get("tokens") or {}
+            silent = bool(result.get("silent")) if "silent" in result else (
+                status == "ok" and is_silent(result.get("summary_text"))
+            )
+            needs_session_delivery = bool(
+                status == "ok"
+                and not silent
+                and job.session_id
+            )
+            run.status = status
+            run.temp_session_id = (
+                result.get("temp_session_id") or run.temp_session_id
+            )
+            run.summary_text = result.get("summary_text")
+            run.context_summary = result.get("context_summary")
+            run.error_message = error if status == "error" else None
+            run.duration_ms = duration_ms
+            run.input_tokens = int(tokens.get("input_tokens") or 0)
+            run.output_tokens = int(tokens.get("output_tokens") or 0)
+            run.total_tokens = int(tokens.get("total_tokens") or 0)
+            run.ended_at = result.get("ended_at") or now
+            run.injected = not needs_session_delivery
+            run.injected_at = database_now if run.injected else None
+            await db.flush()
+
+            # These rows are added only after both exact ownership checks have
+            # succeeded; commit/rollback covers Job, Run, and all deliveries.
+            from cron.outbox import build_delivery_rows
+
+            deliveries = build_delivery_rows(job, run, result, now)
+            db.add_all(deliveries)
+            deliveries_created = bool(deliveries)
 
     if auto_disabled:
         from bus import bus
@@ -493,12 +670,18 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
             f"{values.get('consecutive_errors')} consecutive failures"
         )
 
+    if deliveries_created:
+        from cron.outbox import notify_outbox_workers
+
+        notify_outbox_workers()
+
     # Notify via callback
     if state.on_job_result:
         try:
             await state.on_job_result(job_id, result)
         except Exception as e:
             log.error(f"on_job_result callback error: {e}")
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ function StateDot({ job }: { job: CronJob }) {
         ? t("job.state.autoDisabled")
         : t("job.state.disabled")
   return (
-    <span className="flex items-center gap-1.5 text-xs text-n600">
+    <span className="text-n600 flex items-center gap-1.5 text-xs">
       <span
         className={cn(
           "size-1.5 rounded-full",
@@ -33,7 +33,15 @@ function StateDot({ job }: { job: CronJob }) {
   )
 }
 
-export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJob) => void }) {
+export function CronJobCard({
+  job,
+  projectName,
+  onEdit,
+}: {
+  job: CronJob
+  projectName?: string | null
+  onEdit: (job: CronJob) => void
+}) {
   const { t } = useTranslation("cron")
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -44,9 +52,9 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
   const busy = update.isPending || remove.isPending || runNow.isPending
 
   return (
-    <div className="flex flex-col rounded-lg border border-hair bg-card px-4 py-3.5">
+    <div className="border-hair bg-card flex flex-col rounded-lg border px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="text-base text-ink">{job.name}</span>
+        <span className="text-ink text-base">{job.name}</span>
         <StateDot job={job} />
         <span className="ms-auto flex items-center gap-1.5">
           <button
@@ -79,9 +87,9 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
         </span>
       </div>
 
-      <span className="mt-1 line-clamp-2 text-pretty text-sm text-n700">{job.task_prompt}</span>
+      <span className="text-n700 mt-1 line-clamp-2 text-sm text-pretty">{job.task_prompt}</span>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n600">
+      <div className="text-n600 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <span>{describeSchedule(job.schedule, t)}</span>
         {job.enabled && job.next_run_at && (
           <span>{t("job.nextRun", { when: formatRelative(job.next_run_at) })}</span>
@@ -90,7 +98,11 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
         <span>
           {t("job.stats", { total: job.total_runs, ok: job.total_successes, failed: job.total_failures })}
         </span>
-        {job.project_directory && <span className="truncate">{job.project_directory}</span>}
+        {(job.project_id || job.project_directory) && (
+          <span data-testid="cron-project-root" className="truncate">
+            {projectName || t("job.projectRoot")} · <span className="font-mono">.</span>
+          </span>
+        )}
         <button
           type="button"
           className="text-ink underline-offset-2 hover:underline"
@@ -101,7 +113,7 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
       </div>
 
       {(job.last_error ?? "") !== "" && !job.enabled && (
-        <span className="mt-1.5 line-clamp-2 text-pretty text-xs text-danger">{t("job.lastError")}</span>
+        <span className="text-danger mt-1.5 line-clamp-2 text-xs text-pretty">{t("job.lastError")}</span>
       )}
 
       <div className={cn("mt-2", !expanded && "hidden")}>
@@ -114,14 +126,14 @@ export function CronJobCard({ job, onEdit }: { job: CronJob; onEdit: (job: CronJ
         <DialogActions>
           <button
             type="button"
-            className="min-h-9 rounded-full px-4 text-sm text-n700"
+            className="text-n700 min-h-9 rounded-full px-4 text-sm"
             onClick={() => setConfirming(false)}
           >
             {t("form.cancel")}
           </button>
           <button
             type="button"
-            className="min-h-9 rounded-full bg-danger px-5 text-sm text-bg"
+            className="bg-danger text-bg min-h-9 rounded-full px-5 text-sm"
             onClick={() => remove.mutate(job.id, { onSettled: () => setConfirming(false) })}
           >
             {t("job.action.delete")}

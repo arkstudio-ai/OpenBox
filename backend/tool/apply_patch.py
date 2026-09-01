@@ -1,4 +1,7 @@
 """Apply Patch tool: structured multi-file patches."""
+from dataclasses import dataclass
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -8,64 +11,102 @@ class ApplyPatchArgs(BaseModel):
     patch: str = Field(description="The patch content in structured format")
 
 
-async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
-    """Apply a structured patch to multiple files."""
-    lines = args.patch.strip().split("\n")
-    operations = []
-    current_op = None
-    current_content = []
+@dataclass(frozen=True)
+class PatchOperation:
+    """One parsed filesystem mutation shared by policy and execution."""
+
+    type: Literal["add", "update", "delete"]
+    path: str
+    content: str = ""
+
+
+class PatchParseError(ValueError):
+    """The patch does not contain a safe, recognizable file operation."""
+
+
+def parse_patch(patch: str) -> list[PatchOperation]:
+    """Parse the patch language once so authorization and execution agree."""
+    lines = str(patch or "").strip().split("\n")
+    operations: list[PatchOperation] = []
+    current_type: Literal["add", "update", "delete"] | None = None
+    current_path = ""
+    current_content: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_type, current_path, current_content
+        if current_type is None:
+            return
+        if not current_path or "\x00" in current_path:
+            raise PatchParseError("Patch file path is empty or invalid")
+        operations.append(
+            PatchOperation(
+                type=current_type,
+                path=current_path,
+                content="\n".join(current_content),
+            )
+        )
+        current_type = None
+        current_path = ""
+        current_content = []
 
     for line in lines:
         if line.startswith("*** Begin Patch"):
             continue
         elif line.startswith("*** End Patch"):
-            if current_op:
-                current_op["content"] = "\n".join(current_content)
-                operations.append(current_op)
+            flush()
             break
         elif line.startswith("*** Update File: "):
-            if current_op:
-                current_op["content"] = "\n".join(current_content)
-                operations.append(current_op)
-            current_op = {"type": "update", "path": line[17:].strip()}
+            flush()
+            current_type = "update"
+            current_path = line[17:].strip()
             current_content = []
         elif line.startswith("*** Add File: "):
-            if current_op:
-                current_op["content"] = "\n".join(current_content)
-                operations.append(current_op)
-            current_op = {"type": "add", "path": line[14:].strip()}
+            flush()
+            current_type = "add"
+            current_path = line[14:].strip()
             current_content = []
         elif line.startswith("*** Delete File: "):
-            if current_op:
-                current_op["content"] = "\n".join(current_content)
-                operations.append(current_op)
-            operations.append({"type": "delete", "path": line[17:].strip(), "content": ""})
-            current_op = None
+            flush()
+            current_type = "delete"
+            current_path = line[17:].strip()
             current_content = []
-        else:
+        elif current_type is not None:
             current_content.append(line)
 
-    if current_op:
-        current_op["content"] = "\n".join(current_content)
-        operations.append(current_op)
+    flush()
+    if not operations:
+        raise PatchParseError("Patch contains no file operations")
+    return operations
+
+
+async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
+    """Apply a structured patch to multiple files."""
+    operations = parse_patch(args.patch)
 
     results = []
     for op in operations:
         try:
-            if op["type"] == "add":
+            execution_path = ctx.resolve_file_path(op.path)
+        except ValueError as exc:
+            results.append(f"Error on {op.path}: {exc}")
+            continue
+        try:
+            if op.type == "add":
                 content = "\n".join(
                     l[1:] if l.startswith("+") else l
-                    for l in op["content"].split("\n")
+                    for l in op.content.split("\n")
                     if not l.startswith("-")
                 )
-                await ctx.sandbox.write_file(op["path"], content)
-                results.append(f"Added {op['path']}")
-            elif op["type"] == "delete":
-                await ctx.sandbox.execute(f"rm -f '{op['path']}'")
-                results.append(f"Deleted {op['path']}")
-            elif op["type"] == "update":
+                await ctx.sandbox.write_file(execution_path, content)
+                results.append(f"Added {op.path}")
+            elif op.type == "delete":
+                await ctx.sandbox.delete_file(execution_path)
+                results.append(f"Deleted {op.path}")
+            elif op.type == "update":
                 # Read current file
-                raw = await ctx.sandbox.read_file(op["path"], offset=0, limit=100000)
+                raw = await ctx.sandbox.read_file(
+                    execution_path, offset=0, limit=100000
+                )
                 # Strip line numbers
                 file_lines = []
                 for l in raw.split("\n"):
@@ -74,11 +115,11 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
                 current = "\n".join(file_lines)
 
                 # Apply patch hunks
-                new_content = _apply_patch_hunks(current, op["content"])
-                await ctx.sandbox.write_file(op["path"], new_content)
-                results.append(f"Updated {op['path']}")
+                new_content = _apply_patch_hunks(current, op.content)
+                await ctx.sandbox.write_file(execution_path, new_content)
+                results.append(f"Updated {op.path}")
         except Exception as e:
-            results.append(f"Error on {op['path']}: {e}")
+            results.append(f"Error on {op.path}: {e}")
 
     return ToolResult(
         title=f"Applied patch ({len(operations)} files)",
@@ -125,7 +166,9 @@ def _apply_patch_hunks(content: str, patch_text: str) -> str:
 
 
 APPLY_PATCH_DESCRIPTION = """\
-Apply a structured patch to create, update, or delete multiple files atomically.
+Apply a structured patch to create, update, or delete multiple files in one call.
+Operations run in order; failures are reported per file and do not roll back an
+earlier successful operation.
 
 Your patch language is a stripped-down, file-oriented diff format:
 

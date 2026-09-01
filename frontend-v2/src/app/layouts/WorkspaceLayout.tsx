@@ -1,6 +1,12 @@
-import { Suspense, useEffect } from "react"
-import { Outlet, useParams } from "react-router"
-import { Sidebar, Topbar, useWorkspaceEvents } from "@/features/workspace"
+import { Suspense, useEffect, useMemo } from "react"
+import { Outlet, useParams, useSearchParams } from "react-router"
+import {
+  Sidebar,
+  Topbar,
+  useProjectsQuery,
+  useSessionsQuery,
+  useWorkspaceEvents,
+} from "@/features/workspace"
 import { WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronPanelTab, CronStatusPill } from "@/features/cron"
 import { Spinner } from "@/shared/ui/Spinner"
@@ -13,9 +19,17 @@ export default function WorkspaceLayout() {
   useWorkspaceEvents()
   usePanelEvents()
   const { sessionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const projects = useProjectsQuery()
+  const sessions = useSessionsQuery()
   const panelOpen = usePanelStore((s) => s.open)
   const togglePanel = usePanelStore((s) => s.togglePanel)
   const userId = useAuthStore((s) => s.user?.id)
+  const activeProject = useMemo(() => {
+    const session = (sessions.data ?? []).find((item) => item.id === sessionId)
+    const projectId = session?.project_id ?? searchParams.get("project")
+    return (projects.data ?? []).find((item) => item.id === projectId) ?? null
+  }, [projects.data, searchParams, sessionId, sessions.data])
 
   // Hydrate appearance from server prefs once per signed-in user.
   useEffect(() => {
@@ -53,6 +67,9 @@ export default function WorkspaceLayout() {
       <Suspense fallback={null}>
         <WorkbenchPanel
           sessionId={sessionId ?? null}
+          projectId={activeProject?.id ?? null}
+          projectName={activeProject?.name ?? null}
+          projectDirectory={activeProject?.directory ?? null}
           cronTab={<CronPanelTab sessionId={sessionId ?? null} />}
         />
       </Suspense>

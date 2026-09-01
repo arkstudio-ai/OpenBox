@@ -7,7 +7,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { containerKeys, containersApi } from "@/shared/api/containers"
-import { workbenchKeys } from "./keys"
+import { useUserId, workbenchKeys } from "./keys"
 
 export interface FileNode {
   name: string
@@ -23,10 +23,16 @@ function normalizeFiles(res: unknown): FileNode[] {
 }
 
 export function useFileListQuery(containerId: string | null, path: string) {
+  const userId = useUserId()
   return useQuery({
-    queryKey: containerKeys.files(containerId ?? "none", path),
+    queryKey: containerKeys.files(userId, containerId ?? "none", path),
     queryFn: async () => normalizeFiles(await containersApi.listFiles(containerId as string, path)),
     enabled: !!containerId,
+    // Agent tools mutate the remote project outside React Query. Keep an open
+    // file panel live so newly created files appear without collapsing and
+    // reopening the tree.
+    refetchInterval: 3_000,
+    refetchOnWindowFocus: true,
   })
 }
 
@@ -37,8 +43,9 @@ export interface FileContent {
 }
 
 export function useFileContentQuery(containerId: string | null, path: string | null) {
+  const userId = useUserId()
   return useQuery({
-    queryKey: workbenchKeys.fileContent(containerId ?? "none", path ?? "none"),
+    queryKey: workbenchKeys.fileContent(userId, containerId ?? "none", path ?? "none"),
     queryFn: () =>
       http.get<FileContent>(
         `/api/containers/${containerId}/files/content?path=${encodeURIComponent(path as string)}`,

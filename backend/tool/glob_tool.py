@@ -1,6 +1,7 @@
 """Glob tool: file name pattern search in the sandbox."""
 from pydantic import BaseModel, Field
 
+from tool.sensitive_paths import explicitly_requests_sensitive
 from tool.tool import ToolResult, ToolContext, define_tool
 
 
@@ -11,9 +12,15 @@ class GlobArgs(BaseModel):
 
 async def execute(args: GlobArgs, ctx: ToolContext) -> ToolResult:
     """Find files matching a glob pattern."""
-    # Use session workdir as default search path
-    search_path = args.path if args.path != "/workspace" else ctx.workdir
-    files = await ctx.sandbox.glob(pattern=args.pattern, path=search_path)
+    try:
+        search_path = ctx.resolve_file_path(args.path, allow_user_scope=True)
+    except ValueError as exc:
+        return ToolResult(title=f"glob: {args.pattern}", output=str(exc))
+    files = await ctx.sandbox.glob(
+        pattern=args.pattern,
+        path=search_path,
+        include_sensitive=explicitly_requests_sensitive(search_path, args.pattern),
+    )
 
     if not files:
         return ToolResult(
@@ -41,4 +48,5 @@ glob_tool = define_tool(
     description=GLOB_DESCRIPTION,
     parameters=GlobArgs,
     execute=execute,
+    parallel_safe=True,
 )

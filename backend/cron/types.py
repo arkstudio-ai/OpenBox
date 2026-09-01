@@ -43,6 +43,7 @@ class CronJobStatus(str, Enum):
     OK = "ok"
     ERROR = "error"
     SKIPPED = "skipped"
+    CANCELED = "canceled"
     RUNNING = "running"
 
 

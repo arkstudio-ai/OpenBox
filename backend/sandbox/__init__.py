@@ -9,15 +9,13 @@ _provider_instance: SandboxProvider | None = None
 def _create_provider() -> SandboxProvider:
     from core.config import get_config
     config = get_config()
-    if config.sandbox_provider == "kubernetes":
-        from sandbox.kubernetes import KubernetesProvider
-        return KubernetesProvider()
-    elif config.sandbox_provider == "wuying":
-        from sandbox.wuying import WuyingProvider
-        return WuyingProvider()
-    else:
-        from sandbox.docker import DockerManager
-        return DockerManager()
+    if config.sandbox_provider != "wuying":
+        raise RuntimeError(
+            "OpenBox Agent execution requires SANDBOX_PROVIDER=wuying; "
+            "Docker Compose is reserved for infrastructure services"
+        )
+    from sandbox.wuying import WuyingProvider
+    return WuyingProvider()
 
 
 def get_provider() -> SandboxProvider:

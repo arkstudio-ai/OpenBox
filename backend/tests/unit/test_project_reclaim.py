@@ -92,7 +92,7 @@ async def test_an_unrecognised_directory_is_reported_not_deleted(slugs):
 
 @pytest.mark.asyncio
 async def test_openbox_internals_are_skipped(slugs):
-    sandbox = FakeSandbox(present=[".openbox", ".hidden"])
+    sandbox = FakeSandbox(present=[".openbox", ".hidden", "openbox"])
     result = await reclaim.reclaim(sandbox)
     assert result["binned"] == []
     assert result["unknown"] == []

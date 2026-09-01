@@ -3,15 +3,23 @@
 A slug is written into a shell command as a path segment, so the validation
 here is the only thing between a project name and an arbitrary path.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from project.workspace import (
     DEFAULT_SLUG,
+    ProjectLocator,
     ProjectError,
+    asset_sandbox_path,
+    ensure_directory,
+    namespaced_project_directory,
     project_directory,
     slugify,
     validate_slug,
+    workdir_for_session,
 )
+from session.session import Session, plan_path
 
 
 # ── slugify ──
@@ -82,3 +90,102 @@ def test_directory_is_under_the_workspace_root():
 
 def test_the_default_project_has_a_directory_like_any_other():
     assert project_directory(DEFAULT_SLUG) == "/workspace/default"
+
+
+def test_same_slug_is_isolated_across_users_and_untrusted_ids_are_not_exposed():
+    alice = namespaced_project_directory("alice@example.com", "project/1", "demo")
+    bob = namespaced_project_directory("bob@example.com", "project/1", "demo")
+
+    assert alice != bob
+    assert alice.startswith("/workspace/openbox/users/u-")
+    assert "alice@example.com" not in alice
+    assert "project/1" not in alice
+    assert alice.endswith("-demo")
+
+
+@pytest.mark.asyncio
+async def test_sessions_in_one_project_share_exactly_one_workdir(monkeypatch):
+    locator = ProjectLocator(id="project-1", user_id="alice", slug="shared")
+
+    async def fake_locator(project_id, user_id=None):
+        assert project_id == "project-1"
+        assert user_id == "alice"
+        return locator
+
+    monkeypatch.setattr("project.workspace.locator_for", fake_locator)
+    first = SimpleNamespace(user_id="alice", project_id="project-1", id="session-1")
+    second = SimpleNamespace(user_id="alice", project_id="project-1", id="session-2")
+
+    assert await workdir_for_session(first) == await workdir_for_session(second)
+
+
+def test_attachment_paths_are_isolated_by_user_project_and_asset():
+    first = asset_sandbox_path("alice", "project-1", "report.pdf", asset_id="asset-1")
+    other_user = asset_sandbox_path("bob", "project-1", "report.pdf", asset_id="asset-1")
+    other_project = asset_sandbox_path("alice", "project-2", "report.pdf", asset_id="asset-1")
+    other_asset = asset_sandbox_path("alice", "project-1", "report.pdf", asset_id="asset-2")
+
+    assert len({first, other_user, other_project, other_asset}) == 4
+    assert first.endswith("/report.pdf")
+    assert all(raw not in first for raw in ("alice", "project-1", "asset-1"))
+
+
+def test_session_owner_is_internal_but_drives_namespaced_plan_path():
+    session = Session(
+        id="session-1",
+        user_id="alice",
+        project_id="project-1",
+        slug="quiet-fox",
+        created_at="2026-08-31T00:00:00+00:00",
+    )
+
+    path = plan_path(session, "demo")
+
+    assert path.startswith(namespaced_project_directory("alice", "project-1", "demo"))
+    assert path.endswith("-quiet-fox.md")
+    assert "user_id" not in session.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_ensure_directory_uses_workspace_cwd_and_checks_exit_status():
+    calls = []
+
+    class Sandbox:
+        async def execute(self, command, **kwargs):
+            calls.append((command, kwargs))
+            return SimpleNamespace(exit_code=0, stdout="", stderr="")
+
+    expected = namespaced_project_directory("alice", "project-1", "demo")
+    actual = await ensure_directory(
+        Sandbox(),
+        "demo",
+        user_id="alice",
+        project_id="project-1",
+    )
+
+    assert actual == expected
+    assert calls == [
+        (
+            f"mkdir -p -- {expected}",
+            {"timeout": 30, "workdir": "/workspace"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ensure_directory_fails_closed_when_runner_cannot_create_it():
+    class Sandbox:
+        async def execute(self, _command, **_kwargs):
+            return SimpleNamespace(
+                exit_code=1,
+                stdout="",
+                stderr="Permission denied",
+            )
+
+    with pytest.raises(RuntimeError, match="Permission denied"):
+        await ensure_directory(
+            Sandbox(),
+            "demo",
+            user_id="alice",
+            project_id="project-1",
+        )

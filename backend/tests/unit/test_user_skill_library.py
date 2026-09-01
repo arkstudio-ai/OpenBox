@@ -6,10 +6,11 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from db.base import get_db_session
 from db.models.user import User
+from db.models.user_skill import UserSkill
 from db.repository.user_repo import PgUserRepo
 from skill.user_library import (
     annotate_installed_skills,
@@ -377,3 +378,43 @@ async def test_delete_owned_skill_is_owner_only_and_cascades_install_provenance(
         [{"name": slug, "install_dir": slug, "source": "container"}],
     )
     assert scanned[0]["category"] == "installed"
+
+
+async def test_deleted_skill_keeps_monotonic_tombstone_until_explicit_recreate(
+    library_users,
+):
+    users = library_users
+    slug = f"lifecycle-{users['suffix']}"
+    created = await upsert_personal_snapshot(
+        users["alice_id"],
+        _skill_info(slug),
+        b"PK\x03\x04generation-one",
+    )
+    assert created["lifecycle_generation"] == 1
+
+    assert await delete_owned_skill(users["alice_id"], slug) is True
+    assert await get_owned_skill(users["alice_id"], slug) is None
+    assert all(
+        item["id"] != created["id"]
+        for item in await list_owned_skills(users["alice_id"])
+    )
+
+    async with get_db_session() as session:
+        tombstone = (
+            await session.execute(
+                select(UserSkill).where(UserSkill.id == created["id"])
+            )
+        ).scalar_one()
+        assert tombstone.lifecycle_state == "deleted"
+        assert tombstone.lifecycle_generation == 2
+        assert tombstone.archive_data == b""
+        assert tombstone.published_archive_data is None
+
+    recreated = await upsert_personal_snapshot(
+        users["alice_id"],
+        _skill_info(slug, description="A deliberate new package"),
+        b"PK\x03\x04generation-three",
+    )
+    assert recreated["id"] == created["id"]
+    assert recreated["lifecycle_generation"] == 3
+    assert recreated["publication_status"] == "unpublished"

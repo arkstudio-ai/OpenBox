@@ -1,6 +1,7 @@
 """Grep tool: file content search in the sandbox."""
 from pydantic import BaseModel, Field
 
+from tool.sensitive_paths import explicitly_requests_sensitive
 from tool.tool import ToolResult, ToolContext, define_tool
 
 
@@ -12,12 +13,15 @@ class GrepArgs(BaseModel):
 
 async def execute(args: GrepArgs, ctx: ToolContext) -> ToolResult:
     """Search file contents using grep."""
-    # Use session workdir as default search path
-    search_path = args.path if args.path != "/workspace" else ctx.workdir
+    try:
+        search_path = ctx.resolve_file_path(args.path, allow_user_scope=True)
+    except ValueError as exc:
+        return ToolResult(title=f"grep: {args.pattern}", output=str(exc))
     output = await ctx.sandbox.grep(
         pattern=args.pattern,
         path=search_path,
         file_type=args.type,
+        include_sensitive=explicitly_requests_sensitive(search_path),
     )
 
     if not output.strip():
@@ -48,4 +52,5 @@ grep_tool = define_tool(
     description=GREP_DESCRIPTION,
     parameters=GrepArgs,
     execute=execute,
+    parallel_safe=True,
 )

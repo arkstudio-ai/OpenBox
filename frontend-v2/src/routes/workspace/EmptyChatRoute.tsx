@@ -30,6 +30,7 @@ export default function EmptyChatRoute() {
         busy={false}
         autoFocus
         onSubmit={(text, opts) => start(text, { ...opts, projectId, agent })}
+        projectId={projectId}
         agents={agents ?? EMPTY_AGENTS}
         sessionAgent={agent}
         onPickAgent={setAgent}

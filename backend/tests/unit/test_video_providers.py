@@ -248,6 +248,27 @@ def test_sd2_resolution_must_match_model_tier():
         )
 
 
+def test_480_fast_rejects_spoken_audio_before_paid_submission():
+    route = _route("sd2", "seedance-2.0-480-fastⅠ", "sd2_video")
+    with pytest.raises(RuntimeError, match="does not support generated audio"):
+        validate_request(
+            route,
+            resolution="480p",
+            ratio="9:16",
+            duration=5,
+            generate_audio=True,
+            input_mimes=[],
+        )
+    validate_request(
+        route,
+        resolution="480p",
+        ratio="9:16",
+        duration=5,
+        generate_audio=False,
+        input_mimes=[],
+    )
+
+
 def test_wan3_validation_rejects_21_9_and_bad_duration():
     route = _route("task", "wan3.0-video", WAN3_MODEL_TYPE)
     with pytest.raises(RuntimeError, match="21:9"):
@@ -299,6 +320,8 @@ def test_sd2_payload_top_level_refs_and_duration_omission():
     assert body["extra_videos"] == ["https://oss/c.mp4"]
     assert "duration" not in body  # -1 is not on this channel; omit, don't error
     assert body["resolution"] == "1080p"
+    assert body["generate_audio"] is True
+    assert body["watermark"] is False
 
     _, timed = build_payload(
         route, prompt="p", refs=[], resolution="1080p", ratio="adaptive",
@@ -306,6 +329,15 @@ def test_sd2_payload_top_level_refs_and_duration_omission():
     )
     assert timed["duration"] == 10
     assert "ratio" not in timed  # adaptive is omitted
+    assert timed["generate_audio"] is True
+    assert timed["watermark"] is False
+
+    _, visual_only = build_payload(
+        route, prompt="p", refs=[], resolution="1080p", ratio="9:16",
+        duration=5, generate_audio=False, watermark=True,
+    )
+    assert visual_only["generate_audio"] is False
+    assert visual_only["watermark"] is True
 
 
 def test_wan3_refs_forced_into_content_with_roles():

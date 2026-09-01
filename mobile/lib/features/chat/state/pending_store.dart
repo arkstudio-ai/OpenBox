@@ -6,6 +6,10 @@ import '../../../shared/models/interaction.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/ws/ws_client.dart';
 
+/// Read the dual-field reply identifier across mixed backend/client versions.
+String interactionReplyRequestId(Map<String, dynamic> data) =>
+    asString(data['request_id']) ?? asString(data['id']) ?? '';
+
 /// Pending permission/question requests grouped by session, mirroring
 /// frontend-v2 `features/chat/stores/pending.ts` + its WS wiring.
 class PendingState {
@@ -37,11 +41,11 @@ class PendingStore extends Notifier<PendingState> {
       case 'permission.asked':
         addPermission(PermissionRequest.fromJson(event.data));
       case 'permission.replied':
-        removePermission(asString(event.data['request_id']) ?? '');
+        removePermission(interactionReplyRequestId(event.data));
       case 'question.asked':
         addQuestion(QuestionRequest.fromJson(event.data));
       case 'question.replied' || 'question.rejected':
-        removeQuestion(asString(event.data['request_id']) ?? '');
+        removeQuestion(interactionReplyRequestId(event.data));
     }
   }
 

@@ -9,8 +9,8 @@ been dead for an hour.
 This module is the single place a turn is ended deliberately. It does three
 things, in an order that matters:
 
-1. Signals the loop and parks the session at idle (what the call sites always
-   did).
+1. Persists a stop request and waits for the owning driver generation to
+   finish.  Only that owner may publish the final status.
 2. Writes an interruption marker into the transcript, so the *model* learns
    in-band what happened — the same shape codex uses, where an interrupted
    turn leaves a note in history rather than relying on out-of-band state.
@@ -93,7 +93,13 @@ async def _already_marked(session_id: str, user_id: str) -> bool:
     return False
 
 
-async def settle_running_todos(session_id: str, user_id: str) -> tuple[str | None, int, int]:
+async def settle_running_todos(
+    session_id: str,
+    user_id: str,
+    *,
+    assert_current=None,
+    generation: int | None = None,
+) -> tuple[str | None, int, int]:
     """Drop the running flag; report what was running, for the marker.
 
     Returns ``(subject, ordinal, total)`` describing the interrupted item.
@@ -118,7 +124,14 @@ async def settle_running_todos(session_id: str, user_id: str) -> tuple[str | Non
                 item.started_at = None
                 changed = True
         if changed:
-            await save_todo(session_id, todo, user_id=user_id)
+            if assert_current is not None:
+                await assert_current()
+            await save_todo(
+                session_id,
+                todo,
+                user_id=user_id,
+                generation=generation,
+            )
         return subject, ordinal, len(items)
 
 
@@ -128,6 +141,8 @@ async def abort_session_turn(
     *,
     reason: AbortReason = "user_stop",
     was_active: bool = True,
+    expected_run_id: str | None = None,
+    expected_generation: int | None = None,
 ) -> bool:
     """End the run in flight and leave an honest record of it.
 
@@ -136,16 +151,135 @@ async def abort_session_turn(
 
     Returns whether a marker was written.
     """
-    from session import session as session_mod
-    from session.status import trigger_abort
-
-    trigger_abort(session_id)
-    await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
     if not was_active:
         return False
-    # The loop only notices between steps; settling before it does would let
-    # the dying run write its state back on top of ours.
+
+    exact = expected_run_id is not None or expected_generation is not None
+    if exact and (expected_run_id is None or expected_generation is None):
+        raise ValueError("exact turn abort requires run_id and generation")
+
+    from session import session as session_mod
+    from agent.driver import (
+        StaleRecoveryError,
+        get_driver_state,
+        request_abort,
+        reserve_aborted_run_settlement,
+        wait_for_generation_end,
+    )
+
+    target_run_id = expected_run_id
+    target_generation = expected_generation
+    saw_durable_state = False
+    if not exact:
+        # Interactive stop means "the run that is current now". Snapshot then
+        # CAS that exact identity; if a replacement wins between those two
+        # operations, retry against the replacement instead of setting its
+        # in-memory abort signal by accident.
+        for _ in range(8):
+            state = await get_driver_state(session_id)
+            if state is None:
+                break
+            saw_durable_state = True
+            if state.phase == "idle" or not state.run_id:
+                return False
+            target_run_id = state.run_id
+            target_generation = state.generation
+            if await request_abort(
+                session_id,
+                user_id,
+                expected_run_id=target_run_id,
+                expected_generation=target_generation,
+            ):
+                break
+            target_run_id = None
+            target_generation = None
+            await asyncio.sleep(0)
+    elif not await request_abort(
+        session_id,
+        user_id,
+        expected_run_id=target_run_id,
+        expected_generation=target_generation,
+    ):
+        # The named old generation already released or was replaced. Its
+        # caller is stale and has no authority over what is current now.
+        return False
+
+    if target_run_id is not None and target_generation is not None:
+        if not await wait_for_generation_end(
+            session_id,
+            run_id=target_run_id,
+            generation=target_generation,
+            timeout=15.0,
+        ):
+            log.warning(
+                "Timed out waiting for agent driver generation to stop "
+                "session=%s generation=%s",
+                session_id,
+                target_generation,
+            )
+            return False
+
+        # The old generation is gone, but cleanup still needs ownership. This
+        # exact idle→maintenance CAS fails if any prompt/recovery worker has
+        # already advanced the Session, which is precisely what prevents a
+        # late marker or todo reset from landing in a newer turn.
+        try:
+            maintenance = await reserve_aborted_run_settlement(
+                session_id,
+                user_id,
+                settled_run_id=target_run_id,
+                settled_generation=target_generation,
+            )
+        except (StaleRecoveryError, LookupError):
+            return False
+
+        try:
+            if await _already_marked(session_id, user_id):
+                return False
+            subject, ordinal, total = await settle_running_todos(
+                session_id,
+                user_id,
+                assert_current=maintenance.assert_current,
+                generation=maintenance.generation,
+            )
+            await session_mod.create_user_message(
+                session_id=session_id,
+                text=marker_text(reason, subject, ordinal, total),
+                synthetic=True,
+                client_message_id=_marker_id(session_id),
+                user_id=user_id,
+                run_fence=(
+                    session_id,
+                    maintenance.run_id,
+                    maintenance.generation,
+                ),
+            )
+            return True
+        except Exception:
+            # The stop itself already happened and is what the user asked for.
+            # Losing the marker degrades the next turn's context; it must not
+            # turn a successful stop into an error.
+            log.warning(f"Could not record interruption for {session_id}", exc_info=True)
+            return False
+        finally:
+            await maintenance.release(session_status="idle")
+
+    if saw_durable_state:
+        # A durable marker existed but could not be aborted as a live exact
+        # generation (normally an expired run awaiting recovery). Never fall
+        # back to unfenced transcript/todo mutation beneath it.
+        return False
+
+    # Compatibility for a legacy/in-memory run created before the lease row
+    # existed. Give its signal a chance to settle, then repair the public read
+    # model. New runs always take the exact durable branch above.
+    await request_abort(session_id, user_id)
     await asyncio.sleep(_ABORT_SETTLE_SECONDS)
+    await session_mod.set_session_status(
+        session_id,
+        SessionStatus.IDLE,
+        user_id=user_id,
+    )
 
     try:
         if await _already_marked(session_id, user_id):

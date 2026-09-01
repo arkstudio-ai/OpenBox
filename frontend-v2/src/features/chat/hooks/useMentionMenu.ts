@@ -60,6 +60,8 @@ interface Args {
   caret: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
   containerId: string | null
+  sessionId?: string
+  projectId?: string
   onReplace: (nextText: string, nextCaret: number) => void
   /** Resource centre, when the surrounding route wired one in. */
   scope?: MentionScope
@@ -78,6 +80,8 @@ export function useMentionMenu({
   caret,
   textareaRef,
   containerId,
+  sessionId,
+  projectId,
   onReplace,
   scope,
   onPickResource,
@@ -98,7 +102,13 @@ export function useMentionMenu({
   }, [query])
 
   const fileEnabled = kind === "at" && containerId !== null && debouncedQuery.trim().length > 0
-  const fileSearch = useFileSearch(containerId, debouncedQuery.trim(), fileEnabled)
+  const fileSearch = useFileSearch({
+    containerId,
+    query: debouncedQuery.trim(),
+    enabled: fileEnabled,
+    sessionId,
+    projectId,
+  })
   const skills = useSkills()
   const commands = useCommands()
 

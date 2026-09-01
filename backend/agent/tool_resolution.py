@@ -181,7 +181,14 @@ async def merge_sandbox_tools(
     return tools
 
 
-async def attach_skill_listing(tools: dict, sandbox, ruleset: list | None = None) -> dict:
+async def attach_skill_listing(
+    tools: dict,
+    sandbox,
+    ruleset: list | None = None,
+    *,
+    scope_key=None,
+    skill_registry=None,
+) -> dict:
     """Advertise Skills and conditionally materialize their search companion.
 
     Separate from merge_sandbox_tools because skills are not a sandbox tool:
@@ -207,6 +214,8 @@ async def attach_skill_listing(tools: dict, sandbox, ruleset: list | None = None
             sandbox,
             ruleset,
             enable_search=search_is_eligible,
+            scope_key=scope_key,
+            registry=skill_registry,
         )
         tools["skill"] = skill
         if search is not None:
@@ -223,6 +232,27 @@ async def attach_skill_listing(tools: dict, sandbox, ruleset: list | None = None
             "without an eligible skill_search companion"
         )
     except Exception as e:
+        from skill.provider import SkillCatalogueUnavailable
+
+        if isinstance(e, SkillCatalogueUnavailable):
+            # Cold failure has no trustworthy directory. Keeping a static
+            # loader would advertise guessable names outside the selected
+            # snapshot and turn partial discovery into a live view.
+            tools.pop("skill", None)
+            tools.pop("skill_search", None)
+            log.error("Skill capability unavailable: %s", str(e)[:300])
+            return tools
+        if scope_key is not None:
+            # Malformed provider output is also non-authoritative. Scoped
+            # Agent resolution must not fall back to the static legacy loader,
+            # which would make unadvertised/guessable names loadable.
+            tools.pop("skill", None)
+            tools.pop("skill_search", None)
+            log.error(
+                "Skill capability rejected malformed provider output error_type=%s",
+                type(e).__name__,
+            )
+            return tools
         log.debug(f"Failed to enrich skill tool: {e}")
     return tools
 
@@ -232,10 +262,41 @@ async def resolve_step_tools(
     sandbox,
     config_rules: list,
     *,
+    user_id: str | None = None,
+    project_id: str | None = None,
+    workdir: str | None = None,
+    scope_key=None,
     include_discovery: bool = True,
     return_catalogue_state: bool = False,
 ) -> dict | ResolvedStepTools:
     """The full set of tools a step may call, schema included."""
+    explicit_scope = (
+        scope_key is not None
+        or user_id is not None
+        or project_id is not None
+        or workdir is not None
+    )
+    if explicit_scope:
+        from skill.provider import ScopeKey
+
+        if scope_key is None:
+            scope_key = ScopeKey(
+                user_id=user_id or "",
+                project_id=project_id or "",
+                workdir=workdir or "",
+            )
+        elif not isinstance(scope_key, ScopeKey):
+            raise TypeError("scope_key must be a ScopeKey")
+        elif any(
+            supplied is not None and supplied != actual
+            for supplied, actual in (
+                (user_id, scope_key.user_id),
+                (project_id, scope_key.project_id),
+                (workdir, scope_key.workdir),
+            )
+        ):
+            raise ValueError("scope_key conflicts with explicit scope fields")
+
     tools = get_tools_for_agent(agent_def.tools)
     if not include_discovery:
         # The logical discovery slot is explicit in AgentDef but has no role
@@ -248,9 +309,40 @@ async def resolve_step_tools(
     if not agent_def.tools:
         resolved = ResolvedStepTools(tools, "available")
         return resolved if return_catalogue_state else resolved.tools
+    ruleset = list(config_rules) + agent_ruleset(agent_def)
+    if (
+        sandbox is not None
+        and user_id
+        and "skill" in tools
+        and "skill" not in set(disabled_tools(["skill"], ruleset))
+    ):
+        try:
+            from skill.user_library import (
+                SkillRestoreScopeError,
+                restore_personal_skills_to_sandbox,
+            )
+        except ImportError as exc:
+            log.debug(
+                "Personal Skill restore unavailable error_type=%s",
+                type(exc).__name__,
+            )
+        else:
+            try:
+                # Restore owner-filtered durable ZIPs before taking the coherent
+                # sandbox catalogue snapshot used for this Agent step. Failure is
+                # fail-small: it never adds a definition or relaxes permissions.
+                await restore_personal_skills_to_sandbox(user_id, sandbox)
+            except SkillRestoreScopeError:
+                # Continuing would expose the mismatched sandbox's Skill/MCP
+                # directory. Treat an ownership invariant violation as fatal.
+                raise
+            except Exception as exc:
+                log.debug(
+                    "Personal Skill restore unavailable error_type=%s",
+                    type(exc).__name__,
+                )
     catalogue_sandbox, catalogue_availability = await _catalogue_view(sandbox)
     # The same rules that strip tools also decide which skills are worth listing.
-    ruleset = list(config_rules) + agent_ruleset(agent_def)
     tools = await merge_sandbox_tools(
         tools,
         catalogue_sandbox,
@@ -262,6 +354,20 @@ async def resolve_step_tools(
     # exists. Otherwise a denied `skill_search` could be stripped only after
     # the listing had already discarded names, breaking the atomic fallback.
     tools = strip_denied(tools, config_rules, agent_def)
-    tools = await attach_skill_listing(tools, catalogue_sandbox, ruleset)
+    skill_registry = None
+    if explicit_scope:
+        from skill.provider import skill_registry_for
+
+        # The registry is owned by the original tenant-scoped client so its
+        # LKG and lifecycle survive across steps. MCP still consumes the
+        # frozen aggregate projection above.
+        skill_registry = skill_registry_for(sandbox)
+    tools = await attach_skill_listing(
+        tools,
+        sandbox if explicit_scope else catalogue_sandbox,
+        ruleset,
+        scope_key=scope_key if explicit_scope else None,
+        skill_registry=skill_registry,
+    )
     resolved = ResolvedStepTools(tools, catalogue_availability)
     return resolved if return_catalogue_state else resolved.tools

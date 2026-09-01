@@ -1,6 +1,6 @@
-// The directory a session's tools run in (/workspace/<project-slug>), from the
-// session detail endpoint. The files panel roots its tree here: /workspace is
-// the agent's whole activity space, not the project the user is working on.
+// The canonical namespaced directory a session's tools run in, from the
+// session detail endpoint. The files panel roots its tree here; `/workspace`
+// is the whole execution plane, not the project the user is working on.
 import { useQuery } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
 import { useUserId, workbenchKeys } from "./keys"

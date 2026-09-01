@@ -275,7 +275,7 @@ function AppInner() {
         return <ChatView sessionId={(route as { id: string }).id} onNavigate={handleNavigate} />
       case "session-files": {
         const firstContainer = containers.find((c) => c.status === "running") || containers[0]
-        return <FileBrowser containerId={firstContainer?.id} />
+        return <FileBrowser containerId={firstContainer?.id} sessionId={(route as { id: string }).id} />
       }
       case "session-diff":
         return <DiffView sessionId={(route as { id: string }).id} />
@@ -338,7 +338,7 @@ function AppInner() {
             </div>
             <RightPanel />
           </div>
-          <BottomPanel containers={containers} />
+          <BottomPanel containers={containers} sessionId={sessionId} />
         </main>
       </div>
       <CommandPalette onNavigate={handleNavigate} />

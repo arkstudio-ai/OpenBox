@@ -15,7 +15,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ENV_FILE="${WUYING_ENV_FILE:-$HERE/../.env}"
+DEFAULT_ENV="$HERE/../.env"
+[ -f "$DEFAULT_ENV" ] || DEFAULT_ENV="$HERE/../.env.wuying-dev"
+ENV_FILE="${WUYING_ENV_FILE:-$DEFAULT_ENV}"
 
 # Environment-specific values live in backend/.env, which is not committed.
 # Only the three keys this script needs are read, and anything already exported

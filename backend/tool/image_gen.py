@@ -15,7 +15,7 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -44,7 +44,7 @@ class ImageGenArgs(BaseModel):
         default_factory=list,
         max_length=16,
         description=(
-            "Optional OSS asset IDs or attachment paths such as /workspace/uploads/photo.png. "
+            "Optional OSS asset IDs or absolute tenant-scoped sandbox attachment paths. "
             "When present, the tool edits/composites these images instead of generating from scratch."
         ),
     )
@@ -320,6 +320,7 @@ async def _call_provider(
     output_format: str,
     images: list[InputImage],
     mask: InputImage | None,
+    operation_key: str | None = None,
 ) -> list[bytes]:
     from openai import AsyncOpenAI
 
@@ -343,6 +344,10 @@ async def _call_provider(
         common["output_compression"] = args.output_compression
     if args.background is not None:
         common["background"] = args.background
+    if operation_key:
+        # Correlation only. The configured gateway is not assumed to honor
+        # idempotency for image billing, so unknown responses remain terminal.
+        common["extra_headers"] = {"X-Client-Request-Id": operation_key}
 
     client = AsyncOpenAI(**client_kwargs)
     try:
@@ -381,16 +386,34 @@ def _safe_filename(requested: str | None, asset_id: str, index: int, total: int,
 
 
 async def _upload_bytes(oss, key: str, mime: str, data: bytes) -> int:
+    import hashlib
     import httpx
 
     url = oss.presign_put(key, mime, expires_sec=600)
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.put(url, content=data, headers={"Content-Type": mime})
-    if response.status_code not in (200, 201, 204):
-        raise RuntimeError(f"OSS upload failed (HTTP {response.status_code})")
+    upload_error: Exception | None = None
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.put(url, content=data, headers={"Content-Type": mime})
+        if response.status_code not in (200, 201, 204):
+            upload_error = RuntimeError(
+                f"OSS upload failed (HTTP {response.status_code})"
+            )
+    except Exception as exc:
+        upload_error = exc
     head = await oss.head(key)
-    if not head:
+    if not head or int(head.get("size") or 0) != len(data):
+        if upload_error is not None:
+            raise upload_error
         raise RuntimeError("generated image is missing from OSS after upload")
+    etag = str(head.get("etag") or "").strip('"').casefold()
+    if re.fullmatch(r"[0-9a-f]{32}", etag):
+        digest = hashlib.md5(data, usedforsecurity=False).hexdigest()
+        if etag != digest:
+            raise RuntimeError("generated image OSS digest does not match the provider output")
+    elif upload_error is not None:
+        # After a lost/failed PUT response, matching length alone cannot prove
+        # that this deterministic key contains these paid provider bytes.
+        raise upload_error
     return head["size"] or len(data)
 
 
@@ -404,6 +427,8 @@ async def _store_output(
     mode: str,
     index: int,
     total: int,
+    *,
+    reserved_asset=None,
 ) -> StoredImage:
     from datetime import datetime, timezone
 
@@ -411,42 +436,101 @@ async def _store_output(
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from models.message import FilePart, FileRelation
+    from project.workspace import asset_sandbox_path
     from sandbox.assets import _session_project, _use_internal_oss, ensure_cli
     from session.session import save_part
 
-    asset_id = ascending("asset")
+    asset_id = reserved_asset.id if reserved_asset is not None else ascending("asset")
     mime, ext = _detect_output(data, fallback_format)
-    name = _safe_filename(requested_name, asset_id, index, total, ext)
-    key = f"assets/{ctx.user_id}/{asset_id}/{name}"
+    name = (
+        reserved_asset.name
+        if reserved_asset is not None
+        else _safe_filename(requested_name, asset_id, index, total, ext)
+    )
+    key = (
+        reserved_asset.oss_key
+        if reserved_asset is not None
+        else f"assets/{ctx.user_id}/{asset_id}/{name}"
+    )
+    await _assert_image_current(ctx)
+    if reserved_asset is not None:
+        from sqlalchemy import update
+
+        async with get_db_session() as db:
+            if reserved_asset is not None:
+                await _fence_image_write(db, ctx)
+            changed = await db.execute(
+                update(FileAsset)
+                .where(
+                    FileAsset.id == asset_id,
+                    FileAsset.user_id == ctx.user_id,
+                    FileAsset.status == "generating",
+                )
+                .values(status="uploading", mime=mime, size=len(data))
+                .execution_options(synchronize_session=False)
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("image output reservation is no longer writable")
     size = await _upload_bytes(oss, key, mime, data)
-    path = f"/workspace/generated_images/{name}"
+    project_id = ctx.project_id
 
     try:
         async with get_db_session() as db:
+            if reserved_asset is not None:
+                await _fence_image_write(db, ctx)
             project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
-            db.add(
-                FileAsset(
-                    id=asset_id,
-                    user_id=ctx.user_id,
-                    session_id=ctx.session_id,
-                    project_id=project_id or None,
-                    name=name,
-                    oss_key=key,
-                    mime=mime,
-                    size=size,
-                    status="ready",
-                    source="agent",
-                    transient=False,
-                    created_at=datetime.now(timezone.utc),
+            if reserved_asset is None:
+                db.add(
+                    FileAsset(
+                        id=asset_id,
+                        user_id=ctx.user_id,
+                        session_id=ctx.session_id,
+                        project_id=project_id or None,
+                        name=name,
+                        oss_key=key,
+                        mime=mime,
+                        size=size,
+                        status="ready",
+                        source="agent",
+                        transient=False,
+                        created_at=datetime.now(timezone.utc),
+                    )
                 )
-            )
+            else:
+                from sqlalchemy import update
+
+                changed = await db.execute(
+                    update(FileAsset)
+                    .where(
+                        FileAsset.id == asset_id,
+                        FileAsset.user_id == ctx.user_id,
+                        FileAsset.status == "uploading",
+                    )
+                    .values(
+                        project_id=project_id or None,
+                        mime=mime,
+                        size=size,
+                        status="ready",
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("image output reservation changed before OSS commit")
             await db.commit()
     except Exception:
-        try:
-            await oss.delete(key)
-        except Exception:
-            log.warning("failed to clean up an OSS image after database failure", exc_info=True)
+        if reserved_asset is None:
+            try:
+                await oss.delete(key)
+            except Exception:
+                log.warning("failed to clean up an OSS image after database failure", exc_info=True)
         raise
+
+    path = asset_sandbox_path(
+        ctx.user_id,
+        project_id,
+        name,
+        asset_id=asset_id,
+    )
 
     materialized = False
     if ctx.sandbox:
@@ -467,7 +551,11 @@ async def _store_output(
             materialized = pull.exit_code == 0
             if not materialized:
                 log.warning("generated image stayed in OSS but could not reach workspace: %s", pull.stderr[:200])
-        except Exception:
+        except Exception as exc:
+            from agent.driver import LeaseLostError
+
+            if isinstance(exc, LeaseLostError):
+                raise
             log.warning("generated image stayed in OSS but could not reach workspace", exc_info=True)
 
     attached = True
@@ -495,8 +583,13 @@ async def _store_output(
             ),
             is_new=True,
             user_id=ctx.user_id,
+            run_fence=ctx.run_fence,
         )
-    except Exception:
+    except Exception as exc:
+        from agent.driver import LeaseLostError
+
+        if isinstance(exc, LeaseLostError):
+            raise
         # The durable resource is still valid and visible in the resource
         # centre.  Do not delete paid-for output merely because the chat card
         # could not be pinned; report the distinction to the caller instead.
@@ -546,6 +639,173 @@ def _fingerprint(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _image_operation_key(ctx: ToolContext, fingerprint: str) -> str:
+    import hashlib
+
+    # Tool-call identity is stable across recovery of the same call. Run
+    # generation is deliberately excluded so lease takeover does not create a
+    # second paid identity.
+    call_identity = str(ctx.part_id or f"{ctx.user_id}:{fingerprint}")
+    raw = (
+        f"image_gen:v1\x1f{ctx.user_id}\x1f{ctx.session_id}"
+        f"\x1f{call_identity}\x1f{fingerprint}"
+    )
+    return "openbox-image-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _reserved_image_id(operation_key: str, index: int) -> str:
+    import hashlib
+
+    digest = hashlib.sha256(f"{operation_key}:{index}".encode("utf-8")).hexdigest()[:32]
+    return f"asset_img_{digest}"
+
+
+async def _assert_image_current(ctx: ToolContext) -> None:
+    guard = getattr(ctx, "assert_run_current", None)
+    if callable(guard):
+        await guard()
+
+
+async def _fence_image_write(db, ctx: ToolContext | None) -> None:
+    run_fence = getattr(ctx, "run_fence", None) if ctx is not None else None
+    if run_fence is None:
+        return
+    from agent.driver import assert_run_fence_locked
+
+    session_id, run_id, generation = run_fence
+    await assert_run_fence_locked(
+        db,
+        session_id=session_id,
+        user_id=ctx.user_id,
+        run_id=run_id,
+        generation=generation,
+    )
+
+
+async def _reserve_image_outputs(
+    ctx: ToolContext,
+    *,
+    operation_key: str,
+    requested_name: str | None,
+    output_format: str,
+    count: int,
+) -> tuple[list[Any], bool]:
+    """Reserve deterministic asset/OSS identities before the paid POST."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from sandbox.assets import _session_project
+
+    ext = "jpg" if output_format == "jpeg" else output_format
+    mime = "image/jpeg" if output_format == "jpeg" else f"image/{output_format}"
+    ids = [_reserved_image_id(operation_key, index) for index in range(1, count + 1)]
+    now = datetime.now(timezone.utc)
+    created = False
+    try:
+        async with get_db_session() as db:
+            await _fence_image_write(db, ctx)
+            existing = list(
+                (
+                    await db.execute(
+                        select(FileAsset).where(
+                            FileAsset.id.in_(ids),
+                            FileAsset.user_id == ctx.user_id,
+                        )
+                    )
+                ).scalars()
+            )
+            if existing:
+                if len(existing) != count:
+                    raise RuntimeError("image operation reservation is incomplete")
+                by_id = {row.id: row for row in existing}
+                return [by_id[asset_id] for asset_id in ids], False
+            project_id = ctx.project_id or await _session_project(
+                db, ctx.session_id, ctx.user_id
+            )
+            rows = []
+            for index, asset_id in enumerate(ids, start=1):
+                name = _safe_filename(
+                    requested_name,
+                    asset_id,
+                    index,
+                    count,
+                    ext,
+                )
+                row = FileAsset(
+                    id=asset_id,
+                    user_id=ctx.user_id,
+                    session_id=ctx.session_id,
+                    project_id=project_id or None,
+                    name=name,
+                    oss_key=f"assets/{ctx.user_id}/{asset_id}/{name}",
+                    mime=mime,
+                    size=0,
+                    status="pending",
+                    source="agent",
+                    transient=False,
+                    created_at=now,
+                )
+                db.add(row)
+                rows.append(row)
+            await db.flush()
+            created = True
+            return rows, created
+    except IntegrityError:
+        async with get_db_session() as db:
+            rows = list(
+                (
+                    await db.execute(
+                        select(FileAsset).where(
+                            FileAsset.id.in_(ids),
+                            FileAsset.user_id == ctx.user_id,
+                        )
+                    )
+                ).scalars()
+            )
+            by_id = {row.id: row for row in rows}
+            if len(by_id) != count:
+                raise RuntimeError("image operation reservation raced incompletely")
+            return [by_id[asset_id] for asset_id in ids], False
+
+
+async def _set_reserved_image_status(
+    rows: list[Any],
+    status: str,
+    *,
+    ctx: ToolContext | None,
+    expected: set[str] | None = None,
+) -> bool:
+    from sqlalchemy import update
+
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+
+    ids = [row.id for row in rows]
+    async with get_db_session() as db:
+        await _fence_image_write(db, ctx)
+        conditions = [FileAsset.id.in_(ids)]
+        if ctx is not None and ctx.user_id:
+            conditions.append(FileAsset.user_id == ctx.user_id)
+        else:
+            owners = {str(getattr(row, "user_id", "") or "") for row in rows}
+            if len(owners) != 1 or not next(iter(owners)):
+                raise RuntimeError("image reservations do not have one durable owner")
+            conditions.append(FileAsset.user_id == next(iter(owners)))
+        if expected:
+            conditions.append(FileAsset.status.in_(tuple(expected)))
+        result = await db.execute(
+            update(FileAsset)
+            .where(*conditions)
+            .values(status=status)
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == len(ids)
+
+
 async def _find_reusable_image(fingerprint: str):
     """Newest cached generation with a live, ready asset — any user."""
     from sqlalchemy import select
@@ -590,6 +850,7 @@ async def _store_reused(
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from models.message import FilePart, FileRelation
+    from project.workspace import asset_sandbox_path
     from sandbox.assets import _session_project, _use_internal_oss, ensure_cli
     from session.session import save_part
 
@@ -597,16 +858,39 @@ async def _store_reused(
     ext = cached_asset.name.rsplit(".", 1)[-1] if "." in cached_asset.name else "png"
     name = _safe_filename(requested_name, asset_id, 1, 1, ext)
     key = f"assets/{ctx.user_id}/{asset_id}/{name}"
+    await _assert_image_current(ctx)
+    try:
+        source_head = await oss.head(cached_asset.oss_key)
+    except Exception:
+        source_head = None
     try:
         head = await oss.copy(cached_asset.oss_key, key)
     except Exception:
-        head = None
-    if not head or not head.get("size"):
+        # COPY may have committed even when its response was lost.
+        try:
+            head = await oss.head(key)
+        except Exception:
+            head = None
+    expected_size = int(
+        (source_head or {}).get("size") or getattr(cached_asset, "size", 0) or 0
+    )
+    actual_size = int((head or {}).get("size") or 0)
+    if (
+        not head
+        or actual_size <= 0
+        or (expected_size > 0 and actual_size != expected_size)
+    ):
         return None
+    source_etag = str((source_head or {}).get("etag") or "").strip('"').casefold()
+    dest_etag = str(head.get("etag") or "").strip('"').casefold()
+    if source_etag and dest_etag and source_etag != dest_etag:
+        return None
+    await _assert_image_current(ctx)
     size = head["size"]
     mime = cached_asset.mime
 
     async with get_db_session() as db:
+        await _fence_image_write(db, ctx)
         project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
         db.add(
             FileAsset(
@@ -626,7 +910,12 @@ async def _store_reused(
         )
         await db.commit()
 
-    path = f"/workspace/generated_images/{name}"
+    path = asset_sandbox_path(
+        ctx.user_id,
+        project_id,
+        name,
+        asset_id=asset_id,
+    )
     materialized = False
     if ctx.sandbox:
         try:
@@ -637,7 +926,11 @@ async def _store_reused(
                 timeout=120,
             )
             materialized = pull.exit_code == 0
-        except Exception:
+        except Exception as exc:
+            from agent.driver import LeaseLostError
+
+            if isinstance(exc, LeaseLostError):
+                raise
             log.warning("reused image stayed in OSS but could not reach workspace", exc_info=True)
 
     attached = True
@@ -665,8 +958,13 @@ async def _store_reused(
             ),
             is_new=True,
             user_id=ctx.user_id,
+            run_fence=ctx.run_fence,
         )
-    except Exception:
+    except Exception as exc:
+        from agent.driver import LeaseLostError
+
+        if isinstance(exc, LeaseLostError):
+            raise
         attached = False
         log.warning("reused image saved to OSS but could not be attached to chat", exc_info=True)
 
@@ -753,23 +1051,22 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         if args.input_images:
             await ctx.update_output("Loading source images from OSS…")
         images, mask = await _load_inputs(args.input_images, args.mask_image, ctx, oss)
-        fingerprint = None
-        if getattr(settings, "dedupe", False) and args.n == 1:
-            import hashlib as _hashlib
+        import hashlib as _hashlib
 
-            fingerprint = _fingerprint(
-                op=mode,
-                model=target.model,
-                prompt=args.prompt,
-                size=size,
-                quality=quality,
-                output_format=output_format,
-                background=args.background,
-                output_compression=args.output_compression,
-                n=args.n,
-                source_digests=[_hashlib.sha256(img.data).hexdigest() for img in images],
-                mask_digest=_hashlib.sha256(mask.data).hexdigest() if mask else None,
-            )
+        fingerprint = _fingerprint(
+            op=mode,
+            model=target.model,
+            prompt=args.prompt,
+            size=size,
+            quality=quality,
+            output_format=output_format,
+            background=args.background,
+            output_compression=args.output_compression,
+            n=args.n,
+            source_digests=[_hashlib.sha256(img.data).hexdigest() for img in images],
+            mask_digest=_hashlib.sha256(mask.data).hexdigest() if mask else None,
+        )
+        if getattr(settings, "dedupe", False) and args.n == 1:
             cached = await _find_reusable_image(fingerprint)
             if cached:
                 reused = await _store_reused(
@@ -796,41 +1093,398 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                             "reused": True,
                         },
                     )
-        await ctx.update_output(
-            "Editing image with the configured provider…"
-            if images
-            else "Generating image with the configured provider…"
-        )
-        payloads = await _call_provider(
-            target,
-            args,
-            size=size,
-            quality=quality,
-            output_format=output_format,
-            images=images,
-            mask=mask,
-        )
-        await ctx.update_output("Uploading generated image to OSS…")
-        stored: list[StoredImage] = []
-        for index, payload in enumerate(payloads, start=1):
-            stored.append(
-                await _store_output(
-                    ctx,
-                    oss,
-                    payload,
-                    output_format,
-                    args.filename,
-                    args.prompt,
-                    mode,
-                    index,
-                    len(payloads),
-                )
-            )
-    except Exception as exc:
-        log.warning("image_gen %s failed: %s", mode, _public_error(exc))
-        return ToolResult(title=f"Image {mode} failed", output=_public_error(exc))
+        operation_key = _image_operation_key(ctx, fingerprint)
+        effect_prepared = None
+        effect_claim = None
+        if ctx.run_fence is not None:
+            # The generic ledger is the provider send authority.  FileAsset
+            # reservations remain the product projection, but can no longer
+            # be mistaken for evidence that a paid request was or was not
+            # accepted by the provider.
+            from agent.effect_ledger import EffectRunFence, prepare_effect
 
-    if fingerprint:
+            effect_prepared = await prepare_effect(
+                EffectRunFence.from_tool_context(ctx),
+                adapter="image_gen",
+                provider=target.provider,
+                operation=mode,
+                logical_key=operation_key,
+                request_digest=fingerprint,
+                project_id=ctx.project_id or None,
+                idempotency_key=operation_key,
+                safe_context={
+                    "asset_ids": [
+                        _reserved_image_id(operation_key, index)
+                        for index in range(1, args.n + 1)
+                    ],
+                    "mode": mode,
+                    "model": target.model,
+                    "output_count": args.n,
+                    "output_format": output_format,
+                },
+            )
+        reservations, created = await _reserve_image_outputs(
+            ctx,
+            operation_key=operation_key,
+            requested_name=args.filename,
+            output_format=output_format,
+            count=args.n,
+        )
+        stored: list[StoredImage] = []
+        provider_called = False
+        should_generate = created
+        if effect_prepared is not None and effect_prepared.snapshot.state != "prepared":
+            # ``succeeded`` is allowed to fall through to the ready-reservation
+            # projection below. Every other post-send state is reconcile-only;
+            # a stable FileAsset row must never reopen provider dispatch.
+            should_generate = False
+        if not created:
+            if all(row.status == "ready" and row.size > 0 for row in reservations):
+                from project.workspace import asset_sandbox_path
+
+                stored = [
+                    StoredImage(
+                        row.id,
+                        row.name,
+                        row.mime,
+                        row.size,
+                        asset_sandbox_path(
+                            row.user_id,
+                            row.project_id,
+                            row.name,
+                            asset_id=row.id,
+                        ),
+                        attached=False,
+                        materialized=False,
+                    )
+                    for row in reservations
+                ]
+            elif (
+                all(row.status == "pending" for row in reservations)
+                and (
+                    effect_prepared is None
+                    or effect_prepared.snapshot.state == "prepared"
+                )
+            ):
+                # A prior generation lost its lease at the explicit pre-send
+                # guard. No provider call occurred, so the stable reservation
+                # is safe for exactly one caller to claim below.
+                should_generate = True
+            else:
+                states = sorted({str(row.status) for row in reservations})
+                return ToolResult(
+                    title="Image operation needs operator review",
+                    output=(
+                        "This exact image operation already crossed its durable send boundary "
+                        "without a complete local result. It will not be submitted again automatically."
+                    ),
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_outcome_unknown",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "states": states,
+                        "outcome_unknown": True,
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    },
+                )
+        if not should_generate and not stored:
+            return ToolResult(
+                title="Image operation needs reconciliation",
+                output=(
+                    "This exact image effect is already beyond its durable send boundary, "
+                    "but no complete ready asset projection is available. It will not be "
+                    "submitted again automatically."
+                ),
+                metadata={
+                    "error": True,
+                    "failure_code": "image_effect_reconciliation_required",
+                    "operation_key": operation_key,
+                    "asset_ids": [row.id for row in reservations],
+                    "effect_state": (
+                        effect_prepared.snapshot.state
+                        if effect_prepared is not None
+                        else None
+                    ),
+                    "manual_review": True,
+                    "do_not_retry": True,
+                },
+            )
+        if should_generate:
+            if effect_prepared is not None:
+                from agent.effect_ledger import claim_effect_for_dispatch
+
+                effect_claim = await claim_effect_for_dispatch(
+                    effect_prepared.snapshot.effect_id,
+                    EffectRunFence.from_tool_context(ctx),
+                )
+            claimed = await _set_reserved_image_status(
+                reservations,
+                "generating",
+                ctx=ctx,
+                expected={"pending"},
+            )
+            if not claimed:
+                raise RuntimeError("image operation send reservation was lost")
+            await ctx.update_output(
+                "Editing image with the configured provider…"
+                if images
+                else "Generating image with the configured provider…"
+            )
+            try:
+                await _assert_image_current(ctx)
+                if effect_claim is not None:
+                    from agent.effect_ledger import (
+                        assert_effect_dispatchable,
+                        mark_effect_submitting,
+                    )
+
+                    await mark_effect_submitting(effect_claim)
+                    await assert_effect_dispatchable(effect_claim)
+                provider_called = True
+                provider_operation = _call_provider(
+                    target,
+                    args,
+                    size=size,
+                    quality=quality,
+                    output_format=output_format,
+                    images=images,
+                    mask=mask,
+                    operation_key=operation_key,
+                )
+                if effect_claim is not None:
+                    from agent.effect_ledger import (
+                        run_with_effect_claim_heartbeat,
+                    )
+
+                    payloads = await run_with_effect_claim_heartbeat(
+                        effect_claim,
+                        provider_operation,
+                    )
+                else:
+                    payloads = await provider_operation
+                await _assert_image_current(ctx)
+            except Exception as exc:
+                from agent.driver import LeaseLostError
+
+                if effect_claim is not None and provider_called:
+                    from agent.effect_ledger import (
+                        EffectLeaseLostError,
+                        record_effect_outcome_unknown,
+                    )
+
+                    try:
+                        await record_effect_outcome_unknown(
+                            effect_claim,
+                            error={
+                                "code": "image_provider_response_unknown",
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                    except EffectLeaseLostError:
+                        # A takeover owns the durable classification now.  The
+                        # old worker must not repair over the new claim.
+                        pass
+                elif effect_claim is not None:
+                    from agent.effect_ledger import (
+                        EffectLeaseLostError,
+                        abandon_effect_before_dispatch,
+                    )
+
+                    try:
+                        await abandon_effect_before_dispatch(
+                            effect_claim,
+                            reason=f"pre_send_{type(exc).__name__}",
+                        )
+                    except EffectLeaseLostError:
+                        # If ``submitting`` actually committed before an
+                        # unknown database result, only reconciliation may
+                        # classify it. Never force it back to prepared.
+                        pass
+
+                # A lease check that fails before entering the provider SDK is
+                # a proven pre-send failure, so the stable reservation may be
+                # returned to pending. Once the call begins, any exception is
+                # ambiguous and paid resubmission remains disabled.
+                next_status = (
+                    "pending"
+                    if isinstance(exc, LeaseLostError) and not provider_called
+                    else "outcome_unknown"
+                )
+                await _set_reserved_image_status(
+                    reservations,
+                    next_status,
+                    ctx=None,
+                    expected={"generating"},
+                )
+                if isinstance(exc, LeaseLostError):
+                    raise
+                log.warning("image provider outcome unknown: %s", type(exc).__name__)
+                return ToolResult(
+                    title=f"Image {mode} outcome unknown",
+                    output=(
+                        "The image provider request may have been accepted, but no durable provider "
+                        "receipt is available. Automatic paid resubmission is disabled."
+                    ),
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_provider_outcome_unknown",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "outcome_unknown": True,
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    },
+                )
+            if effect_claim is not None:
+                import hashlib as _receipt_hashlib
+
+                from agent.effect_ledger import (
+                    EffectLeaseLostError,
+                    record_effect_accepted,
+                )
+
+                try:
+                    await record_effect_accepted(
+                        effect_claim,
+                        provider_handle=None,
+                        receipt={
+                            "asset_ids": [row.id for row in reservations],
+                            "output_count": len(payloads),
+                            "output_sha256": [
+                                _receipt_hashlib.sha256(payload).hexdigest()
+                                for payload in payloads
+                            ],
+                        },
+                    )
+                except EffectLeaseLostError:
+                    await _set_reserved_image_status(
+                        reservations,
+                        "outcome_unknown",
+                        ctx=None,
+                        expected={"generating"},
+                    )
+                    return ToolResult(
+                        title=f"Image {mode} receipt needs reconciliation",
+                        output=(
+                            "The provider returned image bytes, but this worker no longer owns "
+                            "the durable effect receipt. Automatic paid resubmission is disabled."
+                        ),
+                        metadata={
+                            "error": True,
+                            "failure_code": "image_receipt_fenced_out",
+                            "operation_key": operation_key,
+                            "asset_ids": [row.id for row in reservations],
+                            "outcome_unknown": True,
+                            "manual_review": True,
+                            "do_not_retry": True,
+                        },
+                    )
+            if len(payloads) != len(reservations):
+                await _set_reserved_image_status(
+                    reservations,
+                    "transfer_failed",
+                    ctx=None,
+                    expected={"generating"},
+                )
+                return ToolResult(
+                    title="Image provider response incomplete",
+                    output="The provider returned a different number of images than were reserved; no paid retry was attempted.",
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_provider_response_incomplete",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    },
+                )
+            await ctx.update_output("Uploading generated image to OSS…")
+            try:
+                for index, (payload, reservation) in enumerate(
+                    zip(payloads, reservations, strict=True), start=1
+                ):
+                    if effect_claim is not None:
+                        from agent.effect_ledger import (
+                            renew_effect_claim,
+                            run_with_effect_claim_heartbeat,
+                        )
+
+                        effect_claim = await renew_effect_claim(effect_claim)
+                    store_operation = _store_output(
+                        ctx,
+                        oss,
+                        payload,
+                        output_format,
+                        args.filename,
+                        args.prompt,
+                        mode,
+                        index,
+                        len(payloads),
+                        reserved_asset=reservation,
+                    )
+                    if effect_claim is not None:
+                        stored_image = await run_with_effect_claim_heartbeat(
+                            effect_claim,
+                            store_operation,
+                        )
+                    else:
+                        stored_image = await store_operation
+                    stored.append(stored_image)
+                if effect_claim is not None:
+                    from agent.effect_ledger import settle_effect
+
+                    effect_claim = await renew_effect_claim(effect_claim)
+                    await settle_effect(
+                        effect_claim,
+                        state="succeeded",
+                        projection={
+                            "asset_ids": [item.asset_id for item in stored],
+                            "output_count": len(stored),
+                        },
+                        evidence={"projection": "file_assets_ready"},
+                    )
+            except Exception as exc:
+                await _set_reserved_image_status(
+                    reservations,
+                    "transfer_failed",
+                    ctx=None,
+                    expected={"generating", "uploading"},
+                )
+                from agent.driver import LeaseLostError
+
+                if isinstance(exc, LeaseLostError):
+                    raise
+                log.warning("image delivery failed after provider response: %s", type(exc).__name__)
+                return ToolResult(
+                    title="Generated image delivery failed",
+                    output=(
+                        "The provider response was received, but OSS/database delivery did not finish. "
+                        "The paid provider request will not be repeated automatically."
+                    ),
+                    metadata={
+                        "error": True,
+                        "failure_code": "image_delivery_failed",
+                        "operation_key": operation_key,
+                        "asset_ids": [row.id for row in reservations],
+                        "manual_review": True,
+                        "do_not_retry": True,
+                    },
+                )
+    except Exception as exc:
+        from agent.driver import LeaseLostError
+
+        if isinstance(exc, LeaseLostError):
+            raise
+        log.warning("image_gen %s failed: %s", mode, _public_error(exc))
+        return ToolResult(
+            title=f"Image {mode} failed",
+            output=_public_error(exc),
+            metadata={"error": True, "failure_code": "image_preflight_failed"},
+        )
+
+    if fingerprint and provider_called:
         await _record_cache(
             fingerprint,
             mode,
@@ -872,6 +1526,77 @@ IMAGE_GEN_DESCRIPTION = """\
 Generate raster images from text, or edit OSS assets and uploads. An optional PNG
 mask targets the first input. Results are stored, indexed, and attached
 automatically; do not attach them again."""
+
+
+class _ImageEffectReconciler:
+    """Reconcile only the deterministic FileAsset/OSS projection.
+
+    The synchronous image endpoint exposes no queryable provider handle.  A
+    complete set of ready deterministic asset rows proves local projection;
+    every other state remains manual review and never causes a paid replay.
+    """
+
+    can_reconcile_without_handle = True
+
+    async def reconcile(self, effect):
+        from agent.effect_ledger import ReconcileDecision
+        from db.base import get_db_session
+        from db.models.file_asset import FileAsset
+        from sqlalchemy import select
+
+        raw_ids = effect.safe_context.get("asset_ids")
+        asset_ids = [str(item) for item in raw_ids] if isinstance(raw_ids, list) else []
+        expected = int(effect.safe_context.get("output_count") or len(asset_ids) or 0)
+        if not asset_ids or len(asset_ids) != expected:
+            return ReconcileDecision(
+                state="manual_review",
+                evidence={"code": "image_projection_identity_incomplete"},
+            )
+        async with get_db_session() as db:
+            rows = list(
+                (
+                    await db.execute(
+                        select(FileAsset).where(
+                            FileAsset.id.in_(asset_ids),
+                            FileAsset.user_id == effect.tenant_id,
+                            FileAsset.is_deleted.is_(False),
+                        )
+                    )
+                ).scalars()
+            )
+        by_id = {row.id: row for row in rows}
+        if len(by_id) == len(asset_ids) and all(
+            by_id[asset_id].status == "ready" and by_id[asset_id].size > 0
+            for asset_id in asset_ids
+        ):
+            return ReconcileDecision(
+                state="succeeded",
+                receipt=effect.provider_receipt,
+                projection={"asset_ids": asset_ids, "output_count": len(asset_ids)},
+                evidence={"projection": "file_assets_ready"},
+            )
+        return ReconcileDecision(
+            state="manual_review",
+            receipt=effect.provider_receipt,
+            evidence={
+                "code": "image_bytes_not_recoverable",
+                "known_asset_count": len(by_id),
+                "expected_asset_count": len(asset_ids),
+                "states": sorted({str(row.status) for row in rows}),
+            },
+        )
+
+
+_image_effect_reconciler = _ImageEffectReconciler()
+
+
+def _register_image_effect_reconciler() -> None:
+    from agent.effect_ledger import register_effect_reconciler
+
+    register_effect_reconciler("image_gen", _image_effect_reconciler)
+
+
+_register_image_effect_reconciler()
 
 
 image_gen_tool = define_tool(

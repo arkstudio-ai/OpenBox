@@ -37,6 +37,8 @@ class WorkspaceData {
 class WorkspaceController extends AsyncNotifier<WorkspaceData> {
   StreamSubscription<WsEvent>? _sub;
   StreamSubscription<AppEvent>? _busSub;
+  final Map<String, int> _statusGeneration = {};
+  final Map<String, int> _terminalStatusGeneration = {};
 
   @override
   Future<WorkspaceData> build() async {
@@ -79,13 +81,50 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
           (s) => s.copyWith(title: asString(event.data['title']) ?? s.title),
         );
       case 'session.status':
+        final incoming = sessionStatusFrom(asString(event.data['status']));
+        if (!_acceptStatusEvent(event, incoming)) return;
+        _patchSession(event.sessionId, (s) => s.copyWith(status: incoming));
+      case 'session.finalizing':
+        if (!_acceptStatusEvent(event, SessionStatus.finalizing)) return;
         _patchSession(
           event.sessionId,
-          (s) => s.copyWith(
-            status: sessionStatusFrom(asString(event.data['status'])),
-          ),
+          (s) => s.copyWith(status: SessionStatus.finalizing),
+        );
+      case 'session.error':
+        if (!_acceptStatusEvent(event, SessionStatus.error)) return;
+        _patchSession(
+          event.sessionId,
+          (s) => s.copyWith(status: SessionStatus.error),
         );
     }
+  }
+
+  bool _acceptStatusEvent(WsEvent event, SessionStatus status) {
+    final sessionId = event.sessionId;
+    if (sessionId == null) return false;
+    final generation = asInt(event.data['generation']);
+    final current = _statusGeneration[sessionId];
+    if (!acceptsEventGeneration(
+      current,
+      generation,
+      rejectLegacyAfterSeen: true,
+    )) {
+      return false;
+    }
+    if (generation != null &&
+        _terminalStatusGeneration[sessionId] == generation) {
+      final currentStatus = state.valueOrNull?.sessionById(sessionId)?.status;
+      if (currentStatus != status) {
+        return false;
+      }
+    }
+    if (generation != null) {
+      _statusGeneration[sessionId] = generation;
+      if (status == SessionStatus.idle || status == SessionStatus.error) {
+        _terminalStatusGeneration[sessionId] = generation;
+      }
+    }
+    return true;
   }
 
   void _patchSession(String? id, Session Function(Session) update) {
@@ -100,11 +139,17 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
       for (final s in data.sessions)
         if (s.id == id) update(s) else s,
     ];
-    state = AsyncData(WorkspaceData(projects: data.projects, sessions: sessions));
+    state = AsyncData(
+      WorkspaceData(projects: data.projects, sessions: sessions),
+    );
   }
 
   /// Create + return a session; the caller navigates to it.
-  Future<Session> createSession({String? projectId, String model = '', String agent = 'build'}) async {
+  Future<Session> createSession({
+    String? projectId,
+    String model = '',
+    String agent = 'build',
+  }) async {
     final session = await ref
         .read(workspaceApiProvider)
         .createSession(projectId: projectId, model: model, agent: agent);
@@ -135,8 +180,8 @@ class WorkspaceController extends AsyncNotifier<WorkspaceData> {
 
 final workspaceProvider =
     AsyncNotifierProvider<WorkspaceController, WorkspaceData>(
-  WorkspaceController.new,
-);
+      WorkspaceController.new,
+    );
 
 /// The project new chats land in (web `useWorkspaceUi.selectedProject`).
 final selectedProjectProvider = StateProvider<String?>((ref) => null);

@@ -1,11 +1,12 @@
 """Private persistence for deferred-tool exposure and provider replay.
 
-This module is the *only* supported read/write path for ``internal_parts``.
-It deliberately has no event-bus dependency: opaque provider blocks and reveal
-evidence must never appear in REST/SSE payloads.  PostgreSQL mutations lock the
-session row; the single-process desktop SQLite deployment additionally uses an
-application guard plus ``BEGIN IMMEDIATE`` as the database-equivalent write
-fence.
+This module is the only supported compatibility read/write path for
+``internal_parts``. Provider transcript writes are sanitized here and copied
+into the canonical Agent event log as an API-hidden replay sidecar in the same
+transaction. Tool-reveal evidence remains private SQL state. Neither category
+appears in REST/SSE payloads. PostgreSQL mutations lock the session row; the
+single-process desktop SQLite deployment additionally uses an application
+guard plus ``BEGIN IMMEDIATE`` as the database-equivalent write fence.
 """
 from __future__ import annotations
 
@@ -45,6 +46,32 @@ _PORTABLE_BINDING_BYTES = b"openbox:portable-tool-reveal:v1"
 PORTABLE_CAPABILITY_KEY_DIGEST = hashlib.sha256(_PORTABLE_BINDING_BYTES).hexdigest()
 
 FaultInjector = Callable[[str], None]
+RunFence = tuple[str, str, int]
+
+
+async def _assert_run_fence(
+    db: AsyncSession,
+    run_fence: RunFence | None,
+    *,
+    session_id: str,
+    user_id: str,
+) -> None:
+    if run_fence is None:
+        return
+    fence_session_id, run_id, generation = run_fence
+    if fence_session_id != session_id:
+        from agent.driver import LeaseLostError
+
+        raise LeaseLostError("provider transcript fence targets another session")
+    from agent.driver import assert_run_fence_locked
+
+    await assert_run_fence_locked(
+        db,
+        session_id=session_id,
+        user_id=user_id,
+        run_id=run_id,
+        generation=generation,
+    )
 
 
 class ProviderCapabilityBinding(BaseModel):
@@ -438,6 +465,7 @@ async def save_internal_part(
     response_chain_id: str,
     stream_seq: int,
     idempotency_key: str | None = None,
+    run_fence: RunFence | None = None,
     _fault_injector: FaultInjector | None = None,
 ) -> InternalPartRecord:
     """Persist an opaque provider block without publishing any public event."""
@@ -449,9 +477,12 @@ async def save_internal_part(
         raise ValueError("response_chain_id must be 1..128 characters")
     if stream_seq < 0:
         raise ValueError("stream_seq must be non-negative")
-    # Round-trip through JSON now so unsupported objects fail before acquiring
-    # a row lock, and strip PostgreSQL-forbidden NUL bytes.
-    clean_data = json.loads(json.dumps(dict(data), ensure_ascii=False).replace("\\u0000", ""))
+    # Provider-owned opaque blocks may contain transport metadata. Sanitize at
+    # the persistence boundary, then round-trip through JSON before acquiring
+    # a row lock. Ordinary user/public Part content never passes this path.
+    from session.agent_event_log import json_safe_copy, sanitize_provider_private
+
+    clean_data = json_safe_copy(sanitize_provider_private(dict(data)))
     binding_digest = binding.digest()
     storage_digest = (
         str(capability_key_digest).lower()
@@ -477,7 +508,20 @@ async def save_internal_part(
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
+            await _assert_run_fence(
+                db,
+                run_fence,
+                session_id=session_id,
+                user_id=user_id,
+            )
             session_row = await lock_owned_session(db, session_id, user_id)
+            from session.agent_event_log import (
+                ensure_model_seed_locked,
+                ensure_surface_seed_locked,
+            )
+
+            await ensure_surface_seed_locked(db, session_row)
+            await ensure_model_seed_locked(db, session_row)
             await _require_owned_message(
                 db,
                 session_id=session_id,
@@ -522,6 +566,14 @@ async def save_internal_part(
             )
             db.add(row)
             await db.flush()
+            from session.agent_event_log import append_provider_replay_event_locked
+
+            await append_provider_replay_event_locked(
+                db,
+                session_row,
+                row,
+                run_fence=run_fence,
+            )
             _call_fault(_fault_injector, "after_insert")
             session_row.tool_exposure_state = state
             _call_fault(_fault_injector, "before_commit")
@@ -643,6 +695,7 @@ async def commit_tool_reveals(
     *,
     ttl_seconds: int = DEFAULT_REVEAL_TTL_SECONDS,
     max_reveals: int = DEFAULT_MAX_REVEALS_PER_AGENT,
+    run_fence: RunFence | None = None,
     _fault_injector: FaultInjector | None = None,
 ) -> tuple[RevealCommitResult, ...]:
     """Atomically validate and commit one capability-result reveal batch.
@@ -681,6 +734,12 @@ async def commit_tool_reveals(
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
+            await _assert_run_fence(
+                db,
+                run_fence,
+                session_id=session_id,
+                user_id=user_id,
+            )
             session_row = await lock_owned_session(db, session_id, user_id)
 
             # Validate the entire ownership/origin surface before allocating a
@@ -811,6 +870,7 @@ async def commit_tool_reveal(
     *,
     ttl_seconds: int = DEFAULT_REVEAL_TTL_SECONDS,
     max_reveals: int = DEFAULT_MAX_REVEALS_PER_AGENT,
+    run_fence: RunFence | None = None,
     _fault_injector: FaultInjector | None = None,
 ) -> RevealCommitResult:
     """Backward-compatible single-event wrapper around the atomic batch API."""
@@ -819,6 +879,7 @@ async def commit_tool_reveal(
         (event,),
         ttl_seconds=ttl_seconds,
         max_reveals=max_reveals,
+        run_fence=run_fence,
         _fault_injector=_fault_injector,
     )
     return committed[0]

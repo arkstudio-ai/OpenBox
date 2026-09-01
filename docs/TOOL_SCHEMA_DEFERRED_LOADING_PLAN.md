@@ -1072,7 +1072,8 @@ native catalogue >128K 和单项 >5K，断言上述优先级、fallback 与 disc
    `reveal_ttl_seconds=1800`、`max_persisted_reveals=8`、
    `max_search_calls_per_step=2`、`max_reveals_per_step=5`、
    `max_search_result_chars_per_step=2000`、native endpoint/model allowlist、
-   `allow_emergency_eager=false`。默认 `legacy_eager`；
+   `allow_emergency_eager=false`。PR#0 迁移阶段默认 `legacy_eager`；完成 Browser A–H、
+   当前生产目录预算实测和 portable 回归后，现行代码默认已切为 `portable`；
 3. 每请求记录工具数、三种 definition chars、proxy tokens、来源分布、最大项；
 4. 用实际 serialized chars 替换 `loop.py` 的 `len(tools) * 400`；
 5. 只对 `skill_tool.render_listing()` **最终完整输出**做精确 meter 与 8K 超限告警，
@@ -2011,9 +2012,9 @@ permission 双重检查。
 26. **桌面重启的连带效应。** systemd 自动拉起 action server 并 `reconnect_configured()`
     重连 MCP（工具集可能变化）、dev-browser 不自启、`START_TIME` 重置。`START_TIME`
     是唯一可靠的重启信号，必须进目录 generation 与 evidence 失效链。
-27. **config 默认值陷阱。** `sandbox_provider` 代码默认仍是 `docker`；一切验收环境
-    必须显式 `SANDBOX_PROVIDER=wuying`。不要因为本地 fixture 用 fake sandbox 就误以
-    为 docker 路径被测试覆盖——它是冻结区，不是回归目标。
+27. **执行 Provider fail-closed。** `sandbox_provider` 代码默认且唯一允许值现为
+    `wuying`，factory 对 Docker、Kubernetes 和未知值再次拒绝；Docker Compose 只提供
+    PostgreSQL、Redis 与可选 Azurite，不是 Agent 执行面。
 
 ---
 

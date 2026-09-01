@@ -16,42 +16,109 @@ from cron.types import CronJobCreate, CronJobUpdate, CronJobStatus
 log = create_logger("cron.service")
 
 
+def _utc_iso(value: datetime | None) -> str | None:
+    """Serialize database timestamps as unambiguous UTC ISO-8601.
+
+    PostgreSQL commonly returns ``timestamp without time zone`` columns as
+    naive ``datetime`` objects even though OpenBox stores UTC in them.  A
+    bare ``isoformat()`` makes browsers interpret those values as local time,
+    shifting every Cron timestamp by the viewer's UTC offset.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class CronService:
     """Session-level cron job scheduler."""
 
     def __init__(self):
         self._state = TimerState()
+        from cron.outbox import OutboxWorker
+
+        self._outbox_worker = OutboxWorker()
         self._started = False
+        self._lifecycle_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the cron scheduler. Call during app lifespan startup."""
-        if self._started:
-            return
-        self._started = True
-        log.info("Cron scheduler starting...")
+        async with self._lifecycle_lock:
+            if self._started:
+                return
+            log.info("Cron scheduler starting...")
 
-        # Health baseline: "alive as of start", so a fresh scheduler is not
-        # reported unhealthy during the minute before its first tick.
-        self._state.last_tick_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            try:
+                # Desktop SQLite does not run Alembic and create_all cannot
+                # retrofit existing tables. PostgreSQL remains exclusively
+                # migration-driven.
+                from cron.schema import ensure_desktop_cron_lease_schema
+                await ensure_desktop_cron_lease_schema()
 
-        # Recovery: clean stuck markers + replay missed jobs
-        from cron.recovery import recover_on_startup
-        await recover_on_startup()
+                # Recovery: clean stuck markers + replay missed jobs.
+                from cron.recovery import recover_on_startup
+                await recover_on_startup()
 
-        # Recompute next_run_at for all enabled jobs
-        await self._recompute_all()
+                # Recompute next_run_at for all enabled jobs.
+                await self._recompute_all()
 
-        # Arm the timer
-        arm_timer(self._state)
-        log.info("Cron scheduler started")
+                from cron.outbox import (
+                    materialize_legacy_pending_session_deliveries,
+                )
+                await materialize_legacy_pending_session_deliveries()
+
+                # Pending deliveries from a previous process are claimable as
+                # soon as their database lease expires (or immediately when
+                # they were never claimed).
+                await self._outbox_worker.start()
+
+                # Dispatch the first timer arm before publishing readiness. If
+                # this call itself fails, no observer may see a started service.
+                arm_timer(self._state)
+            except BaseException:
+                # A partially armed callback must not survive a failed startup,
+                # and the same service instance must remain retryable.
+                try:
+                    stop_timer(self._state)
+                except BaseException as cleanup_error:
+                    log.warning(
+                        "Cron startup cleanup failed error_type=%s",
+                        type(cleanup_error).__name__,
+                    )
+                try:
+                    await self._outbox_worker.stop()
+                except BaseException as cleanup_error:
+                    log.warning(
+                        "Cron outbox startup cleanup failed error_type=%s",
+                        type(cleanup_error).__name__,
+                    )
+                self._state.last_tick_at_ms = None
+                self._started = False
+                raise
+
+            # Health baseline: a successfully armed fresh scheduler is healthy
+            # during the minute before its first actual tick.
+            self._state.last_tick_at_ms = int(
+                datetime.now(timezone.utc).timestamp() * 1000
+            )
+            self._started = True
+            log.info("Cron scheduler started")
 
     async def stop(self) -> None:
         """Stop the cron scheduler. Call during app lifespan shutdown."""
-        if not self._started:
-            return
-        stop_timer(self._state)
-        self._started = False
-        log.info("Cron scheduler stopped")
+        async with self._lifecycle_lock:
+            if not self._started:
+                return
+            try:
+                stop_timer(self._state)
+            finally:
+                try:
+                    await self._outbox_worker.stop()
+                finally:
+                    self._started = False
+                    self._state.last_tick_at_ms = None
+            log.info("Cron scheduler stopped")
 
     def set_executor(self, executor) -> None:
         """Inject the job executor callback (set by executor.py)."""
@@ -132,7 +199,7 @@ class CronService:
             "name": create.name,
         })
 
-        return {"id": job_id, "next_run_at": next_run.isoformat() if next_run else None}
+        return {"id": job_id, "next_run_at": _utc_iso(next_run)}
 
     async def update(self, job_id: str, user_id: str, patch: CronJobUpdate) -> dict:
         """Update an existing cron job."""
@@ -219,24 +286,86 @@ class CronService:
         return {"ok": True}
 
     async def remove(self, job_id: str, user_id: str) -> dict:
-        """Soft-delete a cron job."""
+        """Atomically cancel an exact active run and soft-delete its job."""
+        from cron.lease import _database_now
         from db.base import get_db_session
-        from db.models.cron import CronJob
-        from sqlalchemy import update
-
-        now = datetime.now(timezone.utc)
+        from db.models.cron import CronJob, CronRun
+        from sqlalchemy import select, update
 
         async with get_db_session() as db:
+            # Settlement, heartbeat, and deletion all serialize on this row in
+            # PostgreSQL. Capturing the claim only after the lock ensures the
+            # audit row below belongs to the generation being revoked.
             result = await db.execute(
+                select(CronJob)
+                .where(
+                    CronJob.id == job_id,
+                    CronJob.user_id == user_id,
+                    CronJob.is_deleted == False,  # noqa: E712
+                )
+                .with_for_update()
+            )
+            job = result.scalar_one_or_none()
+            if job is None:
+                raise ValueError(f"Cron job {job_id} not found")
+
+            database_now = _database_now(db)
+            run_ownership = None
+            if job.run_token is not None:
+                run_ownership = [
+                    CronRun.job_id == job.id,
+                    CronRun.status == CronJobStatus.RUNNING.value,
+                    CronRun.claim_token == job.run_token,
+                    CronRun.claim_generation == job.run_generation,
+                    CronRun.claim_owner == job.run_owner,
+                ]
+            elif job.running_at is not None:
+                # Legacy pre-lease rows have no stronger receipt. Restrict the
+                # cancellation to the legacy identity and never touch a newer
+                # fenced generation.
+                run_ownership = [
+                    CronRun.job_id == job.id,
+                    CronRun.status == CronJobStatus.RUNNING.value,
+                    CronRun.claim_token.is_(None),
+                    CronRun.claim_generation.is_(None),
+                    CronRun.claim_owner.is_(None),
+                ]
+
+            if run_ownership is not None:
+                await db.execute(
+                    update(CronRun)
+                    .where(*run_ownership)
+                    .values(
+                        status=CronJobStatus.CANCELED.value,
+                        error_message=(
+                            "Execution canceled because the Cron job was deleted"
+                        ),
+                        ended_at=database_now,
+                    )
+                )
+
+            # No delivery outbox is created for administrative cancellation.
+            # Clearing the exact job claim in this same transaction fences the
+            # worker's later settlement and heartbeat before either can commit.
+            deleted = await db.execute(
                 update(CronJob)
                 .where(
                     CronJob.id == job_id,
                     CronJob.user_id == user_id,
-                    CronJob.is_deleted == False,
+                    CronJob.is_deleted == False,  # noqa: E712
                 )
-                .values(is_deleted=True, enabled=False, updated_at=now)
+                .values(
+                    is_deleted=True,
+                    enabled=False,
+                    running_at=None,
+                    run_token=None,
+                    run_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    updated_at=database_now,
+                )
             )
-            if result.rowcount == 0:
+            if deleted.rowcount != 1:
                 raise ValueError(f"Cron job {job_id} not found")
 
         arm_timer(self._state)
@@ -246,6 +375,7 @@ class CronService:
         """Manually trigger a cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
+        from cron.lease import claim_job, claimed_job_payload, is_live_claim
         from sqlalchemy import select
 
         async with get_db_session() as db:
@@ -259,69 +389,97 @@ class CronService:
             job = result.scalar_one_or_none()
             if not job:
                 raise ValueError(f"Cron job {job_id} not found")
+            live_before_claim = is_live_claim(job, datetime.now(timezone.utc))
 
-            if job.running_at is not None:
+        if not self._state.execute_job:
+            # Preserve the old response precedence when dispatch is disabled;
+            # actual executions always proceed to the atomic claim below.
+            if live_before_claim:
                 return {"ok": False, "reason": "already-running"}
-
-        # Build job dict and execute
-        job_dict = {
-            "id": job.id,
-            "user_id": job.user_id,
-            "project_id": job.project_id,
-            "session_id": job.session_id,
-            "name": job.name,
-            "schedule": job.schedule,
-            "task_prompt": job.task_prompt,
-            "agent": job.agent,
-            "model": job.model,
-            "timeout_seconds": job.timeout_seconds,
-            "delivery": job.delivery,
-            "delete_after_run": job.delete_after_run,
-            "max_retries": job.max_retries,
-            "consecutive_errors": job.consecutive_errors,
-            "summary_cache": job.summary_cache,
-            "summary_cache_msg_id": job.summary_cache_msg_id,
-        }
-
-        if self._state.execute_job:
-            asyncio.create_task(self._run_manual(job_dict))
-            return {"ok": True, "status": "triggered"}
-        else:
             return {"ok": False, "reason": "no-executor"}
+
+        # Manual and timer paths deliberately share this one conditional
+        # UPDATE.  Disabled jobs remain manually runnable, as before.
+        claim = await claim_job(
+            job_id,
+            user_id=user_id,
+            require_enabled=False,
+        )
+        if claim is None:
+            return {"ok": False, "reason": "already-running"}
+
+        # Re-read after claim so an update racing the initial ownership check
+        # cannot launch with an old project, prompt, model, or schedule.
+        job_dict = await claimed_job_payload(claim)
+        if job_dict is None:
+            log.warning("Manual Cron claim vanished before dispatch job=%s", job_id)
+            return {"ok": False, "reason": "already-running"}
+        asyncio.create_task(self._run_manual(job_dict))
+        return {"ok": True, "status": "triggered"}
 
     async def _run_manual(self, job_dict: dict) -> None:
         """Execute a manual job run (background task)."""
         import time as _time
+        from cron.lease import CronLease, CronLeaseLost, run_with_heartbeat
         from cron.timer import _apply_job_result
 
         job_id = job_dict["id"]
-
-        # Mark running
-        from db.base import get_db_session
-        from db.models.cron import CronJob
-        from sqlalchemy import update
-        now = datetime.now(timezone.utc)
-        async with get_db_session() as db:
-            await db.execute(
-                update(CronJob).where(CronJob.id == job_id).values(running_at=now)
-            )
+        claim = CronLease.from_payload(job_dict.get("_cron_claim"))
+        if claim is None:
+            log.error("Manual Cron run %s has no valid lease claim", job_id)
+            return
 
         start = _time.time()
+        lease_lost = False
         try:
-            result = await asyncio.wait_for(
-                self._state.execute_job(job_dict),
+            result = await run_with_heartbeat(
+                claim,
+                lambda: self._state.execute_job(job_dict),
                 timeout=job_dict.get("timeout_seconds", 1800),
             )
         except asyncio.TimeoutError:
             result = {"status": "error", "error": "Job execution timed out"}
+        except CronLeaseLost as exc:
+            lease_lost = True
+            result = {"status": "error", "error": str(exc)}
         except Exception as e:
             result = {"status": "error", "error": str(e)}
 
         result["duration_ms"] = int((_time.time() - start) * 1000)
+        result.setdefault("run_id", job_dict.get("_cron_run_id"))
+        result.setdefault(
+            "temp_session_id", job_dict.get("_cron_temp_session_id")
+        )
+        result.setdefault("started_at", job_dict.get("_cron_started_at"))
+        result.setdefault("ended_at", datetime.now(timezone.utc))
+        result.setdefault("locale", job_dict.get("_cron_locale") or "zh-CN")
+        result.setdefault(
+            "context_summary", job_dict.get("_cron_context_summary")
+        )
+        result.setdefault("tokens", job_dict.get("_cron_tokens") or {})
+        result.setdefault("silent", False)
 
-        # Apply result (don't advance schedule for manual runs)
+        if lease_lost:
+            log.warning(
+                "Discarded stale manual Cron result job=%s generation=%s",
+                job_id,
+                claim.generation,
+            )
+            return
+
         async with self._state.lock:
-            await _apply_job_result(self._state, job_id, result)
+            applied = await _apply_job_result(
+                self._state,
+                job_id,
+                result,
+                claim=claim,
+            )
+        if not applied:
+            log.warning(
+                "Discarded fenced manual Cron result job=%s generation=%s",
+                job_id,
+                claim.generation,
+            )
 
     async def pause_all(self, user_id: str, session_id: str | None = None) -> int:
         """Disable all of a user's jobs (optionally one session's). Returns count."""
@@ -425,13 +583,15 @@ class CronService:
 
         jobs = [_job_to_dict(row) for row in rows]
 
-        # Which directory each job runs in — the part you cannot infer from
-        # the prompt. Resolved through the cached slug lookup.
-        from project.workspace import project_directory, slug_for
+        # Which tenant/project directory each job runs in — the part you cannot
+        # infer from the prompt.
+        from project.workspace import workdir_for_identity
         for job in jobs:
             try:
-                slug = await slug_for(job["project_id"])
-                job["project_directory"] = project_directory(slug)
+                job["project_directory"] = await workdir_for_identity(
+                    job["user_id"],
+                    job["project_id"],
+                )
             except Exception:
                 job["project_directory"] = None
         return jobs
@@ -479,7 +639,6 @@ class CronService:
         from db.base import get_db_session
         from db.models.cron import CronJob
         from sqlalchemy import select, func
-        from cron.types import MAX_TIMER_DELAY_MS
 
         async with get_db_session() as db:
             total = await db.execute(
@@ -503,28 +662,44 @@ class CronService:
                 )
             )
 
-        # The timer promises a tick at least every MAX_TIMER_DELAY; if several
-        # windows pass without one, the scheduler is wedged — the exact failure
-        # mode that goes unnoticed when only in-process watchdogs exist.
-        last_tick_ms = self._state.last_tick_at_ms
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        healthy = self._started and (
-            last_tick_ms is not None and now_ms - last_tick_ms < 3 * MAX_TIMER_DELAY_MS
-        )
+        readiness = self.readiness_status()
 
         next_wake_at = next_wake.scalar()
         return {
-            "running": self._started,
-            "healthy": healthy,
-            "last_tick_at": (
-                datetime.fromtimestamp(last_tick_ms / 1000, tz=timezone.utc).isoformat()
-                if last_tick_ms
-                else None
-            ),
-            "next_run_at": next_wake_at.isoformat() if next_wake_at else None,
+            "running": readiness["started"],
+            "healthy": readiness["ready"],
+            "last_tick_at": readiness["last_tick_at"],
+            "next_run_at": _utc_iso(next_wake_at),
             "total_jobs": total.scalar() or 0,
             "enabled_jobs": enabled.scalar() or 0,
             "running_jobs": running.scalar() or 0,
+        }
+
+    def readiness_status(self) -> dict:
+        """Return the process-local scheduler gate without touching the DB."""
+        from cron.types import MAX_TIMER_DELAY_MS
+
+        last_tick_ms = self._state.last_tick_at_ms
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        heartbeat_fresh = bool(
+            last_tick_ms is not None
+            and now_ms - last_tick_ms < 3 * MAX_TIMER_DELAY_MS
+        )
+        outbox = self._outbox_worker.readiness()
+        return {
+            "ready": self._started and heartbeat_fresh and outbox["ready"],
+            "started": self._started,
+            "heartbeat_fresh": heartbeat_fresh,
+            "outbox_running": outbox["running"],
+            "outbox_heartbeat_fresh": outbox["heartbeat_fresh"],
+            "outbox_dispatch_healthy": outbox.get(
+                "dispatch_healthy", outbox["ready"]
+            ),
+            "last_tick_at": _utc_iso(
+                datetime.fromtimestamp(last_tick_ms / 1000, tz=timezone.utc)
+                if last_tick_ms is not None
+                else None
+            ),
         }
 
     # ── Internal ──
@@ -584,8 +759,8 @@ def _job_to_dict(job) -> dict:
         "timeout_seconds": job.timeout_seconds,
         "delivery": job.delivery,
         "delete_after_run": job.delete_after_run,
-        "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
-        "last_run_at": job.last_run_at.isoformat() if job.last_run_at else None,
+        "next_run_at": _utc_iso(job.next_run_at),
+        "last_run_at": _utc_iso(job.last_run_at),
         "last_status": job.last_status,
         "last_error": job.last_error,
         "last_duration_ms": job.last_duration_ms,
@@ -594,8 +769,8 @@ def _job_to_dict(job) -> dict:
         "total_successes": job.total_successes,
         "total_failures": job.total_failures,
         "running": job.running_at is not None,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "created_at": _utc_iso(job.created_at),
+        "updated_at": _utc_iso(job.updated_at),
     }
 
 
@@ -614,8 +789,8 @@ def _run_to_dict(run) -> dict:
         "output_tokens": run.output_tokens,
         "total_tokens": run.total_tokens,
         "duration_ms": run.duration_ms,
-        "started_at": run.started_at.isoformat() if run.started_at else None,
-        "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+        "started_at": _utc_iso(run.started_at),
+        "ended_at": _utc_iso(run.ended_at),
     }
 
 

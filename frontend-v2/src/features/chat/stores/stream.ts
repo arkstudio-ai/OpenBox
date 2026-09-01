@@ -18,6 +18,10 @@ interface StreamState {
   messages: MsgMap
   /** Live session status, fed by WS session.status + optimistic send. */
   status: Map<string, SessionStatus>
+  /** Highest durable Driver generation observed for each session. */
+  statusGeneration: Map<string, number>
+  /** Generation already settled to idle/error; active frames cannot reopen it. */
+  terminalStatusGeneration: Map<string, number>
   /** Which retry a stalled run is on, so the wait can account for itself. */
   retry: Map<string, { attempt: number; maxAttempts: number }>
   /** Why the last run failed, shown above the composer until the next send. */
@@ -42,6 +46,10 @@ interface StreamState {
    *  the very turn that was just removed. */
   clearMessages: (sessionId: string) => void
   setStatus: (sessionId: string, status: SessionStatus) => void
+  /** Apply a server status only when its Driver generation is monotonic. */
+  applyStatusEvent: (sessionId: string, status: SessionStatus, generation?: number) => boolean
+  /** Reject transcript frames from an older Driver generation. */
+  acceptEventGeneration: (sessionId: string, generation?: number) => boolean
   setRetry: (sessionId: string, attempt: number, maxAttempts: number) => void
   setRunError: (sessionId: string, message: string) => void
   clearRunError: (sessionId: string) => void
@@ -136,6 +144,8 @@ function toolPatch(status: ToolStatus, data?: Record<string, unknown>): Partial<
 export const useStreamStore = create<StreamState>((set) => ({
   messages: new Map(),
   status: new Map(),
+  statusGeneration: new Map(),
+  terminalStatusGeneration: new Map(),
   retry: new Map(),
   runError: new Map(),
 
@@ -154,9 +164,7 @@ export const useStreamStore = create<StreamState>((set) => ({
       if (!list) return s
       // Only ever removes the temp echo — a server-confirmed message with the
       // same client id must survive, or a slow success would erase itself.
-      const next = list.filter(
-        (m) => !(m.id.startsWith("tmp-") && m.client_message_id === clientMessageId),
-      )
+      const next = list.filter((m) => !(m.id.startsWith("tmp-") && m.client_message_id === clientMessageId))
       if (next.length === list.length) return s
       return commit(s.messages, sessionId, next)
     }),
@@ -262,6 +270,58 @@ export const useStreamStore = create<StreamState>((set) => ({
       if (status !== "retry") retry.delete(sessionId)
       return { status: map, retry }
     }),
+
+  applyStatusEvent: (sessionId, status, generation) => {
+    let accepted = false
+    set((s) => {
+      const currentGeneration = s.statusGeneration.get(sessionId)
+      // Generation-less frames remain compatible only until a revised frame
+      // has been seen. After that point accepting a legacy terminal frame can
+      // move a new run back to idle/error.
+      if (
+        (generation === undefined && currentGeneration !== undefined) ||
+        (generation !== undefined && currentGeneration !== undefined && generation < currentGeneration)
+      ) {
+        return s
+      }
+      if (
+        generation !== undefined &&
+        s.terminalStatusGeneration.get(sessionId) === generation &&
+        s.status.get(sessionId) !== status
+      ) {
+        return s
+      }
+
+      accepted = true
+      const statusMap = new Map(s.status)
+      statusMap.set(sessionId, status)
+      const statusGeneration = new Map(s.statusGeneration)
+      if (generation !== undefined) statusGeneration.set(sessionId, generation)
+      const terminalStatusGeneration = new Map(s.terminalStatusGeneration)
+      if (generation !== undefined && (status === "idle" || status === "error")) {
+        terminalStatusGeneration.set(sessionId, generation)
+      }
+      const retry = new Map(s.retry)
+      if (status !== "retry") retry.delete(sessionId)
+      return { status: statusMap, statusGeneration, terminalStatusGeneration, retry }
+    })
+    return accepted
+  },
+
+  acceptEventGeneration: (sessionId, generation) => {
+    if (generation === undefined) return true
+    let accepted = false
+    set((s) => {
+      const currentGeneration = s.statusGeneration.get(sessionId)
+      if (currentGeneration !== undefined && generation < currentGeneration) return s
+      accepted = true
+      if (currentGeneration === generation) return s
+      const statusGeneration = new Map(s.statusGeneration)
+      statusGeneration.set(sessionId, generation)
+      return { statusGeneration }
+    })
+    return accepted
+  },
 
   setRetry: (sessionId, attempt, maxAttempts) =>
     set((s) => {

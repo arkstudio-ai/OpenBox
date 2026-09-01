@@ -292,13 +292,98 @@ async def test_responses_payload_uses_stable_normalized_schemas(monkeypatch):
         events = [
             event
             async for event in llm._stream_responses_api(
-                "openai/gpt-5-test", [], [], tools
+                "openai/gpt-5-test",
+                [],
+                [],
+                tools,
+                cache_key="a" * 64,
             )
         ]
         assert events[-1]["type"] == "finish"
 
     _assert_stable_normalized_provider_tools(captured, raw_schema, lambda item: item)
+    assert all(payload["prompt_cache_key"] == "a" * 64 for payload in captured)
     assert raw_schema == original
+
+
+@pytest.mark.asyncio
+async def test_responses_api_reports_missing_key_before_opening_network(monkeypatch):
+    import httpx
+
+    class UnexpectedClient:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("missing credentials must fail before network setup")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedClient)
+    monkeypatch.setattr(
+        llm,
+        "_get_provider_kwargs",
+        lambda _model: {"api_base": "https://example.test/v1"},
+    )
+
+    events = [
+        event
+        async for event in llm._stream_responses_api(
+            "openai/gpt-5-test", [], [], {}
+        )
+    ]
+
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    assert str(events[0]["error"]) == "No API key configured for provider 'openai'"
+
+
+@pytest.mark.asyncio
+async def test_responses_api_preserves_retry_after_on_pre_stream_429(monkeypatch):
+    import httpx
+
+    class FakeResponse:
+        status_code = 429
+        headers = {"Retry-After": "17", "x-request-id": "request-1"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def aread(self):
+            return b"rate limited"
+
+    class FakeClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        llm,
+        "_get_provider_kwargs",
+        lambda _model: {"api_key": "test", "api_base": "https://example.test/v1"},
+    )
+    monkeypatch.setattr(llm, "_get_variant_kwargs", lambda *_args: {})
+    monkeypatch.setattr(llm, "_get_max_output_tokens", lambda _model: 1000)
+
+    events = [
+        event
+        async for event in llm._stream_responses_api(
+            "openai/gpt-5-test", [], [], {}
+        )
+    ]
+
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    error = events[0]["error"]
+    assert error.status_code == 429
+    assert error.headers["Retry-After"] == "17"
 
 
 @pytest.mark.asyncio
@@ -337,7 +422,11 @@ async def test_litellm_payload_uses_stable_normalized_schemas(monkeypatch):
         events = [
             event
             async for event in llm._stream_litellm_direct(
-                "anthropic/test", [], [], tools
+                "anthropic/test",
+                ["stable system"],
+                [{"role": "user", "content": "stable user"}],
+                tools,
+                cache_key="b" * 64,
             )
         ]
         assert events[-1]["type"] == "finish"
@@ -346,4 +435,63 @@ async def test_litellm_payload_uses_stable_normalized_schemas(monkeypatch):
         return item["function"]
 
     _assert_stable_normalized_provider_tools(captured, raw_schema, nested)
+    assert all(
+        payload["messages"] == [
+            {
+                "role": "system",
+                "content": "stable system",
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "role": "user",
+                "content": "stable user",
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+        for payload in captured
+    )
+    assert all("prompt_cache_key" not in payload for payload in captured)
     assert raw_schema == original
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_cache_key_is_a_top_level_litellm_parameter(monkeypatch):
+    import litellm
+
+    captured = []
+
+    class EmptyStream:
+        _hidden_params = {}
+        usage = None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    async def fake_completion(**kwargs):
+        captured.append(copy.deepcopy(kwargs))
+        return EmptyStream()
+
+    for setting in ("modify_params", "drop_params", "reasoning_auto_summary"):
+        monkeypatch.setattr(litellm, setting, getattr(litellm, setting))
+    monkeypatch.setattr(litellm, "acompletion", fake_completion)
+    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _model: {})
+    monkeypatch.setattr(llm, "_get_variant_kwargs", lambda *_args: {})
+    monkeypatch.setattr(llm, "_get_max_output_tokens", lambda _model: 1000)
+
+    events = [
+        event
+        async for event in llm._stream_litellm_direct(
+            "openai/claude-opus-5",
+            ["stable system"],
+            [{"role": "user", "content": "hello"}],
+            {},
+            cache_key="c" * 64,
+        )
+    ]
+
+    assert events[-1]["type"] == "finish"
+    assert captured[0]["prompt_cache_key"] == "c" * 64
+    assert all("cache_control" not in message for message in captured[0]["messages"])

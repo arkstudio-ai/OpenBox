@@ -157,6 +157,15 @@ class CompactionPart(BaseModel):
     # First message kept verbatim after this compaction. None means the summary
     # replaces everything before the boundary (pre-tail behaviour).
     tail_start_id: str | None = None
+    # New compactions cite the immutable Agent-event snapshot they replaced.
+    # All fields are optional as a group so transcripts written before the
+    # event-range protocol remain readable.  Readers that see any one of them
+    # validate the complete group before treating the summary as a boundary.
+    source_event_start: int | None = None
+    source_event_end: int | None = None
+    source_event_digest: str | None = None
+    covered_message_ids: list[str] | None = None
+    replacement_id: str | None = None
     session_id: str = ""
     message_id: str = ""
 

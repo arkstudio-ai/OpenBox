@@ -96,6 +96,22 @@ async def test_notices_are_handed_over_once():
     assert await todo_mod.take_notices("s") == []
 
 
+async def test_notice_snapshot_ack_preserves_concurrent_new_edits():
+    await todo_mod.add_notice("s", "- added: first")
+    snapshot = await todo_mod.pending_notices("s")
+    await todo_mod.add_notice("s", "- added: later")
+
+    assert await todo_mod.acknowledge_notices("s", snapshot) is True
+    assert await todo_mod.pending_notices("s") == ["- added: later"]
+
+
+async def test_notice_snapshot_ack_fails_safe_when_prefix_changed():
+    await todo_mod.add_notice("s", "- added: current")
+
+    assert await todo_mod.acknowledge_notices("s", ["- stale snapshot"]) is False
+    assert await todo_mod.pending_notices("s") == ["- added: current"]
+
+
 async def test_a_notice_rides_along_on_the_last_user_message():
     await todo_mod.add_notice("s", "- added: mine")
     msgs = [
@@ -246,16 +262,32 @@ async def test_the_card_update_is_addressed_to_the_user_watching_it(monkeypatch)
 
     seen: dict = {}
 
-    async def fake_save_part(part, is_new=False, user_id="default"):
+    async def fake_save_part(
+        part,
+        is_new=False,
+        user_id="default",
+        run_fence=None,
+    ):
         seen["type"] = part.type
         seen["user_id"] = user_id
+        seen["run_fence"] = run_fence
 
     import session.session as session_mod
     monkeypatch.setattr(session_mod, "save_part", fake_save_part)
 
-    ctx = ToolContext(session_id="s", user_id="user_real", message_id="msg_1")
+    ctx = ToolContext(
+        session_id="s",
+        user_id="user_real",
+        message_id="msg_1",
+        run_id="run_todo_1",
+        run_generation=4,
+    )
     await _publish_todo_part(ctx, [TodoItem(subject="a")])
-    assert seen == {"type": "todo", "user_id": "user_real"}
+    assert seen == {
+        "type": "todo",
+        "user_id": "user_real",
+        "run_fence": ("s", "run_todo_1", 4),
+    }
 
 
 async def test_no_card_update_without_a_message_to_hang_it_on(monkeypatch):

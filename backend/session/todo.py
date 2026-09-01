@@ -42,20 +42,26 @@ async def get_todo(session_id: str) -> TodoList:
     return TodoList()
 
 
-async def save_todo(session_id: str, todo: TodoList, user_id: str = "default") -> None:
+async def save_todo(
+    session_id: str,
+    todo: TodoList,
+    user_id: str = "default",
+    *,
+    generation: int | None = None,
+) -> None:
     """Save todo list and broadcast update."""
     await storage.write(["todo", session_id], todo.model_dump())
-    bus.publish(
-        TODO_UPDATED,
-        {
+    payload = {
             "userId": user_id,
             "sessionId": session_id,
             # Carried so the card can render straight from the event. Without
             # it every change costs a round-trip, and the list visibly lags
             # the tool rows that belong under it.
             "items": [item.model_dump() for item in todo.items],
-        },
-    )
+        }
+    if generation is not None:
+        payload["generation"] = generation
+    bus.publish(TODO_UPDATED, payload)
 
 
 def _now() -> str:
@@ -234,17 +240,42 @@ async def add_notice(session_id: str, notice: str) -> None:
     The merge already guarantees a user's item survives, so a lost notice
     costs attention, not data — the item is still on the list either way.
     """
-    notices = await pending_notices(session_id)
-    notices.append(notice)
-    await storage.write(["todo_notice", session_id], {"notices": notices[-20:]})
+    async with session_lock(session_id):
+        notices = await pending_notices(session_id)
+        notices.append(notice)
+        await storage.write(["todo_notice", session_id], {"notices": notices[-20:]})
+
+
+async def acknowledge_notices(session_id: str, snapshot: list[str]) -> bool:
+    """Remove exactly a previously observed notice prefix.
+
+    Provider attempts read notices without consuming them.  Only a completed
+    provider response acknowledges that snapshot, so a pre-stream retry or a
+    crash cannot silently lose the reminder.  User edits appended while the
+    request was in flight remain queued.  If the bounded queue changed in a
+    way that no longer has this exact prefix, fail safe and retain everything.
+    """
+    expected = list(snapshot)
+    if not expected:
+        return True
+    async with session_lock(session_id):
+        current = await pending_notices(session_id)
+        if current[:len(expected)] != expected:
+            return False
+        await storage.write(
+            ["todo_notice", session_id],
+            {"notices": current[len(expected):]},
+        )
+        return True
 
 
 async def take_notices(session_id: str) -> list[str]:
     """Read the queued notices and clear them, so they are said once."""
-    notices = await pending_notices(session_id)
-    if notices:
-        await storage.write(["todo_notice", session_id], {"notices": []})
-    return notices
+    async with session_lock(session_id):
+        notices = await pending_notices(session_id)
+        if notices:
+            await storage.write(["todo_notice", session_id], {"notices": []})
+        return notices
 
 
 async def add_todo_item(

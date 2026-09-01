@@ -10,6 +10,7 @@ import {
   usePauseAllCronJobs,
   useResumeAllCronJobs,
 } from "@/features/cron/api/cron"
+import { useProjectOptions } from "@/features/cron/api/projects"
 import { CronJobCard } from "@/features/cron/components/CronJobCard"
 import { CronJobForm } from "@/features/cron/components/CronJobForm"
 import { ChatCreateDialog } from "@/features/cron/components/ChatCreateDialog"
@@ -24,7 +25,7 @@ function StatusLine() {
   if (!status.data) return null
   const s = status.data
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n500">
+    <div className="text-n500 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       <span className={s.healthy ? undefined : "text-danger"}>
         {s.healthy ? t("status.healthy") : t("status.unhealthy")}
       </span>
@@ -38,6 +39,7 @@ function StatusLine() {
 export function CronPage() {
   const { t } = useTranslation("cron")
   const jobs = useCronJobs()
+  const projects = useProjectOptions()
   const pauseAll = usePauseAllCronJobs()
   const resumeAll = useResumeAllCronJobs()
   const [formOpen, setFormOpen] = useState(false)
@@ -60,6 +62,7 @@ export function CronPage() {
   }
 
   const list = jobs.data ?? []
+  const projectNames = new Map((projects.data ?? []).map((project) => [project.id, project.name]))
   const anyEnabled = list.some((j) => j.enabled)
 
   return (
@@ -71,12 +74,12 @@ export function CronPage() {
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex min-h-9 items-center gap-1.5 rounded-full bg-ink px-4.5 text-sm text-bg"
+            className="bg-ink text-bg flex min-h-9 items-center gap-1.5 rounded-full px-4.5 text-sm"
           >
             {t("page.create")}
             <ChevronDown size={14} strokeWidth={2.4} />
           </button>
-          <Menu open={menuOpen} onClose={() => setMenuOpen(false)} className="top-10 start-0 min-w-44">
+          <Menu open={menuOpen} onClose={() => setMenuOpen(false)} className="start-0 top-10 min-w-44">
             <MenuItem onClick={openManual}>{t("page.createManual")}</MenuItem>
             <MenuItem onClick={openChat}>{t("page.createChat")}</MenuItem>
           </Menu>
@@ -104,25 +107,30 @@ export function CronPage() {
       </div>
 
       {jobs.isPending && (
-        <div className="flex items-center gap-2 py-6 text-sm text-n600">
+        <div className="text-n600 flex items-center gap-2 py-6 text-sm">
           <Spinner />
           <span>{t("page.loading")}</span>
         </div>
       )}
 
-      {jobs.isError && <span className="py-6 text-sm text-danger">{t("page.loadFailed")}</span>}
+      {jobs.isError && <span className="text-danger py-6 text-sm">{t("page.loadFailed")}</span>}
 
       {jobs.isSuccess && list.length === 0 && (
-        <div className="flex flex-col gap-1 rounded-lg border border-hair bg-card px-4 py-6">
-          <span className="text-base text-ink">{t("page.empty.title")}</span>
-          <span className="text-pretty text-sm text-n600">{t("page.empty.body")}</span>
+        <div className="border-hair bg-card flex flex-col gap-1 rounded-lg border px-4 py-6">
+          <span className="text-ink text-base">{t("page.empty.title")}</span>
+          <span className="text-n600 text-sm text-pretty">{t("page.empty.body")}</span>
         </div>
       )}
 
       {list.length > 0 && (
         <div className="flex flex-col gap-2.5">
           {list.map((job) => (
-            <CronJobCard key={job.id} job={job} onEdit={openEdit} />
+            <CronJobCard
+              key={job.id}
+              job={job}
+              projectName={job.project_id ? projectNames.get(job.project_id) : null}
+              onEdit={openEdit}
+            />
           ))}
         </div>
       )}

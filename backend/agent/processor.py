@@ -26,9 +26,16 @@ from typing import Mapping
 from agent.agent import get_agent
 from agent.compaction import create_compaction
 from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeat_of_recent
+from agent.driver import LeaseLostError
 from agent.hooks import ToolHooks
 from agent.llm import provider_tool_binding, stream_llm
 from agent.retry import ContextOverflowError, is_context_overflow, is_retryable
+from agent.tool_scheduler import (
+    DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
+    ScheduledToolCall,
+    ToolCallPreparation,
+    run_ordered_tool_calls,
+)
 from bus import bus
 from bus.events import (
     MESSAGE_TEXT_DELTA, PART_DELTA, SESSION_ERROR, SESSION_STATUS,
@@ -38,8 +45,8 @@ from core.log import create_logger
 from models.message import (
     ReasoningPart, TextPart, ToolPartData, ToolStatus,
 )
-from session.session import get_messages, save_part, update_message_info, update_session
-from tool.tool import ToolContext
+from session.session import save_part, update_message_info, update_session
+from tool.tool import ToolContext, ToolResult
 
 log = create_logger("agent.processor")
 
@@ -55,7 +62,8 @@ _CALL_ID_ILLEGAL = re.compile(r"[^A-Za-z0-9_-]")
 PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
-    "child_session_id", "subagent_type", "questions", "answers",
+    "child_session_id", "subagent_type", "task_handoff_id",
+    "task_outbox_completed", "questions", "answers",
     # ``video_identity`` returns only its deliberately public projection here:
     # the short-lived H5 link/QR may be rendered by the chat UI, while the
     # provider polling token remains private in the database and never enters
@@ -313,8 +321,24 @@ class StepResult:
     completed_tool_parts: list = field(default_factory=list)
     agent_switch: str | None = None
     retry_reason: str | None = None
+    # Kept in-process only so the loop can honour provider Retry-After headers.
+    # Public events receive the bounded retry_reason/error strings, never the
+    # exception object or its request headers.
+    retry_error: Exception | None = None
     error: str | None = None
     duration: float = 0.0
+
+
+@dataclass
+class _ToolCallOutcome:
+    """One scheduler slot awaiting model-order result commit."""
+
+    tool_part: ToolPartData
+    direct_result: ToolResult | None = None
+    hook_prepared: object | None = None
+    hook_outcome: object | None = None
+    track_completed: bool = False
+    is_new: bool = False
 
 
 async def _iter_until_abort(stream, abort: asyncio.Event):
@@ -359,14 +383,21 @@ async def _iter_until_abort(stream, abort: asyncio.Event):
             await abort_task
 
 
-async def _history_for_compaction(session_id: str, user_id: str) -> list:
-    """History for sizing the preserved tail. Best effort — losing the tail is
-    much better than losing the compaction that keeps the session alive."""
-    try:
-        return await get_messages(session_id, user_id=user_id)
-    except Exception as e:
-        log.warning(f"Could not load history for compaction tail: {e}")
-        return []
+async def _history_for_compaction(
+    session_id: str,
+    user_id: str,
+    run_fence: tuple[str, str, int] | None,
+) -> list:
+    """Load preserved-tail history from the canonical Agent-event Surface."""
+    from session.agent_event_log import load_canonical_model_surface
+
+    surface = await load_canonical_model_surface(
+        session_id,
+        user_id=user_id,
+        run_fence=run_fence,
+        repair_tail=False,
+    )
+    return list(surface.messages)
 
 
 async def process_step(
@@ -392,6 +423,8 @@ async def process_step(
     provider_to_canonical: Mapping[str, str] | None = None,
     provider_binding_digest: str | None = None,
     provider_dialect: str | None = None,
+    prompt_cache_key: str = "",
+    tool_body_timeout_seconds: float = DEFAULT_TOOL_BODY_TIMEOUT_SECONDS,
 ) -> StepResult:
     """Run one LLM turn: stream it, persist its parts, execute its tool calls.
 
@@ -419,6 +452,19 @@ async def process_step(
         else frozenset(execution_tools)
     )
     response_executable = set(executable_ids)
+    run_fence = getattr(ctx, "run_fence", None)
+
+    async def assert_current() -> None:
+        callback = getattr(ctx, "assert_run_current", None)
+        if callback is not None:
+            await callback()
+
+    def generation_payload(payload: dict) -> dict:
+        generation = int(getattr(ctx, "run_generation", 0) or 0)
+        if generation > 0:
+            payload["generation"] = generation
+        return payload
+
     wire_to_canonical = (
         dict(provider_to_canonical)
         if provider_to_canonical is not None
@@ -442,6 +488,7 @@ async def process_step(
     # Nested dispatchers must observe the same execution frontier as direct
     # calls; the complete eligible catalogue is never placed here.
     ctx.available_tools = frozenset(response_executable)
+    ctx._tool_execution_lookup = execution_tools
 
     try:
         llm_stream = stream_llm(
@@ -454,14 +501,19 @@ async def process_step(
             hooks=hooks,
             variant=user_variant,
             tool_choice=tool_choice,
+            cache_key=prompt_cache_key,
         )
         async for event in _iter_until_abort(llm_stream, abort):
             # Once any provider event has crossed the stream boundary, this
             # response may already have visible text, persisted native state,
             # or a pending tool card. Replaying the whole request after a
-            # transport error could duplicate narration or side effects.
-            provider_event_received = True
-            if event["type"] == "reasoning_delta":
+            # transport error could duplicate narration or side effects.  An
+            # adapter-level ``error`` envelope is not response progress: when
+            # it is the first event, the request is still safe to retry.
+            event_type = event["type"]
+            if event_type != "error":
+                provider_event_received = True
+            if event_type == "reasoning_delta":
                 text = event["text"]
                 collected_reasoning += text
 
@@ -473,17 +525,22 @@ async def process_step(
                         session_id=session_id,
                         message_id=assistant_info.id,
                     )
-                    await save_part(reasoning_part, is_new=True, user_id=user_id)
+                    await save_part(
+                        reasoning_part,
+                        is_new=True,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
                     reasoning_checkpoint_at = time.monotonic()
                 else:
                     from bus.events import PART_DELTA
-                    bus.publish(PART_DELTA, {
+                    bus.publish(PART_DELTA, generation_payload({
                         "userId": user_id,
                         "sessionId": session_id,
                         "messageId": assistant_info.id,
                         "partId": reasoning_part_id,
                         "delta": text,
-                    })
+                    }))
                     now = time.monotonic()
                     if now - reasoning_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
                         await save_part(
@@ -494,10 +551,11 @@ async def process_step(
                                 message_id=assistant_info.id,
                             ),
                             user_id=user_id,
+                            run_fence=run_fence,
                         )
                         reasoning_checkpoint_at = now
 
-            elif event["type"] == "text_delta":
+            elif event_type == "text_delta":
                 text = event["text"]
                 collected_text += text
 
@@ -509,16 +567,21 @@ async def process_step(
                         session_id=session_id,
                         message_id=assistant_info.id,
                     )
-                    await save_part(text_part, is_new=True, user_id=user_id)
+                    await save_part(
+                        text_part,
+                        is_new=True,
+                        user_id=user_id,
+                        run_fence=run_fence,
+                    )
                     text_checkpoint_at = time.monotonic()
                 else:
-                    bus.publish(MESSAGE_TEXT_DELTA, {
+                    bus.publish(MESSAGE_TEXT_DELTA, generation_payload({
                         "userId": user_id,
                         "sessionId": session_id,
                         "messageId": assistant_info.id,
                         "partId": text_part_id,
                         "text": text,
-                    })
+                    }))
                     now = time.monotonic()
                     if now - text_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
                         await save_part(
@@ -529,10 +592,11 @@ async def process_step(
                                 message_id=assistant_info.id,
                             ),
                             user_id=user_id,
+                            run_fence=run_fence,
                         )
                         text_checkpoint_at = now
 
-            elif event["type"] in {"native_search_started", "native_search_result"}:
+            elif event_type in {"native_search_started", "native_search_result"}:
                 if ctx._native_binding is None or ctx._native_capability_key is None:
                     raise RuntimeError("native provider event arrived without a binding")
                 from session.internal_parts import (
@@ -540,6 +604,7 @@ async def process_step(
                     save_internal_part,
                 )
 
+                await assert_current()
                 await save_internal_part(
                     session_id=session_id,
                     user_id=user_id,
@@ -554,9 +619,10 @@ async def process_step(
                         f"{event['response_chain_id']}:{event['stream_seq']}:"
                         f"{event['type']}"
                     ),
+                    run_fence=run_fence,
                 )
 
-            elif event["type"] == "native_tool_revealed":
+            elif event_type == "native_tool_revealed":
                 if ctx._native_binding is None or ctx._native_capability_key is None:
                     raise RuntimeError("native reveal arrived without a capability binding")
                 catalogue = ctx._capability_catalog
@@ -599,6 +665,7 @@ async def process_step(
                     isinstance(provider_item, dict)
                     and provider_item.get("type") == "tool_reference"
                 ):
+                    await assert_current()
                     await save_internal_part(
                         session_id=session_id,
                         user_id=user_id,
@@ -613,8 +680,10 @@ async def process_step(
                             f"{event['response_chain_id']}:{event['stream_seq']}:"
                             f"tool_reference:{canonical_id}"
                         ),
+                        run_fence=run_fence,
                     )
 
+                await assert_current()
                 origin = await save_internal_part(
                     session_id=session_id,
                     user_id=user_id,
@@ -629,7 +698,9 @@ async def process_step(
                         f"{event['response_chain_id']}:{event['stream_seq']}:"
                         f"tool_revealed:{canonical_id}"
                     ),
+                    run_fence=run_fence,
                 )
+                await assert_current()
                 await commit_tool_reveal(
                     ToolRevealEvent(
                         session_id=session_id,
@@ -647,12 +718,13 @@ async def process_step(
                     ),
                     ttl_seconds=ctx._native_reveal_ttl_seconds,
                     max_reveals=ctx._native_max_persisted_reveals,
+                    run_fence=run_fence,
                 )
                 if event.get("same_response_executable"):
                     response_executable.add(canonical_id)
                     ctx.available_tools = frozenset(response_executable)
 
-            elif event["type"] == "tool_call_start":
+            elif event_type == "tool_call_start":
                 # LLM just started emitting a tool call — create a pending
                 # tool part immediately so the frontend can show the card.
                 tc_index = event["index"]
@@ -673,35 +745,44 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await save_part(tool_part, is_new=True, user_id=user_id)
+                await save_part(
+                    tool_part,
+                    is_new=True,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
 
-            elif event["type"] == "tool_call_args_delta":
+            elif event_type == "tool_call_args_delta":
                 # Stream argument chunks to the frontend for live preview.
                 tc_index = event["index"]
                 tc_part_id = streaming_tool_parts.get(tc_index)
                 if tc_part_id:
                     from bus.events import PART_DELTA
-                    bus.publish(PART_DELTA, {
+                    bus.publish(PART_DELTA, generation_payload({
                         "userId": user_id,
                         "sessionId": session_id,
                         "messageId": assistant_info.id,
                         "partId": tc_part_id,
                         "delta": event["delta"],
-                    })
+                    }))
 
-            elif event["type"] == "tool_call":
+            elif event_type == "tool_call":
                 pending_tool_calls.append(event)
 
-            elif event["type"] == "finish":
+            elif event_type == "finish":
                 finish_reason = event.get("reason", "stop")
                 total_usage = event.get("usage", {})
 
-            elif event["type"] == "error":
+            elif event_type == "error":
                 error = event["error"]
                 if is_context_overflow(str(error)):
+                    await assert_current()
                     await create_compaction(session_id, auto=True, user_id=user_id,
-                                        messages=await _history_for_compaction(session_id, user_id),
-                                        model_id=model_id)
+                                        messages=await _history_for_compaction(
+                                            session_id, user_id, run_fence
+                                        ),
+                                        model_id=model_id,
+                                        run_fence=run_fence)
                     finish_reason = "compact"
                 else:
                     raise error
@@ -710,6 +791,7 @@ async def process_step(
         # provider call id with different payloads is ambiguous on replay; if
         # even one exists, fail the whole batch closed rather than allowing a
         # safe-looking prefix of calls to cause side effects.
+        await assert_current()
         original_tool_calls = pending_tool_calls
         pending_tool_calls, duplicate_indexes, has_call_id_conflict = (
             prepare_tool_call_batch(original_tool_calls)
@@ -753,6 +835,7 @@ async def process_step(
                     tool_part,
                     is_new=not bool(existing_part_id),
                     user_id=user_id,
+                    run_fence=run_fence,
                 )
             pending_tool_calls = []
 
@@ -791,197 +874,345 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await save_part(duplicate_part, is_new=False, user_id=user_id)
+                await save_part(
+                    duplicate_part,
+                    is_new=False,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
 
-        # Execute tool calls after stream completes (with correct part_id)
+        # Execute tool calls after the stream. Policy/permission/guards and
+        # RUNNING cards are prepared in model order. Only explicitly safe tool
+        # bodies overlap; terminal SSE, ToolPart results and ToolContext state
+        # commit through contiguous scheduler slots in model order.
         ctx.message_id = assistant_info.id
-        for tc_event in pending_tool_calls:
-            if abort.is_set():
-                break
 
+        def _part_for_call(
+            tc_event: dict,
+            *,
+            status: ToolStatus,
+        ) -> tuple[ToolPartData, bool]:
             tc_idx = int(tc_event["_batch_index"])
-
-            tool_name = tc_event["tool"]
-            tool_args = tc_event["args"]
-            canonical_tool_id = wire_to_canonical.get(tool_name)
-            native_error_code = tc_event.get("native_error_code")
-            is_invalid = (
-                tc_event.get("invalid", False)
-                or canonical_tool_id is None
-                or canonical_tool_id not in response_executable
-                or native_error_code is not None
+            existing_part_id = streaming_tool_parts.get(tc_idx)
+            return (
+                ToolPartData(
+                    id=existing_part_id or ascending("part"),
+                    tool=tc_event["tool"],
+                    status=status,
+                    input=tc_event["args"],
+                    call_id=str(tc_event["_canonical_call_id"]),
+                    **_tool_part_runtime_identity(
+                        tc_event,
+                        stream_seq=_event_stream_seq(tc_event, tc_idx),
+                        wire_to_canonical=wire_to_canonical,
+                        provider_binding_digest=provider_binding_digest,
+                        provider_dialect=provider_dialect,
+                    ),
+                    session_id=session_id,
+                    message_id=assistant_info.id,
+                ),
+                not bool(existing_part_id),
             )
 
-            # Bounded, portable and collision-resistant.  The full batch was
-            # validated above before any side effect was allowed.
-            llm_call_id = str(tc_event["_canonical_call_id"])
+        def _parallel_classifier(tc_event: dict):
+            def classify() -> bool:
+                canonical_id = wire_to_canonical.get(tc_event["tool"])
+                tool_info = execution_tools.get(str(canonical_id))
+                # Fail closed: absent/unknown/non-boolean values are exclusive.
+                return getattr(tool_info, "parallel_safe", False) is True
 
-            # Reuse the streaming part_id if we already created one during
-            # LLM streaming, otherwise create a new part.
-            existing_part_id = streaming_tool_parts.get(tc_idx)
-            if existing_part_id:
-                # Update the pending part → RUNNING with full args
-                tool_part = ToolPartData(
-                    id=existing_part_id,
-                    tool=tool_name,
-                    status=ToolStatus.RUNNING,
-                    input=tool_args,
-                    call_id=llm_call_id,
-                    **_tool_part_runtime_identity(
-                        tc_event,
-                        stream_seq=_event_stream_seq(tc_event, tc_idx),
-                        wire_to_canonical=wire_to_canonical,
-                        provider_binding_digest=provider_binding_digest,
-                        provider_dialect=provider_dialect,
-                    ),
-                    session_id=session_id,
-                    message_id=assistant_info.id,
-                )
-                await save_part(tool_part, is_new=False, user_id=user_id)
-            else:
-                tool_part = ToolPartData(
-                    id=ascending("part"),
-                    tool=tool_name,
-                    status=ToolStatus.RUNNING,
-                    input=tool_args,
-                    call_id=llm_call_id,
-                    **_tool_part_runtime_identity(
-                        tc_event,
-                        stream_seq=_event_stream_seq(tc_event, tc_idx),
-                        wire_to_canonical=wire_to_canonical,
-                        provider_binding_digest=provider_binding_digest,
-                        provider_dialect=provider_dialect,
-                    ),
-                    session_id=session_id,
-                    message_id=assistant_info.id,
-                )
-                await save_part(tool_part, is_new=True, user_id=user_id)
+            return classify
 
-            if is_invalid:
-                tool_part.status = ToolStatus.ERROR
-                if native_error_code == "deferred_until_next_step":
-                    tool_part.title = "Deferred tool available next step"
+        def _scheduled_call(tc_event: dict) -> ScheduledToolCall:
+            state: dict[str, object] = {}
+
+            async def prepare() -> ToolCallPreparation:
+                await assert_current()
+                tool_name = tc_event["tool"]
+                tool_args = tc_event["args"]
+                canonical_tool_id = wire_to_canonical.get(tool_name)
+                native_error_code = tc_event.get("native_error_code")
+                tool_part, is_new = _part_for_call(
+                    tc_event,
+                    status=ToolStatus.RUNNING,
+                )
+                state["tool_part"] = tool_part
+                state["is_new"] = is_new
+                await save_part(
+                    tool_part,
+                    is_new=is_new,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+
+                is_invalid = (
+                    tc_event.get("invalid", False)
+                    or canonical_tool_id is None
+                    or canonical_tool_id not in response_executable
+                    or native_error_code is not None
+                )
+                if is_invalid:
+                    tool_part.status = ToolStatus.ERROR
+                    if native_error_code == "deferred_until_next_step":
+                        tool_part.title = "Deferred tool available next step"
+                        tool_part.error = (
+                            "deferred_until_next_step: the tool was safely revealed, "
+                            "but its execution policy requires a newly planned step and "
+                            "a new call id. No executor was entered."
+                        )
+                        tool_part.metadata = {
+                            "blocked": True,
+                            "failure_code": "deferred_until_next_step",
+                        }
+                    else:
+                        tool_part.error = (
+                            f"Tool '{tool_name}' is not materialized for this step. "
+                            f"Available: {', '.join(visible_wire_names)}"
+                        )
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
+
+                # Validation and doom-loop guards are ordered preparation, not
+                # body work: later calls never overtake them into permission.
+                prior_failure = unchanged_validation_failure(
+                    [*doom_loop_history, *completed_tool_parts],
+                    tool_name,
+                    tool_args,
+                )
+                if prior_failure:
+                    log.warning(
+                        "Blocked unchanged retry after %s: %s",
+                        prior_failure,
+                        tool_name,
+                    )
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.title = "Unchanged validation retry blocked"
                     tool_part.error = (
-                        "deferred_until_next_step: the tool was safely revealed, "
-                        "but its execution policy requires a newly planned step and "
-                        "a new call id. No executor was entered."
+                        f"Identical retry blocked after {prior_failure}. Change the arguments using "
+                        "the previous result's corrected_prompt_template before calling this tool again."
                     )
                     tool_part.metadata = {
                         "blocked": True,
-                        "failure_code": "deferred_until_next_step",
+                        "failure_code": prior_failure,
                     }
-                else:
-                    tool_part.error = (
-                        f"Tool '{tool_name}' is not materialized for this step. "
-                        f"Available: {', '.join(visible_wire_names)}"
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
+
+                if is_repeat_of_recent(doom_loop_history, tool_name, tool_args):
+                    log.warning(
+                        f"Doom loop detected: {tool_name} called "
+                        f"{DOOM_LOOP_THRESHOLD} times with same args"
                     )
-                await save_part(tool_part, user_id=user_id)
-                continue
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.error = (
+                        f"Doom loop detected: '{tool_name}' has been called {DOOM_LOOP_THRESHOLD} "
+                        "consecutive times with identical arguments. Breaking the loop. "
+                        "Please try a different approach."
+                    )
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
 
-            # A semantic validation failure already returned a structured fix
-            # recipe.  Re-executing the identical mutation cannot change the
-            # outcome, so block the first unchanged retry instead of waiting
-            # for the generic three-call doom-loop threshold.
-            prior_failure = unchanged_validation_failure(
-                [*doom_loop_history, *completed_tool_parts],
-                tool_name,
-                tool_args,
-            )
-            if prior_failure:
-                log.warning(
-                    "Blocked unchanged retry after %s: %s",
-                    prior_failure,
-                    tool_name,
-                )
-                tool_part.status = ToolStatus.ERROR
-                tool_part.title = "Unchanged validation retry blocked"
-                tool_part.error = (
-                    f"Identical retry blocked after {prior_failure}. Change the arguments using "
-                    "the previous result's corrected_prompt_template before calling this tool again."
-                )
-                tool_part.metadata = {
-                    "blocked": True,
-                    "failure_code": prior_failure,
-                }
-                await save_part(tool_part, user_id=user_id)
-                continue
+                tool_info = execution_tools.get(str(canonical_tool_id))
+                if tool_info is None:
+                    tool_part.status = ToolStatus.ERROR
+                    tool_part.error = f"Tool '{tool_name}' has no executable binding for this step."
+                    return ToolCallPreparation.ready(_ToolCallOutcome(tool_part))
 
-            # Doom loop detection: check if same tool+args repeated across steps
-            if is_repeat_of_recent(doom_loop_history, tool_name, tool_args):
-                log.warning(f"Doom loop detected: {tool_name} called {DOOM_LOOP_THRESHOLD} times with same args")
-                tool_part.status = ToolStatus.ERROR
-                tool_part.error = (
-                    f"Doom loop detected: '{tool_name}' has been called {DOOM_LOOP_THRESHOLD} "
-                    f"consecutive times with identical arguments. Breaking the loop. "
-                    f"Please try a different approach."
-                )
-                await save_part(tool_part, user_id=user_id)
-                continue
+                parallel_safe = _parallel_classifier(tc_event)()
+                staged_hooks = all(hasattr(hooks, name) for name in (
+                    "prepare_execute",
+                    "dispatch_execute",
+                    "finalize_execute",
+                    "abandon_execute",
+                ))
+                if staged_hooks:
+                    hook_prepared = await hooks.prepare_execute(
+                        str(canonical_tool_id),
+                        tool_info.execute,
+                        tool_args,
+                        ctx,
+                        part_id=tool_part.id,
+                        isolate_context=parallel_safe,
+                    )
+                    state["hook_prepared"] = hook_prepared
+                    if hook_prepared.blocked_result is not None:
+                        return ToolCallPreparation.ready(_ToolCallOutcome(
+                            tool_part,
+                            direct_result=hook_prepared.blocked_result,
+                            track_completed=True,
+                        ))
 
-            # Execute via hooks (passes part_id for SSE events). Raced against
-            # abort so the stop button interrupts a running command instead of
-            # waiting it out — the abandoned part is finalised as interrupted
-            # by the loop's cleanup, mirroring opencode.
-            tool_info = execution_tools.get(str(canonical_tool_id))
-            if tool_info:
-                exec_task = asyncio.create_task(
-                    hooks.wrap_execute(
+                    async def staged_body() -> _ToolCallOutcome:
+                        await assert_current()
+                        hook_outcome = await hooks.dispatch_execute(hook_prepared)
+                        return _ToolCallOutcome(
+                            tool_part,
+                            hook_prepared=hook_prepared,
+                            hook_outcome=hook_outcome,
+                            track_completed=True,
+                        )
+
+                    return ToolCallPreparation.dispatch(staged_body)
+
+                # Test/custom hook compatibility. Production ToolHooks always
+                # uses the staged path above, so permission remains ordered.
+                async def compatibility_body() -> _ToolCallOutcome:
+                    await assert_current()
+                    result = await hooks.wrap_execute(
                         str(canonical_tool_id),
                         tool_info.execute,
                         tool_args,
                         ctx,
                         part_id=tool_part.id,
                     )
+                    return _ToolCallOutcome(
+                        tool_part,
+                        direct_result=result,
+                        track_completed=True,
+                    )
+
+                return ToolCallPreparation.dispatch(compatibility_body)
+
+            async def aborted_before_dispatch() -> _ToolCallOutcome:
+                hook_prepared = state.get("hook_prepared")
+                if hook_prepared is not None and hasattr(hooks, "abandon_execute"):
+                    await hooks.abandon_execute(hook_prepared)
+                tool_part = state.get("tool_part")
+                is_new = bool(state.get("is_new", False))
+                if not isinstance(tool_part, ToolPartData):
+                    tool_part, is_new = _part_for_call(
+                        tc_event,
+                        status=ToolStatus.ERROR,
+                    )
+                tool_part.status = ToolStatus.ERROR
+                tool_part.title = "Tool call aborted before dispatch"
+                tool_part.error = "Tool call aborted before dispatch."
+                tool_part.metadata = {
+                    "blocked": True,
+                    "failure_code": "aborted_before_dispatch",
+                }
+                return _ToolCallOutcome(tool_part, is_new=is_new)
+
+            async def timed_out(timeout_seconds: float) -> _ToolCallOutcome:
+                """Turn a cancelled body into this call's ordered error slot."""
+                hook_prepared = state.get("hook_prepared")
+                tool_part = state.get("tool_part")
+                if not isinstance(tool_part, ToolPartData):  # pragma: no cover
+                    tool_part, _is_new = _part_for_call(
+                        tc_event,
+                        status=ToolStatus.ERROR,
+                    )
+
+                if hook_prepared is not None:
+                    if hasattr(hooks, "timeout_execute"):
+                        hook_outcome = await hooks.timeout_execute(
+                            hook_prepared,
+                            timeout_seconds,
+                        )
+                        return _ToolCallOutcome(
+                            tool_part,
+                            hook_prepared=hook_prepared,
+                            hook_outcome=hook_outcome,
+                            track_completed=True,
+                        )
+                    if hasattr(hooks, "abandon_execute"):
+                        await hooks.abandon_execute(hook_prepared)
+
+                # Compatibility hooks do not expose staged terminal events,
+                # but their ToolPart still receives the same canonical result.
+                duration = f"{timeout_seconds:g}"
+                return _ToolCallOutcome(
+                    tool_part,
+                    direct_result=ToolResult(
+                        title=f"{tc_event['tool']} timed out",
+                        output=(
+                            "Tool execution exceeded "
+                            f"{duration} seconds and was cancelled."
+                        ),
+                        metadata={
+                            "error": True,
+                            "failure_code": "tool_timeout",
+                        },
+                    ),
+                    track_completed=True,
                 )
-                abort_task = asyncio.create_task(abort.wait())
-                done, _ = await asyncio.wait({exec_task, abort_task}, return_when=asyncio.FIRST_COMPLETED)
-                abort_task.cancel()
-                if exec_task not in done:
-                    exec_task.cancel()
-                    try:
-                        await exec_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                    break
-                result = exec_task.result()
 
-                # Check for agent_switch metadata
-                agent_switch = result.metadata.get("agent_switch")
-                if agent_switch:
-                    try:
-                        # Validate before persisting; the switch itself takes
-                        # effect on the next step, which re-resolves the agent
-                        # from the session. Rebinding agent_def here would only
-                        # touch this function's local and mislead the reader.
-                        get_agent(agent_switch)
-                        # user_id is not optional here — update_session
-                        # filters on it, so omitting it silently updated
-                        # nobody and the switch never took effect.
-                        await update_session(session_id, user_id=user_id, agent=agent_switch)
-                        log.info(f"Agent switched to {agent_switch}")
-                    except ValueError:
-                        log.warning(f"Unknown agent for switch: {agent_switch}")
+            async def commit(outcome: _ToolCallOutcome) -> None:
+                nonlocal agent_switch, finish_reason
+                await assert_current()
+                result = outcome.direct_result
+                if outcome.hook_prepared is not None:
+                    result = await hooks.finalize_execute(
+                        outcome.hook_prepared,
+                        outcome.hook_outcome,
+                    )
+                    await assert_current()
 
-                # Update tool part with result
-                tool_part.status = ToolStatus.COMPLETED if not result.metadata.get("error") else ToolStatus.ERROR
-                tool_part.output = result.output
-                tool_part.title = result.title
-                tool_part.error = result.output if result.metadata.get("error") else None
-                tool_part.metadata = persisted_tool_metadata(result.metadata)
-                await save_part(tool_part, user_id=user_id)
+                if result is not None:
+                    requested_switch = result.metadata.get("agent_switch")
+                    # Preserve the serial processor's contract: each committed
+                    # result replaces this step-level field, including with
+                    # None when a later call carries no switch.
+                    agent_switch = requested_switch
+                    if requested_switch:
+                        try:
+                            get_agent(requested_switch)
+                            await update_session(
+                                session_id,
+                                user_id=user_id,
+                                agent=requested_switch,
+                                run_fence=run_fence,
+                            )
+                            log.info(f"Agent switched to {requested_switch}")
+                        except ValueError:
+                            log.warning(f"Unknown agent for switch: {requested_switch}")
 
-                # Track for doom loop detection (across steps)
-                completed_tool_parts.append(tool_part)
+                    outcome.tool_part.status = (
+                        ToolStatus.COMPLETED
+                        if not result.metadata.get("error")
+                        else ToolStatus.ERROR
+                    )
+                    outcome.tool_part.output = result.output
+                    outcome.tool_part.title = result.title
+                    outcome.tool_part.error = (
+                        result.output if result.metadata.get("error") else None
+                    )
+                    outcome.tool_part.metadata = persisted_tool_metadata(result.metadata)
+                    if outcome.track_completed:
+                        completed_tool_parts.append(outcome.tool_part)
+                    if result.metadata.get("plan_ready"):
+                        finish_reason = "stop"
 
-                # plan_exit: stop the loop so the user can review
-                if result.metadata.get("plan_ready"):
-                    finish_reason = "stop"
+                await save_part(
+                    outcome.tool_part,
+                    is_new=outcome.is_new,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+
+            return ScheduledToolCall(
+                prepare=prepare,
+                commit=commit,
+                aborted_before_dispatch=aborted_before_dispatch,
+                timed_out=timed_out,
+                parallel_safe=_parallel_classifier(tc_event),
+            )
+
+        await run_ordered_tool_calls(
+            [_scheduled_call(tc_event) for tc_event in pending_tool_calls],
+            abort,
+            body_timeout_seconds=tool_body_timeout_seconds,
+        )
+        await assert_current()
 
     except ContextOverflowError:
+        await assert_current()
         await create_compaction(session_id, auto=True, user_id=user_id,
-                                        messages=await _history_for_compaction(session_id, user_id),
-                                        model_id=model_id)
+                                        messages=await _history_for_compaction(
+                                            session_id, user_id, run_fence
+                                        ),
+                                        model_id=model_id,
+                                        run_fence=run_fence)
         finish_reason = "compact"
+    except LeaseLostError:
+        raise
     except Exception as e:
         # Preserve partial prose as process narration before returning early;
         # the normal final-save block below is skipped by both retry and error
@@ -997,6 +1228,7 @@ async def process_step(
                         message_id=assistant_info.id,
                     ),
                     user_id=user_id,
+                    run_fence=run_fence,
                 )
             except Exception:
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
@@ -1009,17 +1241,12 @@ async def process_step(
             return StepResult(
                 outcome=StepOutcome.RETRY,
                 retry_reason=retry_msg,
+                retry_error=e,
                 error=str(e),
                 duration=time.time() - step_start_time,
             )
         log.error(f"LLM error in session {session_id}: {e}")
-        bus.publish(SESSION_ERROR, {
-            "userId": user_id,
-            "sessionId": session_id,
-            "error": {"message": str(e)},
-        })
         assistant_info.error = {"message": str(e)}
-        await update_message_info(assistant_info, user_id=user_id)
         return StepResult(
             outcome=StepOutcome.ERROR,
             error=str(e),
@@ -1034,7 +1261,11 @@ async def process_step(
             session_id=session_id,
             message_id=assistant_info.id,
         )
-        await save_part(final_reasoning, user_id=user_id)
+        await save_part(
+            final_reasoning,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
 
     # Save final text part (full text)
     if text_part_id and collected_text:
@@ -1048,8 +1279,13 @@ async def process_step(
             session_id=session_id,
             message_id=assistant_info.id,
         )
-        await save_part(final_text, user_id=user_id)
+        await save_part(
+            final_text,
+            user_id=user_id,
+            run_fence=run_fence,
+        )
 
+    await assert_current()
     return StepResult(
         outcome=StepOutcome.COMPACT if finish_reason == "compact" else StepOutcome.CONTINUE,
         finish_reason=finish_reason,

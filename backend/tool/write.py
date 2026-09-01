@@ -1,4 +1,6 @@
 """Write tool: write files to the sandbox."""
+import shlex
+
 from pydantic import BaseModel, Field
 
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -11,15 +13,25 @@ class WriteArgs(BaseModel):
 
 async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
     """Write content to a file in the sandbox."""
+    try:
+        execution_path = ctx.resolve_file_path(args.file_path)
+    except ValueError as exc:
+        return ToolResult(
+            title=f"Error writing {args.file_path}",
+            output=str(exc),
+        )
+
     # F9: Check for stale file
     stale_warning = ""
     try:
         from tool.filetime import get_tracker
         tracker = get_tracker(ctx.session_id)
-        recorded_mtime = tracker.get(args.file_path)
+        recorded_mtime = tracker.get(execution_path)
         if recorded_mtime is not None:
             stat_result = await ctx.sandbox.execute(
-                f"stat -c %Y {args.file_path} 2>/dev/null", timeout=5
+                f"stat -c %Y -- {shlex.quote(execution_path)} 2>/dev/null",
+                timeout=5,
+                workdir=ctx.workdir,
             )
             if stat_result.exit_code == 0 and stat_result.stdout.strip():
                 current_mtime = float(stat_result.stdout.strip())
@@ -32,7 +44,7 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
         pass
 
     try:
-        await ctx.sandbox.write_file(path=args.file_path, content=args.content)
+        await ctx.sandbox.write_file(path=execution_path, content=args.content)
     except Exception as e:
         return ToolResult(
             title=f"Error writing {args.file_path}",
@@ -46,7 +58,7 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
         from core.config import get_config
         if getattr(get_config(), "auto_format", True):
             from lsp.format import auto_format
-            formatter = await auto_format(ctx.sandbox, args.file_path)
+            formatter = await auto_format(ctx.sandbox, execution_path)
             if formatter:
                 output += f"\n(auto-formatted with {formatter})"
     except Exception:
@@ -57,7 +69,7 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
         from core.config import get_config
         if getattr(get_config(), "lsp_diagnostics", True):
             from lsp.diagnostics import run_diagnostics, format_diagnostics
-            diags = await run_diagnostics(ctx.sandbox, args.file_path)
+            diags = await run_diagnostics(ctx.sandbox, execution_path)
             diag_str = format_diagnostics(diags)
             if diag_str:
                 output += diag_str
@@ -68,10 +80,15 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
     try:
         from tool.filetime import get_tracker
         stat_result = await ctx.sandbox.execute(
-            f"stat -c %Y {args.file_path} 2>/dev/null", timeout=5
+            f"stat -c %Y -- {shlex.quote(execution_path)} 2>/dev/null",
+            timeout=5,
+            workdir=ctx.workdir,
         )
         if stat_result.exit_code == 0 and stat_result.stdout.strip():
-            get_tracker(ctx.session_id).record(args.file_path, float(stat_result.stdout.strip()))
+            get_tracker(ctx.session_id).record(
+                execution_path,
+                float(stat_result.stdout.strip()),
+            )
     except Exception:
         pass
 

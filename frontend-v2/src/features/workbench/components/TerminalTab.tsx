@@ -8,7 +8,12 @@ import { EmptyState } from "./EmptyState"
 
 const TerminalView = lazy(() => import("./TerminalView"))
 
-export function TerminalTab() {
+interface TerminalTabProps {
+  sessionId: string | null
+  projectId: string | null
+}
+
+export function TerminalTab({ sessionId, projectId }: TerminalTabProps) {
   const { t } = useTranslation("workbench")
   const running = useRunningContainer()
   const create = useCreateContainer()
@@ -30,7 +35,7 @@ export function TerminalTab() {
   return (
     <div className="mx-3 mb-3 min-h-0 flex-1 overflow-hidden rounded-xl bg-term p-2">
       <Suspense fallback={<div className="p-3 text-sm text-termink">{t("terminal.connecting")}</div>}>
-        <TerminalView containerId={running.id} />
+        <TerminalView containerId={running.id} sessionId={sessionId} projectId={projectId} />
       </Suspense>
     </div>
   )

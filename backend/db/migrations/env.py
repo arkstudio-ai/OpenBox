@@ -18,6 +18,22 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# ``kv_store`` predates the ORM and remains intentionally managed by the
+# storage compatibility layer with explicit SQL. It is part of the supported
+# schema, not an orphan table that autogenerate is allowed to drop.
+_UNMANAGED_TABLES = frozenset({"kv_store"})
+
+
+def include_object(object_, name, type_, reflected, compare_to):
+    if (
+        type_ == "table"
+        and reflected
+        and compare_to is None
+        and name in _UNMANAGED_TABLES
+    ):
+        return False
+    return True
+
 # Allow DATABASE_URL env var to override alembic.ini
 database_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
 
@@ -29,6 +45,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -46,7 +63,12 @@ from db.base import JSONType  # noqa: E402
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata, render_item=render_item)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_item=render_item,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

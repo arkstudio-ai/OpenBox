@@ -20,6 +20,7 @@ log = create_logger("cron.reaper")
 
 REAPER_INTERVAL_MS = 5 * 60 * 1000   # 5 minutes between sweeps
 RETENTION_DAYS = 30                    # Keep cron_runs (and their transcripts) 30 days
+ACTIVE_OUTBOX_STATES = ("pending", "processing")
 
 _last_sweep_at_ms: int = 0
 
@@ -56,7 +57,7 @@ async def _sweep_temp_sessions() -> None:
     """
     from core.config import get_config
     from db.base import get_db_session
-    from db.models.cron import CronRun
+    from db.models.cron import CronDeliveryOutbox, CronRun
     from sqlalchemy import func, select, update
 
     keep = max(0, get_config().cron_transcript_keep_per_job)
@@ -70,7 +71,14 @@ async def _sweep_temp_sessions() -> None:
     )
     ranked = (
         select(CronRun.id, CronRun.temp_session_id, rn)
-        .where(CronRun.temp_session_id.isnot(None), CronRun.status != "running")
+        .where(
+            CronRun.temp_session_id.isnot(None),
+            CronRun.status != "running",
+            ~select(CronDeliveryOutbox.id).where(
+                CronDeliveryOutbox.run_id == CronRun.id,
+                CronDeliveryOutbox.state.in_(ACTIVE_OUTBOX_STATES),
+            ).exists(),
+        )
         .subquery()
     )
 
@@ -93,10 +101,17 @@ async def _sweep_temp_sessions() -> None:
     deleted = 0
     for run_id, sid, uid in expired:
         try:
-            await delete_session(sid, user_id=uid)
-            deleted += 1
-        except Exception:
-            pass  # Session may already be deleted
+            if await delete_session(sid, user_id=uid):
+                deleted += 1
+        except Exception as exc:
+            # Keep the only durable link to a still-live transcript. A later
+            # sweep can retry after the transient deletion failure clears.
+            log.warning(
+                "Cron transcript trim deferred run=%s error_type=%s",
+                run_id,
+                type(exc).__name__,
+            )
+            continue
         async with get_db_session() as db:
             await db.execute(
                 update(CronRun).where(CronRun.id == run_id).values(temp_session_id=None)
@@ -113,12 +128,17 @@ async def _sweep_old_runs() -> None:
     session forever — nothing else knows it exists.
     """
     from db.base import get_db_session
-    from db.models.cron import CronRun
+    from db.models.cron import CronDeliveryOutbox, CronRun
     from sqlalchemy import delete, select
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
 
     from db.models.session import Session as SessionORM
+
+    pending_delivery = select(CronDeliveryOutbox.id).where(
+        CronDeliveryOutbox.run_id == CronRun.id,
+        CronDeliveryOutbox.state.in_(ACTIVE_OUTBOX_STATES),
+    ).exists()
 
     async with get_db_session() as db:
         result = await db.execute(
@@ -127,6 +147,7 @@ async def _sweep_old_runs() -> None:
             .where(
                 CronRun.temp_session_id.isnot(None),
                 CronRun.started_at < cutoff,
+                ~pending_delivery,
                 SessionORM.is_deleted == False,  # noqa: E712
             )
             .distinct()
@@ -135,15 +156,42 @@ async def _sweep_old_runs() -> None:
 
     from session.session import delete_session
 
+    failed_session_ids: set[str] = set()
     for sid, uid in stale_sessions:
         try:
             await delete_session(sid, user_id=uid)
-        except Exception:
-            pass
+        except Exception as exc:
+            failed_session_ids.add(sid)
+            log.warning(
+                "Cron transcript retention deferred session=%s error_type=%s",
+                sid,
+                type(exc).__name__,
+            )
 
     async with get_db_session() as db:
+        from sqlalchemy import or_
+
+        stale_predicates = [
+            CronRun.started_at < cutoff,
+            ~select(CronDeliveryOutbox.id).where(
+                CronDeliveryOutbox.run_id == CronRun.id,
+                CronDeliveryOutbox.state.in_(ACTIVE_OUTBOX_STATES),
+            ).exists(),
+        ]
+        if failed_session_ids:
+            stale_predicates.append(or_(
+                CronRun.temp_session_id.is_(None),
+                ~CronRun.temp_session_id.in_(failed_session_ids),
+            ))
+        stale_run_ids = select(CronRun.id).where(*stale_predicates)
+        await db.execute(
+            delete(CronDeliveryOutbox).where(
+                CronDeliveryOutbox.run_id.in_(stale_run_ids),
+                ~CronDeliveryOutbox.state.in_(ACTIVE_OUTBOX_STATES),
+            )
+        )
         result = await db.execute(
-            delete(CronRun).where(CronRun.started_at < cutoff)
+            delete(CronRun).where(CronRun.id.in_(stale_run_ids))
         )
         if result.rowcount > 0:
             log.info(f"Cleaned up {result.rowcount} old cron run(s)")

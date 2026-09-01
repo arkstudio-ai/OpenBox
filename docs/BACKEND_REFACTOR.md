@@ -1,5 +1,9 @@
 # OpenBox Backend 重构总结
 
+> 历史文档：其中 Docker sandbox 等描述不再代表当前运行时。Agent 执行面
+> 已收敛为 WUYING-only；当前事实以 `AGENT_KERNEL_ARCHITECTURE.md` 与
+> `WUYING_SANDBOX.md` 为准。
+
 ## 概述
 
 将原有三个独立的后端包 (`backend/app/`、`backend/openagent/`、`backend/openbox/`) 合并为统一的扁平结构 `backend/`，实现沙箱管理 + AI Agent 平台的完整后端。

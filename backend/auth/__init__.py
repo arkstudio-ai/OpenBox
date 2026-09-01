@@ -8,9 +8,12 @@ from auth.preview_token import init_preview_store
 
 def setup_auth(config, cache):
     """Initialize all auth subsystems. Call during app startup."""
+    # Preview URLs use their own short-lived opaque credentials in both SaaS
+    # and historical single-user desktop mode.  Initialise this store even
+    # when JWT authentication is disabled.
+    init_preview_store(cache)
     if config.jwt_secret:
         init_auth(config.jwt_secret, config.jwt_access_expire_minutes, config.jwt_refresh_expire_days)
         init_ticket_store(cache)
         init_blacklist(cache)
         init_auth_routes(cache)
-        init_preview_store(cache)

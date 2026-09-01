@@ -65,14 +65,18 @@ export function InputBar({ onSend, onAbort, isBusy, sessionId, statusText }: Inp
 
   // Fetch file list for @ mentions
   const { data: fileData } = useQuery({
-    queryKey: ["files-mention", mentionContainerId],
-    queryFn: () => api.listFiles(mentionContainerId!, "/workspace"),
-    enabled: !!mentionContainerId,
+    queryKey: ["files-mention", mentionContainerId, sessionId],
+    queryFn: async () => {
+      const session = await api.getSession(sessionId)
+      if (!session.directory) return { files: [] }
+      return api.listFiles(mentionContainerId!, session.directory)
+    },
+    enabled: !!mentionContainerId && !!sessionId && !sessionId.startsWith("mock-"),
     staleTime: 30000,
   })
 
   const fileSuggestions = useMemo(() => {
-    const files = fileData?.files || []
+    const files = fileData?.files ?? fileData?.entries ?? []
     const mentionQuery = text.split("@").pop()?.toLowerCase() || ""
     if (!showFileMention) return []
     if (!mentionQuery) return files.map((f: { name: string }) => f.name).slice(0, 10)

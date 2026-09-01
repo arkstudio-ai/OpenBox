@@ -3,7 +3,7 @@
 // Clicking a row opens (or converts the current menu tab into) that kind.
 import { useTranslation } from "react-i18next"
 import { usePanelStore } from "@/features/workbench/stores/panel"
-import { TAB_GLYPH, splitPath } from "@/features/workbench/utils/glyphs"
+import { TAB_GLYPH } from "@/features/workbench/utils/glyphs"
 import { useDiffQuery } from "@/features/workbench/api/diff"
 import { useRunningContainer } from "@/features/workbench/api/containers"
 import { useSessionWorkdir } from "@/features/workbench/api/workdir"
@@ -11,11 +11,12 @@ import type { TabKind } from "@/features/workbench/stores/panel"
 
 interface MenuTabProps {
   sessionId: string | null
+  projectName: string | null
 }
 
-const ROWS: TabKind[] = ["review", "terminal", "browser", "files", "desktop", "cron"]
+const ROWS: TabKind[] = ["review", "terminal", "preview", "browser", "files", "desktop", "cron"]
 
-export function MenuTab({ sessionId }: MenuTabProps) {
+export function MenuTab({ sessionId, projectName }: MenuTabProps) {
   const { t } = useTranslation("workbench")
   const openKind = usePanelStore((s) => s.openKind)
   const diff = useDiffQuery(sessionId)
@@ -28,8 +29,8 @@ export function MenuTab({ sessionId }: MenuTabProps) {
   // terminal just whether a sandbox is up.
   const hintFor = (kind: TabKind): string => {
     if (kind === "review") return pending > 0 ? t("menu.pending", { count: pending }) : t("menu.clean")
-    if (kind === "terminal") return running ? t("menu.online") : ""
-    if (kind === "files") return workdir ? splitPath(workdir).base : ""
+    if (kind === "terminal" || kind === "preview") return running ? t("menu.online") : ""
+    if (kind === "files") return projectName ?? (workdir ? t("files.projectRoot") : "")
     return ""
   }
 
@@ -40,13 +41,13 @@ export function MenuTab({ sessionId }: MenuTabProps) {
           key={kind}
           type="button"
           onClick={() => openKind(kind)}
-          className="flex min-h-11.5 items-center gap-3 rounded-full px-3.5 text-start hover:bg-hairsoft"
+          className="hover:bg-hairsoft flex min-h-11.5 items-center gap-3 rounded-full px-3.5 text-start"
         >
-          <span className="flex size-7 flex-none items-center justify-center rounded-full border border-hair font-mono text-xs text-n700">
+          <span className="border-hair text-n700 flex size-7 flex-none items-center justify-center rounded-full border font-mono text-xs">
             {TAB_GLYPH[kind]}
           </span>
           <span className="text-base">{t(`menu.${kind}`)}</span>
-          <span className="ms-auto ps-3 text-xs text-n600">{hintFor(kind)}</span>
+          <span className="text-n600 ms-auto ps-3 text-xs">{hintFor(kind)}</span>
         </button>
       ))}
     </div>

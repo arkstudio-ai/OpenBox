@@ -430,13 +430,19 @@ def validate_request(
             has_image_ref=any(mime.startswith("image/") for mime in input_mimes),
         )
     if channel == "sd2":
-        native = sd2_native_resolution(route.model)
+        canonical_model = canonicalize_sd2_model_name(route.model)
+        native = sd2_native_resolution(canonical_model)
         if resolution and resolution != native:
             raise RuntimeError(
                 f"model {route.model} generates {native} natively; requested "
                 f"{resolution} would be silently ignored — pick the matching model tier"
             )
-        if has_video_ref and canonicalize_sd2_model_name(route.model) == "video-sd-720p-proⅠ":
+        if canonical_model == "seedance-2.0-480-fastⅠ" and generate_audio:
+            raise RuntimeError(
+                "seedance-2.0-480-fastⅠ does not support generated audio; "
+                "use a visual-only b-roll segment or select a spoken-video model"
+            )
+        if has_video_ref and canonical_model == "video-sd-720p-proⅠ":
             # Upstream drops extra_videos for this tier without erroring; the
             # task then succeeds with output unrelated to the reference.
             raise RuntimeError(
@@ -489,6 +495,12 @@ def build_payload(
             "model": canonicalize_sd2_model_name(route.model),
             "prompt": prompt,
             "resolution": sd2_native_resolution(route.model),
+            # These switches are part of the relay's public video contract.
+            # Dropping ``generate_audio=False`` made visual-only b-roll return
+            # an unwanted provider-default audio track; dropping ``True``
+            # made the spend approval describe a request that was never sent.
+            "generate_audio": bool(generate_audio),
+            "watermark": bool(watermark),
         }
         if ratio and ratio != "adaptive":
             body["ratio"] = ratio

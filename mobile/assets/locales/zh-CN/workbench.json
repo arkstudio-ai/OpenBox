@@ -51,6 +51,7 @@
     "failed": "页面加载失败"
   },
   "files": {
+    "projectRoot": "项目",
     "filter": "筛选文件…",
     "fileList": "文件列表",
     "copyPath": "复制路径",

@@ -4,11 +4,17 @@ import pytest
 from core.config import ProviderConfig, VideoModelConfig, get_config
 
 
-def _declare(monkeypatch, models, allowed=None):
+def _declare(monkeypatch, models, allowed=None, *, channel="task"):
     config = get_config()
     monkeypatch.setattr(config.video_generation, "models",
                         [VideoModelConfig(**m) for m in models])
     monkeypatch.setattr(config.video_generation, "allowed_models", allowed or [])
+    monkeypatch.setattr(config.video_generation, "channel_providers", {channel: "video-test"})
+    monkeypatch.setitem(
+        config.provider,
+        "video-test",
+        ProviderConfig(api_key="test-only", base_url="https://video.test"),
+    )
     return config
 
 
@@ -37,6 +43,18 @@ def test_picker_never_offers_what_the_submit_path_would_refuse(monkeypatch):
         allowed=["cheap"],
     )
     assert [r["id"] for r in _video_models(config)] == ["cheap"]
+
+
+def test_picker_hides_a_declared_model_without_a_bound_channel_provider(monkeypatch):
+    from api.metadata import _video_models
+
+    config = _declare(
+        monkeypatch,
+        [{"id": "wan3.0-video", "channel": "task"}],
+    )
+    monkeypatch.setattr(config.video_generation, "channel_providers", {})
+
+    assert _video_models(config) == []
 
 
 def test_undeclared_deployment_still_shows_its_one_real_model(monkeypatch):

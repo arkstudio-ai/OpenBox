@@ -36,6 +36,13 @@ export function CronJobList({ sessionId, showSessionInfo: _showSessionInfo, comp
     refetchInterval: 10000,
   })
 
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.listProjects,
+    staleTime: 30000,
+  })
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]))
+
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["cron-jobs"] })
 
   const handleToggle = async (jobId: string, enabled: boolean) => {
@@ -113,6 +120,7 @@ export function CronJobList({ sessionId, showSessionInfo: _showSessionInfo, comp
         {jobs.map((job: any) => {
           const st = statusConfig[job.running ? "running" : (job.last_status || "pending")] || statusConfig.pending
           const scheduleText = _formatSchedule(job.schedule)
+          const projectName = projectNames.get(job.project_id)
 
           return (
             <div
@@ -159,11 +167,9 @@ export function CronJobList({ sessionId, showSessionInfo: _showSessionInfo, comp
                     )}
                   </p>
 
-                  {/* Where it runs. A scheduled task acts on files, and the
-                      directory is the part you cannot infer from the prompt. */}
-                  {job.project_directory && (
+                  {(job.project_id || job.project_directory) && (
                     <p className="text-[10px] text-[hsl(var(--muted-foreground))]/60 font-mono truncate mt-0.5">
-                      {job.project_directory}
+                      {projectName || "Project root"} · .
                     </p>
                   )}
 

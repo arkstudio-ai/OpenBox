@@ -1,3 +1,9 @@
+# 已归档：GKE Sandbox 设计草案
+
+> 本文仅保留为历史设计记录，不是可部署方案。当前 OpenBox 运行时只接受
+> `SANDBOX_PROVIDER=wuying`；Docker Compose 只运行 PostgreSQL、Redis、
+> Azurite 等本地基础服务。请使用 [`WUYING_SANDBOX.md`](./WUYING_SANDBOX.md)。
+
 GKE 改造完整设计方案
 一、总体架构
                     Internet

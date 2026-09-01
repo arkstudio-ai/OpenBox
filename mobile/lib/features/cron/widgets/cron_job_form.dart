@@ -18,8 +18,9 @@ Future<void> showCronJobForm(BuildContext context, {CronJob? job}) {
     isScrollControlled: true,
     useSafeArea: true,
     builder: (_) => Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: _CronJobFormBody(job: job),
     ),
   );
@@ -36,8 +37,7 @@ class _CronJobFormBody extends ConsumerStatefulWidget {
 
 class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
   late final _name = TextEditingController(text: widget.job?.name ?? '');
-  late final _task =
-      TextEditingController(text: widget.job?.taskPrompt ?? '');
+  late final _task = TextEditingController(text: widget.job?.taskPrompt ?? '');
   late final _expr = TextEditingController();
   late final _every = TextEditingController();
   late ScheduleForm _form = widget.job != null
@@ -53,9 +53,14 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
     super.initState();
     _expr.text = _form.expr;
     _every.text = '${_form.every}';
-    FlutterTimezone.getLocalTimezone().then((tz) {
-      if (mounted) setState(() => _tz = tz.identifier);
-    });
+    final storedTimezone = _form.timezone?.trim();
+    if (storedTimezone != null && storedTimezone.isNotEmpty) {
+      _tz = storedTimezone;
+    } else {
+      FlutterTimezone.getLocalTimezone().then((tz) {
+        if (mounted) setState(() => _tz = tz.identifier);
+      });
+    }
   }
 
   @override
@@ -75,8 +80,8 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
     final targetProject = widget.job != null
         ? (widget.job!.projectId ?? '')
         : (_projectId.isNotEmpty
-            ? _projectId
-            : (projects.isNotEmpty ? projects.first.$1 : ''));
+              ? _projectId
+              : (projects.isNotEmpty ? projects.first.$1 : ''));
     if (_name.text.trim().isEmpty ||
         _task.text.trim().isEmpty ||
         schedule == null ||
@@ -127,10 +132,11 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
     final targetProject = editing
         ? (widget.job!.projectId ?? '')
         : (_projectId.isNotEmpty
-            ? _projectId
-            : (projects.isNotEmpty ? projects.first.$1 : ''));
+              ? _projectId
+              : (projects.isNotEmpty ? projects.first.$1 : ''));
     final schedule = buildSchedule(_form, _tz);
-    final valid = _name.text.trim().isNotEmpty &&
+    final valid =
+        _name.text.trim().isNotEmpty &&
         _task.text.trim().isNotEmpty &&
         schedule != null &&
         targetProject.isNotEmpty;
@@ -167,10 +173,10 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                       maxLength: 256,
                       onChanged: (_) => setState(() {}),
                       decoration: _decoration(
-                          t, i18n.t('cron:form.namePlaceholder'))
-                        ..applyDefaults(const InputDecorationTheme()),
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                        t,
+                        i18n.t('cron:form.namePlaceholder'),
+                      )..applyDefaults(const InputDecorationTheme()),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                     ),
                   ),
                   _field(
@@ -183,9 +189,10 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                       maxLength: 5000,
                       onChanged: (_) => setState(() {}),
                       decoration: _decoration(
-                          t, i18n.t('cron:form.taskPlaceholder')),
-                      style:
-                          TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                        t,
+                        i18n.t('cron:form.taskPlaceholder'),
+                      ),
+                      style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                     ),
                   ),
                   if (!editing)
@@ -205,14 +212,17 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                             () => _pickOption(
                               options: projects,
                               selected: targetProject,
-                              onPick: (id) =>
-                                  setState(() => _projectId = id),
+                              onPick: (id) => setState(() => _projectId = id),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          Text(i18n.t('cron:form.projectHint'),
-                              style: TextStyle(
-                                  fontSize: FontSizes.xs2, color: t.n500)),
+                          Text(
+                            i18n.t('cron:form.projectHint'),
+                            style: TextStyle(
+                              fontSize: FontSizes.xs2,
+                              color: t.n500,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -224,20 +234,20 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                       children: [
                         for (final mode in scheduleModes)
                           ChoiceChip(
-                            label: Text(i18n.t(scheduleModeKeys[mode]!),
-                                style: const TextStyle(
-                                    fontSize: FontSizes.xs)),
+                            label: Text(
+                              i18n.t(scheduleModeKeys[mode]!),
+                              style: const TextStyle(fontSize: FontSizes.xs),
+                            ),
                             selected: _form.mode == mode,
                             showCheckmark: false,
                             selectedColor: t.n300,
                             backgroundColor: t.card,
                             labelStyle: TextStyle(
-                                color:
-                                    _form.mode == mode ? t.ink : t.n700),
+                              color: _form.mode == mode ? t.ink : t.n700,
+                            ),
                             side: BorderSide(
-                                color: _form.mode == mode
-                                    ? t.ink
-                                    : t.hair),
+                              color: _form.mode == mode ? t.ink : t.hair,
+                            ),
                             onSelected: (_) =>
                                 _patch(_form.copyWith(mode: mode)),
                           ),
@@ -261,21 +271,22 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                                       ('${entry.key}', i18n.t(entry.value)),
                                   ],
                                   selected: '${_form.weekday}',
-                                  onPick: (v) => _patch(_form.copyWith(
-                                      weekday: int.parse(v))),
+                                  onPick: (v) => _patch(
+                                    _form.copyWith(weekday: int.parse(v)),
+                                  ),
                                 ),
                               ),
                             ),
                             const SizedBox(width: 8),
                           ],
-                          Expanded(
-                            child: _selector(t, _form.time, _pickTime),
-                          ),
+                          Expanded(child: _selector(t, _form.time, _pickTime)),
                           const SizedBox(width: 8),
                           Text(
                             i18n.t('cron:form.timezone', vars: {'tz': _tz}),
                             style: TextStyle(
-                                fontSize: FontSizes.xs2, color: t.n500),
+                              fontSize: FontSizes.xs2,
+                              color: t.n500,
+                            ),
                           ),
                         ],
                       ),
@@ -291,11 +302,14 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                             child: TextField(
                               controller: _every,
                               keyboardType: TextInputType.number,
-                              onChanged: (v) => _patch(_form.copyWith(
-                                  every: int.tryParse(v) ?? 0)),
+                              onChanged: (v) => _patch(
+                                _form.copyWith(every: int.tryParse(v) ?? 0),
+                              ),
                               decoration: _decoration(t, ''),
                               style: TextStyle(
-                                  fontSize: FontSizes.sm, color: t.ink),
+                                fontSize: FontSizes.sm,
+                                color: t.ink,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -309,17 +323,20 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                                     (unit, i18n.t(intervalUnitKeys[unit]!)),
                                 ],
                                 selected: _form.unit,
-                                onPick: (v) =>
-                                    _patch(_form.copyWith(unit: v)),
+                                onPick: (v) => _patch(_form.copyWith(unit: v)),
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            i18n.t('cron:form.minInterval',
-                                count: minIntervalMinutes),
+                            i18n.t(
+                              'cron:form.minInterval',
+                              count: minIntervalMinutes,
+                            ),
                             style: TextStyle(
-                                fontSize: FontSizes.xs2, color: t.n500),
+                              fontSize: FontSizes.xs2,
+                              color: t.n500,
+                            ),
                           ),
                         ],
                       ),
@@ -333,8 +350,7 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                         children: [
                           TextField(
                             controller: _expr,
-                            onChanged: (v) =>
-                                _patch(_form.copyWith(expr: v)),
+                            onChanged: (v) => _patch(_form.copyWith(expr: v)),
                             decoration: _decoration(t, '0 9 * * 1-5'),
                             style: TextStyle(
                               fontSize: FontSizes.sm,
@@ -347,17 +363,35 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                           Text(
                             i18n.t('cron:form.exprHint', vars: {'tz': _tz}),
                             style: TextStyle(
-                                fontSize: FontSizes.xs2, color: t.n500),
+                              fontSize: FontSizes.xs2,
+                              color: t.n500,
+                            ),
                           ),
                         ],
+                      ),
+                    ),
+                  if (_form.mode == 'at')
+                    _field(
+                      t,
+                      i18n.t('cron:form.schedule'),
+                      Text(
+                        i18n.t(
+                          'cron:describe.once',
+                          vars: {'time': _form.at ?? ''},
+                        ),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
                       ),
                     ),
                   if (_failed)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(i18n.t('cron:form.saveFailed'),
-                          style: TextStyle(
-                              fontSize: FontSizes.xs, color: t.danger)),
+                      child: Text(
+                        i18n.t('cron:form.saveFailed'),
+                        style: TextStyle(
+                          fontSize: FontSizes.xs,
+                          color: t.danger,
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -367,9 +401,10 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
               children: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: Text(i18n.t('cron:form.cancel'),
-                      style: TextStyle(
-                          fontSize: FontSizes.sm, color: t.n700)),
+                  child: Text(
+                    i18n.t('cron:form.cancel'),
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n700),
+                  ),
                 ),
                 const SizedBox(width: 6),
                 FilledButton(
@@ -387,8 +422,8 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
                     _saving
                         ? i18n.t('cron:form.saving')
                         : editing
-                            ? i18n.t('cron:form.save')
-                            : i18n.t('cron:form.create'),
+                        ? i18n.t('cron:form.save')
+                        : i18n.t('cron:form.create'),
                     style: const TextStyle(fontSize: FontSizes.sm),
                   ),
                 ),
@@ -401,66 +436,63 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
   }
 
   Widget _field(BossipTokens t, String label, Widget child) => Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label,
-                style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
-            const SizedBox(height: 6),
-            child,
-          ],
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
         ),
-      );
+        const SizedBox(height: 6),
+        child,
+      ],
+    ),
+  );
 
-  InputDecoration _decoration(BossipTokens t, String hint) =>
-      InputDecoration(
-        hintText: hint.isEmpty ? null : hint,
-        hintStyle: TextStyle(fontSize: FontSizes.sm, color: t.n500),
-        isDense: true,
-        counterText: '',
-        filled: true,
-        fillColor: t.card,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(Radii.md),
-          borderSide: BorderSide(color: t.hair),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(Radii.md),
-          borderSide: BorderSide(color: t.ink),
-        ),
-      );
+  InputDecoration _decoration(BossipTokens t, String hint) => InputDecoration(
+    hintText: hint.isEmpty ? null : hint,
+    hintStyle: TextStyle(fontSize: FontSizes.sm, color: t.n500),
+    isDense: true,
+    counterText: '',
+    filled: true,
+    fillColor: t.card,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(Radii.md),
+      borderSide: BorderSide(color: t.hair),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(Radii.md),
+      borderSide: BorderSide(color: t.ink),
+    ),
+  );
 
-  Widget _selector(BossipTokens t, String label, VoidCallback onTap) =>
-      InkWell(
+  Widget _selector(BossipTokens t, String label, VoidCallback onTap) => InkWell(
+    borderRadius: BorderRadius.circular(Radii.md),
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: t.hair),
         borderRadius: BorderRadius.circular(Radii.md),
-        onTap: onTap,
-        child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            border: Border.all(color: t.hair),
-            borderRadius: BorderRadius.circular(Radii.md),
-            color: t.card,
+        color: t.card,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
+            ),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style:
-                      TextStyle(fontSize: FontSizes.sm, color: t.ink),
-                ),
-              ),
-              Icon(Icons.expand_more, size: 15, color: t.n500),
-            ],
-          ),
-        ),
-      );
+          Icon(Icons.expand_more, size: 15, color: t.n500),
+        ],
+      ),
+    ),
+  );
 
   Future<void> _pickTime() async {
     final parts = _form.time.split(':');
@@ -472,10 +504,12 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
       ),
     );
     if (picked != null) {
-      _patch(_form.copyWith(
-        time:
-            '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}',
-      ));
+      _patch(
+        _form.copyWith(
+          time:
+              '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}',
+        ),
+      );
     }
   }
 
@@ -494,9 +528,10 @@ class _CronJobFormBodyState extends ConsumerState<_CronJobFormBody> {
             for (final (id, label) in options)
               ListTile(
                 dense: true,
-                title: Text(label,
-                    style:
-                        TextStyle(fontSize: FontSizes.base, color: t.ink)),
+                title: Text(
+                  label,
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                ),
                 trailing: id == selected
                     ? Icon(Icons.check, size: 18, color: t.a700)
                     : null,

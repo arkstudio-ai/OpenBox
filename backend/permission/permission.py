@@ -100,7 +100,12 @@ async def load_persisted_rules(user_id: str = "default") -> None:
         log.warning(f"Failed to load persisted permissions: {e}")
 
 
-async def _persist_rule(user_id: str, rule: Rule) -> None:
+async def _persist_rule(
+    user_id: str,
+    rule: Rule,
+    *,
+    raise_on_error: bool = False,
+) -> bool:
     """Persist a single permission rule to DB/FS."""
     try:
         if _use_db():
@@ -115,8 +120,94 @@ async def _persist_rule(user_id: str, rule: Rule) -> None:
             existing = await storage.read(["permissions", user_id]) or []
             existing.append({"permission": rule.permission, "pattern": rule.pattern, "action": rule.action})
             await storage.write(["permissions", user_id], existing)
+        return True
     except Exception as e:
         log.warning(f"Failed to persist permission rule: {e}")
+        if raise_on_error:
+            raise
+        return False
+
+
+def _cache_rule(user_id: str, rule: Rule) -> None:
+    """Merge one persisted grant into this worker without duplicating it."""
+    user_rules = _get_user_approved(user_id)
+    if not any(existing == rule for existing in user_rules):
+        user_rules.append(rule)
+
+
+def _rules_from_reply(data: dict[str, Any]) -> list[Rule]:
+    """Validate the bounded rule projection carried between workers."""
+    raw_rules = data.get("granted_rules") or []
+    if not isinstance(raw_rules, list):
+        return []
+    rules: list[Rule] = []
+    for raw in raw_rules:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            rule = Rule.model_validate(raw)
+        except Exception:
+            continue
+        if rule.action == "allow":
+            rules.append(rule)
+    return rules
+
+
+def _apply_reply_data(pending: PendingPermission, data: dict[str, Any]) -> None:
+    """Apply a local or Redis reply and synchronize this worker's grant cache."""
+    action = data.get("action")
+    pending.result = action if action in {"once", "always", "reject"} else None
+    pending.error_message = data.get("message")
+    if pending.result == "always":
+        for rule in _rules_from_reply(data):
+            _cache_rule(pending.request.user_id, rule)
+
+
+def _resolve_related_pending(pending: PendingPermission) -> None:
+    """Apply session-scoped always/reject behavior on the waiting worker."""
+    action = pending.result
+    if action not in {"always", "reject"}:
+        return
+    user_rules = _get_user_approved(pending.request.user_id)
+    for request_id, other in list(_pending.items()):
+        if request_id == pending.request.id:
+            continue
+        if (
+            other.request.user_id != pending.request.user_id
+            or other.request.session_id != pending.request.session_id
+        ):
+            continue
+        if action == "always":
+            all_ok = all(
+                evaluate(other.request.tool, pattern, user_rules).action == "allow"
+                for pattern in other.request.patterns
+            )
+            if not all_ok:
+                continue
+            other.result = "always"
+        else:
+            other.result = "reject"
+        _pending.pop(request_id, None)
+        other.event.set()
+
+
+async def _record_always_grant(
+    user_id: str,
+    request: PermissionRequest,
+) -> list[Rule]:
+    """Durably record an always reply before acknowledging it to any worker."""
+    await load_persisted_rules(user_id)
+    rules = [
+        Rule(permission=request.tool, pattern=pattern, action="allow")
+        for pattern in (request.always or request.patterns)
+    ]
+    existing = _get_user_approved(user_id)
+    for rule in rules:
+        if any(current == rule for current in existing):
+            continue
+        await _persist_rule(user_id, rule, raise_on_error=True)
+        _cache_rule(user_id, rule)
+    return rules
 
 
 def _get_redis_client():
@@ -138,6 +229,21 @@ def evaluate(permission: str, pattern: str, *rulesets: Ruleset) -> Rule:
     return match or Rule(permission=permission, pattern="*", action="ask")
 
 
+def evaluate_guard(permission: str, pattern: str, ruleset: Ruleset) -> Rule:
+    """Evaluate a deployment guard without treating no-match as an ask.
+
+    Ordinary permission evaluation intentionally defaults to ``ask``. A guard
+    is instead a restriction floor layered over the ordinary policy, so an
+    unmatched guard must be neutral while an explicitly matched ``ask`` must
+    remain visible even when a later Agent rule says ``allow``.
+    """
+    return evaluate(
+        permission,
+        pattern,
+        [Rule(permission="*", pattern="*", action="allow"), *ruleset],
+    )
+
+
 EDIT_TOOLS = ["edit", "write", "patch", "multiedit", "apply_patch"]
 
 
@@ -155,21 +261,36 @@ def disabled_tools(tools: list[str], ruleset: Ruleset) -> set[str]:
 
 
 async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
-    """Wait for a permission reply via Redis Pub/Sub channel."""
+    """Wait for a permission reply via Pub/Sub plus a durable response key."""
     redis_client = _get_redis_client()
     channel_name = f"perm_reply:{request_id}"
+    response_key = f"perm_resp:{request_id}"
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel_name)
     try:
         while True:
+            if pending.event.is_set():
+                return
+            try:
+                durable = await redis_client.get(response_key)
+            except Exception:
+                durable = None
+            if durable:
+                try:
+                    reply_data = json.loads(durable)
+                    _apply_reply_data(pending, reply_data)
+                    _resolve_related_pending(pending)
+                    return
+                except (json.JSONDecodeError, TypeError) as exc:
+                    log.warning(f"Invalid durable permission reply: {exc}")
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True, timeout=1.0
             )
             if message is not None and message["type"] == "message":
                 try:
                     reply_data = json.loads(message["data"])
-                    pending.result = reply_data.get("action")
-                    pending.error_message = reply_data.get("message")
+                    _apply_reply_data(pending, reply_data)
+                    _resolve_related_pending(pending)
                     return
                 except (json.JSONDecodeError, KeyError, TypeError) as e:
                     log.warning(f"Invalid permission reply message: {e}")
@@ -190,6 +311,9 @@ async def ask(
     input_data: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
     config_rules: Ruleset | None = None,
+    guard_rules: Ruleset | None = None,
+    authority_rulesets: list[Ruleset] | tuple[Ruleset, ...] | None = None,
+    authority_guard_rulesets: list[Ruleset] | tuple[Ruleset, ...] | None = None,
     is_doom_loop: bool = False,
     always: list[str] | None = None,
     user_id: str = "default",
@@ -206,173 +330,262 @@ async def ask(
         metadata = {}
 
     user_rules = _get_user_approved(user_id)
-    rulesets = []
-    if config_rules:
-        rulesets.append(config_rules)
-    rulesets.append(user_rules)
+    trusted_rules = config_rules or []
+    deployment_guards = guard_rules or []
+    inherited_rulesets = authority_rulesets or []
+    inherited_guard_rulesets = authority_guard_rulesets or []
 
-    # Check each pattern
+    # Resolve the complete call before publishing a prompt. Trusted
+    # config/Agent policy is authoritative: persisted user approvals may only
+    # resolve an ``ask`` and can never turn a current deny into allow. Checking
+    # every target first also prevents an early ask from skipping a later deny
+    # in multi-file tools.
+    needs_confirmation = False
     for pattern in patterns:
-        rule = evaluate(permission, pattern, *rulesets)
-
-        if rule.action == "allow":
-            continue
-        elif rule.action == "deny":
+        trusted_actions = [
+            evaluate(permission, pattern, trusted_rules),
+            *(
+                evaluate(permission, pattern, ruleset)
+                for ruleset in inherited_rulesets
+            ),
+        ]
+        guard_actions = [
+            evaluate_guard(permission, pattern, deployment_guards),
+            *(
+                evaluate_guard(permission, pattern, ruleset)
+                for ruleset in inherited_guard_rulesets
+            ),
+        ]
+        if any(rule.action == "deny" for rule in [*trusted_actions, *guard_actions]):
             raise PermissionDeniedError(permission, pattern)
-        else:
-            # Need to ask user
-            request_id = generate_id()
-            request = PermissionRequest(
-                id=request_id,
-                user_id=user_id,
-                session_id=session_id,
-                tool=permission,
-                input=input_data,
-                patterns=patterns,
-                always=always or patterns,
-                metadata=metadata,
-                is_doom_loop=is_doom_loop,
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
+        if (
+            all(rule.action == "allow" for rule in trusted_actions)
+            and all(rule.action != "ask" for rule in guard_actions)
+        ):
+            continue
 
-            pending = PendingPermission(request=request)
-            _pending[request_id] = pending
+        user_rule = evaluate(permission, pattern, user_rules)
+        if user_rule.action == "deny":
+            raise PermissionDeniedError(permission, pattern)
+        if user_rule.action == "allow":
+            continue
+        needs_confirmation = True
 
-            redis_client = _get_redis_client()
+    if not needs_confirmation:
+        return
 
-            if redis_client is not None:
-                # Store request data in Redis for cross-worker access
-                try:
-                    await redis_client.setex(
-                        f"perm_req:{request_id}",
-                        300,  # TTL 300s
-                        json.dumps(request.model_dump()),
-                    )
-                except Exception as e:
-                    log.warning(f"Failed to store permission request in Redis: {e}")
+    request_id = generate_id()
+    request = PermissionRequest(
+        id=request_id,
+        user_id=user_id,
+        session_id=session_id,
+        tool=permission,
+        input=input_data,
+        patterns=patterns,
+        always=always or patterns,
+        metadata=metadata,
+        is_doom_loop=is_doom_loop,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
 
-            # Publish SSE event
-            bus.publish(PERMISSION_ASKED, {**request.model_dump(), "userId": user_id})
-
-            if redis_client is not None:
-                # Wait via Redis Pub/Sub for cross-worker support
-                try:
-                    await _wait_via_redis(request_id, pending)
-                except Exception as e:
-                    log.warning(f"Redis wait failed, falling back to local: {e}")
-                    await pending.event.wait()
-            else:
-                # Fallback: local asyncio.Event wait
-                await pending.event.wait()
-
-            # Clean up pending
-            _pending.pop(request_id, None)
-
-            if pending.result == "reject":
-                if pending.error_message:
-                    raise PermissionCorrectedError(pending.error_message)
-                raise PermissionRejectedError()
-
-            # "once" or "always" — continue
-            return
-
-
-async def reply(request_id: str, action: PermissionAction, message: str | None = None, user_id: str = "default") -> None:
-    """Handle user reply to a permission request."""
+    pending = PendingPermission(request=request)
+    _pending[request_id] = pending
     redis_client = _get_redis_client()
 
-    # Try to load request from Redis first (cross-worker scenario)
-    request_data = None
     if redis_client is not None:
         try:
-            raw = await redis_client.get(f"perm_req:{request_id}")
-            if raw:
-                request_data = json.loads(raw)
-                await redis_client.delete(f"perm_req:{request_id}")
+            await redis_client.setex(
+                f"perm_req:{request_id}",
+                300,
+                json.dumps(request.model_dump()),
+            )
         except Exception as e:
-            log.warning(f"Failed to read permission request from Redis: {e}")
+            log.warning(f"Failed to store permission request in Redis: {e}")
 
-    # Check local pending dict
-    pending = _pending.pop(request_id, None)
+    bus.publish(PERMISSION_ASKED, {**request.model_dump(), "userId": user_id})
 
-    # Enforce per-user ownership (works for local + cross-worker request data).
-    owner_id = pending.request.user_id if pending is not None else (request_data or {}).get("user_id")
+    try:
+        if redis_client is not None:
+            try:
+                await _wait_via_redis(request_id, pending)
+            except Exception as e:
+                log.warning(f"Redis wait failed, falling back to local: {e}")
+                await pending.event.wait()
+        else:
+            await pending.event.wait()
+    finally:
+        _pending.pop(request_id, None)
+        if redis_client is not None:
+            try:
+                await redis_client.delete(
+                    f"perm_req:{request_id}",
+                    f"perm_resp:{request_id}",
+                )
+            except Exception:
+                pass
+
+    if pending.result not in {"once", "always"}:
+        if pending.error_message:
+            raise PermissionCorrectedError(pending.error_message)
+        raise PermissionRejectedError()
+
+
+async def _consume_redis_request(redis_client, request_id: str, raw: str) -> str | None:
+    """Claim one request after ownership validation, atomically when supported."""
+    key = f"perm_req:{request_id}"
+    getdel = getattr(redis_client, "getdel", None)
+    if callable(getdel):
+        return await getdel(key)
+    # Compatibility for older/fake clients. Production Redis clients expose
+    # GETDEL; this fallback preserves the legacy behavior without pretending it
+    # is an atomic distributed claim.
+    await redis_client.delete(key)
+    return raw
+
+
+async def reply(
+    request_id: str,
+    action: PermissionAction,
+    message: str | None = None,
+    user_id: str = "default",
+) -> None:
+    """Handle a reply, durably recording ``always`` before acknowledgement."""
+    if action not in {"once", "always", "reject"}:
+        raise ValueError("Invalid permission action")
+
+    redis_client = _get_redis_client()
+    request_data = None
+    raw_request = None
+    if redis_client is not None:
+        try:
+            raw_request = await redis_client.get(f"perm_req:{request_id}")
+            if raw_request:
+                request_data = json.loads(raw_request)
+        except Exception as exc:
+            log.warning(f"Failed to read permission request from Redis: {exc}")
+
+    # Do not consume either representation until the authenticated owner has
+    # been checked. A wrong-user request must not be able to destroy the real
+    # user's pending prompt.
+    pending = _pending.get(request_id)
+    owner_id = (
+        pending.request.user_id
+        if pending is not None
+        else (request_data or {}).get("user_id")
+    )
     if owner_id and owner_id != user_id:
-        # Put back local pending if we popped someone else's request by accident.
-        if pending is not None:
-            _pending[request_id] = pending
         raise PermissionError("Permission request does not belong to current user")
     if pending is None and request_data is None:
         raise KeyError("Permission request not found")
 
+    request = (
+        pending.request
+        if pending is not None
+        else PermissionRequest.model_validate(request_data)
+    )
+
+    consumed_request = None
+    if redis_client is not None and raw_request is not None:
+        consumed_request = await _consume_redis_request(
+            redis_client, request_id, raw_request
+        )
+        if consumed_request is None:
+            raise KeyError("Permission request already replied")
+
+    # Claim the in-process representation before the first persistence await.
+    # Without this pop, two concurrent local Always clicks can both observe the
+    # same PendingPermission and create duplicate durable grants.
     if pending is not None:
-        # Local worker owns this request
-        pending.result = action
-        pending.error_message = message
+        _pending.pop(request_id, None)
 
-        if action == "always":
-            # Add broader "always" patterns to this user's approved rules
-            user_rules = _get_user_approved(user_id)
-            always_patterns = pending.request.always or pending.request.patterns
-            for pattern in always_patterns:
-                new_rule = Rule(
-                    permission=pending.request.tool,
-                    pattern=pattern,
-                    action="allow",
+    try:
+        granted_rules = (
+            await _record_always_grant(user_id, request)
+            if action == "always"
+            else []
+        )
+    except Exception:
+        # Persistence failed before acknowledgement. Restore the distributed
+        # request so the user may retry rather than silently degrading Always to
+        # a one-shot approval.
+        if redis_client is not None and consumed_request is not None:
+            try:
+                await redis_client.setex(
+                    f"perm_req:{request_id}", 300, consumed_request
                 )
-                user_rules.append(new_rule)
-                asyncio.create_task(_persist_rule(user_id, new_rule))
+            except Exception:
+                pass
+        if pending is not None:
+            _pending[request_id] = pending
+        raise
 
-            # Auto-resolve other pending permissions for the same session that now pass
-            session_id = pending.request.session_id
-            for rid, p in list(_pending.items()):
-                if p.request.session_id != session_id:
-                    continue
-                all_ok = all(
-                    evaluate(p.request.tool, pat, user_rules).action == "allow"
-                    for pat in p.request.patterns
-                )
-                if all_ok:
-                    p.result = "always"
-                    _pending.pop(rid, None)
-                    p.event.set()
+    reply_data = {
+        "action": action,
+        "message": message,
+        "user_id": user_id,
+        "session_id": request.session_id,
+        "granted_rules": [rule.model_dump() for rule in granted_rules],
+    }
+    reply_payload = json.dumps(reply_data)
 
-        elif action == "reject":
-            # Reject all pending permissions for this session
-            session_id = pending.request.session_id
-            for rid, p in list(_pending.items()):
-                if p.request.session_id == session_id:
-                    p.result = "reject"
-                    _pending.pop(rid, None)
-                    p.event.set()
+    durable_delivery = False
+    published_delivery = False
+    if redis_client is not None:
+        try:
+            await redis_client.setex(
+                f"perm_resp:{request_id}", 300, reply_payload
+            )
+            durable_delivery = True
+        except Exception as exc:
+            log.warning(f"Failed to store permission reply in Redis: {exc}")
 
+    if pending is not None:
+        _apply_reply_data(pending, reply_data)
+        _resolve_related_pending(pending)
         pending.event.set()
 
-    # Publish reply via Redis channel for cross-worker delivery
     if redis_client is not None:
-        reply_payload = json.dumps({
-            "action": action,
-            "message": message,
-        })
         try:
             await redis_client.publish(f"perm_reply:{request_id}", reply_payload)
-        except Exception as e:
-            log.warning(f"Failed to publish permission reply to Redis: {e}")
+            published_delivery = True
+        except Exception as exc:
+            log.warning(f"Failed to publish permission reply to Redis: {exc}")
 
-    # Determine session_id for the bus event
-    session_id = None
-    if pending is not None:
-        session_id = pending.request.session_id
-    elif request_data is not None:
-        session_id = request_data.get("session_id")
+    if pending is None and redis_client is not None and not (
+        durable_delivery or published_delivery
+    ):
+        if consumed_request is not None:
+            try:
+                await redis_client.setex(
+                    f"perm_req:{request_id}", 300, consumed_request
+                )
+            except Exception:
+                pass
+        raise RuntimeError("Permission reply could not reach its waiting worker")
 
-    # Publish replied event so all connected clients can remove the dialog
+    # This global event removes the UI card and synchronizes warmed workers'
+    # in-memory grant caches. Workers that were offline reload the durable rule.
     bus.publish(PERMISSION_REPLIED, {
         "userId": user_id,
         "id": request_id,
-        "session_id": session_id or "",
+        "request_id": request_id,
+        "session_id": request.session_id,
         "action": action,
+        "granted_rules": reply_data["granted_rules"],
     })
+
+
+def _sync_grants_from_bus(event: dict[str, Any]) -> None:
+    """Keep already-warm worker caches coherent with durable Always replies."""
+    data = event.get("data") or {}
+    user_id = data.get("userId") or data.get("user_id")
+    if not isinstance(user_id, str) or not user_id:
+        return
+    for rule in _rules_from_reply(data):
+        _cache_rule(user_id, rule)
+
+
+bus.subscribe(PERMISSION_REPLIED, _sync_grants_from_bus)
 
 
 def list_pending(user_id: str | None = None) -> list[PermissionRequest]:

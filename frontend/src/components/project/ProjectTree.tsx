@@ -223,7 +223,7 @@ export function ProjectTree({
             writeExpanded(next)
             return next
           })
-          addToast("success", `Created ${p.name} at ${p.directory}`)
+          addToast("success", `Created ${p.name} at the project root`)
         }}
       />
 
@@ -262,7 +262,7 @@ export function ProjectTree({
         open={deleting !== null}
         title={`Delete ${deleting?.name ?? ""}?`}
         message={
-          `Its sessions stay in your history, and the files in ${deleting?.directory ?? ""} ` +
+          `Its sessions stay in your history, and the files in this project root ` +
           `move to the workspace trash rather than being erased.`
         }
         confirmLabel="Delete project"
@@ -306,7 +306,7 @@ function ProjectHeader({
     <div className="group relative flex items-center gap-1 pr-1.5">
       <button
         onClick={onToggle}
-        title={project.directory}
+        title={`${project.name} project root`}
         aria-expanded={open}
         className="flex-1 min-w-0 flex items-center gap-1.5 px-2 py-2 rounded-sm hover:bg-[hsl(var(--muted))]/50 transition-colors cursor-pointer"
       >
@@ -348,7 +348,7 @@ function ProjectHeader({
           <div className="absolute right-0 top-full mt-1 z-30 w-40 rounded-sm border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[0_0_20px_hsl(var(--primary)/0.1)] overflow-hidden animate-slide-up">
             <div className="px-3 py-2 border-b border-[hsl(var(--border))]">
               <div className="text-[10px] font-mono text-[hsl(var(--muted-foreground))]/70 truncate">
-                {project.directory}
+                Project root · .
               </div>
             </div>
             <button

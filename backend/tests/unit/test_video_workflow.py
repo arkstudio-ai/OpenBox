@@ -1,6 +1,7 @@
 """Hash-bound spoken-video workflow, prompt lint, STT, and render source gates."""
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from tool.video_workflow import (
     SegmentSpec,
     VideoProjectArgs,
     compare_transcript,
+    content_hash,
     consume_spend_approval,
     execute_project,
     lint_segment_prompt,
@@ -21,7 +23,43 @@ from tool.video_workflow import (
     prepare_render_submission,
     prepare_segment_submission,
     record_segment_transcript,
+    spend_scope,
 )
+
+
+def test_video_project_accepts_the_declared_fast_480p_resolution():
+    args = VideoProjectArgs(
+        action="create",
+        title="Fast canary",
+        brief="One minimal 480p segment",
+        resolution="480p",
+    )
+
+    assert args.resolution == "480p"
+
+
+def test_spend_scope_preserves_legacy_hash_for_all_spoken_segments():
+    production = SimpleNamespace(
+        plan_hash="plan-hash",
+        resolution="720p",
+        ratio="9:16",
+    )
+    spoken = [SimpleNamespace(id="segment-spoken", role="hook")]
+    legacy = content_hash(
+        {
+            "plan_hash": production.plan_hash,
+            "segment_ids": ["segment-spoken"],
+            "resolution": production.resolution,
+            "ratio": production.ratio,
+            "generate_audio": True,
+        }
+    )
+
+    assert spend_scope(production, spoken) == legacy
+    assert spend_scope(
+        production,
+        [SimpleNamespace(id="segment-spoken", role="broll")],
+    ) != legacy
 
 
 def test_prompt_lint_requires_recipe_and_valid_reference_numbers():
@@ -234,6 +272,7 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
     gate = await prepare_segment_submission(ctx, production_id, segment_id)
     assert gate["prompt"] == prompt
     assert gate["character_reference_asset"] == portrait_id
+    assert gate["generate_audio"] is True
     await consume_spend_approval(gate["spend_approval_id"])
     with pytest.raises(RuntimeError, match="limit is exhausted"):
         await prepare_segment_submission(ctx, production_id, segment_id)
@@ -302,6 +341,23 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
     assert "segment 1=failed" in blocked_spend.output
     with pytest.raises(RuntimeError, match="newly planned revision"):
         await prepare_segment_submission(ctx, production_id, segment_id)
+
+    await mark_segment_job(
+        segment_id,
+        "video_job_outcome_unknown",
+        user_id=user_id,
+        status="outcome_unknown",
+    )
+    unknown = await execute_project(
+        VideoProjectArgs(action="status", production_id=production_id),
+        ctx,
+    )
+    assert unknown.metadata["status"] == "needs_segment_revision"
+    assert unknown.metadata["segments"][0]["status"] == "outcome_unknown"
+    assert (
+        unknown.metadata["segments"][0]["generation_job_id"]
+        == "video_job_outcome_unknown"
+    )
 
     await mark_segment_job(
         segment_id,
@@ -387,3 +443,110 @@ async def test_hash_bound_approvals_spend_stt_and_render_caption_source(monkeypa
         assert paid_source is not None
         assert paid_source.is_active is False
         assert paid_source.output_asset_id == output_id
+
+
+@pytest.mark.asyncio
+async def test_broll_submission_disables_provider_audio_and_binds_spend_scope(monkeypatch):
+    suffix = uuid4().hex[:10]
+    user_id = f"user_broll_{suffix}"
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(
+            User(
+                id=user_id,
+                username=f"video-broll-{suffix}",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    approval_questions = []
+
+    async def approve_first(*, questions, **_kwargs):
+        approval_questions.extend(questions)
+        return [[questions[0].options[0].label]]
+
+    monkeypatch.setattr("question.question.ask", approve_first)
+    ctx = ToolContext(
+        session_id=f"session_broll_{suffix}",
+        user_id=user_id,
+        message_id="message_broll",
+        part_id="part_broll",
+    )
+    created = await execute_project(
+        VideoProjectArgs(
+            action="create",
+            title="B-roll audio contract",
+            brief="One visual-only b-roll segment",
+            target_duration_seconds=15,
+        ),
+        ctx,
+    )
+    production_id = created.metadata["production_id"]
+    script = "A blue circle moves slowly right across a pure white background."
+    await execute_project(
+        VideoProjectArgs(
+            action="set_script",
+            production_id=production_id,
+            script_text=script,
+        ),
+        ctx,
+    )
+    await execute_project(
+        VideoProjectArgs(
+            action="request_approval",
+            production_id=production_id,
+            approval_kind="script",
+        ),
+        ctx,
+    )
+    anchor = "Pure white background with one blue circle moving slowly right"
+    prompt = (
+        f"Consistent visual base: {anchor}. Fixed shot / fixed camera. "
+        "Framing: vertical 9:16 graphic composition. No people or audio. "
+        "Subtitles: none; subtitles are added only in post-production."
+    )
+    planned = await execute_project(
+        VideoProjectArgs(
+            action="set_segments",
+            production_id=production_id,
+            visual_anchor=anchor,
+            segments=[
+                SegmentSpec(
+                    ordinal=1,
+                    role="broll",
+                    script_text=script,
+                    prompt=prompt,
+                )
+            ],
+        ),
+        ctx,
+    )
+    assert planned.metadata["segments"][0]["role"] == "broll"
+    segment_id = planned.metadata["segments"][0]["segment_id"]
+    await execute_project(
+        VideoProjectArgs(
+            action="request_approval",
+            production_id=production_id,
+            approval_kind="segments",
+        ),
+        ctx,
+    )
+    spend = await execute_project(
+        VideoProjectArgs(
+            action="request_approval",
+            production_id=production_id,
+            approval_kind="spend",
+        ),
+        ctx,
+    )
+    assert spend.metadata["approvals"]["spend"] is True
+
+    gate = await prepare_segment_submission(ctx, production_id, segment_id)
+
+    assert gate["generate_audio"] is False
+    spend_question = next(
+        question for question in approval_questions if question.header == "生成费用确认"
+    )
+    assert "0 段生成口播音频" in spend_question.question
+    assert "1 段纯画面且不生成音频" in spend_question.question

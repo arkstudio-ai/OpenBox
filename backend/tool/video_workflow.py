@@ -64,7 +64,7 @@ class VideoProjectArgs(BaseModel):
     mode: Literal["standard", "delegated"] = "standard"
     target_duration_seconds: int = Field(default=60, ge=15, le=180)
     ratio: Literal["9:16"] = "9:16"
-    resolution: Literal["720p", "1080p"] = "720p"
+    resolution: Literal["480p", "720p", "1080p"] = "720p"
     quality_policy: Literal["required", "advisory"] = "required"
     channel_name: str = Field(default="", max_length=100)
     script_text: str | None = Field(default=None, min_length=1, max_length=20_000)
@@ -620,15 +620,39 @@ async def _matching_approval(db, production_id: str, kind: str, scope_hash: str)
 
 
 def spend_scope(production, segments: list[Any]) -> str:
-    return content_hash(
+    payload: dict[str, Any] = {
+        "plan_hash": production.plan_hash,
+        "segment_ids": [row.id for row in segments],
+        "resolution": production.resolution,
+        "ratio": production.ratio,
+    }
+    audio_modes = [
         {
-            "plan_hash": production.plan_hash,
-            "segment_ids": [row.id for row in segments],
-            "resolution": production.resolution,
-            "ratio": production.ratio,
-            "generate_audio": True,
+            "segment_id": row.id,
+            "generate_audio": _segment_generate_audio(row),
         }
-    )
+        for row in segments
+    ]
+    if all(item["generate_audio"] for item in audio_modes):
+        # Preserve approvals minted before per-segment audio was introduced:
+        # every historical role was submitted as spoken, so an all-spoken
+        # plan has exactly the same provider semantics as before.
+        payload["generate_audio"] = True
+    else:
+        payload["generate_audio_by_segment"] = audio_modes
+    return content_hash(payload)
+
+
+def _segment_generate_audio(segment: Any) -> bool:
+    """Bind provider audio to the approved segment role.
+
+    B-roll is visual-only throughout the workflow: it skips transcript/STT
+    gates and may explicitly ask for no audio.  Treating every segment as
+    spoken made the spend approval describe one operation while the provider
+    received another, and produced an unwanted audio track for visual-only
+    clips.  Unknown/legacy roles remain spoken by default.
+    """
+    return str(getattr(segment, "role", "") or "").strip().lower() != "broll"
 
 
 def quality_scope(production, segments: list[Any]) -> str:
@@ -1386,16 +1410,31 @@ async def execute_project(args: VideoProjectArgs, ctx: ToolContext) -> ToolResul
                     return ToolResult(title="No generation spend needed", output="Every active segment is already generated.")
                 scope = spend_scope(production, segments)
                 estimated_seconds = sum(max(4, min(15, round(len(normalize_spoken_text(row.script_text)) / 3.2))) for row in pending)
-                metadata = {"segment_ids": [row.id for row in pending], "estimated_seconds": estimated_seconds}
+                audio_segment_ids = [
+                    row.id for row in pending if _segment_generate_audio(row)
+                ]
+                silent_segment_ids = [
+                    row.id for row in pending if not _segment_generate_audio(row)
+                ]
+                metadata = {
+                    "segment_ids": [row.id for row in pending],
+                    "estimated_seconds": estimated_seconds,
+                    "audio_segment_ids": audio_segment_ids,
+                    "silent_segment_ids": silent_segment_ids,
+                }
                 # Name the model that will actually be billed. Hard-coding
                 # "Seedance" here misreported the spend at the exact moment the
                 # user authorises it — the card said Seedance while the segments
                 # were frozen to whatever the composer had picked.
                 models = await _pending_segment_models(db, production, pending, ctx.user_id)
                 model_label = "/".join(models) if models else "默认模型"
+                audio_summary = (
+                    f"；{len(audio_segment_ids)} 段生成口播音频，"
+                    f"{len(silent_segment_ids)} 段纯画面且不生成音频"
+                )
                 question = (
                     f"将提交 {len(pending)} 段 {model_label}，预计约 {estimated_seconds} 秒"
-                    "并消耗视频额度。确认吗？"
+                    f"并消耗视频额度{audio_summary}。确认吗？"
                 )
                 options = [(f"确认，生成 {len(pending)} 段（消耗额度）", "最多允许本快照提交同样数量的新任务"), ("先不生成", "不调用收费的视频生成接口")]
             elif kind == "quality":
@@ -1649,7 +1688,7 @@ async def prepare_segment_submission(ctx: ToolContext, production_id: str, segme
             "resolution": production.resolution,
             "ratio": production.ratio,
             "duration": -1,
-            "generate_audio": True,
+            "generate_audio": _segment_generate_audio(segment),
             "watermark": False,
             "content_hash": segment.content_hash,
             "plan_hash": production.plan_hash,
@@ -1704,7 +1743,7 @@ async def mark_segment_job(
                 "review_note": None,
             }
         )
-    elif status in {"failed", "cancelled"}:
+    elif status in {"failed", "cancelled", "outcome_unknown"}:
         values["status"] = status
     else:
         values["status"] = "generating"
@@ -1751,22 +1790,38 @@ async def record_segment_transcript(
     *,
     user_id: str,
     threshold: float,
+    session_id: str = "",
+    run_fence: tuple[str, str, int] | None = None,
 ) -> dict[str, Any]:
     from db.base import get_db_session
     from db.models.part import Part as PartORM
     from db.models.video_production import VideoProduction, VideoSegment
+    from session.agent_event_log import prepare_agent_event_write
+    from session.session import update_part_data_locked
 
     updated_parts: list[dict[str, Any]] = []
     owner_id = ""
+    effective_session_id = session_id or (run_fence[0] if run_fence else "")
     async with get_db_session() as db:
+        session_row = None
+        if effective_session_id:
+            session_row = await prepare_agent_event_write(
+                db,
+                session_id=effective_session_id,
+                user_id=user_id,
+                run_fence=run_fence,
+            )
+        ownership = [
+            VideoSegment.id == segment_id,
+            VideoProduction.user_id == user_id,
+        ]
+        if effective_session_id:
+            ownership.append(VideoProduction.session_id == effective_session_id)
         segment = (
             await db.execute(
                 select(VideoSegment)
                 .join(VideoProduction, VideoProduction.id == VideoSegment.production_id)
-                .where(
-                    VideoSegment.id == segment_id,
-                    VideoProduction.user_id == user_id,
-                )
+                .where(*ownership)
             )
         ).scalar_one_or_none()
         if not segment or not segment.is_active:
@@ -1832,27 +1887,38 @@ async def record_segment_transcript(
                     }
                 )
                 data["relation"] = relation
-                row.data = data
-                updated_parts.append(data)
+                if session_row is None:
+                    raise RuntimeError(
+                        "transcription Part update requires its owning session"
+                    )
+                clean_data, _message_id = await update_part_data_locked(
+                    db,
+                    session_row,
+                    row.id,
+                    data,
+                    user_id=user_id,
+                    run_fence=run_fence,
+                )
+                updated_parts.append(clean_data)
 
     if updated_parts and owner_id:
         from bus import bus
         from bus.events import PART_UPDATED
 
         for data in updated_parts:
-            bus.publish(
-                PART_UPDATED,
-                {
-                    "userId": owner_id,
-                    "sessionId": data.get("session_id", ""),
-                    "messageId": data.get("message_id", ""),
-                    "part": {
-                        key: value
-                        for key, value in data.items()
-                        if key not in ("session_id", "message_id", "state")
-                    },
+            payload = {
+                "userId": owner_id,
+                "sessionId": data.get("session_id", ""),
+                "messageId": data.get("message_id", ""),
+                "part": {
+                    key: value
+                    for key, value in data.items()
+                    if key not in ("session_id", "message_id", "state")
                 },
-            )
+            }
+            if run_fence is not None:
+                payload["generation"] = run_fence[2]
+            bus.publish(PART_UPDATED, payload)
     return comparison
 
 

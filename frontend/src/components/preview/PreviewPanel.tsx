@@ -4,6 +4,7 @@ import { Globe, RefreshCw, ExternalLink, AlertCircle, Radio } from "lucide-react
 import { api } from "@/services/api"
 import { Spinner } from "@/components/ui/Spinner"
 import { cn } from "@/lib/utils"
+import { authorizePreviewNavigation } from "./previewAccess"
 
 interface DetectedPort {
   port: number
@@ -19,9 +20,14 @@ interface PreviewPanelProps {
 export function PreviewPanel({ sessionId }: PreviewPanelProps) {
   const [port, setPort] = useState("")
   const [activePort, setActivePort] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isolatedPreview, setIsolatedPreview] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [isAuthorizing, setIsAuthorizing] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [detectedPorts, setDetectedPorts] = useState<DetectedPort[]>([])
   const prevPortsRef = useRef<string>("")
+  const authorizationRequestRef = useRef(0)
 
   // 1. Get the session's bound container (not just first running)
   const { data: sandboxData, isLoading: sandboxLoading } = useQuery({
@@ -54,6 +60,61 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
     refetchInterval: 3000,
   })
 
+  useEffect(() => {
+    authorizationRequestRef.current += 1
+    prevPortsRef.current = ""
+    setActivePort(null)
+    setPreviewUrl(null)
+    setIsolatedPreview(false)
+    setPreviewError(null)
+    setIsAuthorizing(false)
+    setDetectedPorts([])
+  }, [containerId])
+
+  const handleOpen = useCallback(async (p?: string) => {
+    const target = (p ?? port).trim()
+    const numericPort = Number(target)
+    if (
+      !containerId
+      || !/^\d+$/.test(target)
+      || !Number.isInteger(numericPort)
+      || numericPort < 1
+      || numericPort > 65535
+    ) {
+      setPreviewError("Enter a valid port between 1 and 65535")
+      return
+    }
+
+    const requestId = authorizationRequestRef.current + 1
+    authorizationRequestRef.current = requestId
+    setPort(target)
+    setPreviewError(null)
+    setIsAuthorizing(true)
+
+    try {
+      await authorizePreviewNavigation(
+        api.getPreviewToken,
+        containerId,
+        numericPort,
+        (preview) => {
+          if (authorizationRequestRef.current !== requestId) return
+          setActivePort(target)
+          setPreviewUrl(preview.url)
+          setIsolatedPreview(preview.isolated)
+          setRefreshKey((key) => key + 1)
+        },
+      )
+    } catch (error) {
+      if (authorizationRequestRef.current === requestId) {
+        setPreviewError(error instanceof Error ? error.message : "Unable to authorize preview")
+      }
+    } finally {
+      if (authorizationRequestRef.current === requestId) {
+        setIsAuthorizing(false)
+      }
+    }
+  }, [containerId, port])
+
   // Detect newly appeared ports and auto-open the first one
   useEffect(() => {
     if (!portsData?.ports) return
@@ -71,31 +132,41 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
         // Auto-open the first new port
         const newPort = newPorts[0].port.toString()
         setPort(newPort)
-        setActivePort(newPort)
-        setRefreshKey((k) => k + 1)
+        void handleOpen(newPort)
       }
     }
-  }, [portsData, activePort])
+  }, [portsData, activePort, handleOpen])
 
-  const previewUrl = useMemo(() => {
-    if (!containerId || !activePort) return null
-    return `/api/containers/${containerId}/preview/${activePort}/`
-  }, [containerId, activePort])
+  const handleRefresh = useCallback(() => {
+    if (activePort) void handleOpen(activePort)
+  }, [activePort, handleOpen])
 
-  const handleOpen = useCallback((p?: string) => {
-    const target = (p || port).trim()
-    if (target && /^\d+$/.test(target)) {
-      setPort(target)
-      setActivePort(target)
-      setRefreshKey((k) => k + 1)
+  const handleOpenExternal = useCallback(() => {
+    if (!containerId || !activePort || !isolatedPreview) return
+
+    // Reserve the tab during the click gesture; it remains blank until the
+    // management POST has set the scoped HttpOnly cookie.
+    const previewWindow = window.open("about:blank", "_blank")
+    if (!previewWindow) {
+      setPreviewError("The preview window was blocked by the browser")
+      return
     }
-  }, [port])
+    previewWindow.opener = null
+    setPreviewError(null)
 
-  const handleRefresh = () => setRefreshKey((k) => k + 1)
-
-  const handleOpenExternal = () => {
-    if (previewUrl) window.open(previewUrl, "_blank")
-  }
+    void authorizePreviewNavigation(
+      api.getPreviewToken,
+      containerId,
+      Number(activePort),
+      (preview) => {
+        if (!preview.isolated) throw new Error("Dedicated preview origin required")
+        previewWindow.location.replace(preview.url)
+      },
+    ).catch((error) => {
+      previewWindow.close()
+      setPreviewError(error instanceof Error ? error.message : "Unable to authorize preview")
+    })
+  }, [activePort, containerId, isolatedPreview])
 
   const isLoading = sandboxLoading || (!sandboxData?.available && containersLoading)
 
@@ -135,12 +206,15 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
           type="text"
           value={port}
           onChange={(e) => setPort(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleOpen()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void handleOpen()
+          }}
           placeholder="3000"
           className="w-16 px-2.5 py-1.5 text-xs rounded-sm border border-[hsl(var(--border))]/50 bg-[hsl(var(--surface-1))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))]/30 transition-all tabular-nums font-mono"
         />
         <button
-          onClick={() => handleOpen()}
+          onClick={() => void handleOpen()}
+          disabled={isAuthorizing}
           className="px-3.5 py-1.5 text-xs font-mono uppercase tracking-wider rounded-sm bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity cursor-pointer glow-cyan"
         >
           Open
@@ -150,18 +224,22 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
             <div className="h-4 w-px bg-[hsl(var(--border))]/50" />
             <button
               onClick={handleRefresh}
+              disabled={isAuthorizing}
               className="p-1.5 rounded-sm text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-all cursor-pointer"
               title="Refresh"
             >
               <RefreshCw className="h-3.5 w-3.5" />
             </button>
-            <button
-              onClick={handleOpenExternal}
-              className="p-1.5 rounded-sm text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-all cursor-pointer"
-              title="Open in new tab"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
+            {isolatedPreview && (
+              <button
+                onClick={handleOpenExternal}
+                className="p-1.5 rounded-sm text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-all cursor-pointer"
+                title="Open in new tab"
+                aria-label="Open preview in new tab"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            )}
           </>
         )}
         <span className="text-[10px] text-[hsl(var(--muted-foreground))]/60 ml-auto font-mono tabular-nums">
@@ -169,6 +247,12 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
           {activePort && `:${activePort}`}
         </span>
       </div>
+
+      {previewError && (
+        <div className="px-3.5 py-2 border-b border-[hsl(var(--destructive))]/20 bg-[hsl(var(--destructive))]/10 text-[10px] font-mono text-[hsl(var(--destructive))]">
+          {previewError}
+        </div>
+      )}
 
       {/* Detected ports bar */}
       {detectedPorts.length > 0 && (
@@ -180,7 +264,8 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
           {detectedPorts.map((dp) => (
             <button
               key={dp.port}
-              onClick={() => handleOpen(dp.port.toString())}
+              onClick={() => void handleOpen(dp.port.toString())}
+              disabled={isAuthorizing}
               title={dp.command || dp.process || `Port ${dp.port}`}
               className={cn(
                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm text-[10px] font-mono font-medium transition-all cursor-pointer tabular-nums",
@@ -210,7 +295,11 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps) {
             src={previewUrl}
             className="w-full h-full border-0"
             title={`Preview port ${activePort}`}
-            sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+            sandbox={
+              isolatedPreview
+                ? "allow-scripts allow-forms allow-popups allow-same-origin"
+                : "allow-scripts allow-forms allow-popups"
+            }
           />
         ) : (
           <div className="h-full flex items-center justify-center bg-[hsl(var(--background))] grid-pattern">

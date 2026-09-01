@@ -1,9 +1,10 @@
 # WUYING Cloud Desktop as a Sandbox
 
 `SANDBOX_PROVIDER=wuying` runs the sandbox execution plane on an Alibaba Cloud
-WUYING cloud desktop (无影云电脑) instead of a local Docker container or a
-Kubernetes pod. The control plane — agent loop, permissions, event bus, the API
-— still runs wherever you started the backend.
+WUYING cloud desktop (无影云电脑). It is the only supported Agent execution
+provider. Docker Compose is limited to local PostgreSQL, Redis and Azurite; it
+does not execute Agent tools. The control plane — agent loop, permissions,
+event bus and API — still runs wherever you started the backend.
 
 Use it when you want a persistent, full-fat Linux desktop as the agent's
 workspace: it survives restarts, keeps installed tooling between sessions, and
@@ -19,7 +20,7 @@ can be attached to over the WUYING client to see what the agent did.
 - [Daily use](#daily-use)
 - [Operations](#operations)
 - [Troubleshooting](#troubleshooting)
-- [What differs from the Docker and Kubernetes providers](#what-differs-from-the-docker-and-kubernetes-providers)
+- [Why execution is WUYING-only](#why-execution-is-wuying-only)
 
 ---
 
@@ -149,6 +150,12 @@ at 16KB; `action_server.py` alone is ~85KB.
 It prints a generated `SESSION_API_KEY` at the end. Keep it — the backend and the
 desktop must agree on it.
 
+The WUYING service also enables `OPENBOX_REQUIRE_USER_SCOPE=1`. Skill packages,
+Skill exports, MCP configuration (including credentials), and MCP runtime
+caches are then keyed by the backend's pseudonymous user scope. Requests to
+those catalogue APIs without a valid scope are rejected rather than falling
+back to the old shared `/data/skills` or `/data/mcp/config.json` state.
+
 ### 2. Configure the backend
 
 ```bash
@@ -186,6 +193,15 @@ backend/scripts/wuying_tunnel.sh          # keeps reconnecting; leave it running
 curl http://127.0.0.1:18000/alive
 ```
 
+For the isolated acceptance desktop, use the explicit dev launcher instead.
+It selects `.env.wuying-dev`, forces trusted single-user auth, uses tunnel port
+`18001`, and starts the backend on the frontend-v2 proxy port `8080`:
+
+```bash
+backend/scripts/wuying_dev.sh tunnel
+backend/scripts/wuying_dev.sh backend
+```
+
 A healthy response names the desktop:
 
 ```json
@@ -196,14 +212,15 @@ A healthy response names the desktop:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SANDBOX_PROVIDER` | `docker` | Set to `wuying`. |
+| `SANDBOX_PROVIDER` | `wuying` | The only supported Agent execution value. Any other value fails configuration/startup; Docker Compose is infrastructure-only. |
 | `WUYING_ENDPOINT` | `http://127.0.0.1:18000` | Where the action server is reachable. Normally the local end of the tunnel. |
-| `WUYING_API_KEY` | *(empty)* | Must equal `SESSION_API_KEY` on the desktop. Empty means every request is rejected with 403. |
+| `WUYING_API_KEY` | *(empty)* | Must equal `SESSION_API_KEY` on the desktop. The backend refuses to start this provider without it, and the Action Server itself refuses to start without `SESSION_API_KEY`. |
 | `WUYING_DESKTOP_ID` | *(empty)* | `ecd-…`, informational — surfaced in logs and the container listing. |
 
-On startup the provider calls `/alive` and logs the result. A failure is logged
-loudly but does **not** abort startup, so the backend still comes up with a dead
-sandbox rather than refusing to boot.
+On startup the provider calls `/alive` and logs the result. The process can
+start while WUYING is temporarily unavailable so diagnostics remain reachable,
+but `/ready` stays non-ready until the required Action Server version and
+capabilities respond successfully.
 
 ## Daily use
 
@@ -230,6 +247,50 @@ under `/tmp/openbox-media`. Queue concurrency and FFmpeg threads come from
 Linear spoken-video concatenation uses the pure-FFmpeg fast path; HyperFrames
 and Chrome start only when the request explicitly selects the HTML-animation
 engine.
+
+### MCP connection supervisor (v10)
+
+MCP connections are tenant-scoped and persistent. For each enabled server the
+Action Server starts one owner task; that same task opens, initializes, uses,
+and closes the stdio, SSE, or raw Streamable HTTP transport. Tool calls,
+resource reads, prompt reads, and manual refreshes enter a bounded per-server
+queue instead of spawning a new MCP subprocess or session for every request.
+An explicit disconnect or delete first persists the disabled/removed desired
+state, then stops and awaits the owner, so a slow connect or refresh cannot
+resurrect the server. Startup restores enabled owners and shutdown awaits all
+of them.
+
+Discovery follows every pagination cursor for tools, resources, and prompts,
+builds a detached temporary generation, and publishes all three catalogues in
+one atomic swap with one revision increment. A failed refresh retains the
+last-known-good generation and exposes the failure in `GET /mcp/servers`.
+Servers that advertise MCP `listChanged` use SDK callbacks or an authenticated
+Streamable HTTP GET/SSE receiver. If the transport cannot receive those
+notifications, that server is reported as `poll` and receives coalesced full
+refreshes; capabilities that the server did not advertise are reported as
+`unsupported`. The raw notification GET carries both configured credentials
+and the negotiated `Mcp-Session-Id`, as does the initialized notification.
+
+`GET /alive` reports version `2026.08.31-run-lease-receipt-v12` and capabilities
+`mcp_supervisor_v1`, `terminal_project_cwd_v1`, and `run_lease_receipt_v2`;
+all earlier capabilities remain present. Agent requests carry a signed database
+lease expiry in addition to the durable generation high-water mark, so an old
+worker cannot make its first late desktop request after its PostgreSQL lease has
+expired. The Backend requires `run_lease_receipt_v2` before sending an Agent
+side effect, so an older Action Server fails closed instead of ignoring the new
+headers. Lease settlement revokes transport locally before committing idle.
+This boundary assumes the PostgreSQL host and desktop clocks are synchronized;
+an already accepted command is not retroactively killed when its receipt later
+expires. Terminal sessions start in the authenticated project directory and use
+the same pseudonymous tenant scope as Agent tools.
+
+Headless Agent commands use Bash with `--noprofile --norc`; desktop-wide login
+hooks are intentionally not sourced. This prevents the WUYING image's GNOME
+`gsettings` profile hook from emitting dconf/DBus warnings into every command
+while keeping the explicit UTF-8 locale and safe PATH. Closing an
+`/execute_stream` response kills and reaps that command's process group. The
+Bash tool also watches the owning Agent abort signal, so pressing Stop closes
+the stream immediately instead of waiting for the idle judge or hard timeout.
 
 Recommended values for the current 4-core, 8-GB-class desktop are:
 
@@ -281,8 +342,16 @@ script. It reuses an already healthy pinned runtime by default; pass
 `--force-media-bundle` when the lockfile or Node bundle changed:
 
 ```bash
-python backend/scripts/wuying_deploy_action_server.py --force-media-bundle
+OPENBOX_ENV_FILE=.env.wuying-dev \
+OPENBOX_BASE_ENV_FILE=.env \
+  python backend/scripts/wuying_deploy_action_server.py \
+    --desktop-id ecd-<development-desktop> \
+    --force-media-bundle
 ```
+
+The deploy command rejects an explicit `--desktop-id` that differs from
+`WUYING_DESKTOP_ID` in the selected profile. This prevents a valid key for one
+desktop from being installed on another desktop by mistake.
 
 ## Troubleshooting
 
@@ -299,8 +368,9 @@ tunnel rather than the relay's public IP, and make sure nothing has reintroduced
 
 **Every request comes back 403**
 `WUYING_API_KEY` does not match `SESSION_API_KEY` in
-`openbox-action-server.service`. Re-run the bootstrap with an explicit
-`--api-key` to set both.
+`openbox-action-server.service`. Select the intended profile explicitly and
+re-run the narrow deploy command above; never reuse a different desktop's
+profile merely because its API key is valid.
 
 **Tunnel is up, relay listens, but the backend still cannot reach it**
 Check which address the relay bound. `permitlisten` with no host restricts the
@@ -317,21 +387,25 @@ failed. Re-run the bootstrap without that flag.
 `extensionConnected: false` points at the Chrome extension — check its Server URL
 under *Advanced* in the popup.
 
-## What differs from the Docker and Kubernetes providers
+## Why execution is WUYING-only
 
-| | Docker / Kubernetes | WUYING |
-|---|---|---|
-| Lifecycle | OpenBox creates and destroys containers | The desktop is provisioned out of band; `create` is idempotent, `delete`/`stop` are **no-ops** |
-| Isolation | Container per user (Docker) or pod (K8s) | One shared desktop; sessions separated by `/workspace/sessions/<id>` only |
-| Reachability | Local port / in-cluster service | Two-hop tunnel |
-| Clean slate | Docker starts fresh each boot | State persists — installed packages, files, everything |
-| Startup | Docker cleans up; K8s reconciles | Reconciles (health-checks the endpoint) |
+The Docker and Kubernetes provider implementations and their runtime
+dependencies have been removed. The product configuration and provider factory
+accept only `wuying`; missing or misspelled configuration fails closed rather
+than silently starting an execution environment on the backend host.
+
+The desktop is provisioned out of band, reached through the two-hop tunnel and
+persists installed packages and files across backend restarts. `create` is an
+idempotent control-plane projection; `delete` and `stop` are no-ops because
+OpenBox does not own the cloud desktop lifecycle.
 
 The no-op `delete_container` matters: `SandboxManager.release()` destroys a
 container once its last session ends. Left alone, that would try to delete
 someone's cloud desktop.
 
-The shared-desktop model also means **there is no isolation boundary between
-users** beyond the working directory, and the action server does not constrain
-paths — an absolute path escapes the session directory. Treat a WUYING sandbox
-as single-tenant.
+The shared-desktop model also means **there is no hard isolation boundary
+between users**. File APIs constrain paths to the claimed project workspace,
+but arbitrary shell execution uses one shared `sandbox` Unix identity and can
+inspect the global workspace. Treat this topology as single-user/trusted
+acceptance only; public SaaS requires one desktop (or equivalent OS boundary)
+per user.

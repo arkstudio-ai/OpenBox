@@ -8,7 +8,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from dotenv import load_dotenv
+from wuying_env import load_environment
 
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -31,7 +31,9 @@ def main() -> None:
     options, uvicorn_args = parser.parse_known_args()
 
     os.chdir(BACKEND_DIR)
-    load_dotenv(BACKEND_DIR / ".env")
+    env_file = load_environment()
+    if env_file is not None:
+        print(f"OpenBox configuration: {env_file.name}", file=sys.stderr)
     os.environ.setdefault("DATABASE_URL", LOCAL_DATABASE_URL)
 
     if not options.skip_migrate:

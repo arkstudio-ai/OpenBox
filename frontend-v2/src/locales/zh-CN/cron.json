@@ -40,6 +40,7 @@
     "nextRun": "下次 {{when}}",
     "lastRun": "上次 {{when}}",
     "stats": "运行 {{total}} · 成功 {{ok}} · 失败 {{failed}}",
+    "projectRoot": "项目根目录",
     "showRuns": "查看运行记录",
     "hideRuns": "收起运行记录",
     "lastError": "最近一次运行失败,任务已停用;可在运行记录中查看详情。",

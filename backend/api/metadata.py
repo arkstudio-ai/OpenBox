@@ -62,12 +62,23 @@ async def get_config():
             "vision": supports_vision(config.model),
         }]
 
+    video_models = _video_models(config)
+    configured_video_default = config.video_generation.model
+    default_video_model = next(
+        (
+            row["id"]
+            for row in video_models
+            if row["id"] == configured_video_default
+        ),
+        video_models[0]["id"] if video_models else "",
+    )
+
     return {
         "models": models,
         "default_model": config.model,
         "default_agent": default_agent_name(),
-        "video_models": _video_models(config),
-        "default_video_model": config.video_generation.model,
+        "video_models": video_models,
+        "default_video_model": default_video_model,
     }
 
 
@@ -81,6 +92,8 @@ def _video_models(config) -> list[dict]:
     settings = config.video_generation
     declared = list(settings.models or [])
     if not declared:
+        if not _video_model_is_bound(config, settings.model):
+            return []
         return [{
             "id": settings.model,
             "name": settings.model,
@@ -103,8 +116,19 @@ def _video_models(config) -> list[dict]:
         # An allowed_models whitelist, when set, also governs what the picker
         # may offer — otherwise the UI would advertise a model the submit path
         # refuses.
-        if not allowed or m.id in allowed
+        if (not allowed or m.id in allowed) and _video_model_is_bound(config, m.id)
     ]
+
+
+def _video_model_is_bound(config, model_id: str) -> bool:
+    """Keep the picker aligned with the exact non-network submit resolver."""
+    try:
+        from tool.video_providers import resolve_route
+
+        resolve_route(model_id, config)
+    except Exception:
+        return False
+    return True
 
 
 @router.get("/agent")
@@ -144,8 +168,8 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
     try:
         from skill.user_library import (
             annotate_installed_skills,
-            get_owned_skill,
             list_owned_skills,
+            restore_personal_skills_to_sandbox,
         )
 
         owned_skills = await list_owned_skills(user_id)
@@ -161,62 +185,13 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
         if client:
             container = await client.list_skills()
             if isinstance(container, list):
-                # A durable snapshot is the source of truth for a personal
-                # package after its per-user sandbox is recreated.  Fetch ZIP
-                # bytes only for rows that are actually missing and restorable.
-                restored = False
-                for owned in owned_skills:
-                    owned_dir = owned.get("install_dir")
-                    owned_name = owned.get("name")
-                    already_live = any(
-                        (
-                            owned_dir
-                            and item.get("install_dir") == owned_dir
-                        )
-                        or (
-                            owned_name
-                            and item.get("name") == owned_name
-                        )
-                        for item in container
+                if library_available:
+                    container = await restore_personal_skills_to_sandbox(
+                        user_id,
+                        client,
+                        owned_skills=owned_skills,
+                        installed_skills=container,
                     )
-                    if already_live or not owned.get("restore_available"):
-                        continue
-                    try:
-                        snapshot = await get_owned_skill(
-                            user_id,
-                            owned["id"],
-                            include_archive=True,
-                        )
-                        archive = snapshot.get("archive_data") if snapshot else None
-                        install_dir = (snapshot or owned).get("install_dir")
-                        if not isinstance(archive, bytes) or not install_dir:
-                            continue
-                        result = await client.upload_skill_archive(
-                            archive,
-                            f"{install_dir}.zip",
-                            install_dir,
-                        )
-                        # Keep a truthful fallback if the post-restore rescan
-                        # below is temporarily unavailable.
-                        container.append({
-                            **owned,
-                            **(result if isinstance(result, dict) else {}),
-                            "name": owned_name or install_dir,
-                            "install_dir": install_dir,
-                            "source": "container",
-                        })
-                        restored = True
-                    except Exception:
-                        # Listing remains useful and the durable row is merged
-                        # below; the next refresh gets another recovery chance.
-                        continue
-                if restored:
-                    try:
-                        refreshed = await client.list_skills()
-                        if isinstance(refreshed, list):
-                            container = refreshed
-                    except Exception:
-                        pass
                 merged.extend(container)
     except Exception:
         pass
@@ -400,10 +375,30 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
 
         category = None
         target = name
-        try:
-            from skill.user_library import annotate_installed_skills
+        from skill.user_library import (
+            annotate_installed_skills,
+            get_owned_skill,
+        )
 
+        # Ownership is durable database state, not a property inferred only
+        # from a currently reachable filesystem entry. Fail closed if this
+        # lookup is unavailable: deleting an unclassified personal package
+        # without its tombstone/fence would let the next restore revive it.
+        owned = await get_owned_skill(user_id, name)
+        try:
             live = await client.get_skill(name)
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            missing_live = status == 404 or isinstance(
+                exc,
+                (FileNotFoundError, LookupError),
+            )
+            if owned and missing_live:
+                category = "personal"
+                target = owned.get("install_dir") or name
+            else:
+                raise
+        else:
             if isinstance(live, dict):
                 target = live.get("install_dir") or name
                 annotated = await annotate_installed_skills(
@@ -412,16 +407,18 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
                 )
                 if annotated:
                     category = annotated[0].get("category")
-        except RuntimeError:
-            pass
 
-        result = await client.uninstall_skill(target)
+        if category == "personal":
+            from skill.user_library import uninstall_owned_skill
+
+            # Personal uninstall is one fenced lifecycle operation: advance
+            # the durable generation before the execution-plane delete, then
+            # commit the database tombstone only after that delete succeeds.
+            result = await uninstall_owned_skill(user_id, target, client)
+        else:
+            result = await client.uninstall_skill(target)
         try:
-            if category == "personal":
-                from skill.user_library import delete_owned_skill
-
-                await delete_owned_skill(user_id, target)
-            elif category == "store":
+            if category == "store":
                 from skill.user_library import remove_community_installation
 
                 await remove_community_installation(user_id, target)
@@ -442,15 +439,29 @@ async def upload_skill_archive(
 ):
     """Install a skill from an uploaded archive (zip/tar/tar.gz/tgz/rar)."""
     from sandbox.manager import sandbox_manager
+    from skill.archive import (
+        SKILL_ARCHIVE_MAX_COMPRESSED_BYTES,
+        SkillArchiveValidationError,
+    )
     user_id = current_user["user_id"]
     try:
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
-        file_bytes = await file.read()
+        file_bytes = await file.read(SKILL_ARCHIVE_MAX_COMPRESSED_BYTES + 1)
+        if len(file_bytes) > SKILL_ARCHIVE_MAX_COMPRESSED_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Skill archive exceeds the compressed size limit",
+            )
         return await client.upload_skill_archive(file_bytes, file.filename or "archive.zip", name)
     except HTTPException:
         raise
+    except SkillArchiveValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -527,11 +538,14 @@ async def install_from_catalog(
     then fails at its first tool call, which reads as a broken skill rather
     than a missing dependency.
     """
-    from skill.catalog import catalog_index
+    from skill.catalog import catalog_index, load_catalog
     from sandbox.manager import sandbox_manager
 
     user_id = current_user["user_id"]
-    index = catalog_index()
+    # Resolve the install from the exact same validated built-in + operator
+    # overlay source that GET /catalog renders. Accepting only the opaque id in
+    # the request keeps clone/content/MCP config out of user-controlled input.
+    index = catalog_index(await load_catalog())
 
     community_row: dict | None = None
     entry: dict | None = None
@@ -679,8 +693,30 @@ async def install_from_catalog(
         installed.append(await install_mcp(entry))
     else:
         spec = entry.get("install", {})
+        target_name = spec.get("name") or entry["name"]
+        existing = await client.list_skills() or []
+        conflict = next(
+            (
+                item
+                for item in existing
+                if item.get("install_dir") == target_name
+                or item.get("name") == target_name
+            ),
+            None,
+        )
+        if conflict:
+            # Built-in/operator catalogues have no immutable per-user install
+            # record comparable to community provenance. Never overwrite an
+            # unproven live package merely because it shares the catalogue slug.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A skill named '{target_name}' is already installed; remove it "
+                    "before installing this catalog copy."
+                ),
+            )
         result = await client.install_skill(
-            url=spec.get("url"), name=spec.get("name"), content=spec.get("content"),
+            url=spec.get("url"), name=target_name, content=spec.get("content"),
         )
         installed.append({"kind": "skill", "id": entry["id"],
                           "name": result.get("name") or entry["name"], "status": "installed"})

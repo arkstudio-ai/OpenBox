@@ -30,10 +30,28 @@ export async function fetchWsTicket(): Promise<string | null> {
   return ticket
 }
 
-export function terminalWsUrl(containerId: string, ticket: string): string {
-  return `${wsBase()}/ws/terminal/${containerId}?ticket=${ticket}`
+interface TerminalWorkspace {
+  sessionId?: string | null
+  projectId?: string | null
+}
+
+export function terminalWsUrl(
+  containerId: string,
+  ticket: string,
+  workspace: TerminalWorkspace,
+): string {
+  const query = new URLSearchParams({ ticket })
+  if (workspace.sessionId) query.set("session_id", workspace.sessionId)
+  if (workspace.projectId) query.set("project_id", workspace.projectId)
+  return `${wsBase()}/ws/terminal/${encodeURIComponent(containerId)}?${query.toString()}`
 }
 
 export function devBrowserWsUrl(ticket: string): string {
   return `${wsBase()}/ws/dev-browser/auto?ticket=${ticket}`
+}
+
+/** Live PNG/input stream for the cloud Chrome shown in the workbench. */
+export function browserViewWsUrl(ticket: string): string {
+  const query = new URLSearchParams({ ticket })
+  return `${wsBase()}/ws/browser-view/auto?${query.toString()}`
 }

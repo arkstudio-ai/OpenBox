@@ -5,6 +5,7 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
+import '../../../../shared/utils/project_path.dart';
 
 /// One-line change row (web `PatchChip` / D.4.6):
 /// `⊞ path +N −M  审阅 →` — tap opens the review screen.
@@ -21,7 +22,7 @@ class PatchChip extends ConsumerWidget {
     final additions = patch.files.fold(0, (sum, f) => sum + f.additions);
     final deletions = patch.files.fold(0, (sum, f) => sum + f.deletions);
     final label = patch.files.length == 1
-        ? patch.files.first.path
+        ? projectScopedDisplayPath(patch.files.first.path)
         : i18n.t('chat:changedFiles', count: patch.files.length);
     return Material(
       color: Colors.transparent,
@@ -38,8 +39,10 @@ class PatchChip extends ConsumerWidget {
           ),
           child: Row(
             children: [
-              Text('⊞',
-                  style: TextStyle(fontSize: FontSizes.base, color: t.n600)),
+              Text(
+                '⊞',
+                style: TextStyle(fontSize: FontSizes.base, color: t.n600),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -55,11 +58,15 @@ class PatchChip extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text('+$additions',
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.s700)),
+              Text(
+                '+$additions',
+                style: TextStyle(fontSize: FontSizes.xs, color: t.s700),
+              ),
               const SizedBox(width: 4),
-              Text('−$deletions',
-                  style: TextStyle(fontSize: FontSizes.xs, color: t.dangerInk)),
+              Text(
+                '−$deletions',
+                style: TextStyle(fontSize: FontSizes.xs, color: t.dangerInk),
+              ),
               const SizedBox(width: 10),
               Text(
                 i18n.t('chat:reviewGo'),

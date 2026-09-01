@@ -13,9 +13,9 @@ reach two very different browsers:
 Everything here runs against the desktop's loopback (ports 9333 for Chrome,
 9222 for the relay), so every probe is a `curl` executed *on the desktop* — the
 backend only reaches the desktop through the action-server tunnel and cannot
-open those ports directly. Chrome must run inside the X session as the desktop
-user, not as the root action server, which is why launches go through the
-`obx-x` wrapper and `sudo -u`.
+open those ports directly. Chrome runs as the isolated Action Server command
+identity inside the visible X session, which is why launches go through the
+`obx-x` wrapper without granting the Agent root.
 """
 import asyncio
 import base64
@@ -33,12 +33,16 @@ log = create_logger("sandbox.browser")
 CHROME_PORT = 9333
 RELAY_PORT = 9222
 
-CHROME_LOG = "/tmp/obx-chrome.log"
-RELAY_LOG = "/tmp/obx-relay.log"
-RELAY_PID = "/tmp/obx-relay.pid"
+# Runtime state lives below the request-scoped runner HOME. Fixed files in
+# /tmp used to survive an Action Server upgrade as root-owned artifacts; the
+# unprivileged runner could neither truncate the logs nor replace the PID file.
+BROWSER_RUNTIME_DIR = ".cache/openbox/browser"
+CHROME_LOG = "chrome.log"
+RELAY_LOG = "relay.log"
+RELAY_PID = "relay.pid"
 
-#: Dedicated profile, relative to the desktop user's home. See the launch script
-#: for why a non-default profile is mandatory.
+#: Dedicated profile, relative to the isolated runner's scoped home. See the
+#: launch script for why a non-default profile is mandatory.
 CHROME_PROFILE = ".config/obx-chrome"
 
 #: Where wuying_bootstrap.py deploys the relay.
@@ -164,8 +168,13 @@ async def _fire_and_forget(client, command: str) -> None:
 
 
 async def _log_tail(client, path: str, lines: int = 40) -> str:
+    if path not in {CHROME_LOG, RELAY_LOG}:
+        raise ValueError(f"unknown browser runtime file: {path!r}")
     try:
-        res = await client.execute(f"tail -n {lines} {shlex.quote(path)} 2>/dev/null", timeout=10)
+        res = await client.execute(
+            f'tail -n {int(lines)} "$HOME/{BROWSER_RUNTIME_DIR}/{path}" 2>/dev/null',
+            timeout=10,
+        )
         return (res.stdout or "").strip()
     except Exception:
         return ""
@@ -243,28 +252,57 @@ AUTOMATION_POLICY = {
 
 
 def _policy_install_script() -> str:
-    """Shell that drops the automation policy into every path Chrome reads."""
+    """Best-effort runtime policy repair without assuming Agent root access.
+
+    Normal WUYING deployment installs this machine policy ahead of time through
+    :func:`browser_policy_provision_script`. This fallback remains useful for a
+    permissive development sandbox, but deliberately never invokes sudo.
+    """
     payload = json.dumps(AUTOMATION_POLICY, indent=2)
     b64 = base64.b64encode(payload.encode()).decode()
     dirs = " ".join(shlex.quote(d) for d in POLICY_DIRS)
     return f"""set -e
-printf %s {b64} | base64 -d > /tmp/.obx-chrome-policy.json
+runtime="$HOME/{BROWSER_RUNTIME_DIR}"
+install -d -m 0700 "$runtime"
+tmp=$(mktemp "$runtime/policy.XXXXXX.json")
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+printf %s {b64} | base64 -d > "$tmp"
 for d in {dirs}; do
-  mkdir -p "$d" 2>/dev/null || continue
-  cp /tmp/.obx-chrome-policy.json "$d/openbox-automation.json" 2>/dev/null || true
-  chmod 644 "$d/openbox-automation.json" 2>/dev/null || true
+  [ -d "$d" ] && [ -w "$d" ] || continue
+  install -m 0644 "$tmp" "$d/openbox-automation.json"
 done
-rm -f /tmp/.obx-chrome-policy.json
 """
 
 
-def _chrome_launch_script() -> str:
-    """Shell that launches a headed, debuggable Chrome as the desktop user.
+def browser_policy_provision_script() -> str:
+    """Return the root-only machine-policy installer used by WUYING deploys."""
+    payload = json.dumps(AUTOMATION_POLICY, indent=2)
+    b64 = base64.b64encode(payload.encode()).decode()
+    commands = ["set -e"]
+    for directory in POLICY_DIRS:
+        quoted_dir = shlex.quote(directory)
+        commands.extend(
+            [
+                f"install -d -o root -g root -m 0755 {quoted_dir}",
+                f"tmp=$(mktemp {quoted_dir}/.openbox-automation.XXXXXX)",
+                f"printf %s {b64} | base64 -d > \"$tmp\"",
+                'chmod 0644 "$tmp"',
+                'chown root:root "$tmp"',
+                f'mv -f "$tmp" {quoted_dir}/openbox-automation.json',
+            ]
+        )
+    commands.append(
+        "test -r " + shlex.quote(f"{POLICY_DIRS[0]}/openbox-automation.json")
+    )
+    return "\n".join(commands) + "\n"
 
-    Detached with setsid + a log file so it outlives the exec call, and run
-    through `sudo -u` because the action server is root while Chrome must live
-    in the desktop user's X session (DISPLAY/XAUTHORITY are exported into this
-    script by the obx-x wrapper).
+
+def _chrome_launch_script() -> str:
+    """Shell that launches a headed, debuggable Chrome on the desktop.
+
+    The Action Server already runs it as the isolated ``sandbox`` identity.
+    ``obx-x`` supplies DISPLAY/XAUTHORITY, so no second sudo transition is
+    necessary (and ``NoNewPrivileges`` intentionally makes one impossible).
     """
     # Chrome 136+ refuses --remote-debugging-port when it is pointed at the
     # DEFAULT user-data-dir, a hardening measure against other local processes
@@ -272,10 +310,8 @@ def _chrome_launch_script() -> str:
     # which is what lets ordinary Google Chrome serve as the automation browser
     # — verified on this desktop: Chrome 151 opens the port on this profile.
     return f"""set -e
-U=$(ps -o user= -p "$(pgrep -x gnome-shell | head -n1)" 2>/dev/null | tr -d ' ')
-if [ -z "$U" ] || [ "$U" = root ]; then U=$(stat -c %U /tmp/.X11-unix/X* 2>/dev/null | grep -v '^root$' | head -n1); fi
-if [ -z "$U" ]; then U=$(getent passwd 1000 | cut -d: -f1); fi
-H=$(getent passwd "$U" | cut -d: -f6)
+RUNTIME="$HOME/{BROWSER_RUNTIME_DIR}"
+install -d -m 0700 "$RUNTIME"
 BIN=""
 for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}; done
 [ -n "$BIN" ] || BIN=$(command -v google-chrome || command -v chromium || true)
@@ -296,20 +332,20 @@ for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}
 # Deleting the session files closes both: there is no crash to report and
 # nothing to restore. They are pure scratch state; the profile's cookies,
 # logins and history live in other files and survive.
-PROF="$H/{CHROME_PROFILE}"
+PROF="$HOME/{CHROME_PROFILE}"
 PREF="$PROF/Default/Preferences"
 if [ -f "$PREF" ]; then
-  sudo -u "$U" sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREF" 2>/dev/null || true
+  sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREF" 2>/dev/null || true
 fi
-sudo -u "$U" rm -rf "$PROF/Default/Sessions" 2>/dev/null || true
-sudo -u "$U" rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" \
-                   "$PROF/Default/Last Session" "$PROF/Default/Last Tabs" 2>/dev/null || true
-( setsid sudo -u "$U" -H env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
+rm -rf "$PROF/Default/Sessions" 2>/dev/null || true
+rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" \
+      "$PROF/Default/Last Session" "$PROF/Default/Last Tabs" 2>/dev/null || true
+( setsid env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
   DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
   "$BIN" \\
   --remote-debugging-port={CHROME_PORT} \\
   --remote-debugging-address=127.0.0.1 \\
-  --user-data-dir="$H/{CHROME_PROFILE}" \\
+  --user-data-dir="$HOME/{CHROME_PROFILE}" \\
   --no-first-run \\
   --no-default-browser-check \\
   --disable-session-crashed-bubble \\
@@ -323,7 +359,7 @@ sudo -u "$U" rm -f "$PROF/Default/Current Session" "$PROF/Default/Current Tabs" 
   --use-mock-keychain \\
   --start-maximized \\
   about:blank \\
-  >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+  >"$RUNTIME/{CHROME_LOG}" 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
 exit 0
 """
 
@@ -342,17 +378,21 @@ def _relay_start_script(mode: str) -> str:
     # pattern also matches the very shell running it (the command line contains
     # the string), so the restart killed itself and the port never opened.
     return f"""set -e
-if [ -f {RELAY_PID} ]; then
-  kill -TERM "-$(cat {RELAY_PID})" 2>/dev/null || kill -TERM "$(cat {RELAY_PID})" 2>/dev/null || true
-  rm -f {RELAY_PID}
+RUNTIME="$HOME/{BROWSER_RUNTIME_DIR}"
+install -d -m 0700 "$RUNTIME"
+PID="$RUNTIME/{RELAY_PID}"
+LOG="$RUNTIME/{RELAY_LOG}"
+if [ -f "$PID" ]; then
+  kill -TERM "-$(cat "$PID")" 2>/dev/null || kill -TERM "$(cat "$PID")" 2>/dev/null || true
+  rm -f "$PID"
   sleep 1
 fi
 fuser -k -TERM {RELAY_PORT}/tcp >/dev/null 2>&1 || true
 sleep 0.5
 cd {SKILL_DIR}
 ( DEV_BROWSER_MODE={shlex.quote(mode)} DEV_BROWSER_CHROME_PORT={CHROME_PORT} PATH=/usr/local/bin:$PATH \\
-  setsid npm run start-relay >{RELAY_LOG} 2>&1 </dev/null &
-  echo $! > {RELAY_PID} ) >/dev/null 2>&1 </dev/null
+  setsid npm run start-relay >"$LOG" 2>&1 </dev/null &
+  echo $! > "$PID" ) >/dev/null 2>&1 </dev/null
 exit 0
 """
 
@@ -370,7 +410,7 @@ async def ensure_chrome(client, container_key: str) -> dict:
         _chrome_ready.add(container_key)
         return existing
 
-    # obx-x is what discovers the desktop's X session for the sudo launch below.
+    # obx-x discovers the desktop X session for the isolated launch below.
     await ensure_x_helper(client, container_key)
     # Policy must be on disk before Chrome starts: it is read once at launch.
     await client.execute(_policy_install_script(), timeout=30)

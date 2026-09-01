@@ -144,6 +144,17 @@ async def test_same_binding_reuses_original_wire_and_switch_remaps_from_canonica
     assert same.wire_tool_name == "mcp_report_original"
     assert same.canonical_tool_id == CANONICAL
 
+    removed_from_same_dialect = await resolve_tool_part_for_replay(
+        part_id=part.id,
+        session_id=session_id,
+        user_id=user_id,
+        current_binding_digest=_digest("binding-removed"),
+        current_provider_dialect="responses",
+        current_wire_by_canonical={},
+    )
+    assert removed_from_same_dialect.same_binding is False
+    assert removed_from_same_dialect.wire_tool_name == "mcp_report_original"
+
     switched = await resolve_tool_part_for_replay(
         part_id=part.id,
         session_id=session_id,

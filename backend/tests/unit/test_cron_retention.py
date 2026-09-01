@@ -117,6 +117,160 @@ async def test_thirty_day_cap_deletes_runs_and_transcripts():
         assert deleted is True
 
 
+async def test_pending_outbox_protects_run_and_transcript_from_retention():
+    from cron.outbox import stable_delivery_id
+    from db.base import get_db_session
+    from db.models.cron import CronDeliveryOutbox, CronRun
+    from db.models.session import Session as SessionORM
+    from sqlalchemy import select
+
+    await _project_row()
+    user = "u_" + uuid.uuid4().hex[:8]
+    job_id = "cron_" + uuid.uuid4().hex[:10]
+    sid = f"sess_pending_{uuid.uuid4().hex[:8]}"
+    await _insert_session(sid, user)
+    started = NOW() - timedelta(days=RETENTION_DAYS + 1)
+    run_id = await _insert_run(job_id, user, started, sid)
+    delivery_id = stable_delivery_id(run_id, "runlog")
+    async with get_db_session() as db:
+        db.add(CronDeliveryOutbox(
+            id=delivery_id,
+            run_id=run_id,
+            job_id=job_id,
+            user_id=user,
+            session_id="sess_main",
+            kind="runlog",
+            payload={},
+            state="pending",
+            attempts=0,
+            available_at=NOW(),
+            created_at=NOW(),
+            updated_at=NOW(),
+        ))
+
+    await _sweep_old_runs()
+
+    async with get_db_session() as db:
+        assert (await db.execute(
+            select(CronRun.id).where(CronRun.id == run_id)
+        )).scalar_one() == run_id
+        assert (await db.execute(
+            select(SessionORM.is_deleted).where(SessionORM.id == sid)
+        )).scalar_one() is False
+
+
+async def test_dead_letter_keeps_audit_until_normal_retention_then_reaps():
+    from cron.outbox import stable_delivery_id
+    from db.base import get_db_session
+    from db.models.cron import CronDeliveryOutbox, CronRun
+    from db.models.session import Session as SessionORM
+    from sqlalchemy import select
+
+    await _project_row()
+    user = "u_" + uuid.uuid4().hex[:8]
+    job_id = "cron_" + uuid.uuid4().hex[:10]
+    sid = f"sess_dead_{uuid.uuid4().hex[:8]}"
+    await _insert_session(sid, user)
+    started = NOW() - timedelta(days=RETENTION_DAYS + 1)
+    run_id = await _insert_run(job_id, user, started, sid)
+    delivery_id = stable_delivery_id(run_id, "runlog")
+    async with get_db_session() as db:
+        db.add(CronDeliveryOutbox(
+            id=delivery_id,
+            run_id=run_id,
+            job_id=job_id,
+            user_id=user,
+            session_id="sess_main",
+            kind="runlog",
+            payload={},
+            state="dead_letter",
+            attempts=12,
+            available_at=started,
+            last_error="permanent failure",
+            created_at=started,
+            updated_at=started,
+        ))
+
+    await _sweep_old_runs()
+
+    async with get_db_session() as db:
+        assert await db.scalar(
+            select(CronRun.id).where(CronRun.id == run_id)
+        ) is None
+        assert await db.scalar(
+            select(CronDeliveryOutbox.id).where(
+                CronDeliveryOutbox.id == delivery_id
+            )
+        ) is None
+        assert await db.scalar(
+            select(SessionORM.is_deleted).where(SessionORM.id == sid)
+        ) is True
+
+
+async def test_old_run_is_retained_when_transcript_deletion_raises(monkeypatch):
+    from db.base import get_db_session
+    from db.models.cron import CronRun
+    from db.models.session import Session as SessionORM
+    from sqlalchemy import select
+    import session.session as session_mod
+
+    await _project_row()
+    user = "u_" + uuid.uuid4().hex[:8]
+    job_id = "cron_" + uuid.uuid4().hex[:10]
+    sid = f"sess_delete_fail_{uuid.uuid4().hex[:8]}"
+    await _insert_session(sid, user)
+    run_id = await _insert_run(
+        job_id,
+        user,
+        NOW() - timedelta(days=RETENTION_DAYS + 1),
+        sid,
+    )
+
+    async def fail_delete(*_args, **_kwargs):
+        raise RuntimeError("transient session delete failure")
+
+    monkeypatch.setattr(session_mod, "delete_session", fail_delete)
+    await _sweep_old_runs()
+
+    async with get_db_session() as db:
+        run = await db.scalar(select(CronRun).where(CronRun.id == run_id))
+        session_deleted = await db.scalar(
+            select(SessionORM.is_deleted).where(SessionORM.id == sid)
+        )
+    assert run is not None and run.temp_session_id == sid
+    assert session_deleted is False
+
+
+async def test_keep_window_does_not_unlink_failed_transcript_delete(monkeypatch):
+    from db.base import get_db_session
+    from db.models.cron import CronRun
+    from sqlalchemy import select
+    import session.session as session_mod
+
+    await _project_row()
+    config = get_config()
+    original = config.cron_transcript_keep_per_job
+    config.cron_transcript_keep_per_job = 0
+    try:
+        user = "u_" + uuid.uuid4().hex[:8]
+        job_id = "cron_" + uuid.uuid4().hex[:10]
+        sid = f"sess_trim_fail_{uuid.uuid4().hex[:8]}"
+        await _insert_session(sid, user)
+        run_id = await _insert_run(job_id, user, NOW(), sid)
+
+        async def fail_delete(*_args, **_kwargs):
+            raise RuntimeError("transient session delete failure")
+
+        monkeypatch.setattr(session_mod, "delete_session", fail_delete)
+        await _sweep_temp_sessions()
+
+        async with get_db_session() as db:
+            run = await db.scalar(select(CronRun).where(CronRun.id == run_id))
+        assert run is not None and run.temp_session_id == sid
+    finally:
+        config.cron_transcript_keep_per_job = original
+
+
 async def test_cron_sessions_do_not_count_against_quota():
     from db.repository.session_repo import PgSessionRepo
 

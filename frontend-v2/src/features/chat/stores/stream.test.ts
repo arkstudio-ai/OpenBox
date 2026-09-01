@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 import type { MessagePart, MessageWithParts } from "@/shared/types/api"
-import { mergeSnapshotMessages } from "./stream"
+import { mergeSnapshotMessages, useStreamStore } from "./stream"
 
 function message(parts: MessagePart[]): MessageWithParts {
   return {
@@ -52,5 +52,43 @@ describe("mergeSnapshotMessages", () => {
 
     expect(merged[0].parts.map((part) => part.id)).toEqual(["text-1", "tool-2"])
     expect(merged.map((item) => item.id)).toEqual(["message-1", "message-2"])
+  })
+})
+
+describe("generation-aware events", () => {
+  beforeEach(() => {
+    useStreamStore.setState({
+      status: new Map(),
+      statusGeneration: new Map(),
+      terminalStatusGeneration: new Map(),
+      retry: new Map(),
+      runError: new Map(),
+    })
+  })
+
+  it("does not let an old terminal event replace a newer busy generation", () => {
+    const stream = useStreamStore.getState()
+
+    expect(stream.applyStatusEvent("session-1", "busy", 2)).toBe(true)
+    expect(stream.applyStatusEvent("session-1", "idle", 1)).toBe(false)
+    expect(stream.applyStatusEvent("session-1", "error", undefined)).toBe(false)
+    expect(useStreamStore.getState().status.get("session-1")).toBe("busy")
+  })
+
+  it("rejects a delayed old transcript event after a newer event watermark", () => {
+    const stream = useStreamStore.getState()
+
+    expect(stream.acceptEventGeneration("session-1", 3)).toBe(true)
+    expect(stream.acceptEventGeneration("session-1", 2)).toBe(false)
+    expect(stream.acceptEventGeneration("session-1", undefined)).toBe(true)
+  })
+
+  it("keeps a terminal status closed within the same generation", () => {
+    const stream = useStreamStore.getState()
+
+    expect(stream.applyStatusEvent("session-1", "finalizing", 4)).toBe(true)
+    expect(stream.applyStatusEvent("session-1", "idle", 4)).toBe(true)
+    expect(stream.applyStatusEvent("session-1", "finalizing", 4)).toBe(false)
+    expect(useStreamStore.getState().status.get("session-1")).toBe("idle")
   })
 })

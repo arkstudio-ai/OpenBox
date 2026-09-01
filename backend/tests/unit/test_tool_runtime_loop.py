@@ -29,6 +29,7 @@ from agent.tool_payload import build_tool_definitions, measure_tool_definitions
 from agent.tool_runtime import ToolRuntime, assemble_tool_runtime
 from db.base import get_db_session
 from db.models.internal_part import InternalPart
+from db.models.agent_event import AgentEvent
 from db.models.message import Message
 from db.models.part import Part
 from db.models.project import Project
@@ -150,6 +151,7 @@ async def _process_runtime_step(
     session_id: str,
     user_id: str,
     parent_id: str,
+    tool_body_timeout_seconds: float | None = None,
 ):
     assistant = await create_assistant_message(
         session_id=session_id,
@@ -159,6 +161,11 @@ async def _process_runtime_step(
         user_id=user_id,
     )
     monkeypatch.setattr(processor_mod, "stream_llm", _fake_stream(events))
+    timeout_kwargs = (
+        {"tool_body_timeout_seconds": tool_body_timeout_seconds}
+        if tool_body_timeout_seconds is not None
+        else {}
+    )
     result = await process_step(
         session_id=session_id,
         user_id=user_id,
@@ -177,6 +184,7 @@ async def _process_runtime_step(
         execution_lookup=runtime.execution_lookup,
         step_executable_ids=runtime.step_executable_ids,
         provider_to_canonical=runtime.provider_to_canonical,
+        **timeout_kwargs,
     )
     assert result.outcome is StepOutcome.CONTINUE
     return result, assistant
@@ -537,6 +545,227 @@ async def test_batch_cannot_escape_from_executable_ids_to_a_hidden_catalogue_too
 
     assert executed == []
     assert "not available to the current agent" in result.completed_tool_parts[0].output
+
+
+@pytest.mark.asyncio
+async def test_batch_nested_calls_use_ordered_durable_tool_lifecycle(monkeypatch):
+    from tool import registry
+
+    user_id, session_id, parent_id = await _seed_scope()
+    second_started = asyncio.Event()
+    completion_order: list[str] = []
+
+    async def first(args: StringArgs, _ctx: ToolContext) -> ToolResult:
+        await second_started.wait()
+        await asyncio.sleep(0)
+        completion_order.append("first")
+        return ToolResult(title="first", output=args.value)
+
+    async def second(args: StringArgs, _ctx: ToolContext) -> ToolResult:
+        second_started.set()
+        completion_order.append("second")
+        return ToolResult(title="second", output=args.value)
+
+    first_tool = define_tool(
+        "nested_first",
+        description="first",
+        parameters=StringArgs,
+        execute=first,
+        sandbox_required=False,
+        parallel_safe=True,
+    )
+    second_tool = define_tool(
+        "nested_second",
+        description="second",
+        parameters=StringArgs,
+        execute=second,
+        sandbox_required=False,
+        parallel_safe=True,
+    )
+    tools = {
+        "batch": batch_tool,
+        first_tool.id: first_tool,
+        second_tool.id: second_tool,
+    }
+    runtime = assemble_tool_runtime(
+        tools,
+        mode="legacy_eager",
+        agent_name="build",
+    )
+    monkeypatch.setattr(registry, "get_tool", tools.get)
+
+    result, assistant = await _process_runtime_step(
+        monkeypatch,
+        runtime=runtime,
+        ctx=_context_for(runtime, session_id=session_id, user_id=user_id),
+        events=_tool_call(
+            "batch",
+            {
+                "invocations": [
+                    {"tool": first_tool.id, "parameters": {"value": "one"}},
+                    {"tool": second_tool.id, "parameters": {"value": "two"}},
+                ]
+            },
+            "call_batch_lifecycle",
+        ),
+        session_id=session_id,
+        user_id=user_id,
+        parent_id=parent_id,
+    )
+
+    assert completion_order == ["second", "first"]
+    assert result.completed_tool_parts[0].output.index("one") < (
+        result.completed_tool_parts[0].output.index("two")
+    )
+    async with get_db_session() as db:
+        nested = list((await db.execute(
+            select(Part).where(
+                Part.session_id == session_id,
+                Part.message_id == assistant.id,
+                Part.provider_dialect == "nested",
+            ).order_by(Part.stream_seq)
+        )).scalars().all())
+        events = list((await db.execute(
+            select(AgentEvent).where(
+                AgentEvent.session_id == session_id,
+                AgentEvent.part_id.in_([row.id for row in nested]),
+            ).order_by(AgentEvent.sequence)
+        )).scalars().all())
+
+    assert [row.canonical_tool_id for row in nested] == [
+        first_tool.id,
+        second_tool.id,
+    ]
+    assert [row.data["status"] for row in nested] == ["completed", "completed"]
+    assert [row.data["output"] for row in nested] == ["one", "two"]
+    by_part = {
+        row.id: [event.kind for event in events if event.part_id == row.id]
+        for row in nested
+    }
+    assert all("tool.called" in kinds and "tool.result" in kinds for kinds in by_part.values())
+
+
+@pytest.mark.asyncio
+async def test_batch_timeout_closes_nested_running_part(monkeypatch):
+    from tool import registry
+
+    user_id, session_id, parent_id = await _seed_scope()
+    body_started = asyncio.Event()
+    body_canceled = asyncio.Event()
+
+    async def hung(_args: StringArgs, _ctx: ToolContext) -> ToolResult:
+        body_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            body_canceled.set()
+
+    hung_tool = define_tool(
+        "nested_hung",
+        description="hung",
+        parameters=StringArgs,
+        execute=hung,
+        sandbox_required=False,
+        parallel_safe=True,
+    )
+    tools = {"batch": batch_tool, hung_tool.id: hung_tool}
+    runtime = assemble_tool_runtime(
+        tools,
+        mode="legacy_eager",
+        agent_name="build",
+    )
+    monkeypatch.setattr(registry, "get_tool", tools.get)
+
+    result, assistant = await _process_runtime_step(
+        monkeypatch,
+        runtime=runtime,
+        ctx=_context_for(runtime, session_id=session_id, user_id=user_id),
+        events=_tool_call(
+            "batch",
+            {
+                "invocations": [
+                    {"tool": hung_tool.id, "parameters": {"value": "wait"}}
+                ]
+            },
+            "call_batch_timeout",
+        ),
+        session_id=session_id,
+        user_id=user_id,
+        parent_id=parent_id,
+        tool_body_timeout_seconds=0.02,
+    )
+
+    assert body_started.is_set()
+    assert body_canceled.is_set()
+    assert result.completed_tool_parts[0].metadata["failure_code"] == "tool_timeout"
+    async with get_db_session() as db:
+        nested = (await db.execute(
+            select(Part).where(
+                Part.session_id == session_id,
+                Part.message_id == assistant.id,
+                Part.provider_dialect == "nested",
+            )
+        )).scalar_one()
+    assert nested.data["status"] == "error"
+    assert nested.data["metadata"]["failure_code"] == "nested_tool_canceled"
+
+
+@pytest.mark.asyncio
+async def test_batch_prepare_failure_closes_the_already_persisted_nested_part(
+    monkeypatch,
+):
+    user_id, session_id, parent_id = await _seed_scope()
+
+    failing_tool = define_tool(
+        "nested_prepare_failure",
+        description="prepare fails",
+        parameters=StringArgs,
+        execute=_ok,
+        sandbox_required=False,
+        parallel_safe=True,
+    )
+    runtime = assemble_tool_runtime(
+        {"batch": batch_tool, failing_tool.id: failing_tool},
+        mode="legacy_eager",
+        agent_name="build",
+    )
+    original_prepare = ToolHooks.prepare_execute
+
+    async def fail_nested_prepare(self, tool_id, *args, **kwargs):
+        if tool_id == failing_tool.id:
+            raise RuntimeError("injected nested preparation failure")
+        return await original_prepare(self, tool_id, *args, **kwargs)
+
+    monkeypatch.setattr(ToolHooks, "prepare_execute", fail_nested_prepare)
+
+    _result, assistant = await _process_runtime_step(
+        monkeypatch,
+        runtime=runtime,
+        ctx=_context_for(runtime, session_id=session_id, user_id=user_id),
+        events=_tool_call(
+            "batch",
+            {
+                "invocations": [
+                    {"tool": failing_tool.id, "parameters": {"value": "fail"}}
+                ]
+            },
+            "call_batch_prepare_failure",
+        ),
+        session_id=session_id,
+        user_id=user_id,
+        parent_id=parent_id,
+    )
+
+    async with get_db_session() as db:
+        nested = (await db.execute(
+            select(Part).where(
+                Part.session_id == session_id,
+                Part.message_id == assistant.id,
+                Part.provider_dialect == "nested",
+            )
+        )).scalar_one()
+    assert nested.data["status"] == "error"
+    assert nested.data["metadata"]["failure_code"] == "nested_tool_canceled"
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
+from agent.retry import RetryableError
 from agent.tool_payload import build_tool_definitions
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
@@ -186,32 +187,212 @@ def provider_api_base(model_id: str, *, config: Any | None = None) -> str:
             config = get_config()
         except Exception:
             return ""
+    provider_slot, payload = _provider_config_payload(model_id, config)
+    if payload is None:
+        return ""
+    endpoint = _configured_provider_api_base(payload)
+    if endpoint:
+        return endpoint
+    if provider_slot == "openai":
+        return OPENAI_DEFAULT_API_BASE
+    return ""
+
+
+def _provider_config_payload(
+    model_id: str,
+    config: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """Resolve the credential slot used by the LLM wire adapters.
+
+    ``ModelConfig.provider`` is the binding authority.  The model-id prefix is
+    only the documented legacy default when the catalogue entry omits it.
+    Returning a copied model dump prevents readiness inspection from mutating
+    live configuration.
+    """
+
+    model_config = next(
+        (
+            item for item in (getattr(config, "models", None) or [])
+            if str(getattr(item, "id", "") or "") == model_id
+        ),
+        None,
+    )
+    declared_provider = str(
+        getattr(model_config, "provider", "") or ""
+    ).strip()
+    provider_slot = declared_provider or (
+        model_id.split("/", 1)[0] if "/" in model_id else model_id
+    )
     providers = getattr(config, "provider", {})
-    provider_slot = model_id.split("/", 1)[0] if "/" in model_id else model_id
     provider_cfg = providers.get(provider_slot) if isinstance(providers, dict) else None
     if provider_cfg is None:
-        return ""
+        return provider_slot, None
     if hasattr(provider_cfg, "model_dump"):
-        payload = provider_cfg.model_dump(mode="json")
-    elif isinstance(provider_cfg, dict):
-        payload = dict(provider_cfg)
-    else:
-        return ""
+        return provider_slot, provider_cfg.model_dump(mode="json")
+    if isinstance(provider_cfg, dict):
+        return provider_slot, dict(provider_cfg)
+    return provider_slot, None
+
+
+def _configured_provider_api_base(payload: Mapping[str, Any]) -> str:
+    """Return only an explicitly configured endpoint, without defaults."""
+
     options = payload.get("options") or {}
     if not isinstance(options, dict):
         options = {}
-    endpoint = str(
+    return str(
         options.get("api_base")
         or options.get("base_url")
         or options.get("endpoint")
         or payload.get("base_url")
         or ""
     ).strip()
-    if endpoint:
-        return endpoint
-    if provider_slot == "openai":
-        return OPENAI_DEFAULT_API_BASE
-    return ""
+
+
+def _provider_kwargs_from_config(model_id: str, config: Any) -> dict[str, Any]:
+    """Build the exact secret-bearing kwargs used by the provider request.
+
+    This private value must never be logged or returned by a health endpoint.
+    Keeping construction here lets the public readiness projection validate
+    the real request inputs instead of maintaining a second approximation.
+    """
+
+    _provider_slot, payload = _provider_config_payload(model_id, config)
+    if payload is None:
+        return {}
+
+    kwargs: dict[str, Any] = {}
+    if payload.get("api_key"):
+        kwargs["api_key"] = payload["api_key"]
+    options = payload.get("options") or {}
+    if isinstance(options, dict):
+        kwargs.update(options)
+    api_base = provider_api_base(model_id, config=config)
+    if api_base:
+        # Canonicalize aliases such as options.base_url/endpoint to the key the
+        # direct Responses adapter actually consumes.
+        kwargs["api_base"] = api_base
+    return kwargs
+
+
+def provider_configuration_readiness(model_id: str, config: Any) -> dict[str, bool | str]:
+    """Return a secret-free configuration gate for one model provider.
+
+    No provider call is made.  The result deliberately contains only the
+    stable readiness contract; model ids, endpoint URLs and credentials are
+    excluded.  Provider requirements are protocol-specific and can be
+    extended here without changing the server readiness endpoint.
+    """
+
+    provider_slot, payload = _provider_config_payload(model_id, config)
+    if payload is None:
+        return {
+            "configured": False,
+            "ready": False,
+            "reason": "provider_missing",
+        }
+
+    kwargs = _provider_kwargs_from_config(model_id, config)
+    if not str(kwargs.get("api_key") or "").strip():
+        return {
+            "configured": True,
+            "ready": False,
+            "reason": "api_key_missing",
+        }
+
+    # OpenAI-compatible gateway deployments need an explicit route.  The
+    # request helper still supports the official OpenAI default for generic
+    # library use, but OpenBox's configured model catalogue includes gateway-
+    # hosted model names that the public endpoint does not provide.  Treating
+    # an omitted route as ready would therefore accept work that cannot run.
+    required_explicit_api_base = provider_slot in {"openai", "azure"}
+    if required_explicit_api_base and not _configured_provider_api_base(payload):
+        return {
+            "configured": True,
+            "ready": False,
+            "reason": "base_url_missing",
+        }
+
+    return {
+        "configured": True,
+        "ready": True,
+        "reason": "configured",
+    }
+
+
+def resolved_subagent_provider_binding(model_id: str, config: Any) -> dict[str, Any]:
+    """Return the explicit, secret-free Task-composition binding.
+
+    Capability acceptance must not reuse LiteLLM's provider/model-name
+    heuristics: those are request-routing conveniences, not durable promises.
+    The credential slot comes from ``ModelConfig.provider`` (with its documented
+    prefix fallback), and optional features come only from explicit model or
+    provider configuration.
+    """
+
+    model_config = next(
+        (
+            item for item in (getattr(config, "models", None) or [])
+            if str(getattr(item, "id", "") or "") == model_id
+        ),
+        None,
+    )
+    provider_slot, payload = _provider_config_payload(model_id, config)
+    providers = getattr(config, "provider", {})
+    provider_config = (
+        providers.get(provider_slot) if isinstance(providers, dict) else None
+    )
+
+    def declared_value(source: Any, field: str) -> Any:
+        if isinstance(source, Mapping):
+            return source.get(field)
+        return getattr(source, field, None)
+
+    provider_capabilities = (
+        declared_value(provider_config, "subagent_capabilities")
+        if provider_config is not None else None
+    )
+    provider_variants = (
+        declared_value(provider_config, "subagent_reasoning_variants")
+        if provider_config is not None else None
+    )
+    model_capabilities = (
+        declared_value(model_config, "subagent_capabilities")
+        if model_config is not None else None
+    )
+    model_variants = (
+        declared_value(model_config, "subagent_reasoning_variants")
+        if model_config is not None else None
+    )
+    provider_capability_set = set(provider_capabilities or [])
+    provider_variant_set = set(provider_variants or [])
+    declaration_consistent = not (
+        model_capabilities is not None
+        and not set(model_capabilities).issubset(provider_capability_set)
+    ) and not (
+        model_variants is not None
+        and not set(model_variants).issubset(provider_variant_set)
+    )
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else (provider_capabilities or [])
+    )
+    variants = (
+        model_variants
+        if model_variants is not None
+        else (provider_variants or [])
+    )
+    return {
+        "model_id": model_id,
+        "provider_id": provider_slot,
+        "api_base": provider_api_base(model_id, config=config),
+        "configured_provider": payload is not None,
+        "readiness": provider_configuration_readiness(model_id, config),
+        "declaration_consistent": declaration_consistent,
+        "capabilities": list(capabilities),
+        "reasoning_variants": list(variants),
+    }
 
 
 def _get_provider_kwargs(model_id: str) -> dict:
@@ -226,29 +407,7 @@ def _get_provider_kwargs(model_id: str) -> dict:
     except Exception:
         return {}
 
-    if not config.provider:
-        return {}
-
-    # Detect provider name from model_id: "provider/model" or "provider"
-    provider_name = model_id.split("/")[0] if "/" in model_id else model_id
-
-    provider_cfg = config.provider.get(provider_name)
-    if not provider_cfg:
-        return {}
-
-    kwargs: dict = {}
-    if provider_cfg.api_key:
-        kwargs["api_key"] = provider_cfg.api_key
-    # Pass through any extra options
-    if provider_cfg.options:
-        kwargs.update(provider_cfg.options)
-    api_base = provider_api_base(model_id, config=config)
-    if api_base:
-        # Canonicalize aliases such as options.base_url/endpoint to the key the
-        # direct Responses adapter actually consumes.
-        kwargs["api_base"] = api_base
-
-    return kwargs
+    return _provider_kwargs_from_config(model_id, config)
 
 
 def _repair_tool_name(tool_name: str, available_tools: dict[str, ToolInfo]) -> str | None:
@@ -807,6 +966,7 @@ async def _stream_responses_api(
     native_portable_system: list[str] | None = None,
     native_record_capability: Any | None = None,
     native_discovery_state: Any | None = None,
+    cache_key: str = "",
 ) -> AsyncIterator[dict]:
     """Stream LLM via OpenAI Responses API directly (for GPT-5.x reasoning).
 
@@ -819,6 +979,17 @@ async def _stream_responses_api(
     provider_kwargs = _get_provider_kwargs(model_id)
     api_key = provider_kwargs.get("api_key", "")
     api_base = provider_kwargs.get("api_base", "")
+
+    if not api_key:
+        provider_name = model_id.split("/", 1)[0] if "/" in model_id else "openai"
+        log.error("No api_key configured for Responses API provider %s", provider_name)
+        yield {
+            "type": "error",
+            "error": Exception(
+                f"No API key configured for provider '{provider_name}'"
+            ),
+        }
+        return
 
     if not api_base:
         log.error("No api_base configured for Responses API")
@@ -860,6 +1031,11 @@ async def _stream_responses_api(
         "stream": True,
         "max_output_tokens": _get_max_output_tokens(model_id),
     }
+    if cache_key:
+        # Responses cache affinity is request-level. The value is already a
+        # salted tenant/session digest; no raw identity crosses the provider
+        # boundary.
+        payload["prompt_cache_key"] = cache_key
     if api_tools:
         payload["tools"] = api_tools
         # Structured output is enforced by forcing a tool call, not by asking
@@ -1002,6 +1178,7 @@ async def _stream_responses_api(
                                 ),
                                 variant=variant,
                                 tool_choice=tool_choice,
+                                cache_key=cache_key,
                             ):
                                 yield event
                             return
@@ -1010,12 +1187,20 @@ async def _stream_responses_api(
                         resp.status_code,
                         body_text[:500],
                     )
-                    yield {
-                        "type": "error",
-                        "error": Exception(
-                            f"Responses API {resp.status_code}: {body_text[:200]}"
-                        ),
-                    }
+                    message = f"Responses API {resp.status_code}: {body_text[:200]}"
+                    if (
+                        resp.status_code == 408
+                        or resp.status_code == 429
+                        or resp.status_code >= 500
+                    ):
+                        provider_error: Exception = RetryableError(
+                            message,
+                            status_code=resp.status_code,
+                            headers=dict(resp.headers),
+                        )
+                    else:
+                        provider_error = Exception(message)
+                    yield {"type": "error", "error": provider_error}
                     return
 
                 async for line in resp.aiter_lines():
@@ -1337,6 +1522,7 @@ async def stream_llm(
     hooks: Any = None,
     variant: str | None = None,
     tool_choice: str | None = None,
+    cache_key: str = "",
 ) -> AsyncIterator[dict]:
     """Stream LLM responses using LiteLLM.
 
@@ -1364,12 +1550,21 @@ async def stream_llm(
             native_portable_system=ctx._native_portable_system,
             native_record_capability=ctx._native_record_capability,
             native_discovery_state=ctx,
+            cache_key=cache_key,
         ):
             yield event
         return
 
     # All other models: use LiteLLM Chat Completions
-    async for event in _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice):
+    async for event in _stream_litellm_direct(
+        model_id,
+        system,
+        messages,
+        tools,
+        variant=variant,
+        tool_choice=tool_choice,
+        cache_key=cache_key,
+    ):
         yield event
 
 
@@ -1508,6 +1703,7 @@ async def _stream_litellm_direct(
     tools: dict[str, ToolInfo],
     variant: str | None = None,
     tool_choice: str | None = None,
+    cache_key: str = "",
 ) -> AsyncIterator[dict]:
     """Stream LLM via LiteLLM. Only yields stream events — no tool execution.
 
@@ -1545,6 +1741,13 @@ async def _stream_litellm_direct(
         # Ensure the conversation ends with a user or tool message.
         if llm_messages and llm_messages[-1].get("role") == "assistant":
             llm_messages.append({"role": "user", "content": "Continue."})
+
+        # Serialize breakpoints only after system/history are merged and
+        # multimodal content is finalized. This is the first point where the
+        # actual provider dialect is known.
+        from agent.caching import apply_caching
+
+        llm_messages = apply_caching(llm_messages, model_id)
 
         # LiteLLM/Anthropic proxy compatibility: the same production builder
         # also owns the synthetic _noop definition so budget measurement cannot
@@ -1589,6 +1792,11 @@ async def _stream_litellm_direct(
         }
         if extra_body:
             call_kwargs["extra_body"] = extra_body
+        if provider == "openai" and cache_key:
+            # LiteLLM forwards this request-level OpenAI parameter. Putting it
+            # on a message is ineffective because the OpenAI transformer
+            # strips message cache metadata.
+            call_kwargs["prompt_cache_key"] = cache_key
         # Anthropic draws the thinking budget OUT of the output budget and
         # requires max_tokens to be strictly greater. The generic 32k default
         # happens to equal the "max" budget exactly, so the highest reasoning

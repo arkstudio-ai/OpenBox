@@ -45,7 +45,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, code, detail, meta)
 }
 
-async function doFetch(path: string, options: RequestInit, token: string | null): Promise<Response> {
+async function doFetchUrl(url: string, options: RequestInit, token: string | null): Promise<Response> {
   // A FormData body has to set its own Content-Type, because only the browser
   // knows the multipart boundary it generated. Forcing application/json here
   // left the server with a body it could not parse — an upload came back 422
@@ -56,7 +56,11 @@ async function doFetch(path: string, options: RequestInit, token: string | null)
     ...((options.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  return fetch(`${env.apiBase}${path}`, { ...options, headers, credentials: "include" })
+  return fetch(url, { ...options, headers, credentials: "include" })
+}
+
+async function doFetch(path: string, options: RequestInit, token: string | null): Promise<Response> {
+  return doFetchUrl(`${env.apiBase}${path}`, options, token)
 }
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -66,6 +70,28 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (res.status === 401 && token) {
     const newToken = await refreshAccessToken()
     if (newToken) res = await doFetch(path, options, newToken)
+  }
+
+  if (!res.ok) throw await toApiError(res)
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+/**
+ * Authenticated JSON request to an explicitly selected absolute origin.
+ * Used only for the dedicated preview plane: the access token stays in memory,
+ * while credentials:"include" lets that origin set its own HostOnly cookie.
+ */
+export async function requestAbsolute<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const parsed = new URL(url)
+  if (parsed.protocol !== "https:") throw new ApiError(0, "UNSAFE_ORIGIN", "HTTPS origin required")
+
+  const token = useAuthStore.getState().accessToken
+  let res = await doFetchUrl(parsed.href, options, token)
+
+  if (res.status === 401 && token) {
+    const newToken = await refreshAccessToken()
+    if (newToken) res = await doFetchUrl(parsed.href, options, newToken)
   }
 
   if (!res.ok) throw await toApiError(res)

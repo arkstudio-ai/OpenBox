@@ -17,13 +17,235 @@ catalogue without forking the backend.
 """
 from __future__ import annotations
 
-import json
+from collections.abc import Mapping
+from copy import deepcopy
 import os
+import re
 from typing import Any
 
 from core.log import create_logger
 
 log = create_logger("skill.catalog")
+
+
+_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_SERVER_OWNED_FIELDS = frozenset({
+    "catalog_id",
+    "category",
+    "community",
+    "installed",
+    "library_id",
+    "missing_mcp",
+    "publication_status",
+    "published_at",
+})
+_SKILL_URL_PREFIXES = ("https://", "http://", "git://", "ssh://", "git@")
+
+
+def _safe_log_id(value: object) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]", "?", str(value))[:128]
+
+
+def _required_catalog_text(value: object, field: str, *, limit: int = 128) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} is required")
+    result = value.strip()
+    if len(result) > limit:
+        raise ValueError(f"{field} must be at most {limit} characters")
+    return result
+
+
+def _safe_install_name(value: object, field: str = "name") -> str:
+    name = _required_catalog_text(value, field)
+    cleaned = name.replace(" ", "-")
+    if (
+        cleaned in {".", ".."}
+        or cleaned.startswith(".")
+        or "/" in cleaned
+        or "\\" in cleaned
+        or "\x00" in cleaned
+    ):
+        raise ValueError(f"{field} must be a single directory-safe name")
+    return cleaned
+
+
+def _string_list(value: object, field: str, *, limit: int = 128) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    result: list[str] = []
+    for raw in value:
+        item = _required_catalog_text(raw, field)
+        if item not in result:
+            result.append(item)
+        if len(result) > limit:
+            raise ValueError(f"{field} has too many entries")
+    return result
+
+
+def _optional_catalog_text(
+    value: object,
+    field: str,
+    *,
+    limit: int,
+) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    if len(value) > limit:
+        raise ValueError(f"{field} must be at most {limit} characters")
+    return value
+
+
+def _string_mapping(value: object, field: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field} must be an object")
+    result: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = _required_catalog_text(raw_key, f"{field} key")
+        if not isinstance(raw_value, str):
+            raise ValueError(f"{field}.{key} must be a string")
+        result[key] = raw_value
+    return result
+
+
+def _validated_skill_install(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("install must be an object")
+    url = value.get("url")
+    content = value.get("content")
+    if bool(url) == bool(content):
+        raise ValueError("skill install must contain exactly one of url or content")
+    result: dict[str, Any] = {}
+    if url:
+        candidate = _required_catalog_text(url, "install.url", limit=2048)
+        # The Action Server repeats this validation immediately before git
+        # clone. Keeping the catalogue check aligned prevents the store from
+        # advertising an entry that the authoritative installer will reject.
+        if not candidate.startswith(_SKILL_URL_PREFIXES):
+            raise ValueError("install.url uses an unsupported clone scheme")
+        result["url"] = candidate
+    else:
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("install.content is required")
+        # Catalogue JSON is returned to the browser. Bound inline packages so
+        # an operator typo cannot turn a listing request into an unbounded
+        # response; large packages belong in a reviewed git repository.
+        if len(content) > 512_000:
+            raise ValueError("install.content is too large")
+        result["content"] = content
+    if value.get("name") is not None:
+        result["name"] = _safe_install_name(value.get("name"), "install.name")
+    return result
+
+
+def _validated_mcp_config(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("config must be an object")
+    server_type = value.get("type", "stdio")
+    if server_type not in {"stdio", "remote"}:
+        raise ValueError("config.type must be stdio or remote")
+    result: dict[str, Any] = {"type": server_type}
+    if server_type == "stdio":
+        result["command"] = _required_catalog_text(
+            value.get("command"), "config.command", limit=2048
+        )
+        args = value.get("args", [])
+        if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
+            raise ValueError("config.args must be a list of strings")
+        result["args"] = list(args)
+        result["env"] = _string_mapping(value.get("env"), "config.env")
+    else:
+        url = _required_catalog_text(value.get("url"), "config.url", limit=2048)
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("config.url must use http or https")
+        result["url"] = url
+        result["headers"] = _string_mapping(value.get("headers"), "config.headers")
+    timeout = value.get("timeout", 60)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 600:
+        raise ValueError("config.timeout must be an integer between 1 and 600")
+    result["timeout"] = timeout
+    return result
+
+
+def _validated_catalog_entry(raw: object, *, kind: str) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ValueError("entry must be an object")
+    entry = deepcopy(dict(raw))
+    entry_id = _required_catalog_text(entry.get("id"), "id")
+    if not _SAFE_ID.fullmatch(entry_id):
+        raise ValueError("id contains unsupported characters")
+    if entry_id.startswith("community:"):
+        # That namespace is resolved from immutable, owner-filtered database
+        # snapshots. An operator overlay must not impersonate that provenance.
+        raise ValueError("community: ids are reserved")
+    declared_kind = entry.get("kind", kind)
+    if declared_kind != kind:
+        raise ValueError(f"entry kind must be {kind}")
+    entry["id"] = entry_id
+    entry["kind"] = kind
+    entry["name"] = _safe_install_name(entry.get("name"))
+    entry["title"] = _required_catalog_text(
+        entry.get("title") or entry["name"], "title", limit=256
+    )
+    for field, limit in (
+        ("description", 8_000),
+        ("publisher", 256),
+        ("icon", 32),
+    ):
+        if field in entry:
+            entry[field] = _optional_catalog_text(entry.get(field), field, limit=limit)
+    if "homepage" in entry:
+        homepage = _optional_catalog_text(
+            entry.get("homepage"), "homepage", limit=2048
+        )
+        if homepage and not homepage.startswith(("https://", "http://")):
+            raise ValueError("homepage must use http or https")
+        entry["homepage"] = homepage
+    for field in _SERVER_OWNED_FIELDS:
+        entry.pop(field, None)
+    if "tags" in entry:
+        entry["tags"] = _string_list(entry.get("tags"), "tags", limit=32)
+    if kind == "skill":
+        entry["requires_mcp"] = _string_list(
+            entry.get("requires_mcp"), "requires_mcp", limit=32
+        )
+        if any(not _SAFE_ID.fullmatch(dep) for dep in entry["requires_mcp"]):
+            raise ValueError("requires_mcp contains an invalid catalog id")
+        install = _validated_skill_install(entry.get("install"))
+        # Resolve every catalogue Skill to one deterministic directory. Without
+        # this, a URL basename or inline frontmatter could differ from the name
+        # used by GET /catalog to calculate installed state and conflicts.
+        install.setdefault("name", entry["name"])
+        entry["install"] = install
+    else:
+        entry["config"] = _validated_mcp_config(entry.get("config"))
+        required_env = entry.get("required_env", [])
+        if not isinstance(required_env, list):
+            raise ValueError("required_env must be a list")
+        normalized_required_env: list[dict[str, Any]] = []
+        for raw_env in required_env:
+            if not isinstance(raw_env, Mapping):
+                raise ValueError("required_env entries must be objects")
+            key = _required_catalog_text(raw_env.get("key"), "required_env.key")
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError("required_env.key must be an environment variable name")
+            secret = raw_env.get("secret", False)
+            if not isinstance(secret, bool):
+                raise ValueError("required_env.secret must be a boolean")
+            normalized_required_env.append({
+                "key": key,
+                "label": _required_catalog_text(
+                    raw_env.get("label") or key, "required_env.label", limit=256
+                ),
+                "secret": secret,
+            })
+        entry["required_env"] = normalized_required_env
+    return entry
 
 
 #: MCP servers. `config` is exactly the body POST /api/agent/mcp accepts, so the
@@ -350,20 +572,73 @@ session.
 ]
 
 
-def _merge_remote(entries: list[dict], remote: list[dict]) -> list[dict]:
-    """Overlay a remote catalogue onto the built-in one, keyed by id."""
-    by_id = {e["id"]: dict(e) for e in entries}
+def _merge_remote(
+    entries: list[dict],
+    remote: object,
+    *,
+    kind: str,
+) -> list[dict]:
+    """Overlay validated remote entries, retaining a valid built-in on error."""
+    by_id = {e["id"]: deepcopy(e) for e in entries}
+    if not isinstance(remote, list):
+        return list(by_id.values())
     for item in remote:
         if not isinstance(item, dict) or not item.get("id"):
             continue
-        by_id[item["id"]] = {**by_id.get(item["id"], {}), **item}
+        item_id = str(item["id"])
+        candidate = {**by_id.get(item_id, {}), **item}
+        try:
+            by_id[item_id] = _validated_catalog_entry(candidate, kind=kind)
+        except ValueError as exc:
+            # Log identity and reason only. Inline Skill content, MCP headers
+            # and environment values must never enter backend logs.
+            log.warning(
+                "Ignored invalid remote catalog entry kind=%s id=%s reason=%s",
+                kind,
+                _safe_log_id(item_id),
+                str(exc),
+            )
     return list(by_id.values())
 
 
+def _filter_installable_skills(
+    skills: list[dict],
+    mcp: list[dict],
+    *,
+    builtin_skills: Mapping[str, dict] | None = None,
+) -> list[dict]:
+    """Keep only skills whose declared catalogue dependencies can resolve."""
+    mcp_ids = {entry["id"] for entry in mcp}
+    result: list[dict] = []
+    for entry in skills:
+        missing = [dep for dep in entry.get("requires_mcp", []) if dep not in mcp_ids]
+        if not missing:
+            result.append(entry)
+            continue
+        fallback = (builtin_skills or {}).get(entry["id"])
+        if fallback is not None and fallback != entry:
+            fallback_missing = [
+                dep for dep in fallback.get("requires_mcp", []) if dep not in mcp_ids
+            ]
+            if not fallback_missing:
+                result.append(deepcopy(fallback))
+                log.warning(
+                    "Ignored remote skill override with unknown MCP dependencies id=%s",
+                    _safe_log_id(entry["id"]),
+                )
+                continue
+        log.warning(
+            "Ignored catalog skill with unknown MCP dependencies id=%s",
+            _safe_log_id(entry["id"]),
+        )
+    return result
+
+
 async def load_catalog() -> dict[str, list[dict]]:
-    """The catalogue the store renders: built-in, plus any operator overlay."""
-    skills = [dict(e) for e in SKILL_CATALOG]
-    mcp = [dict(e) for e in MCP_CATALOG]
+    """Return the one validated catalogue used by both listing and install."""
+    skills = [_validated_catalog_entry(e, kind="skill") for e in SKILL_CATALOG]
+    builtin_skills = {entry["id"]: deepcopy(entry) for entry in skills}
+    mcp = [_validated_catalog_entry(e, kind="mcp") for e in MCP_CATALOG]
 
     url = os.environ.get("OPENBOX_CATALOG_URL", "").strip()
     if url:
@@ -375,22 +650,58 @@ async def load_catalog() -> dict[str, list[dict]]:
                 resp.raise_for_status()
                 data = resp.json()
             if isinstance(data, dict):
-                skills = _merge_remote(skills, data.get("skills") or [])
-                mcp = _merge_remote(mcp, data.get("mcp") or [])
+                skills = _merge_remote(
+                    skills,
+                    data.get("skills") or [],
+                    kind="skill",
+                )
+                mcp = _merge_remote(
+                    mcp,
+                    data.get("mcp") or [],
+                    kind="mcp",
+                )
                 log.info(f"Merged remote catalog from {url}")
         except Exception as e:
             # A reachable store beats an empty one: the built-in catalogue is
             # still perfectly installable without the overlay.
             log.warning(f"Could not load catalog from {url}: {e}")
 
+    skills = _filter_installable_skills(
+        skills,
+        mcp,
+        builtin_skills=builtin_skills,
+    )
     return {"skills": skills, "mcp": mcp}
 
 
-def catalog_index() -> dict[str, dict]:
-    """Built-in entries keyed by ``kind:id``, for resolving dependencies."""
+def catalog_index(catalog: Mapping[str, object] | None = None) -> dict[str, dict]:
+    """Index one validated catalogue snapshot for install and dependencies.
+
+    Passing the result of :func:`load_catalog` is the production path. The
+    no-argument form remains useful to offline tooling and returns the same
+    validated built-in baseline rather than a second, weaker representation.
+    """
+    if catalog is None:
+        skills = [_validated_catalog_entry(e, kind="skill") for e in SKILL_CATALOG]
+        mcp = [_validated_catalog_entry(e, kind="mcp") for e in MCP_CATALOG]
+    else:
+        raw_skills = catalog.get("skills", [])
+        raw_mcp = catalog.get("mcp", [])
+        if not isinstance(raw_skills, list) or not isinstance(raw_mcp, list):
+            raise ValueError("catalog skills and mcp must be lists")
+        # load_catalog already validated these rows. Revalidation makes this
+        # public helper safe for tests/offline callers that construct a snapshot.
+        skills = [_validated_catalog_entry(e, kind="skill") for e in raw_skills]
+        mcp = [_validated_catalog_entry(e, kind="mcp") for e in raw_mcp]
+
+    installable_skills = _filter_installable_skills(skills, mcp)
+    if len(installable_skills) != len(skills):
+        raise ValueError("catalog contains unresolved skill dependencies")
+    skills = installable_skills
+
     index: dict[str, dict] = {}
-    for entry in SKILL_CATALOG:
+    for entry in skills:
         index[f"skill:{entry['id']}"] = entry
-    for entry in MCP_CATALOG:
+    for entry in mcp:
         index[f"mcp:{entry['id']}"] = entry
     return index

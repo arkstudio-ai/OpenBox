@@ -26,6 +26,10 @@ export interface UserTurn {
 /** Identity + meta of the turn's *last* assistant message. */
 export interface AssistantTurnMeta {
   messageId: string
+  /** Immutable model recorded on this assistant message.  Never derive this
+   *  from the Session's current picker: later model switches must not rewrite
+   *  the badge on an older answer. */
+  model?: string | null
   finish?: string | null
   tokens?: TokenUsage | null
   reaction?: MessageReaction
@@ -46,6 +50,7 @@ export type Turn = UserTurn | AssistantTurn
 function metaOf(m: MessageWithParts): AssistantTurnMeta {
   return {
     messageId: m.id,
+    model: m.model,
     finish: m.finish,
     tokens: m.tokens,
     reaction: m.reaction,
@@ -362,4 +367,3 @@ export function buildTurnView(parts: MessagePart[]): TurnView {
   }
   return view
 }
-

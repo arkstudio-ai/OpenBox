@@ -5,10 +5,24 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../shared/api/auth_store.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/models/skill.dart';
+
+/// A catalogue write can commit its configuration while the follow-up MCP
+/// connection fails.  The backend reports that as HTTP 200 with an installed
+/// entry whose status is `error`, so transport success alone is not success for
+/// the person waiting in the install sheet.
+class McpCatalogInstallException implements Exception {
+  const McpCatalogInstallException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
 
 /// Skill-centre transport + providers (web `features/skills-center/api/*`).
 /// Screens never talk to Dio directly (mirrors the web §7 rule).
@@ -60,12 +74,34 @@ class SkillsApi {
     List<String> withMcp = const [],
     Map<String, Map<String, String>> env = const {},
   }) async {
-    await _dio.post<dynamic>('/api/agent/catalog/install', data: {
-      'id': id,
-      'kind': kind,
-      'with_mcp': withMcp,
-      'env': env,
-    });
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/agent/catalog/install',
+      data: {'id': id, 'kind': kind, 'with_mcp': withMcp, 'env': env},
+    );
+
+    final failures = <String>[];
+    for (final raw in asList(response.data?['installed'])) {
+      final installed = asMap(raw);
+      if (installed['kind'] != 'mcp' || installed['status'] != 'error') {
+        continue;
+      }
+      final rawName = (asString(installed['name']) ?? 'unknown').trim();
+      final name = rawName.length > 120
+          ? '${rawName.substring(0, 120)}…'
+          : rawName;
+      final rawReason = (asString(installed['error']) ?? '').trim();
+      final reason = rawReason.length > 500
+          ? '${rawReason.substring(0, 500)}…'
+          : rawReason;
+      failures.add(
+        reason.isEmpty
+            ? "MCP server '$name' failed to connect."
+            : "MCP server '$name' failed to connect: $reason",
+      );
+    }
+    if (failures.isNotEmpty) {
+      throw McpCatalogInstallException(failures.join('\n'));
+    }
   }
 
   /// Configure and connect are separate calls; a server that is configured
@@ -196,37 +232,64 @@ String? _dispositionFilename(String? value) {
 final skillsApiProvider =
     Provider<SkillsApi>((ref) => SkillsApi(ref.watch(apiDioProvider)));
 
-/// Bumped after every write — an install moves more than one list, so all
-/// three refetch together (web `useRefreshAll`).
-final skillsRevisionProvider = StateProvider<int>((ref) => 0);
-
-void bumpSkills(WidgetRef ref) =>
-    ref.read(skillsRevisionProvider.notifier).state++;
-
-/// A skill can be created by an agent while this route is unmounted, so the
-/// list always refetches rather than serving a stale cache.
-final installedSkillsProvider = FutureProvider<List<InstalledSkill>>((ref) {
-  ref.watch(skillsRevisionProvider);
-  return ref.watch(skillsApiProvider).listSkills();
+/// The account whose Skill Centre state the current widget tree may consume.
+/// Keeping this as a provider makes the auth dependency explicit and gives
+/// tests one production selector to exercise during A -> signed-out -> B.
+final skillsAccountProvider = Provider<String?>((ref) {
+  return ref.watch(authProvider.select((state) => state.user?.id));
 });
 
-final mcpServersProvider = FutureProvider<List<McpServer>>((ref) {
-  ref.watch(skillsRevisionProvider);
-  return ref.watch(skillsApiProvider).listServers();
-});
-
-final skillCatalogProvider = FutureProvider<Catalog>((ref) {
-  ref.watch(skillsRevisionProvider);
-  return ref.watch(skillsApiProvider).catalog();
-});
-
-final skillProjectsProvider = FutureProvider<List<(String, String)>>(
-  (ref) => ref.watch(skillsApiProvider).listProjects(),
+/// Bumped after every write — an install moves more than one list, so all three
+/// refetch together. Revisions are account-scoped so a write by B never revives
+/// or mutates a retained A cache entry.
+final skillsRevisionProvider = StateProvider.autoDispose.family<int, String?>(
+  (ref, userId) => 0,
 );
+
+void bumpSkills(WidgetRef ref) {
+  final userId = ref.read(skillsAccountProvider);
+  if (userId == null) return;
+  ref.read(skillsRevisionProvider(userId).notifier).state++;
+}
+
+/// Every server-backed cache is a family keyed by the authenticated account.
+/// On A -> B, the screen watches B's fresh AsyncLoading rather than an async
+/// refresh of A's provider (which Riverpod may otherwise retain as previous
+/// data). autoDispose also gives route remounts a real refetch.
+final installedSkillsProvider = FutureProvider.autoDispose
+    .family<List<InstalledSkill>, String?>((ref, userId) async {
+      ref.watch(skillsRevisionProvider(userId));
+      if (userId == null) return const <InstalledSkill>[];
+      return ref.watch(skillsApiProvider).listSkills();
+    });
+
+final mcpServersProvider = FutureProvider.autoDispose
+    .family<List<McpServer>, String?>((ref, userId) async {
+      ref.watch(skillsRevisionProvider(userId));
+      if (userId == null) return const <McpServer>[];
+      return ref.watch(skillsApiProvider).listServers();
+    });
+
+final skillCatalogProvider = FutureProvider.autoDispose
+    .family<Catalog, String?>((ref, userId) async {
+      ref.watch(skillsRevisionProvider(userId));
+      if (userId == null) return const Catalog();
+      return ref.watch(skillsApiProvider).catalog();
+    });
+
+final skillProjectsProvider = FutureProvider.autoDispose
+    .family<List<(String, String)>, String?>((ref, userId) async {
+      if (userId == null) return const <(String, String)>[];
+      return ref.watch(skillsApiProvider).listProjects();
+    });
 
 /// One write at a time, and the last failure — shared by the screen and by
 /// whichever sheet is open, because a modal route builds once and would
 /// otherwise never see the screen's own state change.
-final skillsBusyProvider = StateProvider<bool>((ref) => false);
+final skillsBusyProvider = StateProvider.autoDispose.family<bool, String?>(
+  (ref, userId) => false,
+);
 
-final skillsErrorProvider = StateProvider<String?>((ref) => null);
+final skillsErrorProvider = StateProvider.autoDispose.family<String?, String?>(
+  (ref, userId) => null,
+);

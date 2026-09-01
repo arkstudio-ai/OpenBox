@@ -139,7 +139,14 @@ export default function ChatRoute() {
           <Spinner className="size-6" />
         </div>
       ) : (
-        <ChatFlow turns={turns} sessionId={sessionId} busy={busy} footer={footer} onStop={stop} retry={retry} />
+        <ChatFlow
+          turns={turns}
+          sessionId={sessionId}
+          busy={busy}
+          footer={footer}
+          onStop={stop}
+          retry={retry}
+        />
       )}
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
@@ -156,6 +163,7 @@ export default function ChatRoute() {
         sessionModel={session.data?.model}
         sessionVideoModel={session.data?.video_model}
         sessionKey={sessionId}
+        projectId={session.data?.project_id}
         contextTokens={session.data?.token_usage?.context ?? 0}
         contextLimit={session.data?.token_usage?.limit ?? 0}
         agents={agents ?? EMPTY_AGENTS}

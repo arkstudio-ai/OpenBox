@@ -81,3 +81,57 @@ async def test_append_failure_is_swallowed(monkeypatch):
     import sandbox
     monkeypatch.setattr(sandbox, "sandbox_manager", BrokenManager())
     assert await append_run_log("sess_t", "u1", _job(), "entry\n") is False
+
+
+async def test_delivery_marker_makes_ambiguous_retry_idempotent(
+    monkeypatch,
+    tmp_path,
+):
+    import base64
+    import shlex
+    from types import SimpleNamespace
+
+    class FakeClient:
+        async def execute(self, command, timeout=30, workdir="/workspace"):
+            args = shlex.split(command)
+            path, marker, block, header = [
+                base64.b64decode(value).decode("utf-8")
+                for value in args[3:7]
+            ]
+            from pathlib import Path
+
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            existing = target.read_text() if target.exists() else ""
+            target.write_text(
+                existing
+                + (header if not existing else "")
+                + ("" if marker in existing else block)
+            )
+            return SimpleNamespace(exit_code=0, stdout="", stderr="")
+
+    class FakeManager:
+        async def get_client(self, sid, *, user_id):
+            return FakeClient()
+
+        async def get_session_workdir(self, sid):
+            return str(tmp_path)
+
+    import sandbox
+    monkeypatch.setattr(sandbox, "sandbox_manager", FakeManager())
+
+    kwargs = {
+        "delivery_id": "cron-delivery-stable",
+        "filename_override": "cron/2026-08-26.md",
+    }
+    assert await append_run_log(
+        "sess_t", "u1", _job(), "entry-once\n", "zh-CN", **kwargs
+    )
+    # Simulates process death after the file append but before outbox ack.
+    assert await append_run_log(
+        "sess_t", "u1", _job(), "entry-once\n", "zh-CN", **kwargs
+    )
+
+    content = (tmp_path / "cron" / "2026-08-26.md").read_text()
+    assert content.count("openbox-cron-delivery:cron-delivery-stable") == 1
+    assert content.count("entry-once") == 1

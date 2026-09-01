@@ -59,7 +59,12 @@ async def create_project(
         from sandbox import sandbox_manager
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if client:
-            await workspace.ensure_directory(client, project.slug)
+            await workspace.ensure_directory(
+                client,
+                project.slug,
+                user_id=user_id,
+                project_id=project.id,
+            )
     except Exception as e:
         log.debug(f"Deferred directory creation for {project.slug}: {e}")
 

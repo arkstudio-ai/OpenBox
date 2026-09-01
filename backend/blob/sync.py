@@ -17,7 +17,8 @@ from core.log import create_logger
 
 log = create_logger("blob.sync")
 
-# Base path for local project caches — must match docker.py bind mount path
+# Base path for optional backend-side blob caches. Agent project files live on
+# WUYING and are not mounted into the backend process.
 _data_home = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
 LOCAL_CACHE_BASE = Path(_data_home) / "openbox" / "cache"
 

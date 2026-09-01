@@ -43,7 +43,15 @@ def test_responses_tool_item_fits_description_budget(tool, limit):
     ("tool", "properties", "required"),
     [
         (todo_write_tool, {"todos"}, {"todos"}),
-        (task_tool, {"description", "prompt", "subagent_type"}, {"description", "prompt"}),
+        (
+            task_tool,
+            {
+                "action", "description", "prompt", "subagent_type",
+                "lifecycle", "task_id", "model", "reasoning", "persona",
+                "tools", "output_schema",
+            },
+            set(),
+        ),
         (bash_tool, {"command", "timeout", "description"}, {"command"}),
         (batch_tool, {"invocations"}, {"invocations"}),
     ],
@@ -54,7 +62,7 @@ def test_description_slimming_does_not_remove_tool_schema(tool, properties, requ
 
     assert schema["type"] == "object"
     assert set(schema["properties"]) == properties
-    assert set(schema["required"]) == required
+    assert set(schema.get("required", ())) == required
 
 
 def test_computer_union_schema_is_preserved():

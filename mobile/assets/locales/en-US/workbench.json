@@ -51,6 +51,7 @@
     "failed": "The page failed to load"
   },
   "files": {
+    "projectRoot": "Project",
     "filter": "Filter files…",
     "fileList": "File list",
     "copyPath": "Copy path",

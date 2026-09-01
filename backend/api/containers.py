@@ -1,17 +1,17 @@
-import json
 import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
-from sse_starlette.sse import EventSourceResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 
 from auth.middleware import get_current_user, require_admin
+from auth.preview_origin import origin_is_allowed, preview_origin_host, request_host
 from sandbox import provider
 from models.container import (
-    ContainerInfo,
     ContainerListResponse,
     CreateContainerRequest,
     ImageStatusResponse,
+    PublicContainerInfo,
     SuccessResponse,
 )
 
@@ -19,30 +19,88 @@ router = APIRouter(prefix="/api/containers", tags=["containers"], dependencies=[
 
 # Preview proxy: separate router with preview token auth (no JWT — browser accesses via URL)
 preview_router = APIRouter(prefix="/api/containers", tags=["preview"])
+preview_config_router = APIRouter(
+    prefix="/api/preview",
+    tags=["preview"],
+    dependencies=[Depends(get_current_user)],
+)
+
+PREVIEW_COOKIE_NAME = "openbox_preview_token"
+
+
+@preview_config_router.get("/config")
+async def get_preview_config(response: Response):
+    """Publish the non-secret navigation contract from the control plane."""
+    from core.config import get_config
+
+    origin = get_config().preview_public_origin
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "mode": "isolated_origin" if origin else "sandboxed_same_origin",
+        "origin": origin or None,
+    }
+
+
+def _preview_cookie_path(container_id: str, port: int) -> str:
+    """Scope a preview credential to one container and one exposed port."""
+    return f"/api/containers/{container_id}/preview/{port}"
+
+
+def _without_preview_cookie(raw_cookie: str) -> str:
+    """Remove the proxy credential while preserving application cookies."""
+    kept: list[str] = []
+    for item in raw_cookie.split(";"):
+        name, separator, _value = item.strip().partition("=")
+        if separator and name == PREVIEW_COOKIE_NAME:
+            continue
+        if item.strip():
+            kept.append(item.strip())
+    return "; ".join(kept)
+
+
+def _without_preview_query(url: str) -> str:
+    """Remove preview credentials embedded in a URL such as Referer."""
+    parsed = urlsplit(url)
+    query = urlencode(
+        [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key != "_pt"
+        ]
+    )
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
 
 
 @router.get("/sandbox-image/status", response_model=ImageStatusResponse)
 async def check_sandbox_image(current_user: dict = Depends(require_admin)):
-    image = provider.config.sandbox_image
-    exists = provider.image_exists(image)
-    return ImageStatusResponse(exists=exists, image=image)
+    """Compatibility projection for clients that still show an image gate.
+
+    WUYING is pre-provisioned and has no user-buildable sandbox image. Report
+    the configured desktop as available instead of reaching into the removed
+    Docker provider and raising a 500.
+    """
+    from core.config import get_config
+
+    config = get_config()
+    image = f"wuying:{config.wuying_desktop_id or 'desktop'}"
+    return ImageStatusResponse(
+        exists=bool(config.wuying_desktop_id and config.wuying_endpoint),
+        image=image,
+    )
 
 
 @router.post("/sandbox-image/build")
 async def build_sandbox_image(current_user: dict = Depends(require_admin)):
-    if not provider.supports_build:
-        async def not_supported():
-            yield {"data": json.dumps({"step": "error", "message": "Image build not supported in this provider"})}
-        return EventSourceResponse(not_supported())
-
-    async def event_stream():
-        async for event in provider.build_sandbox_image():
-            yield {"data": json.dumps(event)}
-
-    return EventSourceResponse(event_stream())
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "WUYING system components are provisioned by the controlled "
+            "deployment workflow; runtime image builds are not supported"
+        ),
+    )
 
 
-@router.post("", response_model=ContainerInfo, status_code=201)
+@router.post("", response_model=PublicContainerInfo, status_code=201)
 async def create_container(req: CreateContainerRequest, current_user: dict = Depends(get_current_user)):
     from auth.quota import check_container_quota
     from core.config import get_config
@@ -102,7 +160,7 @@ async def list_all_containers(current_user: dict = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"Failed to query containers: {e}")
 
 
-@router.get("/{container_id}", response_model=ContainerInfo)
+@router.get("/{container_id}", response_model=PublicContainerInfo)
 async def get_container(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
         return await provider.get_container(container_id, user_id=current_user["user_id"])
@@ -162,8 +220,23 @@ async def get_listening_ports(container_id: str, current_user: dict = Depends(ge
 
 
 @router.post("/{container_id}/preview-token")
-async def create_preview_access_token(container_id: str, port: int, current_user: dict = Depends(get_current_user)):
-    """Create short-lived preview token bound to user + container + port."""
+async def create_preview_access_token(
+    request: Request,
+    container_id: str,
+    port: int = Query(..., ge=1, le=65535),
+    current_user: dict = Depends(get_current_user),
+):
+    """Set a short-lived preview cookie bound to user + container + port."""
+    from core.config import get_config
+
+    config = get_config()
+    preview_origin = config.preview_public_origin
+    if preview_origin:
+        if request_host(request.scope.get("headers", ())) != preview_origin_host(preview_origin):
+            raise HTTPException(status_code=404, detail="Not found")
+        if not origin_is_allowed(request.headers.get("origin", ""), config.cors_origins):
+            raise HTTPException(status_code=403, detail="Invalid preview issuer origin")
+
     user_id = current_user["user_id"]
     try:
         await provider.get_container(container_id, user_id=user_id)
@@ -172,15 +245,30 @@ async def create_preview_access_token(container_id: str, port: int, current_user
     except PermissionError:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    from auth.preview_token import create_preview_token
+    from auth.preview_token import PREVIEW_TOKEN_TTL, create_preview_token
+
     token = await create_preview_token(user_id, container_id, port)
-    return {
-        "token": token,
-        "url": f"/api/containers/{container_id}/preview/{port}/?_pt={token}",
-    }
+    preview_path = f"/api/containers/{container_id}/preview/{port}/"
+    response = JSONResponse(
+        {
+            "url": f"{preview_origin}{preview_path}" if preview_origin else preview_path,
+            "mode": "isolated_origin" if preview_origin else "sandboxed_same_origin",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        key=PREVIEW_COOKIE_NAME,
+        value=token,
+        max_age=PREVIEW_TOKEN_TTL,
+        path=_preview_cookie_path(container_id, port),
+        httponly=True,
+        secure=bool(preview_origin) or request.url.scheme == "https",
+        samesite="none" if preview_origin else "lax",
+    )
+    return response
 
 
-# ── Preview Proxy (no auth — container is ephemeral) ──
+# ── Preview Proxy (short-lived preview-token authentication) ──
 
 @preview_router.api_route(
     "/{container_id}/preview/{port:int}/{path:path}",
@@ -193,23 +281,67 @@ async def create_preview_access_token(container_id: str, port: int, current_user
 async def preview_proxy(request: Request, container_id: str, port: int, path: str = ""):
     """Proxy requests to a user application running inside the container on the given port.
 
-    NOTE: Preview proxy is intentionally open — NO authentication, NO token required.
-    Do NOT add auth here. Browser loads these URLs directly (iframes, stylesheets,
-    scripts, fonts, source maps, HMR) and cannot attach Authorization headers.
-    Container sandboxes are ephemeral and network-isolated per-user, so the risk is low.
+    The authenticated management request that creates the preview sets an
+    HttpOnly cookie scoped to this exact container/port. Every request
+    revalidates the opaque token so expiry/revocation takes effect immediately.
     """
+    from auth.preview_token import (
+        get_preview_token_claims,
+    )
+
+    token = request.cookies.get(PREVIEW_COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=401, detail="Preview token required")
+
+    claims = await get_preview_token_claims(token)
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired preview token")
+    if claims["container_id"] != container_id or claims["port"] != port:
+        raise HTTPException(
+            status_code=403,
+            detail="Preview token is not valid for this container or port",
+        )
+
     try:
-        info = await provider.get_container(container_id)
+        info = await provider.get_container(container_id, user_id=claims["user_id"])
     except ValueError:
         raise HTTPException(status_code=404, detail="Container not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
+    # A legacy or user-supplied `_pt` parameter is never a credential and must
+    # not reach sandbox code. Preserve all other query parameters, including
+    # duplicates.
+    query_items = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key != "_pt"
+    ]
     proxy_url = f"http://{info.host}:{info.port}/proxy/{port}/{path}"
-    if request.url.query:
-        proxy_url += f"?{request.url.query}"
+    if query_items:
+        proxy_url += f"?{urlencode(query_items)}"
 
     body = await request.body()
-    headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("host", "connection")}
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower()
+        not in (
+            "host",
+            "connection",
+            "cookie",
+            "authorization",
+            "proxy-authorization",
+            "referer",
+            "x-api-key",
+        )
+    }
+    application_cookie = _without_preview_cookie(request.headers.get("cookie", ""))
+    if application_cookie:
+        headers["cookie"] = application_cookie
+    referer = _without_preview_query(request.headers.get("referer", ""))
+    if referer:
+        headers["referer"] = referer
     headers["X-API-Key"] = info.api_key or ""
 
     import httpx
@@ -221,8 +353,22 @@ async def preview_proxy(request: Request, container_id: str, port: int, path: st
                 headers=headers,
                 content=body,
             )
-        excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
+        # Sandbox applications do not get to mutate browser state owned by the
+        # platform origin. Dedicated origins limit the blast radius, while the
+        # same filtering also protects the safe fallback mode.
+        excluded = {
+            "transfer-encoding",
+            "connection",
+            "content-encoding",
+            "content-length",
+            "set-cookie",
+            "clear-site-data",
+            "service-worker-allowed",
+            "cache-control",
+            "expires",
+        }
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+        resp_headers["Cache-Control"] = "private, no-store"
 
         content = resp.content
         content_type = resp.headers.get("content-type", "")

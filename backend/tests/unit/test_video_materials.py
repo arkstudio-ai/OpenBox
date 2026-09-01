@@ -112,7 +112,8 @@ async def test_liveness_session_hides_polling_token_and_enforces_owner(monkeypat
     user_id = await _user("liveness")
     monkeypatch.setattr(material_mod, "configured_material_target", _target)
 
-    async def create_call(_target_value, action, body):
+    async def create_call(_target_value, action, body, **kwargs):
+        assert kwargs["operation_key"].startswith("openbox-material-")
         assert action == "CreateVisualValidateSession"
         assert body == {}
         return {
@@ -224,7 +225,7 @@ async def test_verified_asset_is_uploaded_once_and_reused(monkeypatch):
 
     calls: list[tuple[str, dict]] = []
 
-    async def provider_call(_target_value, action, body):
+    async def provider_call(_target_value, action, body, **_kwargs):
         calls.append((action, body))
         if action == "CreateAsset":
             assert body == {
@@ -263,7 +264,8 @@ async def test_aigc_material_group_is_private_per_user_and_reused(monkeypatch):
     provider_group_id = f"group-aigc-{suffix}"
     calls: list[tuple[str, dict]] = []
 
-    async def provider_call(_target_value, action, body):
+    async def provider_call(_target_value, action, body, **kwargs):
+        assert kwargs["operation_key"].startswith("openbox-material-")
         calls.append((action, body))
         if action == "ListAssetGroups":
             assert body["Filter"]["GroupType"] == "AIGC"

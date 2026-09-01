@@ -1,7 +1,16 @@
 """Cron jobs and runs ORM models."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Integer, Index, Text, text
+from sqlalchemy import (
+    String,
+    Boolean,
+    Integer,
+    BigInteger,
+    Index,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -44,6 +53,16 @@ class CronJob(Base):
     next_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     running_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Durable scheduler ownership. ``running_at`` remains the public/product
+    # marker; these fields decide which backend replica is allowed to execute
+    # and, critically, which result is allowed to clear/update the job.
+    run_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    run_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    run_owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -84,6 +103,8 @@ class CronJob(Base):
         ),
         # Project's jobs
         Index("ix_cron_jobs_project", "project_id"),
+        # Startup recovery and competing schedulers only inspect expired leases.
+        Index("ix_cron_jobs_lease", "lease_expires_at"),
     )
 
 
@@ -97,6 +118,11 @@ class CronRun(Base):
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     temp_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Claim identity that created this run. Recovery uses it to mark only the
+    # expired run, never a newer run for the same CronJob.
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    claim_owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
     # Execution state
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -130,10 +156,66 @@ class CronRun(Base):
         ),
         # Job history (newest first)
         Index("ix_cron_runs_job", "job_id", "started_at"),
+        Index("ix_cron_runs_claim", "job_id", "claim_generation"),
         # Cleanup query
         Index(
             "ix_cron_runs_cleanup",
             "started_at",
             postgresql_where=text("temp_session_id IS NOT NULL"),
+        ),
+    )
+
+
+class CronDeliveryOutbox(Base):
+    """Durable, claimed delivery work created by a fenced Cron settlement.
+
+    ``id`` is the externally visible delivery receipt.  It is stable for one
+    run/kind pair, so retries after an ambiguous crash can be deduplicated by
+    the local message/runlog sinks and by webhook receivers.
+    """
+
+    __tablename__ = "cron_delivery_outbox"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False)
+
+    # pending -> processing -> delivered.  An expired processing lease is
+    # claimable again; failed attempts return to pending with backoff.
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    available_at: Mapped[datetime] = mapped_column(nullable=False)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "kind", name="uq_cron_delivery_run_kind"),
+        Index(
+            "ix_cron_delivery_claim",
+            "state",
+            "available_at",
+            "claim_expires_at",
+        ),
+        Index("ix_cron_delivery_run", "run_id"),
+        Index(
+            "ix_cron_delivery_session",
+            "session_id",
+            "kind",
+            "state",
+            "available_at",
         ),
     )

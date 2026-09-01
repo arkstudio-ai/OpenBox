@@ -10,14 +10,16 @@ These load the container's action_server by source, with its absolute paths
 rebound into tmp_path, because it ships as a standalone script rather than an
 importable package.
 """
+import asyncio
 import io
+import multiprocessing
 import os
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 ACTION_SERVER = Path(__file__).resolve().parents[3] / "container" / "action_server.py"
 
@@ -144,6 +146,48 @@ def test_data_filter_refuses_absolute_symlink(server, tmp_path):
     assert not (server["_test_builtin_dir"] / "pwned.txt").exists()
 
 
+@pytest.mark.asyncio
+async def test_tar_upload_keeps_legacy_format_with_bounded_preflight(server):
+    name = "tar-helper"
+    blob = io.BytesIO()
+    with tarfile.open(fileobj=blob, mode="w") as bundle:
+        skill_md = _skill_md(name).encode()
+        info = tarfile.TarInfo(f"{name}/SKILL.md")
+        info.size = len(skill_md)
+        bundle.addfile(info, io.BytesIO(skill_md))
+        marker = b"legacy-tar"
+        info = tarfile.TarInfo(f"{name}/marker.txt")
+        info.size = len(marker)
+        bundle.addfile(info, io.BytesIO(marker))
+
+    installed = await server["upload_skill_archive"](
+        UploadFile(filename=f"{name}.tar", file=io.BytesIO(blob.getvalue())),
+        name,
+        False,
+        None,
+    )
+
+    assert installed["install_dir"] == name
+    assert (server["_test_skills_dir"] / name / "marker.txt").read_bytes() == marker
+
+
+@pytest.mark.asyncio
+async def test_tar_link_is_rejected_by_endpoint_before_publish(server):
+    name = "tar-link-helper"
+    blob = _tar_with_absolute_symlink(server["_test_builtin_dir"])
+
+    with pytest.raises(HTTPException) as rejected:
+        await server["upload_skill_archive"](
+            UploadFile(filename=f"{name}.tar", file=io.BytesIO(blob)),
+            name,
+            False,
+            None,
+        )
+
+    assert rejected.value.detail["code"] == "special_entry"
+    assert not (server["_test_skills_dir"] / name).exists()
+
+
 # --- listing hygiene ---------------------------------------------------------
 
 def test_staging_directories_are_not_listed_as_skills(server):
@@ -177,6 +221,387 @@ def _skill_md(name="greeting-helper"):
         "---\n\n"
         "# Instructions\n\nAlways use the greeting from references/greeting.txt.\n"
     )
+
+
+def _skill_zip(name: str, marker: str) -> bytes:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(f"{name}/SKILL.md", _skill_md(name))
+        bundle.writestr(f"{name}/marker.txt", marker)
+    return archive.getvalue()
+
+
+def _skill_zip_entries(entries, *, compression=zipfile.ZIP_STORED) -> bytes:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=compression) as bundle:
+        for entry, content in entries:
+            bundle.writestr(entry, content)
+    return archive.getvalue()
+
+
+def test_action_server_and_backend_use_the_same_skill_zip_resource_envelope(server):
+    from skill import archive as backend_policy
+
+    assert server["_SKILL_ARCHIVE_POLICY_VERSION"] == backend_policy.SKILL_ARCHIVE_POLICY_VERSION
+    assert server["_SKILL_ARCHIVE_MAX_COMPRESSED_BYTES"] == backend_policy.SKILL_ARCHIVE_MAX_COMPRESSED_BYTES
+    assert server["_SKILL_ARCHIVE_MAX_FILES"] == backend_policy.SKILL_ARCHIVE_MAX_ENTRIES
+    assert server["_SKILL_ARCHIVE_MAX_FILE_BYTES"] == backend_policy.SKILL_ARCHIVE_MAX_FILE_BYTES
+    assert server["_SKILL_ARCHIVE_MAX_TOTAL_BYTES"] == backend_policy.SKILL_ARCHIVE_MAX_TOTAL_BYTES
+    assert server["_SKILL_ARCHIVE_MAX_RATIO"] == backend_policy.SKILL_ARCHIVE_MAX_RATIO
+    assert server["_SKILL_ARCHIVE_RATIO_MIN_BYTES"] == backend_policy.SKILL_ARCHIVE_RATIO_MIN_BYTES
+    assert server["_SKILL_ARCHIVE_MAX_PATH_BYTES"] == backend_policy.SKILL_ARCHIVE_MAX_PATH_BYTES
+    assert server["_SKILL_ARCHIVE_MAX_DEPTH"] == backend_policy.SKILL_ARCHIVE_MAX_DEPTH
+
+
+@pytest.mark.asyncio
+async def test_zip_symlink_duplicate_and_collision_never_reach_publish(server):
+    upload = server["upload_skill_archive"]
+    name = "unsafe-restore-helper"
+    link = zipfile.ZipInfo(f"{name}/link")
+    link.create_system = 3
+    link.external_attr = (0o120777 << 16)
+    bad_archives = [
+        (_skill_zip_entries([
+            (f"{name}/SKILL.md", _skill_md(name)),
+            (link, "../../outside"),
+        ]), "special_entry"),
+        (_skill_zip_entries([
+            (f"{name}/SKILL.md", _skill_md(name)),
+            (f"{name}/skill.md", "duplicate after case folding"),
+        ]), "duplicate_path"),
+        (_skill_zip_entries([
+            (f"{name}/references/guide.md", "guide"),
+            (f"{name}/references", "shadow"),
+        ]), "path_collision"),
+    ]
+
+    for blob, expected_code in bad_archives:
+        with pytest.raises(HTTPException) as rejected:
+            await upload(
+                UploadFile(filename=f"{name}.zip", file=io.BytesIO(blob)),
+                name,
+                True,
+                1,
+            )
+        assert rejected.value.detail["code"] == expected_code
+        assert not (server["_test_skills_dir"] / name).exists()
+        assert server["_skill_restore_fence_generation"](
+            server["_test_skills_dir"], name
+        ) == 0
+
+
+@pytest.mark.asyncio
+async def test_zip_resource_rejection_preserves_restore_generation_fence(server):
+    upload = server["upload_skill_archive"]
+    name = "bounded-restore-helper"
+    skills = server["_test_skills_dir"]
+
+    # Make the budgets tiny so the test exercises every branch without
+    # allocating production-sized payloads.
+    original_file = server["_SKILL_ARCHIVE_MAX_FILE_BYTES"]
+    original_total = server["_SKILL_ARCHIVE_MAX_TOTAL_BYTES"]
+    original_entries = server["_SKILL_ARCHIVE_MAX_FILES"]
+    try:
+        server["_SKILL_ARCHIVE_MAX_FILE_BYTES"] = 16
+        too_large = _skill_zip_entries([(f"{name}/SKILL.md", "x" * 17)])
+        with pytest.raises(HTTPException) as single:
+            await upload(
+                UploadFile(filename=f"{name}.zip", file=io.BytesIO(too_large)),
+                name,
+                True,
+                1,
+            )
+        assert single.value.detail["code"] == "file_too_large"
+
+        server["_SKILL_ARCHIVE_MAX_FILE_BYTES"] = 32
+        server["_SKILL_ARCHIVE_MAX_TOTAL_BYTES"] = 20
+        total = _skill_zip_entries([
+            (f"{name}/SKILL.md", "x" * 12),
+            (f"{name}/guide.md", "y" * 12),
+        ])
+        with pytest.raises(HTTPException) as aggregate:
+            await upload(
+                UploadFile(filename=f"{name}.zip", file=io.BytesIO(total)),
+                name,
+                True,
+                1,
+            )
+        assert aggregate.value.detail["code"] == "archive_too_large"
+
+        server["_SKILL_ARCHIVE_MAX_TOTAL_BYTES"] = 100
+        server["_SKILL_ARCHIVE_MAX_FILES"] = 2
+        entries = _skill_zip_entries([
+            ("one/SKILL.md", "one"),
+            ("two/guide.md", "two"),
+        ])
+        with pytest.raises(HTTPException) as count:
+            await upload(
+                UploadFile(filename=f"{name}.zip", file=io.BytesIO(entries)),
+                name,
+                True,
+                1,
+            )
+        assert count.value.detail["code"] == "too_many_entries"
+    finally:
+        server["_SKILL_ARCHIVE_MAX_FILE_BYTES"] = original_file
+        server["_SKILL_ARCHIVE_MAX_TOTAL_BYTES"] = original_total
+        server["_SKILL_ARCHIVE_MAX_FILES"] = original_entries
+
+    assert not (skills / name).exists()
+    assert server["_skill_restore_fence_generation"](skills, name) == 0
+
+    # A rejected archive did not consume or advance the lifecycle generation.
+    restored = await upload(
+        UploadFile(filename=f"{name}.zip", file=io.BytesIO(_skill_zip(name, "valid"))),
+        name,
+        True,
+        1,
+    )
+    assert restored["install_dir"] == name
+
+
+@pytest.mark.asyncio
+async def test_high_compression_ratio_is_rejected_before_zip_writes(server):
+    upload = server["upload_skill_archive"]
+    name = "zip-bomb-helper"
+    original_ratio = server["_SKILL_ARCHIVE_MAX_RATIO"]
+    original_minimum = server["_SKILL_ARCHIVE_RATIO_MIN_BYTES"]
+    try:
+        server["_SKILL_ARCHIVE_MAX_RATIO"] = 10
+        server["_SKILL_ARCHIVE_RATIO_MIN_BYTES"] = 1
+        bomb = _skill_zip_entries(
+            [(f"{name}/SKILL.md", "0" * 100_000)],
+            compression=zipfile.ZIP_DEFLATED,
+        )
+        with pytest.raises(HTTPException) as rejected:
+            await upload(
+                UploadFile(filename=f"{name}.zip", file=io.BytesIO(bomb)),
+                name,
+                True,
+                1,
+            )
+        assert rejected.value.detail["code"] == "compression_ratio"
+        assert not (server["_test_skills_dir"] / name).exists()
+    finally:
+        server["_SKILL_ARCHIVE_MAX_RATIO"] = original_ratio
+        server["_SKILL_ARCHIVE_RATIO_MIN_BYTES"] = original_minimum
+
+
+def test_export_stores_extremely_compressible_file_to_remain_restorable(server):
+    name = "compressible-export-helper"
+    target = server["_test_skills_dir"] / name
+    target.mkdir()
+    (target / "SKILL.md").write_text(_skill_md(name))
+    (target / "zeros.bin").write_bytes(b"0" * (1024 * 1024))
+
+    exported_name, blob = server["_skill_archive_bytes"](name)
+
+    assert exported_name == name
+    with zipfile.ZipFile(io.BytesIO(blob)) as bundle:
+        assert bundle.getinfo(f"{name}/zeros.bin").compress_type == zipfile.ZIP_STORED
+    # Producer and consumer policy are closed over the same bytes.
+    server["_extract_bounded_skill_zip"](blob, target.parent / "extract-probe")
+
+
+@pytest.mark.asyncio
+async def test_archive_create_only_conflict_never_replaces_live_package(server):
+    upload = server["upload_skill_archive"]
+    name = "restore-helper"
+    assert "skill_archive_create_only_v1" in (await server["alive"]())["capabilities"]
+
+    first = await upload(
+        UploadFile(filename=f"{name}.zip", file=io.BytesIO(_skill_zip(name, "winner"))),
+        name,
+        True,
+        None,
+    )
+    assert first["install_dir"] == name
+
+    with pytest.raises(HTTPException) as conflict:
+        await upload(
+            UploadFile(
+                filename=f"{name}.zip",
+                file=io.BytesIO(_skill_zip(name, "must-not-win")),
+            ),
+            name,
+            True,
+            None,
+        )
+
+    assert conflict.value.status_code == 409
+    assert conflict.value.detail["code"] == "skill_already_exists"
+    target = server["_test_skills_dir"] / name
+    assert (target / "marker.txt").read_text() == "winner"
+    assert not list(server["_test_skills_dir"].glob(".*.incoming"))
+
+    # The public upload endpoint remains an explicit update by default.
+    updated = await upload(
+        UploadFile(filename=f"{name}.zip", file=io.BytesIO(_skill_zip(name, "updated"))),
+        name,
+        False,
+        None,
+    )
+    assert updated["install_dir"] == name
+    assert (target / "marker.txt").read_text() == "updated"
+
+
+@pytest.mark.asyncio
+async def test_durable_uninstall_fences_late_snapshot_restore(server):
+    upload = server["upload_skill_archive"]
+    name = "fenced-restore-helper"
+    target = server["_test_skills_dir"] / name
+    assert "skill_restore_fence_v1" in (await server["alive"]())["capabilities"]
+
+    await upload(
+        UploadFile(filename=f"{name}.zip", file=io.BytesIO(_skill_zip(name, "old"))),
+        name,
+        True,
+        1,
+    )
+    removed = await server["uninstall_skill"](name, 2)
+    assert removed["mutation_generation"] == 2
+    assert not target.exists()
+
+    with pytest.raises(HTTPException) as stale:
+        await upload(
+            UploadFile(
+                filename=f"{name}.zip",
+                file=io.BytesIO(_skill_zip(name, "must-not-revive")),
+            ),
+            name,
+            True,
+            1,
+        )
+
+    assert stale.value.status_code == 409
+    assert stale.value.detail == {
+        "code": "skill_restore_fenced",
+        "name": name,
+        "fenced_through_generation": 2,
+        "message": "A newer durable uninstall fenced this Skill restore",
+    }
+    assert not target.exists()
+
+    # A deliberate user upload is still an update/create operation and is not
+    # mistaken for an automatic stale snapshot restore.
+    await upload(
+        UploadFile(filename=f"{name}.zip", file=io.BytesIO(_skill_zip(name, "new"))),
+        name,
+        False,
+        None,
+    )
+    assert (target / "marker.txt").read_text() == "new"
+
+
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason="cross-process lock regression requires fork inheritance",
+)
+def test_archive_create_only_has_one_winner_across_processes(server):
+    skills_dir = server["_test_skills_dir"]
+    name = "process-race-helper"
+    labels = ("worker-a", "worker-b")
+    for label in labels:
+        staging = skills_dir / f".{name}.{label}.incoming"
+        staging.mkdir()
+        (staging / "SKILL.md").write_text(_skill_md(name))
+        (staging / "marker.txt").write_text(label)
+
+    context = multiprocessing.get_context("fork")
+    start = context.Event()
+    results = context.Queue()
+
+    def publish(label: str) -> None:
+        start.wait()
+        staging = skills_dir / f".{name}.{label}.incoming"
+        try:
+            server["_publish_skill_staging"](
+                skills_dir,
+                name,
+                staging,
+                create_only=True,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            results.put((label, exc.status_code, detail.get("code")))
+        else:
+            results.put((label, 200, None))
+
+    processes = [context.Process(target=publish, args=(label,)) for label in labels]
+    for process in processes:
+        process.start()
+    start.set()
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    outcomes = [results.get(timeout=2) for _ in labels]
+    assert sorted(status for _label, status, _code in outcomes) == [200, 409]
+    assert [code for _label, status, code in outcomes if status == 409] == [
+        "skill_already_exists"
+    ]
+    winner = next(label for label, status, _code in outcomes if status == 200)
+    assert (skills_dir / name / "marker.txt").read_text() == winner
+
+
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(),
+    reason="cross-process lock regression requires fork inheritance",
+)
+def test_restore_and_uninstall_race_finishes_absent_across_processes(server):
+    skills_dir = server["_test_skills_dir"]
+    name = "process-delete-fence-helper"
+    staging = skills_dir / f".{name}.restore.incoming"
+    staging.mkdir()
+    (staging / "SKILL.md").write_text(_skill_md(name))
+    (staging / "marker.txt").write_text("stale-restore")
+
+    context = multiprocessing.get_context("fork")
+    start = context.Event()
+    results = context.Queue()
+
+    def restore() -> None:
+        start.wait()
+        try:
+            server["_publish_skill_staging"](
+                skills_dir,
+                name,
+                staging,
+                create_only=True,
+                restore_generation=1,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            results.put(("restore", exc.status_code, detail.get("code")))
+        else:
+            results.put(("restore", 200, None))
+
+    def uninstall() -> None:
+        start.wait()
+        result = asyncio.run(server["uninstall_skill"](name, 2))
+        results.put(("uninstall", 200, result.get("mutation_generation")))
+
+    processes = [
+        context.Process(target=restore),
+        context.Process(target=uninstall),
+    ]
+    for process in processes:
+        process.start()
+    start.set()
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    outcomes = {kind: (status, detail) for kind, status, detail in (
+        results.get(timeout=2) for _ in processes
+    )}
+    assert outcomes["uninstall"] == (200, 2)
+    assert outcomes["restore"] in {
+        (200, None),
+        (409, "skill_restore_fenced"),
+    }
+    assert not (skills_dir / name).exists()
+    assert server["_skill_restore_fence_generation"](skills_dir, name) == 2
 
 
 @pytest.mark.asyncio
@@ -464,13 +889,14 @@ def test_endpoints_only_touch_attributes_the_manager_has(server):
     assert missing == [], f"endpoints reference attributes the manager lacks: {missing}"
 
 
-def test_manager_has_no_cross_request_session_state(server):
-    """Sessions must not be parked between requests.
+def test_manager_keeps_transport_state_inside_owner_tasks_only(server):
+    """The manager must not expose context managers across request tasks.
 
-    anyio requires a task group to be exited by the task that entered it, so a
-    session held from /connect and closed by /disconnect is a crash waiting to
-    happen. Keeping the attribute absent is what stops it growing back.
+    Persistent sessions live inside `_owners`; each owner enters, requests,
+    and exits in its own task. Raw session/context-manager maps on the manager
+    would reintroduce the anyio cross-task exit failure.
     """
     manager = server["ContainerMcpManager"]()
     assert not hasattr(manager, "_sessions")
     assert not hasattr(manager, "_transports")
+    assert manager._owners == {}

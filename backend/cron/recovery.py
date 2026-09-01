@@ -4,6 +4,7 @@ Called once during CronService.start() before the timer is armed.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from core.log import create_logger
@@ -11,12 +12,21 @@ from core.log import create_logger
 log = create_logger("cron.recovery")
 
 
+@dataclass(frozen=True)
+class ExpiredClaim:
+    """Identity of the exact execution fenced out during recovery."""
+
+    job_id: str
+    token: str | None
+    generation: int | None
+
+
 async def recover_on_startup() -> None:
     """Full startup recovery sequence."""
     log.info("Running cron startup recovery...")
 
-    interrupted_ids = await _clear_stuck_running_markers()
-    await _mark_interrupted_runs()
+    interrupted = await _clear_stuck_running_markers()
+    interrupted_ids = {claim.job_id for claim in interrupted}
     missed_count = await _replay_missed_jobs(skip_ids=interrupted_ids)
 
     log.info(
@@ -25,53 +35,113 @@ async def recover_on_startup() -> None:
     )
 
 
-async def _clear_stuck_running_markers() -> set[str]:
-    """Clear running_at markers left by a previous crash.
+async def _clear_stuck_running_markers(*, _fault=None) -> list[ExpiredClaim]:
+    """Atomically clear expired claims and close their exact run rows.
 
-    Returns the set of job IDs that were interrupted (to skip from replay).
+    A conditional update re-checks expiry while holding the row lock, so a
+    concurrent heartbeat that renewed first wins and remains untouched.  Job
+    and run changes intentionally share this transaction: a restart at either
+    statement cannot strand a permanently-running CronRun.
     """
     from db.base import get_db_session
-    from db.models.cron import CronJob
+    from db.models.cron import CronJob, CronRun
+    from cron.lease import (
+        _database_legacy_cutoff,
+        _database_now,
+        expired_claim_clause,
+    )
     from sqlalchemy import select, update
 
+    expired: list[ExpiredClaim] = []
     async with get_db_session() as db:
+        database_now = _database_now(db)
+        legacy_cutoff = _database_legacy_cutoff(db)
         result = await db.execute(
-            select(CronJob.id).where(CronJob.running_at.isnot(None))
+            select(CronJob)
+            .where(
+                expired_claim_clause(
+                    CronJob,
+                    database_now,
+                    legacy_cutoff=legacy_cutoff,
+                )
+            )
+            .with_for_update(skip_locked=True)
         )
-        stuck_ids = {row[0] for row in result.all()}
+        for job in result.scalars().all():
+            ownership = [
+                CronJob.id == job.id,
+                expired_claim_clause(
+                    CronJob,
+                    database_now,
+                    legacy_cutoff=legacy_cutoff,
+                ),
+            ]
+            if job.run_token is None:
+                ownership.append(CronJob.run_token.is_(None))
+                generation = None
+            else:
+                ownership.extend([
+                    CronJob.run_token == job.run_token,
+                    CronJob.run_generation == job.run_generation,
+                    CronJob.run_owner == job.run_owner,
+                ])
+                generation = int(job.run_generation)
 
-        if stuck_ids:
-            await db.execute(
+            cleared = await db.execute(
                 update(CronJob)
-                .where(CronJob.id.in_(stuck_ids))
-                .values(running_at=None)
+                .where(*ownership)
+                .values(
+                    running_at=None,
+                    run_token=None,
+                    run_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    updated_at=database_now,
+                )
+                # SQLite returns timezone-naive ORM values; evaluating the
+                # expiry predicate again in Python would compare them with an
+                # aware UTC cutoff. The database is the source of truth here.
+                .execution_options(synchronize_session=False)
             )
-            for jid in stuck_ids:
-                log.warning(f"Cleared stale running marker for job {jid}")
+            if cleared.rowcount != 1:
+                continue
 
-    return stuck_ids
+            if _fault is not None:
+                _fault("after_claim_clear")
 
-
-async def _mark_interrupted_runs() -> None:
-    """Mark cron_runs that were running when the server crashed."""
-    from db.base import get_db_session
-    from db.models.cron import CronRun
-    from sqlalchemy import update
-
-    now = datetime.now(timezone.utc)
-
-    async with get_db_session() as db:
-        result = await db.execute(
-            update(CronRun)
-            .where(CronRun.status == "running")
-            .values(
-                status="error",
-                error_message="Server restarted during execution",
-                ended_at=now,
+            run_ownership = [CronRun.job_id == job.id]
+            if job.run_token is None:
+                run_ownership.extend([
+                    CronRun.status == "running",
+                    CronRun.claim_token.is_(None),
+                    CronRun.claim_generation.is_(None),
+                ])
+            else:
+                run_ownership.extend([
+                    CronRun.claim_token == job.run_token,
+                    CronRun.claim_generation == generation,
+                    CronRun.claim_owner == job.run_owner,
+                ])
+            await db.execute(
+                update(CronRun)
+                .where(*run_ownership)
+                .values(
+                    status="error",
+                    error_message=(
+                        "Server restarted or worker lease expired during execution"
+                    ),
+                    ended_at=database_now,
+                )
             )
-        )
-        if result.rowcount > 0:
-            log.warning(f"Marked {result.rowcount} interrupted cron run(s) as error")
+
+            expired.append(ExpiredClaim(job.id, job.run_token, generation))
+            log.warning(
+                "Cleared expired Cron claim job=%s generation=%s",
+                job.id,
+                generation if generation is not None else "legacy",
+            )
+
+    return expired
 
 
 async def _replay_missed_jobs(skip_ids: set[str]) -> int:
@@ -102,6 +172,7 @@ async def _replay_missed_jobs(skip_ids: set[str]) -> int:
                 CronJob.is_deleted == False,
                 CronJob.next_run_at < now,
                 CronJob.running_at.is_(None),
+                CronJob.run_token.is_(None),
             )
         )
         candidates = result.scalars().all()

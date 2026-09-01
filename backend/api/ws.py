@@ -51,17 +51,44 @@ async def _enqueue_recovery_snapshot(user_id: str, queue: asyncio.Queue) -> None
     the run. The DB snapshot closes that gap without replaying large histories.
     """
     try:
-        from session.session import list_sessions
+        from sqlalchemy import select
 
-        for session in await list_sessions(user_id=user_id):
-            status = session.status.value if hasattr(session.status, "value") else str(session.status)
+        from db.base import get_db_session
+        from db.models.agent_driver import AgentDriverState
+        from db.models.session import Session as SessionRow
+
+        # Read public status and its Driver revision in one statement. Two
+        # independent snapshots could otherwise pair an old ``idle`` with a
+        # newly reserved generation and make that stale terminal state look
+        # current to a reconnecting client.
+        async with get_db_session() as db:
+            rows = list((await db.execute(
+                select(
+                    SessionRow.id,
+                    SessionRow.status,
+                    AgentDriverState.generation,
+                )
+                .outerjoin(
+                    AgentDriverState,
+                    AgentDriverState.session_id == SessionRow.id,
+                )
+                .where(
+                    SessionRow.user_id == user_id,
+                    SessionRow.is_deleted == False,  # noqa: E712
+                )
+            )).all())
+
+        for session_id, status, generation in rows:
+            data = {
+                "userId": user_id,
+                "sessionId": session_id,
+                "status": str(status),
+            }
+            if generation is not None:
+                data["generation"] = int(generation)
             await queue.put({
                 "type": "session.status",
-                "data": {
-                    "userId": user_id,
-                    "sessionId": session.id,
-                    "status": status,
-                },
+                "data": data,
             })
     except Exception as exc:
         log.warning(
@@ -285,8 +312,8 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
         from session.session import get_session
         session = await get_session(session_id, user_id=user_id)
         if session:
-            from session.status import trigger_abort
-            trigger_abort(session_id)
+            from agent.driver import request_abort
+            await request_abort(session_id, user_id)
 
     elif msg_type == "build.start":
         if user_role != "admin":
@@ -298,21 +325,17 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
 
 
 async def _stream_build_to_user(user_id: str):
-    """Stream Docker build progress to a user's WebSocket connections."""
-    from sandbox import provider
-    try:
-        async for event in provider.build_sandbox_image():
-            step = event.get("step", "building")
-            event_type = f"build.{step}" if step != "building" else "build.progress"
-            await ws_manager.send_to_user(user_id, {
-                "type": event_type,
-                "data": {"userId": user_id, **event},
-            })
-    except Exception as e:
-        await ws_manager.send_to_user(user_id, {
-            "type": "build.error",
-            "data": {"userId": user_id, "message": str(e)},
-        })
+    """Keep the legacy message contract while failing closed on WUYING."""
+    await ws_manager.send_to_user(user_id, {
+        "type": "build.error",
+        "data": {
+            "userId": user_id,
+            "message": (
+                "WUYING system components are provisioned by the controlled "
+                "deployment workflow; runtime image builds are not supported"
+            ),
+        },
+    })
 
 
 async def _ensure_user_container(user_id: str) -> None:

@@ -7,29 +7,25 @@ import { cn } from "@/shared/lib/cn"
 import { useCopy } from "@/shared/hooks/useCopy"
 import { toast } from "@/shared/ui/Toast"
 import { usePanelStore } from "@/features/workbench/stores/panel"
-import { splitPath } from "@/features/workbench/utils/glyphs"
 import { useRunningContainer } from "@/features/workbench/api/containers"
 import { useSessionWorkdir } from "@/features/workbench/api/workdir"
+import {
+  projectParentPath,
+  projectRelativePath,
+  resolveProjectPath,
+} from "@/features/workbench/utils/project-path"
 import { EmptyState } from "./EmptyState"
 import { FileViewer } from "./FileViewer"
 import { FilesTree } from "./FilesTree"
 
-function resolvePath(openFile: string | null, root: string): string | null {
-  if (!openFile) return null
-  return openFile.startsWith("/") ? openFile : `${root}/${openFile.replace(/^\/+/, "")}`
-}
-
-function dirOf(path: string, root: string): string {
-  const cut = path.lastIndexOf("/")
-  return cut > 0 ? path.slice(0, cut) : root
-}
-
 interface FilesTabProps {
   narrow: boolean
   sessionId: string | null
+  projectName: string | null
+  projectDirectory: string | null
 }
 
-export function FilesTab({ narrow, sessionId }: FilesTabProps) {
+export function FilesTab({ narrow, sessionId, projectName, projectDirectory }: FilesTabProps) {
   const { t } = useTranslation("workbench")
   const running = useRunningContainer()
   const containerId = running?.id ?? null
@@ -53,14 +49,18 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
     return <EmptyState title={t("files.pickFile")} />
   }
 
-  const root = workdir ?? "/workspace"
-  const fullPath = resolvePath(openFile, root)
-  const initialCwd = fullPath ? dirOf(fullPath, root) : root
-  const rootName = splitPath(root).base || root
+  const root = workdir ?? projectDirectory
+  if (!root) {
+    return <EmptyState title={t("files.pickFile")} />
+  }
+  const fullPath = resolveProjectPath(openFile, root)
+  const initialCwd = fullPath ? projectParentPath(fullPath, root) : root
+  const rootName = projectName ?? t("files.projectRoot")
 
   const showTree = treeOpen
   const showViewer = !(narrow && treeOpen)
-  const name = fullPath ? splitPath(fullPath).base : ""
+  const relativePath = projectRelativePath(fullPath, root)
+  const name = relativePath ?? ""
 
   const startTreeDrag = (e: ReactMouseEvent) => {
     e.preventDefault()
@@ -79,14 +79,14 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
 
   const onCopy = () => {
     if (!fullPath) return
-    copy(fullPath)
+    copy(relativePath ?? "")
     toast("info", t("files.pathCopied"))
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-none items-center gap-2 px-3 pb-2.5">
-        {!narrow && <span className="flex-none text-sm text-n600">{`${rootName} ›`}</span>}
+        {!narrow && <span className="text-n600 flex-none text-sm">{`${rootName} ›`}</span>}
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{name || t("files.pickFile")}</span>
         <button
           type="button"
@@ -94,7 +94,7 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
           disabled={!fullPath}
           title={t("files.copyPath")}
           aria-label={t("files.copyPath")}
-          className="flex size-7.5 flex-none items-center justify-center rounded-full text-n700 hover:bg-hairsoft disabled:opacity-40"
+          className="text-n700 hover:bg-hairsoft flex size-7.5 flex-none items-center justify-center rounded-full disabled:opacity-40"
         >
           <Copy size={14} strokeWidth={2.2} />
         </button>
@@ -104,7 +104,7 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
           title={t("files.fileList")}
           aria-label={t("files.fileList")}
           className={cn(
-            "flex size-7.5 flex-none items-center justify-center rounded-full hover:bg-n200",
+            "hover:bg-n200 flex size-7.5 flex-none items-center justify-center rounded-full",
             treeOpen ? "text-a700" : "text-n700",
           )}
         >
@@ -114,7 +114,7 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
 
       <div className="flex min-h-0 flex-1 gap-2.5 px-3 pb-3">
         {showViewer && (
-          <div className="scr min-w-0 flex-1 overflow-auto rounded-2xl border border-hair bg-card p-4">
+          <div className="scr border-hair bg-card min-w-0 flex-1 overflow-auto rounded-2xl border p-4">
             <FileViewer containerId={containerId} path={fullPath} />
           </div>
         )}
@@ -123,6 +123,7 @@ export function FilesTab({ narrow, sessionId }: FilesTabProps) {
             key={`${containerId}:${initialCwd}`}
             containerId={containerId}
             root={root}
+            rootLabel={rootName}
             initialCwd={initialCwd}
             openFile={fullPath}
             onOpenFile={setOpenFile}

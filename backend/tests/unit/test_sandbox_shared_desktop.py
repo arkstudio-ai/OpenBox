@@ -53,5 +53,9 @@ def test_it_is_not_evictable_in_the_first_place():
 
 
 def test_a_provider_that_makes_its_own_containers_still_forgets_them():
-    from sandbox.docker import DockerManager
-    assert DockerManager.owns_containers is True
+    from sandbox.provider import SandboxProvider
+
+    # Future per-user WUYING provisioners may own their desktops. The generic
+    # contract remains owning by default; this shared pre-provisioned desktop
+    # explicitly opts out above.
+    assert SandboxProvider.owns_containers is True

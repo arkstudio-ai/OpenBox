@@ -1,13 +1,17 @@
+import { projectScopedDisplayPath } from "@/lib/projectPath";
+
 interface ToolReadProps {
-  input?: Record<string, unknown>
-  output?: string
+  input?: Record<string, unknown>;
+  output?: string;
 }
 
 export function ToolRead({ input, output }: ToolReadProps) {
-  const filePath = String(input?.file_path || input?.path || "")
-  const lines = (output || "").split("\n")
-  const maxLines = 15
-  const truncated = lines.length > maxLines
+  const filePath = projectScopedDisplayPath(
+    String(input?.file_path || input?.path || ""),
+  );
+  const lines = (output || "").split("\n");
+  const maxLines = 15;
+  const truncated = lines.length > maxLines;
 
   return (
     <div className="font-mono text-[11px]">
@@ -20,7 +24,9 @@ export function ToolRead({ input, output }: ToolReadProps) {
         <div className="px-3.5 py-2.5 whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto leading-relaxed bg-[hsl(var(--terminal-bg))]">
           {lines.slice(0, maxLines).map((line, i) => (
             <div key={i} className="flex">
-              <span className="w-10 text-right pr-3 text-[hsl(var(--muted-foreground))]/50 select-none shrink-0 tabular-nums">{i + 1}</span>
+              <span className="w-10 text-right pr-3 text-[hsl(var(--muted-foreground))]/50 select-none shrink-0 tabular-nums">
+                {i + 1}
+              </span>
               <span>{line}</span>
             </div>
           ))}
@@ -32,5 +38,5 @@ export function ToolRead({ input, output }: ToolReadProps) {
         </div>
       )}
     </div>
-  )
+  );
 }

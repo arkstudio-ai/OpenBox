@@ -10,7 +10,7 @@ export function useUserId(): string {
 
 export const workbenchKeys = {
   diff: (userId: string, sessionId: string) => ["diff", userId, sessionId] as const,
-  fileContent: (containerId: string, path: string) =>
-    ["container-file-content", containerId, path] as const,
+  fileContent: (userId: string, containerId: string, path: string) =>
+    ["container-file-content", userId, containerId, path] as const,
   workdir: (userId: string, sessionId: string) => ["session-workdir", userId, sessionId] as const,
 }

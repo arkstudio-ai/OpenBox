@@ -1,0 +1,99 @@
+name: OpenBox CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend, migrations, and contracts
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: openbox
+          POSTGRES_USER: openbox
+          POSTGRES_PASSWORD: openbox_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openbox -d openbox"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://openbox:openbox_dev@127.0.0.1:5432/openbox
+      OPENBOX_TEST_POSTGRES_URL: postgresql+asyncpg://openbox:openbox_dev@127.0.0.1:5432/openbox
+      JWT_SECRET: ""
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --extra test
+      - name: Require one Alembic head
+        run: |
+          heads="$(uv run alembic heads)"
+          test -n "$heads"
+          test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
+      - name: Upgrade and verify PostgreSQL schema
+        run: |
+          uv run alembic upgrade head
+          uv run alembic current | grep -q '(head)'
+          uv run alembic check
+      - name: Run backend tests
+        run: uv run --with psutil pytest -q
+      - name: Compile backend
+        run: |
+          uv run python -m compileall -q .
+          bash -n scripts/*.sh
+      - name: Reject Python syntax and undefined names
+        run: uv run --with ruff ruff check --select E9,F821 .
+
+  frontend-v2:
+    name: Frontend V2
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-v2
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  mobile:
+    name: Mobile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test

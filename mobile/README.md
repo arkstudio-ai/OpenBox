@@ -69,7 +69,7 @@ lib/
 
 - WS 信封 `{type,data}`:路由字段 camelCase(`sessionId`/`messageId`/`partId`),内嵌 message/part 对象 snake_case —— 两层分开解析,勿全局转换。
 - `message.text_delta` 与 `part.delta` 都是**追加**语义;快照合并时 text/reasoning 取更长者、tool 取更高状态(pending<running<completed=error),防止 UI 回退。
-- 权限回复动作用后端原生值 `once`/`always`/`reject`(web 端目前发的 `allow/allow_always` 会被 REST 400 拒)。
+- Web/Mobile 权限回复统一使用后端原生值 `once`/`always`/`reject`。
 - 问题回复 `answers` 是嵌套数组:每个问题一个 label 数组,按序。
 - 运行中每 1s 轮询 messages+session 快照兜底(WS 重连只补 `session.status`,不重放 delta)。
 - 终端 WS:二进制帧 1 字节 tag + 载荷,`0x00` 数据、`0x01` resize(cols/rows 各为大端 uint16);文本帧只有 `{type:"error"}`。

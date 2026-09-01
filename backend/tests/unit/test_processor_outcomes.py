@@ -60,6 +60,7 @@ def stub_side_effects(monkeypatch):
     monkeypatch.setattr(P, "update_message_info", anoop)
     monkeypatch.setattr(P, "update_session", anoop)
     monkeypatch.setattr(P, "create_compaction", anoop)
+    monkeypatch.setattr(P, "_history_for_compaction", anoop)
     monkeypatch.setattr(P.bus, "publish", lambda *a, **k: None)
 
 
@@ -182,6 +183,40 @@ async def test_pre_event_read_error_remains_retryable(monkeypatch):
 
     assert result.outcome is StepOutcome.RETRY
     assert result.retry_reason == "Network error"
+
+
+async def test_first_adapter_error_event_remains_retryable(monkeypatch):
+    """Real adapters normalize provider failures into an error event.
+
+    That envelope must have the same pre-stream retry semantics as a generator
+    that raises before yielding anything.
+    """
+    result = await run(
+        monkeypatch,
+        events=[{
+            "type": "error",
+            "error": RetryableError("service unavailable", 503, {}),
+        }],
+    )
+
+    assert result.outcome is StepOutcome.RETRY
+    assert result.retry_reason
+
+
+async def test_adapter_error_after_visible_output_is_not_replayed(monkeypatch):
+    result = await run(
+        monkeypatch,
+        events=[
+            {"type": "text_delta", "text": "already visible"},
+            {
+                "type": "error",
+                "error": RetryableError("service unavailable", 503, {}),
+            },
+        ],
+    )
+
+    assert result.outcome is StepOutcome.ERROR
+    assert result.retry_reason is None
 
 
 async def test_text_delta_then_read_error_is_terminal_not_replayed(monkeypatch):

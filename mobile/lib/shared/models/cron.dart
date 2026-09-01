@@ -41,7 +41,11 @@ class CronScheduleEvery extends CronSchedule {
   final int? anchorMs;
 
   @override
-  Map<String, dynamic> toJson() => {'kind': 'every', 'every_ms': everyMs};
+  Map<String, dynamic> toJson() => {
+    'kind': 'every',
+    'every_ms': everyMs,
+    if (anchorMs != null) 'anchor_ms': anchorMs,
+  };
 }
 
 class CronScheduleCron extends CronSchedule {
@@ -51,8 +55,7 @@ class CronScheduleCron extends CronSchedule {
   final String? tz;
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'cron', 'expr': expr, 'tz': ?tz};
+  Map<String, dynamic> toJson() => {'kind': 'cron', 'expr': expr, 'tz': ?tz};
 }
 
 class CronJob {
@@ -76,23 +79,23 @@ class CronJob {
   });
 
   factory CronJob.fromJson(Map<String, dynamic> json) => CronJob(
-        id: asString(json['id']) ?? '',
-        projectId: asString(json['project_id']),
-        sessionId: asString(json['session_id']),
-        name: asString(json['name']) ?? '',
-        enabled: asBool(json['enabled']) ?? false,
-        schedule: CronSchedule.fromJson(asMap(json['schedule'])),
-        taskPrompt: asString(json['task_prompt']) ?? '',
-        nextRunAt: asDate(json['next_run_at']),
-        lastRunAt: asDate(json['last_run_at']),
-        lastStatus: asString(json['last_status']),
-        lastError: asString(json['last_error']),
-        totalRuns: asInt(json['total_runs']) ?? 0,
-        totalSuccesses: asInt(json['total_successes']) ?? 0,
-        totalFailures: asInt(json['total_failures']) ?? 0,
-        running: asBool(json['running']) ?? false,
-        projectDirectory: asString(json['project_directory']),
-      );
+    id: asString(json['id']) ?? '',
+    projectId: asString(json['project_id']),
+    sessionId: asString(json['session_id']),
+    name: asString(json['name']) ?? '',
+    enabled: asBool(json['enabled']) ?? false,
+    schedule: CronSchedule.fromJson(asMap(json['schedule'])),
+    taskPrompt: asString(json['task_prompt']) ?? '',
+    nextRunAt: asDate(json['next_run_at']),
+    lastRunAt: asDate(json['last_run_at']),
+    lastStatus: asString(json['last_status']),
+    lastError: asString(json['last_error']),
+    totalRuns: asInt(json['total_runs']) ?? 0,
+    totalSuccesses: asInt(json['total_successes']) ?? 0,
+    totalFailures: asInt(json['total_failures']) ?? 0,
+    running: asBool(json['running']) ?? false,
+    projectDirectory: asString(json['project_directory']),
+  );
 
   final String id;
   final String? projectId;
@@ -129,14 +132,14 @@ class CronRun {
   });
 
   factory CronRun.fromJson(Map<String, dynamic> json) => CronRun(
-        id: asString(json['id']) ?? '',
-        status: asString(json['status']) ?? 'skipped',
-        tempSessionId: asString(json['temp_session_id']),
-        summaryText: asString(json['summary_text']),
-        totalTokens: asInt(json['total_tokens']) ?? 0,
-        durationMs: asInt(json['duration_ms']) ?? 0,
-        startedAt: asDate(json['started_at']),
-      );
+    id: asString(json['id']) ?? '',
+    status: asString(json['status']) ?? 'skipped',
+    tempSessionId: asString(json['temp_session_id']),
+    summaryText: asString(json['summary_text']),
+    totalTokens: asInt(json['total_tokens']) ?? 0,
+    durationMs: asInt(json['duration_ms']) ?? 0,
+    startedAt: asDate(json['started_at']),
+  );
 
   final String id;
   final String status; // ok | error | skipped | running
@@ -156,11 +159,11 @@ class CronStatus {
   });
 
   factory CronStatus.fromJson(Map<String, dynamic> json) => CronStatus(
-        healthy: asBool(json['healthy']) ?? false,
-        lastTickAt: asDate(json['last_tick_at']),
-        enabledJobs: asInt(json['enabled_jobs']) ?? 0,
-        runningJobs: asInt(json['running_jobs']) ?? 0,
-      );
+    healthy: asBool(json['healthy']) ?? false,
+    lastTickAt: asDate(json['last_tick_at']),
+    enabledJobs: asInt(json['enabled_jobs']) ?? 0,
+    runningJobs: asInt(json['running_jobs']) ?? 0,
+  );
 
   final bool healthy;
   final DateTime? lastTickAt;

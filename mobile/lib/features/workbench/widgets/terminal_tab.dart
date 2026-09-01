@@ -12,52 +12,106 @@ import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/config/env.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/ws/ws_client.dart';
+import '../utils/terminal_protocol.dart';
 
 /// PTY terminal (web `TerminalView.tsx`): binary frames = 1-byte tag +
 /// payload — `0x00` DATA (both directions), `0x01` RESIZE (cols, rows as
 /// big-endian uint16). Text frames are JSON `{type:"error",data}`.
-/// Connects to `/ws/terminal/{containerId}?ticket=`.
+/// Connects to the project-scoped `/ws/terminal/{containerId}` endpoint.
 class TerminalTab extends ConsumerStatefulWidget {
-  const TerminalTab({super.key, required this.containerId});
+  const TerminalTab({
+    super.key,
+    required this.containerId,
+    required this.sessionId,
+    this.projectId,
+  });
 
   final String containerId;
+  final String sessionId;
+  final String? projectId;
+
+  TerminalConnectionIdentity get connectionIdentity =>
+      TerminalConnectionIdentity(
+        containerId: containerId,
+        sessionId: sessionId,
+        projectId: projectId,
+      );
 
   @override
   ConsumerState<TerminalTab> createState() => _TerminalTabState();
 }
 
 class _TerminalTabState extends ConsumerState<TerminalTab> {
-  final _terminal = Terminal(maxLines: 10000);
+  late Terminal _terminal;
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _subscription;
+  TerminalUtf8StreamDecoder? _decoder;
+  int _connectionGeneration = 0;
   bool _connecting = true;
   bool _disconnected = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_connect());
+    _terminal = Terminal(maxLines: 10000);
+    unawaited(_connect(++_connectionGeneration));
   }
 
-  Future<void> _connect() async {
+  @override
+  void didUpdateWidget(covariant TerminalTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.connectionIdentity != widget.connectionIdentity) {
+      _restartConnection();
+    }
+  }
+
+  void _restartConnection() {
+    final oldChannel = _channel;
+    final oldSubscription = _subscription;
+    _connectionGeneration += 1;
+    _channel = null;
+    _subscription = null;
+    _decoder?.close();
+    _decoder = null;
+    _terminal = Terminal(maxLines: 10000);
+    setState(() {
+      _connecting = true;
+      _disconnected = false;
+    });
+    unawaited(oldSubscription?.cancel());
+    unawaited(oldChannel?.sink.close());
+    unawaited(_connect(_connectionGeneration));
+  }
+
+  Future<void> _connect(int generation) async {
+    final identity = widget.connectionIdentity;
     try {
       final ticket = await ref.read(wsClientProvider).fetchTicket();
+      if (!mounted || generation != _connectionGeneration) return;
       final channel = WebSocketChannel.connect(
-        Uri.parse(
-            '${Env.wsBase}/ws/terminal/${widget.containerId}?ticket=$ticket'),
+        terminalWebSocketUri(
+          wsBase: Env.wsBase,
+          containerId: identity.containerId,
+          ticket: ticket,
+          sessionId: identity.sessionId,
+          projectId: identity.projectId,
+        ),
       );
       await channel.ready;
-      if (!mounted) {
+      if (!mounted || generation != _connectionGeneration) {
         await channel.sink.close();
         return;
       }
       _channel = channel;
+      final terminal = _terminal;
+      _decoder = TerminalUtf8StreamDecoder(terminal.write);
       setState(() => _connecting = false);
 
-      _terminal.onOutput = (data) {
+      terminal.onOutput = (data) {
         final bytes = utf8.encode(data);
         channel.sink.add(Uint8List.fromList([0x00, ...bytes]));
       };
-      _terminal.onResize = (cols, rows, _, _) {
+      terminal.onResize = (cols, rows, _, _) {
         final frame = ByteData(5)
           ..setUint8(0, 0x01)
           ..setUint16(1, cols)
@@ -65,36 +119,32 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
         channel.sink.add(frame.buffer.asUint8List());
       };
       // Announce the initial size.
-      _terminal.onResize
-          ?.call(_terminal.viewWidth, _terminal.viewHeight, 0, 0);
+      terminal.onResize?.call(terminal.viewWidth, terminal.viewHeight, 0, 0);
 
-      channel.stream.listen(
+      _subscription = channel.stream.listen(
         (frame) {
+          if (!mounted || generation != _connectionGeneration) return;
           if (frame is List<int>) {
             if (frame.isNotEmpty && frame.first == 0x00) {
-              _terminal.write(utf8.decode(frame.sublist(1), allowMalformed: true));
+              _decoder?.add(frame.sublist(1));
             }
           } else if (frame is String) {
             // Text frames are JSON `{type:"error", data}` only.
             try {
               final parsed = jsonDecode(frame);
               if (parsed is Map<String, dynamic> && parsed['type'] == 'error') {
-                if (mounted) setState(() => _disconnected = true);
+                _markDisconnected(generation);
               }
             } on FormatException {
-              _terminal.write(frame);
+              terminal.write(frame);
             }
           }
         },
-        onDone: () {
-          if (mounted) setState(() => _disconnected = true);
-        },
-        onError: (Object _) {
-          if (mounted) setState(() => _disconnected = true);
-        },
+        onDone: () => _markDisconnected(generation),
+        onError: (Object _) => _markDisconnected(generation),
       );
     } catch (_) {
-      if (mounted) {
+      if (mounted && generation == _connectionGeneration) {
         setState(() {
           _connecting = false;
           _disconnected = true;
@@ -103,9 +153,22 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
     }
   }
 
+  void _markDisconnected(int generation) {
+    if (!mounted || generation != _connectionGeneration) return;
+    _decoder?.close();
+    _decoder = null;
+    setState(() {
+      _connecting = false;
+      _disconnected = true;
+    });
+  }
+
   @override
   void dispose() {
-    _channel?.sink.close();
+    _connectionGeneration += 1;
+    unawaited(_subscription?.cancel());
+    _decoder?.close();
+    unawaited(_channel?.sink.close());
     super.dispose();
   }
 
@@ -115,8 +178,10 @@ class _TerminalTabState extends ConsumerState<TerminalTab> {
     final i18n = ref.watch(i18nProvider);
     if (_connecting) {
       return Center(
-        child: Text(i18n.t('workbench:terminal.connecting'),
-            style: TextStyle(fontSize: FontSizes.sm, color: t.n600)),
+        child: Text(
+          i18n.t('workbench:terminal.connecting'),
+          style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+        ),
       );
     }
     return Container(

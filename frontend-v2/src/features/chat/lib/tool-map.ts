@@ -2,6 +2,7 @@
 // mapEntries / toneBg / toneFg / linePfx / lineStyle rules, expressed with
 // design-token Tailwind classes only. Labels resolve through i18n `chat:kind.*`.
 import type { ToolPart } from "@/shared/types/api"
+import { projectScopedDisplayPath, projectScopedToolText } from "@/shared/lib/project-path"
 
 export type Tone = "accent" | "sage" | "grey" | "red"
 
@@ -131,8 +132,8 @@ export function toolTarget(part: ToolPart): string {
   const input = part.input ?? {}
   const t = part.tool.toLowerCase()
   if (t === "bash" || t === "shell" || t === "terminal") return str(input.command) ?? part.tool
-  if (["read", "edit", "write", "multiedit", "readfile", "writefile", "view"].includes(t))
-    return str(input.file_path) ?? str(input.path) ?? part.title ?? part.tool
+  if (FILE_TOOLS.includes(t))
+    return projectScopedDisplayPath(str(input.file_path) ?? str(input.path) ?? part.title ?? part.tool)
   if (["glob", "grep", "search", "find"].includes(t))
     return str(input.pattern) ?? str(input.query) ?? part.title ?? part.tool
   if (t === "web_search" || t === "websearch") return str(input.query) ?? part.title ?? part.tool
@@ -161,7 +162,18 @@ function safeJson(input: Record<string, unknown>): string {
 /** Compact one-line preview of a request input (permission card, etc.). */
 export function previewInput(input?: Record<string, unknown>): string {
   if (!input || Object.keys(input).length === 0) return ""
-  return safeJson(input)
+  const displayInput = Object.fromEntries(
+    Object.entries(input).map(([key, value]) => {
+      if ((key === "path" || key === "file_path") && typeof value === "string") {
+        return [key, projectScopedDisplayPath(value)]
+      }
+      if (key === "patch" && typeof value === "string") {
+        return [key, projectScopedToolText(value)]
+      }
+      return [key, value]
+    }),
+  )
+  return safeJson(displayInput)
 }
 
 /** Expanded body of a tool entry: an input echo plus a capped output/error tail. */

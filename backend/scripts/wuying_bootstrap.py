@@ -25,11 +25,18 @@ import gzip
 import json
 import pathlib
 import secrets
+import shlex
 import subprocess
 import sys
 import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "backend"))
+
+from sandbox.browser import browser_policy_provision_script  # noqa: E402
+from sandbox.assets import asset_cli_provision_script  # noqa: E402
+from sandbox.desktop import desktop_provision_script  # noqa: E402
+
 MAX_CHUNK = 11_000          # run-command caps command-content at 16KB base64
 TUNNEL_PORT = 18_000        # loopback port on the relay host
 VIDEO_PRODUCTION_SKILL_DIR = (
@@ -94,15 +101,34 @@ class Desktop:
         raise SystemExit(f"invocation {invoke_id} never settled")
 
     def put(self, local: pathlib.Path, remote: str, mode: str = "644") -> None:
+        if not mode.isdigit():
+            raise ValueError("remote file mode must be numeric")
         b64 = base64.b64encode(gzip.compress(local.read_bytes(), 9)).decode()
         chunks = [b64[i:i + MAX_CHUNK] for i in range(0, len(b64), MAX_CHUNK)]
-        stage = f"/tmp/.upload.{pathlib.PurePath(remote).name}.b64"
+        nonce = secrets.token_hex(6)
+        stage = f"/tmp/.upload.{pathlib.PurePath(remote).name}.{nonce}.b64"
+        staged_remote = f"{remote}.upload-{nonce}"
         print(f"  upload {local.name} -> {remote} ({len(b64) / 1024:.0f}KB, {len(chunks)} chunks)")
         for i, c in enumerate(chunks):
-            self.run(f"printf '%s' '{c}' {'>' if i == 0 else '>>'} {stage}", timeout=120)
+            self.run(
+                f"printf '%s' {shlex.quote(c)} "
+                f"{'>' if i == 0 else '>>'} {shlex.quote(stage)}",
+                timeout=120,
+            )
+        remote_q = shlex.quote(remote)
+        staged_q = shlex.quote(staged_remote)
+        stage_q = shlex.quote(stage)
+        parent_q = shlex.quote(str(pathlib.PurePosixPath(remote).parent))
+        cleanup_q = shlex.quote(f"rm -f -- {stage_q} {staged_q}")
         self.run(
-            f"mkdir -p $(dirname {remote}) && base64 -d {stage} | gunzip > {remote} && "
-            f"chmod {mode} {remote} && rm -f {stage}",
+            "set -e; "
+            f"trap {cleanup_q} EXIT; "
+            f"mkdir -p -- {parent_q}; "
+            f"base64 -d {stage_q} | gunzip > {staged_q}; "
+            f"chmod {mode} {staged_q}; "
+            # The staged file lives beside the target, so rename is atomic and
+            # a truncated upload can never replace the last-known-good service.
+            f"mv -f -- {staged_q} {remote_q}",
             timeout=120,
         )
 
@@ -143,14 +169,24 @@ set -e
 export PATH=/usr/local/bin:$PATH
 mkdir -p /workspace /data/skills /data/mcp/logs
 export DEBIAN_FRONTEND=noninteractive
-if ! command -v ffmpeg >/dev/null 2>&1 || ! fc-list :lang=zh | grep -q .; then
+if ! command -v ffmpeg >/dev/null 2>&1 || ! fc-list :lang=zh | grep -q . || ! command -v setpriv >/dev/null 2>&1; then
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-cjk fontconfig
+  apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-cjk fontconfig util-linux
   rm -rf /var/lib/apt/lists/*
 fi
+if ! id -u sandbox >/dev/null 2>&1; then
+  useradd --system --create-home --home-dir /workspace/.openbox-home --shell /bin/bash sandbox
+fi
+install -d -o sandbox -g sandbox -m 0750 /workspace/.openbox-home
+install -d -o root -g root -m 0711 /data/skills
+chown -R sandbox:sandbox /workspace
+chmod 0700 /data/mcp
 echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head -1 | cut -d' ' -f3)"
 echo "node 22 is delivered with the local media bundle in stage 2"
 """, timeout=900)
+    d.run(desktop_provision_script(), timeout=900)
+    d.run(asset_cli_provision_script(), timeout=120)
+    d.run(browser_policy_provision_script(), timeout=120)
 
 
 def install_action_server(d: Desktop) -> None:
@@ -169,6 +205,7 @@ def install_action_server(d: Desktop) -> None:
 set -e
 cat > /opt/action_server/requirements.txt <<'EOF'
 fastapi>=0.115.0
+anyio>=4.0.0
 uvicorn[standard]>=0.32.0
 psutil>=6.0.0
 python-multipart>=0.0.12
@@ -241,10 +278,31 @@ Environment=SESSION_API_KEY={api_key}
 Environment=PYTHONUNBUFFERED=1
 Environment=MEDIA_JOBS_CONFIG=/opt/openbox/media/media-jobs.json
 Environment=HYPERFRAMES_BROWSER_PATH=/usr/bin/google-chrome
+Environment=OPENBOX_RUNNER_USER=sandbox
+Environment=OPENBOX_REQUIRE_RUNNER=1
+Environment=OPENBOX_REQUIRE_USER_SCOPE=1
+Environment=OPENBOX_WORKSPACE_ROOT=/workspace
+Environment=OPENBOX_RUNNER_HOME=/workspace/.openbox-home
 WorkingDirectory=/workspace
 ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
 Restart=always
 RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_KILL CAP_DAC_OVERRIDE
+ReadWritePaths=/workspace /data /tmp /var/tmp
 MemoryHigh=5G
 MemoryMax=6G
 TasksMax=512

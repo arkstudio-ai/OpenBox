@@ -168,6 +168,7 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
       <AssistantMeta
         sessionId={sessionId}
         messageId={content.finalMessageId ?? meta.messageId}
+        model={meta.model}
         content={content.finalText}
         tokens={meta.tokens}
         reaction={meta.reaction}

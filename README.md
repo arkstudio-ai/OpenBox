@@ -4,7 +4,7 @@ English | [中文](README.zh-CN.md)
 
 **An AI Agent execution platform** — give an LLM a safe, isolated sandbox to read, write, run code, and drive a browser, with production-grade orchestration, context management, and multi-tenant isolation.
 
-> A general-purpose agent runtime (inspired by OpenCode/Claude Code), rewritten in Python around **Pydantic AI + LiteLLM**, with every file/command operation confined to a per-session **Docker / Kubernetes sandbox**. Deployed on GCP GKE.
+> A general-purpose agent runtime (inspired by OpenCode/Claude Code), implemented in Python around a **custom durable Agent kernel** with LiteLLM and OpenAI Responses adapters. The FastAPI control plane owns agent state and policy; file, command, desktop and sandbox MCP execution runs on an Alibaba Cloud **WUYING** desktop. Docker Compose is used only for local infrastructure such as PostgreSQL, Redis and optional Azurite.
 
 > **Frontend direction:** [`frontend-v2/`](frontend-v2/) is the primary and actively developed OpenBox web UI. The original [`frontend/`](frontend/) is retained only as a legacy migration reference.
 
@@ -14,11 +14,11 @@ English | [中文](README.zh-CN.md)
 
 | | |
 |---|---|
-| **What it is** | A full-stack platform where an AI agent autonomously executes development tasks (edit code, run bash, git, browse) inside an isolated container, with the v2 web UI showing every tool call in real time. |
-| **Core stack** | FastAPI · Pydantic AI · LiteLLM (100+ models) · Docker/K8s sandbox · PostgreSQL · Redis · React 19 |
-| **Agent loop** | Pydantic AI single-turn tool calls wrapped by a custom outer loop: multi-turn orchestration, permission checks, retries, context compaction |
-| **Isolation** | Each session owns a dedicated sandbox container; user file/command tools run inside it, control-plane logic runs on the host |
-| **Scale** | Docker locally, dynamic K8s container pool on GKE; multi-tenant (workspace / project / permission inheritance) |
+| **What it is** | A full-stack platform where an AI agent edits code, runs commands and drives a desktop through WUYING, while the v2 web UI and mobile client show every durable turn and tool call. |
+| **Core stack** | FastAPI · custom Agent kernel · LiteLLM/Responses · WUYING Action Server · PostgreSQL · Redis · React 19 · Flutter |
+| **Agent loop** | Durable single-flight driver, fenced recovery, bounded portable tool schemas, ordered concurrent tool bodies, permission checks and context compaction |
+| **Isolation** | The backend owns tenant/project policy; WUYING workspaces, Skill/MCP catalogues, assets and snapshots use stable user/project namespaces |
+| **Scale** | Multi-worker SaaS control plane; the current shared desktop is for trusted single-user acceptance, with one WUYING desktop per user as the production isolation boundary |
 
 ---
 
@@ -28,29 +28,30 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 
 | Concern | Typical agent demo | OpenBox |
 |---|---|---|
-| **Safety** | LLM runs commands on the host | Every `bash`/`read`/`write`/`edit`/`glob`/`grep` runs **inside a per-session sandbox**; host only does control-plane work |
-| **Context overflow** | Conversation grows until it blows the window | **Automatic context compaction** (summarize history on overflow) + tool-output truncation + prompt cache |
-| **Reliability** | One bad tool call kills the run | Custom outer loop with per-tool retry, permission gating, and graceful degradation |
-| **Multi-user** | Single shared process | Workspace/project isolation, per-session container, Logto OIDC (enterprise SSO), credential boundary |
-| **Auditability** | Opaque chat history | Real-time event stream (SSE + WebSocket), tool-execution visualization, session branch/rollback (git-like history) |
+| **Safety** | LLM runs commands on the host | File/command/desktop actions cross an authenticated, tenant-scoped and generation-fenced WUYING boundary |
+| **Context overflow** | Conversation grows until it blows the window | Full internal history + compaction, bounded portable tool schemas, deferred capability discovery and output truncation |
+| **Reliability** | One bad tool call kills the run | Durable run ownership, cold-tail repair, ordered tool commits, conservative unknown-outcome handling and periodic recovery |
+| **Multi-user** | Single shared process | PostgreSQL/Redis control plane, stable user/project namespaces, scoped Skill/MCP state and JWT/Logto support |
+| **Auditability** | Opaque chat history | Real-time SSE/WebSocket events, tool traces and append-before-delete Surface provenance for regenerate/dismiss |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  OpenBox API (FastAPI, host)                  │
-│  Agent orchestration · permission · skill ·   │
-│  MCP · session · cron · event bus             │
-├──────────────────┬────────────────────────────┤
-│  Pydantic AI      │   Sandbox (per session)     │
-│  tool-call loop   │   bash / read / write /     │
-│  + LiteLLM        │   edit / glob / grep ...     │
-└──────────────────┴────────────────────────────┘
-                        │
-                 Docker container  (local)
-                 K8s container pool (GKE prod)
+Web / Mobile
+      │ REST + SSE/WebSocket
+      ▼
+FastAPI control plane
+  ├── Agent driver, model/context policy and ordered tool scheduler
+  ├── PostgreSQL + Redis: durable ownership, sessions, Cron and events
+  └── permissions, tenant/project identity, Skill/MCP catalogue policy
+      │ authenticated SandboxClient + scope/fencing headers
+      ▼
+WUYING execution plane
+  ├── root-owned Action Server
+  ├── non-root sandbox runner
+  └── tenant/project namespaced workspaces and Skill/MCP state
 ```
 
 ### Execution boundary (host vs sandbox)
@@ -58,24 +59,26 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 | Tool / module | Runs in | Why |
 |---|---|---|
 | `bash`, `read`, `write`, `edit`, `apply_patch`, `glob`, `grep` | **Sandbox** | File/command ops must be isolated |
-| MCP tool calls | Host | MCP servers are separate processes |
-| Skill load (read `SKILL.md`) | Host | Config read, no risk |
+| Sandbox MCP processes | **WUYING** | Stdio servers and their filesystem state stay in the execution plane |
+| MCP catalogue/policy and host MCP | Backend | Scope, permission, canonical identity and lifecycle remain control-plane decisions |
+| Skill load | Backend or **WUYING** | Project/host instructions remain authoritative; user-installed bundles are read in their scoped sandbox |
 | Skill execution (LLM acting) | **Sandbox** | Real actions go through `bash`/`write` |
+| Trusted platform plugins | Backend runtime | Dependency-ordered generations, async setup/dispose, atomic hot replacement, LKG rollback and in-flight drain; administrator-controlled code only |
 | `web_fetch`, `web_search` | Host | Network requests |
-| Plugin code + hooks | Host | Auth, arg mutation, host logic |
+| Agent hooks and registered integrations | Backend | Auth, argument policy, tracing and commit ordering are control-plane logic |
 | Agent orchestration / permission / event bus | Host | Control plane |
 
 ---
 
 ## Key capabilities
 
-- **Agent loop** (`backend/agent/`): `loop.py` outer orchestration, `compaction.py` auto context summarization, `caching.py` prompt cache, `retry.py` resilient retries, `hooks.py` lifecycle hooks.
-- **Sandbox manager** (`backend/sandbox/`): `docker.py` + `kubernetes.py` dual providers, `manager.py` lifecycle (create on session start, destroy on end), dynamic GKE container pool.
+- **Agent kernel** (`backend/agent/`): durable Driver leases/generations, periodic recovery, per-step model selection, portable tool exposure, ordered tool scheduling and bounded Task handoffs.
+- **WUYING sandbox** (`backend/sandbox/`, `container/action_server.py`): one supported execution provider, scoped catalogues, non-root command execution, desktop leases and run fencing.
 - **22+ built-in tools**: bash, read, write, edit, glob, grep, mcp, skill, web_fetch, web_search, question, todo, plan, batch, …
 - **Fine-grained permissions** (`backend/permission/`): per-tool approval flow with interactive user confirmation.
-- **Three-tier context/memory**: in-memory current turn → DB-persisted compacted history → long-term instruction files.
-- **Cron agents** (`backend/cron/`): scheduled autonomous agent runs.
-- **Session branch / rollback**: git-like session history management.
+- **Context/memory**: complete internal transcript, public latest-window pagination, compaction, sandbox instruction discovery and append-only destructive-projection snapshots.
+- **Cron agents** (`backend/cron/`): scheduled autonomous runs with DB leases, fencing, heartbeats, takeover and project ownership.
+- **Session branch / recovery**: complete closed-turn event-prefix forks, explicit lineage, snapshots and fenced regenerate/recovery flows.
 - **Frontend v2 workbench** (`frontend-v2/`): streaming chat, tool/thinking traces, permission/question/plan/todo cards, diff review, PTY terminal, browser, desktop and file panels.
 - **Product-grade UI foundation**: Chinese/English localization, eight theme families, light/dark modes, four font sizes, accessible interactions and responsive layouts.
 
@@ -84,9 +87,9 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 ## Tech stack
 
 **Backend** (Python 3.12)
-- FastAPI + Uvicorn · **Pydantic AI** (agent loop) · **LiteLLM** (100+ providers)
+- FastAPI + Uvicorn · custom **Agent Driver / Processor / Inbox** · **LiteLLM + OpenAI Responses** provider adapters
 - PostgreSQL (SQLAlchemy async + Alembic) · Redis (session / ticket / context cache)
-- Docker SDK + Kubernetes client (sandbox) · Azure Blob Storage (user files)
+- WUYING Action Server client · Alibaba OSS / optional Azure Blob integrations
 - JWT + Logto OIDC (enterprise SSO)
 
 **Frontend v2** (React 19)
@@ -95,7 +98,7 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - xterm.js 6 (PTY) · Vitest + Testing Library · Playwright
 
 **Infrastructure**
-- GCP GKE (K8s) · Docker Compose (local dependencies) · Makefile workflow · Python/Node monorepo
+- Alibaba Cloud WUYING execution plane · Docker Compose for local PostgreSQL/Redis/Azurite only · Makefile workflow · Python/Node/Flutter monorepo
 
 ---
 
@@ -105,7 +108,7 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 OpenBox/
 ├── backend/
 │   ├── agent/        # agent loop, compaction, caching, retry, hooks
-│   ├── sandbox/      # docker.py + kubernetes.py providers, manager
+│   ├── sandbox/      # WUYING provider, scoped client and manager
 │   ├── tool/         # built-in tools
 │   ├── permission/   # per-tool approval
 │   ├── mcp/          # MCP integration
@@ -116,8 +119,7 @@ OpenBox/
 │   └── main.py
 ├── frontend-v2/      # Primary React 19 UI (active development)
 ├── frontend/         # Legacy v1 UI (migration reference only)
-├── container/        # sandbox image (action_server)
-├── k8s/              # GKE manifests
+├── container/        # WUYING Action Server
 ├── docs/             # architecture & design docs
 └── docker-compose.yml
 ```
@@ -130,9 +132,12 @@ OpenBox/
 # Local dependencies (PostgreSQL + Redis + Azurite)
 make deps
 
-# Configure and run the backend (FastAPI, http://localhost:8080)
+# Configure the WUYING execution plane and model providers
 cp backend/openbox.jsonc.example backend/openbox.json   # configure models/providers
-cp backend/.env.example backend/.env                    # fill keys (never commit)
+cp backend/.env.example backend/.env.wuying-dev         # fill keys (never commit)
+cd backend && ./scripts/wuying_tunnel.sh                 # local forward to Action Server
+
+# Run the backend (FastAPI, http://localhost:8080)
 cd backend && uv sync && cd ..
 make backend
 ```
@@ -153,16 +158,16 @@ npm run check          # i18n parity + ESLint + TypeScript + Vitest
 npx playwright test    # E2E; requires the backend and a devtest account
 ```
 
-The v2 production image is defined in `frontend-v2/Dockerfile`. Deployment manifests for GKE live in `k8s/`; see `docs/gke.md`.
+The backend refuses Docker, Kubernetes and unknown sandbox providers at configuration and runtime boundaries. See [`docs/WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) before deploying the Action Server.
 
 ---
 
 ## Documentation
 
-Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, `gke.md`, [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop).
+Current implementation docs: [`AGENT_KERNEL_ARCHITECTURE.md`](docs/AGENT_KERNEL_ARCHITECTURE.md), [`WORKSPACE_NAMESPACING.md`](docs/WORKSPACE_NAMESPACING.md), [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md), [`PREVIEW_ORIGIN_ISOLATION.md`](docs/PREVIEW_ORIGIN_ISOLATION.md) and [`DeepSeek-Harness-vs-OpenBox-source-analysis.md`](docs/DeepSeek-Harness-vs-OpenBox-source-analysis.md).
 
 ---
 
 ## Note
 
-This is a sanitized public copy: secrets and environment files have been removed; sandbox image internals and a vendored agent framework are excluded. Configure your own model providers and credentials via `.env` / `openbox.json`.
+Secrets and environment files are not committed. Configure model providers and WUYING credentials through ignored environment files and `openbox.json`; never expose Action Server credentials through browser-facing APIs.

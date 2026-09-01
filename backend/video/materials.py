@@ -202,6 +202,8 @@ async def call_material_api(
     target: MaterialTarget,
     action: str,
     body: dict[str, Any],
+    *,
+    operation_key: str | None = None,
 ) -> dict[str, Any]:
     """Call one TokenSpace material Action and return its Result envelope."""
     import httpx
@@ -211,13 +213,18 @@ async def call_material_api(
         timeout=target.request_timeout_seconds,
         follow_redirects=True,
     ) as client:
+        headers = {
+            "Authorization": _auth_header(target.api_key),
+            "Content-Type": "application/json; charset=utf-8",
+        }
+        if operation_key:
+            # Correlation only: TokenSpace does not document this as an
+            # idempotency contract. Callers still quarantine ambiguous POSTs.
+            headers["X-Client-Request-Id"] = operation_key
         response = await client.post(
             url,
             params={"Action": action, "Version": _MATERIAL_API_VERSION},
-            headers={
-                "Authorization": _auth_header(target.api_key),
-                "Content-Type": "application/json; charset=utf-8",
-            },
+            headers=headers,
             json=body,
         )
     try:
@@ -256,6 +263,34 @@ def _clean_label(value: str) -> str:
 def _aigc_label(user_id: str) -> str:
     digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
     return f"openbox-aigc-{digest}"
+
+
+def _operation_key(*parts: str) -> str:
+    raw = "\x1f".join(str(part) for part in parts)
+    return "openbox-material-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _stable_row_id(prefix: str, operation_key: str) -> str:
+    digest = hashlib.sha256(operation_key.encode("utf-8")).hexdigest()[:32]
+    return f"{prefix}_{digest}"
+
+
+def _manual_review_error(kind: str) -> MaterialProviderError:
+    return MaterialProviderError(
+        f"{kind} 的远端创建结果未知，已停止自动重试；请人工核对供应商素材库后再处理。",
+        code="material_outcome_unknown",
+        status=409,
+        retryable=False,
+        public=True,
+    )
+
+
+def _reservation_stale(updated_at: datetime | None, timeout_seconds: int) -> bool:
+    value = _utc(updated_at)
+    if value is None:
+        return True
+    grace = max(60, int(timeout_seconds) * 2)
+    return (datetime.now(timezone.utc) - value).total_seconds() > grace
 
 
 def _public_group(row) -> dict[str, Any]:
@@ -347,7 +382,15 @@ async def create_liveness_session(user_id: str, label: str) -> dict[str, Any]:
 
     target = configured_material_target()
     clean_label = _clean_label(label)
+    operation_key = _operation_key(
+        target.provider,
+        user_id,
+        "LivenessFace",
+        clean_label,
+    )
     now = datetime.now(timezone.utc)
+    reserved = False
+    stale_creating = False
     async with get_db_session() as db:
         existing = (
             await db.execute(
@@ -356,7 +399,7 @@ async def create_liveness_session(user_id: str, label: str) -> dict[str, Any]:
                     VideoMaterialGroup.provider == target.provider,
                     VideoMaterialGroup.group_type == "LivenessFace",
                     VideoMaterialGroup.label == clean_label,
-                )
+                ).with_for_update()
             )
         ).scalar_one_or_none()
         if existing and existing.status == "active":
@@ -369,59 +412,132 @@ async def create_liveness_session(user_id: str, label: str) -> dict[str, Any]:
             and existing.authorization_url
         ):
             return _public_group(existing)
-
-    result = await call_material_api(target, "CreateVisualValidateSession", {})
-    token = str(result.get("BytedToken") or "").strip()
-    authorization_url = str(result.get("H5Link") or "").strip()
-    qr_code = str(result.get("QrCode") or "").strip() or None
-    if not token or not authorization_url.startswith("https://"):
-        raise RuntimeError("TokenSpace did not return a valid real-person authorization session")
-    if qr_code and not qr_code.startswith("data:image/"):
-        qr_code = None
-    raw_ttl = result.get("ExpiresIn")
-    ttl = int(raw_ttl) if isinstance(raw_ttl, (int, float)) and int(raw_ttl) > 0 else target.liveness_session_ttl_seconds
-    expires_at = now + timedelta(seconds=ttl)
-
-    async with get_db_session() as db:
-        row = (
-            await db.execute(
-                select(VideoMaterialGroup).where(
-                    VideoMaterialGroup.user_id == user_id,
-                    VideoMaterialGroup.provider == target.provider,
-                    VideoMaterialGroup.group_type == "LivenessFace",
-                    VideoMaterialGroup.label == clean_label,
+        if existing and existing.status == "session_creating":
+            if _reservation_stale(
+                existing.updated_at, target.request_timeout_seconds
+            ):
+                existing.status = "manual_review"
+                existing.error = "远端认证会话创建可能已发生但回执未持久化；自动重试已禁用。"
+                existing.updated_at = now
+                stale_creating = True
+            else:
+                raise MaterialProviderError(
+                    "真人认证会话正在由另一个请求创建，请稍后查询；当前请求不会重复创建。",
+                    code="material_operation_in_progress",
+                    status=409,
+                    retryable=True,
+                    public=True,
                 )
-            )
-        ).scalar_one_or_none()
-        if not row:
-            row = VideoMaterialGroup(
-                id=ascending("identity"),
+        if not stale_creating and existing and existing.status == "manual_review":
+            raise _manual_review_error("真人认证会话")
+        if stale_creating:
+            pass
+        elif existing is None:
+            existing = VideoMaterialGroup(
+                id=_stable_row_id("identity", operation_key),
                 user_id=user_id,
                 provider=target.provider,
                 project_name=target.project_name,
                 group_type="LivenessFace",
                 label=clean_label,
                 provider_group_id=None,
-                status="awaiting_user",
+                status="session_creating",
                 created_at=now,
                 updated_at=now,
             )
-            db.add(row)
-        row.status = "awaiting_user"
-        row.provider_token = token
-        row.authorization_url = authorization_url
-        row.qr_code = qr_code
-        row.expires_at = expires_at
-        row.authorized_at = None
-        row.provider_group_id = None
-        row.error = None
-        row.updated_at = now
+            db.add(existing)
+        else:
+            existing.status = "session_creating"
+            existing.provider_token = None
+            existing.authorization_url = None
+            existing.qr_code = None
+            existing.error = None
+            existing.updated_at = now
         try:
             await db.flush()
+            reserved = True
         except IntegrityError:
             await db.rollback()
-            raise RuntimeError("A真人认证 session for this label was created concurrently")
-        return _public_group(row)
+
+    if stale_creating:
+        raise _manual_review_error("真人认证会话")
+    if not reserved:
+        raise _manual_review_error("真人认证会话")
+
+    try:
+        result = await call_material_api(
+            target,
+            "CreateVisualValidateSession",
+            {},
+            operation_key=operation_key,
+        )
+    except Exception:
+        async with get_db_session() as db:
+            row = await db.get(VideoMaterialGroup, _stable_row_id("identity", operation_key))
+            if row and row.user_id == user_id and row.status == "session_creating":
+                row.status = "manual_review"
+                row.error = "远端认证会话创建结果未知；自动重试已禁用。"
+                row.updated_at = datetime.now(timezone.utc)
+        raise _manual_review_error("真人认证会话")
+    token = str(result.get("BytedToken") or "").strip()
+    authorization_url = str(result.get("H5Link") or "").strip()
+    qr_code = str(result.get("QrCode") or "").strip() or None
+    if not token or not authorization_url.startswith("https://"):
+        async with get_db_session() as db:
+            row = await db.get(VideoMaterialGroup, _stable_row_id("identity", operation_key))
+            if row and row.status == "session_creating":
+                row.status = "manual_review"
+                row.error = "远端返回了无效认证回执；自动重试已禁用。"
+                row.updated_at = datetime.now(timezone.utc)
+        raise _manual_review_error("真人认证会话")
+    if qr_code and not qr_code.startswith("data:image/"):
+        qr_code = None
+    raw_ttl = result.get("ExpiresIn")
+    ttl = int(raw_ttl) if isinstance(raw_ttl, (int, float)) and int(raw_ttl) > 0 else target.liveness_session_ttl_seconds
+    expires_at = now + timedelta(seconds=ttl)
+
+    try:
+        async with get_db_session() as db:
+            row = (
+                await db.execute(
+                    select(VideoMaterialGroup).where(
+                        VideoMaterialGroup.user_id == user_id,
+                        VideoMaterialGroup.provider == target.provider,
+                        VideoMaterialGroup.group_type == "LivenessFace",
+                        VideoMaterialGroup.label == clean_label,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not row or row.status != "session_creating":
+                raise RuntimeError("真人认证会话的本地预留状态已改变")
+            row.status = "awaiting_user"
+            row.provider_token = token
+            row.authorization_url = authorization_url
+            row.qr_code = qr_code
+            row.expires_at = expires_at
+            row.authorized_at = None
+            row.provider_group_id = None
+            row.error = None
+            row.updated_at = now
+            await db.flush()
+            return _public_group(row)
+    except Exception as exc:
+        # The provider receipt was returned, so a persistence failure is not a
+        # reason to POST another session. Quarantine the stable row whenever
+        # the database is reachable again in this process.
+        try:
+            async with get_db_session() as db:
+                row = await db.get(
+                    VideoMaterialGroup,
+                    _stable_row_id("identity", operation_key),
+                )
+                if row and row.user_id == user_id and row.status == "session_creating":
+                    row.status = "manual_review"
+                    row.error = "远端认证回执未能持久化；自动重试已禁用。"
+                    row.updated_at = datetime.now(timezone.utc)
+        except Exception:
+            log.warning("failed to quarantine an unpersisted liveness receipt")
+        raise _manual_review_error("真人认证会话") from exc
 
 
 def _pending_validation_error(exc: MaterialProviderError) -> bool:
@@ -529,6 +645,10 @@ async def _ensure_aigc_group(user_id: str, target: MaterialTarget):
     from db.models.video_material import VideoMaterialGroup
 
     label = _aigc_label(user_id)
+    operation_key = _operation_key(target.provider, user_id, "AIGC", label)
+    row_id = _stable_row_id("material_group", operation_key)
+    reserved = False
+    now = datetime.now(timezone.utc)
     async with get_db_session() as db:
         row = (
             await db.execute(
@@ -537,12 +657,38 @@ async def _ensure_aigc_group(user_id: str, target: MaterialTarget):
                     VideoMaterialGroup.provider == target.provider,
                     VideoMaterialGroup.group_type == "AIGC",
                     VideoMaterialGroup.label == label,
-                    VideoMaterialGroup.status == "active",
-                )
+                ).with_for_update()
             )
         ).scalar_one_or_none()
-        if row and row.provider_group_id:
+        if row and row.status == "active" and row.provider_group_id:
             return row
+        if row is None:
+            row = VideoMaterialGroup(
+                id=row_id,
+                user_id=user_id,
+                provider=target.provider,
+                project_name=target.project_name,
+                group_type="AIGC",
+                label=label,
+                provider_group_id=None,
+                status="resolving",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(row)
+            try:
+                await db.flush()
+                reserved = True
+            except IntegrityError:
+                await db.rollback()
+        elif row.status == "resolving" and _reservation_stale(
+            row.updated_at, target.request_timeout_seconds
+        ):
+            # ``resolving`` is committed before List and is advanced to
+            # ``creating`` before Create. Therefore a stale resolving row has
+            # not crossed the paid/create POST boundary and is safe to reclaim.
+            row.updated_at = now
+            reserved = True
 
     listed = await call_material_api(
         target,
@@ -553,6 +699,7 @@ async def _ensure_aigc_group(user_id: str, target: MaterialTarget):
             "PageSize": 100,
             "ProjectName": target.project_name,
         },
+        operation_key=operation_key,
     )
     items = listed.get("Items") if isinstance(listed.get("Items"), list) else []
     provider_group_id = next(
@@ -567,15 +714,59 @@ async def _ensure_aigc_group(user_id: str, target: MaterialTarget):
         "",
     )
     if not provider_group_id:
-        created = await call_material_api(
-            target,
-            "CreateAssetGroup",
-            {
-                "Name": label,
-                "Description": "OpenBox user-scoped generated-video references",
-            },
-        )
-        provider_group_id = str(created.get("Id") or "")
+        # Only the transaction that inserted the unique logical group may
+        # issue Create. A concurrent/previous creator with no visible receipt
+        # is quarantined; eventual consistency is not evidence for a retry.
+        if not reserved:
+            async with get_db_session() as db:
+                current = (
+                    await db.execute(
+                        select(VideoMaterialGroup).where(
+                            VideoMaterialGroup.user_id == user_id,
+                            VideoMaterialGroup.provider == target.provider,
+                            VideoMaterialGroup.group_type == "AIGC",
+                            VideoMaterialGroup.label == label,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if current and current.status == "creating":
+                    current.status = "manual_review"
+                    current.error = "素材组创建结果未知；自动重试已禁用。"
+                    current.updated_at = datetime.now(timezone.utc)
+                elif current and current.status == "resolving":
+                    raise MaterialProviderError(
+                        "AIGC 素材组正在由另一个请求解析，请稍后查询；当前请求不会重复创建。",
+                        code="material_operation_in_progress",
+                        status=409,
+                        retryable=True,
+                        public=True,
+                    )
+            raise _manual_review_error("AIGC 素材组")
+        async with get_db_session() as db:
+            current = await db.get(VideoMaterialGroup, row_id)
+            if not current or current.status != "resolving":
+                raise _manual_review_error("AIGC 素材组")
+            current.status = "creating"
+            current.updated_at = datetime.now(timezone.utc)
+        try:
+            created = await call_material_api(
+                target,
+                "CreateAssetGroup",
+                {
+                    "Name": label,
+                    "Description": "OpenBox user-scoped generated-video references",
+                },
+                operation_key=operation_key,
+            )
+            provider_group_id = str(created.get("Id") or "")
+        except Exception:
+            async with get_db_session() as db:
+                current = await db.get(VideoMaterialGroup, row_id)
+                if current and current.status == "creating":
+                    current.status = "manual_review"
+                    current.error = "素材组创建结果未知；自动重试已禁用。"
+                    current.updated_at = datetime.now(timezone.utc)
+            raise _manual_review_error("AIGC 素材组")
     if not provider_group_id.startswith("group-"):
         raise RuntimeError("TokenSpace did not return a valid AIGC material group")
 
@@ -592,24 +783,11 @@ async def _ensure_aigc_group(user_id: str, target: MaterialTarget):
             )
         ).scalar_one_or_none()
         if not row:
-            row = VideoMaterialGroup(
-                id=ascending("material_group"),
-                user_id=user_id,
-                provider=target.provider,
-                project_name=target.project_name,
-                group_type="AIGC",
-                label=label,
-                provider_group_id=provider_group_id,
-                status="active",
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(row)
-        else:
-            row.provider_group_id = provider_group_id
-            row.status = "active"
-            row.error = None
-            row.updated_at = now
+            raise RuntimeError("AIGC material group reservation disappeared")
+        row.provider_group_id = provider_group_id
+        row.status = "active"
+        row.error = None
+        row.updated_at = now
         await db.flush()
         return row
 
@@ -704,6 +882,45 @@ async def list_identity_assets(user_id: str, identity_id: str) -> list[dict[str,
         return [_public_asset(row) for row in rows]
 
 
+async def _persist_material_asset_receipt(
+    binding_id: str,
+    *,
+    user_id: str,
+    provider_asset_id: str,
+    asset_type: str,
+) -> str:
+    """Bind CreateAsset's receipt without reopening its send boundary."""
+    from db.base import get_db_session
+    from db.models.video_material import VideoMaterialAsset
+
+    async with get_db_session() as db:
+        binding = (
+            await db.execute(
+                select(VideoMaterialAsset)
+                .where(
+                    VideoMaterialAsset.id == binding_id,
+                    VideoMaterialAsset.user_id == user_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if not binding:
+            raise RuntimeError("TokenSpace material reservation disappeared")
+        if binding.provider_asset_id:
+            if binding.provider_asset_id != provider_asset_id:
+                raise RuntimeError("TokenSpace material receipt conflicts with the durable binding")
+            return binding.id
+        if binding.status != "creating":
+            raise RuntimeError("TokenSpace material reservation changed before receipt commit")
+        binding.provider_asset_id = provider_asset_id
+        binding.asset_type = asset_type
+        binding.status = "processing"
+        binding.error = None
+        binding.updated_at = datetime.now(timezone.utc)
+        await db.flush()
+        return binding.id
+
+
 async def ensure_material_asset(
     user_id: str,
     source_asset_id: str,
@@ -736,6 +953,16 @@ async def ensure_material_asset(
     else:
         group = await _ensure_aigc_group(user_id, target)
 
+    operation_key = _operation_key(
+        target.provider,
+        user_id,
+        "asset",
+        group.id,
+        source.id,
+    )
+    binding_row_id = _stable_row_id("material_asset", operation_key)
+    reserved = False
+    reserve_now = datetime.now(timezone.utc)
     async with get_db_session() as db:
         binding = (
             await db.execute(
@@ -743,12 +970,58 @@ async def ensure_material_asset(
                     VideoMaterialAsset.group_id == group.id,
                     VideoMaterialAsset.source_asset_id == source.id,
                     VideoMaterialAsset.user_id == user_id,
-                )
+                ).with_for_update()
             )
         ).scalar_one_or_none()
         if binding and binding.status == "active" and binding.provider_asset_id:
             return _public_asset(binding)
+        if binding and not binding.provider_asset_id and binding.status in {
+            "creating",
+            "manual_review",
+        }:
+            raise _manual_review_error("TokenSpace 素材")
+        if binding and not binding.provider_asset_id and binding.status == "reserved":
+            if _reservation_stale(
+                binding.updated_at, target.request_timeout_seconds
+            ):
+                # ``reserved`` has not crossed CreateAsset; ``creating`` is the
+                # first ambiguous state. Reclaim only this provably pre-send row.
+                binding.updated_at = reserve_now
+                reserved = True
+            else:
+                raise MaterialProviderError(
+                    "TokenSpace 素材正在由另一个请求预留，请稍后查询；当前请求不会重复创建。",
+                    code="material_operation_in_progress",
+                    status=409,
+                    retryable=True,
+                    public=True,
+                )
+        if binding is None:
+            binding = VideoMaterialAsset(
+                id=binding_row_id,
+                user_id=user_id,
+                group_id=group.id,
+                source_asset_id=source.id,
+                provider_asset_id=None,
+                asset_type=asset_type,
+                status="reserved",
+                created_at=reserve_now,
+                updated_at=reserve_now,
+            )
+            db.add(binding)
+            try:
+                await db.flush()
+                reserved = True
+            except IntegrityError:
+                await db.rollback()
+        elif not binding.provider_asset_id and binding.status == "failed":
+            # A provider-declared terminal failure makes an explicit retry safe.
+            binding.status = "reserved"
+            binding.error = None
+            binding.updated_at = datetime.now(timezone.utc)
+            reserved = True
         provider_asset_id = binding.provider_asset_id if binding else None
+        binding_id = binding.id if binding else binding_row_id
 
     if provider_asset_id:
         try:
@@ -764,13 +1037,22 @@ async def ensure_material_asset(
             if state == "failed":
                 provider_asset_id = None
         except MaterialProviderError:
-            provider_asset_id = None
+            # A status outage is not evidence that creating another provider
+            # asset is safe. Keep the receipt and let a later call poll it.
+            raise
 
-    now = datetime.now(timezone.utc)
     if not provider_asset_id:
+        if not reserved:
+            raise _manual_review_error("TokenSpace 素材")
         oss = get_oss()
         source_url = oss.presign_get(source.oss_key, expires_sec=target.input_url_ttl_seconds)
         safe_name = re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", source.name).strip("._") or source.id
+        async with get_db_session() as db:
+            binding = await db.get(VideoMaterialAsset, binding_id)
+            if not binding or binding.status != "reserved":
+                raise _manual_review_error("TokenSpace 素材")
+            binding.status = "creating"
+            binding.updated_at = datetime.now(timezone.utc)
         try:
             created = await call_material_api(
                 target,
@@ -781,45 +1063,50 @@ async def ensure_material_asset(
                     "Name": f"openbox-{safe_name[:96]}",
                     "AssetType": asset_type,
                 },
+                operation_key=operation_key,
             )
         except MaterialProviderError as exc:
+            async with get_db_session() as db:
+                binding = await db.get(VideoMaterialAsset, binding_id)
+                if binding and binding.status == "creating":
+                    binding.status = "manual_review"
+                    binding.error = "素材创建结果未知；自动重试已禁用。"
+                    binding.updated_at = datetime.now(timezone.utc)
             if identity_id is None and _looks_like_liveness_restriction(exc):
                 raise _authorization_required(exc) from exc
-            raise
-        provider_asset_id = str(created.get("Id") or "").strip()
-        if not provider_asset_id.startswith("asset-"):
-            raise RuntimeError("TokenSpace did not return a valid material asset ID")
-        async with get_db_session() as db:
-            binding = (
-                await db.execute(
-                    select(VideoMaterialAsset).where(
-                        VideoMaterialAsset.group_id == group.id,
-                        VideoMaterialAsset.source_asset_id == source.id,
-                        VideoMaterialAsset.user_id == user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if not binding:
-                binding = VideoMaterialAsset(
-                    id=ascending("material_asset"),
-                    user_id=user_id,
-                    group_id=group.id,
-                    source_asset_id=source.id,
-                    provider_asset_id=provider_asset_id,
-                    asset_type=asset_type,
-                    status="processing",
-                    created_at=now,
-                    updated_at=now,
-                )
-                db.add(binding)
-            else:
-                binding.provider_asset_id = provider_asset_id
-                binding.asset_type = asset_type
-                binding.status = "processing"
-                binding.error = None
-                binding.updated_at = now
-            await db.flush()
-            binding_id = binding.id
+            raise _manual_review_error("TokenSpace 素材") from exc
+        except Exception as exc:
+            async with get_db_session() as db:
+                binding = await db.get(VideoMaterialAsset, binding_id)
+                if binding and binding.status == "creating":
+                    binding.status = "manual_review"
+                    binding.error = "素材创建结果未知；自动重试已禁用。"
+                    binding.updated_at = datetime.now(timezone.utc)
+            raise _manual_review_error("TokenSpace 素材") from exc
+        try:
+            provider_asset_id = str(created.get("Id") or "").strip()
+            if not provider_asset_id.startswith("asset-"):
+                raise RuntimeError("TokenSpace did not return a valid material asset ID")
+            binding_id = await _persist_material_asset_receipt(
+                binding_id,
+                user_id=user_id,
+                provider_asset_id=provider_asset_id,
+                asset_type=asset_type,
+            )
+        except Exception as exc:
+            # The CreateAsset response crossed the paid/create boundary. A
+            # malformed receipt or local commit failure cannot justify another
+            # POST, even though the business row cannot retain an attempt log.
+            try:
+                async with get_db_session() as db:
+                    binding = await db.get(VideoMaterialAsset, binding_id)
+                    if binding and binding.user_id == user_id and binding.status == "creating":
+                        binding.status = "manual_review"
+                        binding.error = "远端素材回执未能可靠持久化；自动重试已禁用。"
+                        binding.updated_at = datetime.now(timezone.utc)
+            except Exception:
+                log.warning("failed to quarantine an unpersisted material receipt")
+            raise _manual_review_error("TokenSpace 素材") from exc
     else:
         binding_id = binding.id
 

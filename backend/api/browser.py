@@ -47,7 +47,7 @@ def _existing_client(user_id: str):
     when it is running fine.
     """
     from sandbox.client import SandboxClient
-    from sandbox.manager import sandbox_manager
+    from sandbox.manager import _user_scope, sandbox_manager
 
     for key, client in sandbox_manager._clients.items():
         sandbox = sandbox_manager._project_map.get(key)
@@ -63,6 +63,7 @@ def _existing_client(user_id: str):
             host=container.host or "127.0.0.1",
             port=container.port,
             api_key=container.api_key or "",
+            user_scope=_user_scope(user_id),
         )
     except Exception as e:
         log.debug(f"No existing sandbox to inspect: {e}")

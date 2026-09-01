@@ -28,9 +28,10 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
     from sandbox.assets import attach_sandbox_image
 
-    path = args.file_path
-    if not path.startswith("/"):
-        path = f"{ctx.workdir.rstrip('/')}/{path}"
+    try:
+        path = ctx.resolve_file_path(args.file_path, allow_user_scope=True)
+    except ValueError as exc:
+        return ToolResult(title=f"Cannot read {args.file_path}", output=str(exc))
 
     try:
         get_oss()
@@ -38,15 +39,23 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="share_file unavailable", output=f"OSS transfer is not configured: {e}")
 
     probe = await ctx.sandbox.execute(
-        f"stat -c %s {shlex.quote(path)} && file --brief --mime-type {shlex.quote(path)}", timeout=15
+        f"stat -c %s {shlex.quote(path)} && file --brief --mime-type {shlex.quote(path)}",
+        timeout=15,
+        workdir=ctx.workdir,
     )
     if probe.exit_code != 0:
-        return ToolResult(title=f"Cannot read {path}", output=probe.stderr.strip() or "No such file")
+        return ToolResult(
+            title=f"Cannot read {args.file_path}",
+            output=probe.stderr.strip() or "No such file",
+        )
     lines = probe.stdout.strip().splitlines()
     size = int(lines[0]) if lines and lines[0].isdigit() else 0
     mime = (lines[1].strip() if len(lines) > 1 else "") or "application/octet-stream"
     if size > _MAX_BYTES:
-        return ToolResult(title=f"File too large: {path}", output=f"{size} bytes (max {_MAX_BYTES})")
+        return ToolResult(
+            title=f"File too large: {args.file_path}",
+            output=f"{size} bytes (max {_MAX_BYTES})",
+        )
 
     name = path.split("/")[-1]
     try:
@@ -61,11 +70,11 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
             relation_label=name,
         )
     except Exception as e:
-        return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])
+        return ToolResult(title=f"Upload failed: {args.file_path}", output=str(e)[:300])
 
     return ToolResult(
         title=name,
-        output=f"File attached to this reply for the user: {path} ({mime}, {verified} bytes).",
+        output=f"File attached to this reply for the user: {args.file_path} ({mime}, {verified} bytes).",
         metadata={"asset_id": asset_id, "mime": mime, "path": path, "size": verified},
     )
 

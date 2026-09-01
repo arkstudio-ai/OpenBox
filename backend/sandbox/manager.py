@@ -10,6 +10,14 @@ from sandbox.provider import build_sandbox_name
 log = create_logger("sandbox.manager")
 
 
+def _user_scope(user_id: str) -> str:
+    """Return the canonical pseudonymous segment used by the remote desktop."""
+    from pathlib import PurePosixPath
+    from project.workspace import user_directory
+
+    return PurePosixPath(user_directory(user_id)).name
+
+
 def _map_key(user_id: str, project_id: str = "default") -> str:
     """Build a stable in-memory mapping key for a user's sandbox."""
     return user_id
@@ -35,9 +43,9 @@ class SandboxInfo:
 class SandboxManager:
     """Manages user-level sandbox containers with session-level directory isolation.
 
-    All sessions for the same user share ONE container.
-    Each session gets its own working directory: /workspace/sessions/{session_id}/
-    This avoids creating a new container per session while keeping data isolated.
+    All sessions for the same user share ONE container. Sessions in the same
+    project share one tree; tenant/project hashes keep a shared development
+    desktop from colliding across users with identical slugs.
     """
 
     def __init__(self):
@@ -193,6 +201,7 @@ class SandboxManager:
                         port=sandbox.port,
                         api_key=sandbox.api_key,
                         base_url=sandbox.base_url,
+                        user_scope=_user_scope(user_id),
                     )
                 async with self._lock:
                     if self._project_map.get(key) is not sandbox:
@@ -259,6 +268,7 @@ class SandboxManager:
                 port=info.port,
                 api_key=info.api_key or "",
                 base_url=getattr(provider, "client_base_url", None),
+                user_scope=_user_scope(user_id),
             )
 
             async with self._lock:
@@ -287,22 +297,32 @@ class SandboxManager:
         off instead of starting in an empty folder every time.
         """
         from project.workspace import (
-            INTERNAL_ROOT, project_directory, slug_for, WORKSPACE_ROOT,
+            namespaced_project_directory,
+            user_internal_directory,
+            locator_for,
+            WORKSPACE_ROOT,
         )
-        slug = "default"
+        user_id = "default"
+        project_id = "default"
         try:
-            from session.session import project_id_for
-            slug = await slug_for(await project_id_for(session_id))
+            from session.session import workspace_identity_for
+            user_id, project_id = await workspace_identity_for(session_id)
         except Exception as exc:
             log.debug(
                 f"Could not resolve project for session {session_id}: "
                 f"{type(exc).__name__}"
             )
 
-        workdir = project_directory(slug)
+        locator = await locator_for(project_id, user_id=user_id)
+        workdir = namespaced_project_directory(
+            locator.user_id,
+            locator.id,
+            locator.slug,
+        )
+        internal = user_internal_directory(locator.user_id)
         try:
             await client.execute(
-                command=f"mkdir -p {workdir} {INTERNAL_ROOT}",
+                command=f"mkdir -p {workdir} {internal}",
                 timeout=10,
                 workdir=WORKSPACE_ROOT,
             )
@@ -313,16 +333,17 @@ class SandboxManager:
 
     async def get_session_workdir(self, session_id: str) -> str:
         """The directory a session's tools run in — its project's directory."""
-        from project.workspace import project_directory, slug_for
+        from project.workspace import workdir_for_identity
         try:
-            from session.session import project_id_for
-            return project_directory(await slug_for(await project_id_for(session_id)))
+            from session.session import workspace_identity_for
+            user_id, project_id = await workspace_identity_for(session_id)
+            return await workdir_for_identity(user_id, project_id)
         except Exception as exc:
             log.debug(
                 f"Could not resolve workdir for {session_id}: "
                 f"{type(exc).__name__}"
             )
-        return project_directory("default")
+        return await workdir_for_identity("default", "default")
 
     async def release(self, session_id: str, *, user_id: str) -> None:
         """Detach one session without deciding the sandbox's global lifetime.

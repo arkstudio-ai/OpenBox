@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContainerStatus(str, Enum):
@@ -17,6 +17,12 @@ class CreateContainerRequest(BaseModel):
 
 
 class ContainerInfo(BaseModel):
+    """Internal container record used by sandbox providers.
+
+    ``api_key`` is transport infrastructure state and must never be serialized
+    by a public API response model.
+    """
+
     id: str
     name: str
     status: ContainerStatus
@@ -27,8 +33,21 @@ class ContainerInfo(BaseModel):
     api_key: str | None = None
 
 
+class PublicContainerInfo(BaseModel):
+    """Browser-safe container metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    status: ContainerStatus
+    image: str
+    created_at: datetime
+    port: int | None = None
+
+
 class ContainerListResponse(BaseModel):
-    containers: list[ContainerInfo]
+    containers: list[PublicContainerInfo]
     total: int
 
 

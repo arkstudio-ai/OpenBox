@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -11,6 +12,9 @@ from core.log import create_logger
 from tool.tool import ToolResult, ToolContext, ToolInfo, define_tool
 
 log = create_logger("tool.skill")
+
+if TYPE_CHECKING:
+    from skill.provider import SkillCatalogSnapshot, SkillRegistry
 
 
 class SkillArgs(BaseModel):
@@ -36,6 +40,7 @@ class SkillSearchArgs(BaseModel):
 #: are not covered by that link.
 USER_SKILLS_DIR = "/data/skills"
 WORKSPACE_SKILLS_LINK = "/workspace/skills"
+_SCOPED_SKILL_SEGMENT = re.compile(r"^u-[0-9a-f]{20}$")
 
 _BASE_DESCRIPTION = """\
 Load a specialized skill that provides domain-specific instructions and workflows.
@@ -94,6 +99,25 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     behaviour because the sandbox copy is the one whose bundled files the
     agent can reach.
     """
+    return await _execute_skill(args, ctx)
+
+
+async def _execute_skill(
+    args: SkillArgs,
+    ctx: ToolContext,
+    *,
+    registry: "SkillRegistry | None" = None,
+    snapshot: "SkillCatalogSnapshot | None" = None,
+) -> ToolResult:
+    """Load through an exact provider snapshot, or the legacy host helper.
+
+    Agent-resolved tool definitions always supply ``registry`` and
+    ``snapshot``.  The fallback remains for direct API/tests built against the
+    historical module-level ``skill_tool``.
+    """
+    if registry is not None and snapshot is not None:
+        return await _execute_selected_skill(args, ctx, registry, snapshot)
+
     content = None
     base_dir = ""
     files: list[str] = []
@@ -196,9 +220,19 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         # Only user-installed skills live under the path /workspace/skills points
         # at. Saying this for a built-in skill sent the model to an empty
         # directory, one line after being given the correct base directory.
-        if base_dir.startswith(USER_SKILLS_DIR):
+        relative_skill_path = base_dir.removeprefix(f"{USER_SKILLS_DIR}/")
+        first_segment = relative_skill_path.split("/", 1)[0]
+        if (
+            base_dir.startswith(f"{USER_SKILLS_DIR}/")
+            and not _SCOPED_SKILL_SEGMENT.fullmatch(first_segment)
+        ):
             output_parts.append(
                 f"The skill directory is also reachable at {WORKSPACE_SKILLS_LINK}/.")
+        elif _SCOPED_SKILL_SEGMENT.fullmatch(first_segment):
+            output_parts.append(
+                "This is your tenant-scoped Skill directory; use the exact base "
+                "directory above for bundled scripts and references."
+            )
     if files:
         output_parts.append("")
         if host_only:
@@ -221,6 +255,152 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
         output="\n".join(output_parts),
+    )
+
+
+async def _execute_selected_skill(
+    args: SkillArgs,
+    ctx: ToolContext,
+    registry: "SkillRegistry",
+    snapshot: "SkillCatalogSnapshot",
+) -> ToolResult:
+    """Load only the provider/revision selected by the advertised catalog."""
+    from skill.provider import (
+        ScopeKey,
+        SkillCatalogueUnavailable,
+        SkillScopeMismatch,
+        SkillSnapshotStale,
+    )
+
+    try:
+        caller_scope = ScopeKey(
+            user_id=ctx.user_id,
+            project_id=ctx.project_id,
+            workdir=ctx.workdir,
+        )
+        skill = await registry.load(snapshot, args.skill, scope=caller_scope)
+    except SkillScopeMismatch:
+        return ToolResult(
+            title=f"Skill scope mismatch: {args.skill}",
+            output="The advertised skill belongs to another user or project scope.",
+            metadata={"error": "skill_scope_mismatch"},
+        )
+    except SkillSnapshotStale:
+        return ToolResult(
+            title=f"Skill changed; refresh required: {args.skill}",
+            output=(
+                "The Skill provider changed after this catalog was selected. "
+                "Retry on the next Agent step so the Skill can be rediscovered safely."
+            ),
+            metadata={"error": "skill_snapshot_stale"},
+        )
+    except SkillCatalogueUnavailable:
+        return ToolResult(
+            title=f"Skill catalogue unavailable: {args.skill}",
+            output="No complete or last-known-good Skill catalogue is available.",
+            metadata={"error": "skill_catalogue_unavailable"},
+        )
+    except Exception as exc:
+        log.debug(
+            "Selected Skill load failed skill=%s error_type=%s",
+            args.skill,
+            type(exc).__name__,
+        )
+        return ToolResult(
+            title=f"Could not load skill: {args.skill}",
+            output=(
+                "The selected Skill provider could not load the body. This is an "
+                "infrastructure failure; retrying on the next step may work."
+            ),
+            metadata={"error": "skill_provider_unreachable"},
+        )
+
+    if skill is None:
+        return ToolResult(
+            title=f"Skill not found: {args.skill}",
+            output=f"No skill named '{args.skill}' exists in the selected catalog.",
+        )
+
+    content = skill.content
+    if args.args:
+        content = content.replace("$ARGUMENTS", args.args)
+    base_dir = skill.base_dir
+    files = list(skill.files)
+    host_only = bool(skill.path and not base_dir)
+    if host_only and skill.path:
+        files = _host_files(skill.path)
+
+    output_parts = [
+        f"<skill_content name=\"{args.skill}\">",
+        content.strip(),
+    ]
+    if base_dir:
+        output_parts.extend([
+            "",
+            f"Base directory for this skill: {base_dir}",
+            "Relative paths in this skill should be resolved from this directory.",
+        ])
+        relative_skill_path = base_dir.removeprefix(f"{USER_SKILLS_DIR}/")
+        first_segment = relative_skill_path.split("/", 1)[0]
+        if (
+            base_dir.startswith(f"{USER_SKILLS_DIR}/")
+            and not _SCOPED_SKILL_SEGMENT.fullmatch(first_segment)
+        ):
+            output_parts.append(
+                f"The skill directory is also reachable at {WORKSPACE_SKILLS_LINK}/."
+            )
+        elif _SCOPED_SKILL_SEGMENT.fullmatch(first_segment):
+            output_parts.append(
+                "This is your tenant-scoped Skill directory; use the exact base "
+                "directory above for bundled scripts and references."
+            )
+    if files:
+        output_parts.append("")
+        if host_only:
+            output_parts.extend([
+                "This skill is installed on the backend host, not in",
+                "your workspace. The files below ship with it but are",
+                "NOT readable from here — follow the instructions above",
+                "without trying to open them.",
+            ])
+        output_parts.append("<skill_files>")
+        output_parts.extend(f"  {filename}" for filename in files[:50])
+        if len(files) > 50:
+            output_parts.append(f"  ... and {len(files) - 50} more files")
+        output_parts.append("</skill_files>")
+    output_parts.append("</skill_content>")
+    if args.skill == "dev-browser":
+        output_parts.extend(["", await _browser_readiness(ctx)])
+    return ToolResult(
+        title=f"Loaded skill: {args.skill}",
+        output="\n".join(output_parts),
+        metadata={
+            "provider": skill.provider_id,
+            "provider_revision": skill.provider_revision,
+            "catalog_revision": snapshot.revision,
+        },
+    )
+
+
+def _skill_tool_for_snapshot(
+    registry: "SkillRegistry",
+    snapshot: "SkillCatalogSnapshot",
+) -> ToolInfo:
+    async def selected(args: SkillArgs, ctx: ToolContext) -> ToolResult:
+        return await _execute_skill(
+            args,
+            ctx,
+            registry=registry,
+            snapshot=snapshot,
+        )
+
+    return define_tool(
+        "skill",
+        description=_BASE_DESCRIPTION,
+        parameters=SkillArgs,
+        execute=selected,
+        sandbox_required=False,
+        never_prune=True,
     )
 
 
@@ -667,8 +847,35 @@ skill_search_tool = define_tool(
 async def _collect_permitted_skills(
     sandbox=None,
     ruleset: list | None = None,
+    *,
+    scope_key=None,
+    registry=None,
 ) -> list[dict]:
     """Merge container/global/project directories, then authorize every row."""
+    if scope_key is not None:
+        from skill.provider import SkillCatalogueUnavailable, skill_registry_for
+
+        active = registry or skill_registry_for(sandbox)
+        observed = await active.snapshot(scope_key)
+        if not observed.available:
+            raise SkillCatalogueUnavailable(
+                "; ".join(item.message for item in observed.diagnostics)
+                or "Skill catalogue unavailable"
+            )
+        return _permitted(
+            [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "source": skill.source,
+                    "provider": skill.provider_id,
+                    "provider_revision": skill.provider_revision,
+                }
+                for skill in observed.skills
+            ],
+            ruleset or [],
+        )
+
     skills: list[dict] = []
 
     if sandbox:
@@ -718,12 +925,46 @@ async def build_skill_tools_with_listing(
     ruleset: list | None = None,
     *,
     enable_search: bool = True,
+    scope_key=None,
+    registry=None,
 ) -> tuple[ToolInfo, ToolInfo | None]:
     """Build the Skill loader and its conditional, same-step search companion."""
-    skills = await _collect_permitted_skills(sandbox, ruleset)
+    snapshot = None
+    active_registry = registry
+    if scope_key is not None:
+        from skill.provider import SkillCatalogueUnavailable, skill_registry_for
+
+        active_registry = active_registry or skill_registry_for(sandbox)
+        snapshot = await active_registry.snapshot(scope_key)
+        if not snapshot.available:
+            raise SkillCatalogueUnavailable(
+                "; ".join(item.message for item in snapshot.diagnostics)
+                or "Skill catalogue unavailable"
+            )
+        skills = _permitted(
+            [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "source": skill.source,
+                    "provider": skill.provider_id,
+                    "provider_revision": skill.provider_revision,
+                }
+                for skill in snapshot.skills
+            ],
+            ruleset or [],
+        )
+    else:
+        skills = await _collect_permitted_skills(sandbox, ruleset)
+
+    loader = (
+        _skill_tool_for_snapshot(active_registry, snapshot)
+        if active_registry is not None and snapshot is not None
+        else skill_tool
+    )
 
     if not skills:
-        return skill_tool, None
+        return loader, None
 
     complete_listing = render_listing(skills)
     hard_chars = _listing_hard_chars()
@@ -742,17 +983,22 @@ async def build_skill_tools_with_listing(
             )
 
     enriched_description = "\n".join([_BASE_DESCRIPTION, "", wire_listing])
-    return replace(skill_tool, description=enriched_description), search
+    return replace(loader, description=enriched_description), search
 
 
 async def build_skill_tool_with_listing(
     sandbox=None,
     ruleset: list | None = None,
+    *,
+    scope_key=None,
+    registry=None,
 ) -> ToolInfo:
     """Compatibility helper that never truncates without returning a search tool."""
     tool, _search = await build_skill_tools_with_listing(
         sandbox,
         ruleset,
         enable_search=False,
+        scope_key=scope_key,
+        registry=registry,
     )
     return tool

@@ -34,4 +34,5 @@ invalid_tool = define_tool(
     parameters=InvalidArgs,
     execute=execute,
     sandbox_required=False,
+    parallel_safe=True,
 )

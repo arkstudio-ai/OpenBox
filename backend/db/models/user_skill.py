@@ -40,6 +40,12 @@ class UserSkill(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'unpublished'")
     )
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'active'")
+    )
+    lifecycle_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1")
+    )
     version: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
@@ -73,5 +79,11 @@ class UserSkill(Base):
     __table_args__ = (
         UniqueConstraint("owner_id", "name", name="uq_user_skills_owner_name"),
         Index("ix_user_skills_owner_updated", "owner_id", "updated_at"),
+        Index(
+            "ix_user_skills_owner_lifecycle",
+            "owner_id",
+            "lifecycle_state",
+            "updated_at",
+        ),
         Index("ix_user_skills_status_published", "status", "published_at"),
     )

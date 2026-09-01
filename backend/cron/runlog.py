@@ -91,6 +91,9 @@ async def append_run_log(
     job: dict,
     entry: str,
     locale: str = "zh-CN",
+    *,
+    delivery_id: str | None = None,
+    filename_override: str | None = None,
 ) -> bool:
     """Append the entry to today's log in the job's project workspace.
 
@@ -101,8 +104,44 @@ async def append_run_log(
 
         client = await sandbox_manager.get_client(temp_session_id, user_id=user_id)
         workdir = await sandbox_manager.get_session_workdir(temp_session_id)
-        filename = log_filename(job)
+        filename = filename_override or log_filename(job)
         path = f"{workdir}/{filename}"
+
+        if delivery_id:
+            # One remote process performs marker check + append while holding
+            # an advisory file lock.  This closes both the retry-after-crash
+            # duplicate and the multi-replica read/append race.
+            import base64
+            import shlex
+
+            marker = f"<!-- openbox-cron-delivery:{delivery_id} -->"
+            block = f"{marker}\n{entry}"
+            header = file_header(job, filename, locale)
+            script = (
+                "import base64,fcntl,os,sys;"
+                "p=base64.b64decode(sys.argv[1]).decode();"
+                "m=base64.b64decode(sys.argv[2]).decode();"
+                "b=base64.b64decode(sys.argv[3]).decode();"
+                "h=base64.b64decode(sys.argv[4]).decode();"
+                "os.makedirs(os.path.dirname(p),exist_ok=True);"
+                "f=open(p,'a+',encoding='utf-8');"
+                "fcntl.flock(f.fileno(),fcntl.LOCK_EX);"
+                "f.seek(0);e=f.read();"
+                "f.write(('' if e else h)+('' if m in e else b));"
+                "f.flush();os.fsync(f.fileno());f.close()"
+            )
+            encoded = [
+                base64.b64encode(value.encode("utf-8")).decode("ascii")
+                for value in (path, marker, block, header)
+            ]
+            command = "python3 -c {} {}".format(
+                shlex.quote(script),
+                " ".join(shlex.quote(value) for value in encoded),
+            )
+            result = await client.execute(command, timeout=30, workdir=workdir)
+            if result.exit_code != 0:
+                raise RuntimeError(result.stderr or "runlog append command failed")
+            return True
 
         # write_file may not create parent directories; the first entry of a
         # project must not fail on a missing cron/ dir.

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next"
 import { Check, ChevronDown, Pencil, X } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import type { PlanPart } from "@/shared/types/api"
+import { projectScopedDisplayPath } from "@/shared/lib/project-path"
 import { usePlanDecision, useSavePlan } from "../api/plan"
 
 const Markdown = lazy(() => import("./Markdown"))
@@ -46,7 +47,7 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
           className="group flex min-w-0 flex-1 items-center gap-2.5 text-start"
         >
           <span className="text-lg font-medium">{t("plan.review.title")}</span>
-          <span className="text-n600 truncate font-mono text-xs">{part.path}</span>
+          <span className="text-n600 truncate font-mono text-xs">{projectScopedDisplayPath(part.path)}</span>
           <ChevronDown
             className={cn(
               "text-n500 group-hover:text-ink size-3.5 shrink-0 transition-transform duration-200",
@@ -79,7 +80,7 @@ export function PlanPartCard({ part, sessionId }: { part: PlanPart; sessionId: s
               className="scr border-hair bg-bg text-ink focus:border-accent max-h-100 w-full resize-y rounded-lg border p-3 font-mono text-sm leading-relaxed outline-none"
             />
           ) : (
-            <div className="scr text-ink max-h-100 overflow-auto text-md leading-relaxed">
+            <div className="scr text-ink text-md max-h-100 overflow-auto leading-relaxed">
               <Suspense fallback={<p className="whitespace-pre-wrap">{part.content}</p>}>
                 <Markdown text={part.content} />
               </Suspense>

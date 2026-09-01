@@ -18,12 +18,16 @@ class ChatStreamState {
   const ChatStreamState({
     this.messages = const {},
     this.status = const {},
+    this.statusGeneration = const {},
+    this.terminalStatusGeneration = const {},
     this.retry = const {},
     this.runError = const {},
   });
 
   final Map<String, List<ChatMessage>> messages;
   final Map<String, SessionStatus> status;
+  final Map<String, int> statusGeneration;
+  final Map<String, int> terminalStatusGeneration;
 
   /// Which retry a stalled run is on, so the wait can account for itself.
   final Map<String, RetryProgress> retry;
@@ -43,15 +47,19 @@ class ChatStreamState {
   ChatStreamState copyWith({
     Map<String, List<ChatMessage>>? messages,
     Map<String, SessionStatus>? status,
+    Map<String, int>? statusGeneration,
+    Map<String, int>? terminalStatusGeneration,
     Map<String, RetryProgress>? retry,
     Map<String, String>? runError,
-  }) =>
-      ChatStreamState(
-        messages: messages ?? this.messages,
-        status: status ?? this.status,
-        retry: retry ?? this.retry,
-        runError: runError ?? this.runError,
-      );
+  }) => ChatStreamState(
+    messages: messages ?? this.messages,
+    status: status ?? this.status,
+    statusGeneration: statusGeneration ?? this.statusGeneration,
+    terminalStatusGeneration:
+        terminalStatusGeneration ?? this.terminalStatusGeneration,
+    retry: retry ?? this.retry,
+    runError: runError ?? this.runError,
+  );
 }
 
 /// Web `isBusyStatus`: busy | finalizing | retry | compacting.
@@ -62,10 +70,25 @@ bool isBusyStatus(SessionStatus? status) =>
     status == SessionStatus.compacting;
 
 int _toolRank(ToolStatus s) => switch (s) {
-      ToolStatus.pending => 0,
-      ToolStatus.running => 1,
-      ToolStatus.completed || ToolStatus.error => 2,
-    };
+  ToolStatus.pending => 0,
+  ToolStatus.running => 1,
+  ToolStatus.completed || ToolStatus.error => 2,
+};
+
+const _generationScopedEvents = <String>{
+  'session.status',
+  'session.finalizing',
+  'session.error',
+  'message.created',
+  'message.updated',
+  'message.text_delta',
+  'part.created',
+  'part.updated',
+  'part.delta',
+  'tool.running',
+  'tool.completed',
+  'tool.error',
+};
 
 class ChatStreamStore extends Notifier<ChatStreamState> {
   StreamSubscription<WsEvent>? _sub;
@@ -81,6 +104,11 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   void _onWsEvent(WsEvent event) {
     final sessionId = event.sessionId;
     if (sessionId == null) return;
+    final generation = asInt(event.data['generation']);
+    if (_generationScopedEvents.contains(event.type) &&
+        !acceptEventGeneration(sessionId, generation)) {
+      return;
+    }
     switch (event.type) {
       case 'message.created':
         final msg = asMap(event.data['message']);
@@ -98,27 +126,45 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       case 'part.created':
         final part = asMap(event.data['part']);
         if (part.isNotEmpty) {
-          addPart(sessionId, asString(event.data['messageId']) ?? '',
-              MessagePart.fromJson(part));
+          addPart(
+            sessionId,
+            asString(event.data['messageId']) ?? '',
+            MessagePart.fromJson(part),
+          );
         }
       case 'part.updated':
         final part = asMap(event.data['part']);
         if (part.isNotEmpty) {
-          updatePart(sessionId, asString(event.data['messageId']) ?? '',
-              MessagePart.fromJson(part));
+          updatePart(
+            sessionId,
+            asString(event.data['messageId']) ?? '',
+            MessagePart.fromJson(part),
+          );
         }
       case 'tool.running':
-        updateToolStatus(sessionId, asString(event.data['partId']) ?? '',
-            ToolStatus.running, event.data);
+        updateToolStatus(
+          sessionId,
+          asString(event.data['partId']) ?? '',
+          ToolStatus.running,
+          event.data,
+        );
       case 'tool.completed':
-        updateToolStatus(sessionId, asString(event.data['partId']) ?? '',
-            ToolStatus.completed, event.data);
+        updateToolStatus(
+          sessionId,
+          asString(event.data['partId']) ?? '',
+          ToolStatus.completed,
+          event.data,
+        );
       case 'tool.error':
-        updateToolStatus(sessionId, asString(event.data['partId']) ?? '',
-            ToolStatus.error, event.data);
+        updateToolStatus(
+          sessionId,
+          asString(event.data['partId']) ?? '',
+          ToolStatus.error,
+          event.data,
+        );
       case 'session.status':
         final status = sessionStatusFrom(asString(event.data['status']));
-        setStatus(sessionId, status);
+        if (!applyStatusEvent(sessionId, status, generation)) return;
         // A fresh run supersedes whatever the last one failed with.
         if (status == SessionStatus.busy) clearRunError(sessionId);
         final attempt = asInt(event.data['attempt']);
@@ -130,9 +176,17 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
           );
         }
       case 'session.finalizing':
-        setStatus(sessionId, SessionStatus.finalizing);
+        if (!applyStatusEvent(
+          sessionId,
+          SessionStatus.finalizing,
+          generation,
+        )) {
+          return;
+        }
       case 'session.error':
-        setStatus(sessionId, SessionStatus.error);
+        if (!applyStatusEvent(sessionId, SessionStatus.error, generation)) {
+          return;
+        }
         // Say it twice, deliberately. The toast is what someone sees if they
         // are looking; the line above the composer is what remains for
         // someone who was not, or who dismissed the toast — without it a
@@ -158,8 +212,11 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     final used = <String>{};
     final merged = <ChatMessage>[];
     for (final snap in snapshot) {
-      final liveMsg = liveById[snap.id] ??
-          (snap.clientMessageId != null ? liveByCmid[snap.clientMessageId] : null);
+      final liveMsg =
+          liveById[snap.id] ??
+          (snap.clientMessageId != null
+              ? liveByCmid[snap.clientMessageId]
+              : null);
       if (liveMsg == null) {
         merged.add(snap);
       } else {
@@ -170,6 +227,19 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     for (final m in live) {
       if (!used.contains(m.id)) merged.add(m);
     }
+    // REST polling fetches only the newest page after the initial complete
+    // history load. Snapshot-first merge would otherwise append every older
+    // cached message after the newest turn. Message ids are sortable ULIDs;
+    // created_at remains the primary key for legacy/nonstandard ids.
+    merged.sort((left, right) {
+      final leftTime = left.createdAt;
+      final rightTime = right.createdAt;
+      if (leftTime != null && rightTime != null) {
+        final byTime = leftTime.compareTo(rightTime);
+        if (byTime != 0) return byTime;
+      }
+      return left.id.compareTo(right.id);
+    });
     _setSessionMessages(sessionId, merged);
   }
 
@@ -215,7 +285,9 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     final tmpIndex = cmid == null
         ? -1
         : list.indexWhere(
-            (m) => m.id == 'tmp-$cmid' || (m.id != message.id && m.clientMessageId == cmid),
+            (m) =>
+                m.id == 'tmp-$cmid' ||
+                (m.id != message.id && m.clientMessageId == cmid),
           );
     if (tmpIndex != -1) {
       list[tmpIndex] = message;
@@ -238,7 +310,11 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   void appendPartDelta(
-      String sessionId, String messageId, String partId, String delta) {
+    String sessionId,
+    String messageId,
+    String partId,
+    String delta,
+  ) {
     if (delta.isEmpty) return;
     _patchMessage(sessionId, messageId, (m) {
       final parts = [
@@ -275,8 +351,12 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   /// `tool.running/completed/error` — patch the tool part wherever it lives.
-  void updateToolStatus(String sessionId, String partId, ToolStatus status,
-      Map<String, dynamic> data) {
+  void updateToolStatus(
+    String sessionId,
+    String partId,
+    ToolStatus status,
+    Map<String, dynamic> data,
+  ) {
     final list = state.messagesOf(sessionId);
     for (final message in list) {
       final index = message.parts.indexWhere((p) => p.id == partId);
@@ -312,17 +392,67 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     );
   }
 
+  /// Advance the shared event-generation watermark without changing status.
+  /// Missing generations remain valid for user-authored/rolling-deploy events.
+  bool acceptEventGeneration(String sessionId, int? generation) {
+    final current = state.statusGeneration[sessionId];
+    if (!acceptsEventGeneration(current, generation)) return false;
+    if (generation != null && generation != current) {
+      state = state.copyWith(
+        statusGeneration: {...state.statusGeneration, sessionId: generation},
+      );
+    }
+    return true;
+  }
+
+  /// Apply a status frame only when its durable Driver revision is monotonic.
+  bool applyStatusEvent(
+    String sessionId,
+    SessionStatus status,
+    int? generation,
+  ) {
+    final current = state.statusGeneration[sessionId];
+    if (!acceptsEventGeneration(
+      current,
+      generation,
+      rejectLegacyAfterSeen: true,
+    )) {
+      return false;
+    }
+    if (generation != null &&
+        state.terminalStatusGeneration[sessionId] == generation &&
+        state.status[sessionId] != status) {
+      return false;
+    }
+    if (generation != null && generation != current) {
+      state = state.copyWith(
+        statusGeneration: {...state.statusGeneration, sessionId: generation},
+      );
+    }
+    if (generation != null &&
+        (status == SessionStatus.idle || status == SessionStatus.error)) {
+      state = state.copyWith(
+        terminalStatusGeneration: {
+          ...state.terminalStatusGeneration,
+          sessionId: generation,
+        },
+      );
+    }
+    setStatus(sessionId, status);
+    return true;
+  }
+
   void setRetry(String sessionId, int attempt, int maxAttempts) {
-    state = state.copyWith(retry: {
-      ...state.retry,
-      sessionId: RetryProgress(attempt: attempt, maxAttempts: maxAttempts),
-    });
+    state = state.copyWith(
+      retry: {
+        ...state.retry,
+        sessionId: RetryProgress(attempt: attempt, maxAttempts: maxAttempts),
+      },
+    );
   }
 
   void setRunError(String sessionId, String message) {
-    state = state.copyWith(
-      runError: {...state.runError, sessionId: message},
-    );
+    state = state.copyWith(runError: {...state.runError, sessionId: message});
   }
 
   void clearRunError(String sessionId) {
@@ -337,8 +467,11 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   void dropOptimistic(String sessionId, String clientMessageId) {
     final list = state.messagesOf(sessionId);
     final next = list
-        .where((m) =>
-            !(m.id.startsWith('tmp-') && m.clientMessageId == clientMessageId))
+        .where(
+          (m) =>
+              !(m.id.startsWith('tmp-') &&
+                  m.clientMessageId == clientMessageId),
+        )
         .toList();
     if (next.length == list.length) return;
     _setSessionMessages(sessionId, next);
@@ -351,7 +484,10 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   void _patchMessage(
-      String sessionId, String messageId, ChatMessage Function(ChatMessage) fn) {
+    String sessionId,
+    String messageId,
+    ChatMessage Function(ChatMessage) fn,
+  ) {
     final list = state.messagesOf(sessionId);
     final index = list.indexWhere((m) => m.id == messageId);
     if (index == -1) return;
@@ -364,5 +500,6 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 }
 
-final chatStreamProvider =
-    NotifierProvider<ChatStreamStore, ChatStreamState>(ChatStreamStore.new);
+final chatStreamProvider = NotifierProvider<ChatStreamStore, ChatStreamState>(
+  ChatStreamStore.new,
+);

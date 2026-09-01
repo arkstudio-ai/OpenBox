@@ -5,7 +5,7 @@ import { usePendingStore } from "../stores/pending"
 import { chatKeys } from "./keys"
 import { useUserId } from "./messages"
 
-export type PermissionAction = "allow" | "allow_always" | "reject"
+export type PermissionAction = "once" | "always" | "reject"
 
 export function usePermissionsQuery() {
   const userId = useUserId()

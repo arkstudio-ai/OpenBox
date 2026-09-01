@@ -21,6 +21,16 @@ export function useRunningContainer(): ContainerInfo | null {
   return data?.containers?.find((c) => c.status === "running") ?? null
 }
 
+export function useListeningPorts(containerId: string | null) {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: containerKeys.ports(userId, containerId ?? "none"),
+    queryFn: () => containersApi.listeningPorts(containerId as string),
+    enabled: !!containerId,
+    refetchInterval: 3000,
+  })
+}
+
 export function useCreateContainer() {
   const userId = useUserId()
   const qc = useQueryClient()

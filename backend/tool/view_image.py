@@ -30,9 +30,10 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
     from sandbox.assets import attach_sandbox_image
 
-    path = args.file_path
-    if not path.startswith("/"):
-        path = f"{ctx.workdir.rstrip('/')}/{path}"
+    try:
+        path = ctx.resolve_file_path(args.file_path, allow_user_scope=True)
+    except ValueError as exc:
+        return ToolResult(title=f"Cannot read {args.file_path}", output=str(exc))
 
     try:
         oss = get_oss()
@@ -40,20 +41,28 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="view_image unavailable", output=f"OSS transfer is not configured: {e}")
 
     probe = await ctx.sandbox.execute(
-        f"stat -c %s {shlex.quote(path)} && file --brief --mime-type {shlex.quote(path)}", timeout=15
+        f"stat -c %s {shlex.quote(path)} && file --brief --mime-type {shlex.quote(path)}",
+        timeout=15,
+        workdir=ctx.workdir,
     )
     if probe.exit_code != 0:
-        return ToolResult(title=f"Cannot read {path}", output=probe.stderr.strip() or "No such file")
+        return ToolResult(
+            title=f"Cannot read {args.file_path}",
+            output=probe.stderr.strip() or "No such file",
+        )
     lines = probe.stdout.strip().splitlines()
     size = int(lines[0]) if lines and lines[0].isdigit() else 0
     mime = lines[1].strip() if len(lines) > 1 else ""
     if mime not in _IMAGE_MIMES:
         return ToolResult(
-            title=f"Not a viewable image: {path}",
+            title=f"Not a viewable image: {args.file_path}",
             output=f"Detected type {mime or 'unknown'}; supported: {', '.join(sorted(_IMAGE_MIMES))}",
         )
     if size > _MAX_BYTES:
-        return ToolResult(title=f"Image too large: {path}", output=f"{size} bytes (max {_MAX_BYTES})")
+        return ToolResult(
+            title=f"Image too large: {args.file_path}",
+            output=f"{size} bytes (max {_MAX_BYTES})",
+        )
 
     name = path.split("/")[-1]
     try:
@@ -68,12 +77,12 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
             relation_label=name,
         )
     except Exception as e:
-        return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])
+        return ToolResult(title=f"Upload failed: {args.file_path}", output=str(e)[:300])
 
     return ToolResult(
         title=name,
         output=(
-            f"Image attached for viewing: {path} ({mime}, {size} bytes; asset_id={asset_id}). "
+            f"Image attached for viewing: {args.file_path} ({mime}, {size} bytes; asset_id={asset_id}). "
             "It will be visible in your next turn. Use this asset_id for image_gen input_images."
         ),
         metadata={"asset_id": asset_id, "mime": mime, "path": path, "size": verified},

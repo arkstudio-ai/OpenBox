@@ -1,36 +1,4 @@
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./backend/openbox.json:/app/openbox.json:ro
-    env_file:
-      - ./backend/.env
-    environment:
-      - HOST=0.0.0.0
-      - PORT=8080
-      - DEBUG=true
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://openbox:openbox@postgres:5432/openbox}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-    depends_on:
-      - redis
-      - postgres
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     ports:
@@ -45,12 +13,23 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=openbox
-      - POSTGRES_PASSWORD=openbox
+      - POSTGRES_PASSWORD=openbox_dev
       - POSTGRES_DB=openbox
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    profiles: ["azure"]
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite-data:/data
+    command: azurite-blob --blobHost 0.0.0.0
+    restart: unless-stopped
+
 volumes:
   redis-data:
   postgres-data:
+  azurite-data:

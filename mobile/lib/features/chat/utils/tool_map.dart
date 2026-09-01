@@ -1,4 +1,5 @@
 import '../../../shared/models/message_part.dart';
+import '../../../shared/utils/project_path.dart';
 
 /// Tool → kind-label key + one-line detail, mirroring web
 /// `features/chat/lib/tool-map.ts` (`describeTool`). Keys resolve under
@@ -47,6 +48,8 @@ String resolveToolLayout(String tool) {
     'view',
     'create',
     'new_file',
+    'apply_patch',
+    'str_replace',
   ].contains(t)) {
     return 'file';
   }
@@ -83,14 +86,27 @@ String toolTarget(ToolPart part) {
     final command = pick(const ['command']);
     return command.isEmpty ? part.tool : command;
   }
-  if (const ['read', 'edit', 'write', 'multiedit', 'readfile', 'writefile', 'view']
-      .contains(t)) {
+  if (const [
+    'read',
+    'edit',
+    'write',
+    'multiedit',
+    'readfile',
+    'writefile',
+    'view',
+    'create',
+    'new_file',
+  ].contains(t)) {
     final path = pick(const ['file_path', 'path']);
-    return path.isNotEmpty ? path : (title.isNotEmpty ? title : part.tool);
+    return projectScopedDisplayPath(
+      path.isNotEmpty ? path : (title.isNotEmpty ? title : part.tool),
+    );
   }
   if (const ['glob', 'grep', 'search', 'find'].contains(t)) {
     final pattern = pick(const ['pattern', 'query']);
-    return pattern.isNotEmpty ? pattern : (title.isNotEmpty ? title : part.tool);
+    return pattern.isNotEmpty
+        ? pattern
+        : (title.isNotEmpty ? title : part.tool);
   }
   if (t == 'web_search' || t == 'websearch') {
     final query = pick(const ['query']);
@@ -107,8 +123,31 @@ String toolTarget(ToolPart part) {
 
 /// Compact one-line detail for a tool row (path/command/query…).
 String toolDetail(ToolPart part) {
-  if (part.title != null && part.title!.isNotEmpty) return part.title!;
   final input = part.input;
+  if (const [
+        'read',
+        'edit',
+        'write',
+        'multiedit',
+        'readfile',
+        'writefile',
+        'view',
+        'create',
+        'new_file',
+        'apply_patch',
+        'str_replace',
+      ].contains(part.tool.toLowerCase()) &&
+      input is Map<String, dynamic>) {
+    for (final key in const ['file_path', 'path']) {
+      final value = input[key];
+      if (value is String && value.isNotEmpty) {
+        return projectScopedDisplayPath(value);
+      }
+    }
+  }
+  if (part.title != null && part.title!.isNotEmpty) {
+    return projectScopedDisplayPath(part.title!);
+  }
   if (input is Map<String, dynamic>) {
     for (final key in const [
       'path',
@@ -121,7 +160,11 @@ String toolDetail(ToolPart part) {
       'name',
     ]) {
       final value = input[key];
-      if (value is String && value.isNotEmpty) return value;
+      if (value is String && value.isNotEmpty) {
+        return const ['path', 'file_path'].contains(key)
+            ? projectScopedDisplayPath(value)
+            : value;
+      }
     }
   }
   return part.tool;
@@ -140,9 +183,7 @@ String toolPayloadText(dynamic payload) {
   if (payload == null) return '';
   if (payload is String) return payload;
   if (payload is Map<String, dynamic>) {
-    return payload.entries
-        .map((e) => '${e.key}: ${e.value}')
-        .join('\n');
+    return payload.entries.map((e) => '${e.key}: ${e.value}').join('\n');
   }
   return payload.toString();
 }

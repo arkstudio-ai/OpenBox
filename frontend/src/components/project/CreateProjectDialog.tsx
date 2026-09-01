@@ -6,9 +6,8 @@ import { cn } from "@/lib/utils"
 import type { Project } from "@/types"
 
 /**
- * Mirrors the backend's slugify so the directory shown while typing is the one
- * that will actually be created. Kept deliberately simple — the server
- * validates, this only has to be honest about the common case.
+ * Mirrors the backend's slugify for the optional internal identifier preview.
+ * Physical workspace paths are deliberately not rendered in product UI.
  */
 function previewSlug(name: string): string {
   return name
@@ -91,11 +90,11 @@ export function CreateProjectDialog({
           />
           <p className="text-[11px] font-mono mt-1.5 text-[hsl(var(--muted-foreground))]/70">
             {name.trim().length === 0 ? (
-              <span className="opacity-60">Files will live in /workspace/&lt;folder&gt;</span>
+              <span className="opacity-60">Files will live at this project root (.)</span>
             ) : generated ? (
-              <span>Folder name will be generated — <span className="opacity-60">non-Latin names don’t map to a path</span></span>
+              <span>Project root: . — <span className="opacity-60">a safe internal identifier will be generated</span></span>
             ) : (
-              <>Files will live in <span className="text-[hsl(var(--primary))]">/workspace/{slug}</span></>
+              <>Project root: <span className="text-[hsl(var(--primary))]">.</span> · identifier: {slug}</>
             )}
           </p>
         </div>

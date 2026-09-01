@@ -14,10 +14,9 @@ class ContainersApi {
 
   Future<List<ContainerInfo>> list() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/containers');
-    return asList(resp.data?['containers'])
-        .whereType<Map<String, dynamic>>()
-        .map(ContainerInfo.fromJson)
-        .toList();
+    return asList(
+      resp.data?['containers'],
+    ).whereType<Map<String, dynamic>>().map(ContainerInfo.fromJson).toList();
   }
 
   Future<ContainerInfo> create() async {
@@ -26,24 +25,36 @@ class ContainersApi {
   }
 
   Future<SandboxStatus> sandboxStatus() async {
-    final resp =
-        await _dio.get<Map<String, dynamic>>('/api/agent/sandbox/status');
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/agent/sandbox/status',
+    );
     return SandboxStatus.fromJson(resp.data ?? const {});
   }
 
   /// `@`-mention file search (web `useFileSearch`).
-  Future<List<String>> searchFiles(String containerId, String query,
-      {int limit = 20}) async {
+  Future<List<String>> searchFiles(
+    String containerId,
+    String query, {
+    int limit = 20,
+    String? sessionId,
+    String? projectId,
+  }) async {
     final resp = await _dio.get<Map<String, dynamic>>(
       '/api/containers/$containerId/files/search',
-      queryParameters: {'q': query, 'limit': limit},
+      queryParameters: {
+        'q': query,
+        'limit': limit,
+        if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+        if (projectId != null && projectId.isNotEmpty) 'project_id': projectId,
+      },
     );
     return asList(resp.data?['files']).whereType<String>().toList();
   }
 }
 
-final containersApiProvider =
-    Provider<ContainersApi>((ref) => ContainersApi(ref.watch(apiDioProvider)));
+final containersApiProvider = Provider<ContainersApi>(
+  (ref) => ContainersApi(ref.watch(apiDioProvider)),
+);
 
 /// The user's running sandbox, if any (web `useRunningContainer`).
 final runningContainerProvider = FutureProvider<ContainerInfo?>((ref) async {

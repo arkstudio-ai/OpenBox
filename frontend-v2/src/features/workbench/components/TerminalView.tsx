@@ -36,7 +36,13 @@ function dataFrame(text: string): Uint8Array<ArrayBuffer> {
   return buf
 }
 
-export default function TerminalView({ containerId }: { containerId: string }) {
+interface TerminalViewProps {
+  containerId: string
+  sessionId: string | null
+  projectId: string | null
+}
+
+export default function TerminalView({ containerId, sessionId, projectId }: TerminalViewProps) {
   const { t } = useTranslation("workbench")
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
@@ -83,7 +89,7 @@ export default function TerminalView({ containerId }: { containerId: string }) {
     void (async () => {
       const ticket = await fetchWsTicket()
       if (disposed || !ticket) return
-      const ws = new WebSocket(terminalWsUrl(containerId, ticket))
+      const ws = new WebSocket(terminalWsUrl(containerId, ticket, { sessionId, projectId }))
       ws.binaryType = "arraybuffer"
       socket = ws
       ws.onopen = () => {
@@ -115,10 +121,10 @@ export default function TerminalView({ containerId }: { containerId: string }) {
       term.dispose()
       socket?.close()
     }
-  }, [containerId])
+  }, [containerId, projectId, sessionId])
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full" data-testid="terminal-view">
       <div ref={hostRef} className="h-full w-full" />
       {!connected && (
         <span className="absolute end-2 top-2 font-mono text-2xs text-termink">{t("terminal.connecting")}</span>

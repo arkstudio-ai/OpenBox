@@ -4,6 +4,11 @@
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { emitAppEvent } from "@/shared/events/bus"
+import {
+  projectScopedDisplayPath,
+  projectScopedDisplayText,
+  projectScopedToolText,
+} from "@/shared/lib/project-path"
 import type { ToolPart, ToolStatus, SubtaskPart } from "@/shared/types/api"
 import { resolveToolLayout } from "../../lib/tool-map"
 import {
@@ -50,7 +55,6 @@ function StatusLine({ status }: { status: ToolStatus }) {
       : t("toolStatus.completed")
   return <div className={cn("text-2xs text-n600", running && "text-shimmer")}>{text}</div>
 }
-
 
 function SearchOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
@@ -122,7 +126,9 @@ function FetchOutput({ part, failed }: LayoutProps) {
         <div>
           <ToolMiniLabel>{failed ? t("toolDetail.error") : t("toolDetail.response")}</ToolMiniLabel>
           <ToolPre failed={failed}>{body}</ToolPre>
-          {isTruncated(part.metadata) && <div className="text-2xs text-n600 mt-1">{t("toolDetail.truncated")}</div>}
+          {isTruncated(part.metadata) && (
+            <div className="text-2xs text-n600 mt-1">{t("toolDetail.truncated")}</div>
+          )}
         </div>
       )}
     </Wrap>
@@ -133,7 +139,8 @@ function ShellOutput({ part }: LayoutProps) {
   const { t } = useTranslation("chat")
   const command = strv(part.input?.command)
   const exitCode = parseExitCode(part.metadata)
-  const failed = part.status === "error" || Boolean(part.error?.trim()) || (exitCode !== null && exitCode !== 0)
+  const failed =
+    part.status === "error" || Boolean(part.error?.trim()) || (exitCode !== null && exitCode !== 0)
   const output = part.output || part.error || ""
   return (
     <Wrap failed={failed}>
@@ -163,14 +170,16 @@ function FileOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
   const tool = part.tool.toLowerCase()
   const input = part.input ?? {}
-  const path = strv(input.file_path) || strv(input.path)
+  const rawPath = strv(input.file_path) || strv(input.path)
+  const path = rawPath ? projectScopedDisplayPath(rawPath) : ""
   const edits = parseEdits(input)
+  const patch = strv(input.patch)
   const content =
     tool === "read"
       ? stripLineNumbers(part.output || "")
       : tool === "write"
         ? strv(input.content) || part.output || ""
-        : strv(input.patch) || part.output || ""
+        : projectScopedToolText(patch || part.output || "")
   return (
     <Wrap failed={failed}>
       <StatusLine status={part.status} />
@@ -220,7 +229,7 @@ function FindOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
   const input = part.input ?? {}
   const pattern = strv(input.pattern) || strv(input.query)
-  const body = failed ? part.error || part.output || "" : part.output || ""
+  const body = projectScopedDisplayText(failed ? part.error || part.output || "" : part.output || "")
   return (
     <Wrap failed={failed}>
       <StatusLine status={part.status} />
@@ -279,8 +288,10 @@ function SkillOutput({ part, failed }: LayoutProps) {
 function GenericOutput({ part, failed }: LayoutProps) {
   const { t } = useTranslation("chat")
   const input = part.input ?? {}
-  const args = Object.keys(input).length > 0 ? safeStringify(input) : ""
-  const body = failed ? part.error || part.output || "" : part.output || ""
+  const args = Object.keys(input).length > 0 ? projectScopedDisplayText(safeStringify(input)) : ""
+  const body = projectScopedDisplayText(
+    failed ? part.error || part.output || "" : part.output || "",
+  )
   return (
     <Wrap failed={failed}>
       <StatusLine status={part.status} />

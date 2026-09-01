@@ -18,7 +18,7 @@ from sqlalchemy import select
 from core.log import create_logger
 from db.base import get_db_session
 from db.models.project import Project as ProjectORM
-from project.workspace import TRASH_ROOT, WORKSPACE_ROOT
+from project.workspace import NAMESPACE_ROOT, TRASH_ROOT, WORKSPACE_ROOT, trash_directory
 
 log = create_logger("project.reclaim")
 
@@ -82,7 +82,7 @@ async def reclaim(sandbox, user_id: str | None = None, dry_run: bool = False) ->
     binned, unknown = [], []
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     for name in present:
-        if name.startswith("."):
+        if name.startswith(".") or name == "openbox":
             continue  # .openbox and friends are ours
         if name in live:
             continue
@@ -96,7 +96,7 @@ async def reclaim(sandbox, user_id: str | None = None, dry_run: bool = False) ->
         else:
             unknown.append(name)
 
-    purged = await _purge_trash(sandbox, dry_run=dry_run)
+    purged = await _purge_trash(sandbox, dry_run=dry_run, user_id=user_id)
 
     if binned or purged:
         log.info(f"Reclaim: binned {len(binned)}, purged {len(purged)}")
@@ -105,13 +105,28 @@ async def reclaim(sandbox, user_id: str | None = None, dry_run: bool = False) ->
     return {"binned": binned, "purged": purged, "unknown": unknown}
 
 
-async def _purge_trash(sandbox, dry_run: bool = False) -> list[str]:
+async def _purge_trash(
+    sandbox,
+    dry_run: bool = False,
+    user_id: str | None = None,
+) -> list[str]:
     """Delete trash older than the recovery window."""
+    tenant_trash = trash_directory(user_id) if user_id else None
+    if tenant_trash:
+        scan = (
+            f"find {tenant_trash} -maxdepth 1 -mindepth 1 -type d "
+            f"-mtime +{TRASH_GRACE_DAYS} 2>/dev/null || true"
+        )
+    else:
+        # One shared development WUYING may contain several hashed tenant
+        # roots. No raw user id is needed (or exposed) to sweep their trash.
+        scan = (
+            f"find {NAMESPACE_ROOT} -mindepth 4 -maxdepth 4 -type d "
+            f"-path '*/.openbox/trash/*' "
+            f"-mtime +{TRASH_GRACE_DAYS} 2>/dev/null || true"
+        )
     try:
-        result = await sandbox.execute(
-            f"find {TRASH_ROOT} -maxdepth 1 -mindepth 1 -type d "
-            f"-mtime +{TRASH_GRACE_DAYS} 2>/dev/null || true",
-            timeout=30)
+        result = await sandbox.execute(scan, timeout=30)
         stale = [d.strip() for d in (result.stdout or "").splitlines() if d.strip()]
     except Exception as e:
         log.warning(f"Could not scan trash: {e}")
@@ -120,7 +135,12 @@ async def _purge_trash(sandbox, dry_run: bool = False) -> list[str]:
     for path in stale:
         # Belt and braces: a bug that produced an empty path here would
         # otherwise expand to `rm -rf /`.
-        if not path.startswith(TRASH_ROOT + "/"):
+        in_legacy_trash = path.startswith(TRASH_ROOT + "/")
+        in_tenant_trash = (
+            path.startswith(NAMESPACE_ROOT + "/")
+            and "/.openbox/trash/" in path
+        )
+        if not (in_legacy_trash or in_tenant_trash):
             log.warning(f"Refusing to purge path outside trash: {path}")
             continue
         if not dry_run:

@@ -7,6 +7,38 @@ from tool.computer import computer_tool
 from tool.tool import ToolContext, ToolResult, define_tool
 
 
+def test_unreviewed_tool_is_exclusive_by_default():
+    async def harmless(_args, _ctx):
+        return ToolResult(title="ok", output="ran")
+
+    tool = define_tool(
+        "unreviewed",
+        description="test",
+        parameters=BatchArgs,
+        execute=harmless,
+    )
+
+    assert tool.parallel_safe is False
+
+
+def test_reviewed_read_only_tools_are_explicitly_parallel_safe():
+    from tool.glob_tool import glob_tool
+    from tool.grep import grep_tool
+    from tool.invalid import invalid_tool
+    from tool.todo_tool import todo_read_tool
+    from tool.web_fetch import web_fetch_tool
+    from tool.web_search import web_search_tool
+
+    assert all(tool.parallel_safe is True for tool in (
+        glob_tool,
+        grep_tool,
+        invalid_tool,
+        todo_read_tool,
+        web_fetch_tool,
+        web_search_tool,
+    ))
+
+
 @pytest.mark.asyncio
 async def test_generic_batch_rejects_computer(monkeypatch):
     import tool.registry as registry
@@ -70,6 +102,7 @@ async def test_nested_tool_runs_permission_callback(monkeypatch):
         description="test",
         parameters=BatchArgs,
         execute=harmless,
+        parallel_safe=True,
     )
     monkeypatch.setitem(registry._tools, "nested_test", tool)
 
@@ -88,4 +121,33 @@ async def test_nested_tool_runs_permission_callback(monkeypatch):
     )
 
     assert "Permission denied" in result.output
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_batch_rejects_unreviewed_tool_before_dispatch(monkeypatch):
+    import tool.registry as registry
+
+    called = False
+
+    async def unreviewed(_args, _ctx):
+        nonlocal called
+        called = True
+        return ToolResult(title="bad", output="ran")
+
+    tool = define_tool(
+        "unreviewed_batch_tool",
+        description="test",
+        parameters=BatchArgs,
+        execute=unreviewed,
+    )
+    monkeypatch.setitem(registry._tools, tool.id, tool)
+    ctx = ToolContext(available_tools=frozenset({"batch", tool.id}))
+
+    result = await execute_batch(
+        BatchArgs(invocations=[Invocation(tool=tool.id, parameters={})]),
+        ctx,
+    )
+
+    assert "not safe for parallel execution" in result.output
     assert called is False

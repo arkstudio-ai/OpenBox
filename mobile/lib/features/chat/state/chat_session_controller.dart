@@ -20,7 +20,11 @@ import 'stream_store.dart';
 /// refetch, send/stop/regenerate. Streaming frames land in
 /// [chatStreamProvider]; this controller only converges snapshots.
 class ChatSessionState {
-  const ChatSessionState({this.loading = true, this.session, this.failed = false});
+  const ChatSessionState({
+    this.loading = true,
+    this.session,
+    this.failed = false,
+  });
 
   final bool loading;
   final Session? session;
@@ -43,17 +47,18 @@ String makeClientId() {
   return 'cmid-$now-$rand';
 }
 
-class ChatSessionController
-    extends FamilyNotifier<ChatSessionState, String> {
+class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   Timer? _poll;
   StreamSubscription<WsEvent>? _wsSub;
   bool _disposed = false;
+  bool _completeHistoryLoaded = false;
 
   String get _sessionId => arg;
 
   @override
   ChatSessionState build(String sessionId) {
     _disposed = false;
+    _completeHistoryLoaded = false;
     unawaited(_wsSub?.cancel());
     _wsSub = ref.read(wsClientProvider).events.listen(_onWsEvent);
     _poll?.cancel();
@@ -79,7 +84,8 @@ class ChatSessionController
     for (final m in stream.messagesOf(_sessionId)) {
       for (final p in m.parts) {
         if (p is ToolPart &&
-            (p.status == ToolStatus.running || p.status == ToolStatus.pending)) {
+            (p.status == ToolStatus.running ||
+                p.status == ToolStatus.pending)) {
           return true;
         }
       }
@@ -89,7 +95,7 @@ class ChatSessionController
 
   void _onWsEvent(WsEvent event) {
     if (event.type == '__connected') {
-      unawaited(_refetch());
+      unawaited(_refetch(completeHistory: !_completeHistoryLoaded));
       return;
     }
     if (event.sessionId != _sessionId) return;
@@ -103,7 +109,7 @@ class ChatSessionController
   }
 
   Future<void> _initialLoad() async {
-    await _refetch();
+    await _refetch(completeHistory: true);
     if (_disposed) return;
     state = state.copyWith(loading: false);
     unawaited(_seedPending());
@@ -112,28 +118,32 @@ class ChatSessionController
   Future<void> _seedPending() async {
     try {
       final api = ref.read(chatApiProvider);
-      final results =
-          await Future.wait([api.listPermissions(), api.listQuestions()]);
-      ref.read(pendingProvider.notifier).seed(
-            (results[0] as List).cast(),
-            (results[1] as List).cast(),
-          );
+      final results = await Future.wait([
+        api.listPermissions(),
+        api.listQuestions(),
+      ]);
+      ref
+          .read(pendingProvider.notifier)
+          .seed((results[0] as List).cast(), (results[1] as List).cast());
     } catch (_) {
       // Pending seeds are best-effort; WS events keep them current.
     }
   }
 
-  Future<void> _refetch() async {
+  Future<void> _refetch({bool completeHistory = false}) async {
     final api = ref.read(chatApiProvider);
     try {
       final results = await Future.wait<dynamic>([
-        api.listMessages(_sessionId),
+        completeHistory
+            ? api.listAllMessages(_sessionId)
+            : api.listMessages(_sessionId),
         api.getSession(_sessionId),
       ]);
       if (_disposed) return;
       final messages = results[0] as List<ChatMessage>;
       final session = results[1] as Session;
       ref.read(chatStreamProvider.notifier).setMessages(_sessionId, messages);
+      if (completeHistory) _completeHistoryLoaded = true;
       state = state.copyWith(session: session, loading: false, failed: false);
     } catch (_) {
       if (!_disposed) state = state.copyWith(loading: false, failed: true);
@@ -167,7 +177,9 @@ class ChatSessionController
     stream.setStatus(_sessionId, SessionStatus.busy);
     stream.clearRunError(_sessionId);
     try {
-      await ref.read(chatApiProvider).promptAsync(
+      await ref
+          .read(chatApiProvider)
+          .promptAsync(
             _sessionId,
             text: text,
             clientMessageId: cmid,
@@ -191,12 +203,14 @@ class ChatSessionController
   /// Manual retry from the error state.
   Future<void> reload() async {
     state = state.copyWith(loading: true, failed: false);
-    await _refetch();
+    await _refetch(completeHistory: true);
   }
 
   /// Stop generation (web `stop()`): abort + optimistic idle.
   Future<void> stop() async {
-    ref.read(chatStreamProvider.notifier).setStatus(_sessionId, SessionStatus.idle);
+    ref
+        .read(chatStreamProvider.notifier)
+        .setStatus(_sessionId, SessionStatus.idle);
     try {
       await ref.read(chatApiProvider).abort(_sessionId);
     } catch (_) {
@@ -205,22 +219,29 @@ class ChatSessionController
   }
 
   Future<void> regenerate(String messageId, {String? model}) async {
-    await ref.read(chatApiProvider).regenerate(_sessionId, messageId, model: model);
+    await ref
+        .read(chatApiProvider)
+        .regenerate(_sessionId, messageId, model: model);
     ref.read(chatStreamProvider.notifier).clearMessages(_sessionId);
-    await _refetch();
+    _completeHistoryLoaded = false;
+    await _refetch(completeHistory: true);
   }
 
   Future<void> dismiss(String messageId) async {
     await ref.read(chatApiProvider).dismissMessage(_sessionId, messageId);
     ref.read(chatStreamProvider.notifier).clearMessages(_sessionId);
-    await _refetch();
+    _completeHistoryLoaded = false;
+    await _refetch(completeHistory: true);
   }
 }
 
-final chatSessionProvider = NotifierProvider.family<ChatSessionController,
-    ChatSessionState, String>(ChatSessionController.new);
+final chatSessionProvider =
+    NotifierProvider.family<ChatSessionController, ChatSessionState, String>(
+      ChatSessionController.new,
+    );
 
 /// Unsent per-session model pick (web `stores/model-choice.ts`); null means
 /// "keep the session's model".
-final pickedModelProvider =
-    StateProvider.family<String?, String>((ref, sessionId) => null);
+final pickedModelProvider = StateProvider.family<String?, String>(
+  (ref, sessionId) => null,
+);

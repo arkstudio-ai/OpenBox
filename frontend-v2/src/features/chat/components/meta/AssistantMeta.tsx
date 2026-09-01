@@ -18,6 +18,7 @@ import { MetaIconButton } from "./MetaIconButton"
 interface Props {
   sessionId: string
   messageId: string
+  model?: string | null
   content: string
   tokens?: TokenUsage | null
   reaction?: MessageReaction
@@ -29,6 +30,7 @@ interface Props {
 export function AssistantMeta({
   sessionId,
   messageId,
+  model,
   content,
   tokens,
   reaction,
@@ -71,7 +73,7 @@ export function AssistantMeta({
     <MetaContainer align="start">
       <div className="flex min-w-0 max-w-full flex-col items-start gap-1.5">
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-          <ModelBadge sessionId={sessionId} />
+          <ModelBadge model={model} />
           {tokens ? <TokenBadge tokens={tokens} /> : null}
           <LatencyBadge createdAt={createdAt} streaming={streaming} durationSec={durationSec} />
         </div>

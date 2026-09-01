@@ -13,9 +13,10 @@ interface TerminalTabsProps {
   containers: ContainerInfo[]
   onSelectTab: (containerId: string) => void
   onCloseTab: (containerId: string) => void
+  sessionId?: string | null
 }
 
-export function TerminalTabs({ tabs, activeTab, containers, onSelectTab, onCloseTab }: TerminalTabsProps) {
+export function TerminalTabs({ tabs, activeTab, containers, onSelectTab, onCloseTab, sessionId }: TerminalTabsProps) {
   if (tabs.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-[hsl(var(--muted-foreground))] grid-pattern">
@@ -63,7 +64,7 @@ export function TerminalTabs({ tabs, activeTab, containers, onSelectTab, onClose
       <div className="flex-1 bg-[hsl(var(--terminal-bg))]">
         {tabs.map((tab) => (
           <div key={tab.containerId} className={`h-full ${activeTab === tab.containerId ? "" : "hidden"}`}>
-            <Terminal containerId={tab.containerId} />
+            <Terminal containerId={tab.containerId} sessionId={sessionId} />
           </div>
         ))}
       </div>

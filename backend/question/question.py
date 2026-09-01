@@ -208,6 +208,7 @@ async def reply(request_id: str, answers: list[list[str]], user_id: str = "defau
     bus.publish(QUESTION_REPLIED, {
         "userId": user_id,
         "id": request_id,
+        "request_id": request_id,
         "session_id": session_id or "",
     })
 
@@ -261,6 +262,7 @@ async def reject(request_id: str, user_id: str = "default") -> None:
     bus.publish(QUESTION_REJECTED, {
         "userId": user_id,
         "id": request_id,
+        "request_id": request_id,
         "session_id": session_id or "",
     })
 

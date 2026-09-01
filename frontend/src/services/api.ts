@@ -49,6 +49,63 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+async function requestAbsolute<T>(url: string, options?: RequestInit): Promise<T> {
+  const parsed = new URL(url)
+  if (parsed.protocol !== "https:") throw new Error("HTTPS preview origin required")
+
+  const { useAuthStore, refreshAccessToken } = await import("@/stores/auth")
+  let token = useAuthStore.getState().accessToken
+
+  const send = (accessToken: string | null) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" }
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+    return fetch(parsed.href, {
+      ...options,
+      headers: { ...headers, ...((options?.headers as Record<string, string>) || {}) },
+      credentials: "include",
+    })
+  }
+
+  let response = await send(token)
+  if (response.status === 401 && token) {
+    token = await refreshAccessToken()
+    if (token) response = await send(token)
+  }
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || "Request failed")
+  }
+  return response.json()
+}
+
+type PreviewMode = "sandboxed_same_origin" | "isolated_origin"
+
+interface PreviewConfigResponse {
+  mode: PreviewMode
+  origin: string | null
+}
+
+interface PreviewAccessResponse {
+  url: string
+  mode: PreviewMode
+}
+
+function isolatedPreviewOrigin(config: PreviewConfigResponse): string {
+  if (config.mode !== "isolated_origin" || !config.origin) {
+    throw new Error("Invalid preview configuration")
+  }
+  const parsed = new URL(config.origin)
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new Error("Invalid preview configuration")
+  }
+  return parsed.origin
+}
+
 const realApi = {
   // ===== Sandbox Health Check =====
   getSandboxStatus: () =>
@@ -83,21 +140,42 @@ const realApi = {
   getSystemInfo: (containerId: string) =>
     request<SystemInfo>(`/api/containers/${containerId}/files/system_info`),
   listFiles: (containerId: string, path: string) =>
-    request<{ files: Array<{ name: string; is_dir: boolean; size: number | null; modified: string | null }> }>(
+    request<{
+      files?: Array<{ name: string; is_dir: boolean; size: number | null; modified: string | null }>
+      entries?: Array<{ name: string; is_dir: boolean; size: number | null; modified: string | null }>
+    }>(
       `/api/containers/${containerId}/files/list`,
       { method: "POST", body: JSON.stringify({ path }) },
+    ),
+  getFileContent: (containerId: string, path: string) =>
+    request<{ path: string; content: string; total_lines: number; truncated: boolean }>(
+      `/api/containers/${encodeURIComponent(containerId)}/files/content?path=${encodeURIComponent(path)}`,
     ),
   getListeningPorts: (containerId: string) =>
     request<{ ports: Array<{ port: number; pid: number | null; process: string; command: string }> }>(
       `/api/containers/${containerId}/ports`
     ),
-  getPreviewToken: (containerId: string, port: number) =>
-    request<{ token: string; url: string }>(
-      `/api/containers/${containerId}/preview-token?port=${port}`,
-      { method: "POST" },
-    ),
-  getTerminalWsUrl: async (containerId: string) => {
+  getPreviewToken: async (containerId: string, port: number) => {
+    const config = await request<PreviewConfigResponse>("/api/preview/config")
+    const path = `/api/containers/${encodeURIComponent(containerId)}/preview-token?port=${port}`
+    const response =
+      config.mode === "isolated_origin"
+        ? await requestAbsolute<PreviewAccessResponse>(`${isolatedPreviewOrigin(config)}${path}`, {
+            method: "POST",
+          })
+        : await request<PreviewAccessResponse>(path, { method: "POST" })
+    if (response.mode !== config.mode) throw new Error("Invalid preview configuration")
+    return response
+  },
+  getTerminalWsUrl: async (containerId: string, sessionId?: string | null) => {
     const wsBase = (BASE_URL || window.location.origin).replace(/^http/, "ws")
+    const terminalUrl = (ticket?: string) => {
+      const query = new URLSearchParams()
+      if (ticket) query.set("ticket", ticket)
+      if (sessionId) query.set("session_id", sessionId)
+      const suffix = query.toString()
+      return `${wsBase}/ws/terminal/${encodeURIComponent(containerId)}${suffix ? `?${suffix}` : ""}`
+    }
     // Get ticket for WS auth
     try {
       const { useAuthStore, refreshAccessToken } = await import("@/stores/auth")
@@ -112,12 +190,12 @@ const realApi = {
         })
         if (resp.ok) {
           const { ticket } = await resp.json()
-          return `${wsBase}/ws/terminal/${containerId}?ticket=${ticket}`
+          return terminalUrl(ticket)
         }
       }
     } catch {}
     // Fallback: no ticket (single-user mode)
-    return `${wsBase}/ws/terminal/${containerId}`
+    return terminalUrl()
   },
 
   // ===== Dev Browser =====

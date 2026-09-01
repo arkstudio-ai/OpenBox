@@ -20,6 +20,18 @@ export interface MentionCommand {
   description?: string
 }
 
+export function fileSearchPath(
+  containerId: string,
+  query: string,
+  sessionId?: string,
+  projectId?: string,
+): string {
+  const params = new URLSearchParams({ q: query, limit: "20" })
+  if (sessionId) params.set("session_id", sessionId)
+  if (projectId) params.set("project_id", projectId)
+  return `/api/containers/${encodeURIComponent(containerId)}/files/search?${params.toString()}`
+}
+
 function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
 }
@@ -28,14 +40,20 @@ function useUserId(): string {
  * Sandbox file search for "@" mentions. Caller gates `enabled` (no sandbox /
  * empty query → don't fire); results go stale fast so fresh keystrokes refetch.
  */
-export function useFileSearch(containerId: string | null, query: string, enabled: boolean) {
+interface FileSearchOptions {
+  containerId: string | null
+  query: string
+  enabled: boolean
+  sessionId?: string
+  projectId?: string
+}
+
+export function useFileSearch({ containerId, query, enabled, sessionId, projectId }: FileSearchOptions) {
   const userId = useUserId()
   return useQuery({
-    queryKey: ["mention-files", userId, containerId, query] as const,
+    queryKey: ["mention-files", userId, containerId, sessionId, projectId, query] as const,
     queryFn: () =>
-      http.get<FileSearchResult>(
-        `/api/containers/${containerId}/files/search?q=${encodeURIComponent(query)}&limit=20`,
-      ),
+      http.get<FileSearchResult>(fileSearchPath(containerId as string, query, sessionId, projectId)),
     enabled: enabled && containerId !== null,
     staleTime: 5_000,
   })

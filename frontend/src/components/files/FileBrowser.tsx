@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Folder, FileText, ChevronRight, Search, ArrowUp, RefreshCw } from "lucide-react"
+import { Folder, FileText, ChevronRight, Search, ArrowUp, RefreshCw, Copy, X } from "lucide-react"
 import { api } from "@/services/api"
 import { Spinner } from "@/components/ui/Spinner"
 import { formatBytes } from "@/lib/utils"
@@ -14,11 +14,43 @@ interface FileItem {
 
 interface FileBrowserProps {
   containerId?: string
+  sessionId: string
 }
 
-export function FileBrowser({ containerId }: FileBrowserProps) {
-  const [currentPath, setCurrentPath] = useState("/workspace")
+function cleanRoot(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path
+}
+
+function isInside(root: string, path: string): boolean {
+  const base = cleanRoot(root)
+  return path === base || path.startsWith(`${base}/`)
+}
+
+function relativePath(root: string, path: string): string | null {
+  const base = cleanRoot(root)
+  if (!isInside(base, path)) return null
+  return path === base ? "." : path.slice(base.length + 1)
+}
+
+function parentPath(root: string, path: string): string {
+  const base = cleanRoot(root)
+  if (!isInside(base, path) || path === base) return base
+  const parent = path.slice(0, path.lastIndexOf("/"))
+  return isInside(base, parent) ? parent : base
+}
+
+export function FileBrowser({ containerId, sessionId }: FileBrowserProps) {
+  const [currentPath, setCurrentPath] = useState("")
+  const [openFile, setOpenFile] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+
+  const { data: session } = useQuery({
+    queryKey: ["session-workspace", sessionId],
+    queryFn: () => api.getSession(sessionId),
+    enabled: !!sessionId,
+  })
+  const root = session?.directory ? cleanRoot(session.directory) : ""
+  const safePath = root && isInside(root, currentPath) ? currentPath : root
 
   // Fetch container details
   const { data: container } = useQuery({
@@ -30,27 +62,38 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
 
   // Fetch files from API
   const { data: fileData, isLoading, refetch } = useQuery({
-    queryKey: ["files", containerId, currentPath],
-    queryFn: () => api.listFiles(containerId!, currentPath),
-    enabled: !!containerId,
+    queryKey: ["files", containerId, safePath],
+    queryFn: () => api.listFiles(containerId!, safePath),
+    enabled: !!containerId && !!safePath && !openFile,
   })
 
-  const files: FileItem[] = fileData?.files || []
+  const files: FileItem[] = fileData?.files ?? fileData?.entries ?? []
+
+  const { data: opened, isLoading: fileLoading } = useQuery({
+    queryKey: ["file-content", containerId, openFile],
+    queryFn: () => api.getFileContent(containerId!, openFile!),
+    enabled: !!containerId && !!openFile && !!root && isInside(root, openFile),
+    retry: false,
+  })
 
   const filteredFiles = searchQuery
     ? files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
     : files
 
-  // Reset path when container changes
+  // A route/session switch must never retain the previous project's cwd.
   useEffect(() => {
-    setCurrentPath("/workspace")
-  }, [containerId])
+    setCurrentPath(root)
+    setOpenFile(null)
+  }, [containerId, root, sessionId])
 
   const handleRefresh = useCallback(() => {
     refetch()
   }, [refetch])
 
-  const pathParts = currentPath.split("/").filter(Boolean)
+  const pathParts = (relativePath(root, safePath) ?? "")
+    .split("/")
+    .filter((part) => part && part !== ".")
+  const rootLabel = session?.project_name || "Project root"
 
   if (!containerId) {
     return (
@@ -65,21 +108,32 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
     )
   }
 
+  if (!root) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm font-mono text-[hsl(var(--muted-foreground))]">
+        Loading project files...
+      </div>
+    )
+  }
+
   return (
     <div className="h-full flex flex-col">
       {/* Breadcrumb */}
       <div className="flex items-center gap-1 px-4 py-2.5 border-b border-[hsl(var(--border))]/50 bg-[hsl(var(--card))] text-sm">
         <button
-          onClick={() => setCurrentPath("/")}
+          onClick={() => { setCurrentPath(root); setOpenFile(null) }}
           className="hover:text-[hsl(var(--primary))] transition-colors cursor-pointer font-mono text-xs"
         >
-          /
+          {rootLabel}
         </button>
         {pathParts.map((part, i) => (
           <div key={i} className="flex items-center gap-1">
             <ChevronRight className="h-3 w-3 text-[hsl(var(--muted-foreground))]/50" />
             <button
-              onClick={() => setCurrentPath("/" + pathParts.slice(0, i + 1).join("/"))}
+              onClick={() => {
+                setCurrentPath(`${root}/${pathParts.slice(0, i + 1).join("/")}`)
+                setOpenFile(null)
+              }}
               className="hover:text-[hsl(var(--primary))] transition-colors cursor-pointer font-mono text-xs"
             >
               {part}
@@ -99,8 +153,11 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
           </button>
           <button
             onClick={() => {
-              const parent = "/" + pathParts.slice(0, -1).join("/")
-              setCurrentPath(parent || "/")
+              if (openFile) {
+                setOpenFile(null)
+                return
+              }
+              setCurrentPath(parentPath(root, safePath))
             }}
             className="p-1.5 rounded-sm hover:bg-[hsl(var(--muted))] transition-colors cursor-pointer"
             aria-label="Go up"
@@ -120,7 +177,37 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
         </div>
       </div>
 
-      {/* File list */}
+      {/* File list / viewer. API paths stay absolute; every visible or copied
+          path below is derived relative to this exact project root. */}
+      {openFile ? (
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-[hsl(var(--border))]/50 px-4 py-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+              {relativePath(root, openFile)}
+            </span>
+            <button
+              onClick={() => {
+                const path = relativePath(root, openFile)
+                if (path) void navigator.clipboard.writeText(path)
+              }}
+              className="p-1.5 rounded-sm hover:bg-[hsl(var(--muted))]"
+              aria-label="Copy project-relative path"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setOpenFile(null)}
+              className="p-1.5 rounded-sm hover:bg-[hsl(var(--muted))]"
+              aria-label="Close file"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <pre className="flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed">
+            {fileLoading ? "Loading..." : opened?.content ?? "Unable to open this file."}
+          </pre>
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-[hsl(var(--card))] z-10">
@@ -147,7 +234,12 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
               filteredFiles.map((file) => (
                 <tr
                   key={file.name}
-                  onClick={() => file.is_dir && setCurrentPath(`${currentPath}/${file.name}`)}
+                  onClick={() => {
+                    const path = `${safePath}/${file.name}`
+                    if (!isInside(root, path)) return
+                    if (file.is_dir) setCurrentPath(path)
+                    else setOpenFile(path)
+                  }}
                   className="border-b border-[hsl(var(--border))]/30 hover:bg-[hsl(var(--muted))]/30 cursor-pointer transition-colors group"
                 >
                   <td className="px-4 py-2.5 flex items-center gap-2.5">
@@ -174,6 +266,7 @@ export function FileBrowser({ containerId }: FileBrowserProps) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }

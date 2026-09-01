@@ -11,9 +11,29 @@ deployment still offers it and quietly replaced by the default when it does
 not, which is what lets an old conversation continue after a provider change
 instead of erroring forever.
 """
+from dataclasses import dataclass
+from typing import Literal
+
 from core.log import create_logger
 
 log = create_logger("agent.model")
+
+ModelSource = Literal["agent", "message", "session", "default"]
+
+
+@dataclass(frozen=True)
+class StepModelSelection:
+    """One step's validated model choice and where the preference came from.
+
+    ``agent`` selections are deliberately identifiable as ephemeral.  The run
+    loop may record the effective model on its assistant message, but must not
+    copy an agent override into the session's durable model preference.
+    """
+
+    model_id: str
+    requested: str | None
+    source: ModelSource
+    replaced_from: str | None = None
 
 
 def configured_models(config) -> list[str]:
@@ -56,3 +76,37 @@ def resolve(requested: str | None, config, *, context: str = "") -> tuple[str, s
         requested, f" ({context})" if context else "", fallback,
     )
     return fallback, requested
+
+
+def resolve_step_model(
+    *,
+    agent_model: str | None,
+    message_model: str | None,
+    session_model: str | None,
+    config,
+    context: str = "",
+) -> StepModelSelection:
+    """Choose and validate the model for a single agent step.
+
+    An agent definition is a temporary override.  Without one, the immutable
+    user message anchors the turn; older/synthetic messages that predate that
+    field fall back to the session preference.  Validation is applied after
+    that precedence decision so an unavailable override cannot reach a
+    provider unchecked.
+    """
+    if agent_model:
+        requested, source = agent_model, "agent"
+    elif message_model:
+        requested, source = message_model, "message"
+    elif session_model:
+        requested, source = session_model, "session"
+    else:
+        requested, source = None, "default"
+
+    model_id, replaced_from = resolve(requested, config, context=context)
+    return StepModelSelection(
+        model_id=model_id,
+        requested=requested,
+        source=source,
+        replaced_from=replaced_from,
+    )

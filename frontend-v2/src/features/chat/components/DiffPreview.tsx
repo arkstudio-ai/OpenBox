@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next"
 import { FileDiff } from "lucide-react"
 import { emitAppEvent } from "@/shared/events/bus"
 import type { PatchFile } from "@/shared/types/api"
+import { projectScopedDisplayPath } from "@/shared/lib/project-path"
 import { usePrefetchSessionDiff } from "../api/diff"
 
 interface Props {
@@ -15,13 +16,14 @@ interface Props {
 export function DiffPreview({ file, sessionId }: Props) {
   const { t } = useTranslation("chat")
   const prefetch = usePrefetchSessionDiff(sessionId)
-  const name = file.path.split("/").pop() ?? file.path
-  const dir = file.path.slice(0, file.path.length - name.length)
+  const path = projectScopedDisplayPath(file.path)
+  const name = path.split("/").pop() ?? path
+  const dir = path.slice(0, path.length - name.length)
 
   return (
     <button
       type="button"
-      onClick={() => emitAppEvent("workbench.open", { kind: "review", file: file.path })}
+      onClick={() => emitAppEvent("workbench.open", { kind: "review", file: path })}
       onMouseEnter={prefetch}
       onFocus={prefetch}
       title={t("diff.openReview")}
@@ -33,7 +35,9 @@ export function DiffPreview({ file, sessionId }: Props) {
         {name}
       </span>
       {file.additions > 0 && <span className="text-s700 flex-none font-mono text-xs">+{file.additions}</span>}
-      {file.deletions > 0 && <span className="text-danger flex-none font-mono text-xs">−{file.deletions}</span>}
+      {file.deletions > 0 && (
+        <span className="text-danger flex-none font-mono text-xs">−{file.deletions}</span>
+      )}
       <span className="text-n500 group-hover/diff:text-a700 flex-none text-xs transition-colors">
         {t("reviewGo")}
       </span>

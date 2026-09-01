@@ -7,7 +7,6 @@ export interface ContainerInfo {
   image: string
   created_at: string
   port: number | null
-  api_key: string | null
 }
 
 export interface ContainerListResponse {

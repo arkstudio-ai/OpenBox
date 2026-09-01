@@ -4,12 +4,21 @@ import { Plug, Trash2, Unplug } from "lucide-react"
 import { Badge, EntryRow, IconButton } from "./EntryRow"
 import { groupSkills } from "@/features/skills-center/lib/group-skills"
 import type { InstalledSkill, McpServer } from "@/features/skills-center/types"
+import { projectScopedDisplayPath } from "@/shared/lib/project-path"
 import { SkillGroupsSection, type SkillGroupActions } from "./SkillGroupsSection"
 
 export interface MineActions extends SkillGroupActions {
   connect: (name: string) => void
   disconnect: (name: string) => void
   removeMcp: (name: string) => void
+}
+
+export function mcpServerDescription(server: McpServer): string {
+  if (server.url) return server.url
+  return [server.command, ...(server.args ?? [])]
+    .filter((value): value is string => Boolean(value))
+    .map(projectScopedDisplayPath)
+    .join(" ")
 }
 
 export function MineList({
@@ -81,7 +90,7 @@ export function MineList({
               <EntryRow
                 key={s.name}
                 name={s.name}
-                description={s.url || [s.command, ...(s.args ?? [])].filter(Boolean).join(" ")}
+                description={mcpServerDescription(s)}
                 warning={s.status === "error" && s.error ? s.error : undefined}
                 badges={
                   <>

@@ -8,6 +8,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/events/bus.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
+import '../../../../shared/utils/project_path.dart';
 import '../../utils/diff_preview.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/tool_parse.dart';
@@ -27,7 +28,8 @@ class ToolOutput extends ConsumerWidget {
     final tool = part;
     if (tool is SubtaskPart) return _SubtaskOutput(part: tool);
     if (tool is! ToolPart) return const SizedBox.shrink();
-    final failed = tool.status == ToolStatus.error ||
+    final failed =
+        tool.status == ToolStatus.error ||
         (tool.error?.trim().isNotEmpty ?? false);
     return switch (resolveToolLayout(tool.tool)) {
       'search' => _SearchOutput(part: tool, failed: failed),
@@ -58,8 +60,8 @@ class _SearchOutput extends ConsumerWidget {
     final query = toolInput(part.input, 'query').isNotEmpty
         ? toolInput(part.input, 'query')
         : (part.metadata['query'] is String
-            ? (part.metadata['query'] as String).trim()
-            : '');
+              ? (part.metadata['query'] as String).trim()
+              : '');
     final action = toolInput(part.input, 'action').isNotEmpty
         ? toolInput(part.input, 'action')
         : toolInput(part.input, 'type');
@@ -68,71 +70,80 @@ class _SearchOutput extends ConsumerWidget {
     final urls = results.isNotEmpty
         ? [for (final r in results) r.url]
         : parseSearchUrls(output);
-    final responseLabel = i18n
-        .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.response');
+    final responseLabel = i18n.t(
+      failed ? 'chat:toolDetail.error' : 'chat:toolDetail.response',
+    );
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (query.isNotEmpty || (action.isNotEmpty && action != query))
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.request'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (query.isNotEmpty)
-                Text('${i18n.t('chat:toolDetail.query')}: $query',
-                    style: TextStyle(fontSize: FontSizes.xs, color: t.n700)),
-              if (action.isNotEmpty && action != query)
-                Text('${i18n.t('chat:toolDetail.action')}: $action',
-                    style: TextStyle(fontSize: FontSizes.xs, color: t.n700)),
-            ],
-          ),
-        ),
-      if (urls.isNotEmpty || results.isNotEmpty)
-        ToolBlock(
-          label: responseLabel,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ToolSourceLinks(urls: urls),
-              for (final result in results)
-                Padding(
-                  padding: const EdgeInsets.only(top: 7),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (result.title.isNotEmpty)
-                        Text(
-                          result.title,
-                          style: TextStyle(
-                            fontSize: FontSizes.xs,
-                            fontWeight: FontWeight.w500,
-                            color: t.n800,
-                          ),
-                        ),
-                      if (result.snippet.isNotEmpty)
-                        Text(
-                          result.snippet,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: FontSizes.xs2, color: t.n600),
-                        ),
-                    ],
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (query.isNotEmpty || (action.isNotEmpty && action != query))
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.request'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (query.isNotEmpty)
+                  Text(
+                    '${i18n.t('chat:toolDetail.query')}: $query',
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
                   ),
-                ),
-            ],
+                if (action.isNotEmpty && action != query)
+                  Text(
+                    '${i18n.t('chat:toolDetail.action')}: $action',
+                    style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
+                  ),
+              ],
+            ),
           ),
-        )
-      else if (output.isNotEmpty)
-        ToolBlock(
-          label: responseLabel,
-          child: ToolDetailText(
-            failed ? (part.error ?? output) : output,
-            failed: failed,
+        if (urls.isNotEmpty || results.isNotEmpty)
+          ToolBlock(
+            label: responseLabel,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ToolSourceLinks(urls: urls),
+                for (final result in results)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (result.title.isNotEmpty)
+                          Text(
+                            result.title,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs,
+                              fontWeight: FontWeight.w500,
+                              color: t.n800,
+                            ),
+                          ),
+                        if (result.snippet.isNotEmpty)
+                          Text(
+                            result.snippet,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: FontSizes.xs2,
+                              color: t.n600,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          )
+        else if (output.isNotEmpty)
+          ToolBlock(
+            label: responseLabel,
+            child: ToolDetailText(
+              failed ? (part.error ?? output) : output,
+              failed: failed,
+            ),
           ),
-        ),
-    ]);
+      ],
+    );
   }
 }
 
@@ -150,34 +161,36 @@ class _FetchOutput extends ConsumerWidget {
     final output = part.output is String ? part.output as String : '';
     final body = failed ? (part.error ?? output) : output;
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (url.isNotEmpty)
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.request'),
-          child: ToolSourceLinks(urls: [url]),
-        ),
-      if (body.isNotEmpty)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.response'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ToolPre(body, failed: failed),
-              if (isTruncated(part.metadata))
-                Padding(
-                  padding: const EdgeInsets.only(top: 3),
-                  child: Text(
-                    i18n.t('chat:toolDetail.truncated'),
-                    style:
-                        TextStyle(fontSize: FontSizes.xs2, color: t.n600),
-                  ),
-                ),
-            ],
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (url.isNotEmpty)
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.request'),
+            child: ToolSourceLinks(urls: [url]),
           ),
-        ),
-    ]);
+        if (body.isNotEmpty)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.response',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ToolPre(body, failed: failed),
+                if (isTruncated(part.metadata))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      i18n.t('chat:toolDetail.truncated'),
+                      style: TextStyle(fontSize: FontSizes.xs2, color: t.n600),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 }
 
@@ -192,31 +205,35 @@ class _ShellOutput extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final command = toolInput(part.input, 'command');
     final exitCode = parseExitCode(part.metadata);
-    final failed = part.status == ToolStatus.error ||
+    final failed =
+        part.status == ToolStatus.error ||
         (part.error?.trim().isNotEmpty ?? false) ||
         (exitCode != null && exitCode != 0);
     final output = part.output is String ? part.output as String : '';
     final body = output.isNotEmpty ? output : (part.error ?? '');
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (command.isNotEmpty)
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.command'),
-          child: ToolPre(command),
-        ),
-      if (body.isNotEmpty)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.output'),
-          child: ToolPre(body, failed: failed),
-        ),
-      if (exitCode != null && exitCode != 0)
-        Text(
-          '${i18n.t('chat:toolDetail.exitCode')}: $exitCode',
-          style: TextStyle(fontSize: FontSizes.xs2, color: t.danger),
-        ),
-    ]);
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (command.isNotEmpty)
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.command'),
+            child: ToolPre(command),
+          ),
+        if (body.isNotEmpty)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.output',
+            ),
+            child: ToolPre(body, failed: failed),
+          ),
+        if (exitCode != null && exitCode != 0)
+          Text(
+            '${i18n.t('chat:toolDetail.exitCode')}: $exitCode',
+            style: TextStyle(fontSize: FontSizes.xs2, color: t.danger),
+          ),
+      ],
+    );
   }
 }
 
@@ -231,58 +248,61 @@ class _FileOutput extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final tool = part.tool.toLowerCase();
-    final path = toolInput(part.input, 'file_path').isNotEmpty
+    final rawPath = toolInput(part.input, 'file_path').isNotEmpty
         ? toolInput(part.input, 'file_path')
         : toolInput(part.input, 'path');
+    final path = projectScopedDisplayPath(rawPath);
     final edits = parseEdits(part.input);
     final output = part.output is String ? part.output as String : '';
+    final patch = toolInput(part.input, 'patch');
     final content = switch (tool) {
       'read' => stripLineNumbers(output),
-      'write' => toolInput(part.input, 'content').isNotEmpty
-          ? toolInput(part.input, 'content')
-          : output,
-      _ => toolInput(part.input, 'patch').isNotEmpty
-          ? toolInput(part.input, 'patch')
-          : output,
+      'write' =>
+        toolInput(part.input, 'content').isNotEmpty
+            ? toolInput(part.input, 'content')
+            : output,
+      _ => projectScopedToolText(patch.isNotEmpty ? patch : output),
     };
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (path.isNotEmpty)
-        Text(
-          path,
-          style: TextStyle(
-            fontSize: FontSizes.xs,
-            color: t.n800,
-            fontFamily: 'Menlo',
-            fontFamilyFallback: const ['monospace'],
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (path.isNotEmpty)
+          Text(
+            path,
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              color: t.n800,
+              fontFamily: 'Menlo',
+              fontFamilyFallback: const ['monospace'],
+            ),
           ),
-        ),
-      if (edits.isNotEmpty)
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.diff'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final edit in edits)
-                _EditPreview(
-                  preview: editPreview(edit.oldString, edit.newString),
-                  path: path,
-                ),
-            ],
+        if (edits.isNotEmpty)
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.diff'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final edit in edits)
+                  _EditPreview(
+                    preview: editPreview(edit.oldString, edit.newString),
+                    path: path,
+                  ),
+              ],
+            ),
+          )
+        else if (content.isNotEmpty)
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.content'),
+            child: ToolDetailText(content, failed: failed),
           ),
-        )
-      else if (content.isNotEmpty)
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.content'),
-          child: ToolDetailText(content, failed: failed),
-        ),
-      if (failed && (part.error?.isNotEmpty ?? false))
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.error'),
-          child: ToolPre(part.error!, failed: true),
-        ),
-    ]);
+        if (failed && (part.error?.isNotEmpty ?? false))
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.error'),
+            child: ToolPre(part.error!, failed: true),
+          ),
+      ],
+    );
   }
 }
 
@@ -313,34 +333,31 @@ class _EditPreview extends ConsumerWidget {
           for (final row in preview.rows)
             switch (row) {
               GapRow(:final count) => Container(
-                  width: double.infinity,
-                  color: t.n200.withValues(alpha: 0.35),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  child: Text(
-                    i18n.t('chat:diff.unmodified', count: count),
-                    style:
-                        TextStyle(fontSize: FontSizes.xs2, color: t.n600),
-                  ),
+                width: double.infinity,
+                color: t.n200.withValues(alpha: 0.35),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: Text(
+                  i18n.t('chat:diff.unmodified', count: count),
+                  style: TextStyle(fontSize: FontSizes.xs2, color: t.n600),
                 ),
+              ),
               ChangeRow(:final added, :final text) => Container(
-                  width: double.infinity,
-                  color: added ? t.diffAdd : t.diffDel,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-                  child: Text(
-                    '${added ? '+' : '−'} $text',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: FontSizes.xs2,
-                      height: 1.7,
-                      color: added ? t.s700 : t.dangerInk,
-                      fontFamily: 'Menlo',
-                      fontFamilyFallback: const ['monospace'],
-                    ),
+                width: double.infinity,
+                color: added ? t.diffAdd : t.diffDel,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                child: Text(
+                  '${added ? '+' : '−'} $text',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: FontSizes.xs2,
+                    height: 1.7,
+                    color: added ? t.s700 : t.dangerInk,
+                    fontFamily: 'Menlo',
+                    fontFamilyFallback: const ['monospace'],
                   ),
                 ),
+              ),
             },
           if (preview.hiddenChanges > 0)
             Container(
@@ -357,10 +374,10 @@ class _EditPreview extends ConsumerWidget {
     );
     if (path.isEmpty) return body;
     return GestureDetector(
-      onTap: () => ref.read(appEventBusProvider).emit(
-        'workbench.open',
-        {'kind': 'review', 'file': path},
-      ),
+      onTap: () => ref.read(appEventBusProvider).emit('workbench.open', {
+        'kind': 'review',
+        'file': path,
+      }),
       child: body,
     );
   }
@@ -380,27 +397,32 @@ class _FindOutput extends ConsumerWidget {
         ? toolInput(part.input, 'pattern')
         : toolInput(part.input, 'query');
     final output = part.output is String ? part.output as String : '';
-    final body = failed ? (part.error ?? output) : output;
+    final body = projectScopedDisplayText(
+      failed ? (part.error ?? output) : output,
+    );
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (pattern.isNotEmpty)
-        Text(
-          pattern,
-          style: TextStyle(
-            fontSize: FontSizes.xs,
-            color: t.n800,
-            fontFamily: 'Menlo',
-            fontFamilyFallback: const ['monospace'],
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (pattern.isNotEmpty)
+          Text(
+            pattern,
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              color: t.n800,
+              fontFamily: 'Menlo',
+              fontFamilyFallback: const ['monospace'],
+            ),
           ),
-        ),
-      if (body.isNotEmpty)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.matches'),
-          child: ToolDetailText(body, failed: failed),
-        ),
-    ]);
+        if (body.isNotEmpty)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.matches',
+            ),
+            child: ToolDetailText(body, failed: failed),
+          ),
+      ],
+    );
   }
 }
 
@@ -422,18 +444,23 @@ class _AgentOutput extends ConsumerWidget {
     final output = part.output is String ? part.output as String : '';
     final body = failed ? (part.error ?? output) : output;
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (description.isNotEmpty)
-        Text(description,
-            style: TextStyle(fontSize: FontSizes.xs, color: t.n700)),
-      if (body.isNotEmpty)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result'),
-          child: ToolDetailText(body, failed: failed),
-        ),
-    ]);
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (description.isNotEmpty)
+          Text(
+            description,
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
+          ),
+        if (body.isNotEmpty)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result',
+            ),
+            child: ToolDetailText(body, failed: failed),
+          ),
+      ],
+    );
   }
 }
 
@@ -456,24 +483,26 @@ class _SkillOutput extends ConsumerWidget {
         ? toolInput(part.input, 'skill')
         : (part.title ?? '');
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (name.isNotEmpty)
-        Text(
-          name,
-          style: TextStyle(
-            fontSize: FontSizes.xs,
-            color: t.n700,
-            fontFamily: 'Menlo',
-            fontFamilyFallback: const ['monospace'],
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (name.isNotEmpty)
+          Text(
+            name,
+            style: TextStyle(
+              fontSize: FontSizes.xs,
+              color: t.n700,
+              fontFamily: 'Menlo',
+              fontFamilyFallback: const ['monospace'],
+            ),
           ),
-        ),
-      if (failed && (part.error?.isNotEmpty ?? false))
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.error'),
-          child: ToolDetailText(part.error!, failed: true),
-        ),
-    ]);
+        if (failed && (part.error?.isNotEmpty ?? false))
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.error'),
+            child: ToolDetailText(part.error!, failed: true),
+          ),
+      ],
+    );
   }
 }
 
@@ -488,27 +517,34 @@ class _GenericOutput extends ConsumerWidget {
     final i18n = ref.watch(i18nProvider);
     final input = part.input;
     final args = input is Map<String, dynamic> && input.isNotEmpty
-        ? const JsonEncoder.withIndent('  ').convert(input)
+        ? projectScopedDisplayText(
+            const JsonEncoder.withIndent('  ').convert(input),
+          )
         : '';
     final output = part.output is String
         ? part.output as String
         : (part.output == null ? '' : '${part.output}');
-    final body = failed ? (part.error ?? output) : output;
+    final body = projectScopedDisplayText(
+      failed ? (part.error ?? output) : output,
+    );
 
-    return ToolBlocks(children: [
-      StatusLine(status: part.status),
-      if (args.isNotEmpty)
-        ToolBlock(
-          label: i18n.t('chat:toolDetail.arguments'),
-          child: ToolPre(args),
-        ),
-      if (body.isNotEmpty)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result'),
-          child: ToolDetailText(body, failed: failed),
-        ),
-    ]);
+    return ToolBlocks(
+      children: [
+        StatusLine(status: part.status),
+        if (args.isNotEmpty)
+          ToolBlock(
+            label: i18n.t('chat:toolDetail.arguments'),
+            child: ToolPre(args),
+          ),
+        if (body.isNotEmpty)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result',
+            ),
+            child: ToolDetailText(body, failed: failed),
+          ),
+      ],
+    );
   }
 }
 
@@ -522,18 +558,23 @@ class _SubtaskOutput extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final failed = part.status == 'error';
-    return ToolBlocks(children: [
-      StatusLine(status: failed ? ToolStatus.error : ToolStatus.completed),
-      if (part.description.isNotEmpty)
-        Text(part.description,
-            style: TextStyle(fontSize: FontSizes.xs, color: t.n700)),
-      if (part.output?.isNotEmpty ?? false)
-        ToolBlock(
-          label: i18n
-              .t(failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result'),
-          child: ToolDetailText(part.output!, failed: failed),
-        ),
-    ]);
+    return ToolBlocks(
+      children: [
+        StatusLine(status: failed ? ToolStatus.error : ToolStatus.completed),
+        if (part.description.isNotEmpty)
+          Text(
+            part.description,
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
+          ),
+        if (part.output?.isNotEmpty ?? false)
+          ToolBlock(
+            label: i18n.t(
+              failed ? 'chat:toolDetail.error' : 'chat:toolDetail.result',
+            ),
+            child: ToolDetailText(part.output!, failed: failed),
+          ),
+      ],
+    );
   }
 }
 
@@ -552,7 +593,10 @@ class _QuestionAnswered extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final pairs = questionPairs(part.metadata);
     if (pairs.isEmpty) {
-      return _GenericOutput(part: part, failed: part.status == ToolStatus.error);
+      return _GenericOutput(
+        part: part,
+        failed: part.status == ToolStatus.error,
+      );
     }
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
@@ -565,9 +609,10 @@ class _QuestionAnswered extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(question,
-                    style:
-                        TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+                Text(
+                  question,
+                  style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                ),
                 Text(
                   answer.isEmpty
                       ? i18n.t('chat:question.unanswered')

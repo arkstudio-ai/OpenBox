@@ -35,6 +35,7 @@ def captured(monkeypatch):
     async def fake_create_user_message(**kwargs):
         seen["switch_agent"] = kwargs.get("agent")
         seen["message_user_id"] = kwargs.get("user_id")
+        seen["run_fence"] = kwargs.get("run_fence")
         return None
 
     monkeypatch.setattr("session.session.get_session", fake_get_session)
@@ -64,6 +65,17 @@ async def test_the_switch_message_belongs_to_the_real_user_too(captured):
     ctx = ToolContext(session_id="s1", user_id=USER)
     await execute_enter(PlanEnterArgs(), ctx)
     assert captured["message_user_id"] == USER
+
+
+async def test_the_switch_message_is_fenced_to_the_calling_run(captured):
+    ctx = ToolContext(
+        session_id="s1",
+        user_id=USER,
+        run_id="run-plan-1",
+        run_generation=6,
+    )
+    await execute_enter(PlanEnterArgs(), ctx)
+    assert captured["run_fence"] == ("s1", "run-plan-1", 6)
 
 
 async def test_saying_no_keeps_build_mode(monkeypatch):

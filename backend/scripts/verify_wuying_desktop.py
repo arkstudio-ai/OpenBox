@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import shlex
 import time
 
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+from wuying_env import load_environment
+
+load_environment()
 
 from core.config import get_config
 from core.oss import get_oss

@@ -62,3 +62,39 @@ def test_capability_validators_raise_the_surfaceable_type():
             route, resolution="", ratio="21:9", duration=-1,
             generate_audio=True, input_mimes=[], declared=entry,
         )
+
+
+def test_a_connection_that_never_opened_says_so():
+    """Scrubbing a transport failure blamed the provider for our own network.
+
+    On 2026-09-01 a few seconds of local packet loss surfaced to the user as
+    "the generation service is down", while the paid task was fine and the
+    sweep recovered it minutes later. A connection that never opened carries
+    no provider response to leak, so it can say what actually happened.
+    """
+    import httpx
+
+    from tool.video_production import _public_error
+
+    for failure in (httpx.ConnectError("[Errno 61] Connection refused"),
+                    httpx.ConnectTimeout("timed out"),
+                    httpx.ReadTimeout("timed out")):
+        message = _public_error(failure)
+        assert "could not reach the video provider" in message
+        assert "do not resubmit" in message
+
+
+def test_a_reply_that_did_arrive_is_still_scrubbed():
+    """Anything with a response body keeps the old treatment."""
+    import httpx
+
+    from tool.video_production import _public_error
+
+    request = httpx.Request("POST", "https://relay.example/v1/videos?sig=SECRET")
+    response = httpx.Response(500, request=request)
+    message = _public_error(
+        httpx.HTTPStatusError("boom", request=request, response=response)
+    )
+
+    assert message == "HTTP 500: Internal Server Error"
+    assert "SECRET" not in message

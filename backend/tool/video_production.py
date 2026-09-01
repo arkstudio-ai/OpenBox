@@ -71,7 +71,16 @@ def _asset_kind(mime: str) -> str:
         return "audio"
     return "other"
 
-_MAX_INLINE_GENERATION_WAITS = 8
+#: How many bounded waits one run may spend on a single generation before it
+#: hands the job to the next turn. Each wait is capped at 25s, so this is the
+#: in-turn budget in 25-second units.
+#:
+#: Measured over 39 paid generations on 2026-09-01: median 197s, p90 301s. At
+#: 8 (200s) the budget landed exactly on the median — 46% of jobs paused and
+#: needed the person to say "continue", for work that was already nearly done.
+#: 13 covers p90, so the common case finishes inside the turn and the pause
+#: goes back to meaning what it should: this one is genuinely slow.
+_MAX_INLINE_GENERATION_WAITS = 13
 _DEFERRED_PROVIDER_RECHECK_SECONDS = 60
 
 
@@ -777,6 +786,20 @@ def content_hash(value: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _is_transport_failure(exc: Exception) -> bool:
+    """True when the request never got a reply — DNS, connect, or timeout.
+
+    These carry the host we dialled at most, which is our own configuration,
+    so their text is safe to show. Anything that did get a response is not
+    one of these and stays scrubbed.
+    """
+    import httpx
+
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout,
+                            httpx.ReadTimeout, httpx.WriteTimeout,
+                            httpx.PoolTimeout, httpx.NetworkError))
+
+
 def _public_error(exc: Exception) -> str:
     """Return a stable user-visible diagnostic without provider bodies/URLs.
 
@@ -791,6 +814,17 @@ def _public_error(exc: Exception) -> str:
     if response is not None:
         reason = str(getattr(response, "reason_phrase", "") or "request failed")
         return f"HTTP {response.status_code}: {reason}"[:200]
+    if _is_transport_failure(exc):
+        # A connection that never opened carries no provider content to leak —
+        # the message is about our own network, not their response. Scrubbing
+        # it to "operation failed" made a local outage read as a provider
+        # fault: on 2026-09-01 a few seconds of packet loss was reported to
+        # the user as "the generation service is down", while the paid task
+        # was fine and the sweep recovered it minutes later.
+        return (
+            "could not reach the video provider (network or proxy). The paid "
+            "task is unaffected and recovery will retry it; do not resubmit."
+        )
     return f"{exc.__class__.__name__}: operation failed"
 
 

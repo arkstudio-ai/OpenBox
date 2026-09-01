@@ -97,6 +97,11 @@ async def lifespan(app: FastAPI):
     await provider.reconcile()
     log.info(f"OpenBox starting ({config.sandbox_provider} provider, reconciled)")
 
+    # Per-user ECD fleet patrol (log-only; desktops are subscription-resident)
+    if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
+        from sandbox.wuying_desktop_service import wuying_desktop_service
+        wuying_desktop_service.start_patrol()
+
     # Initialize Redis event bus for cross-worker broadcasting (if in multi-user mode)
     if config.jwt_secret:
         from bus.bus import init_redis_bus
@@ -125,6 +130,10 @@ async def lifespan(app: FastAPI):
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+
+    if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
+        from sandbox.wuying_desktop_service import wuying_desktop_service
+        wuying_desktop_service.stop_patrol()
 
     # Stop cron scheduler
     try:

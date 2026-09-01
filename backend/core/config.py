@@ -349,6 +349,21 @@ class OpenBoxConfig(BaseModel):
     wuying_region_id: str = "cn-hangzhou"           # region the desktop lives in
     wuying_end_user_id: str = ""                    # Wuying end user the web view logs in as
 
+    # -- WUYING per-user desktop provisioning (wuying_mode="per_user") --
+    # "shared" keeps the single pre-provisioned desktop above; "per_user" makes
+    # OpenBox create one ECD desktop + one convenience EndUser per user via the
+    # ECD OpenAPI (ported from the bossip wuying-bridge integration).
+    wuying_mode: str = "shared"                     # "shared" | "per_user"
+    wuying_image_id: str = ""                       # golden image; required in per_user mode —
+                                                    # never fall back to a community image silently
+    wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
+    wuying_desktop_type: str = "eds.enterprise_office.4c8g"
+    wuying_system_disk_size: int = 40               # GiB
+    wuying_policy_group_id: str = "system-all-enabled-policy"
+    wuying_charge_type: str = "PostPaid"
+    wuying_password_salt: str = ""                  # per-deployment secret for derived EndUser passwords
+    wuying_env_tag: str = "default"                 # openbox-env tag; isolates prod/dev sharing one account
+
     # -- Browser automation on the cloud desktop --
     # local=drive a headed Chrome on the cloud desktop over CDP; extension=drive
     # the user's own browser through the dev-browser relay; auto=prefer the
@@ -584,6 +599,15 @@ def _apply_env_overrides(data: dict) -> dict:
         "wuying_desktop_id": "WUYING_DESKTOP_ID",
         "wuying_region_id": "WUYING_REGION_ID",
         "wuying_end_user_id": "WUYING_END_USER_ID",
+        "wuying_mode": "WUYING_MODE",
+        "wuying_image_id": "WUYING_IMAGE_ID",
+        "wuying_office_site_id": "WUYING_OFFICE_SITE_ID",
+        "wuying_desktop_type": "WUYING_DESKTOP_TYPE",
+        "wuying_system_disk_size": "WUYING_SYSTEM_DISK_SIZE",
+        "wuying_policy_group_id": "WUYING_POLICY_GROUP_ID",
+        "wuying_charge_type": "WUYING_CHARGE_TYPE",
+        "wuying_password_salt": "WUYING_PASSWORD_SALT",
+        "wuying_env_tag": "WUYING_ENV_TAG",
         "browser_mode": "BROWSER_MODE",
         "browser_chrome_port": "BROWSER_CHROME_PORT",
         "oss_bucket": "OSS_BUCKET",
@@ -626,7 +650,7 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
-                                "oss_user_quota_bytes"}:
+                                "oss_user_quota_bytes", "wuying_system_disk_size"}:
                 data[field_name] = int(value)
             elif field_name == "monthly_cost_limit":
                 data[field_name] = float(value)

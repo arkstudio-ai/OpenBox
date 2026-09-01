@@ -65,6 +65,12 @@
   },
   "desktop": {
     "loading": "正在连接云桌面…",
+    "provision": "你还没有自己的云电脑",
+    "provisionHint": "开通后将为你创建一台专属云电脑，首次创建约需 2-3 分钟",
+    "provisionAction": "开通云电脑",
+    "provisioning": "正在准备你的云电脑，首次创建约需 2-3 分钟…",
+    "provisionFailed": "云电脑创建失败",
+    "provisionRetry": "重新创建",
     "connected": "已连接",
     "closed": "连接已断开",
     "error": "无法连接云桌面",

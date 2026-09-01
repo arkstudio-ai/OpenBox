@@ -212,6 +212,16 @@ class VideoModelConfig(BaseModel):
     supports_first_last_frame: bool = False
     #: reference_audio role (drive the performance from an audio track).
     supports_reference_audio: bool = False
+    #: Which body shape the gateway channel behind this model actually reads.
+    #: Measured 2026-09-01 against the gateway source, because the three
+    #: differ and a wrong one is accepted and then ignored:
+    #:   "flat"     — resolution/ratio at the top level, passed through as-is
+    #:                (Sora adaptor, type 55: the body is relayed verbatim)
+    #:   "metadata" — resolution/ratio/seed/content[] under `metadata`; the
+    #:                top-level DTO has no field for them (DoubaoVideo, 54)
+    #:   "size"     — a `WxH` string at the top level, which the adaptor
+    #:                parses into its own resolution tiers (MiniMax, 58)
+    wire_shape: Literal["flat", "metadata", "size"] = "flat"
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
 

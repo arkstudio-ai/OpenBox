@@ -609,6 +609,43 @@ def _with_image_file_refs(prompt: str, count: int) -> str:
     )
 
 
+#: Portrait/landscape pixel pairs per resolution tier, for adaptors that take
+#: a `WxH` string rather than a tier name.
+_SIZE_BY_RESOLUTION = {
+    "480p": (480, 854),
+    "720p": (720, 1280),
+    "1080p": (1080, 1920),
+}
+
+
+def _size_shaped_body(
+    route: Any,
+    *,
+    prompt: str,
+    refs: list[dict[str, str]],
+    resolution: str,
+    ratio: str,
+    duration: int,
+) -> dict[str, Any]:
+    """A `WxH` top-level `size`, which the adaptor parses into its own tiers."""
+    short, long = _SIZE_BY_RESOLUTION.get(resolution, _SIZE_BY_RESOLUTION["720p"])
+    portrait = ratio in ("9:16", "3:4") or not ratio
+    width, height = (short, long) if portrait else (long, short)
+
+    body: dict[str, Any] = {
+        "model": route.model,
+        "prompt": prompt,
+        "size": f"{width}x{height}",
+    }
+    if duration != -1:
+        body["duration"] = duration
+    images = [ref["url"] for ref in refs if ref["kind"] == "image"]
+    if images:
+        body["images"] = images
+        body["prompt"] = _with_image_file_refs(prompt, len(images))
+    return body
+
+
 def _task_shaped_body(
     route: Any,
     *,
@@ -673,8 +710,14 @@ def build_payload(
     generate_audio: bool,
     watermark: bool,
     seed: int | None = None,
+    declared: Any | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """(url_path, json_body) for the gateway channels.
+
+    ``declared`` carries the model's wire_shape. Which body a channel reads is
+    a property of the gateway adaptor behind it, not of the model name, and
+    the three shapes are mutually unreadable: a resolution sent in the wrong
+    place is accepted and ignored (or, on MiniMax, rejected outright).
 
     ``refs`` items: {"kind": "image"|"video", "url": public_url, "role": role}.
     The ark channel keeps its historical builder in video_production.py.
@@ -682,7 +725,16 @@ def build_payload(
     channel = getattr(route, "channel", "ark")
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
-        if native is None:
+        shape = getattr(declared, "wire_shape", None) if declared else None
+        if shape == "size":
+            # The adaptor parses its own resolution tiers out of a WxH string
+            # and rejects the request outright without one — measured: sending
+            # `resolution` instead returned "文生视频 ratio 不能为空".
+            return "/v1/videos", _size_shaped_body(
+                route, prompt=prompt, refs=refs, resolution=resolution,
+                ratio=ratio, duration=duration,
+            )
+        if shape == "metadata" or (shape is None and native is None):
             # Not a name-encoded tier, so this model reaches the gateway's task
             # adaptor, whose requestPayload reads resolution / ratio / seed /
             # generate_audio / content[] **only out of `metadata`**. The

@@ -254,6 +254,53 @@ def _content_url(value: object) -> str:
     return ""
 
 
+def _relay_metadata_payload(
+    target: VideoProviderTarget, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """The metadata-carried shape, built from a TokenSpace contents payload.
+
+    The gateway's task adaptors read resolution, ratio, duration, seed,
+    generate_audio and content[] out of `metadata` and nowhere else. Images
+    additionally ride top-level as `images`, which the adaptor appends to
+    content[] before merging metadata — the one field that works flat.
+    """
+    content = list(payload.get("content") or [])
+    prompt = " ".join(
+        str(item.get("text") or "") for item in content if item.get("type") == "text"
+    ).strip()
+    if not prompt:
+        raise RuntimeError("relay video request requires a prompt")
+
+    media = [item for item in content if item.get("type") != "text"]
+    metadata: dict[str, Any] = {"resolution": str(payload.get("resolution") or "").lower()}
+    ratio = str(payload.get("ratio") or "").strip()
+    if ratio and ratio != "adaptive":
+        metadata["ratio"] = ratio
+    duration = payload.get("duration")
+    if isinstance(duration, int) and duration != -1:
+        metadata["duration"] = duration
+    for option in ("generate_audio", "watermark", "seed"):
+        if option in payload:
+            metadata[option] = payload[option]
+    if media:
+        metadata["content"] = media
+
+    body: dict[str, Any] = {
+        "model": target.model.strip(),
+        "prompt": prompt,
+        "metadata": metadata,
+    }
+    images = [
+        _content_url(item.get("image_url"))
+        for item in media
+        if item.get("type") == "image_url"
+    ]
+    images = [url for url in images if url]
+    if images:
+        body["images"] = images
+    return body
+
+
 def _bossip_video_payload(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
     """Translate TokenSpace contents format to BossIP's public `/v1/videos` shape.
 
@@ -262,6 +309,21 @@ def _bossip_video_payload(target: VideoProviderTarget, payload: dict[str, Any]) 
     account-scoped TokenSpace ``asset://`` identifiers.
     """
     resolution = str(payload.get("resolution") or "").lower()
+
+    # A model the relay routes under its own id keeps that id and takes the
+    # metadata shape, which is what its channel adaptor actually reads.
+    # Rewriting it to one of the three name-encoded sd2 tiers below was a
+    # workaround from before those models were declared, and it cost the
+    # caller its resolution: measured 2026-09-01, 480p/9:16 flattened to the
+    # top level came back 1280x720, while the same values under `metadata`
+    # came back 496x864.
+    from core.config import get_config as _cfg
+    from tool import video_providers as _vp
+
+    declared = _vp.declared_model(target.model, _cfg())
+    if declared is not None and getattr(declared, "wire_shape", "flat") == "metadata":
+        return _relay_metadata_payload(target, payload)
+
     if resolution not in _BOSSIP_RELAY_MODELS:
         raise RuntimeError(f"BossIP relay does not support resolution: {resolution}")
 
@@ -1997,6 +2059,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             },
                         )
 
+            from core.config import get_config as _get_config
+
             if channel == "ark":
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": prompt},
@@ -2025,6 +2089,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     generate_audio=generate_audio,
                     watermark=watermark,
                     seed=seed,
+                    declared=video_providers.declared_model(target.model, _get_config()),
                 )
 
             async def submit_and_persist_provider_identity():

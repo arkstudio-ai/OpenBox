@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import dataclasses
+
 import pytest
 from pydantic import ValidationError
 
@@ -1124,7 +1126,14 @@ def _bossip_target() -> VideoProviderTarget:
     )
 
 
-def test_bossip_relay_payload_uses_public_video_contract():
+def test_a_declared_relay_model_keeps_its_id_and_takes_the_metadata_shape():
+    """Rewriting it to a name-encoded tier cost the caller its resolution.
+
+    Measured 2026-09-01: 480p/9:16 flattened to the top level came back
+    1280x720, the upstream default, while the same values under `metadata`
+    came back 496x864. The gateway's task adaptor reads resolution, ratio,
+    duration, seed, generate_audio and content[] out of `metadata` only.
+    """
     body = _bossip_video_payload(
         _bossip_target(),
         {
@@ -1132,7 +1141,6 @@ def test_bossip_relay_payload_uses_public_video_contract():
             "content": [
                 {"type": "text", "text": "主持人自然介绍产品"},
                 {"type": "image_url", "image_url": {"url": "https://oss.test/host.png"}},
-                {"type": "image_url", "image_url": {"url": "https://oss.test/room.png"}},
                 {"type": "video_url", "video_url": {"url": "https://oss.test/motion.mp4"}},
             ],
             "resolution": "720p",
@@ -1143,23 +1151,29 @@ def test_bossip_relay_payload_uses_public_video_contract():
         },
     )
 
-    assert body == {
-        "model": "video-sd-720p-proⅠ",
-        "prompt": "主持人自然介绍产品",
-        "resolution": "720p",
-        "ratio": "9:16",
-        "generate_audio": True,
-        "watermark": False,
-        "image_url": "https://oss.test/host.png",
-        "extra_images": ["https://oss.test/room.png"],
-        "extra_videos": ["https://oss.test/motion.mp4"],
-    }
+    assert body["model"] == "doubao-seedance-2-0-260128"
+    assert body["prompt"] == "主持人自然介绍产品"
+    assert "resolution" not in body, "the top-level DTO has no field for it"
+    assert body["metadata"]["resolution"] == "720p"
+    assert body["metadata"]["ratio"] == "9:16"
+    assert body["metadata"]["generate_audio"] is True
+    # Images ride top-level too: the adaptor appends them to content[] itself.
+    assert body["images"] == ["https://oss.test/host.png"]
+    assert any(item["type"] == "video_url" for item in body["metadata"]["content"])
 
 
-def test_bossip_relay_rejects_480p_spoken_video_instead_of_silently_dropping_audio():
+def test_an_undeclared_relay_model_still_refuses_480p_with_audio():
+    """The rewrite path survives for ids the registry does not describe.
+
+    Its 480p compatibility tier renders silent video, and a spoken segment
+    that comes back silent is a paid take nobody can use.
+    """
+    target = _bossip_target()
+    target = dataclasses.replace(target, model="some-unlisted-model")
+
     with pytest.raises(RuntimeError, match="does not support generated audio"):
         _bossip_video_payload(
-            _bossip_target(),
+            target,
             {
                 "content": [{"type": "text", "text": "测试视频"}],
                 "resolution": "480p",
@@ -1245,7 +1259,9 @@ async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
 
     assert calls[0][0:2] == ("POST", "https://openapi.bossipai.com.cn/v1/videos")
     assert calls[0][2]["Authorization"] == "Bearer sk-gateway"
-    assert calls[0][3]["model"] == "video-sd-720p-proⅠ"
+    # The declared id travels as itself now; only unlisted ids are rewritten
+    # to a name-encoded tier. See the payload test above for why.
+    assert calls[0][3]["model"] == "doubao-seedance-2-0-260128"
     assert calls[1][0:2] == ("GET", "https://openapi.bossipai.com.cn/v1/videos/task_public")
     assert _provider_video_url(status) == "https://result.test/out.mp4"
 

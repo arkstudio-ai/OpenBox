@@ -341,3 +341,52 @@ def test_a_silent_tier_refuses_audio_but_stays_selectable():
     _validate(entry, _route("fast-tier"), generate_audio=False)
     with pytest.raises(RuntimeError, match="silent video"):
         _validate(entry, _route("fast-tier"), generate_audio=True)
+
+
+def test_each_wire_shape_puts_the_resolution_where_its_adaptor_reads_it():
+    """Three gateway adaptors, three mutually unreadable body shapes.
+
+    Measured 2026-09-01 by generating one video per model and probing the
+    pixels that came back:
+
+      metadata — wan3 and Seedance behind the DoubaoVideo adaptor. Top-level
+                 resolution/ratio are dropped by the video DTO, which has no
+                 field for them: 720p/9:16 flat returned 1920x1080, the same
+                 values under `metadata` returned 720x1280.
+      flat     — the name-encoded sd2 tiers behind the Sora adaptor, whose
+                 body is relayed verbatim.
+      size     — MiniMax, which parses its own tiers out of a WxH string and
+                 rejects the request without one ("ratio 不能为空").
+    """
+    shapes = {
+        "metadata": ("wan3.0-video", "metadata"),
+        "flat": ("video-sd-1080p-pro", "resolution"),
+        "size": ("MiniMax-H3", "size"),
+    }
+    for shape, (model_id, expected_key) in shapes.items():
+        entry = VideoModelConfig(id=model_id, channel="sd2", wire_shape=shape,
+                                 resolutions=["1080p"])
+        _path, body = video_providers.build_payload(
+            _route(model_id), prompt="一只猫", refs=[], resolution="1080p",
+            ratio="9:16", duration=5, generate_audio=True, watermark=False,
+            seed=None, declared=entry,
+        )
+        assert expected_key in body, f"{shape}: {sorted(body)}"
+
+
+def test_the_size_shape_is_portrait_for_a_vertical_ratio():
+    entry = VideoModelConfig(id="MiniMax-H3", channel="sd2", wire_shape="size")
+
+    _path, portrait = video_providers.build_payload(
+        _route("MiniMax-H3"), prompt="x", refs=[], resolution="720p",
+        ratio="9:16", duration=5, generate_audio=True, watermark=False,
+        seed=None, declared=entry,
+    )
+    _path, landscape = video_providers.build_payload(
+        _route("MiniMax-H3"), prompt="x", refs=[], resolution="720p",
+        ratio="16:9", duration=5, generate_audio=True, watermark=False,
+        seed=None, declared=entry,
+    )
+
+    assert portrait["size"] == "720x1280"
+    assert landscape["size"] == "1280x720"

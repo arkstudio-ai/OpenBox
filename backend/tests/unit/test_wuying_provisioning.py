@@ -303,6 +303,28 @@ async def test_stopped_desktop_wakes_on_ticket(monkeypatch):
     assert (await service.status(user))["state"] == "running"
 
 
+async def test_ticket_target_releases_ghost_when_tags_report_not_found(monkeypatch):
+    behaviour = _stub_ecd(monkeypatch)
+
+    async def verify(desktop_id, user_id):
+        raise RuntimeError(
+            "Error: InvalidResourceId.NotFound code: 400, ResourceId [[ecd-new]] is not found."
+        )
+
+    monkeypatch.setattr(wuying_ecd, "verify_ownership", verify)
+    service = WuyingDesktopService()
+    user = "user-ghost-tags"
+
+    await service.provision(user)
+    await _drain(service, user)
+    with pytest.raises(DesktopNotReady) as excinfo:
+        await service.resolve_ticket_target(user)
+    assert excinfo.value.payload == {"state": "not_provisioned"}
+    assert behaviour["deleted"] == ["ecd-new"]
+    # The stale record is gone, so the user can provision a fresh desktop.
+    assert (await service.status(user))["state"] == "not_provisioned"
+
+
 async def test_release_ghost_deletes_and_forgets(monkeypatch):
     behaviour = _stub_ecd(monkeypatch)
     service = WuyingDesktopService()

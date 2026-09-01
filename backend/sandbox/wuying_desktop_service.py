@@ -104,7 +104,20 @@ class WuyingDesktopService:
         if state["state"] != "running" or not state.get("desktopId"):
             raise DesktopNotReady(state)
         desktop_id = state["desktopId"]
-        eu_id = await wuying_ecd.verify_ownership(desktop_id, user_id)
+        try:
+            eu_id = await wuying_ecd.verify_ownership(desktop_id, user_id)
+        except wuying_ecd.DesktopOwnershipError:
+            raise
+        except Exception as e:
+            # A desktop deleted behind our back fails here first — the
+            # ownership tag lookup raises InvalidResourceId.NotFound before
+            # GetConnectionTicket ever runs — so the ghost must be released
+            # at this layer too, or the stale record wedges every ticket.
+            if any(x in str(e) for x in ("NotFound", "InvalidDesktopId", "InvalidResourceId")):
+                log.warning(f"Desktop {desktop_id} gone at ownership check; releasing ghost")
+                await self.release_ghost(user_id)
+                raise DesktopNotReady({"state": "not_provisioned"})
+            raise
         return desktop_id, eu_id
 
     async def release_ghost(self, user_id: str) -> None:

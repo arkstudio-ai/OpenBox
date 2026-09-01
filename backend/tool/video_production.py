@@ -755,6 +755,11 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
         return False
 
 
+#: Refusals this backend decides for itself. Their text names only the
+#: caller's own request, so it is safe to show and useless to withhold.
+from tool.video_providers import VideoRequestError as _RequestError
+
+
 def content_hash(value: Any) -> str:
     """Stable hash of a request, for idempotency-key conflict detection."""
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -1388,26 +1393,26 @@ async def _resolve_open_inputs(
     for ref in refs:
         row = await _find_owned_asset(ref.asset_id, ctx)
         if not row:
-            raise RuntimeError(
+            raise _RequestError(
                 f"asset '{ref.asset_id}' is not a ready OSS resource owned by this user"
             )
         kind = _asset_kind(row.mime)
         if kind == "other":
-            raise RuntimeError(
+            raise _RequestError(
                 f"asset '{ref.asset_id}' is {row.mime}; inputs must be image, video or audio"
             )
         role = ref.role or _DEFAULT_ROLE_BY_KIND.get(kind)
         if role is None:
-            raise RuntimeError(
+            raise _RequestError(
                 f"asset '{ref.asset_id}' is {row.mime}; say which role it plays "
                 "(reference_audio) — the backend does not guess for audio"
             )
         if role == "reference_audio" and kind != "audio":
-            raise RuntimeError(f"role reference_audio needs an audio asset, not {row.mime}")
+            raise _RequestError(f"role reference_audio needs an audio asset, not {row.mime}")
         if role in {"first_frame", "last_frame", "reference_image"} and kind != "image":
-            raise RuntimeError(f"role {role} needs an image asset, not {row.mime}")
+            raise _RequestError(f"role {role} needs an image asset, not {row.mime}")
         if role == "reference_video" and kind != "video":
-            raise RuntimeError(f"role reference_video needs a video asset, not {row.mime}")
+            raise _RequestError(f"role reference_video needs a video asset, not {row.mime}")
         if row.id in seen:
             continue
         seen.add(row.id)
@@ -1522,7 +1527,7 @@ async def _check_submit_budget(ctx: ToolContext) -> None:
         return
     used = await _daily_submit_count(ctx)
     if used >= limit:
-        raise RuntimeError(
+        raise _RequestError(
             f"daily video generation limit reached ({used}/{limit} in the last 24h); "
             "tell the user rather than retrying"
         )
@@ -2385,11 +2390,11 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
         try:
             source = await _find_owned_asset(args.asset_id or "", ctx)
             if not source:
-                raise RuntimeError(
+                raise _RequestError(
                     f"asset '{args.asset_id}' is not a ready OSS resource owned by this user"
                 )
             if not source.mime.startswith("audio/"):
-                raise RuntimeError(
+                raise _RequestError(
                     f"asset '{args.asset_id}' is {source.mime}; transcription needs audio. "
                     "Extract it first (ffmpeg -vn) and register that file."
                 )

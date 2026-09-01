@@ -40,6 +40,19 @@ from core.log import create_logger
 
 log = create_logger("tool.video_providers")
 
+
+class VideoRequestError(RuntimeError):
+    """A request this backend refuses on its own, before any provider call.
+
+    These messages are authored here and name only the caller's own request —
+    a model id, a ratio, a duration — so they carry none of the provider
+    bodies or signed URLs that ``_public_error`` scrubs. Surfacing them is the
+    whole point: a caller told "invalid" without being told *what* is invalid
+    cannot fix the request, which would make the free estimate useless.
+    """
+
+    public_message = True
+
 # ── sd2 (Sora adaptor) ──────────────────────────────────────────────────────
 # The trailing Ⅰ on the first two models is ROMAN NUMERAL ONE (U+2160), not
 # the letter I; the wrong character makes the gateway report model-not-found.
@@ -432,43 +445,43 @@ def _validate_declared(
     """
     allowed = list(entry.resolutions or [])
     if resolution and allowed and resolution not in allowed:
-        raise RuntimeError(
+        raise VideoRequestError(
             f"model {entry.id} supports {'/'.join(allowed)}; requested "
             f"{resolution} would be silently substituted upstream"
         )
     ratios = list(getattr(entry, "ratios", None) or [])
     if ratio and ratios and ratio not in ratios:
-        raise RuntimeError(
+        raise VideoRequestError(
             f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}"
         )
     span = getattr(entry, "duration_range", None)
     if duration == -1:
         if not getattr(entry, "supports_smart_duration", True):
-            raise RuntimeError(
+            raise VideoRequestError(
                 f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported"
             )
     elif span is not None:
         low, high = span
         if not low <= duration <= high:
-            raise RuntimeError(
+            raise VideoRequestError(
                 f"model {entry.id} accepts {low}-{high}s; requested {duration}s"
             )
     cap = entry.max_duration_seconds
     if cap is not None and duration != -1 and duration > cap:
-        raise RuntimeError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
+        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
     if has_video_ref and not entry.supports_reference_video:
-        raise RuntimeError(f"model {entry.id} does not accept video references")
+        raise VideoRequestError(f"model {entry.id} does not accept video references")
     if has_image_ref and not entry.supports_reference_image:
-        raise RuntimeError(f"model {entry.id} does not accept image references")
+        raise VideoRequestError(f"model {entry.id} does not accept image references")
     if seed is not None and not getattr(entry, "supports_seed", False):
-        raise RuntimeError(f"model {entry.id} does not accept a seed")
+        raise VideoRequestError(f"model {entry.id} does not accept a seed")
     frame_roles = {"first_frame", "last_frame"}
     if frame_roles & set(roles) and not getattr(entry, "supports_first_last_frame", False):
-        raise RuntimeError(
+        raise VideoRequestError(
             f"model {entry.id} does not accept first_frame/last_frame references"
         )
     if "reference_audio" in roles and not getattr(entry, "supports_reference_audio", False):
-        raise RuntimeError(f"model {entry.id} does not accept an audio reference")
+        raise VideoRequestError(f"model {entry.id} does not accept an audio reference")
 
 
 def validate_request(
@@ -504,42 +517,42 @@ def validate_request(
     if channel == "sd2":
         unsupported = {"first_frame", "last_frame", "reference_audio"} & set(roles)
         if unsupported:
-            raise RuntimeError(
+            raise VideoRequestError(
                 f"the sd2 channel cannot express the {'/'.join(sorted(unsupported))} "
                 "role; it needs the task endpoint, which this gateway does not expose"
             )
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
         if resolution and resolution != native:
-            raise RuntimeError(
+            raise VideoRequestError(
                 f"model {route.model} generates {native} natively; requested "
                 f"{resolution} would be silently ignored — pick the matching model tier"
             )
         if has_video_ref and canonicalize_sd2_model_name(route.model) == "video-sd-720p-proⅠ":
             # Upstream drops extra_videos for this tier without erroring; the
             # task then succeeds with output unrelated to the reference.
-            raise RuntimeError(
+            raise VideoRequestError(
                 "video-sd-720p-proⅠ silently discards video references upstream; "
                 "use video-sd-1080p-pro for video-referenced segments"
             )
         return
     if channel == "task" and getattr(route, "model_type", "") == WAN3_MODEL_TYPE:
         if ratio == "21:9":
-            raise RuntimeError("wan3.0 does not support the 21:9 ratio")
+            raise VideoRequestError("wan3.0 does not support the 21:9 ratio")
         if duration != -1 and not 2 <= duration <= 30:
-            raise RuntimeError("wan3.0 duration must be -1 (smart) or 2-30 seconds")
+            raise VideoRequestError("wan3.0 duration must be -1 (smart) or 2-30 seconds")
         return
     # ark / Seedance rules (unchanged from the historical validator).
     lowered = route.model.lower()
     if resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
-        raise RuntimeError("1080p is supported only by doubao-seedance-2-0-260128")
+        raise VideoRequestError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:
-            raise RuntimeError("Seedance 2.5 duration must be 4-30 seconds")
+            raise VideoRequestError("Seedance 2.5 duration must be 4-30 seconds")
     elif duration != -1 and not 4 <= duration <= 15:
-        raise RuntimeError("Seedance 2.0 duration must be -1 or 4-15 seconds")
+        raise VideoRequestError("Seedance 2.0 duration must be -1 or 4-15 seconds")
     if "fast" in lowered and generate_audio:
-        raise RuntimeError(
+        raise VideoRequestError(
             "Seedance Fast does not support generated audio; use the standard model for spoken video"
         )
 

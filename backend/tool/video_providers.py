@@ -115,7 +115,17 @@ def is_sd2_model(name: str) -> bool:
     return canonicalize_sd2_model_name(name) in SD2_MODELS
 
 
-def sd2_native_resolution(name: str) -> str:
+def sd2_native_resolution(name: str) -> str | None:
+    """The one resolution a name-encoded sd2 model produces, if it is one.
+
+    Only `SD2_MODELS` carry their resolution in the name — there is a separate
+    model id per tier, and asking a 720p model for 1080p silently returns 720p.
+    Other models routed over this channel (wan3, MiniMax) pick resolution as a
+    parameter, so returning "1080p" for them was a guess that then failed its
+    own check: it made every non-1080p choice on those models unreachable.
+    """
+    if not is_sd2_model(name):
+        return None
     model = canonicalize_sd2_model_name(name)
     if "480" in model:
         return "480p"
@@ -499,6 +509,13 @@ def validate_request(
 ) -> None:
     channel = getattr(route, "channel", "ark")
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
+    if declared is not None and generate_audio and not getattr(
+        declared, "supports_generated_audio", True
+    ):
+        raise VideoRequestError(
+            f"model {declared.id} renders silent video; pass generate_audio=false "
+            "for a b-roll shot, or pick a model that speaks"
+        )
     if declared is not None:
         _validate_declared(
             declared,
@@ -514,16 +531,20 @@ def validate_request(
     # Refuse instead of sending a reference the gateway will read as an
     # ordinary one: an undeclared role that silently becomes a plain reference
     # produces a paid take that ignores the continuity the caller asked for.
-    if channel == "sd2":
+    if channel == "sd2" and sd2_native_resolution(route.model) is not None:
+        # Only the name-encoded tiers are stuck with the flat body. Everything
+        # else on this channel reaches the task adaptor through `metadata`,
+        # where content[] carries an explicit role.
         unsupported = {"first_frame", "last_frame", "reference_audio"} & set(roles)
         if unsupported:
             raise VideoRequestError(
-                f"the sd2 channel cannot express the {'/'.join(sorted(unsupported))} "
-                "role; it needs the task endpoint, which this gateway does not expose"
+                f"model {route.model} takes references as a flat list and cannot "
+                f"express the {'/'.join(sorted(unsupported))} role; use a model "
+                "that accepts frame roles"
             )
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
-        if resolution and resolution != native:
+        if native and resolution and resolution != native:
             raise VideoRequestError(
                 f"model {route.model} generates {native} natively; requested "
                 f"{resolution} would be silently ignored — pick the matching model tier"
@@ -544,7 +565,10 @@ def validate_request(
         return
     # ark / Seedance rules (unchanged from the historical validator).
     lowered = route.model.lower()
-    if resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
+    # A declared model states its own resolutions, and _validate_declared has
+    # already checked them. Naming one model here predates the registry and
+    # made every model added since unable to offer 1080p.
+    if declared is None and resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
         raise VideoRequestError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:
@@ -553,7 +577,8 @@ def validate_request(
         raise VideoRequestError("Seedance 2.0 duration must be -1 or 4-15 seconds")
     if "fast" in lowered and generate_audio:
         raise VideoRequestError(
-            "Seedance Fast does not support generated audio; use the standard model for spoken video"
+            f"{route.model} renders silent video; pass generate_audio=false for a "
+            "b-roll shot, or pick a standard tier for anything spoken"
         )
 
 
@@ -584,6 +609,59 @@ def _with_image_file_refs(prompt: str, count: int) -> str:
     )
 
 
+def _task_shaped_body(
+    route: Any,
+    *,
+    prompt: str,
+    refs: list[dict[str, str]],
+    resolution: str,
+    ratio: str,
+    duration: int,
+    generate_audio: bool,
+    watermark: bool,
+    seed: int | None,
+) -> dict[str, Any]:
+    """The `metadata`-carried shape the gateway's task adaptor actually reads.
+
+    Its requestPayload has Resolution, Ratio, Duration, Seed, GenerateAudio and
+    Content[] — every one of them unmarshalled from `metadata`, never from the
+    top level, where the video DTO has no field to hold them.
+
+    Images additionally travel top-level as `images`: the adaptor appends those
+    to Content[] itself before merging metadata, which is why that one field
+    worked while `image_url` did not.
+    """
+    metadata: dict[str, Any] = {
+        "resolution": resolution,
+        "generate_audio": generate_audio,
+        "watermark": watermark,
+    }
+    if ratio and ratio != "adaptive":
+        metadata["ratio"] = ratio
+    if duration != -1:
+        metadata["duration"] = duration
+    if seed is not None:
+        metadata["seed"] = seed
+
+    content = [
+        {
+            "type": f"{ref['kind']}_url",
+            f"{ref['kind']}_url": {"url": ref["url"]},
+            "role": ref.get("role") or f"reference_{ref['kind']}",
+        }
+        for ref in refs
+    ]
+    if content:
+        metadata["content"] = content
+
+    body: dict[str, Any] = {"model": route.model, "prompt": prompt, "metadata": metadata}
+    images = [ref["url"] for ref in refs if ref["kind"] == "image"]
+    if images:
+        body["images"] = images
+        body["prompt"] = _with_image_file_refs(prompt, len(images))
+    return body
+
+
 def build_payload(
     route: Any,
     *,
@@ -603,10 +681,25 @@ def build_payload(
     """
     channel = getattr(route, "channel", "ark")
     if channel == "sd2":
+        native = sd2_native_resolution(route.model)
+        if native is None:
+            # Not a name-encoded tier, so this model reaches the gateway's task
+            # adaptor, whose requestPayload reads resolution / ratio / seed /
+            # generate_audio / content[] **only out of `metadata`**. The
+            # top-level video DTO has no field for any of them, and Go drops
+            # unknown keys silently — measured 2026-09-01, asking for 720p/9:16
+            # at the top level returned 1920x1080, the upstream default, while
+            # the same values under `metadata` returned 720x1280 exactly.
+            return "/v1/videos", _task_shaped_body(
+                route, prompt=prompt, refs=refs, resolution=resolution,
+                ratio=ratio, duration=duration, generate_audio=generate_audio,
+                watermark=watermark, seed=seed,
+            )
+
         body: dict[str, Any] = {
             "model": canonicalize_sd2_model_name(route.model),
             "prompt": prompt,
-            "resolution": sd2_native_resolution(route.model),
+            "resolution": native,
         }
         if ratio and ratio != "adaptive":
             body["ratio"] = ratio

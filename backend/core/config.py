@@ -193,6 +193,10 @@ class VideoModelConfig(BaseModel):
     resolutions: list[str] = []
     supports_reference_image: bool = True
     supports_reference_video: bool = True
+    #: Fast tiers render silent video. Declaring it lets the picker and the
+    #: `models` listing say so up front, instead of the caller discovering it
+    #: from a refused submit.
+    supports_generated_audio: bool = True
     #: Accepted aspect ratios. Empty = whatever the channel validator allows.
     #: Declare them per model: wan3 rejects 21:9 outright rather than
     #: substituting a default, so a global list would mis-describe it.

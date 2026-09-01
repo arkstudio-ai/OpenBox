@@ -466,11 +466,17 @@ def _ark_reference_content(refs: list[dict[str, str]]) -> list[dict[str, Any]]:
     ]
 
 
-def _validate_generation(model: str, resolution: str, duration: int, generate_audio: bool) -> None:
+def _validate_generation(
+    model: str, resolution: str, duration: int, generate_audio: bool,
+    *, declared: Any | None = None,
+) -> None:
     if resolution not in _RESOLUTIONS:
         raise RuntimeError(f"unsupported resolution: {resolution}")
     lowered = model.lower()
-    if resolution == "1080p" and model != "doubao-seedance-2-0-260128":
+    # See video_providers.validate_request: a declared model carries its own
+    # resolution list, so this legacy single-model rule only guards models the
+    # registry does not describe.
+    if declared is None and resolution == "1080p" and model != "doubao-seedance-2-0-260128":
         raise RuntimeError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:

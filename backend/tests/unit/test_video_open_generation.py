@@ -70,28 +70,38 @@ def test_frame_roles_are_refused_on_models_that_lack_them():
         )
 
 
-def test_sd2_refuses_roles_it_cannot_express_even_when_the_model_declares_them():
-    """A role the body has no field for would arrive as a plain reference.
+def test_only_a_name_encoded_tier_refuses_frame_roles():
+    """The flat body has no field for a role; the metadata shape does.
 
-    That produces a paid take which quietly ignores the continuity that was
-    asked for, so the request is refused instead of being silently downgraded.
+    wan3 reaches the gateway's task adaptor, whose content[] carries an
+    explicit role, so frame continuity is expressible there. The name-encoded
+    sd2 tiers still take a flat image list and must refuse.
     """
+    _validate(WAN3, _route("wan3.0-video"), resolution="1080p",
+              ratio="9:16", roles=("last_frame",))
+
+    # A flat tier that nonetheless claims the capability is caught by the
+    # channel rule rather than the declaration, which is the case that matters:
+    # the body simply has nowhere to put the role.
+    flat = VideoModelConfig(id="video-sd-1080p-pro", channel="sd2",
+                            resolutions=["1080p"], supports_first_last_frame=True)
     with pytest.raises(RuntimeError, match="cannot express"):
-        _validate(
-            WAN3,
-            _route("wan3.0-video"),
-            resolution="1080p",
-            ratio="9:16",
-            roles=("last_frame",),
-        )
+        _validate(flat, _route("video-sd-1080p-pro"), resolution="1080p",
+                  roles=("last_frame",))
 
 
-def test_sd2_payload_carries_an_explicit_duration_and_seed():
+def test_a_task_adaptor_model_carries_its_parameters_in_metadata():
+    """Top-level resolution/ratio are dropped by the gateway's video DTO.
+
+    Measured 2026-09-01: 720p/9:16 sent at the top level came back
+    1920x1080 — the upstream default — while the same values under
+    `metadata` came back 720x1280 exactly.
+    """
     _path, body = video_providers.build_payload(
         _route("wan3.0-video"),
         prompt="一只猫跳上窗台",
         refs=[],
-        resolution="1080p",
+        resolution="720p",
         ratio="9:16",
         duration=24,
         generate_audio=True,
@@ -99,8 +109,22 @@ def test_sd2_payload_carries_an_explicit_duration_and_seed():
         seed=42,
     )
 
-    assert body["duration"] == 24
-    assert body["seed"] == 42
+    assert "resolution" not in body, "the DTO has no top-level field for it"
+    assert body["metadata"]["resolution"] == "720p"
+    assert body["metadata"]["ratio"] == "9:16"
+    assert body["metadata"]["duration"] == 24
+    assert body["metadata"]["seed"] == 42
+
+
+def test_a_name_encoded_tier_keeps_the_flat_body():
+    _path, body = video_providers.build_payload(
+        _route("video-sd-1080p-pro"), prompt="一只猫", refs=[],
+        resolution="1080p", ratio="9:16", duration=6,
+        generate_audio=True, watermark=False, seed=None,
+    )
+
+    assert body["resolution"] == "1080p"
+    assert "metadata" not in body
 
 
 def test_smart_duration_sends_no_duration_field():
@@ -267,3 +291,53 @@ def test_shot_is_optional_for_a_one_off_generation():
     args = VideoGenerateArgs(action="submit", prompt="一只猫", idempotency_key="k:1")
 
     assert args.shot is None
+
+
+def test_every_declared_model_and_resolution_is_reachable():
+    """The picker offers what the registry declares, so all of it must work.
+
+    Before this, three of nine models were unusable at the resolution they
+    advertised: the sd2 native-resolution rule (a Seedance naming convention)
+    was applied to wan3 and MiniMax, which pick resolution as a parameter, and
+    a hardcoded "1080p only on doubao-seedance-2-0" predated the registry.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    config = core.config.get_config()
+
+    failures = []
+    for model in config.video_generation.models:
+        for resolution in model.resolutions or ["720p"]:
+            try:
+                video_providers.validate_request(
+                    video_providers.resolve_route(model.id, config),
+                    resolution=resolution, ratio="9:16", duration=-1,
+                    generate_audio=model.supports_generated_audio,
+                    input_mimes=[], declared=model,
+                )
+            except Exception as exc:
+                failures.append(f"{model.id} @ {resolution}: {exc}")
+
+    assert not failures, "\n".join(failures)
+
+
+def test_a_name_encoded_tier_still_pins_its_resolution():
+    """video-sd-720p-proⅠ returns 720p whatever you ask for — keep refusing."""
+    entry = VideoModelConfig(id="video-sd-720p-proⅠ", channel="sd2",
+                             resolutions=["720p", "1080p"])
+
+    with pytest.raises(RuntimeError, match="natively"):
+        _validate(entry, _route("video-sd-720p-proⅠ"), resolution="1080p")
+
+
+def test_a_silent_tier_refuses_audio_but_stays_selectable():
+    entry = VideoModelConfig(id="fast-tier", channel="sd2",
+                             supports_generated_audio=False)
+
+    _validate(entry, _route("fast-tier"), generate_audio=False)
+    with pytest.raises(RuntimeError, match="silent video"):
+        _validate(entry, _route("fast-tier"), generate_audio=True)

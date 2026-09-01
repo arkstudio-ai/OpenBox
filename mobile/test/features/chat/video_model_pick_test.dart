@@ -1,6 +1,6 @@
+import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/shared/models/app_config.dart';
 import 'package:bossip_mobile/shared/models/session.dart';
-import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

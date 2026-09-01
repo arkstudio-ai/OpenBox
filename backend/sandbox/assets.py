@@ -140,6 +140,8 @@ async def attach_sandbox_image(
     relation_group_id: str | None = None,
     relation_label: str | None = None,
     relation_caption: str | None = None,
+    relation_ordinal: int | None = None,
+    pin_part: bool = True,
 ) -> tuple[str, int]:
     """Push a sandbox image to OSS and pin a file part on the current message.
 
@@ -147,6 +149,10 @@ async def attach_sandbox_image(
     in the backend, so the only way it sees a picture that lives on the cloud
     desktop is to move it to OSS (no tunnel bytes) and hand back a presigned
     URL, which loop._to_llm_messages turns into real image content next turn.
+
+    ``pin_part=False`` registers the asset without putting a file part on the
+    message: an intermediate artefact (audio extracted for ASR, a trimmed clip)
+    becomes addressable by ``asset_id`` without adding a card to the chat.
 
     Returns (asset_id, verified_size). Raises RuntimeError on any failure —
     callers translate that into a ToolResult error.
@@ -205,6 +211,9 @@ async def attach_sandbox_image(
         )
         await db.commit()
 
+    if not pin_part:
+        return asset_id, verified
+
     await save_part(
         FilePart(
             id=ascending("part"),
@@ -221,6 +230,10 @@ async def attach_sandbox_image(
                 kind=relation_kind,
                 label=relation_label,
                 caption=relation_caption,
+                # Concurrent shots finish out of order, so attach order is
+                # completion order. Without an explicit ordinal the renderer
+                # falls back to position and labels the last shot "第 2 段".
+                ordinal=relation_ordinal,
             ),
             session_id=ctx.session_id,
             message_id=ctx.message_id,

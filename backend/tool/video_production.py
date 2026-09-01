@@ -1,17 +1,23 @@
-"""Seedance generation and WUYING media-render orchestration.
+"""Video generation and speech-to-text: the platform video primitives.
 
-Provider calls and ownership checks live on the backend.  FFmpeg and
-HyperFrames live behind the sandbox action server's durable per-desktop queue.
-The build agent exposes these tools directly; skills provide workflow guidance
-but never change tool availability.
+Each works on its own — a prompt and an idempotency key is the whole contract
+for a video, an owned audio asset is the whole contract for a transcript.
+What stays on the backend is what only the backend can hold: provider
+credentials, ownership, per-request capability limits, and the guards that
+keep one paid generation from being paid for twice. Everything about *making
+a good video* — how to write the lines, how to keep a presenter consistent,
+how to cut and caption the result — is skill knowledge, and editing is the
+agent running ffmpeg in the sandbox. Skills describe workflow; they never
+change which tools exist.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlsplit
@@ -27,6 +33,16 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.video_production")
 
 _SEGMENT_TERMINAL = {"completed", "failed", "cancelled"}
+#: Everything that is not terminal for a paid generation. A duplicate submit
+#: must be refused across this whole window, the OSS transfer included.
+_IN_FLIGHT_STATUSES = {
+    "submitting",
+    "queued",
+    "in_progress",
+    "generating",
+    "finalizing",
+    "transfer_failed",
+}
 _RENDER_TERMINAL = {"completed", "failed", "cancelled"}
 _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
 _IMAGE_PREFIX = "image/"
@@ -40,77 +56,101 @@ _BOSSIP_RELAY_MODELS = {
 }
 _SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
 _SEGMENT_FINALIZATION_STALE_SECONDS = 300
+#: Roles the backend can infer from a mime type. Anything else must be said
+#: explicitly, because guessing "this image is the last frame" would silently
+#: change what the caller paid for.
+_DEFAULT_ROLE_BY_KIND = {"image": "reference_image", "video": "reference_video"}
+
+
+def _asset_kind(mime: str) -> str:
+    if mime.startswith(_IMAGE_PREFIX):
+        return "image"
+    if mime in _VIDEO_MIMES:
+        return "video"
+    if mime.startswith("audio/"):
+        return "audio"
+    return "other"
+
 _MAX_INLINE_GENERATION_WAITS = 8
 _DEFERRED_PROVIDER_RECHECK_SECONDS = 60
 
 
+#: Reference roles a generation request can carry. ``first_frame`` /
+#: ``last_frame`` pin the ends of a shot (the honest way to keep one look
+#: across separately generated clips); ``reference_audio`` drives the
+#: performance from a track. Availability is per model — see action="models".
+VideoRefRole = Literal[
+    "reference_image",
+    "reference_video",
+    "reference_audio",
+    "first_frame",
+    "last_frame",
+]
+
+
+class VideoInputRef(BaseModel):
+    """One input asset, optionally with the role it plays in the shot."""
+
+    asset_id: str = Field(max_length=512)
+    #: Omitted: inferred from the mime type. Audio must say its role.
+    role: VideoRefRole | None = None
+
+
 class VideoGenerateArgs(BaseModel):
-    action: Literal["submit", "status", "wait", "cancel"]
+    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch"]
     job_id: str | None = Field(default=None, max_length=96)
-    production_id: str | None = Field(default=None, max_length=96)
-    segment_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
+    # ── describe the shot directly ──
+    #: Describe the shot. Supplying it means an open generation.
+    prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
+    #: An id from action="models". Omitted uses the person's chosen model.
+    model: str | None = Field(default=None, max_length=160)
+    resolution: Literal["480p", "720p", "1080p"] | None = None
+    ratio: str | None = Field(default=None, max_length=16)
+    #: Seconds, or -1 to let the model choose.
+    duration: int | None = Field(default=None, ge=-1, le=300)
+    generate_audio: bool | None = None
+    watermark: bool | None = None
+    #: Reuse one seed to hold a look steady across separate shots. 0 means
+    #: "none": models that fill every schema field send 0 for an untouched
+    #: optional int, and refusing that would make every seedless model
+    #: unusable from those callers.
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+    #: Which shot this is, 1-based. Concurrent shots finish out of order, so
+    #: attach order is completion order; without this the chat labels whichever
+    #: finished second "第 2 段" no matter which shot it actually is.
+    shot: int | None = Field(default=None, ge=1, le=200)
+    input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8)
+    #: Pay twice for a second take of a request already in flight.
+    allow_duplicate: bool = False
+    #: For action="fetch": the owned asset to deliver to the workspace.
+    asset_id: str | None = Field(default=None, max_length=512)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
-    wait_iteration: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Supply and increment this on every wait call; together with after_version "
-            "it makes repeated bounded waits explicit rather than an accidental tool loop. "
-            "When the tool returns polling_paused=true, stop the current run and resume "
-            "that same durable job later; never resubmit it."
-        ),
-    )
+    #: Increment on every wait call, so repeated bounded waits are explicit
+    #: rather than an accidental loop. On polling_paused=true, end the run and
+    #: resume this job_id in a later turn; never resubmit it.
+    wait_iteration: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _required_by_action(self):
+        if self.action == "models":
+            return self
+        if self.action == "fetch":
+            if not (self.asset_id or self.job_id):
+                raise ValueError("fetch requires asset_id or job_id")
+            return self
+        if self.action == "estimate":
+            if not self.prompt:
+                raise ValueError("estimate requires prompt")
+            return self
         if self.action == "submit":
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key to prevent duplicate billing")
-            if not self.production_id or not self.segment_id:
-                raise ValueError("submit requires production_id and segment_id from video_project")
-        elif not self.job_id:
-            raise ValueError(f"{self.action} requires job_id")
-        return self
-
-
-class VideoRenderArgs(BaseModel):
-    action: Literal["submit", "status", "wait", "cancel", "retry"]
-    job_id: str | None = Field(default=None, max_length=96)
-    production_id: str | None = Field(default=None, max_length=96)
-    idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
-    segment_assets: list[str] = Field(default_factory=list, max_length=100)
-    captions: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
-        default_factory=list, max_length=100
-    )
-    subtitles: bool = True
-    channel_name: str = Field(default="", max_length=100)
-    render_engine: Literal["auto", "ffmpeg", "hyperframes"] = "auto"
-    width: int = Field(default=720, ge=320, le=3840)
-    height: int = Field(default=1280, ge=320, le=3840)
-    filename: str | None = Field(default=None, max_length=180)
-    wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
-    after_version: int = Field(default=0, ge=0)
-    wait_iteration: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Increment on repeated wait calls when the returned version is unchanged; "
-            "it prevents an intentional long poll from being mistaken for a tool loop."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _required_by_action(self):
-        if self.action == "submit":
-            if not self.idempotency_key:
-                raise ValueError("submit requires idempotency_key")
-            if not self.production_id:
-                raise ValueError("submit requires production_id from video_project")
-            if self.captions and len(self.captions) != len(self.segment_assets):
-                raise ValueError("captions must be empty or match segment_assets length")
-        elif not self.job_id:
+            if not self.prompt:
+                raise ValueError("submit requires prompt")
+            return self
+        if not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
 
@@ -118,8 +158,9 @@ class VideoRenderArgs(BaseModel):
 class VideoTranscribeArgs(BaseModel):
     action: Literal["submit", "status", "wait", "cancel", "retry"]
     job_id: str | None = Field(default=None, max_length=96)
-    production_id: str | None = Field(default=None, max_length=96)
-    segment_id: str | None = Field(default=None, max_length=96)
+    #: An owned, ready audio asset to transcribe. Extract it from a video in
+    #: the sandbox (ffmpeg -vn) and register it with share_file(attach=false).
+    asset_id: str | None = Field(default=None, max_length=512)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
@@ -128,10 +169,10 @@ class VideoTranscribeArgs(BaseModel):
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "submit":
-            if not self.production_id or not self.segment_id:
-                raise ValueError("submit requires production_id and segment_id")
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key")
+            if not self.asset_id:
+                raise ValueError("submit requires asset_id (an owned audio asset)")
         elif not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
@@ -157,7 +198,7 @@ class VideoTranscriptionTarget:
 def _configured_target(model_override: str | None = None) -> tuple[VideoProviderTarget, object]:
     """Resolve the submission route (channel + credentials) for a model.
 
-    Routing lives in tool/video_providers.py; the legacy doubao/ark
+    Routing lives in tool/video_providers.py; the ark relay
     configuration resolves exactly as before.
     """
     from core.config import get_config
@@ -374,12 +415,15 @@ async def _resolve_generation_inputs(
 
 
 def _presigned_provider_refs(
-    rows: list[Any], *, input_url_ttl_seconds: int
+    rows: list[Any], *, input_url_ttl_seconds: int, roles: list[str] | None = None
 ) -> list[dict[str, str]]:
-    """Turn owned image/video rows into ordinary provider reference inputs.
+    """Turn owned image/video/audio rows into provider reference inputs.
 
     This matches BossIP's normal image-to-video path: OpenBox sends scoped OSS
     URLs, and the configured gateway handles any provider-specific preparation.
+    ``roles`` overrides the mime-derived default positionally, carrying
+    first_frame / last_frame / reference_audio through to channels that can
+    express them.
     """
     if not rows:
         return []
@@ -388,14 +432,15 @@ def _presigned_provider_refs(
 
     oss = get_oss()
     refs: list[dict[str, str]] = []
-    for row in rows:
+    for index, row in enumerate(rows):
         url = oss.presign_get(row.oss_key, expires_sec=input_url_ttl_seconds)
-        kind = "image" if row.mime.startswith(_IMAGE_PREFIX) else "video"
+        kind = _asset_kind(row.mime)
+        default_role = _DEFAULT_ROLE_BY_KIND.get(kind, "reference_image")
         refs.append(
             {
                 "kind": kind,
                 "url": url,
-                "role": "reference_image" if kind == "image" else "reference_video",
+                "role": (roles[index] if roles and index < len(roles) else default_role),
             }
         )
     return refs
@@ -442,6 +487,7 @@ async def _create_pending_job(
     output_mime: str = "video/mp4",
     transient: bool = False,
     prompt_hash: str | None = None,
+    reserve_output: bool = True,
 ) -> tuple[Any, Any, bool]:
     """Reserve job+asset before a paid/remote call; return existing on a race."""
     from core.identifier import ascending
@@ -469,6 +515,52 @@ async def _create_pending_job(
             return existing, asset, False
 
     job_id = ascending("video")
+    if not reserve_output:
+        # Nothing is produced: transcription of an existing audio asset writes
+        # its result into the job row, and reserving an empty asset would leave
+        # a permanently pending file in the resource centre.
+        now = datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
+            job = VideoJob(
+                id=job_id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id or None,
+                project_id=project_id or None,
+                kind=kind,
+                production_id=production_id,
+                segment_id=segment_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                prompt_hash=prompt_hash,
+                status="dispatching",
+                model=model,
+                prompt=prompt,
+                request_data=request_data,
+                result_data={},
+                output_asset_id=None,
+                attempt=0,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(job)
+            try:
+                await db.commit()
+                return job, None, True
+            except IntegrityError:
+                await db.rollback()
+        async with get_db_session() as db:
+            existing = (
+                await db.execute(
+                    select(VideoJob).where(
+                        VideoJob.user_id == ctx.user_id,
+                        VideoJob.kind == kind,
+                        VideoJob.idempotency_key == idempotency_key,
+                    )
+                )
+            ).scalar_one()
+            return existing, None, False
+
     asset_id = ascending("asset")
     name = (
         _safe_audio_filename(filename, job_id)
@@ -636,7 +728,11 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
                         if segment
                         else ((production.brief or production.title) if production else None)
                     ),
-                    ordinal=segment.ordinal if segment else None,
+                    ordinal=(
+                        segment.ordinal
+                        if segment
+                        else (job.request_data or {}).get("shot")
+                    ),
                     revision=segment.revision if segment else None,
                     metadata={
                         "production_id": job.production_id,
@@ -668,6 +764,17 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
         await _update_job(job.id, attached_message_id=None)
         log.warning("video asset saved but chat attachment failed", exc_info=True)
         return False
+
+
+#: Refusals this backend decides for itself. Their text names only the
+#: caller's own request, so it is safe to show and useless to withhold.
+from tool.video_providers import VideoRequestError as _RequestError
+
+
+def content_hash(value: Any) -> str:
+    """Stable hash of a request, for idempotency-key conflict detection."""
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _public_error(exc: Exception) -> str:
@@ -1005,16 +1112,6 @@ async def _finalize_segment(
         error=None,
         completed_at=datetime.now(timezone.utc),
     )
-    if getattr(job, "segment_id", None):
-        from tool.video_workflow import mark_segment_job
-
-        await mark_segment_job(
-            job.segment_id,
-            job.id,
-            user_id=ctx.user_id,
-            status="completed",
-            output_asset_id=job.output_asset_id,
-        )
     return await _owned_job(job.id, ctx, "segment")
 
 
@@ -1269,7 +1366,6 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
     the normal paid path.
     """
     from core.oss import get_oss
-    from tool.video_workflow import mark_segment_job
 
     asset = await _job_asset(job)
     if not asset:
@@ -1293,18 +1389,384 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
         completed_at=now,
         error=None,
     )
-    if job.segment_id:
-        await mark_segment_job(
-            job.segment_id,
-            job.id,
-            user_id=ctx.user_id,
-            status="completed",
-            output_asset_id=job.output_asset_id,
-        )
     return await _owned_job(job.id, ctx, "segment")
 
 
+# ── open generation: resolving a request that carries its own content ───────
+
+async def _resolve_open_inputs(
+    refs: list[Any], ctx: ToolContext
+) -> tuple[list[Any], list[str]]:
+    """Resolve open-mode inputs, returning (asset rows, per-row role)."""
+    rows: list[Any] = []
+    roles: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        row = await _find_owned_asset(ref.asset_id, ctx)
+        if not row:
+            raise _RequestError(
+                f"asset '{ref.asset_id}' is not a ready OSS resource owned by this user"
+            )
+        kind = _asset_kind(row.mime)
+        if kind == "other":
+            raise _RequestError(
+                f"asset '{ref.asset_id}' is {row.mime}; inputs must be image, video or audio"
+            )
+        role = ref.role or _DEFAULT_ROLE_BY_KIND.get(kind)
+        if role is None:
+            raise _RequestError(
+                f"asset '{ref.asset_id}' is {row.mime}; say which role it plays "
+                "(reference_audio) — the backend does not guess for audio"
+            )
+        if role == "reference_audio" and kind != "audio":
+            raise _RequestError(f"role reference_audio needs an audio asset, not {row.mime}")
+        if role in {"first_frame", "last_frame", "reference_image"} and kind != "image":
+            raise _RequestError(f"role {role} needs an image asset, not {row.mime}")
+        if role == "reference_video" and kind != "video":
+            raise _RequestError(f"role reference_video needs a video asset, not {row.mime}")
+        if row.id in seen:
+            continue
+        seen.add(row.id)
+        rows.append(row)
+        roles.append(role)
+    return rows, roles
+
+
+async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) -> dict[str, Any]:
+    """Normalize an open request into the same shape an approved segment has.
+
+    Defaults come from the person's composer choice and the model's own
+    declaration, never from a hard-coded house style: a caller who says
+    nothing gets the configured default, and a caller who says 16:9 gets 16:9.
+    """
+    from core.config import get_config
+    from tool import video_providers
+
+    config = get_config()
+    settings = config.video_generation
+    model = (args.model or "").strip() or await _session_video_model_id(ctx)
+    declared = video_providers.declared_model(model, config) if model else None
+
+    # A caller that populates every schema field sends the zero value for an
+    # optional int it never meant to set. Reading that as a real request makes
+    # the parameter refuse work nobody asked for, so treat it as absent — a
+    # deliberate seed is reused precisely because it is a specific number.
+    seed = args.seed or None
+    duration_arg = args.duration or None
+
+    resolution = args.resolution or ""
+    if not resolution:
+        allowed = list(getattr(declared, "resolutions", None) or [])
+        resolution = allowed[0] if len(allowed) == 1 else settings.default_resolution
+    ratio = (args.ratio or settings.default_ratio or "9:16").strip()
+    duration = settings.default_duration if duration_arg is None else duration_arg
+    generate_audio = (
+        settings.default_generate_audio if args.generate_audio is None else args.generate_audio
+    )
+    watermark = settings.default_watermark if args.watermark is None else args.watermark
+    dropped: list[str] = []
+    if seed is not None and not getattr(declared, "supports_seed", False):
+        # See validate_request: reproducibility is worth less than the shot.
+        seed = None
+        dropped.append(f"seed (model {model or settings.model} has none)")
+    return {
+        "production_id": None,
+        "segment_id": None,
+        "prompt": args.prompt or "",
+        "model": model or None,
+        "character_reference_asset": None,
+        "input_assets": list(args.input_assets),
+        "resolution": resolution,
+        "ratio": ratio,
+        "duration": duration,
+        "generate_audio": generate_audio,
+        "watermark": watermark,
+        "seed": seed,
+        "content_hash": "",
+        "plan_hash": "",
+        "reconciling_existing": False,
+        "dropped": dropped,
+        "shot": args.shot,
+    }
+
+
+async def _session_video_model_id(ctx: ToolContext) -> str:
+    """The video model the person picked in the composer, if any.
+
+    The pick is a convenience, never a precondition: any failure to read it
+    falls through to the configured default rather than blocking a request.
+    """
+    try:
+        from db.base import get_db_session
+        from db.models.session import Session as SessionORM
+
+        if not ctx.session_id:
+            return ""
+        async with get_db_session() as db:
+            session = await db.get(SessionORM, ctx.session_id)
+        if session and session.user_id == ctx.user_id and session.video_model:
+            return session.video_model
+        return ""
+    except Exception:
+        return ""
+
+
+async def _in_flight_duplicate(prompt_hash: str, ctx: ToolContext, *, exclude_key: str):
+    """An identical request this user already has running, if any.
+
+    Idempotency keys stop a *retry* from paying twice; they cannot stop a fresh
+    key carrying the same content. This does, because the content key is
+    derived from the request rather than supplied by the caller.
+    """
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        return (
+            await db.execute(
+                select(VideoJob)
+                .where(
+                    VideoJob.user_id == ctx.user_id,
+                    VideoJob.kind == "segment",
+                    VideoJob.prompt_hash == prompt_hash,
+                    VideoJob.idempotency_key != exclude_key,
+                    VideoJob.status.in_(tuple(_IN_FLIGHT_STATUSES)),
+                )
+                .order_by(VideoJob.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+
+async def _check_submit_budget(ctx: ToolContext) -> None:
+    """Refuse a paid submit past the daily ceiling.
+
+    Back-pressure, not an approval: nobody is asked to confirm a charge. The
+    agent is told the ceiling was reached so it can relay that to the person,
+    which is what the credits ledger will do properly once it exists.
+    """
+    from core.config import get_config
+
+    limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
+    if limit <= 0:
+        return
+    used = await _daily_submit_count(ctx)
+    if used >= limit:
+        raise _RequestError(
+            f"daily video generation limit reached ({used}/{limit} in the last 24h); "
+            "tell the user rather than retrying"
+        )
+
+
+async def _daily_submit_count(ctx: ToolContext) -> int:
+    from sqlalchemy import func
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    async with get_db_session() as db:
+        return int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(VideoJob)
+                    .where(
+                        VideoJob.user_id == ctx.user_id,
+                        VideoJob.kind == "segment",
+                        VideoJob.created_at >= since,
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+
+
+def _model_capability_lines(config) -> list[str]:
+    """The declared registry, rendered for the agent.
+
+    The relay publishes no model or pricing endpoint, so this registry is the
+    only description of what each model accepts. Reading it here beats copying
+    it into a skill document that then drifts.
+    """
+    settings = config.video_generation
+    lines = [f"default_model={settings.model}", ""]
+    for entry in settings.models:
+        parts = [f"id={entry.id}"]
+        if entry.name:
+            parts.append(f"name={entry.name}")
+        if entry.tier:
+            parts.append(f"tier={entry.tier}")
+        if entry.resolutions:
+            parts.append(f"resolutions={'/'.join(entry.resolutions)}")
+        if entry.ratios:
+            parts.append(f"ratios={'/'.join(entry.ratios)}")
+        if entry.duration_range:
+            low, high = entry.duration_range
+            parts.append(f"duration={low}-{high}s")
+        if entry.supports_smart_duration:
+            parts.append("duration=-1 ok")
+        capabilities = [
+            name
+            for name, on in (
+                ("seed", entry.supports_seed),
+                ("first/last frame", entry.supports_first_last_frame),
+                ("reference audio", entry.supports_reference_audio),
+                ("reference image", entry.supports_reference_image),
+                ("reference video", entry.supports_reference_video),
+            )
+            if on
+        ]
+        if capabilities:
+            parts.append(f"supports={', '.join(capabilities)}")
+        lines.append("  " + "  ".join(parts))
+    if not settings.models:
+        lines.append("  (no models declared; the configured default is used for every request)")
+    return lines
+
+
+async def _execute_models(ctx: ToolContext) -> ToolResult:
+    from core.config import get_config
+
+    config = get_config()
+    lines = _model_capability_lines(config)
+    chosen = await _session_video_model_id(ctx)
+    if chosen:
+        lines.insert(1, f"person_selected_model={chosen}")
+    return ToolResult(
+        title="Video models",
+        output="\n".join(lines),
+        metadata={"models": [entry.id for entry in config.video_generation.models]},
+    )
+
+
+async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Validate a request and report what it would cost, without submitting."""
+    from core.config import get_config
+    from tool import video_providers
+
+    try:
+        approved = await _resolve_open_submission(args, ctx)
+        target, _settings = _configured_target(approved["model"])
+        inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
+        video_providers.validate_request(
+            target,
+            resolution=approved["resolution"],
+            ratio=approved["ratio"],
+            duration=approved["duration"],
+            generate_audio=approved["generate_audio"],
+            input_mimes=[row.mime for row in inputs],
+            declared=video_providers.declared_model(target.model, get_config()),
+            roles=tuple(roles),
+        )
+    except Exception as exc:
+        return ToolResult(
+            title="This request would be rejected",
+            output=_public_error(exc),
+            metadata={"valid": False},
+        )
+
+    duration = approved["duration"]
+    billed = "model-chosen length" if duration == -1 else f"{duration}s"
+    used = await _daily_submit_count(ctx)
+    limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
+    lines = [
+        "valid=true",
+        f"model={target.model}",
+        f"resolution={approved['resolution']}  ratio={approved['ratio']}  duration={billed}",
+        f"generate_audio={approved['generate_audio']}  watermark={approved['watermark']}",
+        f"inputs={len(inputs)}" + (f" roles={'/'.join(roles)}" if roles else ""),
+        f"seed={approved['seed']}" if approved["seed"] is not None else "seed=unset",
+        *(
+            [f"dropped={'; '.join(approved['dropped'])}"]
+            if approved.get("dropped")
+            else []
+        ),
+        # Billing is per second of output on this route, so an explicit
+        # duration is the whole cost story; there is no per-call price to read.
+        f"daily_submits_used={used}" + (f"/{limit}" if limit else " (no limit configured)"),
+        "",
+        "Nothing was submitted. Re-send as action=\"submit\" with an idempotency_key to pay for it.",
+    ]
+    return ToolResult(
+        title="Video request looks valid",
+        output="\n".join(lines),
+        metadata={"valid": True, "model": target.model},
+    )
+
+
+async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Put an owned video asset into the workspace so bash tools can edit it."""
+    if not ctx.sandbox:
+        return ToolResult(
+            title="No sandbox",
+            output="Materializing an asset into the workspace needs the user's cloud desktop.",
+        )
+    asset = None
+    if args.asset_id:
+        asset = await _find_owned_asset(args.asset_id, ctx)
+    elif args.job_id:
+        job = await _owned_job(args.job_id, ctx, "segment")
+        asset = await _job_asset(job) if job else None
+    if not asset or asset.status != "ready":
+        return ToolResult(
+            title="Asset not available",
+            output="No ready asset owned by this user matches that id.",
+        )
+    try:
+        path = await _materialize_asset(asset, ctx)
+    except Exception as exc:
+        return ToolResult(title="Could not deliver the asset", output=_public_error(exc))
+    return ToolResult(
+        title=asset.name,
+        output=f"workspace_path={path}\nasset_id={asset.id}\nmime={asset.mime}\nsize={asset.size}",
+        metadata={"asset_id": asset.id, "path": path, "mime": asset.mime},
+    )
+
+
+async def _try_materialize(job, ctx: ToolContext) -> str | None:
+    """Best-effort delivery of a finished video into the workspace.
+
+    Editing happens in the sandbox with ffmpeg, so a finished take is only
+    useful once it has landed there. This must never fail the call that
+    produced it: with no sandbox, or a flaky pull, the download URL still
+    stands and action="fetch" can retry later.
+    """
+    if job.status != "completed" or not getattr(ctx, "sandbox", None):
+        return None
+    try:
+        asset = await _job_asset(job)
+        if not asset or asset.status != "ready":
+            return None
+        return await _materialize_asset(asset, ctx)
+    except Exception as exc:
+        log.info(f"workspace delivery skipped for {job.id}: {type(exc).__name__}: {exc}")
+        return None
+
+
+async def _materialize_asset(asset, ctx: ToolContext) -> str:
+    """Copy one OSS asset into the sandbox workspace, returning its path."""
+    from core.oss import get_oss
+    from sandbox.assets import deliver
+
+    paths = await deliver(
+        ctx.sandbox,
+        getattr(ctx.sandbox, "base_url", "") or ctx.session_id,
+        get_oss(),
+        [asset],
+    )
+    if not paths:
+        raise RuntimeError("the sandbox reported no delivered path")
+    return paths[0]
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    if args.action == "models":
+        return await _execute_models(ctx)
+    if args.action == "estimate":
+        return await _execute_estimate(args, ctx)
+    if args.action == "fetch":
+        return await _execute_fetch(args, ctx)
     if args.action == "submit":
         try:
             target, settings = _configured_target(None)
@@ -1314,20 +1776,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 output=_public_error(exc),
             )
         try:
-            from tool.video_workflow import (
-                content_hash,
-                mark_segment_job,
-                prepare_segment_submission,
-            )
-
-            approved = await prepare_segment_submission(
-                ctx, args.production_id or "", args.segment_id or ""
-            )
-            expected_key = f"{approved['production_id']}:{approved['segment_id']}:generate"
-            if args.idempotency_key != expected_key:
-                raise RuntimeError(
-                    f"idempotency_key must be the approved segment key: {expected_key}"
-                )
+            approved = await _resolve_open_submission(args, ctx)
+            await _check_submit_budget(ctx)
             prompt = approved["prompt"]
             resolution = approved["resolution"]
             ratio = approved["ratio"]
@@ -1337,13 +1787,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if approved.get("model"):
                 # Per-segment model override routes to its own channel.
                 target, settings = _configured_target(approved["model"])
+            seed = approved.get("seed")
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
-            inputs, character_reference = await _resolve_generation_inputs(
-                approved["character_reference_asset"],
-                approved["input_assets"],
-                ctx,
-            )
+            inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
             from core.oss import get_oss
             from tool import video_providers
 
@@ -1357,22 +1804,22 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 generate_audio=generate_audio,
                 input_mimes=[row.mime for row in inputs],
                 declared=video_providers.declared_model(target.model, _get_config()),
+                roles=tuple(roles),
             )
             channel = getattr(target, "channel", "ark")
             refs = _presigned_provider_refs(
                 inputs,
                 input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
+                roles=roles,
             )
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
-                "production_id": approved["production_id"],
-                "segment_id": approved["segment_id"],
-                "content_hash": approved["content_hash"],
-                "plan_hash": approved["plan_hash"],
+                "roles": list(roles),
+                # Which shot this is, so the chat can order concurrent results
+                # by script position rather than by whichever finished first.
+                "shot": approved.get("shot"),
+                "seed": seed,
                 "input_asset_ids": [row.id for row in inputs],
-                "character_reference_asset_id": (
-                    character_reference.id if character_reference else None
-                ),
                 "provider_wire_format": target.wire_format,
                 "provider_route_fingerprint": (
                     video_providers.provider_route_fingerprint(target)
@@ -1415,6 +1862,35 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                         extra_params={
                             "generate_audio": generate_audio,
                             "watermark": watermark,
+                            # A different seed or a reference used as a last
+                            # frame instead of a plain reference produces a
+                            # different video; neither may collide in reuse.
+                            "seed": seed,
+                            "roles": list(roles),
+                        },
+                    )
+            if (
+                prompt_hash
+                and not args.allow_duplicate
+                and getattr(settings, "refuse_duplicate_in_flight", True)
+            ):
+                running = await _in_flight_duplicate(
+                    prompt_hash, ctx, exclude_key=args.idempotency_key or ""
+                )
+                if running is not None:
+                    return ToolResult(
+                        title="An identical generation is already running",
+                        output=(
+                            f"job_id={running.id}\nstatus={running.status}\n"
+                            "This exact request (same prompt, model, parameters and inputs) "
+                            "is already in flight, so submitting again would pay twice. "
+                            "Wait on that job_id, or pass allow_duplicate=true if a second "
+                            "take is genuinely wanted."
+                        ),
+                        metadata={
+                            "job_id": running.id,
+                            "status": running.status,
+                            "duplicate_in_flight": True,
                         },
                     )
             job, asset, created = await _create_pending_job(
@@ -1426,19 +1902,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 request_data=request_data,
                 filename=None,
                 request_hash=request_hash,
-                production_id=approved["production_id"],
-                segment_id=approved["segment_id"],
                 prompt_hash=prompt_hash,
             )
             if not created:
                 if job.status == "completed":
-                    await mark_segment_job(
-                        approved["segment_id"],
-                        job.id,
-                        user_id=ctx.user_id,
-                        status="completed",
-                        output_asset_id=job.output_asset_id,
-                    )
                     await _attach_completed(job, ctx)
                 lines = _job_lines(job, asset)
                 ambiguous_submit = job.status == "submitting" and not job.provider_task_id
@@ -1504,6 +1971,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "generate_audio": generate_audio,
                     "watermark": watermark,
                 }
+                if seed is not None:
+                    payload["seed"] = seed
                 submit_path = None
             else:
                 submit_path, payload = video_providers.build_payload(
@@ -1515,14 +1984,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     duration=duration,
                     generate_audio=generate_audio,
                     watermark=watermark,
+                    seed=seed,
                 )
+
             async def submit_and_persist_provider_identity():
-                await mark_segment_job(
-                    approved["segment_id"],
-                    job.id,
-                    user_id=ctx.user_id,
-                    status="submitting",
-                )
                 if submit_path is None:
                     submitted = await _provider_submit(target, payload)
                 else:
@@ -1575,20 +2040,24 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
-                await mark_segment_job(
-                    approved["segment_id"],
-                    job.id,
-                    user_id=ctx.user_id,
-                    status=state,
-                )
                 job = await _owned_job(job.id, ctx, "segment")
+            lines = _job_lines(job, asset)
+            if approved.get("dropped"):
+                # Degrading must stay visible: a caller who asked for a seed
+                # deserves to know it was not honoured, even though the shot
+                # itself is exactly what they asked for.
+                lines.append(f"dropped={'; '.join(approved['dropped'])}")
+            workspace_path = await _try_materialize(job, ctx)
+            if workspace_path:
+                lines.append(f"workspace_path={workspace_path}")
             return ToolResult(
-                title=("Video segment ready" if job.status == "completed" else "Video generation submitted"),
-                output="\n".join(_job_lines(job, asset)),
+                title=("Video ready" if job.status == "completed" else "Video generation submitted"),
+                output="\n".join(lines),
                 metadata={
                     "job_id": job.id,
                     "status": job.status,
                     "asset_id": asset.id if asset and asset.status == "ready" else None,
+                    "workspace_path": workspace_path,
                     "retry_after_seconds": 5,
                 },
             )
@@ -1638,15 +2107,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
-                if job.segment_id:
-                    from tool.video_workflow import mark_segment_job
-
-                    await mark_segment_job(
-                        job.segment_id,
-                        job.id,
-                        user_id=ctx.user_id,
-                        status="failed",
-                    )
             return ToolResult(title="Video generation submit failed", output=_public_error(exc))
 
     job = await _owned_job(args.job_id or "", ctx, "segment")
@@ -1715,15 +2175,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             job.id, status="cancelled", completed_at=datetime.now(timezone.utc), error=cancel_note
         )
         await _mark_asset(job.output_asset_id, status="failed")
-        if job.segment_id:
-            from tool.video_workflow import mark_segment_job
-
-            await mark_segment_job(
-                job.segment_id,
-                job.id,
-                user_id=ctx.user_id,
-                status="cancelled",
-            )
         job = await _owned_job(job.id, ctx, "segment")
         return ToolResult(title="Video generation cancelled", output="\n".join(_job_lines(job)))
 
@@ -1830,15 +2281,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
-                if job.segment_id:
-                    from tool.video_workflow import mark_segment_job
-
-                    await mark_segment_job(
-                        job.segment_id,
-                        job.id,
-                        user_id=ctx.user_id,
-                        status=state,
-                    )
                 job = await _owned_job(job.id, ctx, "segment")
             else:
                 if state != job.status or getattr(job, "error", None):
@@ -1863,10 +2305,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         await asyncio.sleep(min(poll_interval_seconds, remaining))
 
     asset = await _job_asset(job)
+    workspace_path = None
     if job.status == "completed":
         attached = await _attach_completed(job, ctx)
         job = await _owned_job(job.id, ctx, "segment")
-        title = "Video segment ready"
+        workspace_path = await _try_materialize(job, ctx)
+        title = "Video ready"
     else:
         attached = False
         title = (
@@ -1875,6 +2319,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             else "Video generation status"
         )
     lines = _job_lines(job, asset, retry_after=round(poll_interval_seconds))
+    if workspace_path:
+        lines.append(f"workspace_path={workspace_path}")
     version = _job_snapshot_version(job)
     still_running = job.status not in _SEGMENT_TERMINAL
     lines.append(f"version={version}")
@@ -1942,740 +2388,188 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     )
 
 
-async def _transcription_payload(job, ctx: ToolContext, video_settings, oss) -> dict[str, Any]:
-    from sandbox.assets import _use_internal_oss
-
-    source_id = str((job.request_data or {}).get("source_asset_id") or "")
-    rows = await _resolve_inputs([source_id], ctx)
-    source = rows[0]
-    if source.mime not in _VIDEO_MIMES:
-        raise RuntimeError("transcription source must be a video asset")
-    output = await _job_asset(job)
-    if not output:
-        raise RuntimeError("reserved transcription audio asset is missing")
-    ttl = video_settings.render_url_ttl_seconds
-    internal = _use_internal_oss(oss)
-    return {
-        "operation": "extract_audio",
-        "job_id": job.id,
-        "owner": ctx.user_id,
-        "session_id": ctx.session_id,
-        "idempotency_key": job.idempotency_key,
-        "inputs": [
-            {
-                "name": source.name,
-                "mime": source.mime,
-                "size": source.size,
-                "cache_key": f"{oss.bucket}:{source.oss_key}:{source.size}",
-                "url": oss.presign_get(source.oss_key, expires_sec=ttl, internal=internal),
-            }
-        ],
-        "output": {
-            "name": output.name,
-            "mime": "audio/mpeg",
-            "put_url": oss.presign_put(
-                output.oss_key, "audio/mpeg", expires_sec=ttl, internal=internal
-            ),
-        },
-    }
-
-
-async def _dispatch_transcription(
-    job,
-    ctx: ToolContext,
-    video_settings,
-    oss,
-    *,
-    persist_guard=None,
-) -> tuple[Any, dict[str, Any]]:
-    payload = await _transcription_payload(job, ctx, video_settings, oss)
-    remote = await ctx.sandbox.submit_media_job(payload)
-    if persist_guard is not None:
-        await persist_guard()
-    await _update_job(
-        job.id,
-        sandbox_job_id=remote["job_id"],
-        status=remote["status"],
-        error=None,
-        started_at=datetime.now(timezone.utc) if remote["status"] == "in_progress" else None,
-    )
-    return await _owned_job(job.id, ctx, "stt"), remote
-
-
-async def _finalize_transcription(
-    job,
-    ctx: ToolContext,
-    target,
-    oss,
-    extraction_result: dict[str, Any],
-    *,
-    persist_guard=None,
-    durable_recovery: bool = False,
-) -> Any:
-    from db.base import get_db_session
-    from db.models.video_job import VideoJob
-    from tool.video_workflow import record_segment_transcript
-
-    audio = await _job_asset(job)
-    head = await oss.head(audio.oss_key) if audio else None
-    if persist_guard is not None:
-        await persist_guard()
-    if not audio or not head:
-        await _update_job(
-            job.id,
-            status="failed",
-            error="sandbox reported audio extraction complete but the OSS audio is missing",
-            completed_at=datetime.now(timezone.utc),
-        )
-        return await _owned_job(job.id, ctx, "stt")
-    await _mark_asset(audio.id, status="ready", size=head["size"] or 0)
-    existing_result = job.result_data if isinstance(job.result_data, dict) else {}
-    transcript = (
-        existing_result.get("transcript")
-        if isinstance(existing_result.get("transcript"), dict)
-        else None
-    )
-    if transcript is None:
-        now = datetime.now(timezone.utc)
-        async with get_db_session() as db:
-            claimed = await db.execute(
-                update(VideoJob)
-                .where(
-                    VideoJob.id == job.id,
-                    VideoJob.status.in_(["queued", "in_progress", "extraction_completed"]),
-                )
-                .values(status="transcribing", error=None, updated_at=now)
-            )
-            if claimed.rowcount != 1:
-                return await _owned_job(job.id, ctx, "stt")
-        try:
-            await ctx.update_output("Audio extracted; running segment speech-to-text QA…")
-            transcript = await _provider_transcribe(
-                target,
-                oss.presign_get(audio.oss_key, expires_sec=1800),
-            )
-        except Exception as exc:
-            if persist_guard is not None:
-                await persist_guard()
-            # Provider exceptions may embed the presigned audio URL. Keep the
-            # correlation at job level without copying credentials into logs.
-            log.warning(
-                "segment transcription provider failed: %s",
-                type(exc).__name__,
-            )
-            if durable_recovery:
-                # The synchronous adapter exposes no provider handle. A
-                # timeout therefore has an unknown external outcome; preserve
-                # `transcribing` so the Skill handler enters operator review
-                # instead of making a later call look like a safe retry.
-                await _update_job(
-                    job.id,
-                    status="transcribing",
-                    result_data={"extraction": extraction_result},
-                    error="STT provider outcome is ambiguous; operator reconciliation required.",
-                )
-            else:
-                await _update_job(
-                    job.id,
-                    status="failed",
-                    result_data={"extraction": extraction_result},
-                    error="STT provider request failed; the extracted audio is retained for an explicit retry.",
-                    completed_at=datetime.now(timezone.utc),
-                )
-            return await _owned_job(job.id, ctx, "stt")
-
-        # Persist the provider output before the domain comparison. If the
-        # process dies after this point, reconciliation resumes from the
-        # transcript instead of making another provider call.
-        if persist_guard is not None:
-            await persist_guard()
-        if durable_recovery:
-            await _update_job(
-                job.id,
-                status="transcript_ready",
-                result_data={"extraction": extraction_result, "transcript": transcript},
-                error=None,
-            )
-
-    try:
-        comparison = await record_segment_transcript(
-            job.segment_id or "",
-            transcript["text"],
-            transcript,
-            user_id=ctx.user_id,
-            threshold=target.similarity_threshold,
-        )
-        if persist_guard is not None:
-            await persist_guard()
-        await _update_job(
-            job.id,
-            status="completed",
-            result_data={
-                "extraction": extraction_result,
-                "transcript": transcript,
-                "comparison": comparison,
-            },
-            error=None,
-            completed_at=datetime.now(timezone.utc),
-        )
-    except Exception as exc:
-        if persist_guard is not None:
-            await persist_guard()
-        log.warning(
-            "segment transcription domain commit failed: %s",
-            type(exc).__name__,
-        )
-        if durable_recovery:
-            await _update_job(
-                job.id,
-                status="transcript_ready",
-                result_data={"extraction": extraction_result, "transcript": transcript},
-                error="Transcript is durable; retrying the local QA/domain commit only.",
-            )
-        else:
-            await _update_job(
-                job.id,
-                status="failed",
-                result_data={"extraction": extraction_result},
-                error="STT provider request failed; the extracted audio is retained for an explicit retry.",
-                completed_at=datetime.now(timezone.utc),
-            )
-    return await _owned_job(job.id, ctx, "stt")
-
-
-def _transcription_lines(job, asset=None, *, remote: dict[str, Any] | None = None) -> list[str]:
+def _transcription_lines(job) -> list[str]:
     lines = [f"job_id={job.id}", f"status={job.status}"]
-    if job.production_id:
-        lines.append(f"production_id={job.production_id}")
-    if job.segment_id:
-        lines.append(f"segment_id={job.segment_id}")
-    if remote is not None:
-        lines.append(f"version={int(remote.get('version') or 0)}")
-        lines.append(f"queue_position={int(remote.get('queue_position') or 0)}")
     result = job.result_data or {}
     transcript = result.get("transcript") if isinstance(result.get("transcript"), dict) else {}
-    comparison = result.get("comparison") if isinstance(result.get("comparison"), dict) else {}
     if transcript:
         lines.append(f"transcript={transcript.get('text') or ''}")
-    if comparison:
-        lines.append(f"similarity={comparison.get('similarity')}")
-        lines.append(f"verdict={comparison.get('verdict')}")
-        if comparison.get("notes"):
-            lines.append("notes=" + json.dumps(comparison["notes"], ensure_ascii=False))
-    if asset and asset.status == "ready":
-        lines.append(f"audio_asset_id={asset.id}")
+        if transcript.get("duration_ms"):
+            lines.append(f"duration_ms={transcript['duration_ms']}")
+    source = (job.request_data or {}).get("source_asset_id")
+    if source:
+        lines.append(f"source_asset_id={source}")
     if job.error:
         lines.append(f"error={job.error}")
-    if job.status not in {"completed", "failed", "cancelled"}:
-        lines.append("retry_after_seconds=5")
     return lines
 
 
 async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
-    if not ctx.sandbox:
-        return ToolResult(title="Sandbox unavailable", output="Video transcription requires the user's WUYING sandbox.")
+    """Speech-to-text over an owned audio asset.
+
+    A backend-only call: the audio already exists as an asset, so there is no
+    queue, no sandbox and no extraction step. Whoever wants the words out of a
+    video extracts them with ffmpeg first and registers that file.
+    """
     try:
         target = _configured_transcription_target()
-        # Settings, not a generation route: transcription must not fail because
-        # the deployment's default video model is undeclared.
         from core.config import get_config
-
-        video_settings = get_config().video_generation
         from core.oss import get_oss
 
+        video_settings = get_config().video_generation
         oss = get_oss()
     except Exception as exc:
-        return ToolResult(title="Video transcription is not configured", output=_public_error(exc))
+        return ToolResult(title="Transcription is not configured", output=_public_error(exc))
 
     if args.action == "submit":
+        created = False
         try:
-            from tool.video_workflow import content_hash, prepare_transcription
-
-            approved = await prepare_transcription(
-                ctx, args.production_id or "", args.segment_id or ""
-            )
-            expected_key = f"{args.production_id}:{args.segment_id}:stt"
-            if args.idempotency_key != expected_key:
-                raise RuntimeError(f"idempotency_key must be the segment STT key: {expected_key}")
-            source = approved["asset"]
+            source = await _find_owned_asset(args.asset_id or "", ctx)
+            if not source:
+                raise _RequestError(
+                    f"asset '{args.asset_id}' is not a ready OSS resource owned by this user"
+                )
+            if not source.mime.startswith("audio/"):
+                raise _RequestError(
+                    f"asset '{args.asset_id}' is {source.mime}; transcription needs audio. "
+                    "Extract it first (ffmpeg -vn) and register that file."
+                )
             request_data = {
-                "production_id": args.production_id,
-                "segment_id": args.segment_id,
                 "source_asset_id": source.id,
                 "source_bytes": source.size,
                 "model": target.model,
             }
-            request_hash = content_hash({"kind": "stt", "request_data": request_data})
-            job, audio, created = await _create_pending_job(
+            job, _unused, created = await _create_pending_job(
                 ctx=ctx,
                 kind="stt",
                 idempotency_key=args.idempotency_key or "",
                 model=target.model,
                 prompt=None,
                 request_data=request_data,
-                filename=f"segment-{approved['segment'].ordinal}-speech.mp3",
-                request_hash=request_hash,
-                production_id=args.production_id,
-                segment_id=args.segment_id,
-                output_mime="audio/mpeg",
-                transient=True,
+                filename=None,
+                request_hash=content_hash({"kind": "stt", "request_data": request_data}),
+                reserve_output=False,
             )
             if not created:
                 return ToolResult(
                     title="Existing transcription job",
-                    output="\n".join(_transcription_lines(job, audio)),
+                    output="\n".join(_transcription_lines(job)),
                     metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
                 )
-            await ctx.update_output("Queueing FFmpeg audio extraction on WUYING…")
-            job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
-            return ToolResult(
-                title="Segment transcription queued",
-                output="\n".join(_transcription_lines(job, audio, remote=remote)),
-                metadata={
-                    "job_id": job.id,
-                    "status": job.status,
-                    "version": int(remote.get("version") or 0),
-                    "retry_after_seconds": remote.get("retry_after_seconds", 5),
-                },
+            await ctx.update_output("Transcribing the audio…")
+            await _update_job(job.id, status="transcribing", started_at=datetime.now(timezone.utc))
+            audio_url = oss.presign_get(
+                source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
-        except Exception as exc:
-            if "job" in locals() and created:
-                await _update_job(job.id, status="dispatch_unknown", error=_public_error(exc))
-            return ToolResult(title="Segment transcription submit failed", output=_public_error(exc))
-
-    job = await _owned_job(args.job_id or "", ctx, "stt")
-    if not job:
-        return ToolResult(title="Transcription job not found", output="No owned STT job has that job_id.")
-    audio = await _job_asset(job)
-    if job.status == "completed":
-        return ToolResult(
-            title="Segment transcription ready",
-            output="\n".join(_transcription_lines(job, audio)),
-            metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
-        )
-    if job.status in {"failed", "cancelled"} and args.action not in {"retry", "cancel"}:
-        return ToolResult(
-            title="Segment transcription status",
-            output="\n".join(_transcription_lines(job, audio)),
-            metadata={"job_id": job.id, "status": job.status, "segment_id": job.segment_id},
-        )
-    if args.action == "cancel":
-        if job.status == "transcribing":
-            return ToolResult(
-                title="Transcription finalization in progress",
-                output="Audio extraction is complete and STT is already running; it can no longer be cancelled.",
-            )
-        if job.sandbox_job_id and job.status not in {"failed", "cancelled"}:
-            try:
-                remote = await ctx.sandbox.cancel_media_job(job.sandbox_job_id, ctx.user_id)
-            except Exception as exc:
-                return ToolResult(title="Transcription cancellation failed", output=_public_error(exc))
-        await _update_job(job.id, status="cancelled", error="cancelled", completed_at=datetime.now(timezone.utc))
-        await _mark_asset(job.output_asset_id, status="failed")
-        job = await _owned_job(job.id, ctx, "stt")
-        return ToolResult(title="Transcription cancelled", output="\n".join(_transcription_lines(job)))
-
-    remote: dict[str, Any] | None = None
-    try:
-        if args.action == "retry":
-            if job.status != "failed":
-                return ToolResult(title="Retry not available", output="Only a failed transcription can be retried.")
-            if audio and audio.status == "ready":
-                await _update_job(job.id, status="extraction_completed", error=None, completed_at=None)
-                job = await _owned_job(job.id, ctx, "stt")
-                job = await _finalize_transcription(
-                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
-                )
-            else:
-                replacement = await _transcription_payload(job, ctx, video_settings, oss)
-                remote = await ctx.sandbox.retry_media_job(
-                    job.sandbox_job_id or job.id,
-                    ctx.user_id,
-                    replacement_payload=replacement,
-                )
-                await _mark_asset(job.output_asset_id, status="pending", size=0)
-                await _update_job(job.id, status=remote["status"], error=None, completed_at=None)
-                job = await _owned_job(job.id, ctx, "stt")
-        elif job.status == "transcribing":
-            updated = job.updated_at
-            if updated and updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc)
-            if updated and (datetime.now(timezone.utc) - updated).total_seconds() > 300:
-                await _update_job(job.id, status="extraction_completed", error="recovering stale STT finalization")
-                job = await _owned_job(job.id, ctx, "stt")
-                job = await _finalize_transcription(
-                    job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
-                )
-        elif job.status == "extraction_completed":
-            job = await _finalize_transcription(
-                job, ctx, target, oss, (job.result_data or {}).get("extraction") or {}
-            )
-        else:
-            if job.status in {"dispatch_unknown", "dispatching"} and not job.sandbox_job_id:
-                try:
-                    job, remote = await _dispatch_transcription(job, ctx, video_settings, oss)
-                except Exception:
-                    remote = await ctx.sandbox.get_media_job(job.id, ctx.user_id)
-            elif args.action == "wait":
-                await ctx.update_output("Waiting for WUYING to extract the segment audio…")
-                remote = await ctx.sandbox.wait_media_job(
-                    job.sandbox_job_id or job.id,
-                    ctx.user_id,
-                    after_version=args.after_version,
-                    timeout=args.wait_seconds,
-                )
-            else:
-                remote = await ctx.sandbox.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
-            state = str(remote.get("status") or "failed")
-            if state == "completed":
-                await _update_job(
-                    job.id,
-                    status="extraction_completed",
-                    result_data={"extraction": remote.get("result") or {}},
-                    error=None,
-                )
-                job = await _owned_job(job.id, ctx, "stt")
-                job = await _finalize_transcription(
-                    job, ctx, target, oss, remote.get("result") or {}
-                )
-            elif state in {"failed", "cancelled"}:
-                await _mark_asset(job.output_asset_id, status="failed")
-                await _update_job(
-                    job.id,
-                    status=state,
-                    error=str(remote.get("error") or state)[:1200],
-                    completed_at=datetime.now(timezone.utc),
-                )
-                job = await _owned_job(job.id, ctx, "stt")
-            else:
-                await _update_job(job.id, status=state, error=None)
-                job = await _owned_job(job.id, ctx, "stt")
-    except Exception as exc:
-        return ToolResult(title="Transcription status check failed", output=_public_error(exc))
-
-    audio = await _job_asset(job)
-    title = "Segment transcription ready" if job.status == "completed" else "Segment transcription status"
-    return ToolResult(
-        title=title,
-        output="\n".join(_transcription_lines(job, audio, remote=remote)),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "segment_id": job.segment_id,
-            "version": int((remote or {}).get("version") or 0),
-            "retry_after_seconds": int((remote or {}).get("retry_after_seconds") or 5),
-        },
-    )
-
-
-async def _render_payload(job, ctx: ToolContext, settings, oss) -> dict[str, Any]:
-    from sandbox.assets import _use_internal_oss
-
-    data = job.request_data or {}
-    refs = list(data.get("segment_asset_ids") or [])
-    rows = await _resolve_inputs(refs, ctx)
-    for row in rows:
-        if row.mime not in _VIDEO_MIMES:
-            raise RuntimeError(f"render input {row.id} is {row.mime}, not a supported video")
-    ttl = settings.render_url_ttl_seconds
-    asset = await _job_asset(job)
-    if not asset:
-        raise RuntimeError("reserved render output asset is missing")
-    internal = _use_internal_oss(oss)
-    return {
-        "job_id": job.id,
-        "owner": ctx.user_id,
-        "session_id": ctx.session_id,
-        "idempotency_key": job.idempotency_key,
-        "inputs": [
-            {
-                "name": row.name,
-                "mime": row.mime,
-                "size": row.size,
-                "cache_key": f"{oss.bucket}:{row.oss_key}:{row.size}",
-                "url": oss.presign_get(row.oss_key, expires_sec=ttl, internal=internal),
-            }
-            for row in rows
-        ],
-        "output": {
-            "name": asset.name,
-            "mime": "video/mp4",
-            "put_url": oss.presign_put(
-                asset.oss_key, "video/mp4", expires_sec=ttl, internal=internal
-            ),
-        },
-        "captions": list(data.get("captions") or []),
-        "subtitles": bool(data.get("subtitles", True)),
-        "channel_name": str(data.get("channel_name") or ""),
-        "render_engine": str(data.get("render_engine") or "auto"),
-        "width": int(data.get("width") or 720),
-        "height": int(data.get("height") or 1280),
-    }
-
-
-async def _dispatch_render(
-    job,
-    ctx: ToolContext,
-    settings,
-    oss,
-    *,
-    persist_guard=None,
-) -> tuple[Any, dict[str, Any]]:
-    payload = await _render_payload(job, ctx, settings, oss)
-    remote = await ctx.sandbox.submit_media_job(payload)
-    if persist_guard is not None:
-        await persist_guard()
-    await _update_job(
-        job.id,
-        sandbox_job_id=remote["job_id"],
-        status=remote["status"],
-        error=None,
-        started_at=datetime.now(timezone.utc) if remote["status"] == "in_progress" else None,
-    )
-    return await _owned_job(job.id, ctx, "render"), remote
-
-
-async def _sync_render(
-    job,
-    remote: dict[str, Any],
-    ctx: ToolContext,
-    oss,
-    *,
-    persist_guard=None,
-) -> Any:
-    status = remote.get("status") or "failed"
-    result = remote.get("result") if isinstance(remote.get("result"), dict) else {}
-    if status == "completed":
-        asset = await _job_asset(job)
-        head = await oss.head(asset.oss_key) if asset else None
-        if persist_guard is not None:
-            await persist_guard()
-        if not head:
-            status = "failed"
-            remote["error"] = "sandbox reported completion but the OSS output is missing"
-        else:
-            await _mark_asset(job.output_asset_id, status="ready", size=head["size"] or 0)
+            transcript = await _provider_transcribe(target, audio_url)
             await _update_job(
                 job.id,
                 status="completed",
-                result_data=result,
+                result_data={"transcript": transcript},
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
-            if getattr(job, "production_id", None) and job.output_asset_id:
-                from tool.video_workflow import mark_render_complete
-
-                await mark_render_complete(
-                    job.production_id,
-                    job.output_asset_id,
-                    user_id=ctx.user_id,
-                )
-            return await _owned_job(job.id, ctx, "render")
-    if persist_guard is not None:
-        await persist_guard()
-    if status in {"failed", "cancelled"}:
-        await _mark_asset(job.output_asset_id, status="failed")
-        await _update_job(
-            job.id,
-            status=status,
-            result_data=result,
-            error=str(remote.get("error") or status)[:1200],
-            completed_at=datetime.now(timezone.utc),
-        )
-    else:
-        await _update_job(job.id, status=status, result_data={"progress": remote.get("progress") or {}})
-    return await _owned_job(job.id, ctx, "render")
-
-
-async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
-    if not ctx.sandbox:
-        return ToolResult(title="Sandbox unavailable", output="Video rendering requires the user's WUYING sandbox.")
-    try:
-        # Same as transcription: render needs the settings, not a route.
-        from core.config import get_config
-
-        settings = get_config().video_generation
-        from core.oss import get_oss
-
-        oss = get_oss()
-    except Exception as exc:
-        return ToolResult(title="Video rendering is not configured", output=_public_error(exc))
-
-    if args.action == "submit":
-        try:
-            from tool.video_workflow import (
-                content_hash,
-                prepare_render_submission,
-                render_idempotency_key,
-            )
-
-            approved = await prepare_render_submission(ctx, args.production_id or "")
-            expected_key = render_idempotency_key(
-                approved["production_id"], approved["scope_hash"]
-            )
-            if args.idempotency_key != expected_key:
-                raise RuntimeError(f"idempotency_key must be the approved render key: {expected_key}")
-            if args.segment_assets and args.segment_assets != approved["segment_assets"]:
-                raise RuntimeError("render inputs differ from the approved production snapshot")
-            if args.captions and args.captions != approved["captions"]:
-                raise RuntimeError("render captions must come from the accepted STT transcript")
-            rows = await _resolve_inputs(approved["segment_assets"], ctx)
-            for row in rows:
-                if row.mime not in _VIDEO_MIMES:
-                    raise RuntimeError(f"asset {row.id} is {row.mime}; render inputs must be videos")
-            request_data = {
-                "production_id": approved["production_id"],
-                "render_scope_hash": approved["scope_hash"],
-                "segment_asset_ids": [row.id for row in rows],
-                "captions": approved["captions"],
-                "subtitles": approved["subtitles"],
-                "channel_name": approved["channel_name"],
-                "render_engine": args.render_engine,
-                "width": approved["width"],
-                "height": approved["height"],
-            }
-            request_hash = content_hash({"kind": "render", "request_data": request_data})
-            job, asset, created = await _create_pending_job(
-                ctx=ctx,
-                kind="render",
-                idempotency_key=args.idempotency_key or "",
-                model="wuying-media@1",
-                prompt=None,
-                request_data=request_data,
-                filename=args.filename,
-                request_hash=request_hash,
-                production_id=approved["production_id"],
-            )
-            if not created:
-                if job.status == "completed":
-                    await _attach_completed(job, ctx)
-                return ToolResult(
-                    title="Existing render job",
-                    output="\n".join(_job_lines(job, asset)),
-                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
-                )
-            await ctx.update_output("Queueing the HyperFrames/FFmpeg render on WUYING…")
-            job, remote = await _dispatch_render(job, ctx, settings, oss)
+            job = await _owned_job(job.id, ctx, "stt")
             return ToolResult(
-                title="Video render queued",
-                output="\n".join(
-                    _job_lines(
-                        job,
-                        asset,
-                        queue_position=int(remote.get("queue_position") or 0),
-                        retry_after=int(remote.get("retry_after_seconds") or 5),
-                    )
-                ),
+                title="Transcription ready",
+                output="\n".join(_transcription_lines(job)),
                 metadata={
                     "job_id": job.id,
                     "status": job.status,
-                    "queue_position": remote.get("queue_position", 0),
-                    "retry_after_seconds": remote.get("retry_after_seconds", 5),
+                    "text": transcript.get("text", ""),
                 },
             )
         except Exception as exc:
-            if "job" in locals() and created:
-                await _update_job(job.id, status="dispatch_unknown", error=_public_error(exc))
-            return ToolResult(title="Video render dispatch failed", output=_public_error(exc))
-
-    job = await _owned_job(args.job_id or "", ctx, "render")
-    if not job:
-        return ToolResult(title="Render job not found", output="No owned render job has that job_id.")
-
-    try:
-        if args.action == "retry":
-            replacement = await _render_payload(job, ctx, settings, oss)
-            remote = await ctx.sandbox.retry_media_job(
-                job.sandbox_job_id or job.id,
-                ctx.user_id,
-                replacement_payload=replacement,
-            )
-            await _mark_asset(job.output_asset_id, status="pending", size=0)
-            await _update_job(job.id, status=remote["status"], error=None, completed_at=None)
-        elif args.action == "cancel":
-            remote = await ctx.sandbox.cancel_media_job(job.sandbox_job_id or job.id, ctx.user_id)
-        else:
-            if job.status in {"dispatch_unknown", "dispatching"} and not job.sandbox_job_id:
-                try:
-                    job, remote = await _dispatch_render(job, ctx, settings, oss)
-                except Exception:
-                    remote = await ctx.sandbox.get_media_job(job.id, ctx.user_id)
-            elif args.action == "wait":
-                await ctx.update_output("Waiting on the WUYING render queue…")
-                remote = await ctx.sandbox.wait_media_job(
-                    job.sandbox_job_id or job.id,
-                    ctx.user_id,
-                    after_version=args.after_version,
-                    timeout=args.wait_seconds,
+            if created:
+                await _update_job(
+                    job.id,
+                    status="failed",
+                    error=_public_error(exc),
+                    completed_at=datetime.now(timezone.utc),
                 )
-            else:
-                remote = await ctx.sandbox.get_media_job(job.sandbox_job_id or job.id, ctx.user_id)
-        job = await _sync_render(job, remote, ctx, oss)
-    except Exception as exc:
-        return ToolResult(title="Render status check failed", output=_public_error(exc))
+            return ToolResult(title="Transcription failed", output=_public_error(exc))
 
-    asset = await _job_asset(job)
-    attached = await _attach_completed(job, ctx) if job.status == "completed" else False
-    if attached:
-        job = await _owned_job(job.id, ctx, "render")
-    queue_position = int(remote.get("queue_position") or 0)
-    retry_after = int(remote.get("retry_after_seconds") or 0)
-    lines = _job_lines(
-        job,
-        asset,
-        queue_position=queue_position,
-        retry_after=retry_after or 5,
-    )
-    progress = remote.get("progress") or {}
-    version = int(remote.get("version") or 0)
-    lines.append(f"version={version}")
-    if job.status not in _RENDER_TERMINAL:
-        lines.append(
-            f"next_wait_after_version={version} next_wait_iteration={args.wait_iteration + 1}"
+    job = await _owned_job(args.job_id or "", ctx, "stt")
+    if not job:
+        return ToolResult(
+            title="Transcription job not found", output="No owned STT job has that job_id."
         )
-    if progress:
-        lines.append(f"progress={progress}")
-    resource_check = (remote.get("result") or {}).get("resource_check")
-    if resource_check:
-        lines.append(f"resource_check={resource_check}")
+
+    if args.action == "cancel":
+        if job.status in {"completed", "failed", "cancelled"}:
+            return ToolResult(
+                title="Nothing to cancel", output="\n".join(_transcription_lines(job))
+            )
+        await _update_job(
+            job.id,
+            status="cancelled",
+            error="cancelled",
+            completed_at=datetime.now(timezone.utc),
+        )
+        job = await _owned_job(job.id, ctx, "stt")
+        return ToolResult(title="Transcription cancelled", output="\n".join(_transcription_lines(job)))
+
+    if args.action == "retry":
+        if job.status != "failed":
+            return ToolResult(
+                title="Retry not available", output="Only a failed transcription can be retried."
+            )
+        try:
+            source = await _find_owned_asset(
+                (job.request_data or {}).get("source_asset_id") or "", ctx
+            )
+            if not source:
+                raise RuntimeError("the source audio asset is no longer available")
+            await _update_job(job.id, status="transcribing", error=None, completed_at=None)
+            audio_url = oss.presign_get(
+                source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
+            )
+            transcript = await _provider_transcribe(target, audio_url)
+            await _update_job(
+                job.id,
+                status="completed",
+                result_data={"transcript": transcript},
+                error=None,
+                completed_at=datetime.now(timezone.utc),
+            )
+        except Exception as exc:
+            await _update_job(
+                job.id,
+                status="failed",
+                error=_public_error(exc),
+                completed_at=datetime.now(timezone.utc),
+            )
+            return ToolResult(title="Transcription retry failed", output=_public_error(exc))
+        job = await _owned_job(job.id, ctx, "stt")
+
+    # status / wait: the call itself is synchronous, so there is nothing to
+    # poll — an in-flight row means another turn is mid-call.
     return ToolResult(
-        title="Rendered video ready" if job.status == "completed" else "Video render status",
-        output="\n".join(lines),
-        metadata={
-            "job_id": job.id,
-            "status": job.status,
-            "asset_id": asset.id if asset and asset.status == "ready" else None,
-            "download_url": (
-                _asset_download_url(asset)
-                if asset and asset.status == "ready"
-                else None
-            ),
-            "queue_position": queue_position,
-            "retry_after_seconds": retry_after,
-            "version": version,
-            "attached": attached,
-            "resource_check": resource_check,
-        },
+        title=("Transcription ready" if job.status == "completed" else "Transcription status"),
+        output="\n".join(_transcription_lines(job)),
+        metadata={"job_id": job.id, "status": job.status},
     )
 
 
 VIDEO_GENERATE_DESCRIPTION = """\
-Submit, inspect, wait for, or cancel Seedance generation for an approved segment.
-Paid submit requires production_id, segment_id, and the exact idempotency_key.
-Calls for distinct approved segments or jobs may run together; never parallelize
-dependent actions or two mutations of the same segment/job.
-Never replace a task after an ambiguous result; reconcile the same job or key."""
+Generate video. This is the only way to create one, and it works on its own: \
+describe the shot in `prompt`, optionally naming model, resolution, ratio, \
+duration, audio, seed and reference assets, and pass an idempotency_key. \
+Use action="models" to read what each model accepts (the registry is the only \
+description of that) and action="estimate" to validate a request for free \
+before paying. A finished video lands in OSS and, when a sandbox is present, \
+in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
+video asset there. \
+Distinct jobs may run together; never parallelize two mutations of one job. \
+A paid submit is never replaced after an ambiguous result — reconcile the \
+same job or key."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
-Submit, inspect, wait for, cancel, or explicitly retry transcription for a
-generated speech segment. It persists actual words, diffs, similarity, and the
-quality verdict; status never retries. Distinct segment jobs may run together,
-but dependent actions for one job must remain ordered."""
-
-VIDEO_RENDER_DESCRIPTION = """\
-Submit, inspect, wait for, cancel, or explicitly retry an OSS-backed WUYING
-render. It reports queue state for bounded waits and terminal cleanup evidence."""
-
+Transcribe speech from any audio asset you own: pass asset_id and an \
+idempotency_key. To check what a generated video actually says, extract its \
+audio in the sandbox (ffmpeg -vn), register it with share_file(attach=false), \
+then transcribe that asset. Returns the spoken words; comparing them against \
+an intended line is the caller's job."""
 
 video_generate_tool = define_tool(
     "video_generate",
@@ -2692,16 +2586,10 @@ video_transcribe_tool = define_tool(
     description=VIDEO_TRANSCRIBE_DESCRIPTION,
     parameters=VideoTranscribeArgs,
     execute=execute_transcribe,
-    sandbox_required=True,
+    # Transcribing an owned audio asset is backend-only; only the legacy
+    # project path needs the desktop, and it checks for itself.
+    sandbox_required=False,
     parallel_safe=True,
 )
 
 
-video_render_tool = define_tool(
-    "video_render",
-    description=VIDEO_RENDER_DESCRIPTION,
-    parameters=VideoRenderArgs,
-    execute=execute_render,
-    sandbox_required=True,
-    parallel_safe=False,
-)

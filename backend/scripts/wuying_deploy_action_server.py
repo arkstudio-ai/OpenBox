@@ -2,7 +2,7 @@
 """Push the current action server and video skill to a WUYING desktop.
 
 The full bootstrap installs a runtime, dev-browser and systemd units; when the
-action server, media queue, or video-production skill changes, re-running all
+action server or video-production skill changes, re-running all
 of that is minutes of unnecessary work. This deploys those small system-owned
 artifacts plus the restart, reusing the bootstrap's Desktop primitives so the
 upload path stays identical. The skill contains instructions only; provider
@@ -27,13 +27,8 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from wuying_bootstrap import Desktop  # noqa: E402  (path set above)
-from wuying_media_runtime import ensure_local_media_runtime  # noqa: E402
 
 ACTION_SERVER = REPO / "container" / "action_server.py"
-MEDIA_JOBS = REPO / "container" / "media_jobs.py"
-MEDIA_CONFIG = REPO / "container" / "media-jobs.json"
-MEDIA_PACKAGE = REPO / "container" / "media-runtime" / "package.json"
-MEDIA_LOCK = REPO / "container" / "media-runtime" / "package-lock.json"
 VIDEO_PRODUCTION_SKILL_DIR = (
     REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
@@ -59,12 +54,7 @@ def main() -> int:
     ap.add_argument("--desktop-id", default="", help="ecd-… (default: WUYING_DESKTOP_ID from backend/.env)")
     ap.add_argument("--region", default="", help="default: WUYING_REGION_ID from backend/.env, else cn-hangzhou")
     ap.add_argument("--no-restart", action="store_true", help="upload only, leave the running service alone")
-    ap.add_argument("--skip-media-runtime", action="store_true", help="do not install/check FFmpeg, fonts, HyperFrames or GSAP")
-    ap.add_argument(
-        "--force-media-bundle",
-        action="store_true",
-        help="rebuild the pinned linux/amd64 runtime locally and replace the remote copy",
-    )
+    ap.add_argument("--skip-media-tools", action="store_true", help="do not install/check ffmpeg and CJK fonts")
     args = ap.parse_args()
 
     desktop_id = args.desktop_id or read_env("WUYING_DESKTOP_ID")
@@ -85,9 +75,6 @@ def main() -> int:
     # Syntax-check before the restart rather than after: a SyntaxError here
     # leaves the desktop with a service that will not come back up.
     d.put(ACTION_SERVER, REMOTE_PATH)
-    d.put(MEDIA_JOBS, "/opt/action_server/media_jobs.py")
-    d.put(MEDIA_CONFIG, "/opt/openbox/media/media-jobs.json")
-    d.put(MEDIA_PACKAGE, "/opt/openbox/media/package.json")
     skill_files = sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file())
     remote_dirs = sorted(
         {
@@ -100,55 +87,22 @@ def main() -> int:
         relative = local_path.relative_to(VIDEO_PRODUCTION_SKILL_DIR)
         remote_path = str(pathlib.PurePosixPath(REMOTE_VIDEO_PRODUCTION_SKILL_DIR) / relative)
         d.put(local_path, remote_path)
-    if MEDIA_LOCK.exists():
-        d.put(MEDIA_LOCK, "/opt/openbox/media/package-lock.json")
     d.run(
         f"""
 set -e
-python3 -m py_compile {REMOTE_PATH} /opt/action_server/media_jobs.py
+python3 -m py_compile {REMOTE_PATH}
 
-# Some desktops intentionally pin the service to a rollback bytecode bundle
-# (for example /opt/action_server/v11/action_server.pyc).  Updating only the
-# source directory then reports a successful deploy while the live service
-# keeps importing the old media renderer.  Detect that effective ExecStart
-# and atomically refresh only its sibling media renderer bytecode from the
-# just-uploaded source.  The pinned action_server.pyc can intentionally be
-# newer than this checkout, so replacing that entry point would be a rollback.
-active_pyc=$(systemctl show -p ExecStart --value {SERVICE} 2>/dev/null \
-  | grep -o '/opt/action_server/[^ ;]*/action_server\\.pyc' | head -n 1 || true)
-if [ -n "$active_pyc" ]; then
-  active_dir=$(dirname "$active_pyc")
-  python3 - "$active_dir" <<'PY'
-import os
-import pathlib
-import py_compile
-import shutil
-import sys
-
-target_dir = pathlib.Path(sys.argv[1]).resolve()
-allowed_root = pathlib.Path("/opt/action_server").resolve()
-if allowed_root not in target_dir.parents:
-    raise SystemExit(f"refusing unexpected active bytecode directory: {{target_dir}}")
-target_dir.mkdir(parents=True, exist_ok=True)
-for name in ("media_jobs",):
-    source = allowed_root / f"{{name}}.py"
-    target = target_dir / f"{{name}}.pyc"
-    staged = target_dir / f".{{name}}.pyc.next"
-    py_compile.compile(str(source), cfile=str(staged), doraise=True)
-    if target.exists():
-        shutil.copy2(target, target.with_suffix(".pyc.previous"))
-    os.replace(staged, target)
-print(f"refreshed active bytecode bundle: {{target_dir}}")
-PY
-fi
 echo 'compile ok'
 """,
         timeout=120,
     )
     print("  remote syntax check passed")
 
-    if not args.skip_media_runtime:
-        print("  checking pinned media runtime")
+    if not args.skip_media_tools:
+        # Composition is the agent running ffmpeg now, so the desktop needs
+        # the binary and CJK fonts and nothing else. The pinned HyperFrames /
+        # GSAP / Chrome bundle went with the media worker.
+        print("  checking ffmpeg and CJK fonts")
         d.run(r"""
 set -e
 export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/bin:$PATH
@@ -157,29 +111,10 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! fc-list :lang=zh | grep -q .; then
   apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-cjk fontconfig
   rm -rf /var/lib/apt/lists/*
 fi
-mkdir -p /opt/openbox/media /data/openbox-media /tmp/openbox-media/jobs /tmp/openbox-media/cache
-""", timeout=1800)
-        ensure_local_media_runtime(d, force=args.force_media_bundle)
-        d.run(r"""
-set -e
-cd /opt/openbox/media
-node_modules/.bin/hyperframes telemetry disable >/dev/null 2>&1 || true
-mkdir -p /etc/systemd/system/openbox-action-server.service.d
-cat > /etc/systemd/system/openbox-action-server.service.d/media.conf <<'EOF'
-[Service]
-Environment=MEDIA_JOBS_CONFIG=/opt/openbox/media/media-jobs.json
-Environment=HYPERFRAMES_BROWSER_PATH=/usr/bin/google-chrome
-MemoryHigh=5G
-MemoryMax=6G
-TasksMax=512
-EOF
-systemctl daemon-reload
-test -x node_modules/.bin/hyperframes
-test -f node_modules/gsap/dist/gsap.min.js
 command -v ffmpeg
 command -v ffprobe
-test -x /usr/bin/google-chrome
-echo 'media runtime ok'
+fc-list :lang=zh | head -1
+echo 'media tools ok'
 """, timeout=1800)
 
     if args.no_restart:

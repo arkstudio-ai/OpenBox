@@ -3,8 +3,9 @@
 Three wire channels behind one route object:
 
 - ``ark``  — the existing Volcano-Ark shape (``/api/v3/contents/generations/tasks``),
-  used by the legacy ``doubao``/TokenSpace Seedance provider. Submission for
-  this channel stays in ``tool/video_production.py``; this module only routes.
+  used by the ``bossip`` relay credential (historically named ``doubao``,
+  before the gateway moved off the doubao endpoint). Submission for this
+  channel stays in ``tool/video_production.py``; this module only routes.
 - ``sd2``  — new-api Sora adaptor: ``POST /v1/videos`` / ``GET /v1/videos/{id}``,
   lowercase statuses, references as top-level public URLs.
 - ``task`` — new-api task channel: ``POST /v1/video/generations`` with an
@@ -30,9 +31,27 @@ canonicalization. Hard lessons from bossip carried over verbatim:
 """
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from core.log import create_logger
+
+log = create_logger("tool.video_providers")
+
+
+class VideoRequestError(RuntimeError):
+    """A request this backend refuses on its own, before any provider call.
+
+    These messages are authored here and name only the caller's own request —
+    a model id, a ratio, a duration — so they carry none of the provider
+    bodies or signed URLs that ``_public_error`` scrubs. Surfacing them is the
+    whole point: a caller told "invalid" without being told *what* is invalid
+    cannot fix the request, which would make the free estimate useless.
+    """
+
+    public_message = True
 
 # ── sd2 (Sora adaptor) ──────────────────────────────────────────────────────
 # The trailing Ⅰ on the first two models is ROMAN NUMERAL ONE (U+2160), not
@@ -44,6 +63,35 @@ _SD2_TRAILING_I = re.compile(r"[iIⅠ]$")
 
 # ── ark relay host ──────────────────────────────────────────────────────────
 BOSSIP_RELAY_HOST = "openapi.bossipai.com.cn"
+
+#: Provider-entry names that may fall back to the relay credential environment.
+#: ``bossip`` is the current name; ``doubao`` predates the gateway's move off
+#: the doubao endpoint and is kept so an un-migrated deployment still resolves.
+RELAY_PROVIDER_NAMES = ("bossip", "doubao")
+
+_LEGACY_ENV_WARNED: set[str] = set()
+
+
+def relay_env(provider_name: str, suffix: str) -> str:
+    """Read ``BOSSIP_<suffix>``, falling back once to the legacy ``DOUBAO_`` name.
+
+    The fallback warns rather than failing: a deployment whose ``.env`` still
+    says ``DOUBAO_API_KEY`` keeps working through one release, and the warning
+    is what tells the operator to rename it.
+    """
+    if provider_name not in RELAY_PROVIDER_NAMES:
+        return ""
+    value = os.environ.get(f"BOSSIP_{suffix}", "")
+    if value:
+        return value
+    legacy = os.environ.get(f"DOUBAO_{suffix}", "")
+    if legacy and suffix not in _LEGACY_ENV_WARNED:
+        _LEGACY_ENV_WARNED.add(suffix)
+        log.warning(
+            f"DOUBAO_{suffix} is deprecated; rename it to BOSSIP_{suffix}. "
+            "The legacy name will stop being read in a future release."
+        )
+    return legacy
 
 # ── wan3 (task channel via the gateway-side wan3-video-adapter) ─────────────
 WAN3_MODEL_TYPE = "wan3_video"
@@ -338,25 +386,21 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
 
 def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
     """The ark path — byte-identical to the historical _configured_target."""
-    import os
     from urllib.parse import urlsplit
 
     settings = config.video_generation
     provider = config.provider.get(provider_name)
-    api_key = (provider.api_key if provider else None) or (
-        os.environ.get("DOUBAO_API_KEY", "") if provider_name == "doubao" else ""
-    )
-    configured_base = (provider.base_url if provider else None) or (
-        os.environ.get("DOUBAO_BASE_URL", "") if provider_name == "doubao" else ""
+    api_key = (provider.api_key if provider else None) or relay_env(provider_name, "API_KEY")
+    configured_base = (provider.base_url if provider else None) or relay_env(
+        provider_name, "BASE_URL"
     )
     if not api_key:
-        raise RuntimeError("DOUBAO_API_KEY is empty")
+        raise RuntimeError("BOSSIP_API_KEY is empty")
     base_url = configured_base.rstrip("/")
     if not base_url.startswith("https://") or base_url.endswith(".html"):
         raise RuntimeError(
-            "DOUBAO_BASE_URL must be an HTTPS API origin (for example "
-            "https://api.tokenspace.net.cn or https://openapi.bossipai.com.cn), "
-            "not the documentation page"
+            "BOSSIP_BASE_URL must be an HTTPS API origin (for example "
+            "https://openapi.bossipai.com.cn), not the documentation page"
         )
     wire_format = (
         "bossip_videos"
@@ -383,30 +427,63 @@ def _validate_declared(
     entry: Any,
     *,
     resolution: str,
+    ratio: str = "",
     duration: int,
     has_video_ref: bool,
     has_image_ref: bool,
+    roles: tuple[str, ...] = (),
 ) -> None:
     """Refuse what a declared model cannot do, before it costs anything.
 
-    The gateway drops parameters it does not understand and bills for the
-    default it substitutes, so an unchecked request comes back "successful"
-    with output that ignores half of what was asked. Declared limits are the
-    only place that can be caught.
+    Gateways fail in two different ways and both are expensive. Some drop a
+    parameter they do not understand, substitute their own default and bill
+    for it, so the task comes back "successful" having ignored half the
+    request; others reject it outright after the request has already been
+    routed. The declared limits below are the only place either can be caught
+    for free.
     """
     allowed = list(entry.resolutions or [])
     if resolution and allowed and resolution not in allowed:
-        raise RuntimeError(
+        raise VideoRequestError(
             f"model {entry.id} supports {'/'.join(allowed)}; requested "
             f"{resolution} would be silently substituted upstream"
         )
+    ratios = list(getattr(entry, "ratios", None) or [])
+    if ratio and ratios and ratio not in ratios:
+        raise VideoRequestError(
+            f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}"
+        )
+    span = getattr(entry, "duration_range", None)
+    if duration == -1:
+        if not getattr(entry, "supports_smart_duration", True):
+            raise VideoRequestError(
+                f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported"
+            )
+    elif span is not None:
+        low, high = span
+        if not low <= duration <= high:
+            raise VideoRequestError(
+                f"model {entry.id} accepts {low}-{high}s; requested {duration}s"
+            )
     cap = entry.max_duration_seconds
     if cap is not None and duration != -1 and duration > cap:
-        raise RuntimeError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
+        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
     if has_video_ref and not entry.supports_reference_video:
-        raise RuntimeError(f"model {entry.id} does not accept video references")
+        raise VideoRequestError(f"model {entry.id} does not accept video references")
     if has_image_ref and not entry.supports_reference_image:
-        raise RuntimeError(f"model {entry.id} does not accept image references")
+        raise VideoRequestError(f"model {entry.id} does not accept image references")
+    # A seed is deliberately NOT a refusal. Missing it costs reproducibility,
+    # not content — the video is still the one that was asked for — whereas
+    # refusing costs the whole generation. The caller is told it was dropped.
+    # Frame roles and reference audio are different: those change what the
+    # video *is*, so they stay refusals below.
+    frame_roles = {"first_frame", "last_frame"}
+    if frame_roles & set(roles) and not getattr(entry, "supports_first_last_frame", False):
+        raise VideoRequestError(
+            f"model {entry.id} does not accept first_frame/last_frame references"
+        )
+    if "reference_audio" in roles and not getattr(entry, "supports_reference_audio", False):
+        raise VideoRequestError(f"model {entry.id} does not accept an audio reference")
 
 
 def validate_request(
@@ -418,6 +495,7 @@ def validate_request(
     generate_audio: bool,
     input_mimes: list[str],
     declared: Any | None = None,
+    roles: tuple[str, ...] = (),
 ) -> None:
     channel = getattr(route, "channel", "ark")
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
@@ -425,47 +503,86 @@ def validate_request(
         _validate_declared(
             declared,
             resolution=resolution,
+            ratio=ratio,
             duration=duration,
             has_video_ref=has_video_ref,
             has_image_ref=any(mime.startswith("image/") for mime in input_mimes),
+            roles=roles,
         )
+    # first_frame / last_frame / reference_audio have no place to live in the
+    # sd2 body (it carries bare image_url / extra_* lists with no role field).
+    # Refuse instead of sending a reference the gateway will read as an
+    # ordinary one: an undeclared role that silently becomes a plain reference
+    # produces a paid take that ignores the continuity the caller asked for.
+    if channel == "sd2":
+        unsupported = {"first_frame", "last_frame", "reference_audio"} & set(roles)
+        if unsupported:
+            raise VideoRequestError(
+                f"the sd2 channel cannot express the {'/'.join(sorted(unsupported))} "
+                "role; it needs the task endpoint, which this gateway does not expose"
+            )
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
         if resolution and resolution != native:
-            raise RuntimeError(
+            raise VideoRequestError(
                 f"model {route.model} generates {native} natively; requested "
                 f"{resolution} would be silently ignored — pick the matching model tier"
             )
         if has_video_ref and canonicalize_sd2_model_name(route.model) == "video-sd-720p-proⅠ":
             # Upstream drops extra_videos for this tier without erroring; the
             # task then succeeds with output unrelated to the reference.
-            raise RuntimeError(
+            raise VideoRequestError(
                 "video-sd-720p-proⅠ silently discards video references upstream; "
                 "use video-sd-1080p-pro for video-referenced segments"
             )
         return
     if channel == "task" and getattr(route, "model_type", "") == WAN3_MODEL_TYPE:
         if ratio == "21:9":
-            raise RuntimeError("wan3.0 does not support the 21:9 ratio")
+            raise VideoRequestError("wan3.0 does not support the 21:9 ratio")
         if duration != -1 and not 2 <= duration <= 30:
-            raise RuntimeError("wan3.0 duration must be -1 (smart) or 2-30 seconds")
+            raise VideoRequestError("wan3.0 duration must be -1 (smart) or 2-30 seconds")
         return
     # ark / Seedance rules (unchanged from the historical validator).
     lowered = route.model.lower()
     if resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
-        raise RuntimeError("1080p is supported only by doubao-seedance-2-0-260128")
+        raise VideoRequestError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:
-            raise RuntimeError("Seedance 2.5 duration must be 4-30 seconds")
+            raise VideoRequestError("Seedance 2.5 duration must be 4-30 seconds")
     elif duration != -1 and not 4 <= duration <= 15:
-        raise RuntimeError("Seedance 2.0 duration must be -1 or 4-15 seconds")
+        raise VideoRequestError("Seedance 2.0 duration must be -1 or 4-15 seconds")
     if "fast" in lowered and generate_audio:
-        raise RuntimeError(
+        raise VideoRequestError(
             "Seedance Fast does not support generated audio; use the standard model for spoken video"
         )
 
 
 # ── payload building ────────────────────────────────────────────────────────
+
+#: Placeholder the relay's multi-material path binds to `images[i]`.
+_IMAGE_FILE_REF = re.compile(r"@image_file_(\d+)")
+
+
+def _with_image_file_refs(prompt: str, count: int) -> str:
+    """Ensure every supplied image is named in the prompt.
+
+    The relay binds `images[i]` to an `@image_file_{i+1}` mention; an image
+    the prompt never mentions is simply not used, which is exactly the
+    "reference ignored, task succeeds" failure this module exists to prevent.
+    A caller that already wrote the placeholders keeps its own wording.
+    """
+    if count <= 0:
+        return prompt
+    mentioned = {int(n) for n in _IMAGE_FILE_REF.findall(prompt)}
+    missing = [index for index in range(1, count + 1) if index not in mentioned]
+    if not missing:
+        return prompt
+    lead = "，".join(f"@image_file_{index}" for index in missing)
+    return (
+        f"{lead} 是本片参考素材，保持其中人物的五官、脸型、发型与服装完全一致。\n"
+        f"{prompt}"
+    )
+
 
 def build_payload(
     route: Any,
@@ -477,6 +594,7 @@ def build_payload(
     duration: int,
     generate_audio: bool,
     watermark: bool,
+    seed: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """(url_path, json_body) for the gateway channels.
 
@@ -492,14 +610,29 @@ def build_payload(
         }
         if ratio and ratio != "adaptive":
             body["ratio"] = ratio
-        if 4 <= duration <= 15:
+        # Send whatever explicit duration survived validation. The old 4-15
+        # clamp was Seedance's range applied to every sd2 model, which silently
+        # dropped a legal wan3 duration (2-30) and billed for the default.
+        if duration != -1:
             body["duration"] = duration
+        if seed is not None:
+            body["seed"] = seed
         images = [ref["url"] for ref in refs if ref["kind"] == "image"]
         videos = [ref["url"] for ref in refs if ref["kind"] == "video"]
         if images:
-            body["image_url"] = images[0]
-            if images[1:]:
-                body["extra_images"] = images[1:]
+            if is_wan3_model(route.model):
+                # Measured 2026-09-01: wan3 behind this relay ignores
+                # image_url outright — five variants each produced a
+                # different person. `images` plus an @image_file_N mention in
+                # the prompt is the documented multi-material path, and it is
+                # the one that actually locks the face. Seedance accepts
+                # either, so only wan3 is special-cased.
+                body["images"] = images
+                body["prompt"] = _with_image_file_refs(prompt, len(images))
+            else:
+                body["image_url"] = images[0]
+                if images[1:]:
+                    body["extra_images"] = images[1:]
         if videos:
             body["extra_videos"] = videos
         return "/v1/videos", body
@@ -534,6 +667,8 @@ def build_payload(
             "generate_audio": generate_audio,
             "watermark": watermark,
         }
+        if seed is not None:
+            metadata["seed"] = seed
         if content:
             metadata["content"] = content
         body = {

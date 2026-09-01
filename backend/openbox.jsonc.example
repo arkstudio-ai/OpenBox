@@ -38,9 +38,9 @@
       "api_key": "{env:OPENAI_API_KEY}",
       "base_url": null
     },
-    "doubao": {
-      "api_key": "{env:DOUBAO_API_KEY}",
-      "base_url": "{env:DOUBAO_BASE_URL}"
+    "bossip": {
+      "api_key": "{env:BOSSIP_API_KEY}",
+      "base_url": "{env:BOSSIP_BASE_URL}"
     },
     // Self-hosted new-api media gateway (sd2 + wan3 video channels).
     // AUTH QUIRK: new-api expects the token RAW in the Authorization header
@@ -81,7 +81,7 @@
   // The BossIP origin selects its `/v1/videos` format automatically; the
   // official TokenSpace origin keeps the native contents/tasks format.
   "video_generation": {
-    "provider": "doubao",
+    "provider": "bossip",
     "model": "wan3.0-video",
     "default_resolution": "1080p",
     "default_ratio": "9:16",
@@ -95,15 +95,28 @@
     "provider_input_url_ttl_seconds": 3600,
     "render_url_ttl_seconds": 86400,
     "max_provider_output_bytes": 1073741824,
+    // Per-user daily ceiling on paid generation submits (0 = off), and refusal
+    // of a second identical request while one is still in flight. Both are
+    // back-pressure standing in for the shared credits ledger — they refuse,
+    // they never ask a human to approve a charge.
+    "daily_job_limit": 50,
+    "refuse_duplicate_in_flight": true,
     // Selectable video models. Declaring one binds it to a wire channel and a
     // credential, which is all that adding a model normally needs — the three
     // protocol adapters stay in tool/video_providers.py, because no config can
     // express "poll metadata.url" or "unwrap a {code,message,data} envelope".
     //
-    // The capability fields are enforced before submission. That matters: a
-    // gateway typically DROPS parameters it does not understand, substitutes
-    // its own default, and bills you — so an undeclared limit surfaces as a
-    // "successful" task whose output ignores what you asked for.
+    // The capability fields are enforced before submission, and they are the
+    // ONLY record of what a model accepts: the relay exposes no model or
+    // pricing endpoint, so nothing is discoverable at runtime. Gateways differ
+    // in how they fail — the wan3 adapter 400s on an unknown switch, while the
+    // sd2 720p tier DROPS video references, substitutes its own default and
+    // bills you, surfacing as a "successful" task that ignored your input.
+    //
+    // Capability fields: resolutions, ratios, duration_range [min,max],
+    // supports_smart_duration (duration -1), supports_seed,
+    // supports_first_last_frame, supports_reference_audio,
+    // supports_reference_image, supports_reference_video.
     //
     // `channel` must match the endpoint your gateway actually exposes, not the
     // model's family. A relay that serves /v1/videos but 404s
@@ -115,9 +128,17 @@
     "models": [
       { "id": "wan3.0-video", "name": "Wan 3.0", "channel": "sd2",
         "provider": "newapi", "tier": "标准", "max_duration_seconds": 30,
-        "resolutions": ["1080p"] }
+        "resolutions": ["1080p"],
+        // wan3 refuses 21:9 outright rather than substituting a default,
+        // so the accepted set is declared per model rather than globally.
+        "ratios": ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "duration_range": [2, 30], "supports_smart_duration": true,
+        "supports_seed": true, "supports_first_last_frame": true,
+        "supports_reference_audio": true }
       // { "id": "video-sd-720p-proⅠ", "channel": "sd2", "resolutions": ["720p"],
-      //   "supports_reference_video": false },
+      //   "duration_range": [4, 15], "supports_reference_video": false },
+      // { "id": "doubao-seedance-2-0-260128", "channel": "ark",
+      //   "resolutions": ["720p", "1080p"], "duration_range": [4, 15] },
     ],
     // Which credential entry serves each gateway channel, for models that do
     // not name their own `provider` above. Model names otherwise select the

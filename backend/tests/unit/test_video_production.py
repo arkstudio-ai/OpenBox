@@ -15,7 +15,6 @@ from tool.video_production import (
     VideoProviderTarget,
     VideoTranscriptionTarget,
     VideoGenerateArgs,
-    VideoRenderArgs,
     _auth_header,
     _bossip_video_payload,
     _provider_status,
@@ -27,7 +26,6 @@ from tool.video_production import (
     _validate_generation,
     video_generate_tool,
     video_transcribe_tool,
-    video_render_tool,
 )
 from tool.video_providers import provider_route_fingerprint
 
@@ -108,31 +106,57 @@ async def test_dashscope_transcription_submit_poll_and_result(monkeypatch):
     }
 
 
-def test_independent_segment_tools_are_parallel_safe_but_render_is_not():
-    assert video_generate_tool.parallel_safe is True
-    assert video_transcribe_tool.parallel_safe is True
-    assert video_render_tool.parallel_safe is False
-
 def test_billable_submit_requires_idempotency_key():
+    """The key is what stops a retry from paying a second time."""
     with pytest.raises(ValidationError, match="idempotency_key"):
         VideoGenerateArgs(action="submit", prompt="人物说一句话")
-    with pytest.raises(ValidationError, match="idempotency_key"):
-        VideoRenderArgs(action="submit", segment_assets=["asset-1"])
 
 
-def test_generation_schema_exposes_only_control_plane_fields():
+def test_generation_and_transcription_are_parallel_safe():
+    assert video_generate_tool.parallel_safe is True
+    assert video_transcribe_tool.parallel_safe is True
+
+
+def test_generation_schema_exposes_content_parameters_for_open_requests():
+    """The tool is the video primitive, so the shot is describable through it.
+
+    It used to expose control-plane fields only, which meant the sole way to
+    generate anything was to drive a whole approved production. Content
+    parameters belong here; what stays out is anything that would let a caller
+    reach past ownership (references are asset ids, never URLs).
+    """
     properties = set(VideoGenerateArgs.model_json_schema()["properties"])
 
-    assert properties == {
+    assert {
+        "prompt",
+        "model",
+        "resolution",
+        "ratio",
+        "duration",
+        "generate_audio",
+        "watermark",
+        "seed",
+        "input_assets",
+    } <= properties
+    assert {
         "action",
         "job_id",
-        "production_id",
-        "segment_id",
         "idempotency_key",
         "wait_seconds",
         "after_version",
         "wait_iteration",
-    }
+    } <= properties
+    assert not {"url", "image_url", "video_url", "api_key", "base_url"} & properties
+
+
+def test_generation_needs_only_a_prompt_and_a_key():
+    """A prompt and a key is the whole contract: no project, no approvals."""
+    args = VideoGenerateArgs(
+        action="submit", prompt="一只猫跳上窗台", idempotency_key="open:cat:1"
+    )
+
+    assert args.prompt == "一只猫跳上窗台"
+    assert not hasattr(args, "production_id")
 
 
 def test_generation_wait_schema_and_runtime_share_the_optional_iteration_default():
@@ -1036,79 +1060,6 @@ async def test_generation_wait_returns_when_snapshot_version_advances(monkeypatc
     assert "next_wait_iteration=1" in result.output
 
 
-def test_completed_segment_explicitly_hands_off_to_transcription():
-    job = SimpleNamespace(
-        id="video_123",
-        kind="segment",
-        status="completed",
-        production_id="production_123",
-        segment_id="segment_123",
-        request_data={},
-        provider_task_id="provider_123",
-        sandbox_job_id=None,
-        error=None,
-    )
-
-    output = "\n".join(video_mod._job_lines(job))
-
-    assert "next_action=video_transcribe.submit" in output
-    assert "transcription_idempotency_key=production_123:segment_123:stt" in output
-    assert "do not call video_generate again" in output
-
-
-def test_render_completion_exposes_stable_download_handoff():
-    job = SimpleNamespace(
-        id="video_render_123",
-        kind="render",
-        status="completed",
-        production_id="production_123",
-        segment_id=None,
-        request_data={"subtitles": True},
-        provider_task_id=None,
-        sandbox_job_id="sandbox_render_123",
-        error=None,
-    )
-    asset = SimpleNamespace(
-        id="asset_final_123",
-        user_id="user_123",
-        name="final.mp4",
-        size=1234,
-        status="ready",
-    )
-
-    with patch.object(video_mod, "create_asset_download_token", return_value="download-token"):
-        output = "\n".join(video_mod._job_lines(job, asset))
-
-    assert (
-        "download_url=/api/assets/asset_final_123/download?token=download-token"
-        in output
-    )
-    assert "never construct a markdown URL" in output
-
-
-def test_render_captions_must_match_segments():
-    with pytest.raises(ValidationError, match="captions"):
-        VideoRenderArgs(
-            action="submit",
-            production_id="production_1",
-            idempotency_key="travel-final-v1",
-            segment_assets=["a", "b"],
-            captions=["only one"],
-        )
-
-
-def test_render_defaults_to_fast_auto_path_and_source_resolution():
-    args = VideoRenderArgs(
-        action="submit",
-        production_id="production_1",
-        idempotency_key="travel-final-v1",
-        segment_assets=["asset-1"],
-    )
-    assert args.render_engine == "auto"
-    assert (args.width, args.height) == (720, 1280)
-    assert args.wait_iteration == 0
-
-
 @pytest.mark.asyncio
 async def test_character_reference_is_an_image_first_and_is_deduplicated(monkeypatch):
     portrait = SimpleNamespace(id="asset_portrait", mime="image/png")
@@ -1144,160 +1095,6 @@ async def test_character_reference_rejects_video_assets(monkeypatch):
 
     with pytest.raises(RuntimeError, match="must be an image"):
         await _resolve_generation_inputs("asset_clip", [], SimpleNamespace())
-
-
-@pytest.mark.asyncio
-async def test_submit_records_and_sends_character_reference_first(monkeypatch):
-    target = SimpleNamespace(
-        model="doubao-seedance-2-0-260128",
-        provider="doubao",
-        api_key="sk-submit-secret",
-        base_url="https://api.tokenspace.test",
-        channel="ark",
-        auth_scheme="bearer",
-        wire_format="tokenspace_contents",
-    )
-    settings = SimpleNamespace(
-        default_resolution="720p",
-        default_ratio="9:16",
-        default_duration=-1,
-        default_generate_audio=True,
-        default_watermark=False,
-        provider_input_url_ttl_seconds=600,
-    )
-    portrait = SimpleNamespace(
-        id="asset_portrait",
-        mime="image/png",
-        oss_key="assets/user/portrait.png",
-    )
-    scene = SimpleNamespace(
-        id="asset_scene",
-        mime="video/mp4",
-        oss_key="assets/user/scene.mp4",
-    )
-    output_asset = SimpleNamespace(id="asset_output", status="pending")
-    job = SimpleNamespace(
-        id="video_job",
-        status="submitting",
-        request_data={},
-        provider_task_id=None,
-        sandbox_job_id=None,
-        output_asset_id=output_asset.id,
-        production_id="production_1",
-        segment_id="segment_1",
-        error=None,
-    )
-    observed = {}
-
-    async def fake_resolve(character, refs, _ctx):
-        assert character == "asset_portrait"
-        assert refs == ["asset_scene"]
-        return [portrait, scene], portrait
-
-    def fake_refs(rows, **kwargs):
-        assert rows == [portrait, scene]
-        assert kwargs["input_url_ttl_seconds"] == 600
-        return [
-            {
-                "kind": "image",
-                "url": "https://oss.test/asset-provider-portrait",
-                "role": "reference_image",
-            },
-            {
-                "kind": "video",
-                "url": "https://oss.test/asset-provider-scene",
-                "role": "reference_video",
-            },
-        ]
-
-    async def fake_create(**kwargs):
-        observed["request_data"] = kwargs["request_data"]
-        observed["request_hash"] = kwargs["request_hash"]
-        job.request_data = kwargs["request_data"]
-        return job, output_asset, True
-
-    async def fake_submit(_target, payload):
-        observed["payload"] = payload
-        return {"id": "provider_task", "status": "running"}
-
-    async def fake_update(_job_id, **values):
-        for key, value in values.items():
-            setattr(job, key, value)
-
-    async def fake_owned(_job_id, _ctx, _kind):
-        return job
-
-    async def fake_progress(_message):
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(video_mod, "_configured_target", lambda _model: (target, settings))
-    monkeypatch.setattr(video_mod, "_resolve_generation_inputs", fake_resolve)
-    monkeypatch.setattr(video_mod, "_presigned_provider_refs", fake_refs)
-    monkeypatch.setattr(video_mod, "_create_pending_job", fake_create)
-    monkeypatch.setattr(video_mod, "_provider_submit", fake_submit)
-    monkeypatch.setattr(video_mod, "_update_job", fake_update)
-    monkeypatch.setattr(video_mod, "_owned_job", fake_owned)
-    import tool.video_workflow as workflow_mod
-
-    async def fake_prepare(_ctx, production_id, segment_id):
-        assert production_id == "production_1"
-        assert segment_id == "segment_1"
-        return {
-            "production_id": production_id,
-            "segment_id": segment_id,
-            "prompt": "主持人说一句话",
-            "character_reference_asset": "asset_portrait",
-            "input_assets": ["asset_scene"],
-            "resolution": "720p",
-            "ratio": "9:16",
-            "duration": -1,
-            "generate_audio": True,
-            "watermark": False,
-            "content_hash": "content-hash",
-            "plan_hash": "plan-hash",
-        }
-
-    async def fake_mark(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(workflow_mod, "prepare_segment_submission", fake_prepare)
-    monkeypatch.setattr(workflow_mod, "mark_segment_job", fake_mark)
-
-    result = await video_mod.execute_generate(
-        VideoGenerateArgs(
-            action="submit",
-            production_id="production_1",
-            segment_id="segment_1",
-            idempotency_key="production_1:segment_1:generate",
-        ),
-        SimpleNamespace(update_output=fake_progress, user_id="user_1"),
-    )
-
-    assert observed["request_data"]["character_reference_asset_id"] == "asset_portrait"
-    assert observed["request_data"]["input_asset_ids"] == ["asset_portrait", "asset_scene"]
-    from tool.video_providers import provider_route_fingerprint
-
-    assert observed["request_data"]["provider_route_fingerprint"] == provider_route_fingerprint(
-        target
-    )
-    assert "sk-submit-secret" not in json.dumps(observed["request_data"], sort_keys=True)
-    from tool.video_workflow import content_hash
-
-    legacy_request_data = dict(observed["request_data"])
-    legacy_request_data.pop("provider_route_fingerprint")
-    assert observed["request_hash"] == content_hash(
-        {
-            "kind": "segment",
-            "model": target.model,
-            "prompt": "主持人说一句话",
-            "request_data": legacy_request_data,
-        }
-    )
-    content = observed["payload"]["content"]
-    assert content[1]["role"] == "reference_image"
-    assert content[1]["image_url"]["url"] == "https://oss.test/asset-provider-portrait"
-    assert content[2]["role"] == "reference_video"
-    assert "character_reference_asset_id=asset_portrait" in result.output
 
 
 def test_seedance_spoken_video_constraints():
@@ -1453,46 +1250,62 @@ async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
     assert _provider_video_url(status) == "https://result.test/out.mp4"
 
 
-def test_video_skill_preserves_reference_recovery_and_teaching_contract():
-    skill_path = (
-        Path(__file__).resolve().parents[2]
-        / ".openbox"
-        / "skills"
-        / "video-production"
-        / "SKILL.md"
-    )
-    metadata, skill = parse_frontmatter(skill_path.read_text(encoding="utf-8"))
+def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
+    """The skill is knowledge now, so it must read like knowledge.
 
-    assert metadata["allowed-tools"] == [
-        "image_gen",
-        "video_project",
+    It used to restate the server's gates step by step, which made it a manual
+    for a state machine rather than advice about making a video. What it owes
+    the reader is what actually goes wrong and how to avoid it; ownership,
+    billing and idempotency are the tools' job and are not re-litigated here.
+    """
+    skill_dir = (
+        Path(__file__).resolve().parents[2] / ".openbox" / "skills" / "video-production"
+    )
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    metadata, skill = parse_frontmatter(text)
+
+    # A dependency declaration, not a grant: loading a skill never widens the
+    # callable tool set (see docs/SKILL_TOOL_DECOUPLING_PLAN.md).
+    assert set(metadata["allowed-tools"]) == {
         "video_generate",
         "video_transcribe",
-        "video_render",
+        "image_gen",
         "creator_context",
-    ]
-    assert len(skill_path.read_text(encoding="utf-8").splitlines()) <= 90
-    assert "generate it once with `image_gen`" in skill
-    assert "read its ready `asset_id`" in skill
-    assert "`/workspace/...` is inspection-only" in skill
-    assert "never repeat the host" in skill
-    assert "do not stop the turn after this read" in skill
-    assert "A prose-only “if this is okay” question is" in skill
-    assert "native approval card" in skill
-    assert "`spend` approval" in skill
-    assert "accepted actual STT" in skill
-    assert "wait_iteration" in skill
-    assert "returned `version`" in skill
-    assert "A timeout is normal" in skill
-    assert "`recovery_blocked=true`" in skill
-    assert 'role="broll"' in skill
-    assert "`全片一致的画面基底：<anchor>`" in skill
-    assert "`自然肢体动作：...`" in skill
-    assert "recount" in skill
-    assert "Leave `model` unset" in skill
-    assert "`@<exact dialogue>`" in skill
-    assert "`无字幕`" in skill
-    assert "Submit independent planned segments together" in skill
-    assert "Keep dependent actions for one job ordered" in skill
-    assert "`polling_paused=true`" in skill
-    assert "resume that exact job only in a later turn" in skill
+        "share_file",
+        "bash",
+    }
+    assert "video_project" not in text and "video_render" not in text
+
+    # Progressive disclosure: the body stays small, detail lives alongside it.
+    assert len(text.splitlines()) <= 200
+    for name in ("prompt-recipes.md", "model-guide.md", "quality.md"):
+        assert (skill_dir / "references" / name).is_file()
+        assert name in skill
+
+    # The craft it must carry.
+    assert "全片一致的画面基底" in skill or "anchor" in skill
+    assert "无字幕" in skill
+    assert "actual transcript" in skill
+    assert "seed" in skill
+    assert "A timeout is normal, and a paid task is never replaced" in skill
+    assert "polling_paused=true" in skill
+
+    # And the posture: advice that can be departed from.
+    assert "not a pipeline" in skill
+    assert "it advises, it never" in skill
+
+
+def test_video_skill_scripts_are_bundled_for_the_agent_to_run():
+    scripts = (
+        Path(__file__).resolve().parents[2]
+        / ".openbox" / "skills" / "video-production" / "scripts"
+    )
+
+    assert {item.name for item in scripts.iterdir()} >= {
+        "lint_prompt.py",
+        "compare_transcript.py",
+        "build_ass.py",
+        "compose.sh",
+        "extract_audio.sh",
+        "state.py",
+    }

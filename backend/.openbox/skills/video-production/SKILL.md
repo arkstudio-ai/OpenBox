@@ -1,90 +1,114 @@
 ---
 name: video-production
-description: Create a complete vertical spoken-person short video from a topic or script, with a shared host, script and segment approvals, Seedance lip-synced speech, segment-level STT review, selective regeneration, and subtitled or clean composition.
+description: Make a vertical spoken-person short video from a topic or script — write the lines, generate each shot with a consistent presenter, check what was actually said, and compose a subtitled or clean cut. Use for 口播/短视频/成片/带货脚本 work, or whenever someone wants a talking-head video built end to end.
 allowed-tools:
-  - image_gen
-  - video_project
   - video_generate
   - video_transcribe
-  - video_render
+  - image_gen
   - creator_context
+  - share_file
+  - bash
 ---
 
-# OpenBox Spoken Video Production
+# Spoken video production
 
-Create a user-supplied or generated-host vertical spoken video from a topic or full
-script. Skills teach the workflow; the build agent's allowlist and permission
-rules independently decide tool availability. Keep credentials and provider
-calls on the backend, and do not replace the native tools with shell or FFmpeg.
+The bundled scripts run in the sandbox, at
+`/opt/openbox/skills/video-production/scripts/` — this file is served from the
+backend, so a relative path would not resolve where bash actually runs. Set
+`S=/opt/openbox/skills/video-production/scripts` once and use `$S/...` below.
 
-Bundled detail is routed through `references/prompt-recipes.md`,
-`workflow-gates.md`, `asset-contract.md`, `quality-and-retries.md`, and
-`io-schema.json`. The essential workflow below is self-contained when those
-host-side files are not readable from the sandbox.
+This is craft knowledge, not a pipeline. Every tool below works on its own; a
+shot that needs to break one of these rules is allowed to. Depart from the
+workflow when the person's request calls for it, and say why.
+
+The tools own money and ownership: `video_generate` refuses what a model cannot
+do, refuses a second identical job already in flight, and enforces a daily
+ceiling. Nothing here needs to re-check those. What this skill knows is what
+makes a talking-head video *good*.
 
 ## Workflow
 
-1. Call `creator_context(action="get_user_context")` before drafting. Apply the
-   creator's voice, audience, and boundaries. Propose only a new stable fact via
-   `propose_memory`; its confirmation card is the confirmation. An empty context
-   is normal: do not stop the turn after this read.
-2. Call `video_project(action="create")` once. Use `mode="standard"` unless the
-   user explicitly delegates a bounded end-to-end test.
-3. Draft the complete word-for-word script (normally 45–60 seconds at about 3.2
-   Chinese characters/second), show it in chat, call `set_script`, then request
-   `script` approval in the same turn. A prose-only “if this is okay” question is
-   not approval: never end here without the native approval card or an actionable
-   tool error. Do not plan segments until that approval passes.
-4. Establish one host reference. For a user attachment, read its ready `asset_id`
-   from OpenBox attachment metadata; `/workspace/...` is inspection-only and is
-   invalid for asset-taking tools. Pass the exact ID once as the project-level
-   `character_reference_asset` in `set_segments`; never repeat the host in
-   segment `input_assets`. The backend applies that same anchor to every segment:
-   - For a supplied person, use the exact user-owned portrait image directly.
-   - For a generated or illustrated host, generate it once with `image_gen` if
-     needed, then use that resulting image in the same way.
-5. Split the approved script at semantic boundaries (five segments is a useful
-   30–60 second default; normally ≤40 Chinese characters and never >48; recount
-   every line after splitting). Use the same byte-for-byte `visual_anchor`.
-   Every spoken prompt uses explicit lint labels: `全片一致的画面基底：<anchor>`,
-   `固定镜头`, half-body/medium framing, `自然肢体动作：...`, `语气：...`, speech
-   lead immediately followed by `@<exact dialogue>`, and `无字幕`.
-   Leave `model` unset unless the user named one. Call `set_segments` once.
-6. Show the complete asset list and every segment's exact dialogue and full
-   prompt. Request `segments` approval, then `spend` approval. All gates are
-   server-enforced; `video_project(status)` reports what is missing.
-7. Read active segment IDs, job IDs, and exact idempotency keys from `status`.
-   Submit independent planned segments together in one assistant response, each
-   with only its project ID, segment ID, and returned key. Poll independent jobs
-   together using each job's returned `version` and incremented `wait_iteration`.
-   Keep dependent actions for one job ordered. A timeout is normal; never replace
-   an ambiguous paid task. On `polling_paused=true`, end the current run, report
-   the durable job ID, and resume that exact job only in a later turn; never cancel
-   or resubmit. On `recovery_blocked=true`, preserve it for its original route.
-8. Transcribe independent completed speech segments together with each exact
-   returned key; never transcribe `role="broll"`. Show each video, intended
-   dialogue, actual transcript, similarity, and phrase-level verdict before
-   requesting `quality` approval. Captions must use accepted actual STT, not
-   intended dialogue.
-9. Record explicit per-segment feedback before revision. Regenerate only rejected
-   or user-selected suspect segments through `revise_segment`; preserve every old
-   output and all approved segments. For `revise_segment`, `script_text` is only
-   the replacement dialogue of the selected segment, never the full production
-   script; `segment_prompt` is the complete prompt for that selected segment and
-   must contain `@` immediately followed by the same exact dialogue. Dialogue
-   changes reopen the affected approvals.
-10. Request `render` approval, submit the key from `status`, and verify audio,
-    duration, cleanup, and no remaining process. Hand off the attached MP4; use
-    an exact returned `download_url`, never one invented from a path/ID. On an
-    explicit recompose, reuse generated segments with the current key—never regenerate.
+1. **Read the creator.** `creator_context(action="get_user_context")` before
+   drafting — voice, audience, boundaries. Empty is normal; carry on.
+2. **Write the whole script first, in the person's voice.** Natural narration
+   runs about 4 Chinese characters per second, so 45–60s is roughly 170–220
+   characters, breaths included. Show it and get
+   a plain yes before spending anything.
+3. **Split at meaning, then let each line set its own length.** Five shots is a
+   good default for 30–60s. Keep a line under ~40 characters: past that the
+   model rushes the delivery and the caption needs three lines.
+   Run `python3 "$S/plan_shots.py" --target <asked> --rate <pace> --line …
+   --line …` and use the seconds it gives each shot. **Choose `--rate` from
+   the piece you just wrote** — a calm bedtime-routine explainer reads near
+   3.4 characters/second, an ordinary how-to near 4.0, a punchy hook or a
+   promo near 4.6. You know the tone; the script cannot infer it. **Never divide the requested total by the
+   shot count** — the model fills whatever time it is given: too much and it
+   invents words to pad the gap, too little and the delivery races. Both have
+   been measured (see `references/quality.md`). If the honest total overshoots
+   what the person asked for, trim the script or tell them the video will be
+   longer; squeezing the timing is the one thing that does not work.
+4. **Fix the presenter once.** One image is the anchor for every shot — a photo
+   the person supplied, or one from `image_gen`. Pass it as an input asset on
+   every shot with the same visual anchor sentence in every prompt.
+   Never anchor a later shot to an *earlier generated frame*: drift compounds.
+5. **Write one prompt per shot** using `references/prompt-recipes.md`. Check each
+   with `python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "…"
+   --anchor "…"`, then read what it says — it advises, it never blocks.
+6. **Pick the model deliberately.** `video_generate(action="models")` is the only
+   description of what each one accepts; `references/model-guide.md` covers the
+   trade-offs. Use `action="estimate"` to validate a shot for free before paying.
+7. **Generate every shot at once.** One `video_generate(action="submit")` per
+   shot, each with a distinct `idempotency_key` (`<slug>:shot<N>:v1`) **and its
+   `shot=<N>`** — concurrent shots finish out of order, and without that number
+   the chat labels whichever landed second "第 2 段". **All in the same
+   response** — then poll them together. Submitting one, waiting for
+   it, then submitting the next multiplies the wait by the number of shots.
+   Never pay for a whole-script single take "to see how it looks" and then
+   split it up: that is one wasted generation, and its footage duplicates
+   shot 1. Split first, then generate. A finished video lands in `/workspace`
+   automatically. **A timeout is normal, and a paid task is never replaced.**
+   On `polling_paused=true`, end the turn, report the `job_id`, and resume that
+   same id later — never resubmit, never cancel.
+8. **Check what was actually said.** Per shot:
+   `$S/extract_audio.sh shot1.mp4 shot1.mp3` →
+   `share_file(file_path="shot1.mp3", attach=false)` →
+   `video_transcribe(action="submit", asset_id=...)` →
+   `python3 "$S/compare_transcript.py" --intended "…" --heard "…"`.
+   Show the person the video, the intended line, the actual words, and the
+   verdict. `suspect` means look, not fail.
+9. **Regenerate only what is wrong.** A bad take gets a new key (`:v2`) and
+   leaves the old one alone. Keep every good shot.
+   **One shot has exactly one current take.** A `:v2` supersedes `:v1`; compose
+   from the current take of each shot only, and say which takes were replaced.
+   Two takes of the same line in the delivered cut is the failure this rule
+   exists to prevent — the person sees the same sentence twice and reads it as
+   a broken video, not as a retry.
+10. **Compose.** Captions come from the **actual transcript**, never the written
+    line — otherwise the words on screen drift from the audio.
+    `$S/build_ass.py` then `$S/compose.sh`. Hand over the result with
+    `share_file`, and verify it has audio and the length you expect.
 
-## Non-negotiable rules
+Keep notes in `/workspace/videos/<slug>/` with `$S/state.py` so a later
+turn can pick this up. It is a notebook, not a gate.
 
-- For any progress or recovery question, call `video_project(action="status")`
-  first and continue only from its active IDs, approvals, jobs, and keys.
-- A visible plan or chat confirmation is not a hash-bound approval. Editing
-  script, prompts, references, or outputs can reopen downstream gates.
-- Never retry an ambiguous paid submit or reuse a key with changed content.
-- Never use a generated segment as a new character reference, discard historical
-  revisions, manually fabricate captions, or claim completion before checks pass.
-- `allow_replan` and `replace_character_reference` require explicit user consent.
+## What actually goes wrong
+
+- **The presenter changes between shots.** Same anchor sentence, byte for byte,
+  in every prompt, plus the same reference image. On a model that supports it,
+  reuse one `seed` across shots; `last_frame` of the previous shot as the
+  `first_frame` of the next is stronger still. See `references/model-guide.md`.
+- **The model says something else.** Common and cheap to catch — always step 8.
+  Short substitutions (出片 → 出花) keep a high similarity and change the
+  meaning, which is exactly why the verdict is not just a number.
+- **Burned-in subtitles.** Ask for `无字幕` in every prompt; captions are a post
+  step, and a model that renders its own leaves you with two sets.
+- **Captions overflow.** `build_ass.py` wraps CJK explicitly because libass
+  breaks on whitespace and Chinese has none.
+- **Clips drift out of sync when joined.** `compose.sh` normalises fps, timebase
+  and audio format before concat. Do not hand-roll a simpler concat.
+
+## Reference
+
+- `references/prompt-recipes.md` — the prompt shape, per shot role
+- `references/model-guide.md` — choosing a model, continuity tactics, costs
+- `references/quality.md` — the transcript check and when to regenerate

@@ -15,10 +15,8 @@ from tool.tool import ToolContext
 
 BUILD_ONLY_TOOLS = {
     "image_gen",
-    "video_project",
     "video_generate",
     "video_transcribe",
-    "video_render",
     "creator_context",
     "skill_manage",
 }

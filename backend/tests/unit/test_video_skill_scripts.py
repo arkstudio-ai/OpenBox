@@ -414,3 +414,18 @@ def test_the_model_guide_records_where_smart_duration_actually_works():
 
     assert "12.05s" in flowed and "5.06s" in flowed
     assert "2–30 on this deployment" in flowed
+
+
+def test_the_skill_tells_the_agent_to_send_an_explicit_duration():
+    """-1 is fine for one clip and wrong for a cut.
+
+    A length the model picks per shot makes the total drift from the script
+    and pulls the captions out of step with the pauses, one shot at a time.
+    """
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+    guide = " ".join(
+        (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "Always send an explicit duration; do not use `-1`" in flowed
+    assert "Use an explicit duration for anything that gets cut together" in guide

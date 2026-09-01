@@ -62,6 +62,15 @@ clamping them:
 | Wan 3.0 / Prime | 2–30 | yes |
 | MiniMax H3 | 4–15 | no |
 
+### Use an explicit duration for anything that gets cut together
+
+`-1` is for a standalone clip, not for a piece assembled from shots. In a cut,
+a length the model chose per shot means the total drifts from the script, the
+shots do not sit at the rhythm the writing implies, and the captions built
+from each transcript stop matching where the pauses fall. The planner computes
+a number per line precisely so the cut has a shape; passing `-1` throws that
+away one shot at a time. Send the number.
+
 `-1` asks the model to choose the length. Where it works it really does
 choose: Seedance 2.0 returned 12.05s for a line that would otherwise have got
 the 5s default. The three SD tiers accept `-1` and then return exactly 5.06s —

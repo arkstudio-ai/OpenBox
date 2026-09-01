@@ -115,7 +115,13 @@ class WuyingDesktopService:
             # at this layer too, or the stale record wedges every ticket.
             if any(x in str(e) for x in ("NotFound", "InvalidDesktopId", "InvalidResourceId")):
                 log.warning(f"Desktop {desktop_id} gone at ownership check; releasing ghost")
-                await self.release_ghost(user_id)
+                try:
+                    await self.release_ghost(user_id)
+                except Exception as release_error:
+                    # DeleteDesktops on an already-gone desktop also raises
+                    # NotFound; the record is still cleared (finally block),
+                    # so the caller must get the clean not_provisioned answer.
+                    log.warning(f"Ghost release cleanup failed: {release_error}")
                 raise DesktopNotReady({"state": "not_provisioned"})
             raise
         return desktop_id, eu_id

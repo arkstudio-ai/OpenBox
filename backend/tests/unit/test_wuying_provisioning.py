@@ -171,6 +171,8 @@ def _stub_ecd(monkeypatch, service_module="sandbox.wuying_desktop_service", **be
 
     async def delete_desktop(desktop_id):
         behaviour.setdefault("deleted", []).append(desktop_id)
+        if behaviour.get("delete_fails"):
+            raise RuntimeError("Error: InvalidResourceId.NotFound (already gone)")
 
     monkeypatch.setattr(wuying_ecd, "create_desktop", create_desktop)
     monkeypatch.setattr(wuying_ecd, "wait_desktop_ready", wait_desktop_ready)
@@ -304,7 +306,9 @@ async def test_stopped_desktop_wakes_on_ticket(monkeypatch):
 
 
 async def test_ticket_target_releases_ghost_when_tags_report_not_found(monkeypatch):
-    behaviour = _stub_ecd(monkeypatch)
+    # delete_desktop also fails (the desktop is already gone) — the caller
+    # must still get the clean not_provisioned answer, not the cleanup error.
+    behaviour = _stub_ecd(monkeypatch, delete_fails=True)
 
     async def verify(desktop_id, user_id):
         raise RuntimeError(

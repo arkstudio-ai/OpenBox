@@ -764,3 +764,43 @@ python3 scripts/wuying_push_skill.py --env-file .env.wuying-prod
   自然消失。
 - §10 的两件运维事项未变：给 OpenBox 发专属 relay token（现与
   `bossip-center` 共用），以及是否放行 task 端点。
+| 13 | §7 | 技能脚本在沙箱可执行 | ✅ `plan_shots.py --rate 3.4` 正常输出 |
+| 14 | §14.6 | 本地启动不走代理 | ✅ entrypoint 丢弃 + 3 条单测 |
+
+后端 **1215 passed**；前端与移动端 **0 个文件改动**。
+
+### 15.5 放行 task 端点（用户已批准，待执行）
+
+用户批准了 §10.2，另一项（给 OpenBox 发专属 relay token）明确不做，维持与
+`bossip-center` 共用。
+
+**为什么只能改腾讯那台 nginx。** gw-1 的安全组把 3000 端口限死在
+`106.52.167.53/32`，规则描述写着「渠道商入口:仅腾讯前置 nginx 回源」——腾讯
+那台是唯一的 TLS 前门。放宽安全组让后端直连 gw-1:3000 能达到同样效果，但那
+是把带密钥的 API 放到明文 HTTP 上跨公网，不做。
+
+**改动**（`scratchpad/open_task_endpoint.sh`，幂等）：把现有 `/v1/videos` 的
+location 块**原样复制**再改路径，而不是新写一段——那个块已经带着分钟级视频
+提交需要的超时与头部，凭空写正是让"修复"变成 504 的常见方式。先备份、
+`nginx -t` 校验、失败自动回滚，通过才 reload。
+
+**代码侧已验证就绪**，切换是纯配置：
+
+```
+wan3.0-video / wan3.0-video-prime:  channel  sd2 → task
+video_generation.channel_providers: 增加      task: bossip
+```
+
+本地实测切换后的 payload 正是 wan3 适配器要的形状：
+
+```
+POST /v1/video/generations
+{"model":"wan3.0-video-prime","prompt":"…",
+ "metadata":{"resolution":"1080p","ratio":"9:16","duration":6,
+             "generate_audio":true,"seed":42,
+             "content":[{"type":"image_url","image_url":{"url":"…"},
+                         "role":"first_frame"}]}}
+```
+
+端点放行后即可切换，`last_frame → first_frame` 衔接随之可用——那是 §14.6
+留下的"场景漂移"唯一未解手段。

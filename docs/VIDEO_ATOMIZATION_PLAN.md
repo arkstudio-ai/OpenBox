@@ -659,3 +659,39 @@ nginx 白名单复核（POST 也一样）：只有 `/v1/videos` 前缀可达，`
 
 复测（11 段并发）完美复现了触发条件——落库顺序 7,4,3,6,9,8,11,5,2,1,10，
 与镜次完全错开；每条 relation 带对了自己的 ordinal，界面显示 1–11 有序。
+
+### 14.8 验收清单与证据（2026-09-01 收尾）
+
+先从本手册提取可验断言立成清单，再逐条到运行环境里验——而不是先测完再
+补文档。环境：worktree 自身的前后端 + 无影 dev 桌面。
+
+**环境前提**（每项都当场取证，不靠记忆）：
+
+| 项 | 证据 |
+|---|---|
+| 无影 dev 配置来自 main | `.env.wuying-dev` / `.env.wuying-prod` 与 main 逐字节一致 |
+| 后端来自本 worktree | `:8080` 进程 cwd = `…/OpenBox-video-atomization/backend` |
+| 前端来自本 worktree | `:3000` 进程 cwd = `…/OpenBox-video-atomization/frontend-v2` |
+| 沙箱可达 | `:18002/alive` HTTP 200，桌面 `ecd-8zp47qagrsc95h67t` |
+| 出站直连 | 后端进程无 `HTTP(S)_PROXY` |
+
+**清单结果**：
+
+| # | 手册出处 | 断言 | 结果 |
+|---|---|---|---|
+| 1 | §11 | 前端/移动端零改动 | ✅ 改动文件数 0 |
+| 2 | §14.4 | composer 选择器 9 项、tier 正确、Wan 3.0 默认 | ✅ |
+| 3 | §1.2 | 新补 3 个模型出现在选择器 | ✅ Seedance 2.0 Fast / 1.5 Pro / MiniMax H3 |
+| 4 | §14.4 | `action="models"` 端到端 | ✅ 返回 9 个模型 |
+| 5 | §3.2 | `estimate` 拒绝说明原因 | ✅ "supports ratios …; requested 21:9" |
+| 6 | §3.3 | 额度背压可见 | ✅ `daily_submits_used=36/50` |
+| 7 | §3.2 | 完成即物化 + `share_file` 交付 | ✅ `/workspace/uploads` 35 个 mp4 |
+| 8 | §11 | 历史会话只读渲染（零迁移） | ✅ 22 条 production 保留，会话与视频照常显示 |
+| 9 | §8 | `video_project`/`video_render` 已退役 | ✅ 残留 0，原子工具 5/5 在位 |
+| 10 | §14.6 | 并发提交 | ✅ 11 段首尾相差 **60ms** |
+| 11 | §14.6 | 人物跨段一致 | ✅ 锚点图 ↔ 各段同一人 |
+| 12 | §14.6 | 内容无重复 | ✅ 11 个镜次 / 11 段；`shot5:v2` 是质检后的重做，符合 `:v2 取代 :v1` |
+| 13 | §7 | 技能脚本在沙箱可执行 | ✅ `plan_shots.py --rate 3.4` 正常输出 |
+| 14 | §14.6 | 本地启动不走代理 | ✅ entrypoint 丢弃 + 3 条单测 |
+
+后端 **1215 passed**；前端与移动端 **0 个文件改动**。

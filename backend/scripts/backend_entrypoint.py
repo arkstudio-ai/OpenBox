@@ -14,6 +14,30 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 LOCAL_DATABASE_URL = "postgresql+asyncpg://openbox:openbox_dev@localhost:5432/openbox"
 
+#: httpx and boto both honour these by default, so a VPN client that exports
+#: them globally silently reroutes every backend call — the video relay, OSS
+#: transfers, DashScope, the WUYING tunnel. All of those are mainland-direct
+#: and want no proxy; a flaky tunnel there surfaces as "ConnectError" from a
+#: provider that is in fact perfectly healthy (observed 2026-09-01: two paid
+#: generations finished upstream while our transfer failed).
+_PROXY_VARS = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FTP_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "ftp_proxy",
+)
+
+
+def _drop_inherited_proxy() -> None:
+    """Start the dev server on a direct connection.
+
+    Set OPENBOX_KEEP_PROXY=1 for the rare deployment that genuinely reaches
+    its providers through one.
+    """
+    if os.environ.get("OPENBOX_KEEP_PROXY") == "1":
+        return
+    dropped = [name for name in _PROXY_VARS if os.environ.pop(name, None)]
+    if dropped:
+        print(f"[entrypoint] ignoring inherited proxy: {', '.join(sorted(dropped))}")
+
 
 def _migrate() -> None:
     alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
@@ -32,6 +56,7 @@ def main() -> None:
 
     os.chdir(BACKEND_DIR)
     load_dotenv(BACKEND_DIR / ".env")
+    _drop_inherited_proxy()
     os.environ.setdefault("DATABASE_URL", LOCAL_DATABASE_URL)
 
     if not options.skip_migrate:

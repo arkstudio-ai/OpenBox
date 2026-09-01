@@ -33,7 +33,10 @@ comparing — nobody hears them.
 
 ## Regenerating
 
-Change only the shot that is wrong. Give it a fresh idempotency key (`:v2`),
+Change only the shot that is wrong, and keep exactly one current take per shot:
+a `:v2` supersedes `:v1`, and only current takes go into the composition. The
+old take stays on disk as evidence, never in the cut. Track which is current in
+`state.py` so a later turn does not have to guess. Give it a fresh idempotency key (`:v2`),
 keep the old take, and leave every good shot alone. If the line itself was the
 problem, rewrite that line and the prompt together — the prompt carries the
 verbatim words after `@`, so they must move as a pair.

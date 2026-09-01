@@ -46,12 +46,16 @@ makes a talking-head video *good*.
 6. **Pick the model deliberately.** `video_generate(action="models")` is the only
    description of what each one accepts; `references/model-guide.md` covers the
    trade-offs. Use `action="estimate"` to validate a shot for free before paying.
-7. **Generate the shots.** One `video_generate(action="submit")` per shot with a
-   distinct `idempotency_key` (`<slug>:shot<N>:v1`). Independent shots can go out
-   together. A finished video lands in `/workspace` automatically.
-   **A timeout is normal, and a paid task is never replaced.** On
-   `polling_paused=true`, end the turn, report the `job_id`, and resume that same
-   id later — never resubmit, never cancel.
+7. **Generate every shot at once.** One `video_generate(action="submit")` per
+   shot, each with a distinct `idempotency_key` (`<slug>:shot<N>:v1`), **all in
+   the same response** — then poll them together. Submitting one, waiting for
+   it, then submitting the next multiplies the wait by the number of shots.
+   Never pay for a whole-script single take "to see how it looks" and then
+   split it up: that is one wasted generation, and its footage duplicates
+   shot 1. Split first, then generate. A finished video lands in `/workspace`
+   automatically. **A timeout is normal, and a paid task is never replaced.**
+   On `polling_paused=true`, end the turn, report the `job_id`, and resume that
+   same id later — never resubmit, never cancel.
 8. **Check what was actually said.** Per shot:
    `$S/extract_audio.sh shot1.mp4 shot1.mp3` →
    `share_file(file_path="shot1.mp3", attach=false)` →
@@ -61,6 +65,11 @@ makes a talking-head video *good*.
    verdict. `suspect` means look, not fail.
 9. **Regenerate only what is wrong.** A bad take gets a new key (`:v2`) and
    leaves the old one alone. Keep every good shot.
+   **One shot has exactly one current take.** A `:v2` supersedes `:v1`; compose
+   from the current take of each shot only, and say which takes were replaced.
+   Two takes of the same line in the delivered cut is the failure this rule
+   exists to prevent — the person sees the same sentence twice and reads it as
+   a broken video, not as a retry.
 10. **Compose.** Captions come from the **actual transcript**, never the written
     line — otherwise the words on screen drift from the audio.
     `$S/build_ass.py` then `$S/compose.sh`. Hand over the result with

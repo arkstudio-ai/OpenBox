@@ -250,3 +250,29 @@ def test_the_skill_shows_the_flags_each_script_actually_takes():
 
     assert "--intended" in text and "--heard" in text
     assert "--prompt-file" in text and "--anchor" in text
+
+
+def test_the_skill_says_to_fan_out_shots_rather_than_walk_them():
+    """One-at-a-time submission multiplies the wait by the number of shots.
+
+    A run on 2026-09-01 submitted four paid generations six minutes apart, and
+    one of them was a whole-script single take the agent then discarded after
+    splitting — a duplicate of shot 1, paid for twice over.
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "all in\n   the same response" in text
+    assert "Split first, then generate" in text
+
+
+def test_the_skill_says_one_current_take_per_shot():
+    """A retry left both takes of the same line in the delivered segment list.
+
+    Two takes of one sentence reads as a broken video, not as a retry, so the
+    rule is explicit: :v2 supersedes :v1 and only current takes are composed.
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    quality = (SCRIPTS.parent / "references/quality.md").read_text(encoding="utf-8")
+
+    assert "One shot has exactly one current take" in text
+    assert "supersedes" in text and "supersedes" in quality

@@ -400,3 +400,17 @@ def test_the_skill_takes_both_bounds_from_the_model():
     assert "--min-shot-seconds" in flowed
     assert "--max-shot-seconds" in flowed
     assert "Seedance takes 4–15s, Wan 3.0 takes 2–30s" in flowed
+
+
+def test_the_model_guide_records_where_smart_duration_actually_works():
+    """"Accepted" and "honoured" differ, and the guide has to say which.
+
+    Seedance 2.0 returned 12.05s for -1 — a length it chose. The three SD
+    tiers accept -1 and return 5.06s, which is the default, so there is no
+    evidence the model chose anything.
+    """
+    guide = (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8")
+    flowed = " ".join(guide.split())
+
+    assert "12.05s" in flowed and "5.06s" in flowed
+    assert "2–30 on this deployment" in flowed

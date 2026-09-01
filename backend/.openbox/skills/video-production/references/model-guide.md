@@ -57,10 +57,17 @@ clamping them:
 
 | model | seconds | smart (-1) |
 |---|---|---|
-| Seedance 2.0 / 2.0 Fast | 4–15 | no |
-| SD 480p / 720p / 1080p | 4–15 | no |
+| Seedance 2.0 / 2.0 Fast | 4–15 | yes |
+| SD 480p / 720p / 1080p | 4–15 | **no** |
 | Wan 3.0 / Prime | 2–30 | yes |
 | MiniMax H3 | 4–15 | no |
+
+`-1` asks the model to choose the length. Where it works it really does
+choose: Seedance 2.0 returned 12.05s for a line that would otherwise have got
+the 5s default. The three SD tiers accept `-1` and then return exactly 5.06s —
+indistinguishable from the default, so treat it as unsupported there and send
+a number. Wan 3.0's range is 2–30 on this deployment, wider than the 2–15 in
+通义万相 2.7's public docs, and 30s was measured as 30.02s of actual video.
 
 Two consequences for splitting. A line that needs less than the model's floor
 gets padded up to it — on Seedance a three-character line still occupies 4s,

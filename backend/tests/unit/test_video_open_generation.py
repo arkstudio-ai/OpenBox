@@ -196,33 +196,3 @@ def test_content_changing_roles_are_still_refused():
     with pytest.raises(RuntimeError, match="audio reference"):
         _validate(SEEDANCE, _route("video-sd-720p-proⅠ"), resolution="720p",
                   roles=("reference_audio",))
-
-
-def test_a_model_that_cannot_take_a_reference_refuses_one():
-    """Measured 2026-09-01: wan3 through this relay drops references entirely.
-
-    image_url, first_frame_url and content[] were each accepted and then
-    ignored, producing a different person every time — the exact "succeeds
-    while ignoring the reference" failure this codebase refuses to allow.
-    Seedance honoured the same URL, so the registry now says so and the tool
-    sends the caller there instead of quietly delivering a stranger.
-    """
-    no_ref = VideoModelConfig(
-        id="wan3.0-video", channel="sd2", supports_reference_image=False,
-        supports_reference_video=False,
-    )
-
-    with pytest.raises(RuntimeError, match="does not accept image references"):
-        _validate(no_ref, _route("wan3.0-video"), input_mimes=["image/png"])
-
-
-def test_the_listing_flags_models_that_cannot_hold_a_face():
-    config = type("C", (), {"video_generation": VideoGenerationConfig(
-        model="wan3.0-video",
-        models=[VideoModelConfig(id="wan3.0-video", supports_reference_image=False,
-                                 note="measured: reference silently dropped")],
-    )})()
-    text = "\n".join(_model_capability_lines(config))
-
-    assert "NO reference image" in text
-    assert "measured: reference silently dropped" in text

@@ -9,8 +9,7 @@ What the registry cannot tell you:
 
 | Situation | Choose |
 |---|---|
-| **Anything with a fixed presenter or product** | **A model that lists reference-image support.** This outranks every other consideration: a model without it invents a new person per shot |
-| A shot with no reference material | The configured default — widest parameter range: 2–30s, six ratios, seed |
+| Default vertical talking head | The configured default (Wan 3.0 today) — widest parameter range: 2–30s, six ratios, seed, first/last frame |
 | A quick look at whether an idea works | The cheapest fast tier at 480p, then regenerate the keeper at full resolution |
 | Final delivery | A 1080p tier |
 | The shot uses a reference **video** | Not the 720p tier — it drops video references upstream, and you pay for a take that ignored them |
@@ -22,17 +21,12 @@ validation and costs nothing.
 
 In order of strength:
 
-0. **Use a model that can actually receive a reference image.** Everything
-   below is worthless without this. `action="models"` marks the ones that
-   cannot; measured behaviour, not a vendor feature list, decides that flag.
-1. **The same reference image on every shot**, and a prompt that describes the
-   *action* rather than the person. "画面中的人物自然看向镜头" beats a paragraph
-   re-describing her face and clothes — a full description competes with the
-   photo and the model will happily follow the words instead.
-2. **One `seed` reused across shots**, on a model that accepts one.
-3. **`last_frame` of shot N as the `first_frame` of shot N+1** — the strongest
-   continuity there is, and currently unreachable: it needs the task endpoint,
-   which this gateway does not expose.
+1. **Same anchor sentence + same reference image, every shot.** Always do this.
+2. **One `seed` reused across shots**, on a model that accepts one. Same seed
+   plus same anchor removes most of the remaining drift, for free.
+3. **`last_frame` of shot N as the `first_frame` of shot N+1**, on a model that
+   accepts frame roles. Strongest continuity available, and the honest way to
+   do it — the shots genuinely join.
 
 What not to do: never feed a **generated** clip's frame back as the general
 character reference. Each generation drifts a little from the anchor; anchoring

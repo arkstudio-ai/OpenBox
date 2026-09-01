@@ -1610,13 +1610,7 @@ def _model_capability_lines(config) -> list[str]:
         ]
         if capabilities:
             parts.append(f"supports={', '.join(capabilities)}")
-        if not entry.supports_reference_image:
-            # The single most consequential limit: a model that cannot take a
-            # reference image cannot hold a person's face across shots.
-            parts.append("NO reference image (cannot hold a face)")
         lines.append("  " + "  ".join(parts))
-        if entry.note:
-            lines.append(f"      note: {entry.note}")
     if not settings.models:
         lines.append("  (no models declared; the configured default is used for every request)")
     return lines

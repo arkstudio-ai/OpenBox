@@ -149,22 +149,15 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! fc-list :lang=zh | grep -q .; then
   rm -rf /var/lib/apt/lists/*
 fi
 echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head -1 | cut -d' ' -f3)"
-echo "node 22 is delivered with the local media bundle in stage 2"
 """, timeout=900)
 
 
 def install_action_server(d: Desktop) -> None:
     print("[2/5] action server")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
-    d.put(REPO / "container" / "media_jobs.py", "/opt/action_server/media_jobs.py")
-    d.put(REPO / "container" / "media-jobs.json", "/opt/openbox/media/media-jobs.json")
     for local_path in sorted(path for path in VIDEO_PRODUCTION_SKILL_DIR.rglob("*") if path.is_file()):
         relative = local_path.relative_to(VIDEO_PRODUCTION_SKILL_DIR)
         d.put(local_path, str(pathlib.PurePosixPath("/opt/openbox/skills/video-production") / relative))
-    d.put(REPO / "container" / "media-runtime" / "package.json", "/opt/openbox/media/package.json")
-    package_lock = REPO / "container" / "media-runtime" / "package-lock.json"
-    if package_lock.exists():
-        d.put(package_lock, "/opt/openbox/media/package-lock.json")
     d.run(r"""
 set -e
 cat > /opt/action_server/requirements.txt <<'EOF'
@@ -181,20 +174,11 @@ EOF
 pip3 install -q --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
      -r /opt/action_server/requirements.txt
 python3 -c "import fastapi,uvicorn,psutil,yaml,sse_starlette,httpx,websockets" && echo "deps ok"
-python3 -m py_compile /opt/action_server/action_server.py /opt/action_server/media_jobs.py
+python3 -m py_compile /opt/action_server/action_server.py
 echo "action server dependencies ok"
 """, timeout=900)
-    # npm never runs on the mainland desktop. Build linux/amd64 locally, use a
-    # short-lived OSS object for transfer, then delete the object after SHA-256
-    # verification and an atomic node_modules swap.
-    from wuying_media_runtime import ensure_local_media_runtime
-
-    ensure_local_media_runtime(d)
-    d.run(
-        "cd /opt/openbox/media && "
-        "node_modules/.bin/hyperframes telemetry disable >/dev/null 2>&1 || true",
-        timeout=120,
-    )
+    # The HyperFrames renderer is gone with the media worker: composition is
+    # now the agent running ffmpeg, which the desktop already has.
 
 
 def install_dev_browser(d: Desktop) -> None:
@@ -239,8 +223,6 @@ Wants=network-online.target
 Type=simple
 Environment=SESSION_API_KEY={api_key}
 Environment=PYTHONUNBUFFERED=1
-Environment=MEDIA_JOBS_CONFIG=/opt/openbox/media/media-jobs.json
-Environment=HYPERFRAMES_BROWSER_PATH=/usr/bin/google-chrome
 WorkingDirectory=/workspace
 ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
 Restart=always

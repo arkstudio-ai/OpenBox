@@ -215,15 +215,6 @@ async def _recover_job(job) -> bool:
             completed_at=datetime.now(timezone.utc),
         )
         await vp._mark_asset(job.output_asset_id, status="failed")
-        if job.segment_id:
-            from tool.video_workflow import mark_segment_job
-
-            await mark_segment_job(
-                job.segment_id,
-                job.id,
-                user_id=job.user_id,
-                status=state,
-            )
         log.info(f"Settled stranded video job {job.id} as {state}")
         return True
 

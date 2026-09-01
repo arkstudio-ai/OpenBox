@@ -19,10 +19,9 @@ from urllib.parse import urlsplit
 
 
 USER_ID = "restart-e2e-user"
-PRODUCTION_ID = "restart-e2e-production"
-SEGMENT_ID = "restart-e2e-segment"
 MODEL = "restart-e2e-seedance"
-IDEMPOTENCY_KEY = f"{PRODUCTION_ID}:{SEGMENT_ID}:generate"
+PROMPT = "restart-e2e shot: a locked-off half-body presenter"
+IDEMPOTENCY_KEY = "restart-e2e:shot1:v1"
 TASK_ID = "mock-provider-task-1"
 RESULT_PREFIX = "RESTART_E2E_RESULT="
 
@@ -87,13 +86,25 @@ def _patch_runtime(provider_url: str):
     )
     video._configured_target = lambda model_override=None: (target, settings)
 
-    # execute_generate only needs the declared-model list after route resolution.
-    # Supplying a minimal, local config also prevents this E2E from consulting a
-    # developer's real provider configuration.
+    # A minimal local config: the declared-model list plus the defaults an
+    # open request falls back to. Supplying it here also keeps this E2E from
+    # consulting a developer's real provider configuration.
     import core.config
 
     core.config.get_config = lambda: SimpleNamespace(
-        video_generation=SimpleNamespace(models=[])
+        video_generation=SimpleNamespace(
+            models=[],
+            model=MODEL,
+            default_resolution="720p",
+            default_ratio="9:16",
+            default_duration=-1,
+            default_generate_audio=True,
+            default_watermark=False,
+            daily_job_limit=0,
+            refuse_duplicate_in_flight=False,
+            dedupe=False,
+            provider_input_url_ttl_seconds=60,
+        )
     )
     return video, target
 
@@ -109,145 +120,12 @@ async def _open_database(path: Path, *, create: bool) -> None:
             await connection.run_sync(Base.metadata.create_all)
 
 
-async def _seed_approved_segment() -> None:
-    from db.base import get_db_session
-    from db.models.user import User
-    from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
-    from tool.video_workflow import content_hash, spend_scope
-
-    now = datetime.now(timezone.utc)
-    script = "重启恢复验收。"
-    script_hash = content_hash({"script_text": script})
-    production = VideoProduction(
-        id=PRODUCTION_ID,
-        user_id=USER_ID,
-        session_id=None,
-        project_id=None,
-        title="进程级恢复验收",
-        brief="仅调用本地 mock provider",
-        mode="standard",
-        status="spend_ok",
-        target_duration_seconds=5,
-        ratio="9:16",
-        resolution="720p",
-        quality_policy="required",
-        subtitles=None,
-        channel_name="",
-        visual_anchor="固定镜头",
-        character_asset_id=None,
-        script_text=script,
-        script_hash=script_hash,
-        plan_hash="restart-e2e-plan",
-        render_asset_id=None,
-        error=None,
-        created_at=now,
-        updated_at=now,
-        completed_at=None,
-    )
-    segment = VideoSegment(
-        id=SEGMENT_ID,
-        production_id=PRODUCTION_ID,
-        ordinal=1,
-        revision=1,
-        is_active=True,
-        role="body",
-        script_text=script,
-        prompt="固定镜头，中景，主持人自然说：@重启恢复验收。 无字幕。",
-        content_hash=content_hash({"restart-e2e-segment": 1}),
-        model=MODEL,
-        input_asset_ids=[],
-        lint_data={"ok": True},
-        status="planned",
-        generation_job_id=None,
-        output_asset_id=None,
-        transcript_text=None,
-        transcript_data={},
-        stt_similarity=None,
-        stt_verdict=None,
-        stt_notes=[],
-        stt_checked_at=None,
-        review_status=None,
-        review_note=None,
-        created_at=now,
-        updated_at=now,
-    )
-    approvals = [
-        VideoApproval(
-            id="restart-e2e-script-approval",
-            production_id=PRODUCTION_ID,
-            user_id=USER_ID,
-            session_id=None,
-            kind="script",
-            scope_hash=script_hash,
-            decision="approved",
-            answer="测试批准",
-            evidence_message_id=None,
-            evidence_part_id=None,
-            metadata_data={},
-            created_at=now,
-        ),
-        VideoApproval(
-            id="restart-e2e-segments-approval",
-            production_id=PRODUCTION_ID,
-            user_id=USER_ID,
-            session_id=None,
-            kind="segments",
-            scope_hash=production.plan_hash,
-            decision="approved",
-            answer="测试批准",
-            evidence_message_id=None,
-            evidence_part_id=None,
-            metadata_data={},
-            created_at=now,
-        ),
-        VideoApproval(
-            id="restart-e2e-spend-approval",
-            production_id=PRODUCTION_ID,
-            user_id=USER_ID,
-            session_id=None,
-            kind="spend",
-            scope_hash=spend_scope(production, [segment]),
-            decision="approved",
-            answer="仅限本地 mock",
-            evidence_message_id=None,
-            evidence_part_id=None,
-            metadata_data={},
-            created_at=now,
-        ),
-    ]
-    async with get_db_session() as db:
-        db.add(
-            User(
-                id=USER_ID,
-                username=USER_ID,
-                email=None,
-                password_hash=None,
-                avatar_url=None,
-                role="user",
-                is_active=True,
-                oauth_provider=None,
-                oauth_id=None,
-                failed_login_count=0,
-                locked_until=None,
-                monthly_cost_limit=None,
-                is_deleted=False,
-                deleted_at=None,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        db.add(production)
-        db.add(segment)
-        db.add_all(approvals)
-
-
 async def _snapshot() -> dict:
     from sqlalchemy import select
 
     from db.base import get_db_session
     from db.models.file_asset import FileAsset
     from db.models.video_job import VideoJob
-    from db.models.video_production import VideoSegment
 
     async with get_db_session() as db:
         job = (
@@ -259,7 +137,6 @@ async def _snapshot() -> dict:
                 )
             )
         ).scalar_one()
-        segment = await db.get(VideoSegment, SEGMENT_ID)
         asset = await db.get(FileAsset, job.output_asset_id)
         return {
             "pid": os.getpid(),
@@ -272,9 +149,6 @@ async def _snapshot() -> dict:
             "route_fingerprint": (job.request_data or {}).get(
                 "provider_route_fingerprint"
             ),
-            "segment_status": segment.status,
-            "segment_job_id": segment.generation_job_id,
-            "segment_asset_id": segment.output_asset_id,
             "asset_status": asset.status,
             "asset_size": asset.size,
         }
@@ -282,7 +156,6 @@ async def _snapshot() -> dict:
 
 async def _submit(database: Path, provider_url: str) -> dict:
     await _open_database(database, create=True)
-    await _seed_approved_segment()
     video, _target = _patch_runtime(provider_url)
 
     from tool.tool import ToolContext
@@ -290,8 +163,8 @@ async def _submit(database: Path, provider_url: str) -> dict:
     result = await video.execute_generate(
         video.VideoGenerateArgs(
             action="submit",
-            production_id=PRODUCTION_ID,
-            segment_id=SEGMENT_ID,
+            prompt=PROMPT,
+            model=MODEL,
             idempotency_key=IDEMPOTENCY_KEY,
         ),
         ToolContext(user_id=USER_ID),
@@ -317,8 +190,8 @@ async def _recover(database: Path, provider_url: str) -> dict:
     replay_before_recovery = await video.execute_generate(
         video.VideoGenerateArgs(
             action="submit",
-            production_id=PRODUCTION_ID,
-            segment_id=SEGMENT_ID,
+            prompt=PROMPT,
+            model=MODEL,
             idempotency_key=IDEMPOTENCY_KEY,
         ),
         ToolContext(user_id=USER_ID),
@@ -352,8 +225,8 @@ async def _recover(database: Path, provider_url: str) -> dict:
     replay = await video.execute_generate(
         video.VideoGenerateArgs(
             action="submit",
-            production_id=PRODUCTION_ID,
-            segment_id=SEGMENT_ID,
+            prompt=PROMPT,
+            model=MODEL,
             idempotency_key=IDEMPOTENCY_KEY,
         ),
         ToolContext(user_id=USER_ID),

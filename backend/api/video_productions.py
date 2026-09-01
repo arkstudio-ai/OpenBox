@@ -1,9 +1,9 @@
-"""Read surface + user-authoritative segment feedback for video productions.
+"""Read surface for historical video productions, plus segment feedback.
 
-The agent drives productions through the `video_project` tool; this router
-gives the frontend a way to list productions, read the full snapshot, and
-record per-segment feedback directly (the tool path is agent-relayed, this
-one carries the user's own auth). Ownership per query: foreign rows are 404.
+These rows were written by the retired `video_project` tool. They are kept so
+old conversations keep rendering; the read model lives in `video/productions`.
+Feedback stays writable because it is the user's own annotation on a take.
+Ownership per query: foreign rows are 404.
 """
 from datetime import datetime, timezone
 from typing import Literal
@@ -68,7 +68,7 @@ async def list_productions(
 
 @router.get("/{production_id}")
 async def get_production(production_id: str, current_user: dict = Depends(get_current_user)):
-    from tool.video_workflow import production_snapshot
+    from video.productions import production_snapshot
 
     snapshot = await production_snapshot(production_id, current_user["user_id"])
     if snapshot is None:
@@ -83,7 +83,7 @@ async def set_segment_feedback(
     body: SegmentFeedbackBody,
     current_user: dict = Depends(get_current_user),
 ):
-    from tool.video_workflow import _owned_production, _active_segments, _refresh_status
+    from video.productions import _active_segments, _owned_production, _refresh_status
 
     if body.feedback == "rejected" and not (body.note or "").strip():
         raise HTTPException(status_code=422, detail="rejected feedback requires a note")

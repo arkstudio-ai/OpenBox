@@ -12,24 +12,17 @@ from tool.registry import get_tool, register_builtin_tools
 
 
 PERMANENT_MEDIA_TOOLS = (
-    "video_project",
     "video_generate",
     "video_transcribe",
-    "video_render",
     "image_gen",
     "creator_context",
 )
 
 EXPECTED_ACTIONS = {
-    "video_project": {
-        "create", "set_script", "set_segments", "request_approval",
-        "revise_segment", "set_segment_feedback", "status",
-    },
     "video_generate": {
         "models", "estimate", "submit", "status", "wait", "cancel", "fetch",
     },
     "video_transcribe": {"submit", "status", "wait", "cancel", "retry"},
-    "video_render": {"submit", "status", "wait", "cancel", "retry"},
     "creator_context": {
         "get_user_context", "write_memory", "propose_memory",
         "search_memories", "list_active_memories",
@@ -134,10 +127,7 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
         assert schema["required"], name
         assert "$ref" not in json.dumps(schema), name
 
-    # video_project is being retired; while both it and the open generation
-    # shape are registered the permanent set is temporarily over budget.
-    # The ceiling returns to 10_000 once video_project/video_render are gone.
-    assert sum(sizes.values()) <= 11_500, sizes
+    assert sum(sizes.values()) <= 10_000, sizes
 
     for name, actions in EXPECTED_ACTIONS.items():
         assert schemas[name]["required"] == ["action"]
@@ -148,21 +138,17 @@ def test_permanent_media_tool_schemas_fit_the_request_budget():
     assert schemas["image_gen"]["properties"]["n"]["maximum"] == 4
     assert schemas["image_gen"]["properties"]["input_images"]["maxItems"] == 16
 
-    project = schemas["video_project"]["properties"]
-    assert (project["target_duration_seconds"]["minimum"],
-            project["target_duration_seconds"]["maximum"]) == (15, 180)
-    assert project["segments"]["maxItems"] == 100
+    generate = schemas["video_generate"]["properties"]
+    assert (generate["duration"]["minimum"], generate["duration"]["maximum"]) == (-1, 300)
+    assert generate["input_assets"]["maxItems"] == 8
+    assert generate["seed"]["minimum"] == 0
 
-    for name in ("video_generate", "video_transcribe", "video_render"):
+    for name in ("video_generate", "video_transcribe"):
         properties = schemas[name]["properties"]
         assert (properties["wait_seconds"]["minimum"],
                 properties["wait_seconds"]["maximum"]) == (0.0, 25.0)
         assert (properties["idempotency_key"]["minLength"],
                 properties["idempotency_key"]["maxLength"]) == (3, 180)
-
-    render = schemas["video_render"]["properties"]
-    assert (render["width"]["minimum"], render["width"]["maximum"]) == (320, 3840)
-    assert render["segment_assets"]["maxItems"] == 100
 
     context = schemas["creator_context"]["properties"]
     assert (context["limit"]["minimum"], context["limit"]["maximum"]) == (1, 100)

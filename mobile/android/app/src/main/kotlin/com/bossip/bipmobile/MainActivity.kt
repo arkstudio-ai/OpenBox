@@ -1,4 +1,4 @@
-package com.bossip.bossip_mobile
+package com.bossip.bipmobile
 
 import io.flutter.embedding.android.FlutterActivity
 

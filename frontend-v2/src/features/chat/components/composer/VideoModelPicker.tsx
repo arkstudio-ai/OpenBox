@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Check, ChevronRight, Clapperboard } from "lucide-react"
+import { Clapperboard } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { Menu } from "@/shared/ui/Menu"
 import type { VideoModelInfo } from "@/shared/types/api"
@@ -18,113 +18,99 @@ interface Props {
  *  through the same gateway, and the row that matters to the reader is the
  *  price tier, not the badge.
  *
- *  Resolution hangs off each model as a submenu rather than sitting in its own
- *  pill, because the pair is what gets generated: one model offers 480p and
- *  another only 1080p, so a standalone resolution control would spend most of
- *  its life offering choices the current model cannot honour.
+ *  Resolution sits inline on each row rather than behind a hover submenu. A
+ *  submenu had to float outside the menu box to avoid clipping, which put it
+ *  over the conversation with nothing tying it to its row; it also left the
+ *  single-tier models with no chevron and no tier, reading as if they could
+ *  not be chosen at all. Inline chips show every model what it offers, and
+ *  one click picks the pair.
  */
 export function VideoModelPicker({ models, activeId, activeResolution, onPick }: Props) {
   const { t } = useTranslation("chat")
   const [open, setOpen] = useState(false)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const closeTimer = useRef<number | undefined>(undefined)
 
   // A conversation can be pinned to a model no longer offered — retired, or
   // dropped from allowed_models since. Show the id rather than nothing.
   const active = models.find((m) => m.id === activeId)
   const activeName = active?.name ?? activeId ?? ""
 
-  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
-
   if (models.length === 0) return null
-
-  // Collapse the submenu here rather than in an effect watching `open`:
-  // setState inside an effect cascades a second render for no benefit.
-  const close = () => {
-    setOpen(false)
-    setExpanded(null)
-  }
 
   const choose = (model: VideoModelInfo, resolution: string) => {
     onPick(model.id, resolution)
-    close()
+    setOpen(false)
   }
-
-  const resolutionsOf = (model: VideoModelInfo) => model.resolutions ?? []
 
   return (
     <div className="relative">
-      <Menu open={open} onClose={close} className="end-0 bottom-10 w-72">
+      <Menu open={open} onClose={() => setOpen(false)} className="end-0 bottom-10 w-80">
         {models.map((m) => {
-          const tiers = resolutionsOf(m)
+          const tiers = m.resolutions ?? []
           const isActive = m.id === activeId
-          // One tier is not a choice — picking the model already made it.
-          const hasSubmenu = tiers.length > 1
           return (
             <div
               key={m.id}
-              className="relative"
-              onMouseEnter={() => {
-                window.clearTimeout(closeTimer.current)
-                setExpanded(m.id)
-              }}
-              onMouseLeave={() => {
-                closeTimer.current = window.setTimeout(() => setExpanded(null), 160)
-              }}
+              className={cn(
+                "flex items-center gap-2 rounded-full py-1.5 pe-1.5 ps-3",
+                isActive && "bg-hairsoft",
+              )}
             >
+              <Clapperboard
+                className={cn("size-4 flex-none", isActive ? "text-ink" : "text-n600")}
+              />
               <button
                 type="button"
-                onClick={() => choose(m, tiers[0] ?? "")}
-                className="hover:bg-hairsoft flex w-full items-center gap-2.5 rounded-full px-3 py-2 text-start"
+                onClick={() => choose(m, activeOrFirst(tiers, isActive, activeResolution))}
+                className="text-ink min-w-0 flex-1 truncate text-start text-sm"
               >
-                <Clapperboard
-                  className={cn("size-4 flex-none", isActive ? "text-ink" : "text-n600")}
-                />
-                <span className="text-ink min-w-0 flex-1 truncate text-sm">{m.name}</span>
-                {/* The tier, not the channel: what a switch costs is the only
-                    thing a reader can act on — the wire channel is our problem. */}
-                {m.tier && <span className="text-n600 text-2xs flex-none">{m.tier}</span>}
-                {isActive && activeResolution && (
-                  <span className="text-n600 text-2xs flex-none">{activeResolution}</span>
-                )}
-                {isActive && !hasSubmenu && (
-                  <Check className="text-ink size-3.5 flex-none" strokeWidth={2.4} />
-                )}
-                {hasSubmenu && <ChevronRight className="text-n600 size-3.5 flex-none" />}
+                {m.name}
               </button>
-
-              {hasSubmenu && expanded === m.id && (
-                <div className="border-hairline bg-paper absolute end-full top-0 me-1 w-32 rounded-2xl border p-1 shadow-lg">
-                  {tiers.map((tier) => (
+              {/* The tier, not the channel: what a switch costs is the only
+                  thing a reader can act on — the wire channel is our problem. */}
+              {m.tier && <span className="text-n600 text-2xs flex-none">{m.tier}</span>}
+              <span className="flex flex-none items-center gap-0.5">
+                {tiers.map((tier) => {
+                  const picked = isActive && tier === activeResolution
+                  return (
                     <button
                       key={tier}
                       type="button"
                       onClick={() => choose(m, tier)}
-                      className="hover:bg-hairsoft flex w-full items-center gap-2 rounded-full px-3 py-2 text-start"
-                    >
-                      <span className="text-ink min-w-0 flex-1 text-sm">{tier}</span>
-                      {isActive && tier === activeResolution && (
-                        <Check className="text-ink size-3.5 flex-none" strokeWidth={2.4} />
+                      className={cn(
+                        "text-2xs rounded-full px-1.5 py-1 tabular-nums",
+                        picked
+                          ? "bg-ink text-paper"
+                          : "text-n600 hover:bg-hairline hover:text-ink",
                       )}
+                    >
+                      {tier}
                     </button>
-                  ))}
-                </div>
-              )}
+                  )
+                })}
+              </span>
             </div>
           )
         })}
       </Menu>
       <button
         type="button"
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => setOpen((o) => !o)}
         title={t("videoModel.pick")}
         className="hover:bg-hairsoft flex h-8 items-center gap-2 rounded-full px-3"
       >
         <Clapperboard className="text-ink size-4" />
         <span className="text-ink text-sm font-medium">{activeName}</span>
-        {activeResolution && <span className="text-n600 text-2xs">{activeResolution}</span>}
+        {activeResolution && (
+          <span className="text-n600 text-2xs tabular-nums">{activeResolution}</span>
+        )}
         <span className="text-n600 text-2xs">▾</span>
       </button>
     </div>
   )
+}
+
+/** Clicking the name keeps the tier you were already on, where it exists. */
+function activeOrFirst(tiers: string[], isActive: boolean, current?: string): string {
+  if (isActive && current && tiers.includes(current)) return current
+  return tiers[0] ?? ""
 }

@@ -277,6 +277,12 @@ Future<void> showVideoModelPicker(
                 ].join(' · '),
                 style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
               ),
+              // The chevron says "there is a second step here", so the row
+              // you are already on needs it too — its tiers are exactly the
+              // ones you are most likely to want to change. Showing only the
+              // check made the current model read as the one model whose
+              // resolution was fixed, when tapping it opens the tiers like
+              // any other.
               trailing: model.id == activeId
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
@@ -287,6 +293,8 @@ Future<void> showVideoModelPicker(
                                   fontSize: FontSizes.xs, color: t.n500)),
                         const SizedBox(width: 6),
                         Icon(Icons.check, size: 18, color: t.a700),
+                        if (model.resolutions.length > 1)
+                          Icon(Icons.chevron_right, size: 18, color: t.n500),
                       ],
                     )
                   : (model.resolutions.length > 1

@@ -153,6 +153,7 @@ class ChatSessionController
     final agent =
         ref.read(pickedAgentProvider(_sessionId)) ?? state.session?.agent;
     final variant = _reasoningValue(model);
+    final video = ref.read(pickedVideoProvider(_sessionId));
     final cmid = makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);
     stream.addMessage(
@@ -176,6 +177,8 @@ class ChatSessionController
             agent: agent,
             model: model,
             variant: variant,
+            videoModel: video?.modelId,
+            videoResolution: video?.resolution,
             attachments: attachments,
           );
     } catch (error) {
@@ -245,6 +248,22 @@ final chatSessionProvider = NotifierProvider.family<ChatSessionController,
 /// "keep the session's model".
 final pickedModelProvider =
     StateProvider.family<String?, String>((ref, sessionId) => null);
+
+/// A video model and the resolution chosen with it (web
+/// `stores/video-model-choice.ts`). The pair travels together because neither
+/// means anything alone: a model's tiers are its own, and the same "720p"
+/// costs and looks different per model.
+class VideoPick {
+  const VideoPick(this.modelId, this.resolution);
+
+  final String modelId;
+  final String resolution;
+}
+
+/// Unsent per-session video pick; null means "keep whatever the session
+/// records". No default is substituted here — for video that pin costs money.
+final pickedVideoProvider =
+    StateProvider.family<VideoPick?, String>((ref, sessionId) => null);
 
 /// Unsent reasoning pick, keyed by [reasoningKey] — a conversation *and* a
 /// model. A null state means nothing was picked for that pair, which is not

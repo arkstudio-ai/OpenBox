@@ -7,6 +7,7 @@ import '../../../../shared/api/containers_api.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
+import '../../../../shared/models/app_config.dart';
 import '../../../../shared/models/resource.dart';
 import '../../../../shared/models/session.dart';
 import '../../../../shared/utils/format.dart';
@@ -322,6 +323,30 @@ class _ComposerState extends ConsumerState<Composer> {
       defaultModel: config?.defaultModel,
     );
     final activeModel = config?.byId(modelId);
+
+    // The pill shows the pair, because the pair is what gets generated.
+    final videoModels = config?.videoModels ?? const <VideoModelInfo>[];
+    final videoPick = ref.watch(pickedVideoProvider(widget.sessionKey));
+    final videoModelId = videoPick?.modelId ??
+        (widget.session?.videoModel?.isNotEmpty == true
+            ? widget.session!.videoModel!
+            : config?.defaultVideoModel ?? '');
+    final videoModel = config?.videoById(videoModelId);
+    final videoTiers = videoModel?.resolutions ?? const <String>[];
+    final chosenTier = videoPick?.resolution ??
+        (widget.session?.videoResolution?.isNotEmpty == true
+            ? widget.session!.videoResolution!
+            : config?.defaultVideoResolution ?? '');
+    // A tier belongs to the model it was picked with; switching model can
+    // strand it, and showing one the new model does not offer would promise
+    // something the backend then refuses.
+    final videoTier = videoTiers.contains(chosenTier)
+        ? chosenTier
+        : (videoTiers.isEmpty ? '' : videoTiers.first);
+    final videoLabel = [
+      videoModel?.name ?? videoModelId,
+      if (videoTier.isNotEmpty) videoTier,
+    ].where((part) => part.isNotEmpty).join(' · ');
     final activeAgent =
         pickedAgent ?? widget.session?.agent ?? config?.defaultAgent ?? 'build';
     final reasoning = resolveReasoning(
@@ -442,6 +467,25 @@ class _ComposerState extends ConsumerState<Composer> {
                             currentModel: widget.session?.model,
                           ),
                         ),
+                        // Beside the chat model on purpose, as on web: the
+                        // two are picked independently and someone setting up
+                        // a video turn expects both in one place. Hidden when
+                        // the deployment publishes no video models.
+                        if (videoModels.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          _pill(
+                            t,
+                            label: videoLabel,
+                            icon: Icons.movie_creation_outlined,
+                            onTap: () => showVideoModelPicker(
+                              context,
+                              ref,
+                              sessionKey: widget.sessionKey,
+                              currentModel: widget.session?.videoModel,
+                              currentResolution: widget.session?.videoResolution,
+                            ),
+                          ),
+                        ],
                         // Only models that declare reasoning levels get the
                         // picker; the rest own the effort themselves.
                         if (reasoning.variants.isNotEmpty) ...[

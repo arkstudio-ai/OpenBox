@@ -22,6 +22,8 @@ class Session {
     required this.model,
     required this.status,
     this.variant,
+    this.videoModel,
+    this.videoResolution,
     required this.createdAt,
     required this.updatedAt,
     this.sandboxId,
@@ -41,6 +43,8 @@ class Session {
         title: asString(json['title']) ?? '',
         agent: asString(json['agent']) ?? 'build',
         model: asString(json['model']) ?? '',
+        videoModel: asString(json['video_model']),
+        videoResolution: asString(json['video_resolution']),
         status: sessionStatusFrom(asString(json['status'])),
         variant: asString(json['variant']),
         createdAt: asDate(json['created_at']) ?? DateTime.now(),
@@ -63,6 +67,12 @@ class Session {
   final String title;
   final String agent;
   final String model;
+
+  /// The video model this conversation generates with, and the resolution
+  /// chosen beside it. Independent of `model`: a segment freezes both at
+  /// submission, so switching only reaches work not yet started.
+  final String? videoModel;
+  final String? videoResolution;
 
   /// Persisted reasoning strength; null delegates to the model's default.
   final String? variant;
@@ -100,6 +110,8 @@ class Session {
         agent: agent,
         model: model,
         variant: variant,
+        videoModel: videoModel,
+        videoResolution: videoResolution,
         status: status ?? this.status,
         createdAt: createdAt,
         updatedAt: updatedAt,

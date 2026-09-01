@@ -42,10 +42,45 @@ class ModelInfo {
   final String? defaultVariant;
 }
 
+/// A video model the composer can generate with (web `VideoModelInfo`).
+///
+/// The tiers are per model and not interchangeable: one renders 480p only,
+/// another names its tiers 768P and 2K. The backend refuses a mismatch, so
+/// the picker offers each model only what that model published.
+class VideoModelInfo {
+  const VideoModelInfo({
+    required this.id,
+    required this.name,
+    this.tier,
+    this.resolutions = const [],
+  });
+
+  factory VideoModelInfo.fromJson(Map<String, dynamic> json) => VideoModelInfo(
+        id: asString(json['id']) ?? '',
+        name: asString(json['name']) ?? asString(json['id']) ?? '',
+        tier: asString(json['tier']),
+        resolutions: [
+          for (final r in asList(json['resolutions'])) ?asString(r),
+        ],
+      );
+
+  final String id;
+  final String name;
+
+  /// Free-text price tier, so an expensive switch is visible before it happens.
+  final String? tier;
+
+  /// Resolution tiers this model offers, in display order.
+  final List<String> resolutions;
+}
+
 class AppConfig {
   const AppConfig({
     required this.models,
+    this.videoModels = const [],
     this.defaultModel = '',
+    this.defaultVideoModel = '',
+    this.defaultVideoResolution = '',
     this.defaultAgent = 'build',
   });
 
@@ -54,13 +89,29 @@ class AppConfig {
             .whereType<Map<String, dynamic>>()
             .map(ModelInfo.fromJson)
             .toList(),
+        videoModels: asList(json['video_models'])
+            .whereType<Map<String, dynamic>>()
+            .map(VideoModelInfo.fromJson)
+            .toList(),
         defaultModel: asString(json['default_model']) ?? '',
+        defaultVideoModel: asString(json['default_video_model']) ?? '',
+        defaultVideoResolution: asString(json['default_video_resolution']) ?? '',
         defaultAgent: asString(json['default_agent']) ?? 'build',
       );
 
   final List<ModelInfo> models;
+  final List<VideoModelInfo> videoModels;
   final String defaultModel;
+  final String defaultVideoModel;
+  final String defaultVideoResolution;
   final String defaultAgent;
+
+  VideoModelInfo? videoById(String id) {
+    for (final m in videoModels) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
 
   ModelInfo? byId(String id) {
     for (final m in models) {

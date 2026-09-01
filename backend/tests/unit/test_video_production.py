@@ -120,19 +120,57 @@ def test_billable_submit_requires_idempotency_key():
         VideoRenderArgs(action="submit", segment_assets=["asset-1"])
 
 
-def test_generation_schema_exposes_only_control_plane_fields():
+def test_generation_schema_exposes_content_parameters_for_open_requests():
+    """The tool is the video primitive, so the shot is describable through it.
+
+    It used to expose control-plane fields only, which meant the sole way to
+    generate anything was to drive a whole approved production. Content
+    parameters belong here; what stays out is anything that would let a caller
+    reach past ownership (references are asset ids, never URLs).
+    """
     properties = set(VideoGenerateArgs.model_json_schema()["properties"])
 
-    assert properties == {
+    assert {
+        "prompt",
+        "model",
+        "resolution",
+        "ratio",
+        "duration",
+        "generate_audio",
+        "watermark",
+        "seed",
+        "input_assets",
+    } <= properties
+    assert {
         "action",
         "job_id",
-        "production_id",
-        "segment_id",
         "idempotency_key",
         "wait_seconds",
         "after_version",
         "wait_iteration",
-    }
+    } <= properties
+    assert not {"url", "image_url", "video_url", "api_key", "base_url"} & properties
+
+
+def test_open_generation_needs_no_production():
+    """A caller with a prompt and a key can generate; no project, no approvals."""
+    args = VideoGenerateArgs(
+        action="submit", prompt="一只猫跳上窗台", idempotency_key="open:cat:1"
+    )
+
+    assert args.production_id is None and args.segment_id is None
+
+
+def test_open_and_segment_shapes_are_mutually_exclusive():
+    """A segment's content comes from its approved plan, never from the call."""
+    with pytest.raises(ValidationError, match="not both"):
+        VideoGenerateArgs(
+            action="submit",
+            prompt="改写这段台词",
+            production_id="vp-1",
+            segment_id="seg-1",
+            idempotency_key="vp-1:seg-1:generate",
+        )
 
 
 def test_generation_wait_schema_and_runtime_share_the_optional_iteration_default():

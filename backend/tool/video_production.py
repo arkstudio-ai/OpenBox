@@ -11,7 +11,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlsplit
@@ -27,6 +27,16 @@ from tool.tool import ToolContext, ToolResult, define_tool
 log = create_logger("tool.video_production")
 
 _SEGMENT_TERMINAL = {"completed", "failed", "cancelled"}
+#: Everything that is not terminal for a paid generation. Kept here rather than
+#: imported so the generation tool stands alone once video_workflow is gone.
+_IN_FLIGHT_STATUSES = {
+    "submitting",
+    "queued",
+    "in_progress",
+    "generating",
+    "finalizing",
+    "transfer_failed",
+}
 _RENDER_TERMINAL = {"completed", "failed", "cancelled"}
 _VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
 _IMAGE_PREFIX = "image/"
@@ -40,37 +50,106 @@ _BOSSIP_RELAY_MODELS = {
 }
 _SEGMENT_FINALIZATION_TASKS: dict[str, asyncio.Task[Any]] = {}
 _SEGMENT_FINALIZATION_STALE_SECONDS = 300
+#: Roles the backend can infer from a mime type. Anything else must be said
+#: explicitly, because guessing "this image is the last frame" would silently
+#: change what the caller paid for.
+_DEFAULT_ROLE_BY_KIND = {"image": "reference_image", "video": "reference_video"}
+
+
+def _asset_kind(mime: str) -> str:
+    if mime.startswith(_IMAGE_PREFIX):
+        return "image"
+    if mime in _VIDEO_MIMES:
+        return "video"
+    if mime.startswith("audio/"):
+        return "audio"
+    return "other"
+
 _MAX_INLINE_GENERATION_WAITS = 8
 _DEFERRED_PROVIDER_RECHECK_SECONDS = 60
 
 
+#: Reference roles a generation request can carry. ``first_frame`` /
+#: ``last_frame`` pin the ends of a shot (the honest way to keep one look
+#: across separately generated clips); ``reference_audio`` drives the
+#: performance from a track. Availability is per model — see action="models".
+VideoRefRole = Literal[
+    "reference_image",
+    "reference_video",
+    "reference_audio",
+    "first_frame",
+    "last_frame",
+]
+
+
+class VideoInputRef(BaseModel):
+    """One input asset, optionally with the role it plays in the shot."""
+
+    asset_id: str = Field(max_length=512)
+    #: Omitted: inferred from the mime type. Audio must say its role.
+    role: VideoRefRole | None = None
+
+
 class VideoGenerateArgs(BaseModel):
-    action: Literal["submit", "status", "wait", "cancel"]
+    action: Literal["models", "estimate", "submit", "status", "wait", "cancel", "fetch"]
     job_id: str | None = Field(default=None, max_length=96)
     production_id: str | None = Field(default=None, max_length=96)
     segment_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
+    # ── open generation: describe the shot directly, no project required ──
+    #: Describe the shot. Supplying it means an open generation.
+    prompt: str | None = Field(default=None, min_length=1, max_length=32_000)
+    #: An id from action="models". Omitted uses the person's chosen model.
+    model: str | None = Field(default=None, max_length=160)
+    resolution: Literal["480p", "720p", "1080p"] | None = None
+    ratio: str | None = Field(default=None, max_length=16)
+    #: Seconds, or -1 to let the model choose.
+    duration: int | None = Field(default=None, ge=-1, le=300)
+    generate_audio: bool | None = None
+    watermark: bool | None = None
+    #: Reuse one seed to hold a look steady across separate shots.
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+    input_assets: list[VideoInputRef] = Field(default_factory=list, max_length=8)
+    #: Pay twice for a second take of a request already in flight.
+    allow_duplicate: bool = False
+    #: For action="fetch": the owned asset to deliver to the workspace.
+    asset_id: str | None = Field(default=None, max_length=512)
     wait_seconds: float = Field(default=25.0, ge=0.0, le=25.0)
     after_version: int = Field(default=0, ge=0)
-    wait_iteration: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Supply and increment this on every wait call; together with after_version "
-            "it makes repeated bounded waits explicit rather than an accidental tool loop. "
-            "When the tool returns polling_paused=true, stop the current run and resume "
-            "that same durable job later; never resubmit it."
-        ),
-    )
+    #: Increment on every wait call, so repeated bounded waits are explicit
+    #: rather than an accidental loop. On polling_paused=true, end the run and
+    #: resume this job_id in a later turn; never resubmit it.
+    wait_iteration: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _required_by_action(self):
+        if self.action == "models":
+            return self
+        if self.action == "fetch":
+            if not (self.asset_id or self.job_id):
+                raise ValueError("fetch requires asset_id or job_id")
+            return self
+        if self.action == "estimate":
+            if not self.prompt:
+                raise ValueError("estimate requires prompt")
+            return self
         if self.action == "submit":
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key to prevent duplicate billing")
-            if not self.production_id or not self.segment_id:
-                raise ValueError("submit requires production_id and segment_id from video_project")
-        elif not self.job_id:
+            # Two shapes: an open request carrying its own prompt, or a segment
+            # of a video_project production whose content is already approved.
+            if not self.prompt and not (self.production_id and self.segment_id):
+                raise ValueError(
+                    "submit requires either prompt (open generation) or "
+                    "production_id + segment_id (an approved project segment)"
+                )
+            if self.prompt and (self.production_id or self.segment_id):
+                raise ValueError(
+                    "pass either prompt or production_id/segment_id, not both — "
+                    "a project segment's content comes from its approved plan"
+                )
+            return self
+        if not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
 
@@ -118,6 +197,9 @@ class VideoRenderArgs(BaseModel):
 class VideoTranscribeArgs(BaseModel):
     action: Literal["submit", "status", "wait", "cancel", "retry"]
     job_id: str | None = Field(default=None, max_length=96)
+    #: An owned, ready audio asset to transcribe. Extract it from a video in
+    #: the sandbox (ffmpeg -vn) and register it with share_file(attach=false).
+    asset_id: str | None = Field(default=None, max_length=512)
     production_id: str | None = Field(default=None, max_length=96)
     segment_id: str | None = Field(default=None, max_length=96)
     idempotency_key: str | None = Field(default=None, min_length=3, max_length=180)
@@ -128,10 +210,13 @@ class VideoTranscribeArgs(BaseModel):
     @model_validator(mode="after")
     def _required_by_action(self):
         if self.action == "submit":
-            if not self.production_id or not self.segment_id:
-                raise ValueError("submit requires production_id and segment_id")
             if not self.idempotency_key:
                 raise ValueError("submit requires idempotency_key")
+            if not self.asset_id and not (self.production_id and self.segment_id):
+                raise ValueError(
+                    "submit requires either asset_id (any owned audio) or "
+                    "production_id + segment_id (a generated project segment)"
+                )
         elif not self.job_id:
             raise ValueError(f"{self.action} requires job_id")
         return self
@@ -157,7 +242,7 @@ class VideoTranscriptionTarget:
 def _configured_target(model_override: str | None = None) -> tuple[VideoProviderTarget, object]:
     """Resolve the submission route (channel + credentials) for a model.
 
-    Routing lives in tool/video_providers.py; the legacy doubao/ark
+    Routing lives in tool/video_providers.py; the ark relay
     configuration resolves exactly as before.
     """
     from core.config import get_config
@@ -374,12 +459,15 @@ async def _resolve_generation_inputs(
 
 
 def _presigned_provider_refs(
-    rows: list[Any], *, input_url_ttl_seconds: int
+    rows: list[Any], *, input_url_ttl_seconds: int, roles: list[str] | None = None
 ) -> list[dict[str, str]]:
-    """Turn owned image/video rows into ordinary provider reference inputs.
+    """Turn owned image/video/audio rows into provider reference inputs.
 
     This matches BossIP's normal image-to-video path: OpenBox sends scoped OSS
     URLs, and the configured gateway handles any provider-specific preparation.
+    ``roles`` overrides the mime-derived default positionally, carrying
+    first_frame / last_frame / reference_audio through to channels that can
+    express them.
     """
     if not rows:
         return []
@@ -388,14 +476,15 @@ def _presigned_provider_refs(
 
     oss = get_oss()
     refs: list[dict[str, str]] = []
-    for row in rows:
+    for index, row in enumerate(rows):
         url = oss.presign_get(row.oss_key, expires_sec=input_url_ttl_seconds)
-        kind = "image" if row.mime.startswith(_IMAGE_PREFIX) else "video"
+        kind = _asset_kind(row.mime)
+        default_role = _DEFAULT_ROLE_BY_KIND.get(kind, "reference_image")
         refs.append(
             {
                 "kind": kind,
                 "url": url,
-                "role": "reference_image" if kind == "image" else "reference_video",
+                "role": (roles[index] if roles and index < len(roles) else default_role),
             }
         )
     return refs
@@ -442,6 +531,7 @@ async def _create_pending_job(
     output_mime: str = "video/mp4",
     transient: bool = False,
     prompt_hash: str | None = None,
+    reserve_output: bool = True,
 ) -> tuple[Any, Any, bool]:
     """Reserve job+asset before a paid/remote call; return existing on a race."""
     from core.identifier import ascending
@@ -469,6 +559,52 @@ async def _create_pending_job(
             return existing, asset, False
 
     job_id = ascending("video")
+    if not reserve_output:
+        # Nothing is produced: transcription of an existing audio asset writes
+        # its result into the job row, and reserving an empty asset would leave
+        # a permanently pending file in the resource centre.
+        now = datetime.now(timezone.utc)
+        async with get_db_session() as db:
+            project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
+            job = VideoJob(
+                id=job_id,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id or None,
+                project_id=project_id or None,
+                kind=kind,
+                production_id=production_id,
+                segment_id=segment_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                prompt_hash=prompt_hash,
+                status="dispatching",
+                model=model,
+                prompt=prompt,
+                request_data=request_data,
+                result_data={},
+                output_asset_id=None,
+                attempt=0,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(job)
+            try:
+                await db.commit()
+                return job, None, True
+            except IntegrityError:
+                await db.rollback()
+        async with get_db_session() as db:
+            existing = (
+                await db.execute(
+                    select(VideoJob).where(
+                        VideoJob.user_id == ctx.user_id,
+                        VideoJob.kind == kind,
+                        VideoJob.idempotency_key == idempotency_key,
+                    )
+                )
+            ).scalar_one()
+            return existing, None, False
+
     asset_id = ascending("asset")
     name = (
         _safe_audio_filename(filename, job_id)
@@ -1304,7 +1440,357 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
     return await _owned_job(job.id, ctx, "segment")
 
 
+# ── open generation: resolving a request that carries its own content ───────
+
+async def _resolve_open_inputs(
+    refs: list[Any], ctx: ToolContext
+) -> tuple[list[Any], list[str]]:
+    """Resolve open-mode inputs, returning (asset rows, per-row role)."""
+    rows: list[Any] = []
+    roles: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        row = await _find_owned_asset(ref.asset_id, ctx)
+        if not row:
+            raise RuntimeError(
+                f"asset '{ref.asset_id}' is not a ready OSS resource owned by this user"
+            )
+        kind = _asset_kind(row.mime)
+        if kind == "other":
+            raise RuntimeError(
+                f"asset '{ref.asset_id}' is {row.mime}; inputs must be image, video or audio"
+            )
+        role = ref.role or _DEFAULT_ROLE_BY_KIND.get(kind)
+        if role is None:
+            raise RuntimeError(
+                f"asset '{ref.asset_id}' is {row.mime}; say which role it plays "
+                "(reference_audio) — the backend does not guess for audio"
+            )
+        if role == "reference_audio" and kind != "audio":
+            raise RuntimeError(f"role reference_audio needs an audio asset, not {row.mime}")
+        if role in {"first_frame", "last_frame", "reference_image"} and kind != "image":
+            raise RuntimeError(f"role {role} needs an image asset, not {row.mime}")
+        if role == "reference_video" and kind != "video":
+            raise RuntimeError(f"role reference_video needs a video asset, not {row.mime}")
+        if row.id in seen:
+            continue
+        seen.add(row.id)
+        rows.append(row)
+        roles.append(role)
+    return rows, roles
+
+
+async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) -> dict[str, Any]:
+    """Normalize an open request into the same shape an approved segment has.
+
+    Defaults come from the person's composer choice and the model's own
+    declaration, never from a hard-coded house style: a caller who says
+    nothing gets the configured default, and a caller who says 16:9 gets 16:9.
+    """
+    from core.config import get_config
+    from tool import video_providers
+
+    config = get_config()
+    settings = config.video_generation
+    model = (args.model or "").strip() or await _session_video_model_id(ctx)
+    declared = video_providers.declared_model(model, config) if model else None
+
+    resolution = args.resolution or ""
+    if not resolution:
+        allowed = list(getattr(declared, "resolutions", None) or [])
+        resolution = allowed[0] if len(allowed) == 1 else settings.default_resolution
+    ratio = (args.ratio or settings.default_ratio or "9:16").strip()
+    duration = settings.default_duration if args.duration is None else args.duration
+    generate_audio = (
+        settings.default_generate_audio if args.generate_audio is None else args.generate_audio
+    )
+    watermark = settings.default_watermark if args.watermark is None else args.watermark
+    return {
+        "production_id": None,
+        "segment_id": None,
+        "prompt": args.prompt or "",
+        "model": model or None,
+        "character_reference_asset": None,
+        "input_assets": list(args.input_assets),
+        "resolution": resolution,
+        "ratio": ratio,
+        "duration": duration,
+        "generate_audio": generate_audio,
+        "watermark": watermark,
+        "seed": args.seed,
+        "content_hash": "",
+        "plan_hash": "",
+        "reconciling_existing": False,
+    }
+
+
+async def _session_video_model_id(ctx: ToolContext) -> str:
+    """The video model the person picked in the composer, if any."""
+    try:
+        from db.base import get_db_session
+
+        from tool.video_workflow import _session_video_model
+
+        async with get_db_session() as db:
+            return await _session_video_model(db, ctx)
+    except Exception:
+        # The composer preference is a convenience, never a precondition: an
+        # open request must still work when video_workflow is gone.
+        return ""
+
+
+async def _in_flight_duplicate(prompt_hash: str, ctx: ToolContext, *, exclude_key: str):
+    """An identical request this user already has running, if any.
+
+    Idempotency keys stop a *retry* from paying twice; they cannot stop a fresh
+    key carrying the same content. This does, because the content key is
+    derived from the request rather than supplied by the caller.
+    """
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    async with get_db_session() as db:
+        return (
+            await db.execute(
+                select(VideoJob)
+                .where(
+                    VideoJob.user_id == ctx.user_id,
+                    VideoJob.kind == "segment",
+                    VideoJob.prompt_hash == prompt_hash,
+                    VideoJob.idempotency_key != exclude_key,
+                    VideoJob.status.in_(tuple(_IN_FLIGHT_STATUSES)),
+                )
+                .order_by(VideoJob.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+
+async def _check_submit_budget(ctx: ToolContext) -> None:
+    """Refuse a paid submit past the daily ceiling.
+
+    Back-pressure, not an approval: nobody is asked to confirm a charge. The
+    agent is told the ceiling was reached so it can relay that to the person,
+    which is what the credits ledger will do properly once it exists.
+    """
+    from core.config import get_config
+
+    limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
+    if limit <= 0:
+        return
+    used = await _daily_submit_count(ctx)
+    if used >= limit:
+        raise RuntimeError(
+            f"daily video generation limit reached ({used}/{limit} in the last 24h); "
+            "tell the user rather than retrying"
+        )
+
+
+async def _daily_submit_count(ctx: ToolContext) -> int:
+    from sqlalchemy import func
+
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    async with get_db_session() as db:
+        return int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(VideoJob)
+                    .where(
+                        VideoJob.user_id == ctx.user_id,
+                        VideoJob.kind == "segment",
+                        VideoJob.created_at >= since,
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+
+
+def _model_capability_lines(config) -> list[str]:
+    """The declared registry, rendered for the agent.
+
+    The relay publishes no model or pricing endpoint, so this registry is the
+    only description of what each model accepts. Reading it here beats copying
+    it into a skill document that then drifts.
+    """
+    settings = config.video_generation
+    lines = [f"default_model={settings.model}", ""]
+    for entry in settings.models:
+        parts = [f"id={entry.id}"]
+        if entry.name:
+            parts.append(f"name={entry.name}")
+        if entry.tier:
+            parts.append(f"tier={entry.tier}")
+        if entry.resolutions:
+            parts.append(f"resolutions={'/'.join(entry.resolutions)}")
+        if entry.ratios:
+            parts.append(f"ratios={'/'.join(entry.ratios)}")
+        if entry.duration_range:
+            low, high = entry.duration_range
+            parts.append(f"duration={low}-{high}s")
+        if entry.supports_smart_duration:
+            parts.append("duration=-1 ok")
+        capabilities = [
+            name
+            for name, on in (
+                ("seed", entry.supports_seed),
+                ("first/last frame", entry.supports_first_last_frame),
+                ("reference audio", entry.supports_reference_audio),
+                ("reference image", entry.supports_reference_image),
+                ("reference video", entry.supports_reference_video),
+            )
+            if on
+        ]
+        if capabilities:
+            parts.append(f"supports={', '.join(capabilities)}")
+        lines.append("  " + "  ".join(parts))
+    if not settings.models:
+        lines.append("  (no models declared; the configured default is used for every request)")
+    return lines
+
+
+async def _execute_models(ctx: ToolContext) -> ToolResult:
+    from core.config import get_config
+
+    config = get_config()
+    lines = _model_capability_lines(config)
+    chosen = await _session_video_model_id(ctx)
+    if chosen:
+        lines.insert(1, f"person_selected_model={chosen}")
+    return ToolResult(
+        title="Video models",
+        output="\n".join(lines),
+        metadata={"models": [entry.id for entry in config.video_generation.models]},
+    )
+
+
+async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Validate a request and report what it would cost, without submitting."""
+    from core.config import get_config
+    from tool import video_providers
+
+    try:
+        approved = await _resolve_open_submission(args, ctx)
+        target, _settings = _configured_target(approved["model"])
+        inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
+        video_providers.validate_request(
+            target,
+            resolution=approved["resolution"],
+            ratio=approved["ratio"],
+            duration=approved["duration"],
+            generate_audio=approved["generate_audio"],
+            input_mimes=[row.mime for row in inputs],
+            declared=video_providers.declared_model(target.model, get_config()),
+            seed=approved["seed"],
+            roles=tuple(roles),
+        )
+    except Exception as exc:
+        return ToolResult(
+            title="This request would be rejected",
+            output=_public_error(exc),
+            metadata={"valid": False},
+        )
+
+    duration = approved["duration"]
+    billed = "model-chosen length" if duration == -1 else f"{duration}s"
+    used = await _daily_submit_count(ctx)
+    limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
+    lines = [
+        "valid=true",
+        f"model={target.model}",
+        f"resolution={approved['resolution']}  ratio={approved['ratio']}  duration={billed}",
+        f"generate_audio={approved['generate_audio']}  watermark={approved['watermark']}",
+        f"inputs={len(inputs)}" + (f" roles={'/'.join(roles)}" if roles else ""),
+        f"seed={approved['seed']}" if approved["seed"] is not None else "seed=unset",
+        # Billing is per second of output on this route, so an explicit
+        # duration is the whole cost story; there is no per-call price to read.
+        f"daily_submits_used={used}" + (f"/{limit}" if limit else " (no limit configured)"),
+        "",
+        "Nothing was submitted. Re-send as action=\"submit\" with an idempotency_key to pay for it.",
+    ]
+    return ToolResult(
+        title="Video request looks valid",
+        output="\n".join(lines),
+        metadata={"valid": True, "model": target.model},
+    )
+
+
+async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    """Put an owned video asset into the workspace so bash tools can edit it."""
+    if not ctx.sandbox:
+        return ToolResult(
+            title="No sandbox",
+            output="Materializing an asset into the workspace needs the user's cloud desktop.",
+        )
+    asset = None
+    if args.asset_id:
+        asset = await _find_owned_asset(args.asset_id, ctx)
+    elif args.job_id:
+        job = await _owned_job(args.job_id, ctx, "segment")
+        asset = await _job_asset(job) if job else None
+    if not asset or asset.status != "ready":
+        return ToolResult(
+            title="Asset not available",
+            output="No ready asset owned by this user matches that id.",
+        )
+    try:
+        path = await _materialize_asset(asset, ctx)
+    except Exception as exc:
+        return ToolResult(title="Could not deliver the asset", output=_public_error(exc))
+    return ToolResult(
+        title=asset.name,
+        output=f"workspace_path={path}\nasset_id={asset.id}\nmime={asset.mime}\nsize={asset.size}",
+        metadata={"asset_id": asset.id, "path": path, "mime": asset.mime},
+    )
+
+
+async def _try_materialize(job, ctx: ToolContext) -> str | None:
+    """Best-effort delivery of a finished video into the workspace.
+
+    Editing happens in the sandbox with ffmpeg, so a finished take is only
+    useful once it has landed there. This must never fail the call that
+    produced it: with no sandbox, or a flaky pull, the download URL still
+    stands and action="fetch" can retry later.
+    """
+    if job.status != "completed" or not getattr(ctx, "sandbox", None):
+        return None
+    try:
+        asset = await _job_asset(job)
+        if not asset or asset.status != "ready":
+            return None
+        return await _materialize_asset(asset, ctx)
+    except Exception as exc:
+        log.info(f"workspace delivery skipped for {job.id}: {type(exc).__name__}: {exc}")
+        return None
+
+
+async def _materialize_asset(asset, ctx: ToolContext) -> str:
+    """Copy one OSS asset into the sandbox workspace, returning its path."""
+    from core.oss import get_oss
+    from sandbox.assets import deliver
+
+    paths = await deliver(
+        ctx.sandbox,
+        getattr(ctx.sandbox, "base_url", "") or ctx.session_id,
+        get_oss(),
+        [asset],
+    )
+    if not paths:
+        raise RuntimeError("the sandbox reported no delivered path")
+    return paths[0]
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
+    if args.action == "models":
+        return await _execute_models(ctx)
+    if args.action == "estimate":
+        return await _execute_estimate(args, ctx)
+    if args.action == "fetch":
+        return await _execute_fetch(args, ctx)
     if args.action == "submit":
         try:
             target, settings = _configured_target(None)
@@ -1313,21 +1799,40 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 title="Video generation is not configured",
                 output=_public_error(exc),
             )
+        open_mode = bool(args.prompt)
         try:
-            from tool.video_workflow import (
-                content_hash,
-                mark_segment_job,
-                prepare_segment_submission,
-            )
+            from tool.video_workflow import content_hash
 
-            approved = await prepare_segment_submission(
-                ctx, args.production_id or "", args.segment_id or ""
-            )
-            expected_key = f"{approved['production_id']}:{approved['segment_id']}:generate"
-            if args.idempotency_key != expected_key:
-                raise RuntimeError(
-                    f"idempotency_key must be the approved segment key: {expected_key}"
+            if open_mode:
+                approved = await _resolve_open_submission(args, ctx)
+                await _check_submit_budget(ctx)
+            else:
+                from tool.video_workflow import prepare_segment_submission
+
+                approved = await prepare_segment_submission(
+                    ctx, args.production_id or "", args.segment_id or ""
                 )
+                expected_key = f"{approved['production_id']}:{approved['segment_id']}:generate"
+                if args.idempotency_key != expected_key:
+                    raise RuntimeError(
+                        f"idempotency_key must be the approved segment key: {expected_key}"
+                    )
+            segment_id = approved["segment_id"]
+
+            async def mark_segment(status: str, **extra) -> None:
+                """Mirror job state onto the project segment, when there is one.
+
+                An open generation has no segment; the job row is the whole
+                record of it.
+                """
+                if not segment_id:
+                    return
+                from tool.video_workflow import mark_segment_job
+
+                await mark_segment_job(
+                    segment_id, job.id, user_id=ctx.user_id, status=status, **extra
+                )
+
             prompt = approved["prompt"]
             resolution = approved["resolution"]
             ratio = approved["ratio"]
@@ -1337,13 +1842,22 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if approved.get("model"):
                 # Per-segment model override routes to its own channel.
                 target, settings = _configured_target(approved["model"])
+            seed = approved.get("seed")
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
-            inputs, character_reference = await _resolve_generation_inputs(
-                approved["character_reference_asset"],
-                approved["input_assets"],
-                ctx,
-            )
+            if open_mode:
+                inputs, roles = await _resolve_open_inputs(approved["input_assets"], ctx)
+                character_reference = None
+            else:
+                inputs, character_reference = await _resolve_generation_inputs(
+                    approved["character_reference_asset"],
+                    approved["input_assets"],
+                    ctx,
+                )
+                roles = [
+                    "reference_image" if row.mime.startswith(_IMAGE_PREFIX) else "reference_video"
+                    for row in inputs
+                ]
             from core.oss import get_oss
             from tool import video_providers
 
@@ -1357,16 +1871,21 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 generate_audio=generate_audio,
                 input_mimes=[row.mime for row in inputs],
                 declared=video_providers.declared_model(target.model, _get_config()),
+                seed=seed,
+                roles=tuple(roles),
             )
             channel = getattr(target, "channel", "ark")
             refs = _presigned_provider_refs(
                 inputs,
                 input_url_ttl_seconds=settings.provider_input_url_ttl_seconds,
+                roles=roles,
             )
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
                 "production_id": approved["production_id"],
-                "segment_id": approved["segment_id"],
+                "segment_id": segment_id,
+                "roles": list(roles),
+                "seed": seed,
                 "content_hash": approved["content_hash"],
                 "plan_hash": approved["plan_hash"],
                 "input_asset_ids": [row.id for row in inputs],
@@ -1415,6 +1934,35 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                         extra_params={
                             "generate_audio": generate_audio,
                             "watermark": watermark,
+                            # A different seed or a reference used as a last
+                            # frame instead of a plain reference produces a
+                            # different video; neither may collide in reuse.
+                            "seed": seed,
+                            "roles": list(roles),
+                        },
+                    )
+            if (
+                prompt_hash
+                and not args.allow_duplicate
+                and getattr(settings, "refuse_duplicate_in_flight", True)
+            ):
+                running = await _in_flight_duplicate(
+                    prompt_hash, ctx, exclude_key=args.idempotency_key or ""
+                )
+                if running is not None:
+                    return ToolResult(
+                        title="An identical generation is already running",
+                        output=(
+                            f"job_id={running.id}\nstatus={running.status}\n"
+                            "This exact request (same prompt, model, parameters and inputs) "
+                            "is already in flight, so submitting again would pay twice. "
+                            "Wait on that job_id, or pass allow_duplicate=true if a second "
+                            "take is genuinely wanted."
+                        ),
+                        metadata={
+                            "job_id": running.id,
+                            "status": running.status,
+                            "duplicate_in_flight": True,
                         },
                     )
             job, asset, created = await _create_pending_job(
@@ -1427,17 +1975,13 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 filename=None,
                 request_hash=request_hash,
                 production_id=approved["production_id"],
-                segment_id=approved["segment_id"],
+                segment_id=segment_id,
                 prompt_hash=prompt_hash,
             )
             if not created:
                 if job.status == "completed":
-                    await mark_segment_job(
-                        approved["segment_id"],
-                        job.id,
-                        user_id=ctx.user_id,
-                        status="completed",
-                        output_asset_id=job.output_asset_id,
+                    await mark_segment(
+                        "completed", output_asset_id=job.output_asset_id
                     )
                     await _attach_completed(job, ctx)
                 lines = _job_lines(job, asset)
@@ -1504,6 +2048,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "generate_audio": generate_audio,
                     "watermark": watermark,
                 }
+                if seed is not None:
+                    payload["seed"] = seed
                 submit_path = None
             else:
                 submit_path, payload = video_providers.build_payload(
@@ -1515,14 +2061,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     duration=duration,
                     generate_audio=generate_audio,
                     watermark=watermark,
+                    seed=seed,
                 )
+
             async def submit_and_persist_provider_identity():
-                await mark_segment_job(
-                    approved["segment_id"],
-                    job.id,
-                    user_id=ctx.user_id,
-                    status="submitting",
-                )
+                await mark_segment("submitting")
                 if submit_path is None:
                     submitted = await _provider_submit(target, payload)
                 else:
@@ -1575,20 +2118,20 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     completed_at=datetime.now(timezone.utc),
                 )
                 await _mark_asset(job.output_asset_id, status="failed")
-                await mark_segment_job(
-                    approved["segment_id"],
-                    job.id,
-                    user_id=ctx.user_id,
-                    status=state,
-                )
+                await mark_segment(state)
                 job = await _owned_job(job.id, ctx, "segment")
+            lines = _job_lines(job, asset)
+            workspace_path = await _try_materialize(job, ctx)
+            if workspace_path:
+                lines.append(f"workspace_path={workspace_path}")
             return ToolResult(
-                title=("Video segment ready" if job.status == "completed" else "Video generation submitted"),
-                output="\n".join(_job_lines(job, asset)),
+                title=("Video ready" if job.status == "completed" else "Video generation submitted"),
+                output="\n".join(lines),
                 metadata={
                     "job_id": job.id,
                     "status": job.status,
                     "asset_id": asset.id if asset and asset.status == "ready" else None,
+                    "workspace_path": workspace_path,
                     "retry_after_seconds": 5,
                 },
             )
@@ -1863,10 +2406,12 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         await asyncio.sleep(min(poll_interval_seconds, remaining))
 
     asset = await _job_asset(job)
+    workspace_path = None
     if job.status == "completed":
         attached = await _attach_completed(job, ctx)
         job = await _owned_job(job.id, ctx, "segment")
-        title = "Video segment ready"
+        workspace_path = await _try_materialize(job, ctx)
+        title = "Video ready"
     else:
         attached = False
         title = (
@@ -1875,6 +2420,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             else "Video generation status"
         )
     lines = _job_lines(job, asset, retry_after=round(poll_interval_seconds))
+    if workspace_path:
+        lines.append(f"workspace_path={workspace_path}")
     version = _job_snapshot_version(job)
     still_running = job.status not in _SEGMENT_TERMINAL
     lines.append(f"version={version}")
@@ -2172,8 +2719,9 @@ def _transcription_lines(job, asset=None, *, remote: dict[str, Any] | None = Non
 
 
 async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> ToolResult:
-    if not ctx.sandbox:
-        return ToolResult(title="Sandbox unavailable", output="Video transcription requires the user's WUYING sandbox.")
+    # Transcribing an existing audio asset is a backend-only call. Only the
+    # legacy project path needs the sandbox, because that one still extracts
+    # audio from a segment there; it checks for itself below.
     try:
         target = _configured_transcription_target()
         # Settings, not a generation route: transcription must not fail because
@@ -2187,7 +2735,81 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
     except Exception as exc:
         return ToolResult(title="Video transcription is not configured", output=_public_error(exc))
 
+    if args.action == "submit" and args.asset_id:
+        try:
+            from tool.video_workflow import content_hash
+
+            source = await _find_owned_asset(args.asset_id, ctx)
+            if not source:
+                raise RuntimeError(
+                    f"asset '{args.asset_id}' is not a ready OSS resource owned by this user"
+                )
+            if not source.mime.startswith("audio/"):
+                raise RuntimeError(
+                    f"asset '{args.asset_id}' is {source.mime}; transcription needs audio. "
+                    "Extract it in the sandbox first (ffmpeg -vn) and register that file."
+                )
+            request_data = {
+                "source_asset_id": source.id,
+                "source_bytes": source.size,
+                "model": target.model,
+            }
+            job, _unused, created = await _create_pending_job(
+                ctx=ctx,
+                kind="stt",
+                idempotency_key=args.idempotency_key or "",
+                model=target.model,
+                prompt=None,
+                request_data=request_data,
+                filename=None,
+                request_hash=content_hash({"kind": "stt", "request_data": request_data}),
+                reserve_output=False,
+            )
+            if not created:
+                return ToolResult(
+                    title="Existing transcription job",
+                    output="\n".join(_transcription_lines(job)),
+                    metadata={"job_id": job.id, "status": job.status, "idempotent_reuse": True},
+                )
+            await ctx.update_output("Transcribing the audio…")
+            await _update_job(job.id, status="transcribing", started_at=datetime.now(timezone.utc))
+            audio_url = oss.presign_get(
+                source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
+            )
+            transcript = await _provider_transcribe(target, audio_url)
+            await _update_job(
+                job.id,
+                status="completed",
+                result_data={"transcript": transcript},
+                error=None,
+                completed_at=datetime.now(timezone.utc),
+            )
+            job = await _owned_job(job.id, ctx, "stt")
+            return ToolResult(
+                title="Transcription ready",
+                output="\n".join(_transcription_lines(job)),
+                metadata={
+                    "job_id": job.id,
+                    "status": job.status,
+                    "text": transcript.get("text", ""),
+                },
+            )
+        except Exception as exc:
+            if "job" in locals() and created:
+                await _update_job(
+                    job.id,
+                    status="failed",
+                    error=_public_error(exc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+            return ToolResult(title="Transcription failed", output=_public_error(exc))
+
     if args.action == "submit":
+        if not ctx.sandbox:
+            return ToolResult(
+                title="Sandbox unavailable",
+                output="Transcribing a project segment extracts its audio on the cloud desktop.",
+            )
         try:
             from tool.video_workflow import content_hash, prepare_transcription
 
@@ -2660,17 +3282,27 @@ async def execute_render(args: VideoRenderArgs, ctx: ToolContext) -> ToolResult:
 
 
 VIDEO_GENERATE_DESCRIPTION = """\
-Submit, inspect, wait for, or cancel Seedance generation for an approved segment.
-Paid submit requires production_id, segment_id, and the exact idempotency_key.
-Calls for distinct approved segments or jobs may run together; never parallelize
-dependent actions or two mutations of the same segment/job.
-Never replace a task after an ambiguous result; reconcile the same job or key."""
+Generate video. This is the only way to create one, and it works on its own: \
+describe the shot in `prompt`, optionally naming model, resolution, ratio, \
+duration, audio, seed and reference assets, and pass an idempotency_key. \
+Use action="models" to read what each model accepts (the registry is the only \
+description of that) and action="estimate" to validate a request for free \
+before paying. A finished video lands in OSS and, when a sandbox is present, \
+in the workspace for ffmpeg editing; action="fetch" re-delivers any owned \
+video asset there. Submitting an approved video_project segment instead uses \
+production_id + segment_id and takes its content from the approved plan. \
+Distinct jobs may run together; never parallelize two mutations of one job. \
+A paid submit is never replaced after an ambiguous result — reconcile the \
+same job or key."""
 
 VIDEO_TRANSCRIBE_DESCRIPTION = """\
-Submit, inspect, wait for, cancel, or explicitly retry transcription for a
-generated speech segment. It persists actual words, diffs, similarity, and the
-quality verdict; status never retries. Distinct segment jobs may run together,
-but dependent actions for one job must remain ordered."""
+Transcribe speech from any audio asset you own: pass asset_id and an \
+idempotency_key. To check what a generated video actually says, extract its \
+audio in the sandbox (ffmpeg -vn), register it with share_file(attach=false), \
+then transcribe that asset. Returns the spoken words; comparing them against \
+an intended line is the caller's job. Passing production_id + segment_id \
+instead transcribes an approved project segment. Distinct jobs may run \
+together; dependent actions for one job must stay ordered."""
 
 VIDEO_RENDER_DESCRIPTION = """\
 Submit, inspect, wait for, cancel, or explicitly retry an OSS-backed WUYING
@@ -2692,7 +3324,9 @@ video_transcribe_tool = define_tool(
     description=VIDEO_TRANSCRIBE_DESCRIPTION,
     parameters=VideoTranscribeArgs,
     execute=execute_transcribe,
-    sandbox_required=True,
+    # Transcribing an owned audio asset is backend-only; only the legacy
+    # project path needs the desktop, and it checks for itself.
+    sandbox_required=False,
     parallel_safe=True,
 )
 

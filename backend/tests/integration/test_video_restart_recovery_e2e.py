@@ -86,7 +86,7 @@ def _run_phase(backend: Path, phase: str, database: Path, provider_url: str) -> 
     env = os.environ.copy()
     # The helper patches provider resolution, but also scrub the conventional
     # direct-provider variables as defense in depth against future refactors.
-    for name in ("DOUBAO_API_KEY", "DOUBAO_BASE_URL"):
+    for name in ("BOSSIP_API_KEY", "BOSSIP_BASE_URL", "DOUBAO_API_KEY", "DOUBAO_BASE_URL"):
         env.pop(name, None)
     for name in (
         "ALL_PROXY",

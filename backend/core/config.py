@@ -171,10 +171,12 @@ class VideoModelConfig(BaseModel):
     protocol still needs code, because no config schema can express "poll
     ``metadata.url`` and unwrap a ``{code,message,data}`` envelope".
 
-    The capability fields are not decoration. The BossIP relay silently drops
-    parameters it does not understand and bills for the default it substitutes,
-    so a task that "succeeds" can quietly ignore the reference image it was
-    given. Declaring limits here lets the backend refuse loudly instead.
+    The capability fields are not decoration, and they are the *only* record
+    of what each model accepts: the relay exposes no model or pricing endpoint,
+    so nothing can be discovered at runtime. Gateway-side behaviour differs per
+    channel — the wan3 adapter rejects unknown switches with a 400, while the
+    sd2 720p tier still discards video references silently and bills for the
+    substitute. Declaring limits here lets the backend refuse before paying.
     """
 
     #: Wire model name sent to the provider, and the id the UI selects by.
@@ -191,8 +193,31 @@ class VideoModelConfig(BaseModel):
     resolutions: list[str] = []
     supports_reference_image: bool = True
     supports_reference_video: bool = True
+    #: Accepted aspect ratios. Empty = whatever the channel validator allows.
+    #: Declare them per model: wan3 rejects 21:9 outright rather than
+    #: substituting a default, so a global list would mis-describe it.
+    ratios: list[str] = []
+    #: Inclusive (min, max) explicit duration in seconds. None = channel default.
+    duration_range: tuple[int, int] | None = None
+    #: Whether ``duration=-1`` (let the model choose) is accepted.
+    supports_smart_duration: bool = True
+    #: A reproducible-noise seed. Useful for holding one presenter's look
+    #: across separately generated shots without re-describing them.
+    supports_seed: bool = False
+    #: first_frame / last_frame reference roles (continuity between shots).
+    supports_first_last_frame: bool = False
+    #: reference_audio role (drive the performance from an audio track).
+    supports_reference_audio: bool = False
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
+
+    @model_validator(mode="after")
+    def _check_duration_range(self):
+        if self.duration_range is not None:
+            low, high = self.duration_range
+            if low < 1 or high < low:
+                raise ValueError("duration_range must be (min, max) with 1 <= min <= max")
+        return self
 
 
 class VideoGenerationConfig(BaseModel):
@@ -202,7 +227,7 @@ class VideoGenerationConfig(BaseModel):
     renderer itself never receives them; it only sees object-scoped OSS URLs.
     """
 
-    provider: str = "doubao"
+    provider: str = "bossip"
     # Wan 3.0 is the product default. Deployments still declare its concrete
     # channel below because the BossIP relay serves it through ``/v1/videos``
     # (``sd2``), while another gateway may expose the native ``task`` protocol.
@@ -235,6 +260,15 @@ class VideoGenerationConfig(BaseModel):
     allowed_models: list[str] = []
     # Cross-user prompt-hash reuse of identical completed segments.
     dedupe: bool = True
+    #: Per-user daily ceiling on paid generation submits. 0 disables the check.
+    #: A stand-in for the shared credits ledger: it is back-pressure, not an
+    #: approval gate — the tool refuses and tells the agent to relay that to
+    #: the user, rather than asking anyone to confirm a charge.
+    daily_job_limit: int = Field(default=50, ge=0, le=10_000)
+    #: Refuse a paid submit when an identical request (same prompt_hash) is
+    #: still in flight for this user. Callers that genuinely want a second take
+    #: pass allow_duplicate=true.
+    refuse_duplicate_in_flight: bool = True
 
 
 class VideoTranscriptionConfig(BaseModel):

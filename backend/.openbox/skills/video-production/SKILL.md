@@ -30,12 +30,20 @@ makes a talking-head video *good*.
 
 1. **Read the creator.** `creator_context(action="get_user_context")` before
    drafting — voice, audience, boundaries. Empty is normal; carry on.
-2. **Write the whole script first, in the person's voice.** Roughly 3.2 Chinese
-   characters per second, so 45–60s is about 150–190 characters. Show it and get
+2. **Write the whole script first, in the person's voice.** Natural narration
+   runs about 4 Chinese characters per second, so 45–60s is roughly 170–220
+   characters, breaths included. Show it and get
    a plain yes before spending anything.
-3. **Split at meaning, not at length.** Five shots is a good default for 30–60s.
-   Keep a line under ~40 characters: past that the model rushes the delivery and
-   the caption needs three lines. `$S/lint_prompt.py` counts it for you.
+3. **Split at meaning, then let each line set its own length.** Five shots is a
+   good default for 30–60s. Keep a line under ~40 characters: past that the
+   model rushes the delivery and the caption needs three lines.
+   Run `python3 "$S/plan_shots.py" --target <asked> --line … --line …` and use
+   the seconds it gives each shot. **Never divide the requested total by the
+   shot count** — the model fills whatever time it is given: too much and it
+   invents words to pad the gap, too little and the delivery races. Both have
+   been measured (see `references/quality.md`). If the honest total overshoots
+   what the person asked for, trim the script or tell them the video will be
+   longer; squeezing the timing is the one thing that does not work.
 4. **Fix the presenter once.** One image is the anchor for every shot — a photo
    the person supplied, or one from `image_gen`. Pass it as an input asset on
    every shot with the same visual anchor sentence in every prompt.

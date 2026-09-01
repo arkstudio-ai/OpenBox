@@ -276,3 +276,76 @@ def test_the_skill_says_one_current_take_per_shot():
 
     assert "One shot has exactly one current take" in text
     assert "supersedes" in text and "supersedes" in quality
+
+
+def _plan(*lines, target=0, max_seconds=30):
+    argv = [sys.executable, str(SCRIPTS / "plan_shots.py"),
+            "--json", "--max-shot-seconds", str(max_seconds)]
+    for line in lines:
+        argv += ["--line", line]
+    if target:
+        argv += ["--target", str(target)]
+    done = subprocess.run(argv, capture_output=True, text=True, check=True)
+    return json.loads(done.stdout)
+
+
+def test_duration_follows_the_line_not_a_divided_total():
+    """The model fills whatever time it is given.
+
+    Measured 2026-09-01: a 13-character line asked to fill 5s came back with
+    audible padding (2.6 chars/s), while 32 characters in 6s raced at 5.3.
+    Both are the same mistake — a duration picked before the text was written.
+    """
+    plan = _plan("早上赶时间，也别随便对付早餐。",
+                 "第三个办法，优先保证蛋白质：鸡蛋、牛奶、豆浆任选一样，再配主食和水果，更顶饱。")
+
+    short, long = plan["shots"]
+    assert short["seconds"] < long["seconds"]
+    for shot in plan["shots"]:
+        assert 3.0 <= shot["rate"] <= 5.0, shot
+
+
+def test_a_short_line_never_gets_a_shot_that_is_mostly_silence():
+    plan = _plan("好的。")
+
+    assert plan["shots"][0]["seconds"] >= 3
+
+
+def test_the_total_is_reported_not_forced_to_the_target():
+    """Squeezing the script to hit the asked-for total is what caused padding."""
+    plan = _plan(
+        "早上赶时间，也别随便对付早餐。",
+        "第一个办法，提前准备：晚上把鸡蛋煮好，搭配全麦面包和水果，拿了就走。",
+        "第二个办法，选择免开火组合：无糖酸奶加燕麦，再放一把坚果，三分钟就能吃。",
+        "第三个办法，优先保证蛋白质：鸡蛋、牛奶、豆浆任选一样，再配主食和水果，更顶饱。",
+        "记住，早餐不用复杂，营养搭配好，快速也能吃得健康！",
+        target=30,
+    )
+
+    assert plan["total_seconds"] > 30
+    assert plan["drift_seconds"] > 0
+    assert "Cut about" in plan["advice"]
+
+
+def test_a_line_past_the_model_ceiling_says_to_split_it():
+    plan = _plan("这是一句非常长的台词。" * 12, max_seconds=10)
+
+    shot = plan["shots"][0]
+    assert shot["seconds"] == 10
+    assert "split this line" in shot["note"]
+
+
+def test_latin_words_are_read_as_words_not_letters():
+    """"SuperResolution" is one spoken word, not fifteen characters of speech."""
+    plan = _plan("试试 SuperResolution 这个功能。")
+
+    assert plan["shots"][0]["spoken_chars"] < 15
+
+
+def test_the_skill_plans_shot_length_from_the_text():
+    """Prose wraps, so match the sentence with its line breaks collapsed."""
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    flowed = " ".join(text.split())
+
+    assert "plan_shots.py" in flowed
+    assert "Never divide the requested total by the shot count" in flowed

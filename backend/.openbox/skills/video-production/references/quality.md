@@ -50,3 +50,22 @@ pays twice for the same shot.
 Captions use the **accepted actual transcript**, never the written line. That
 is the whole point of this step: it keeps the words on screen aligned with the
 words in the audio when the model changed a particle or a phrase.
+
+
+## Shot length
+
+A shot's duration is an output of its line, never an input. Mandarin narration
+runs about 4 characters per second (broadcast pace is 280–300/minute) and needs
+a breath at each end, so `plan_shots.py` computes each shot from its own text.
+
+Measured 2026-09-01, on a run that divided "30 seconds" by five shots:
+
+| shot | chars | asked | rate | result |
+|---|---|---|---|---|
+| 1 | 13 | 5s | 2.6/s | model padded with words nobody wrote |
+| 3 | 31 | 6s | 5.2/s | rushed |
+| 4 | 32 | 6s | 5.3/s | rushed |
+
+The same script planned per-line needs 40s, every shot landing at 3.4–4.0/s.
+So a "30-second" request gets either a 40-second video or a shorter script —
+those are the two honest options, and the person picks which.

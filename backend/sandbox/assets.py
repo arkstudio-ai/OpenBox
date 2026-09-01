@@ -140,6 +140,7 @@ async def attach_sandbox_image(
     relation_group_id: str | None = None,
     relation_label: str | None = None,
     relation_caption: str | None = None,
+    relation_ordinal: int | None = None,
     pin_part: bool = True,
 ) -> tuple[str, int]:
     """Push a sandbox image to OSS and pin a file part on the current message.

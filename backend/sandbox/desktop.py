@@ -10,7 +10,7 @@ desktop rather than assuming:
 
 2. **The viewer used to resize the X screen.** Browser viewport changes made
    the desktop jump between unrelated coordinate spaces while the model was
-   acting on the previous screenshot. `obx-display` pins X11 to 1024x768
+   acting on the previous screenshot. `obx-display` pins X11 to 1920x1080
    before every capture and input transaction.
 
 Both are installed as system-level CLIs (like `obx-file`), so the agent can
@@ -24,12 +24,18 @@ from core.log import create_logger
 
 log = create_logger("sandbox.desktop")
 
-#: One coordinate space from Web SDK viewer through X11 to the model. The
-#: official Anthropic Linux/X11 reference implementation recommends XGA.
-DESKTOP_W = 1024
-DESKTOP_H = 768
-MODEL_MAX_W = DESKTOP_W
-MODEL_MAX_H = DESKTOP_H
+#: One framebuffer for everyone: the person's Web SDK viewer streams the same
+#: 1920x1080 the agent drives. 16:9 1080p is the deployment-wide standard (the
+#: "OpenBox Personal 1080p" ECD policy group pins the session to it); a split
+#: resolution meant the model could miss an element the person could plainly
+#: see. Keep the X mode here in sync with that policy group.
+DESKTOP_W = 1920
+DESKTOP_H = 1080
+#: What the model is shown: the same frame at 2/3 scale (still 16:9, still
+#: every element the person sees) to keep per-step image tokens sane.
+#: `to_native` maps model coordinates back onto real pixels.
+MODEL_MAX_W = 1280
+MODEL_MAX_H = 720
 
 SHOT_PATH = "/tmp/obx-screen.png"
 
@@ -72,7 +78,7 @@ exec "$@"
 OBX_DISPLAY_SCRIPT = """#!/bin/sh
 # obx-display - keep screenshots and injected input in one coordinate space.
 set -eu
-target="1024x768"
+target="1920x1080"
 current=$(xdpyinfo 2>/dev/null | awk '/dimensions:/{print $2; exit}')
 [ "$current" = "$target" ] && exit 0
 
@@ -429,7 +435,7 @@ def x(command: str) -> str:
 
 
 def fixed_x(command: str) -> str:
-    """Run one desktop transaction only after restoring the fixed XGA mode."""
+    """Run one desktop transaction only after restoring the fixed 1080p mode."""
     program = f"obx-display && {command}"
     return x(f"sh -c {shlex.quote(program)}")
 

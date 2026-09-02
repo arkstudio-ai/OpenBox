@@ -97,6 +97,20 @@ async def lifespan(app: FastAPI):
     await provider.reconcile()
     log.info(f"OpenBox starting ({config.sandbox_provider} provider, reconciled)")
 
+    # Say, in one place, which desktop each plane means. They drifted apart
+    # once already — the view streamed a per-user desktop while the agent ran
+    # on the shared one — and nothing in the logs put the two side by side, so
+    # it read as "the agent is lying" rather than "these are two machines".
+    # The region belongs here too: a desktop id that is real in another region
+    # fails as NotFindDesktopId, which reads like a missing desktop.
+    if config.sandbox_provider == "wuying":
+        from api.desktop import _per_user
+        from sandbox import get_provider
+
+        view = "the caller's own desktop" if _per_user() else (
+            f"{config.wuying_desktop_id or '(unset)'} in {config.wuying_region_id}")
+        log.info(f"Cloud desktop — agent runs on: {get_provider().desktop_id}; view streams: {view}")
+
     # Per-user ECD fleet patrol (log-only; desktops are subscription-resident)
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
         from sandbox.wuying_desktop_service import wuying_desktop_service

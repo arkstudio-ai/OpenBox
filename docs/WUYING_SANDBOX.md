@@ -390,3 +390,38 @@ single `WUYING_ENDPOINT` tunnel — per-desktop connectivity (frpc reverse
 tunnels or per-desktop SSH) is the next step. Until then, per_user mode gives
 each user their own *viewable* desktop while command execution stays on the
 shared one.
+
+That gap is now enforced rather than merely written down. Production was
+switched to `WUYING_MODE=per_user` on 2026-09-01 anyway, and for the next
+half-day the cloud-desktop tab streamed each caller's own fresh desktop while
+their agent kept working on the shared one. Nothing failed: the agent reported
+"opened Baidu" truthfully, and Baidu really was open — on a machine the person
+could not see.
+
+So `api/desktop._per_user()` now requires two things, not one: the deployment
+asked for per-user desktops **and** the sandbox provider says it routes per
+user (`SandboxProvider.routes_per_user`). `WuyingProvider` declares `False`.
+With only the config half, the view falls back to the shared desktop and logs
+an ERROR, keeping the property that matters: *what you watch is where it runs*.
+When per-desktop connectivity lands, flip that flag and per_user works end to
+end; no other change is needed.
+
+Startup now logs both planes on one line, e.g.
+
+```
+Cloud desktop — agent runs on: ecd-4zjxaq5g45dr5qr0i;
+                view streams: ecd-4zjxaq5g45dr5qr0i in cn-shanghai
+```
+
+### The region has to match the desktop
+
+`WUYING_REGION_ID` is not cosmetic: `GetConnectionTicket` is a regional call,
+so a desktop id that is perfectly real in another region comes back as
+`NotFindDesktopId` — which reads like a deleted desktop and sends you looking
+in the wrong place. Production had `cn-hangzhou` while the shared desktop
+(`ecd-4zjxaq5g45dr5qr0i`, `bossip-sh-007`) lives in `cn-shanghai`, so the tab
+could not have worked in shared mode at all. It is `cn-shanghai` now.
+
+`WUYING_OFFICE_SITE_ID` is regional in the same way and is only read when
+creating per-user desktops; if per_user is ever completed, that value has to
+belong to `WUYING_REGION_ID`'s directory too.

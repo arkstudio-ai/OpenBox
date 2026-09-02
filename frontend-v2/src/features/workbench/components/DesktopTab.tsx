@@ -15,11 +15,14 @@ const SDK_URL =
 const SDK_PATH =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/sdk/ASP/container.html"
 const FRAME_ID = "wuying-desktop-frame"
-// Keep the stream at the desktop's fixed XGA aspect ratio. The iframe itself is
-// laid out at its displayed size: CSS-transforming a 1024px iframe makes the
+// Keep the stream at the desktop's fixed aspect ratio. The iframe itself is
+// laid out at its displayed size: CSS-transforming the iframe makes the
 // SDK observe a different input coordinate space than the user clicks in.
-const REMOTE_W = 1024
-const REMOTE_H = 768
+// Per-user desktops are pinned to 16:9 1080p by the "OpenBox Personal 1080p"
+// ECD policy group (WUYING_POLICY_GROUP_ID); only the shared agent desktop
+// stays XGA for cheaper computer-use screenshots.
+const REMOTE_W = 1920
+const REMOTE_H = 1080
 
 interface WuyingSession {
   start: () => void

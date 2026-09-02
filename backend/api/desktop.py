@@ -50,9 +50,45 @@ def _ecd_client(region_id: str):
     return Client(config)
 
 
+_warned_split = False
+
+
 def _per_user() -> bool:
+    """Whether to resolve the caller's own desktop for the cloud-desktop view.
+
+    Requires two things, not one: the deployment asked for per-user desktops,
+    *and* the sandbox provider actually routes per user. With only the first,
+    the view would stream a desktop nobody works on — the agent would keep
+    running on the single shared box, so a person watching the tab sees an idle
+    machine while their command runs somewhere they cannot see. Falling back to
+    shared keeps the one property that matters: what you watch is where it runs.
+    """
+    global _warned_split
+
     config = get_config()
-    return config.sandbox_provider == "wuying" and config.wuying_mode == "per_user"
+    if not (config.sandbox_provider == "wuying" and config.wuying_mode == "per_user"):
+        return False
+
+    from sandbox import get_provider
+
+    try:
+        routes_per_user = get_provider().routes_per_user
+    except Exception as e:  # provider not constructible — assume the safe answer
+        log.warning(f"Cannot read sandbox provider routing, treating as shared: {e}")
+        routes_per_user = False
+    if routes_per_user:
+        return True
+
+    if not _warned_split:
+        _warned_split = True
+        log.error(
+            "WUYING_MODE=per_user but the sandbox provider serves one shared "
+            f"desktop ({config.wuying_desktop_id}); the cloud-desktop view is "
+            "falling back to that desktop so it shows where the agent actually "
+            "runs. Per-user desktops stay unused until the provider routes per "
+            "user."
+        )
+    return False
 
 
 def _pending(payload: dict) -> JSONResponse:

@@ -56,6 +56,12 @@ class SandboxProvider(ABC):
     # building the client. Needed for tunnelled or TLS endpoints.
     client_base_url: str | None = None
 
+    # Whether each user gets their own sandbox. The cloud-desktop view hands
+    # out a connection ticket for the box the agent runs in, so it may only
+    # resolve a per-user desktop when the provider actually routes per user.
+    # False here means one shared box no matter how many users there are.
+    routes_per_user: bool = False
+
     _containers: dict[str, ContainerInfo]
     _api_keys: dict[str, str]
 

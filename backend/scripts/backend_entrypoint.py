@@ -44,6 +44,21 @@ def _drop_inherited_proxy() -> None:
         print(f"[entrypoint] ignoring inherited proxy: {', '.join(sorted(dropped))}")
 
 
+def _uses_relational_store() -> bool:
+    """Mirror ``db.base.ensure_engine``: only an authenticated deployment.
+
+    Desktop/single-user mode keeps its whole application store in
+    ``.openbox/skill_jobs.db`` and never opens ``DATABASE_URL``, so migrating
+    PostgreSQL there is not merely wasted work — it fails the launch outright
+    whenever that database is on a revision this checkout does not carry (a
+    branch, or a rollback). Read the same value the application will read, so
+    the two cannot drift apart.
+    """
+    from core.config import get_config
+
+    return bool(get_config().jwt_secret)
+
+
 def _migrate() -> None:
     alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
     alembic_config.set_main_option(
@@ -67,7 +82,14 @@ def main() -> None:
     os.environ.setdefault("DATABASE_URL", LOCAL_DATABASE_URL)
 
     if not options.skip_migrate:
-        _migrate()
+        if _uses_relational_store():
+            _migrate()
+        else:
+            print(
+                "[entrypoint] single-user mode: the application store is "
+                ".openbox/skill_jobs.db; skipping PostgreSQL migrations",
+                file=sys.stderr,
+            )
     if options.migrate_only:
         return
 

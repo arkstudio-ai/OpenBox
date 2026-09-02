@@ -283,14 +283,28 @@ def _v2_authority(
 
 
 def _ready_composition_config():
-    """A deterministic, explicitly declared provider binding for tests."""
-    from core.config import get_config
+    """A deterministic, explicitly declared provider binding for tests.
+
+    The ambient deployment owns ``config.model``, and a checkout with no
+    credentials declares no provider slot at all — so the slot is built here
+    rather than looked up, or this file would only pass on a machine that
+    happens to have that exact provider configured. Composition accepts only
+    explicitly declared capabilities, never a provider-name heuristic, so the
+    full provider set is declared too: anything a model declares is then a
+    subset, and the binding stays consistent.
+    """
+    from core.config import ProviderConfig, get_config
 
     config = get_config().model_copy(deep=True)
     slot = config.model.split("/", 1)[0]
-    provider = config.provider[slot]
-    provider.api_key = "subagent-test-key"
-    provider.base_url = "https://subagent-provider.invalid/v1"
+    config.provider[slot] = ProviderConfig(
+        api_key="subagent-test-key",
+        base_url="https://subagent-provider.invalid/v1",
+        subagent_capabilities=[
+            "model", "tool_filter", "reasoning", "persona", "output_schema",
+        ],
+        subagent_reasoning_variants=["medium"],
+    )
     return config
 
 

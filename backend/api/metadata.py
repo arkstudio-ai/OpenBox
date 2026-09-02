@@ -131,8 +131,11 @@ def _video_models(config) -> list[dict]:
     settings = config.video_generation
     declared = list(settings.models or [])
     if not declared:
-        if not _video_model_is_bound(config, settings.model):
-            return []
+        # Deliberately not gated on a bound channel provider. A deployment
+        # that declares no catalogue has exactly one real model, and an empty
+        # picker there reads as "video is broken" rather than "this one model
+        # is unbound". The binding check below applies to a declared
+        # catalogue, where hiding one entry still leaves a usable menu.
         return [{
             "id": settings.model,
             "name": settings.model,

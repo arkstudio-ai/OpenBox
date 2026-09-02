@@ -21,6 +21,7 @@ can be attached to over the WUYING client to see what the agent did.
 - [Operations](#operations)
 - [Troubleshooting](#troubleshooting)
 - [Why execution is WUYING-only](#why-execution-is-wuying-only)
+- [Per-user desktops (WUYING_MODE=per_user)](#per-user-desktops-wuying_modeper_user)
 
 ---
 
@@ -415,4 +416,86 @@ between users**. File APIs constrain paths to the claimed project workspace,
 but arbitrary shell execution uses one shared `sandbox` Unix identity and can
 inspect the global workspace. Treat this topology as single-user/trusted
 acceptance only; public SaaS requires one desktop (or equivalent OS boundary)
-per user.
+per user — or switch to per-user desktops, below.
+
+## Per-user desktops (WUYING_MODE=per_user)
+
+`WUYING_MODE=per_user` closes the single-tenant gap: OpenBox provisions **one
+ECD desktop per user** through the ECD OpenAPI, with a dedicated convenience
+EndUser per user, instead of pointing everyone at the shared desktop. The
+implementation is ported from bossip's wuying-bridge and keeps its hard-won
+behaviours (EndUser sync wait before CreateDesktops, tag reads through
+ListTagResources, ghost-desktop hard-delete, environment tagging).
+
+**How it works**
+
+- Identity: each user id derives a stable EndUser (`obx-<sha256[:16]>`) and a
+  salted password (`WUYING_PASSWORD_SALT`). Display names never feed the id.
+- Ownership: desktops carry `openbox-user` / `openbox-eu-id` / `openbox-env`
+  tags. The ticket API verifies the tag before minting a ticket, so one user
+  cannot view another's desktop. `openbox-env` keeps prod and dev sharing one
+  Alibaba Cloud account from adopting or reaping each other's desktops.
+- State: the `cloud_desktops` table records each user's desktop
+  (`backend/db/models/cloud_desktop.py`); a unique partial index enforces one
+  live desktop per user. If the DB forgets a desktop, it is re-adopted by tag.
+- Flow: the 云桌面 tab shows a provisioning opt-in for users without a
+  desktop; `POST /api/desktop/provision` creates (2-3 min) or wakes it, the
+  frontend polls `GET /api/desktop/status`, and the ticket API rides the same
+  202 retry channel while the desktop is creating/starting.
+
+**Extra configuration** (see `.env.example`): `WUYING_IMAGE_ID` (golden image
+— required; there is deliberately no fallback to a community image),
+`WUYING_OFFICE_SITE_ID`, `WUYING_PASSWORD_SALT`, and optionally
+`WUYING_DESKTOP_TYPE` / `WUYING_SYSTEM_DISK_SIZE` / `WUYING_POLICY_GROUP_ID` /
+`WUYING_CHARGE_TYPE` / `WUYING_ENV_TAG`. Build the golden image by
+bootstrapping one desktop with `scripts/wuying_bootstrap.py` and imaging it
+from the ECD console.
+
+**Testing** — `scripts/wuying_provision_smoke.py` exercises the chain in three
+tiers: `check` (read-only: lists office sites, images, OpenBox desktops),
+`enduser` (free: real EndUser create → sync → remove), and `full` (billable:
+provisions a real desktop through the same service the API uses, waits for
+Running, mints a connection ticket, then deletes everything; `--yes` required,
+`--disk` must cover the image size). Unit coverage lives in
+`tests/unit/test_wuying_provisioning.py` with the ECD calls stubbed.
+
+**Not yet wired**: the sandbox execution plane (action server) still uses the
+single `WUYING_ENDPOINT` tunnel — per-desktop connectivity (frpc reverse
+tunnels or per-desktop SSH) is the next step. Until then, per_user mode gives
+each user their own *viewable* desktop while command execution stays on the
+shared one.
+
+That gap is now enforced rather than merely written down. Production was
+switched to `WUYING_MODE=per_user` on 2026-09-01 anyway, and for the next
+half-day the cloud-desktop tab streamed each caller's own fresh desktop while
+their agent kept working on the shared one. Nothing failed: the agent reported
+"opened Baidu" truthfully, and Baidu really was open — on a machine the person
+could not see.
+
+So `api/desktop._per_user()` now requires two things, not one: the deployment
+asked for per-user desktops **and** the sandbox provider says it routes per
+user (`SandboxProvider.routes_per_user`). `WuyingProvider` declares `False`.
+With only the config half, the view falls back to the shared desktop and logs
+an ERROR, keeping the property that matters: *what you watch is where it runs*.
+When per-desktop connectivity lands, flip that flag and per_user works end to
+end; no other change is needed.
+
+Startup now logs both planes on one line, e.g.
+
+```
+Cloud desktop — agent runs on: ecd-4zjxaq5g45dr5qr0i;
+                view streams: ecd-4zjxaq5g45dr5qr0i in cn-shanghai
+```
+
+### The region has to match the desktop
+
+`WUYING_REGION_ID` is not cosmetic: `GetConnectionTicket` is a regional call,
+so a desktop id that is perfectly real in another region comes back as
+`NotFindDesktopId` — which reads like a deleted desktop and sends you looking
+in the wrong place. Production had `cn-hangzhou` while the shared desktop
+(`ecd-4zjxaq5g45dr5qr0i`, `bossip-sh-007`) lives in `cn-shanghai`, so the tab
+could not have worked in shared mode at all. It is `cn-shanghai` now.
+
+`WUYING_OFFICE_SITE_ID` is regional in the same way and is only read when
+creating per-user desktops; if per_user is ever completed, that value has to
+belong to `WUYING_REGION_ID`'s directory too.

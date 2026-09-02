@@ -8,8 +8,11 @@ from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 
+from tests.support.migrations import current_head
 
-REVISION = "f0b2d4e6a8c1"
+
+#: The tree's end, not a pinned id — see tests/support/migrations.
+REVISION = current_head()
 INBOX_REVISION = "b5e8f1a4c7d0"
 PREVIOUS_REVISION = "a4d7f0c2e9b1"
 

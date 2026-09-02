@@ -128,10 +128,15 @@ def test_image_generation_config_defaults():
     assert config.image_generation.timeout_seconds == 600
 
 
-def test_video_generation_defaults_to_wan_3():
+def test_video_generation_defaults_to_wan_3_at_720p():
+    """720p is the tier every model offers and what a vertical short needs.
+
+    Defaulting to 1080p quietly made every generation the most expensive one
+    on the menu, for a picture nobody had asked to be that large.
+    """
     config = OpenBoxConfig()
     assert config.video_generation.model == "wan3.0-video"
-    assert config.video_generation.default_resolution == "1080p"
+    assert config.video_generation.default_resolution == "720p"
 
 
 def test_example_binds_default_wan_3_to_the_bossip_protocol():
@@ -143,10 +148,13 @@ def test_example_binds_default_wan_3_to_the_bossip_protocol():
     declared = {model.id: model for model in settings.models}
 
     assert settings.model == "wan3.0-video"
-    assert settings.default_resolution == "1080p"
+    assert settings.default_resolution == "720p"
     assert declared[settings.model].channel == "sd2"
     assert declared[settings.model].provider == "newapi"
-    assert declared[settings.model].resolutions == ["1080p"]
+    # Measured 2026-09-01: wan3 honours all three tiers once the request
+    # carries them under `metadata`, which is where its adaptor reads.
+    assert declared[settings.model].resolutions == ["480p", "720p", "1080p"]
+    assert settings.default_resolution in declared[settings.model].resolutions
 
     route = resolve_route(None, config)
     validate_request(

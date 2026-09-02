@@ -594,3 +594,55 @@ def test_an_undeclared_id_is_refused_instead_of_inferred():
 def test_inference_still_applies_when_nothing_is_declared():
     cfg = _declared_config(channel_providers={"task": "newapi"})
     assert resolve_route("wan3.0-video", cfg).channel == "task"
+
+
+# ── ark route: private-network gateway + explicit wire format ───────────────
+
+def _ark_config(base_url, options=None):
+    from core.config import ProviderConfig
+
+    return SimpleNamespace(
+        video_generation=SimpleNamespace(
+            provider="bossip",
+            model="doubao-seedance-2-0-260128",
+            models=[],
+            channel_providers={},
+            allowed_models=[],
+            submit_timeout_seconds=180,
+            status_timeout_seconds=60,
+        ),
+        provider={"bossip": ProviderConfig(api_key="sk-obx", base_url=base_url, options=options or {})},
+    )
+
+
+def test_ark_route_accepts_private_http_gateway_with_declared_wire_format():
+    """Our own new-api on its VPC address speaks the relay's /v1/videos format."""
+    cfg = _ark_config("http://10.100.1.76:3000/", {"wire_format": "bossip_videos"})
+    route = resolve_route("doubao-seedance-2-0-260128", cfg)
+    assert route.channel == "ark"
+    assert route.base_url == "http://10.100.1.76:3000"
+    assert route.wire_format == "bossip_videos"
+    assert route.auth_scheme == "bearer"
+
+
+def test_ark_route_still_rejects_public_plain_http():
+    cfg = _ark_config("http://openapi.bossipai.com.cn", {"wire_format": "bossip_videos"})
+    with pytest.raises(RuntimeError) as excinfo:
+        resolve_route("doubao-seedance-2-0-260128", cfg)
+    assert "HTTPS" in str(excinfo.value)
+
+
+def test_ark_route_rejects_unknown_wire_format():
+    cfg = _ark_config("https://gw.test", {"wire_format": "grpc"})
+    with pytest.raises(RuntimeError) as excinfo:
+        resolve_route("doubao-seedance-2-0-260128", cfg)
+    assert "wire_format" in str(excinfo.value)
+
+
+def test_ark_route_infers_wire_format_from_relay_host_when_undeclared():
+    """Existing deployments that never set options.wire_format keep working."""
+    relay = resolve_route("doubao-seedance-2-0-260128", _ark_config("https://openapi.bossipai.com.cn"))
+    assert relay.wire_format == "bossip_videos"
+    direct = resolve_route("doubao-seedance-2-0-260128", _ark_config("https://api.tokenspace.net.cn"))
+    assert direct.wire_format == "tokenspace_contents"
+

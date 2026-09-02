@@ -5,6 +5,8 @@ and pay for it without a production, capability limits are enforced from the
 declared registry, and two guards stand in for the credits ledger that will
 eventually price this.
 """
+import inspect
+
 import pytest
 from pydantic import ValidationError
 
@@ -30,6 +32,28 @@ SEEDANCE = VideoModelConfig(
     duration_range=(4, 15),
     supports_reference_video=False,
 )
+
+
+
+def _config_declaring(*entries: VideoModelConfig, channel: str) -> "object":
+    """A config that declares exactly what the calling test presupposes.
+
+    These used to `load_dotenv(".env")` and read the developer's own
+    `openbox.json`. That made them assertions about one machine's deployment:
+    they fail on a bare checkout and on CI, and they say nothing at all on a
+    machine whose config happens not to declare the model. Declare it here.
+    """
+    from core.config import ProviderConfig, get_config
+
+    config = get_config().model_copy(deep=True)
+    config.video_generation = VideoGenerationConfig(
+        models=list(entries),
+        channel_providers={channel: "video-test"},
+    )
+    config.provider["video-test"] = ProviderConfig(
+        api_key="video-test-key", base_url="https://video.invalid/v1"
+    )
+    return config
 
 
 def _route(model: str, channel: str = "sd2"):
@@ -70,28 +94,38 @@ def test_frame_roles_are_refused_on_models_that_lack_them():
         )
 
 
-def test_sd2_refuses_roles_it_cannot_express_even_when_the_model_declares_them():
-    """A role the body has no field for would arrive as a plain reference.
+def test_only_a_name_encoded_tier_refuses_frame_roles():
+    """The flat body has no field for a role; the metadata shape does.
 
-    That produces a paid take which quietly ignores the continuity that was
-    asked for, so the request is refused instead of being silently downgraded.
+    wan3 reaches the gateway's task adaptor, whose content[] carries an
+    explicit role, so frame continuity is expressible there. The name-encoded
+    sd2 tiers still take a flat image list and must refuse.
     """
+    _validate(WAN3, _route("wan3.0-video"), resolution="1080p",
+              ratio="9:16", roles=("last_frame",))
+
+    # A flat tier that nonetheless claims the capability is caught by the
+    # channel rule rather than the declaration, which is the case that matters:
+    # the body simply has nowhere to put the role.
+    flat = VideoModelConfig(id="video-sd-1080p-pro", channel="sd2",
+                            resolutions=["1080p"], supports_first_last_frame=True)
     with pytest.raises(RuntimeError, match="cannot express"):
-        _validate(
-            WAN3,
-            _route("wan3.0-video"),
-            resolution="1080p",
-            ratio="9:16",
-            roles=("last_frame",),
-        )
+        _validate(flat, _route("video-sd-1080p-pro"), resolution="1080p",
+                  roles=("last_frame",))
 
 
-def test_sd2_payload_carries_an_explicit_duration_and_seed():
+def test_a_task_adaptor_model_carries_its_parameters_in_metadata():
+    """Top-level resolution/ratio are dropped by the gateway's video DTO.
+
+    Measured 2026-09-01: 720p/9:16 sent at the top level came back
+    1920x1080 — the upstream default — while the same values under
+    `metadata` came back 720x1280 exactly.
+    """
     _path, body = video_providers.build_payload(
         _route("wan3.0-video"),
         prompt="一只猫跳上窗台",
         refs=[],
-        resolution="1080p",
+        resolution="720p",
         ratio="9:16",
         duration=24,
         generate_audio=True,
@@ -99,8 +133,22 @@ def test_sd2_payload_carries_an_explicit_duration_and_seed():
         seed=42,
     )
 
-    assert body["duration"] == 24
-    assert body["seed"] == 42
+    assert "resolution" not in body, "the DTO has no top-level field for it"
+    assert body["metadata"]["resolution"] == "720p"
+    assert body["metadata"]["ratio"] == "9:16"
+    assert body["metadata"]["duration"] == 24
+    assert body["metadata"]["seed"] == 42
+
+
+def test_a_name_encoded_tier_keeps_the_flat_body():
+    _path, body = video_providers.build_payload(
+        _route("video-sd-1080p-pro"), prompt="一只猫", refs=[],
+        resolution="1080p", ratio="9:16", duration=6,
+        generate_audio=True, watermark=False, seed=None,
+    )
+
+    assert body["resolution"] == "1080p"
+    assert "metadata" not in body
 
 
 def test_smart_duration_sends_no_duration_field():
@@ -267,3 +315,256 @@ def test_shot_is_optional_for_a_one_off_generation():
     args = VideoGenerateArgs(action="submit", prompt="一只猫", idempotency_key="k:1")
 
     assert args.shot is None
+
+
+def test_every_declared_model_and_resolution_is_reachable():
+    """The picker offers what the registry declares, so all of it must work.
+
+    Before this, three of nine models were unusable at the resolution they
+    advertised: the sd2 native-resolution rule (a Seedance naming convention)
+    was applied to wan3 and MiniMax, which pick resolution as a parameter, and
+    a hardcoded "1080p only on doubao-seedance-2-0" predated the registry.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    config = core.config.get_config()
+
+    failures = []
+    for model in config.video_generation.models:
+        # Only Wan 3.0 accepts -1 ("you pick"); the rest need a real number, so
+        # ask each for something inside its own measured range.
+        duration = -1 if model.supports_smart_duration else (model.duration_range or (5, 5))[0]
+        for resolution in model.resolutions or ["720p"]:
+            try:
+                video_providers.validate_request(
+                    video_providers.resolve_route(model.id, config),
+                    resolution=resolution, ratio="9:16", duration=duration,
+                    generate_audio=model.supports_generated_audio,
+                    input_mimes=[], declared=model,
+                )
+            except Exception as exc:
+                failures.append(f"{model.id} @ {resolution}: {exc}")
+
+    assert not failures, "\n".join(failures)
+
+
+def test_a_name_encoded_tier_still_pins_its_resolution():
+    """video-sd-720p-proⅠ returns 720p whatever you ask for — keep refusing."""
+    entry = VideoModelConfig(id="video-sd-720p-proⅠ", channel="sd2",
+                             resolutions=["720p", "1080p"])
+
+    with pytest.raises(RuntimeError, match="natively"):
+        _validate(entry, _route("video-sd-720p-proⅠ"), resolution="1080p")
+
+
+def test_a_silent_tier_refuses_audio_but_stays_selectable():
+    entry = VideoModelConfig(id="fast-tier", channel="sd2",
+                             supports_generated_audio=False)
+
+    _validate(entry, _route("fast-tier"), generate_audio=False)
+    with pytest.raises(RuntimeError, match="silent video"):
+        _validate(entry, _route("fast-tier"), generate_audio=True)
+
+
+def test_each_wire_shape_puts_the_resolution_where_its_adaptor_reads_it():
+    """Three gateway adaptors, three mutually unreadable body shapes.
+
+    Measured 2026-09-01 by generating one video per model and probing the
+    pixels that came back:
+
+      metadata — wan3 and Seedance behind the DoubaoVideo adaptor. Top-level
+                 resolution/ratio are dropped by the video DTO, which has no
+                 field for them: 720p/9:16 flat returned 1920x1080, the same
+                 values under `metadata` returned 720x1280.
+      flat     — the name-encoded sd2 tiers behind the Sora adaptor, whose
+                 body is relayed verbatim.
+      size     — MiniMax, which parses its own tiers out of a WxH string and
+                 rejects the request without one ("ratio 不能为空").
+    """
+    shapes = {
+        "metadata": ("wan3.0-video", "metadata"),
+        "flat": ("video-sd-1080p-pro", "resolution"),
+        "size": ("MiniMax-H3", "size"),
+    }
+    for shape, (model_id, expected_key) in shapes.items():
+        entry = VideoModelConfig(id=model_id, channel="sd2", wire_shape=shape,
+                                 resolutions=["1080p"])
+        _path, body = video_providers.build_payload(
+            _route(model_id), prompt="一只猫", refs=[], resolution="1080p",
+            ratio="9:16", duration=5, generate_audio=True, watermark=False,
+            seed=None, declared=entry,
+        )
+        assert expected_key in body, f"{shape}: {sorted(body)}"
+
+
+def test_the_size_shape_is_portrait_for_a_vertical_ratio():
+    entry = VideoModelConfig(id="MiniMax-H3", channel="sd2", wire_shape="size")
+
+    _path, portrait = video_providers.build_payload(
+        _route("MiniMax-H3"), prompt="x", refs=[], resolution="720p",
+        ratio="9:16", duration=5, generate_audio=True, watermark=False,
+        seed=None, declared=entry,
+    )
+    _path, landscape = video_providers.build_payload(
+        _route("MiniMax-H3"), prompt="x", refs=[], resolution="720p",
+        ratio="16:9", duration=5, generate_audio=True, watermark=False,
+        seed=None, declared=entry,
+    )
+
+    assert portrait["size"] == "720x1280"
+    assert landscape["size"] == "1280x720"
+
+
+def test_the_budget_line_says_what_is_left_not_what_is_spent():
+    """"used=50/50" was reported to a person as "50 remaining"."""
+    import re
+
+    from tool import video_production
+
+    source = inspect.getsource(video_production._execute_estimate)
+    assert "daily_submits_remaining" in source
+    # The old "used=N/limit" form is what invited the misreading.
+    assert not re.search(r"daily_submits_used=\{used\}\"?\s*\+", source)
+
+
+def test_every_model_declares_a_duration_range_it_was_measured_at():
+    """Vendor docs and this deployment disagree, so both were checked.
+
+    通义万相 2.7's public docs say 2-15s, but the endpoint behind this relay
+    honoured 30s exactly (requested 30 → 30.024s), and its adaptor refuses 31.
+    Seedance's docs say -1 picks a length for you, and both its paths here
+    accept it — an earlier guess had that flag off. MiniMax H3's 4-15s matches
+    its docs and the gateway constants.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    models = core.config.get_config().video_generation.models
+
+    for model in models:
+        low, high = model.duration_range or (0, 0)
+        assert low >= 2 and high >= low, model.id
+        assert high <= 30, f"{model.id} claims more than any vendor here allows"
+
+
+def test_minimax_keeps_its_own_resolution_vocabulary():
+    """Its adaptor parses tiers back out of the WxH string it is sent.
+
+    Declaring 720p/1080p put another vendor's names on it; asking for 720p
+    returned 768x1344, the tier it actually rounded to.
+    """
+    entry = VideoModelConfig(
+        id="MiniMax-H3",
+        channel="sd2",
+        # Its adaptor reads the tier back out of a WxH string, so this model
+        # takes the size shape rather than a `resolution` field.
+        wire_shape="size",
+        resolutions=["480p", "512p", "768p", "2k"],
+        duration_range=(4, 15),
+    )
+    config = _config_declaring(entry, channel="sd2")
+
+    assert entry.resolutions == ["480p", "512p", "768p", "2k"]
+    for tier in entry.resolutions:
+        _path, body = video_providers.build_payload(
+            video_providers.resolve_route("MiniMax-H3", config), prompt="猫",
+            refs=[], resolution=tier, ratio="9:16", duration=6,
+            generate_audio=True, watermark=False, seed=None, declared=entry,
+        )
+        # An unmapped tier would collapse to the default and bill for a
+        # picture nobody chose.
+        assert body["size"] != "720x1280" or tier == "720p", (tier, body["size"])
+
+
+def test_duration_is_checked_for_every_declared_model_at_both_bounds():
+    """The check has to run before the channel branches return early.
+
+    validate_request's sd2 branch returns as soon as its own rules pass, so a
+    duration check placed after it would silently cover none of the six models
+    on that channel.
+    """
+    from dotenv import load_dotenv
+
+    import core.config
+
+    load_dotenv(".env")
+    core.config._config = None
+    config = core.config.get_config()
+
+    for model in config.video_generation.models:
+        low, high = model.duration_range
+        route = video_providers.resolve_route(model.id, config)
+        resolution = (model.resolutions or ["720p"])[0]
+        ratio = (model.ratios or ["9:16"])[0]
+
+        def check(duration):
+            video_providers.validate_request(
+                route, resolution=resolution, ratio=ratio, duration=duration,
+                generate_audio=model.supports_generated_audio,
+                input_mimes=[], declared=model,
+            )
+
+        with pytest.raises(RuntimeError):
+            check(low - 1)
+        with pytest.raises(RuntimeError):
+            check(high + 1)
+        check(low)
+        check(high)
+
+        if model.supports_smart_duration:
+            check(-1)
+        else:
+            with pytest.raises(RuntimeError):
+                check(-1)
+
+
+def test_an_undeclared_model_still_gets_a_channel_wide_duration_guard():
+    """Otherwise duration=3600 goes straight to the provider and burns a submit."""
+    # Declaring nothing is the point: a non-empty catalogue would refuse an
+    # unlisted id outright, and this guard is about the model that slips
+    # through name inference instead.
+    route = video_providers.resolve_route(
+        "wan3.0-video", _config_declaring(channel="task")
+    )
+
+    def check(duration):
+        video_providers.validate_request(
+            route, resolution="720p", ratio="9:16", duration=duration,
+            generate_audio=True, input_mimes=[], declared=None,
+        )
+
+    check(5)
+    check(-1)
+    for absurd in (1, 99, 3600):
+        with pytest.raises(RuntimeError, match="not in video_generation.models"):
+            check(absurd)
+
+
+def test_a_capability_refusal_points_at_the_table_not_at_another_guess():
+    """"20s rejected" alone reads as an invitation to try 18, then 16.
+
+    Each of those attempts is a paid submit spent discovering something that
+    `action="models"` publishes for free, so every capability refusal carries
+    the pointer — the skill may not be loaded, and this is then the only
+    guidance the caller gets.
+    """
+    entry = VideoModelConfig(id="video-sd-1080p-pro", channel="sd2",
+                             resolutions=["1080p"], duration_range=(4, 15),
+                             supports_smart_duration=False)
+    route = _route("video-sd-1080p-pro")
+
+    for kwargs in ({"duration": 20}, {"duration": -1}, {"resolution": "480p"}):
+        args = {"resolution": "1080p", "ratio": "9:16", "duration": 6, **kwargs}
+        with pytest.raises(RuntimeError) as caught:
+            video_providers.validate_request(
+                route, generate_audio=True, input_mimes=[], declared=entry, **args
+            )
+        assert 'action="models"' in str(caught.value)
+        assert 'action="estimate"' in str(caught.value)

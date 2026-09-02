@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Gradle 在 android/ 下也会落一份构建产物，和顶层 build/ 是两处。
+android/build/
+android/.gradle/

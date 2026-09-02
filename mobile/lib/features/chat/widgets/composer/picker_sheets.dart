@@ -220,3 +220,156 @@ String _agentDescription(I18nState i18n, AgentInfo agent) {
   if (label != key) return label;
   return agent.description ?? '';
 }
+
+/// Video-model picker (web `VideoModelPicker`): each model with the resolution
+/// tiers it publishes.
+///
+/// Two sheets rather than the web's inline chips. On a phone the tiers do not
+/// fit beside a model name without shrinking both past readability, and a
+/// second sheet is the gesture people already know from every other picker
+/// here. A model with one tier skips the second sheet — there is nothing to
+/// choose — and is selected outright.
+Future<void> showVideoModelPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String sessionKey,
+  required String? currentModel,
+  required String? currentResolution,
+}) async {
+  final t = context.tokens;
+  final i18n = ref.read(i18nProvider);
+  final config = ref.read(appConfigProvider).valueOrNull;
+  final models = config?.videoModels ?? const <VideoModelInfo>[];
+  if (models.isEmpty) return;
+
+  final picked = ref.read(pickedVideoProvider(sessionKey));
+  final activeId = picked?.modelId ??
+      (currentModel?.isNotEmpty == true ? currentModel : config?.defaultVideoModel);
+  final activeTier = picked?.resolution ??
+      (currentResolution?.isNotEmpty == true
+          ? currentResolution
+          : config?.defaultVideoResolution);
+
+  void choose(String modelId, String resolution) {
+    ref.read(pickedVideoProvider(sessionKey).notifier).state =
+        VideoPick(modelId, resolution);
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: Text(
+              i18n.t('chat:videoModel.pick'),
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                fontWeight: FontWeight.w600,
+                color: t.n600,
+              ),
+            ),
+          ),
+          for (final model in models)
+            ListTile(
+              dense: true,
+              title: Text(model.name,
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              subtitle: Text(
+                [
+                  ?model.tier,
+                  model.resolutions.join(' / '),
+                ].join(' · '),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
+              ),
+              // The chevron says "there is a second step here", so the row
+              // you are already on needs it too — its tiers are exactly the
+              // ones you are most likely to want to change. Showing only the
+              // check made the current model read as the one model whose
+              // resolution was fixed, when tapping it opens the tiers like
+              // any other.
+              trailing: model.id == activeId
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (activeTier != null)
+                          Text(activeTier,
+                              style: TextStyle(
+                                  fontSize: FontSizes.xs, color: t.n500)),
+                        const SizedBox(width: 6),
+                        Icon(Icons.check, size: 18, color: t.a700),
+                        if (model.resolutions.length > 1)
+                          Icon(Icons.chevron_right, size: 18, color: t.n500),
+                      ],
+                    )
+                  : (model.resolutions.length > 1
+                      ? Icon(Icons.chevron_right, size: 18, color: t.n500)
+                      : null),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                final tiers = model.resolutions;
+                if (tiers.length <= 1) {
+                  choose(model.id, tiers.isEmpty ? '' : tiers.first);
+                  return;
+                }
+                if (!context.mounted) return;
+                await _showResolutionPicker(
+                  context,
+                  model: model,
+                  current: model.id == activeId ? activeTier : null,
+                  onPick: (tier) => choose(model.id, tier),
+                );
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> _showResolutionPicker(
+  BuildContext context, {
+  required VideoModelInfo model,
+  required String? current,
+  required void Function(String) onPick,
+}) {
+  final t = context.tokens;
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: Text(
+              model.name,
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                fontWeight: FontWeight.w600,
+                color: t.n600,
+              ),
+            ),
+          ),
+          for (final tier in model.resolutions)
+            ListTile(
+              dense: true,
+              title: Text(tier,
+                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              trailing: tier == current
+                  ? Icon(Icons.check, size: 18, color: t.a700)
+                  : null,
+              onTap: () {
+                onPick(tier);
+                Navigator.pop(sheetContext);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}

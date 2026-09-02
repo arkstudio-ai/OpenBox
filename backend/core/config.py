@@ -218,6 +218,10 @@ class VideoModelConfig(BaseModel):
     resolutions: list[str] = []
     supports_reference_image: bool = True
     supports_reference_video: bool = True
+    #: Fast tiers render silent video. Declaring it lets the picker and the
+    #: `models` listing say so up front, instead of the caller discovering it
+    #: from a refused submit.
+    supports_generated_audio: bool = True
     #: Accepted aspect ratios. Empty = whatever the channel validator allows.
     #: Declare them per model: wan3 rejects 21:9 outright rather than
     #: substituting a default, so a global list would mis-describe it.
@@ -233,6 +237,16 @@ class VideoModelConfig(BaseModel):
     supports_first_last_frame: bool = False
     #: reference_audio role (drive the performance from an audio track).
     supports_reference_audio: bool = False
+    #: Which body shape the gateway channel behind this model actually reads.
+    #: Measured 2026-09-01 against the gateway source, because the three
+    #: differ and a wrong one is accepted and then ignored:
+    #:   "flat"     — resolution/ratio at the top level, passed through as-is
+    #:                (Sora adaptor, type 55: the body is relayed verbatim)
+    #:   "metadata" — resolution/ratio/seed/content[] under `metadata`; the
+    #:                top-level DTO has no field for them (DoubaoVideo, 54)
+    #:   "size"     — a `WxH` string at the top level, which the adaptor
+    #:                parses into its own resolution tiers (MiniMax, 58)
+    wire_shape: Literal["flat", "metadata", "size"] = "flat"
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
 
@@ -257,7 +271,10 @@ class VideoGenerationConfig(BaseModel):
     # channel below because the BossIP relay serves it through ``/v1/videos``
     # (``sd2``), while another gateway may expose the native ``task`` protocol.
     model: str = "wan3.0-video"
-    default_resolution: str = "1080p"
+    # 720p, not 1080p: it is the tier every model offers, and it is what a
+    # vertical short actually needs. Defaulting to the top tier quietly made
+    # every generation the most expensive one available.
+    default_resolution: str = "720p"
     default_ratio: str = "9:16"
     default_duration: int = Field(default=-1, ge=-1, le=30)
     default_generate_audio: bool = True
@@ -407,6 +424,26 @@ class OpenBoxConfig(BaseModel):
     wuying_desktop_id: str = ""                     # ecd-... , used by the desktop-view ticket API
     wuying_region_id: str = "cn-hangzhou"           # region the desktop lives in
     wuying_end_user_id: str = ""                    # Wuying end user the web view logs in as
+
+    # -- WUYING per-user desktop provisioning (wuying_mode="per_user") --
+    # "shared" keeps the single pre-provisioned desktop above; "per_user" makes
+    # OpenBox create one ECD desktop + one convenience EndUser per user via the
+    # ECD OpenAPI (ported from the bossip wuying-bridge integration).
+    wuying_mode: str = "shared"                     # "shared" | "per_user"
+    wuying_image_id: str = ""                       # golden image; required in per_user mode —
+                                                    # never fall back to a community image silently
+    wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
+    wuying_desktop_type: str = "eds.enterprise_office.4c8g"
+    wuying_system_disk_size: int = 40               # GiB
+    # No default on purpose: the policy group pins the session resolution (the
+    # deployment standard is "OpenBox Personal 1080p"), and Alibaba's default
+    # policy is resolution-adaptive — a desktop created with it drifts away
+    # from what the agent screenshots. per_user provisioning refuses to create
+    # desktops until this is set explicitly, like wuying_image_id.
+    wuying_policy_group_id: str = ""
+    wuying_charge_type: str = "PostPaid"
+    wuying_password_salt: str = ""                  # per-deployment secret for derived EndUser passwords
+    wuying_env_tag: str = "default"                 # openbox-env tag; isolates prod/dev sharing one account
 
     # -- Browser automation on the cloud desktop --
     # local=drive a headed Chrome on the cloud desktop over CDP; extension=drive
@@ -637,6 +674,15 @@ def _apply_env_overrides(data: dict) -> dict:
         "wuying_desktop_id": "WUYING_DESKTOP_ID",
         "wuying_region_id": "WUYING_REGION_ID",
         "wuying_end_user_id": "WUYING_END_USER_ID",
+        "wuying_mode": "WUYING_MODE",
+        "wuying_image_id": "WUYING_IMAGE_ID",
+        "wuying_office_site_id": "WUYING_OFFICE_SITE_ID",
+        "wuying_desktop_type": "WUYING_DESKTOP_TYPE",
+        "wuying_system_disk_size": "WUYING_SYSTEM_DISK_SIZE",
+        "wuying_policy_group_id": "WUYING_POLICY_GROUP_ID",
+        "wuying_charge_type": "WUYING_CHARGE_TYPE",
+        "wuying_password_salt": "WUYING_PASSWORD_SALT",
+        "wuying_env_tag": "WUYING_ENV_TAG",
         "browser_mode": "BROWSER_MODE",
         "browser_chrome_port": "BROWSER_CHROME_PORT",
         "oss_bucket": "OSS_BUCKET",
@@ -678,7 +724,7 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
-                                "oss_user_quota_bytes"}:
+                                "oss_user_quota_bytes", "wuying_system_disk_size"}:
                 data[field_name] = int(value)
             elif field_name in {
                 "monthly_cost_limit",

@@ -36,6 +36,11 @@ class WuyingProvider(SandboxProvider):
     """Points every session at a single pre-provisioned WUYING cloud desktop."""
 
     owns_containers = False
+    # One desktop for everyone: this provider reads a single tunnel endpoint at
+    # construction and never consults the caller. wuying_mode="per_user" gives
+    # each user their own desktop for the cloud-desktop *view* only — until
+    # this becomes True, the two planes must not be allowed to diverge.
+    routes_per_user = False
 
     def __init__(self) -> None:
         from core.config import get_config

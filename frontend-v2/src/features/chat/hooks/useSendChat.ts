@@ -9,6 +9,7 @@ export interface SendOpts {
   model?: string
   variant?: string | null
   videoModel?: string
+  videoResolution?: string
   agent?: string
   attachments?: string[]
 }
@@ -33,6 +34,7 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
         model: opts?.model,
         variant: opts?.variant,
         videoModel: opts?.videoModel,
+        videoResolution: opts?.videoResolution,
         agent: opts?.agent,
         attachments: opts?.attachments,
         clientMessageId,

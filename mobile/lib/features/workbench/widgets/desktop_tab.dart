@@ -24,7 +24,7 @@ enum _Phase { loading, connected, error, closed }
 /// toggle, and no machine ids ever reach the UI.
 ///
 /// Two things a phone needs that the desktop client does not: landscape
-/// fullscreen, without which a 1024×768 stream is unreadable, and the
+/// fullscreen, without which a 1920×1080 stream is unreadable, and the
 /// desktop's own on-stream keyboard, because the phone's keyboard cannot
 /// reach the guest.
 class DesktopTab extends ConsumerStatefulWidget {

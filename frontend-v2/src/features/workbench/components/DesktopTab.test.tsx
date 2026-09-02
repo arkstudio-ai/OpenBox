@@ -40,10 +40,15 @@ describe("DesktopTab", () => {
   beforeEach(() => {
     handlers.clear()
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
-    vi.mocked(http.get).mockResolvedValue({
-      ticket: "ticket",
-      desktopId: "ecd-test",
-      regionId: "cn-hangzhou",
+    // Answer per endpoint. One blanket payload made /api/desktop/status reply
+    // with a ticket and no `state`, which is neither "running" nor
+    // "not_provisioned" — so the component sat in the provisioning poll and
+    // never reached createSession.
+    vi.mocked(http.get).mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/desktop/status")) {
+        return { state: "running", mode: "shared" }
+      }
+      return { ticket: "ticket", desktopId: "ecd-test", regionId: "cn-hangzhou" }
     })
     Object.assign(window, { Wuying: { WebSDK: { createSession } } })
   })

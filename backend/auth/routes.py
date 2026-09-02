@@ -155,6 +155,24 @@ def _blacklist_key(token: str) -> str:
     return f"jwt_bl:{_hashlib.sha256(token.encode()).hexdigest()}"
 
 
+def _coded_error(status: int, code: str, message: str) -> HTTPException:
+    """A refusal both clients can turn into their own copy.
+
+    `errors.json` on web and mobile has carried `AUTH_INVALID_CREDENTIALS` and
+    `AUTH_USER_EXISTS` all along, but nothing ever emitted them: a bare string
+    `detail` leaves the clients falling back to the status, so a wrong password
+    came out as "Your session expired. Please sign in again." — which is not
+    what happened and not what the person should do about it. Same shape as
+    `auth.quota._quota_error`.
+    """
+    return HTTPException(
+        status_code=status,
+        detail={"code": code, "message": message},
+        headers={"X-Error-Code": code},
+    )
+
+
+
 @router.post("/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, request: Request, response: Response):
     # Validate password
@@ -165,7 +183,7 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     # Check username taken
     existing = await _user_repo.get_by_username(body.username)
     if existing:
-        raise HTTPException(status_code=409, detail="Username already taken")
+        raise _coded_error(409, "AUTH_USER_EXISTS", "Username already taken")
 
     # Create user
     user_id = generate_id()
@@ -198,7 +216,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
     user = await _user_repo.get_by_username(body.username)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise _coded_error(401, "AUTH_INVALID_CREDENTIALS", "Invalid credentials")
 
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account is disabled")
@@ -217,7 +235,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
             lock_until = datetime.now(timezone.utc) + timedelta(minutes=15)
             await _user_repo.lock_until(user["id"], lock_until.isoformat())
             raise HTTPException(status_code=423, detail="Account locked for 15 minutes")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise _coded_error(401, "AUTH_INVALID_CREDENTIALS", "Invalid credentials")
 
     # Reset failed count on success
     if user.get("failed_login_count", 0) > 0:

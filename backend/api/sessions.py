@@ -42,6 +42,10 @@ class PromptBody(BaseModel):
     #: video tools can read it when the agent reaches them; a segment then
     #: freezes it at submission, leaving in-flight work untouched.
     video_model: str | None = None
+    #: Resolution picked beside that model. Omitted keeps the conversation
+    #: selection; explicit null clears it and returns to the selected model's
+    #: advertised default.
+    video_resolution: str | None = None
     #: Omitted inherits the conversation; explicit null selects the model's default.
     variant: ReasoningVariant | None = None
     client_message_id: str | None = Field(default=None, max_length=64)
@@ -82,6 +86,7 @@ class UpdateSessionBody(BaseModel):
     #: `model`: segments snapshot it at submission, so a switch only reaches
     #: work not yet started.
     video_model: str | None = None
+    video_resolution: str | None = None
 
 
 class CommandBody(BaseModel):
@@ -198,6 +203,24 @@ async def _remember_video_model(session, requested: str | None, user_id: str) ->
         await session_mod.update_session(session.id, video_model=value, user_id=user_id)
 
 
+async def _remember_video_resolution(session, requested: str | None, user_id: str) -> None:
+    """Keep the composer's resolution pick beside its model.
+
+    Direct-ownership entries only. The Inbox path carries the pair on the
+    accepted item instead and writes it back inside the claim transaction, so
+    a queued turn never mutates a Session that a live generation still owns.
+
+    Not validated against the model here: the pair is checked at submit, where
+    a mismatch can name both halves. Rejecting at the API would also strand a
+    conversation whose model was retired under it.
+    """
+    if requested is None:
+        return
+    value = requested.strip() or None
+    if value != getattr(session, "video_resolution", None):
+        await session_mod.update_session(session.id, video_resolution=value, user_id=user_id)
+
+
 def _resolve_prompt_model(session, requested: str | None) -> str:
     """Resolve the queued turn without mutating a currently running Session."""
     from agent.model_resolve import resolve as resolve_model
@@ -260,6 +283,11 @@ async def _accept_prompt(session, body: PromptBody, user_id: str):
                 body.video_model.strip() or None
                 if body.video_model is not None
                 else session.video_model
+            ),
+            video_resolution=(
+                body.video_resolution.strip() or None
+                if body.video_resolution is not None
+                else session.video_resolution
             ),
             variant=chosen_variant,
             output_format=body.format,
@@ -667,6 +695,7 @@ class RegenerateBody(BaseModel):
     model: str | None = None
     #: Independently switchable — a turn can fail on the video model alone.
     video_model: str | None = None
+    video_resolution: str | None = None
 
 
 @router.get("/session/{session_id}/diff/step")
@@ -763,9 +792,11 @@ async def regenerate_message(
         # and "try it on another one" are a single action.
         if body and body.model:
             await _remember_model(session, body.model, user_id)
-        # Independent of the chat model: a retry may switch only the video model.
+        # Independent of the chat model: a retry may switch only the video
+        # model, or only the resolution beside it.
         if body:
             await _remember_video_model(session, body.video_model, user_id)
+            await _remember_video_resolution(session, body.video_resolution, user_id)
 
         last_user = await session_mod.delete_messages_from(
             session_id,

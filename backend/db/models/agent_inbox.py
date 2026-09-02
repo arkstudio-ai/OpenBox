@@ -52,6 +52,7 @@ class AgentInboxItem(Base):
     agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     video_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    video_resolution: Mapped[str | None] = mapped_column(String(16), nullable=True)
     variant: Mapped[str | None] = mapped_column(String(32), nullable=True)
     output_format: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 

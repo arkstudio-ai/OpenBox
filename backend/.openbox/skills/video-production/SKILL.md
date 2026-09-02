@@ -26,7 +26,32 @@ do, refuses a second identical job already in flight, and enforces a daily
 ceiling. Nothing here needs to re-check those. What this skill knows is what
 makes a talking-head video *good*.
 
+## Never probe for parameters
+
+Every limit is published and free to read. **Two calls cost nothing and both
+are exact:**
+
+- `video_generate(action="models")` — every model with its resolutions,
+  ratios, duration range, whether it takes `-1`, and what references it
+  accepts. This is the authority; the numbers in this skill are illustration.
+- `video_generate(action="estimate", …)` — runs the whole validation on a
+  request you are about to pay for and reports the verdict. Free, instant.
+
+So a rejected parameter means you skipped one of them, not that you need
+another attempt with a different number. **Retrying a submit to discover a
+limit spends real money on each guess and the answer was already available.**
+Read the capability line, plan inside it, `estimate` if unsure, then submit
+once.
+
+The limits are also not uniform: resolution tiers, duration ranges and even
+the vocabulary differ per model — MiniMax names its tiers 480p/512p/768P/2K
+while everything else says 480p/720p/1080p. Ask, do not assume.
+
 ## Workflow
+
+0. **Read the menu first.** `video_generate(action="models")` before planning
+   anything. Steps 3 and 6 both need each model's limits, and a plan made
+   without them is a plan that gets refused at submit.
 
 1. **Read the creator.** `creator_context(action="get_user_context")` before
    drafting — voice, audience, boundaries. Empty is normal; carry on.
@@ -34,19 +59,40 @@ makes a talking-head video *good*.
    runs about 4 Chinese characters per second, so 45–60s is roughly 170–220
    characters, breaths included. Show it and get
    a plain yes before spending anything.
-3. **Split at meaning, then let each line set its own length.** Five shots is a
-   good default for 30–60s. Keep a line under ~40 characters: past that the
-   model rushes the delivery and the caption needs three lines.
-   Run `python3 "$S/plan_shots.py" --target <asked> --rate <pace> --line …
-   --line …` and use the seconds it gives each shot. **Choose `--rate` from
-   the piece you just wrote** — a calm bedtime-routine explainer reads near
-   3.4 characters/second, an ordinary how-to near 4.0, a punchy hook or a
-   promo near 4.6. You know the tone; the script cannot infer it. **Never divide the requested total by the
-   shot count** — the model fills whatever time it is given: too much and it
-   invents words to pad the gap, too little and the delivery races. Both have
-   been measured (see `references/quality.md`). If the honest total overshoots
-   what the person asked for, trim the script or tell them the video will be
-   longer; squeezing the timing is the one thing that does not work.
+3. **Split at meaning, then give each shot the length its own line needs.**
+   Five shots is a good default for 30–60s; keep a line under ~40 characters,
+   past that the delivery rushes and the caption needs three lines.
+
+   Run the planner and use the seconds it returns per shot:
+
+   ```
+   python3 "$S/plan_shots.py" --target <asked> --rate <pace> \
+     --min-shot-seconds <floor> --max-shot-seconds <ceiling> \
+     --line "…" --line "…"
+   ```
+
+   - **Always send an explicit duration; do not use `-1`.** Some models accept
+     `-1` and pick a length themselves, which is fine for one standalone clip
+     and wrong for a cut: each shot then lands wherever the model felt like,
+     the total stops matching the script, and the captions you built from the
+     transcript no longer line up with the pauses. You know the line; the
+     model does not know the piece.
+   - **Never divide the requested total by the shot count.** The model fills
+     whatever time it is given — too much and it invents words to pad the gap,
+     too little and the delivery races. Both were measured; see
+     `references/quality.md`.
+   - **Both bounds come from `video_generate(action="models")`** and differ per
+     model — Seedance takes 4–15s, Wan 3.0 takes 2–30s. A plan outside them is
+     refused at submit, so pick the model before planning. Wan 3.0's range is
+     the widest, which matters when the lines are very uneven in length.
+   - **Choose `--rate` from the piece you just wrote**: a calm bedtime
+     explainer reads near 3.4 characters/second, an ordinary how-to near 4.0,
+     a punchy hook near 4.6. You know the tone; the script cannot infer it.
+
+   If the honest total overshoots what the person asked for, trim the script
+   or tell them the video will be longer. Squeezing the timing is the one
+   thing that does not work.
+
 4. **Fix the presenter once.** One image is the anchor for every shot — a photo
    the person supplied, or one from `image_gen`. Pass it as an input asset on
    every shot with the same visual anchor sentence in every prompt.

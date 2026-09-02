@@ -56,6 +56,7 @@ class Session(BaseModel):
     variant: str | None = None
     #: Video model for this conversation; "" = deployment default.
     video_model: str = ""
+    video_resolution: str = ""
     status: SessionStatus = SessionStatus.IDLE
     created_at: str = ""
     updated_at: str = ""
@@ -84,6 +85,7 @@ def _orm_to_session(row: SessionORM) -> Session:
         model=row.model or "",
         variant=getattr(row, "variant", None),
         video_model=getattr(row, "video_model", None) or "",
+        video_resolution=getattr(row, "video_resolution", None) or "",
         status=SessionStatus(row.status) if row.status else SessionStatus.IDLE,
         created_at=row.created_at.isoformat() if row.created_at else "",
         updated_at=row.updated_at.isoformat() if row.updated_at else "",

@@ -39,6 +39,8 @@ dependencies = [
     "google-cloud-storage>=2.14.0",
     # Wuying cloud-desktop view (ECD GetConnectionTicket)
     "alibabacloud-ecd20200930>=4.0.0",
+    # Per-user desktop provisioning: ECD convenience accounts (EndUser CRUD)
+    "alibabacloud-eds-user20210308>=1.0.0",
     # Stay off the 0.4.0 release candidates: they read `provider_name` off the
     # credential object while still declaring credentials>=0.3.6, which has no
     # such field. Resolving one breaks every WUYING API call — the cloud

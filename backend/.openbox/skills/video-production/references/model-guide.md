@@ -47,3 +47,54 @@ Billing on this route is per second of generated video, so an explicit
 right default when you do not care, but a wrong guess is what you pay for.
 The daily ceiling is back-pressure, not permission: if it refuses, tell the
 person rather than retrying.
+
+
+## Shot length per model
+
+Every range below was probed at both edges and the output file measured — a
+gateway that accepts a value and ignores it looks identical at submit time.
+Out-of-range values are refused outright, never clamped, so a wrong number
+costs a whole submit:
+
+| model | probed | delivered |
+|---|---|---|
+| Seedance 2.0 | 3 ✗ · 4 ✓ · 15 ✓ · 16 ✗ | -1 → 12.05s (model chose) |
+| Wan 3.0 | 2 ✓ · 30 ✓ · 31 ✗ | 20 → 20.04s · 30 → 30.02s |
+| MiniMax H3 | 3 ✗ · 4 ✓ · 7 ✓ · 15 ✓ · 16 ✗ | 4 → 4.46s · 7 → 7.30s · 15 → 15.08s |
+
+Delivered length runs a fraction over the request (encoder rounding), never
+under.
+
+
+| model | seconds | smart (-1) |
+|---|---|---|
+| Seedance 2.0 / 2.0 Fast | 4–15 | yes |
+| SD 480p / 720p / 1080p | 4–15 | **no** |
+| Wan 3.0 / Prime | 2–30 | yes |
+| MiniMax H3 | 4–15 | no |
+
+### Use an explicit duration for anything that gets cut together
+
+`-1` is for a standalone clip, not for a piece assembled from shots. In a cut,
+a length the model chose per shot means the total drifts from the script, the
+shots do not sit at the rhythm the writing implies, and the captions built
+from each transcript stop matching where the pauses fall. The planner computes
+a number per line precisely so the cut has a shape; passing `-1` throws that
+away one shot at a time. Send the number.
+
+`-1` asks the model to choose the length. Where it works it really does
+choose: Seedance 2.0 returned 12.05s for a line that would otherwise have got
+the 5s default. The three SD tiers accept `-1` and then return exactly 5.06s —
+indistinguishable from the default, so treat it as unsupported there and send
+a number. Wan 3.0's range is 2–30 on this deployment, wider than the 2–15 in
+通义万相 2.7's public docs, and 30s was measured as 30.02s of actual video.
+
+Two consequences for splitting. A line that needs less than the model's floor
+gets padded up to it — on Seedance a three-character line still occupies 4s,
+so merge it into a neighbour instead. And a line needing more than the ceiling
+has to be split: 15s at 4 chars/second is about 55 spoken characters, which is
+the real upper bound on one Seedance shot.
+
+Wan 3.0's 2–30 range is the widest by far, and it is the only model that
+accepts `-1` for a duration it chooses itself. Prefer it when the script has
+lines of very uneven length.

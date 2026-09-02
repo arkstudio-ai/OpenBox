@@ -9,14 +9,15 @@ from sandbox.desktop import (
     MODEL_MAX_W,
     OBX_DISPLAY_SCRIPT,
     OBX_SHOT_SCRIPT,
+    SHOT_PATH,
     take_stable_screenshot,
 )
 from tool.computer import ComputerAction, ComputerArgs, computer_tool, execute
 
 
 GEOMETRY = {
-    "native": [1024, 768],
-    "scaled": [1024, 768],
+    "native": [1920, 1080],
+    "scaled": [1280, 720],
     "bytes": 1234,
     "stable": True,
     "settle_ms": 280,
@@ -97,8 +98,8 @@ def test_screenshot_helper_uses_fast_xcb_capture_with_scrot_fallback():
     assert "compress_level=3" in OBX_SHOT_SCRIPT
 
 
-def test_display_helper_pins_linux_x11_to_recommended_xga():
-    assert 'target="1024x768"' in OBX_DISPLAY_SCRIPT
+def test_display_helper_pins_linux_x11_to_the_1080p_standard():
+    assert 'target="1920x1080"' in OBX_DISPLAY_SCRIPT
     assert 'xrandr -s "$target"' in OBX_DISPLAY_SCRIPT
     assert "xdpyinfo" in OBX_DISPLAY_SCRIPT
 
@@ -126,7 +127,7 @@ async def test_batch_runs_in_one_sandbox_call_and_uploads_one_final_frame(monkey
 
     async def attach(_ctx, observed):
         uploads.append(observed)
-        return "1024x768"
+        return "1920x1080"
 
     monkeypatch.setattr(computer_mod, "_prepare", prepared)
     monkeypatch.setattr(computer_mod, "_geometry", geometry)
@@ -149,7 +150,7 @@ async def test_batch_runs_in_one_sandbox_call_and_uploads_one_final_frame(monkey
     command, timeout = ctx.sandbox.commands[0]
     assert "obx-x sh -c" in command
     assert "obx-display" in command
-    assert "xdotool mousemove 100 200" in command
+    assert "xdotool mousemove 150 300" in command
     assert "xdotool type" in command
     assert "xdotool key" in command
     assert timeout == 120
@@ -228,7 +229,7 @@ async def test_stable_capture_requests_local_sampling_and_parses_metadata():
             self.command = command
             return ExecuteResult(
                 exit_code=0,
-                stdout='{"native":[1024,768],"scaled":[1024,768],"bytes":99,'
+                stdout='{"native":[1920,1080],"scaled":[1280,720],"bytes":99,'
                 '"stable":true,"settle_ms":240,"frame_delta":0.0001}\n',
                 stderr="",
             )
@@ -241,9 +242,12 @@ async def test_stable_capture_requests_local_sampling_and_parses_metadata():
         threshold=0.004,
     )
 
+    # Every desktop transaction restores the fixed mode first, so the capture
+    # cannot race a resolution the geometry was not computed against.
+    assert "obx-display" in client.command
     assert (
         f"obx-shot {MODEL_MAX_W} {MODEL_MAX_H} "
-        "/tmp/obx-sandbox-screen.png 900 100 0.004"
+        f"{SHOT_PATH} 900 100 0.004"
     ) in client.command
     assert observed["stable"] is True
     assert observed["settle_ms"] == 240

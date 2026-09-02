@@ -163,6 +163,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     final agent =
         ref.read(pickedAgentProvider(_sessionId)) ?? state.session?.agent;
     final variant = _reasoningValue(model);
+    final video = ref.read(pickedVideoProvider(_sessionId));
     final cmid = makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);
     stream.addMessage(
@@ -188,6 +189,8 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
             agent: agent,
             model: model,
             variant: variant,
+            videoModel: video?.modelId,
+            videoResolution: video?.resolution,
             attachments: attachments,
           );
     } catch (error) {
@@ -267,8 +270,24 @@ final pickedModelProvider = StateProvider.family<String?, String>(
   (ref, sessionId) => null,
 );
 
-/// Unsent reasoning choice, isolated by conversation and model. A null state
-/// means no local override; [Variant.modelDefault] is an explicit reset.
-final pickedVariantProvider = StateProvider.family<Variant?, String>(
-  (ref, key) => null,
-);
+/// A video model and the resolution chosen with it (web
+/// `stores/video-model-choice.ts`). The pair travels together because neither
+/// means anything alone: a model's tiers are its own, and the same "720p"
+/// costs and looks different per model.
+class VideoPick {
+  const VideoPick(this.modelId, this.resolution);
+
+  final String modelId;
+  final String resolution;
+}
+
+/// Unsent per-session video pick; null means "keep whatever the session
+/// records". No default is substituted here — for video that pin costs money.
+final pickedVideoProvider =
+    StateProvider.family<VideoPick?, String>((ref, sessionId) => null);
+
+/// Unsent reasoning pick, keyed by [reasoningKey] — a conversation *and* a
+/// model. A null state means nothing was picked for that pair, which is not
+/// the same as picking "default" (see [Variant]).
+final pickedVariantProvider =
+    StateProvider.family<Variant?, String>((ref, key) => null);

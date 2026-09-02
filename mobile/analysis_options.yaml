@@ -6,6 +6,11 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    # Upstream source kept byte-identical on purpose (only its Gradle script is
+    # ours). Linting it to our house style would mean editing it, which is the
+    # one thing the vendoring exists to avoid.
+    - third_party/**
   language:
     strict-casts: true
     strict-inference: true

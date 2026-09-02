@@ -23,6 +23,7 @@ export interface Session {
   variant?: string | null
   /** The video model this conversation generates with; "" = deployment default. */
   video_model?: string
+  video_resolution?: string
   status: SessionStatus
   created_at: string
   updated_at: string
@@ -309,6 +310,7 @@ export interface AppConfig {
   default_agent?: string
   video_models?: VideoModelInfo[]
   default_video_model?: string
+  default_video_resolution?: string
 }
 
 export interface PermissionRequest {

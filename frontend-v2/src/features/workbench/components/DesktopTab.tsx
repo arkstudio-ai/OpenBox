@@ -15,11 +15,14 @@ const SDK_URL =
 const SDK_PATH =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/sdk/ASP/container.html"
 const FRAME_ID = "wuying-desktop-frame"
-// Keep the stream at the desktop's fixed XGA aspect ratio. The iframe itself is
-// laid out at its displayed size: CSS-transforming a 1024px iframe makes the
+// Keep the stream at the desktop's fixed aspect ratio. The iframe itself is
+// laid out at its displayed size: CSS-transforming the iframe makes the
 // SDK observe a different input coordinate space than the user clicks in.
-const REMOTE_W = 1024
-const REMOTE_H = 768
+// Per-user desktops are pinned to 16:9 1080p by the "OpenBox Personal 1080p"
+// ECD policy group (WUYING_POLICY_GROUP_ID); only the shared agent desktop
+// stays XGA for cheaper computer-use screenshots.
+const REMOTE_W = 1920
+const REMOTE_H = 1080
 
 interface WuyingSession {
   start: () => void
@@ -47,6 +50,20 @@ interface Ticket {
   regionId?: string
   pending?: boolean
   taskId?: string
+}
+
+interface DesktopStatus {
+  state: string
+  mode?: string
+  desktopId?: string
+  error?: string
+}
+
+/** Thrown when the backend says this user's desktop failed to provision. */
+class ProvisionFailedError extends Error {
+  constructor(readonly detail: string) {
+    super("provision_failed")
+  }
 }
 
 let sdkLoading: Promise<void> | null = null
@@ -83,7 +100,20 @@ async function fetchTicket(alive: () => boolean): Promise<Ticket> {
   throw new Error("timeout")
 }
 
-type Phase = "loading" | "connected" | "error" | "closed"
+/** Wait out a per-user desktop that is still creating/starting (2-3 min cold). */
+async function waitDesktopRunning(alive: () => boolean, onProgress: (state: string) => void): Promise<void> {
+  for (let attempt = 0; attempt < 120 && alive(); attempt += 1) {
+    const status = await http.get<DesktopStatus>("/api/desktop/status")
+    if (status.state === "running") return
+    if (status.state === "failed") throw new ProvisionFailedError(status.error ?? "")
+    if (status.state === "not_provisioned") throw new Error("not_provisioned")
+    onProgress(status.state)
+    await new Promise((r) => setTimeout(r, 5000))
+  }
+  throw new Error("timeout")
+}
+
+type Phase = "loading" | "connected" | "error" | "closed" | "provision" | "provisionFailed"
 
 type Fullscreen = "off" | "native" | "fallback"
 
@@ -152,6 +182,30 @@ export function DesktopTab() {
 
     void (async () => {
       try {
+        // Per-user mode: make sure this user's own desktop exists and is
+        // Running before asking for a ticket. Shared mode reports "running"
+        // whenever it is usable, so this stays a single code path. A failing
+        // status endpoint (older backend, provider misconfig) falls through to
+        // the ticket call, which owns the definitive error.
+        const status = await http.get<DesktopStatus>("/api/desktop/status").catch(() => null)
+        if (!alive) return
+        if (status) {
+          if (status.state === "not_provisioned" && status.mode === "per_user") {
+            setPhase("provision")
+            return
+          }
+          if (status.state === "failed") throw new ProvisionFailedError(status.error ?? "")
+          if (status.state !== "running" && status.state !== "not_provisioned") {
+            setDetail(t("desktop.provisioning"))
+            await waitDesktopRunning(
+              () => alive,
+              () => setDetail(t("desktop.provisioning")),
+            )
+            if (!alive) return
+            setDetail("")
+          }
+        }
+
         const [, ticket] = await Promise.all([loadSdk(), fetchTicket(() => alive)])
         if (!alive || !stage) return
 
@@ -229,6 +283,15 @@ export function DesktopTab() {
         session.start()
       } catch (e) {
         if (!alive) return
+        if (e instanceof ProvisionFailedError) {
+          setPhase("provisionFailed")
+          setDetail(e.detail)
+          return
+        }
+        if (e instanceof Error && e.message === "not_provisioned") {
+          setPhase("provision")
+          return
+        }
         setPhase("error")
         if (e instanceof ApiError) setDetail(t("desktop.unavailable"))
         else if (e instanceof Error && e.message === "sdk") setDetail(t("desktop.sdkFailed"))
@@ -323,6 +386,18 @@ export function DesktopTab() {
       .catch(() => setFs("fallback"))
   }
 
+  const provisionNow = async () => {
+    setPhase("loading")
+    setDetail(t("desktop.provisioning"))
+    try {
+      await http.post("/api/desktop/provision")
+      setAttempt((n) => n + 1)
+    } catch {
+      setPhase("error")
+      setDetail(t("desktop.unavailable"))
+    }
+  }
+
   const onPickFile = () => {
     const file = fileRef.current?.files?.[0]
     if (fileRef.current) fileRef.current.value = ""
@@ -405,40 +480,79 @@ export function DesktopTab() {
           {fs === "off" ? <Maximize2 size={14.5} strokeWidth={2.2} /> : <Minimize2 size={14.5} strokeWidth={2.2} />}
         </button>
         {(phase === "error" || phase === "closed") && (
-          <button
-            type="button"
+          <RetryButton
+            label={t("desktop.reconnect")}
             onClick={() => {
               setPhase("loading")
               setDetail("")
               setAttempt((n) => n + 1)
             }}
-            className="flex flex-none items-center gap-1.5 rounded-full border border-hair px-3 py-1 text-sm text-n800 hover:bg-hairsoft"
-          >
-            <RotateCw size={13} strokeWidth={2.4} />
-            {t("desktop.reconnect")}
-          </button>
+          />
+        )}
+        {phase === "provisionFailed" && (
+          <RetryButton label={t("desktop.provisionRetry")} onClick={() => void provisionNow()} />
         )}
         <input ref={fileRef} type="file" onChange={onPickFile} className="hidden" aria-hidden tabIndex={-1} />
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl border border-hair bg-card">
         <div ref={stageRef} className="absolute inset-0" data-testid="desktop-stage" />
-        {phase !== "connected" && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card">
-            {phase === "loading" ? (
-              <>
-                <Spinner className="size-5" />
-                <span className="text-sm text-n600">{t("desktop.loading")}</span>
-              </>
-            ) : (
-              <>
-                <span className="text-base text-n800">{t(`desktop.${phase}`)}</span>
-                {detail && <span className="max-w-90 text-center text-sm text-n600">{detail}</span>}
-              </>
-            )}
-          </div>
-        )}
+        {phase !== "connected" && <StageOverlay phase={phase} detail={detail} onProvision={() => void provisionNow()} />}
       </div>
+    </div>
+  )
+}
+
+function RetryButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex flex-none items-center gap-1.5 rounded-full border border-hair px-3 py-1 text-sm text-n800 hover:bg-hairsoft"
+    >
+      <RotateCw size={13} strokeWidth={2.4} />
+      {label}
+    </button>
+  )
+}
+
+// The full-stage message shown while the desktop is not streaming: spinner,
+// first-time provisioning opt-in, or the failure copy.
+function StageOverlay({
+  phase,
+  detail,
+  onProvision,
+}: {
+  phase: Exclude<Phase, "connected">
+  detail: string
+  onProvision: () => void
+}) {
+  const { t } = useTranslation("workbench")
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card">
+      {phase === "loading" ? (
+        <>
+          <Spinner className="size-5" />
+          <span className="text-sm text-n600">{detail || t("desktop.loading")}</span>
+        </>
+      ) : phase === "provision" ? (
+        <>
+          <span className="text-base text-n800">{t("desktop.provision")}</span>
+          <span className="max-w-90 text-center text-sm text-n600">{t("desktop.provisionHint")}</span>
+          <button
+            type="button"
+            onClick={onProvision}
+            className="rounded-full bg-ink px-4 py-1.5 text-sm text-bg hover:bg-a800"
+          >
+            {t("desktop.provisionAction")}
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="text-base text-n800">{t(`desktop.${phase}`)}</span>
+          {detail && <span className="max-w-90 text-center text-sm text-n600">{detail}</span>}
+        </>
+      )}
     </div>
   )
 }

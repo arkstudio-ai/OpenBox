@@ -89,6 +89,8 @@ class ChatApi {
     String? agent,
     String? model,
     Variant? variant,
+    String? videoModel,
+    String? videoResolution,
     List<String> attachments = const [],
   }) async {
     await _dio.post<dynamic>(
@@ -99,6 +101,11 @@ class ChatApi {
         'agent': ?agent,
         if (model != null && model.isNotEmpty) 'model': model,
         if (variant != null) 'variant': variant.level,
+        // Only an actual pick travels: sending the resolved default would pin
+        // every turn to a model the person never chose, and video pins cost.
+        if (videoModel != null && videoModel.isNotEmpty) 'video_model': videoModel,
+        if (videoResolution != null && videoResolution.isNotEmpty)
+          'video_resolution': videoResolution,
         if (attachments.isNotEmpty) 'attachments': attachments,
       },
     );

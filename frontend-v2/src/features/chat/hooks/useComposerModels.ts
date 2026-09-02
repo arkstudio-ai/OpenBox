@@ -19,6 +19,7 @@ interface Options {
   sessionModel?: string
   sessionVariant?: string | null
   sessionVideoModel?: string
+  sessionVideoResolution?: string
   sessionKey?: string
 }
 
@@ -27,6 +28,7 @@ export function useComposerModels({
   sessionModel,
   sessionVariant,
   sessionVideoModel,
+  sessionVideoResolution,
   sessionKey,
 }: Options) {
   const models = config?.models ?? EMPTY_MODELS
@@ -39,8 +41,15 @@ export function useComposerModels({
   })
   const video = useVideoModelChoice({
     sessionVideoModel,
+    sessionVideoResolution,
     sessionKey,
     fallback: config?.default_video_model ?? videoModels[0]?.id,
+    resolutionFallback: config?.default_video_resolution,
+    // Each model's own tiers, so a pick made on one model is not carried onto
+    // another that does not offer it.
+    resolutionsByModel: Object.fromEntries(
+      videoModels.map((model) => [model.id, model.resolutions]),
+    ),
   })
   const reasoning = useReasoningChoice({
     model: models.find((model) => model.id === chat.activeId),

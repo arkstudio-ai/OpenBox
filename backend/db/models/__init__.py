@@ -8,6 +8,7 @@ from db.models.part import Part
 from db.models.internal_part import InternalPart
 from db.models.permission import PermissionRule
 from db.models.container import Container
+from db.models.cloud_desktop import CloudDesktop
 from db.models.todo import Todo
 from db.models.prompt_history import PromptHistory
 from db.models.file_asset import FileAsset
@@ -30,7 +31,7 @@ from db.models.external_effect import ExternalEffect, ExternalEffectEvidence
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
-    "PermissionRule", "Container", "Todo", "PromptHistory", "FileAsset", "AuditLog",
+    "PermissionRule", "Container", "CloudDesktop", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "CronDeliveryOutbox", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "VideoMaterialGroup", "VideoMaterialAsset",
     "UserSkill", "SkillInstall", "UserMemory", "ImageGenCache", "AgentDriverState",

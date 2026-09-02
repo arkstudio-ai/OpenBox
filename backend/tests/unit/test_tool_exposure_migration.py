@@ -10,9 +10,10 @@ from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 
+from tests.support.migrations import current_head
+
 
 PREVIOUS_HEAD = "b6d8f0a2c4e6"
-NEW_HEAD = "f0b2d4e6a8c1"
 
 
 def _previous_head_fixture(database_path: Path) -> None:
@@ -152,7 +153,7 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
     assert state == "{}"
-    assert version == NEW_HEAD
+    assert version == current_head()
     assert "internal_parts" in inspector.get_table_names()
     assert "session_surface_events" in inspector.get_table_names()
     assert "task_handoffs" in inspector.get_table_names()
@@ -179,13 +180,10 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(
         "provider_dialect",
     } <= part_columns
     with engine.connect() as connection:
-        assert (
-            connection.exec_driver_sql(
-                "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
-            ).scalar_one()
-            is None
-        )
-    assert ScriptDirectory.from_config(config).get_heads() == [NEW_HEAD]
+        assert connection.exec_driver_sql(
+            "SELECT canonical_tool_id FROM parts WHERE id='old-part'"
+        ).scalar_one() is None
+    assert ScriptDirectory.from_config(config).get_heads() == [current_head()]
     engine.dispose()
 
     # An empty/drained deployment can safely roll the schema back.  The

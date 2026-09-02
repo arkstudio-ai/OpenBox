@@ -267,6 +267,53 @@ def _content_url(value: object) -> str:
     return ""
 
 
+def _relay_metadata_payload(
+    target: VideoProviderTarget, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """The metadata-carried shape, built from a TokenSpace contents payload.
+
+    The gateway's task adaptors read resolution, ratio, duration, seed,
+    generate_audio and content[] out of `metadata` and nowhere else. Images
+    additionally ride top-level as `images`, which the adaptor appends to
+    content[] before merging metadata — the one field that works flat.
+    """
+    content = list(payload.get("content") or [])
+    prompt = " ".join(
+        str(item.get("text") or "") for item in content if item.get("type") == "text"
+    ).strip()
+    if not prompt:
+        raise RuntimeError("relay video request requires a prompt")
+
+    media = [item for item in content if item.get("type") != "text"]
+    metadata: dict[str, Any] = {"resolution": str(payload.get("resolution") or "").lower()}
+    ratio = str(payload.get("ratio") or "").strip()
+    if ratio and ratio != "adaptive":
+        metadata["ratio"] = ratio
+    duration = payload.get("duration")
+    if isinstance(duration, int) and duration != -1:
+        metadata["duration"] = duration
+    for option in ("generate_audio", "watermark", "seed"):
+        if option in payload:
+            metadata[option] = payload[option]
+    if media:
+        metadata["content"] = media
+
+    body: dict[str, Any] = {
+        "model": target.model.strip(),
+        "prompt": prompt,
+        "metadata": metadata,
+    }
+    images = [
+        _content_url(item.get("image_url"))
+        for item in media
+        if item.get("type") == "image_url"
+    ]
+    images = [url for url in images if url]
+    if images:
+        body["images"] = images
+    return body
+
+
 def _bossip_video_payload(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
     """Translate TokenSpace contents format to BossIP's public `/v1/videos` shape.
 
@@ -275,6 +322,21 @@ def _bossip_video_payload(target: VideoProviderTarget, payload: dict[str, Any]) 
     account-scoped TokenSpace ``asset://`` identifiers.
     """
     resolution = str(payload.get("resolution") or "").lower()
+
+    # A model the relay routes under its own id keeps that id and takes the
+    # metadata shape, which is what its channel adaptor actually reads.
+    # Rewriting it to one of the three name-encoded sd2 tiers below was a
+    # workaround from before those models were declared, and it cost the
+    # caller its resolution: measured 2026-09-01, 480p/9:16 flattened to the
+    # top level came back 1280x720, while the same values under `metadata`
+    # came back 496x864.
+    from core.config import get_config as _cfg
+    from tool import video_providers as _vp
+
+    declared = _vp.declared_model(target.model, _cfg())
+    if declared is not None and getattr(declared, "wire_shape", "flat") == "metadata":
+        return _relay_metadata_payload(target, payload)
+
     if resolution not in _BOSSIP_RELAY_MODELS:
         raise RuntimeError(f"BossIP relay does not support resolution: {resolution}")
 
@@ -479,11 +541,17 @@ def _ark_reference_content(refs: list[dict[str, str]]) -> list[dict[str, Any]]:
     ]
 
 
-def _validate_generation(model: str, resolution: str, duration: int, generate_audio: bool) -> None:
+def _validate_generation(
+    model: str, resolution: str, duration: int, generate_audio: bool,
+    *, declared: Any | None = None,
+) -> None:
     if resolution not in _RESOLUTIONS:
         raise RuntimeError(f"unsupported resolution: {resolution}")
     lowered = model.lower()
-    if resolution == "1080p" and model != "doubao-seedance-2-0-260128":
+    # See video_providers.validate_request: a declared model carries its own
+    # resolution list, so this legacy single-model rule only guards models the
+    # registry does not describe.
+    if declared is None and resolution == "1080p" and model != "doubao-seedance-2-0-260128":
         raise RuntimeError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:
@@ -1974,10 +2042,17 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
     seed = args.seed or None
     duration_arg = args.duration or None
 
-    resolution = args.resolution or ""
+    resolution = args.resolution or await _session_video_resolution(ctx)
+    allowed = list(getattr(declared, "resolutions", None) or [])
+    if resolution and allowed and resolution not in allowed:
+        # The composer pick belongs to whichever model was selected with it.
+        # Switching model can strand it, and silently generating at another
+        # tier bills a different price for a different picture.
+        resolution = ""
     if not resolution:
-        allowed = list(getattr(declared, "resolutions", None) or [])
         resolution = allowed[0] if len(allowed) == 1 else settings.default_resolution
+        if allowed and resolution not in allowed:
+            resolution = allowed[0]
     ratio = (args.ratio or settings.default_ratio or "9:16").strip()
     duration = settings.default_duration if duration_arg is None else duration_arg
     generate_audio = (
@@ -2008,6 +2083,27 @@ async def _resolve_open_submission(args: VideoGenerateArgs, ctx: ToolContext) ->
         "dropped": dropped,
         "shot": args.shot,
     }
+
+
+async def _session_video_resolution(ctx: ToolContext) -> str:
+    """The resolution tier picked in the composer, if any.
+
+    Like the model pick, a convenience rather than a precondition: any failure
+    to read it falls through to the model's own default.
+    """
+    try:
+        from db.base import get_db_session
+        from db.models.session import Session as SessionORM
+
+        if not ctx.session_id:
+            return ""
+        async with get_db_session() as db:
+            session = await db.get(SessionORM, ctx.session_id)
+        if session and session.user_id == ctx.user_id and session.video_resolution:
+            return session.video_resolution
+        return ""
+    except Exception:
+        return ""
 
 
 async def _session_video_model_id(ctx: ToolContext) -> str:
@@ -2204,7 +2300,13 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
         ),
         # Billing is per second of output on this route, so an explicit
         # duration is the whole cost story; there is no per-call price to read.
-        f"daily_submits_used={used}" + (f"/{limit}" if limit else " (no limit configured)"),
+        # "used=50/50" was read as "50 remaining" by a caller reporting it to
+        # the person. Say what is left, and only mention the ceiling beside it.
+        (
+            f"daily_submits_remaining={max(0, limit - used)} (of {limit}; {used} used)"
+            if limit
+            else f"daily_submits_used={used} (no limit configured)"
+        ),
         "",
         "Nothing was submitted. Re-send as action=\"submit\" with an idempotency_key to pay for it.",
     ]
@@ -2491,6 +2593,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                             },
                         )
 
+            from core.config import get_config as _get_config
+
             if channel == "ark":
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": prompt},
@@ -2519,6 +2623,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     generate_audio=generate_audio,
                     watermark=watermark,
                     seed=seed,
+                    declared=video_providers.declared_model(target.model, _get_config()),
                 )
 
             async def submit_and_persist_provider_identity():

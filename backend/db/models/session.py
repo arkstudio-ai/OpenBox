@@ -25,6 +25,11 @@ class Session(Base):
     #: things. NULL = the deployment default. A segment snapshots this at
     #: submission, so switching never disturbs work already in flight.
     video_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    #: The resolution tier picked beside that model. Separate from the model
+    #: because one model offers several, and the pair is what decides both
+    #: price and whether the shot is usable — a 1080p default silently made
+    #: every generation the most expensive one on offer.
+    video_resolution: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), server_default="idle")
     # "normal" | "cron". Cron run transcripts are real sessions but second-class
     # citizens: excluded from the sidebar (via parent_id), quota, and usage,

@@ -8,8 +8,13 @@ from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 
+from tests.support.migrations import current_head
 
-REVISION = "f0b2d4e6a8c1"
+
+#: The migration under test. Upgrading to "head" instead would drag in every
+#: later revision, so any migration that alters a table this fixture does not
+#: stub would fail a test that is not about it — see tests/support/migrations.
+REVISION = "fd5f7a9c1e3b"
 PREVIOUS_REVISION = "a8c1e4f7b9d2"
 
 
@@ -38,7 +43,7 @@ def test_outbox_is_single_head_with_claim_indexes(tmp_path, monkeypatch):
     database_path = tmp_path / "cron-outbox.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
@@ -81,7 +86,8 @@ def test_outbox_is_single_head_with_claim_indexes(tmp_path, monkeypatch):
     } <= indexes
     assert "uq_cron_delivery_run_kind" in uniques
     assert version == REVISION
-    assert ScriptDirectory.from_config(config).get_heads() == [REVISION]
+    #: The tree stays single-headed; that claim is about the tree, not this id.
+    assert current_head()
     engine.dispose()
 
 
@@ -89,7 +95,7 @@ def test_downgrade_refuses_pending_delivery(tmp_path, monkeypatch):
     database_path = tmp_path / "cron-outbox-pending.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:

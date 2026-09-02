@@ -82,7 +82,12 @@ async def get_config():
         "default_model": config.model,
         "default_agent": default_agent_name(),
         "video_models": video_models,
+        # The configured default is only advertised when the picker is really
+        # offering it; otherwise the composer would open on a model the submit
+        # path refuses. The resolution default has no such catalogue to check
+        # against and is passed through as configured.
         "default_video_model": default_video_model,
+        "default_video_resolution": config.video_generation.default_resolution,
     }
 
 

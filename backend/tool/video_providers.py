@@ -30,6 +30,7 @@ canonicalization. Hard lessons from bossip carried over verbatim:
   fails.
 """
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -39,6 +40,15 @@ from typing import Any, Literal
 from core.log import create_logger
 
 log = create_logger("tool.video_providers")
+
+
+#: Appended to capability refusals. Without it a caller reads "20s rejected"
+#: as an invitation to try 18, then 16 — each attempt a paid submit away from
+#: an answer that was free to look up.
+CAPABILITY_HINT = (
+    " — the full table is video_generate(action=\"models\"); "
+    "action=\"estimate\" checks a request for free"
+)
 
 
 class VideoRequestError(RuntimeError):
@@ -115,7 +125,17 @@ def is_sd2_model(name: str) -> bool:
     return canonicalize_sd2_model_name(name) in SD2_MODELS
 
 
-def sd2_native_resolution(name: str) -> str:
+def sd2_native_resolution(name: str) -> str | None:
+    """The one resolution a name-encoded sd2 model produces, if it is one.
+
+    Only `SD2_MODELS` carry their resolution in the name — there is a separate
+    model id per tier, and asking a 720p model for 1080p silently returns 720p.
+    Other models routed over this channel (wan3, MiniMax) pick resolution as a
+    parameter, so returning "1080p" for them was a guess that then failed its
+    own check: it made every non-1080p choice on those models unreachable.
+    """
+    if not is_sd2_model(name):
+        return None
     model = canonicalize_sd2_model_name(name)
     if "480" in model:
         return "480p"
@@ -384,6 +404,23 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
     return _ark_route(model, config, provider_name=settings.provider)
 
 
+def _is_private_gateway_host(host: str) -> bool:
+    """True for hosts that can only be reached from inside our network.
+
+    Plain http is acceptable there: the hop never leaves the VPC, and the
+    self-hosted gateway terminates no TLS on its container port.
+    """
+    if not host:
+        return False
+    if host in ("localhost", "host.docker.internal") or host.endswith((".internal", ".local")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback
+
+
 def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
     """The ark path — byte-identical to the historical _configured_target."""
     from urllib.parse import urlsplit
@@ -397,16 +434,32 @@ def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
     if not api_key:
         raise RuntimeError("BOSSIP_API_KEY is empty")
     base_url = configured_base.rstrip("/")
-    if not base_url.startswith("https://") or base_url.endswith(".html"):
+    host = (urlsplit(base_url).hostname or "").lower()
+    # Public hosts must be https; a private-network gateway (our own new-api
+    # on its VPC address) may be plain http. Either way, a docs page is not
+    # an API origin.
+    plain_http_ok = base_url.startswith("http://") and _is_private_gateway_host(host)
+    if base_url.endswith(".html") or not (base_url.startswith("https://") or plain_http_ok):
         raise RuntimeError(
             "BOSSIP_BASE_URL must be an HTTPS API origin (for example "
-            "https://openapi.bossipai.com.cn), not the documentation page"
+            "https://openapi.bossipai.com.cn) or a plain-http private-network "
+            "gateway (for example http://10.100.1.76:3000), not the documentation page"
         )
-    wire_format = (
-        "bossip_videos"
-        if (urlsplit(base_url).hostname or "").lower() == BOSSIP_RELAY_HOST
-        else "tokenspace_contents"
-    )
+    options = (getattr(provider, "options", None) or {}) if provider else {}
+    # The wire format is a property of the gateway, not of its hostname:
+    # the same new-api answers on a public facade and on a VPC address.
+    # Declare it in provider options; hostname inference only covers
+    # deployments that never set it.
+    declared_wire = str(options.get("wire_format") or "").strip().lower()
+    if declared_wire:
+        if declared_wire not in ("tokenspace_contents", "bossip_videos"):
+            raise RuntimeError(
+                f"provider '{provider_name}' options.wire_format must be "
+                f"'bossip_videos' or 'tokenspace_contents', got {declared_wire!r}"
+            )
+        wire_format = declared_wire
+    else:
+        wire_format = "bossip_videos" if host == BOSSIP_RELAY_HOST else "tokenspace_contents"
     return VideoRoute(
         provider=provider_name,
         model=model,
@@ -416,8 +469,8 @@ def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
         status_timeout_seconds=settings.status_timeout_seconds,
         channel="ark",
         model_type="seedance",
-        auth_scheme="bearer",
-        wire_format=wire_format,
+        auth_scheme=options.get("auth_scheme", "bearer"),
+        wire_format=wire_format,  # type: ignore[arg-type]
     )
 
 
@@ -446,32 +499,32 @@ def _validate_declared(
     if resolution and allowed and resolution not in allowed:
         raise VideoRequestError(
             f"model {entry.id} supports {'/'.join(allowed)}; requested "
-            f"{resolution} would be silently substituted upstream"
+            f"{resolution} would be silently substituted upstream" + CAPABILITY_HINT
         )
     ratios = list(getattr(entry, "ratios", None) or [])
     if ratio and ratios and ratio not in ratios:
         raise VideoRequestError(
-            f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}"
+            f"model {entry.id} supports ratios {'/'.join(ratios)}; requested {ratio}" + CAPABILITY_HINT
         )
     span = getattr(entry, "duration_range", None)
     if duration == -1:
         if not getattr(entry, "supports_smart_duration", True):
             raise VideoRequestError(
-                f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported"
+                f"model {entry.id} needs an explicit duration; -1 smart duration is unsupported" + CAPABILITY_HINT
             )
     elif span is not None:
         low, high = span
         if not low <= duration <= high:
             raise VideoRequestError(
-                f"model {entry.id} accepts {low}-{high}s; requested {duration}s"
+                f"model {entry.id} accepts {low}-{high}s; requested {duration}s" + CAPABILITY_HINT
             )
     cap = entry.max_duration_seconds
     if cap is not None and duration != -1 and duration > cap:
-        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s")
+        raise VideoRequestError(f"model {entry.id} accepts at most {cap}s; requested {duration}s" + CAPABILITY_HINT)
     if has_video_ref and not entry.supports_reference_video:
-        raise VideoRequestError(f"model {entry.id} does not accept video references")
+        raise VideoRequestError(f"model {entry.id} does not accept video references" + CAPABILITY_HINT)
     if has_image_ref and not entry.supports_reference_image:
-        raise VideoRequestError(f"model {entry.id} does not accept image references")
+        raise VideoRequestError(f"model {entry.id} does not accept image references" + CAPABILITY_HINT)
     # A seed is deliberately NOT a refusal. Missing it costs reproducibility,
     # not content — the video is still the one that was asked for — whereas
     # refusing costs the whole generation. The caller is told it was dropped.
@@ -480,10 +533,10 @@ def _validate_declared(
     frame_roles = {"first_frame", "last_frame"}
     if frame_roles & set(roles) and not getattr(entry, "supports_first_last_frame", False):
         raise VideoRequestError(
-            f"model {entry.id} does not accept first_frame/last_frame references"
+            f"model {entry.id} does not accept first_frame/last_frame references" + CAPABILITY_HINT
         )
     if "reference_audio" in roles and not getattr(entry, "supports_reference_audio", False):
-        raise VideoRequestError(f"model {entry.id} does not accept an audio reference")
+        raise VideoRequestError(f"model {entry.id} does not accept an audio reference" + CAPABILITY_HINT)
 
 
 def validate_request(
@@ -499,6 +552,13 @@ def validate_request(
 ) -> None:
     channel = getattr(route, "channel", "ark")
     has_video_ref = any(not mime.startswith("image/") for mime in input_mimes)
+    if declared is not None and generate_audio and not getattr(
+        declared, "supports_generated_audio", True
+    ):
+        raise VideoRequestError(
+            f"model {declared.id} renders silent video; pass generate_audio=false "
+            "for a b-roll shot, or pick a model that speaks"
+        )
     if declared is not None:
         _validate_declared(
             declared,
@@ -514,17 +574,35 @@ def validate_request(
     # Refuse instead of sending a reference the gateway will read as an
     # ordinary one: an undeclared role that silently becomes a plain reference
     # produces a paid take that ignores the continuity the caller asked for.
-    if channel == "sd2":
+    # A model the registry does not describe skips every check above, so an
+    # absurd duration would go straight to the provider and waste the submit.
+    # This is the widest range any model on these channels honours (wan3's
+    # 2-30); a declared model has already been checked against its own.
+    if declared is None and duration != -1 and not 2 <= duration <= 30:
+        raise VideoRequestError(
+            f"{route.model} is not in video_generation.models, so only the "
+            f"channel-wide 2-30s range can be checked; requested {duration}s. "
+            "Declare the model to state its real limits."
+        )
+
+    if channel == "sd2" and sd2_native_resolution(route.model) is not None:
+        # Only the name-encoded tiers are stuck with the flat body. Everything
+        # else on this channel reaches the task adaptor through `metadata`,
+        # where content[] carries an explicit role.
         unsupported = {"first_frame", "last_frame", "reference_audio"} & set(roles)
         if unsupported:
             raise VideoRequestError(
-                f"the sd2 channel cannot express the {'/'.join(sorted(unsupported))} "
-                "role; it needs the task endpoint, which this gateway does not expose"
+                f"model {route.model} takes references as a flat list and cannot "
+                f"express the {'/'.join(sorted(unsupported))} role; use a model "
+                "that accepts frame roles"
             )
     if channel == "sd2":
         canonical_model = canonicalize_sd2_model_name(route.model)
         native = sd2_native_resolution(canonical_model)
-        if resolution and resolution != native:
+        # A tier whose name encodes no native resolution imposes none, so an
+        # explicit request is not a mismatch there — only a declared native
+        # size that disagrees is.
+        if native and resolution and resolution != native:
             raise VideoRequestError(
                 f"model {route.model} generates {native} natively; requested "
                 f"{resolution} would be silently ignored — pick the matching model tier"
@@ -550,7 +628,10 @@ def validate_request(
         return
     # ark / Seedance rules (unchanged from the historical validator).
     lowered = route.model.lower()
-    if resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
+    # A declared model states its own resolutions, and _validate_declared has
+    # already checked them. Naming one model here predates the registry and
+    # made every model added since unable to offer 1080p.
+    if declared is None and resolution == "1080p" and route.model != "doubao-seedance-2-0-260128":
         raise VideoRequestError("1080p is supported only by doubao-seedance-2-0-260128")
     if "2-5" in lowered:
         if duration == -1 or not 4 <= duration <= 30:
@@ -559,7 +640,8 @@ def validate_request(
         raise VideoRequestError("Seedance 2.0 duration must be -1 or 4-15 seconds")
     if "fast" in lowered and generate_audio:
         raise VideoRequestError(
-            "Seedance Fast does not support generated audio; use the standard model for spoken video"
+            f"{route.model} renders silent video; pass generate_audio=false for a "
+            "b-roll shot, or pick a standard tier for anything spoken"
         )
 
 
@@ -590,6 +672,103 @@ def _with_image_file_refs(prompt: str, count: int) -> str:
     )
 
 
+#: Portrait/landscape pixel pairs per resolution tier, for adaptors that take
+#: a `WxH` string rather than a tier name.
+#: Short/long pixel pair per tier name. Includes the tiers only MiniMax uses
+#: (512p, 2k) so a model's own vocabulary survives the trip: its adaptor reads
+#: the numbers back out of the string, so an unmapped tier would silently
+#: become the default one.
+_SIZE_BY_RESOLUTION = {
+    "480p": (480, 854),
+    "512p": (512, 912),
+    "720p": (720, 1280),
+    "768p": (768, 1344),
+    "1080p": (1080, 1920),
+    "2k": (1440, 2560),
+}
+
+
+def _size_shaped_body(
+    route: Any,
+    *,
+    prompt: str,
+    refs: list[dict[str, str]],
+    resolution: str,
+    ratio: str,
+    duration: int,
+) -> dict[str, Any]:
+    """A `WxH` top-level `size`, which the adaptor parses into its own tiers."""
+    short, long = _SIZE_BY_RESOLUTION.get(resolution, _SIZE_BY_RESOLUTION["720p"])
+    portrait = ratio in ("9:16", "3:4") or not ratio
+    width, height = (short, long) if portrait else (long, short)
+
+    body: dict[str, Any] = {
+        "model": route.model,
+        "prompt": prompt,
+        "size": f"{width}x{height}",
+    }
+    if duration != -1:
+        body["duration"] = duration
+    images = [ref["url"] for ref in refs if ref["kind"] == "image"]
+    if images:
+        body["images"] = images
+        body["prompt"] = _with_image_file_refs(prompt, len(images))
+    return body
+
+
+def _task_shaped_body(
+    route: Any,
+    *,
+    prompt: str,
+    refs: list[dict[str, str]],
+    resolution: str,
+    ratio: str,
+    duration: int,
+    generate_audio: bool,
+    watermark: bool,
+    seed: int | None,
+) -> dict[str, Any]:
+    """The `metadata`-carried shape the gateway's task adaptor actually reads.
+
+    Its requestPayload has Resolution, Ratio, Duration, Seed, GenerateAudio and
+    Content[] — every one of them unmarshalled from `metadata`, never from the
+    top level, where the video DTO has no field to hold them.
+
+    Images additionally travel top-level as `images`: the adaptor appends those
+    to Content[] itself before merging metadata, which is why that one field
+    worked while `image_url` did not.
+    """
+    metadata: dict[str, Any] = {
+        "resolution": resolution,
+        "generate_audio": generate_audio,
+        "watermark": watermark,
+    }
+    if ratio and ratio != "adaptive":
+        metadata["ratio"] = ratio
+    if duration != -1:
+        metadata["duration"] = duration
+    if seed is not None:
+        metadata["seed"] = seed
+
+    content = [
+        {
+            "type": f"{ref['kind']}_url",
+            f"{ref['kind']}_url": {"url": ref["url"]},
+            "role": ref.get("role") or f"reference_{ref['kind']}",
+        }
+        for ref in refs
+    ]
+    if content:
+        metadata["content"] = content
+
+    body: dict[str, Any] = {"model": route.model, "prompt": prompt, "metadata": metadata}
+    images = [ref["url"] for ref in refs if ref["kind"] == "image"]
+    if images:
+        body["images"] = images
+        body["prompt"] = _with_image_file_refs(prompt, len(images))
+    return body
+
+
 def build_payload(
     route: Any,
     *,
@@ -601,18 +780,48 @@ def build_payload(
     generate_audio: bool,
     watermark: bool,
     seed: int | None = None,
+    declared: Any | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """(url_path, json_body) for the gateway channels.
+
+    ``declared`` carries the model's wire_shape. Which body a channel reads is
+    a property of the gateway adaptor behind it, not of the model name, and
+    the three shapes are mutually unreadable: a resolution sent in the wrong
+    place is accepted and ignored (or, on MiniMax, rejected outright).
 
     ``refs`` items: {"kind": "image"|"video", "url": public_url, "role": role}.
     The ark channel keeps its historical builder in video_production.py.
     """
     channel = getattr(route, "channel", "ark")
     if channel == "sd2":
+        native = sd2_native_resolution(route.model)
+        shape = getattr(declared, "wire_shape", None) if declared else None
+        if shape == "size":
+            # The adaptor parses its own resolution tiers out of a WxH string
+            # and rejects the request outright without one — measured: sending
+            # `resolution` instead returned "文生视频 ratio 不能为空".
+            return "/v1/videos", _size_shaped_body(
+                route, prompt=prompt, refs=refs, resolution=resolution,
+                ratio=ratio, duration=duration,
+            )
+        if shape == "metadata" or (shape is None and native is None):
+            # Not a name-encoded tier, so this model reaches the gateway's task
+            # adaptor, whose requestPayload reads resolution / ratio / seed /
+            # generate_audio / content[] **only out of `metadata`**. The
+            # top-level video DTO has no field for any of them, and Go drops
+            # unknown keys silently — measured 2026-09-01, asking for 720p/9:16
+            # at the top level returned 1920x1080, the upstream default, while
+            # the same values under `metadata` returned 720x1280 exactly.
+            return "/v1/videos", _task_shaped_body(
+                route, prompt=prompt, refs=refs, resolution=resolution,
+                ratio=ratio, duration=duration, generate_audio=generate_audio,
+                watermark=watermark, seed=seed,
+            )
+
         body: dict[str, Any] = {
             "model": canonicalize_sd2_model_name(route.model),
             "prompt": prompt,
-            "resolution": sd2_native_resolution(route.model),
+            "resolution": native,
             # These switches are part of the relay's public video contract.
             # Dropping ``generate_audio=False`` made visual-only b-roll return
             # an unwanted provider-default audio track; dropping ``True``

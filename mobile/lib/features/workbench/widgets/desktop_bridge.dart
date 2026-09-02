@@ -30,11 +30,11 @@ const desktopSdkUrl =
 const desktopSdkPath =
     'https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/sdk/ASP/container.html';
 
-/// The desktop is pinned to XGA server-side (`backend/sandbox/desktop.py`
-/// `obx-display`), so the agent, its screenshots and this viewer all share one
-/// coordinate space.
-const desktopRemoteWidth = 1024;
-const desktopRemoteHeight = 768;
+/// Per-user desktops are pinned to 16:9 1080p by the "OpenBox Personal 1080p"
+/// ECD policy group (WUYING_POLICY_GROUP_ID); only the shared agent desktop
+/// stays XGA for cheaper computer-use screenshots.
+const desktopRemoteWidth = 1920;
+const desktopRemoteHeight = 1080;
 
 /// The WebView document. [ticket] is the one-time connection ticket from
 /// `GET /api/desktop/ticket`.

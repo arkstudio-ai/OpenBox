@@ -380,3 +380,82 @@ def test_the_skill_tells_the_agent_to_pick_a_pace():
 
     assert "--rate" in flowed
     assert "Choose `--rate` from the piece you just wrote" in flowed
+
+
+def test_the_planner_respects_a_model_floor():
+    """Seedance refuses anything under 4s, so a 3s plan wastes the submit."""
+    import json as _json
+    argv = [sys.executable, str(SCRIPTS / "plan_shots.py"), "--json",
+            "--min-shot-seconds", "4", "--max-shot-seconds", "15",
+            "--line", "早上好。"]
+    plan = _json.loads(subprocess.run(argv, capture_output=True, text=True,
+                                      check=True).stdout)
+
+    assert plan["shots"][0]["seconds"] >= 4
+
+
+def test_the_skill_takes_both_bounds_from_the_model():
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+
+    assert "--min-shot-seconds" in flowed
+    assert "--max-shot-seconds" in flowed
+    assert "Seedance takes 4–15s, Wan 3.0 takes 2–30s" in flowed
+
+
+def test_the_model_guide_records_where_smart_duration_actually_works():
+    """"Accepted" and "honoured" differ, and the guide has to say which.
+
+    Seedance 2.0 returned 12.05s for -1 — a length it chose. The three SD
+    tiers accept -1 and return 5.06s, which is the default, so there is no
+    evidence the model chose anything.
+    """
+    guide = (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8")
+    flowed = " ".join(guide.split())
+
+    assert "12.05s" in flowed and "5.06s" in flowed
+    assert "2–30 on this deployment" in flowed
+
+
+def test_the_skill_tells_the_agent_to_send_an_explicit_duration():
+    """-1 is fine for one clip and wrong for a cut.
+
+    A length the model picks per shot makes the total drift from the script
+    and pulls the captions out of step with the pauses, one shot at a time.
+    """
+    flowed = " ".join((SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+    guide = " ".join(
+        (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "Always send an explicit duration; do not use `-1`" in flowed
+    assert "Use an explicit duration for anything that gets cut together" in guide
+
+
+def test_the_guide_shows_probed_edges_not_just_a_range():
+    """A range copied from docs and one probed at both edges look the same.
+
+    Only one of them tells you the gateway honours it — MiniMax's 4-15 came
+    from constants until 4/7/15 were generated and measured at 4.46/7.30/15.08s.
+    """
+    guide = " ".join(
+        (SCRIPTS.parent / "references/model-guide.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "15.08s" in guide and "30.02s" in guide
+    assert "never clamped" in guide
+
+
+def test_the_skill_forbids_probing_and_reads_the_menu_first():
+    """Ordering matters: step 3 needs limits step 6 used to fetch.
+
+    An agent that reaches the planning step without the capability table can
+    only guess, and each guess it validates by submitting costs money.
+    """
+    text = (SCRIPTS.parent / "SKILL.md").read_text(encoding="utf-8")
+    flowed = " ".join(text.split())
+
+    assert "Never probe for parameters" in flowed
+    assert "Read the menu first" in flowed
+    # The no-probe rule has to precede the step that needs the numbers.
+    assert text.index("Never probe") < text.index("Split at meaning")
+    assert "spends real money on each guess" in flowed

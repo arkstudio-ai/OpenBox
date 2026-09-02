@@ -30,6 +30,8 @@ export interface SendMessageVars {
   variant?: string | null
   /** Video model for this turn; the backend records it on the session. */
   videoModel?: string
+  /** Video resolution tier for this turn; recorded on the session like the model. */
+  videoResolution?: string
   agent?: string
   attachments?: string[]
   clientMessageId: string
@@ -42,6 +44,7 @@ export function sendPromptAsync(sessionId: string, vars: SendMessageVars) {
     agent: vars.agent,
     model: vars.model,
     video_model: vars.videoModel,
+    video_resolution: vars.videoResolution,
     variant: vars.variant,
     attachments: vars.attachments?.length ? vars.attachments : undefined,
     client_message_id: vars.clientMessageId,

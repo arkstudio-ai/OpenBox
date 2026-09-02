@@ -208,6 +208,7 @@ def _request_digest(
     agent: str | None,
     model: str | None,
     video_model: str | None,
+    video_resolution: str | None,
     variant: str | None,
     output_format: dict | None,
 ) -> str:
@@ -220,6 +221,7 @@ def _request_digest(
                 "agent": agent,
                 "model": model,
                 "video_model": video_model,
+                "video_resolution": video_resolution,
                 "variant": variant,
                 "output_format": output_format,
             }
@@ -343,6 +345,7 @@ async def accept_inbox_item(
     agent: str | None = None,
     model: str | None = None,
     video_model: str | None = None,
+    video_resolution: str | None = None,
     variant: str | None = None,
     output_format: dict | None = None,
 ) -> InboxReceipt:
@@ -361,6 +364,7 @@ async def accept_inbox_item(
         agent=agent,
         model=model,
         video_model=video_model,
+        video_resolution=video_resolution,
         variant=variant,
         output_format=output_format,
     )
@@ -418,6 +422,7 @@ async def accept_inbox_item(
                 agent=agent,
                 model=model,
                 video_model=video_model,
+                video_resolution=video_resolution,
                 variant=variant,
                 output_format=output_format,
                 state="accepted",
@@ -786,6 +791,8 @@ async def _claim_inbox_boundary_once(
             owner.variant = final_row.variant
         if final_row.video_model is not None:
             owner.video_model = final_row.video_model.strip() or None
+        if final_row.video_resolution is not None:
+            owner.video_resolution = final_row.video_resolution.strip() or None
         owner.updated_at = now
         await db.flush()
         if fault is not None:

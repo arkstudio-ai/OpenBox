@@ -9,8 +9,13 @@ from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 
+from tests.support.migrations import current_head
 
-REVISION = "f0b2d4e6a8c1"
+
+#: The migration under test. Upgrading to "head" instead would drag in every
+#: later revision, so any migration that alters a table this fixture does not
+#: stub would fail a test that is not about it — see tests/support/migrations.
+REVISION = "e2b4d6f8a0c3"
 PREVIOUS_REVISION = "d0a2c4e6f8b1"
 
 
@@ -77,7 +82,7 @@ def test_schema_contract_upgrade_backfills_and_is_reversible(
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
@@ -98,7 +103,8 @@ def test_schema_contract_upgrade_backfills_and_is_reversible(
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one() == REVISION
-    assert ScriptDirectory.from_config(config).get_heads() == [REVISION]
+    #: The tree stays single-headed; that claim is about the tree, not this id.
+    assert current_head()
     engine.dispose()
 
     command.downgrade(config, PREVIOUS_REVISION)
@@ -118,7 +124,7 @@ def test_schema_contract_downgrade_refuses_projectless_container(
     database_path = tmp_path / "schema-contract-live.db"
     _at_previous_head(database_path)
     config = _config(database_path, monkeypatch)
-    command.upgrade(config, "head")
+    command.upgrade(config, REVISION)
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql(
@@ -150,8 +156,11 @@ def test_alembic_check_ignores_explicitly_managed_kv_store(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"
         )
         connection.exec_driver_sql(
+            # ``alembic check`` compares the live ORM against the tree's end,
+            # so this database has to claim the head — not the one revision
+            # the rest of this module is about.
             "INSERT INTO alembic_version(version_num) VALUES (?)",
-            (REVISION,),
+            (current_head(),),
         )
     engine.dispose()
 

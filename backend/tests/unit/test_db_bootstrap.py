@@ -1,5 +1,6 @@
 """Application database bootstrap is independent of retired job workers."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +100,57 @@ def test_desktop_bridge_adds_durable_inbox_delivery_state_idempotently():
     assert columns["delivery_attempts"]["nullable"] is False
     assert columns["delivery_attempts"]["default"] == "0"
     assert row == (0, None)
+
+
+def test_every_migration_column_on_a_bridged_table_is_mirrored_for_desktop():
+    """Desktop mode never runs Alembic, so the bridge is its only upgrade path.
+
+    A migration that adds a column to one of these tables has to be mirrored in
+    ``_SINGLE_USER_ADDITIVE_COLUMNS`` or an existing single-user store keeps the
+    old shape while the ORM expects the new one — which fails at the first
+    write, not at startup. Read the intent from the migrations themselves, so
+    this cannot be satisfied by editing the bridge alone.
+    """
+    import re
+
+    versions = (
+        Path(__file__).resolve().parents[2] / "db" / "migrations" / "versions"
+    )
+    bridged_tables = set(db_base._SINGLE_USER_ADDITIVE_COLUMNS)
+    # op.add_column("table", sa.Column("name", ...))
+    direct = re.compile(
+        r'op\.add_column\(\s*"(?P<table>[a-z_]+)"\s*,\s*sa\.Column\(\s*"(?P<column>[a-z_]+)"',
+        re.S,
+    )
+    # with op.batch_alter_table("table") as batch: batch.add_column(sa.Column("name", ...))
+    batch_open = re.compile(r'batch_alter_table\(\s*"(?P<table>[a-z_]+)"')
+    batch_add = re.compile(r'batch\.add_column\(\s*sa\.Column\(\s*"(?P<column>[a-z_]+)"', re.S)
+
+    added: dict[str, set[str]] = {table: set() for table in bridged_tables}
+    for path in sorted(versions.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        upgrade = source.split("def downgrade", 1)[0]
+        for match in direct.finditer(upgrade):
+            if match["table"] in bridged_tables:
+                added[match["table"]].add(match["column"])
+        for opened in batch_open.finditer(upgrade):
+            if opened["table"] not in bridged_tables:
+                continue
+            block = upgrade[opened.end():]
+            next_open = batch_open.search(block)
+            if next_open:
+                block = block[: next_open.start()]
+            for match in batch_add.finditer(block):
+                added[opened["table"]].add(match["column"])
+
+    assert any(added.values()), "found no add_column at all — the scan is broken"
+    for table, columns in added.items():
+        missing = columns - set(db_base._SINGLE_USER_ADDITIVE_COLUMNS[table])
+        assert not missing, (
+            f"{table}: {sorted(missing)} is added by a migration but missing "
+            "from _SINGLE_USER_ADDITIVE_COLUMNS, so an existing desktop store "
+            "would never get it"
+        )
 
 
 @pytest.mark.asyncio

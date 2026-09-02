@@ -139,6 +139,13 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "sessions": {
         "tool_exposure_state": "TEXT NOT NULL DEFAULT '{}'",
         "variant": "VARCHAR(32)",
+        # Desktop mode never runs migrations, so a column added by one has to
+        # be mirrored here or an existing single-user store keeps the old shape
+        # while the ORM expects the new one. Alembic f1a2b3c4d5e6 /
+        # d2f4a6b8c0e1 / a1b3c5d7e9f2 respectively.
+        "kind": "VARCHAR(16) NOT NULL DEFAULT 'normal'",
+        "video_model": "VARCHAR(160)",
+        "video_resolution": "VARCHAR(16)",
     },
     "parts": {
         "stream_seq": "INTEGER",
@@ -150,10 +157,22 @@ _SINGLE_USER_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
     "user_skills": {
         "lifecycle_state": "VARCHAR(16) NOT NULL DEFAULT 'active'",
         "lifecycle_generation": "INTEGER NOT NULL DEFAULT 1",
+        # Alembic f4c5d6e7f8a9 — the published snapshot split off from the
+        # draft. All nullable: an unpublished skill has no snapshot.
+        "published_version": "INTEGER",
+        "published_name": "VARCHAR(64)",
+        "published_description": "TEXT",
+        "published_icon": "VARCHAR(16)",
+        "published_install_dir": "VARCHAR(64)",
+        "published_metadata_data": "TEXT",
+        "published_archive_data": "BLOB",
+        "published_archive_size": "BIGINT",
     },
     "agent_inbox_items": {
         "delivery_attempts": "INTEGER NOT NULL DEFAULT 0",
         "delivery_last_error": "TEXT",
+        # Alembic c1e3a5d7f9b2.
+        "video_resolution": "VARCHAR(16)",
     },
 }
 

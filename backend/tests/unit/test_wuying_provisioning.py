@@ -74,10 +74,33 @@ def test_provisioning_config_defaults():
     cfg = OpenBoxConfig()
     assert cfg.wuying_mode == "shared"
     assert cfg.wuying_image_id == ""
+    # Deliberately empty: the policy group pins the deployment-wide 1080p
+    # session resolution, so provisioning must not silently fall back to
+    # Alibaba's resolution-adaptive default policy.
+    assert cfg.wuying_policy_group_id == ""
     assert cfg.wuying_desktop_type == "eds.enterprise_office.4c8g"
     assert cfg.wuying_system_disk_size == 40
     assert cfg.wuying_charge_type == "PostPaid"
     assert cfg.wuying_env_tag == "default"
+
+
+async def test_create_desktop_requires_policy_group(monkeypatch):
+    monkeypatch.setattr(
+        wuying_ecd,
+        "get_config",
+        lambda: _config(
+            wuying_image_id="m-test",
+            wuying_office_site_id="cn-hangzhou+dir-test",
+            wuying_policy_group_id="",
+        ),
+    )
+
+    async def must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("validation must fail before any ECD call")
+
+    monkeypatch.setattr(wuying_ecd, "ensure_end_user", must_not_be_called)
+    with pytest.raises(wuying_ecd.ProvisioningConfigError, match="WUYING_POLICY_GROUP_ID"):
+        await wuying_ecd.create_desktop("user-x")
 
 
 # ---------------------------------------------------------------------------

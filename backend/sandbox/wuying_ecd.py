@@ -224,6 +224,13 @@ async def create_desktop(user_id: str, display_name: str | None = None) -> str:
         raise ProvisioningConfigError(
             "wuying_office_site_id (WUYING_OFFICE_SITE_ID) is required in per_user mode"
         )
+    if not config.wuying_policy_group_id:
+        raise ProvisioningConfigError(
+            "wuying_policy_group_id (WUYING_POLICY_GROUP_ID) is required in per_user "
+            "mode; the policy group pins the 1920x1080 session resolution, and "
+            "Alibaba's default policy is resolution-adaptive — refusing to create "
+            "a desktop that would drift from what the agent screenshots"
+        )
 
     eu_id, _ = await ensure_end_user(user_id, display_name)
     client = ecd_client()

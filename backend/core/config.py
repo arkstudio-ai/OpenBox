@@ -359,7 +359,12 @@ class OpenBoxConfig(BaseModel):
     wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
     wuying_desktop_type: str = "eds.enterprise_office.4c8g"
     wuying_system_disk_size: int = 40               # GiB
-    wuying_policy_group_id: str = "system-all-enabled-policy"
+    # No default on purpose: the policy group pins the session resolution (the
+    # deployment standard is "OpenBox Personal 1080p"), and Alibaba's default
+    # policy is resolution-adaptive — a desktop created with it drifts away
+    # from what the agent screenshots. per_user provisioning refuses to create
+    # desktops until this is set explicitly, like wuying_image_id.
+    wuying_policy_group_id: str = ""
     wuying_charge_type: str = "PostPaid"
     wuying_password_salt: str = ""                  # per-deployment secret for derived EndUser passwords
     wuying_env_tag: str = "default"                 # openbox-env tag; isolates prod/dev sharing one account

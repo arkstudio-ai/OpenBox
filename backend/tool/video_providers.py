@@ -30,6 +30,7 @@ canonicalization. Hard lessons from bossip carried over verbatim:
   fails.
 """
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -403,6 +404,23 @@ def resolve_route(model_override: str | None, config) -> VideoRoute:
     return _ark_route(model, config, provider_name=settings.provider)
 
 
+def _is_private_gateway_host(host: str) -> bool:
+    """True for hosts that can only be reached from inside our network.
+
+    Plain http is acceptable there: the hop never leaves the VPC, and the
+    self-hosted gateway terminates no TLS on its container port.
+    """
+    if not host:
+        return False
+    if host in ("localhost", "host.docker.internal") or host.endswith((".internal", ".local")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback
+
+
 def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
     """The ark path — byte-identical to the historical _configured_target."""
     from urllib.parse import urlsplit
@@ -416,16 +434,32 @@ def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
     if not api_key:
         raise RuntimeError("BOSSIP_API_KEY is empty")
     base_url = configured_base.rstrip("/")
-    if not base_url.startswith("https://") or base_url.endswith(".html"):
+    host = (urlsplit(base_url).hostname or "").lower()
+    # Public hosts must be https; a private-network gateway (our own new-api
+    # on its VPC address) may be plain http. Either way, a docs page is not
+    # an API origin.
+    plain_http_ok = base_url.startswith("http://") and _is_private_gateway_host(host)
+    if base_url.endswith(".html") or not (base_url.startswith("https://") or plain_http_ok):
         raise RuntimeError(
             "BOSSIP_BASE_URL must be an HTTPS API origin (for example "
-            "https://openapi.bossipai.com.cn), not the documentation page"
+            "https://openapi.bossipai.com.cn) or a plain-http private-network "
+            "gateway (for example http://10.100.1.76:3000), not the documentation page"
         )
-    wire_format = (
-        "bossip_videos"
-        if (urlsplit(base_url).hostname or "").lower() == BOSSIP_RELAY_HOST
-        else "tokenspace_contents"
-    )
+    options = (getattr(provider, "options", None) or {}) if provider else {}
+    # The wire format is a property of the gateway, not of its hostname:
+    # the same new-api answers on a public facade and on a VPC address.
+    # Declare it in provider options; hostname inference only covers
+    # deployments that never set it.
+    declared_wire = str(options.get("wire_format") or "").strip().lower()
+    if declared_wire:
+        if declared_wire not in ("tokenspace_contents", "bossip_videos"):
+            raise RuntimeError(
+                f"provider '{provider_name}' options.wire_format must be "
+                f"'bossip_videos' or 'tokenspace_contents', got {declared_wire!r}"
+            )
+        wire_format = declared_wire
+    else:
+        wire_format = "bossip_videos" if host == BOSSIP_RELAY_HOST else "tokenspace_contents"
     return VideoRoute(
         provider=provider_name,
         model=model,
@@ -435,8 +469,8 @@ def _ark_route(model: str, config, *, provider_name: str) -> VideoRoute:
         status_timeout_seconds=settings.status_timeout_seconds,
         channel="ark",
         model_type="seedance",
-        auth_scheme="bearer",
-        wire_format=wire_format,
+        auth_scheme=options.get("auth_scheme", "bearer"),
+        wire_format=wire_format,  # type: ignore[arg-type]
     )
 
 

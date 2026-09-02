@@ -40,7 +40,14 @@
     },
     "bossip": {
       "api_key": "{env:BOSSIP_API_KEY}",
-      "base_url": "{env:BOSSIP_BASE_URL}"
+      "base_url": "{env:BOSSIP_BASE_URL}",
+      // The wire format is a property of the gateway, not of its hostname.
+      // Our own new-api answers on a public facade (https://openapi.bossipai.com.cn)
+      // and on a VPC address (http://10.100.1.76:3000); declare "bossip_videos"
+      // so both use the relay's /v1/videos format. Plain http is accepted only
+      // for private-network hosts. Omit it and the format is inferred from the
+      // hostname (relay host -> bossip_videos, anything else -> tokenspace_contents).
+      "options": { "wire_format": "bossip_videos" }
     },
     // Self-hosted new-api media gateway (sd2 + wan3 video channels).
     // AUTH QUIRK: new-api expects the token RAW in the Authorization header

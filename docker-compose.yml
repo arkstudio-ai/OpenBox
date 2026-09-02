@@ -1,4 +1,45 @@
 services:
+  # The application services build from this checkout. They are the container
+  # deployment path; `backend/scripts/wuying_dev.sh` remains the local one.
+  # Both reach the execution plane over WUYING_ENDPOINT — there is no sandbox
+  # container here, and no docker.sock mount, because WUYING is the only
+  # execution provider.
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["app"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/openbox.json:/app/openbox.json:ro
+    env_file:
+      - ./backend/.env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://openbox:openbox_dev@postgres:5432/openbox}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+
+  # frontend-v2 is the shipped UI; nginx.conf proxies /api and /ws to
+  # BACKEND_HOST, so the browser talks to one origin.
+  frontend:
+    build:
+      context: ./frontend-v2
+      dockerfile: Dockerfile
+    profiles: ["app"]
+    ports:
+      - "3000:80"
+    environment:
+      - BACKEND_HOST=backend:8080
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     ports:

@@ -60,3 +60,39 @@ def test_a_provider_that_makes_its_own_containers_still_forgets_them():
     # contract remains owning by default; this shared pre-provisioned desktop
     # explicitly opts out above.
     assert SandboxProvider.owns_containers is True
+
+
+async def test_forwarded_requests_carry_the_callers_opaque_scope(provider, monkeypatch):
+    """The proxy path must scope every request to its caller.
+
+    ``forward_to_container`` is how the file APIs and the readiness probes
+    reach the desktop, and the deploy now writes
+    ``OPENBOX_REQUIRE_USER_SCOPE=1`` into the action server's systemd unit —
+    so a request that loses this header stops being a silent tenancy leak and
+    starts being a 400 on every proxied call. Neither failure mode should wait
+    for a desktop to notice it.
+    """
+    observed = {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def request(self, method, url, headers, **_kwargs):
+            observed.update({"method": method, "url": url, "headers": headers})
+            return object()
+
+    monkeypatch.setattr("sandbox.wuying.httpx.AsyncClient", lambda **_kwargs: Client())
+    await provider.forward_to_container(
+        CONTAINER_ID,
+        "GET",
+        "/skills/dev-browser",
+        user_id="user-1",
+    )
+
+    assert observed["headers"][USER_SCOPE_HEADER] == user_scope_for("user-1")
+    # Opaque by construction: the raw id must never travel in the header.
+    assert "user-1" not in observed["headers"][USER_SCOPE_HEADER]

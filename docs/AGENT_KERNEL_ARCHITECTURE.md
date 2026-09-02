@@ -514,7 +514,7 @@ Workspace、attachment、snapshot、Skill/MCP catalogue 已分别按 user/projec
 1. Agent transcript 之外的完整 Session event sourcing：当前 Session 元数据、Todo、Tool reveal catalogue 与文件系统仍不能只靠 `agent_events` 恢复；provider 的 raw transport request/response 也不会因 replay 与安全原因被完整记录。
 2. Cordis 式 Plugin Context/Service provide/inject 和 Service provider epoch 通用依赖重算；可信宿主插件的 generation/Effect、manifest 依赖 epoch、版本 activation、polling 热替换与事务 unload/rollback 已实现。
 3. Task 子代理在 parent 进程崩溃后的自动 Loop 续跑。Fork seed、Provider/Agent capability composition、durable activation inbox/outbox、continuable follow-up/interrupt/report/list 和 cold resume 已实现；自动续跑仍因无法证明 parent 是否跨过 provider/兄弟 Tool 边界而保持关闭。
-4. WUYING 一用户一桌面的自动 provisioning/lifecycle。
+4. 一用户一桌面的**执行面**连通。控制面已实现：`WUYING_MODE=per_user` 通过 ECD OpenAPI 为每个用户开通桌面，`cloud_desktops` 以唯一部分索引保证一人一台，归属由 `openbox-user`/`openbox-env` tag 校验后才出票（见 [`sandbox/wuying_ecd.py`](../backend/sandbox/wuying_ecd.py)、[`sandbox/wuying_desktop_service.py`](../backend/sandbox/wuying_desktop_service.py)）。但 Agent 命令仍走单一 `WUYING_ENDPOINT` 隧道到共享桌面：`WuyingProvider.routes_per_user` 为 `False`，`api/desktop._per_user()` 同时要求配置与该标志，否则回落共享桌面并记 ERROR——保住“看到的就是跑的那台”。补齐 per-desktop 连通（frpc 反向隧道或逐桌面 SSH）后翻这个标志即可端到端生效。
 5. 共享桌面上的强恶意租户隔离和完整 Network/Egress Policy。
 
 这些限制是部署与故障处理边界，不是隐含的下一阶段承诺。

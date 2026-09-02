@@ -30,6 +30,7 @@ describe("DesktopTab", () => {
     setTouchEnabled: vi.fn(),
     setMouseMode: vi.fn(),
     setClipboardEnabled: vi.fn(),
+    setResolution: vi.fn(),
   }
   const createSession = vi.fn((id: string, options: Record<string, unknown>) => {
     void id
@@ -40,10 +41,11 @@ describe("DesktopTab", () => {
   beforeEach(() => {
     handlers.clear()
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
-    vi.mocked(http.get).mockResolvedValue({
-      ticket: "ticket",
-      desktopId: "ecd-test",
-      regionId: "cn-hangzhou",
+    // The tab asks /api/desktop/status before the ticket; answer by path so
+    // the shared-desktop "running" state lets the connect proceed.
+    vi.mocked(http.get).mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/desktop/status")) return { state: "running", mode: "shared" }
+      return { ticket: "ticket", desktopId: "ecd-test", regionId: "cn-hangzhou" }
     })
     Object.assign(window, { Wuying: { WebSDK: { createSession } } })
   })
@@ -79,6 +81,10 @@ describe("DesktopTab", () => {
       enableAutoSwitchMouseMode: true,
       mediaSuspendedTipFlag: 27,
     })
+
+    // The SDK's first connect asks the desktop to match the pane ("A" per the
+    // Web SDK docs); onConnected must pin the fixed 1080p mode straight back.
+    expect(session.setResolution).toHaveBeenCalledWith(1920, 1080, 0)
 
     // Connected read-only state uses the preferred API once, without issuing
     // the duplicate legacy command that used to race it.

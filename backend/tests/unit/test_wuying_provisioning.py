@@ -67,6 +67,34 @@ def test_password_changes_with_salt(monkeypatch):
     assert wuying_ecd.password_for("user-a") != one
 
 
+async def test_retry_throttled_recovers_after_short_flow_control(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    async def call():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("Throttling.User: flow control")
+        return "ok"
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(wuying_ecd.asyncio, "sleep", no_sleep)
+    assert await wuying_ecd._retry_throttled(call, "CreateUsers") == "ok"
+    assert calls == 3
+    assert sleeps == [1, 2]
+
+
+async def test_retry_throttled_does_not_hide_other_errors():
+    async def call():
+        raise RuntimeError("InvalidParameter")
+
+    with pytest.raises(RuntimeError, match="InvalidParameter"):
+        await wuying_ecd._retry_throttled(call, "CreateUsers")
+
+
 # ---------------------------------------------------------------------------
 # Config surface
 # ---------------------------------------------------------------------------

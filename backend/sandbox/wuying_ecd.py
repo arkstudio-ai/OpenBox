@@ -49,6 +49,31 @@ class ProvisioningConfigError(Exception):
     """per_user mode is enabled but required config is missing."""
 
 
+async def _retry_throttled(call, operation: str, attempts: int = 6):
+    """Retry Alibaba's short per-user flow-control bursts.
+
+    EDS User applies a narrow account-level rate limit, so two legitimate
+    desktop provisions can race at CreateUsers.  Retrying only explicit
+    throttling responses keeps other configuration/API failures immediate.
+    """
+    for attempt in range(attempts):
+        try:
+            return await call()
+        except Exception as exc:
+            if "Throttling" not in str(exc) or attempt + 1 >= attempts:
+                raise
+            delay = min(2**attempt, 8)
+            log.warning(
+                "%s throttled; retrying in %ss (%s/%s)",
+                operation,
+                delay,
+                attempt + 1,
+                attempts,
+            )
+            await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def _open_api_config(endpoint: str):
     from alibabacloud_tea_openapi import models as open_api_models
 
@@ -139,18 +164,20 @@ async def ensure_end_user(user_id: str, display_name: str | None = None) -> tupl
     # placeholder with a hash suffix against collisions.
     email = f"{eu_id}-{hashlib.sha256(user_id.encode()).hexdigest()[:8]}@openbox.example.com"
     try:
-        resp = await client.create_users_async(
-            eds_models.CreateUsersRequest(
-                users=[
-                    eds_models.CreateUsersRequestUsers(
-                        end_user_id=eu_id,
-                        email=email,
-                        password=password,
-                        owner_type="CreateFromManager",
-                        real_nick_name=display_name or eu_id,
-                    )
-                ]
-            )
+        request = eds_models.CreateUsersRequest(
+            users=[
+                eds_models.CreateUsersRequestUsers(
+                    end_user_id=eu_id,
+                    email=email,
+                    password=password,
+                    owner_type="CreateFromManager",
+                    real_nick_name=display_name or eu_id,
+                )
+            ]
+        )
+        resp = await _retry_throttled(
+            lambda: client.create_users_async(request),
+            "CreateUsers",
         )
         # CreateUsers reports failures in the body instead of raising.
         result = resp.body.create_result

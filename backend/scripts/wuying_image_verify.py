@@ -54,8 +54,8 @@ fi
 
 sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' /tmp/openbox-image-baseline.txt | LC_ALL=C sort -u > /tmp/openbox-baseline-packages
 dpkg-query -W -f='${binary:Package}\n' | LC_ALL=C sort -u > /tmp/openbox-actual-packages
-missing=$(comm -23 /tmp/openbox-baseline-packages /tmp/openbox-actual-packages)
-extra=$(comm -13 /tmp/openbox-baseline-packages /tmp/openbox-actual-packages)
+missing=$(LC_ALL=C comm -23 /tmp/openbox-baseline-packages /tmp/openbox-actual-packages)
+extra=$(LC_ALL=C comm -13 /tmp/openbox-baseline-packages /tmp/openbox-actual-packages)
 if [ -z "$missing" ]; then
   echo "PASS package_inventory_contains_baseline ($(wc -l < /tmp/openbox-baseline-packages) baseline packages)"
   echo "INFO package_inventory_extra_count=$(printf '%s\n' "$extra" | sed '/^$/d' | wc -l)"

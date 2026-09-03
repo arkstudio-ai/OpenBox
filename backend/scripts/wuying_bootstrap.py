@@ -76,6 +76,16 @@ rm -rf /root/.ssh
 # cloud-init/ssh-keygen regenerates them for a new instance when sshd is used;
 # OpenBox's execution channel uses its own per-instance key below /etc/openbox.
 rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+# Ubuntu packages also ship sample/test private keys, while services such as
+# fwupd and snakeoil create machine-local keys during installation.  None are
+# needed by OpenBox and none may be copied into the golden image.
+pem_pattern=$(printf '%s%s' '^-----BEGIN .*' 'PRIVATE KEY-----$')
+find / \
+  -path /proc -prune -o -path /sys -prune -o -path /dev -prune -o \
+  -path /run -prune -o -path /tmp -prune -o -path /var/lib/docker -prune -o \
+  -type f -size -2M -exec awk -v pattern="$pem_pattern" \
+    'FNR == 1 { if ($0 ~ pattern) print FILENAME; nextfile }' {} + \
+  2>/dev/null | while IFS= read -r private_key; do rm -f -- "$private_key"; done
 install -d -m 700 /etc/openbox
 find /etc/openbox -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 

@@ -388,6 +388,12 @@ python backend/scripts/wuying_image_verify.py \
   --baseline docs/image-baseline-dpkg.txt
 ```
 
+The verified Shanghai image produced by this procedure on 2026-09-03 is
+`m-ccceuit7jn3xzwx45` (`openbox-image-v2-shanghai`, CUSTOM Linux, 50G). It
+reached `Available` after the verifier passed, and its source desktop was then
+deleted. Configure `WUYING_IMAGE_ID=m-ccceuit7jn3xzwx45` and
+`WUYING_SYSTEM_DISK_SIZE=50` for the Shanghai per-desktop fleet.
+
 Image mode installs runtime, action server, browser relay and the fixed-display
 helpers, but leaves both systemd units disabled. `/etc/openbox` is empty and
 `/root/.ssh` is absent. Instance provisioning writes `/etc/openbox/action.env`

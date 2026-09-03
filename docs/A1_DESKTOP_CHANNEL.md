@@ -52,7 +52,7 @@
 |---|---|
 | 生产（上海）gw2 | ECS `i-uf66pcsepxpc23v5qsts`，内网 `10.100.1.83`，公网 `106.15.105.236`，VPC `vpc-uf6pfjyysdwybkq8m0hzk`，vSwitch `vsw-uf6urpiz14jtl0ii58hpj`，安全组 `sg-uf6gg28fkz5rsv9vknhf`（80/443 全网，22 只对 EC2 `54.254.36.226`）。栈在 `/opt/openbox`（compose，backend 容器经 `172.17.0.1` 访问宿主机），镜像 tag `20260902-b8b68e0`，`WUYING_MODE=per_user`、`WUYING_ENV_TAG=gw2`、`REGION cn-shanghai` |
 | 现共享执行面 | 共享桌面 `ecd-4zjxaq5g45dr5qr0i`（cn-shanghai）→ 反向 SSH 到杭州中继 `47.110.66.89`:18001 → gw2 上 `openbox-wuying-tunnel` 单元 `-L 172.17.0.1:18001` → backend `WUYING_ENDPOINT=http://172.17.0.1:18001`。gw-1（EC2 新加坡）共用同一路径 |
-| ECD 上海参数 | 金镜像 `m-feb7j85i4d4qo09ux`（openbox-image-v1-shanghai，Size 90G → 系统盘必须 ≥ 90）、办公网络 `cn-shanghai+dir-2879607125`（**便捷型**，无 VPC）、策略组 `pg-0bbay5jmvosn8b2hc`（1080p，跨地域可用）、规格 `eds.enterprise_office.4c8g` |
+| ECD 上海参数 | A1 新金镜像 `m-ccceuit7jn3xzwx45`（openbox-image-v2-shanghai，Size 50G，Available，零运行时秘密）；旧镜像 `m-feb7j85i4d4qo09ux`（openbox-image-v1-shanghai，Size 90G，仅作基线）；办公网络 `cn-shanghai+dir-2879607125`（**便捷型**，无 VPC）、策略组 `pg-0bbay5jmvosn8b2hc`（1080p，跨地域可用）、规格 `eds.enterprise_office.4c8g` |
 | ECD 杭州参数 | 金镜像 `m-5j3k26iwy99nrxtv0`、办公网络 `cn-hangzhou+dir-6394706301`；EC2 生产栈的 prod 桌面 `ecd-2oi2bfla5bl9erw2h`、`ecd-cm7ot1jctchhy58kp` 在杭州 |
 | **金镜像烘焙了秘密（实测 ecd-2oi2bfla5bl9erw2h）** | `openbox-tunnel.service` enabled，`ExecStart ... -i /root/.ssh/openbox_tunnel -R 127.0.0.1:18000:127.0.0.1:8000 root@47.110.66.89`；`/root/.ssh` 有 `authorized_keys known_hosts openbox_tunnel openbox_tunnel.pub`；`openbox-action-server.service` 内联 `SESSION_API_KEY`；journal 每 5 秒 `Permission denied (publickey,password)` |
 | 无影桌面网络 | 桌面无入站路由，只能出站；便捷型办公网络没有可对等的 VPC。阿里文档有「ECS 与无影通过 CEN 互通」（标准办公网络才有 VPC） |
@@ -215,27 +215,93 @@ docker exec -it openbox-backend uv run python scripts/wuying_provision_smoke.py 
 
 ## 8. 执行记录（执行者填写）
 
-- 拓扑决策：☐ 甲成立 ☒ 甲不成立→乙。2026-09-03 只读复核上海现有办公网络
-  `cn-shanghai+dir-2879607125` 为 `SIMPLE`，没有可与 gw2 对等的 VPC；gw2 对现共享桌面
-  `10.1.32.206:8000/alive` 的 3 秒直连探测超时。未为验证甲新建计费的办公网络或 CEN，
-  选择方案乙。gw2 已启用独立 `openbox-tunnel-sshd.service`（2222），动态授权自测记录：
-  指纹授权后仅监听 `172.17.0.1:18888` 且内部 HTTP 200；把测试行置为 `revoked` 后
-  `obx-authkeys` 返回 0 字节，同一密钥重连为 `Permission denied (publickey)`。从杭州 ECS
-  `i-bp1fbwlih14on7rclpqk` 探测公网 `106.15.105.236:18888` 3 秒超时。本机 `nc` 会被 TUN
-  代理假阳性接通，故不作为公网暴露证据。
-- 新镜像 id：待首次计费动作获批后创建。
-- 分支 / 提交：`codex/a1-desktop-channel`；当前提交依次为 `e5a5f18`、`468841a`、
-  `df805a6`、`b69f66c`（最终文档提交待补）。gw2 部署 tag
-  `20260903-a1-e9ec7ff`，数据库 revision `c1d3e5f7a9b2`。
-- 未完成或偏离本文的地方（必须写）：真实金镜像、双用户、重启和真实桌面撤销验收等待
-  一次费用授权。`AuthorizedKeysCommandUser nobody` 必须读取 token，因此
-  `/etc/openbox/authkeys.env` 使用 `root:nogroup 0640`，而不是不可同时满足的 `root 0600`；
-  helper 与父目录仍不可由 `nobody` 写。gw2 无法稳定拉取 Docker Hub/GHCR，部署镜像用
-  已运行且依赖锁相同的镜像作基础层覆盖源码，前端则上传本机已通过 `npm run check` 的
-  `dist` 覆盖 nginx 层。
-- 花费：截至本记录未创建桌面、办公网络或 CEN，新增计费资源为 0。实时
-  `DescribePrice` 返回上海 `eds.enterprise_office.4c8g` + Linux 50G 高效云盘按量价
-  `CNY 0.744086/台/小时`；等待授权后预计创建 1 台镜像源和 2 台验收桌面并在用完后删除。
+### 8.1 拓扑、部署与镜像
+
+- 拓扑决策：☐ 甲成立 ☒ 甲不成立→乙。上海办公网络
+  `cn-shanghai+dir-2879607125` 为 `SIMPLE`，没有可与 gw2 对等的 VPC；gw2 对共享桌面
+  `10.1.32.206:8000/alive` 的 3 秒直连探测超时。没有为方案甲新建办公网络或 CEN。
+- gw2 的独立 `openbox-tunnel-sshd.service` 监听 2222。最终有效配置为
+  `PasswordAuthentication no`、`PermitTTY no`、`X11Forwarding no`、
+  `AllowTcpForwarding remote`、`PermitOpen none`、`GatewayPorts clientspecified`、
+  `AllowUsers obxtunnel`、`AuthorizedKeysCommand /usr/local/bin/obx-authkeys %f`、
+  `AuthorizedKeysCommandUser nobody`。
+- 新镜像：`m-ccceuit7jn3xzwx45` / `openbox-image-v2-shanghai`，CUSTOM Linux，50G，
+  2026-09-03 05:52 UTC 达到 `Available`。源桌面创建镜像后已删除。
+- 镜像验证全部通过：`/root/.ssh` 不存在或为空；action/tunnel 两个服务模板 disabled；
+  两者只从 `/etc/openbox/*.env` 读秘密；没有内联 action key、旧中继或旧端口；
+  `/etc/openbox` 为空；`obx-display` 固定 1920×1080；全盘首行 PEM 私钥扫描 0 命中；
+  旧镜像的 1456 个已安装包全部存在。新镜像另有 707 个显式安装的依赖包，因此包校验采用
+  “旧基线无缺失”而不是禁止新增包。
+- gw2 最终配置为 `WUYING_ROUTING=per_desktop`、镜像 id 如上、系统盘 50G；数据库 revision
+  `c1d3e5f7a9b2`；后端部署 tag `20260903-a1-bf568d0`。启动日志为
+  `Cloud desktop — agent and view route to each caller's assigned desktop in cn-shanghai`。
+
+### 8.2 双用户与独立凭据（AC-1/3）
+
+| | U1 | U2 |
+|---|---|---|
+| OpenBox user | `smoke-66fae445c98f` | `smoke-b05a4490decd` |
+| Desktop | `ecd-ghjuuilmgiylybv0u` | `ecd-ahkizte0nsxv3r30i` |
+| EndUser | `obx-10f0b9ca35b0d1b4` | `obx-6b5a8d12c779fdc9` |
+| 路由 | `172.17.0.1:18101` | `172.17.0.1:18100` |
+| `DescribeDesktops.host_name` | `juuilmgiylybv0u` | `kizte0nsxv3r30i` |
+| 聊天中的 bash 输出 | `juuilmgiylybv0u` | `kizte0nsxv3r30i` |
+| tunnel fingerprint | `SHA256:JewjT+dSlb5DTCBj5o9uoPXS6pQOnWKRVGkh/wKcARc` | `SHA256:Q5ykqG94xnt19PeMwfOcI/kdRGL0/IYfFd47KuKrOa0` |
+| action key SHA-256 | `63af74ac666ba82f57c5d04430d2fd66397e22f2836dd9de621a9489c109f8b8` | `3ba259731d4c5e31c1122e9615b8a13698862669e605d3c0262ccc6a2d59d81a` |
+
+两把 action key 的摘要和两个 SSH 指纹均不同；U1 的 action key 请求 U2 的
+`/system_info` 得到 HTTP 403。两台桌面的服务文件不含内联 `SESSION_API_KEY`；运行时秘密只在
+各自 `/etc/openbox`。聊天记录是正式 `api.sessions.send_message` 回合，模型实际调用了 `bash`，
+不是直接 RunCommand 代替。桌面终端截图：
+[U1](evidence/a1-u1-terminal.png)（SHA-256 `862611c71dd9ad75c38961a74a5a0d4ae2e415aa0d6e67ff0aa9cb0e55d0893f`）、
+[U2](evidence/a1-u2-terminal.png)（SHA-256 `3b4436da2332dfd48c6e08fdc82f3d2d7e5f738c121aa4dfeec552444010df30`）。
+
+### 8.3 恢复、撤销、未就绪与共享回归（AC-4/5/6/7）
+
+- U1 重启开始于 `2026-09-03T06:30:31Z`；ECD 43 秒恢复 Running；巡检在
+  `06:31:18.234624Z`（约 47 秒）刷新 `last_seen_at` 且通道为 `up`，小于 3 分钟。
+  重启后的直接通道和第二个正式聊天回合都再次返回 `juuilmgiylybv0u`。
+- 撤销 U2 后，状态为 `channel.state=revoked`；正式消息返回 HTTP 503：
+  `{"code":"DESKTOP_NOT_READY",...,"channel":{"state":"revoked"}}`；
+  `obx-authkeys <U2 fingerprint>` 返回 0 字节，18100 监听消失。强制在来宾机重启 tunnel 后，
+  journal 连续出现 `Permission denied (publickey)`，随后服务保持 disabled/inactive。
+- 用户 `a1-not-ready-0903` 从未开通桌面。正式消息在模型调用前返回 HTTP 503
+  `{"code":"DESKTOP_NOT_READY","desktop":{"state":"not_provisioned"}}`；真实 cron run
+  `cron_run_01M1JZT2ZCJMZ8WGFE5PP8EBXN` 写入 `status=skipped`、
+  `error_message=DESKTOP_NOT_READY: not_provisioned`、`duration_ms=27`，没有重试。
+- 将 gw2 临时切为 `WUYING_ROUTING=shared` 并重建 backend 后，`/api/desktop/status` 返回
+  `{"state":"running","mode":"shared"}`，启动日志同时显示 agent 和 view 均为旧桌面
+  `ecd-4zjxaq5g45dr5qr0i`，正式聊天的 bash 输出为 `jxaq5g45dr5qr0i`。随后已切回
+  `per_desktop` 并再次健康启动。
+
+### 8.4 暴露面、冒烟与测试（AC-9/10）
+
+- gw2 `ss -ltnp` 在双用户在线时只显示 `172.17.0.1:18100` 和
+  `172.17.0.1:18101`，没有公网绑定；从杭州 ECS `i-bp1fbwlih14on7rclpqk` 对
+  `106.15.105.236:18100/18101` 的 4 秒 TCP 探测均超时。
+- `wuying_provision_smoke.py channel --yes --disk 50` 使用临时 owner
+  `smoke-10021af78942` 和桌面 `ecd-ahkizte0nthlevmrn`：61 秒达到
+  `running/channel.up`，认证路由 `172.17.0.1:18102` 返回主机名
+  `kizte0nthlevmrn` 和 `1920x1080`，输出 `channel tier passed.`，随后自动删除。
+- A1 定向单测：`63 passed`。完整后端单测：`1273 passed, 3 failed`；三个失败均是本文允许的
+  本机 `openbox.json` 视频模型配置基线（MiniMax-H3 缺项及两个 Seedance id 映射），与 A1
+  改动无关。前端 `npm run check`：i18n parity、ESLint、TypeScript 均通过，Vitest
+  `25 files / 185 tests passed`（仅 20 个既有 lint warning）。`git diff --check` 通过。
+
+### 8.5 提交、偏离与资源清理（AC-11）
+
+- 分支：`codex/a1-desktop-channel`。实现按工作项拆为中文提交；最终列表以
+  `git log --oneline main..codex/a1-desktop-channel` 为准。
+- 偏离：`AuthorizedKeysCommandUser nobody` 需要读取内部 token，故
+  `/etc/openbox/authkeys.env` 使用 `root:nogroup 0640`，而非无法同时让 nobody 读取的
+  `root:root 0600`；文件和父目录都不可由 nobody 写。gw2 无法稳定拉取 Docker Hub/GHCR，
+  后端部署使用依赖锁相同的既有镜像作基础层覆盖源码，前端使用本机已通过完整检查的 dist
+  覆盖 nginx 层。除此以外没有未完成验收项。
+- 计费动作共创建 4 台按量桌面：1 台镜像源、U1、U2、1 台 channel 冒烟；实时询价为
+  `CNY 0.744086/台/小时`，实际账单以阿里云结算为准。没有新建办公网络或 CEN。
+- 收尾核验：上述 4 台源/验收/冒烟桌面均已删除；U1、U2 和冒烟的 3 个 `obx-*` EndUser
+  查询结果为空；三个应用测试用户与所有测试 `cloud_desktops` 行均已软删除；18100–18102
+  临时监听已消失。金镜像 `m-ccceuit7jn3xzwx45` 是唯一保留的新增云资源。
 
 ---
 

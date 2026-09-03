@@ -1,7 +1,7 @@
 """Cloud desktops table ORM model — one ECD desktop per user (wuying per_user mode)."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Text, Index, ForeignKey, text
+from sqlalchemy import String, Boolean, Text, Index, ForeignKey, Integer, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -19,6 +19,20 @@ class CloudDesktop(Base):
     # creating | running | starting | stopped | failed
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-desktop execution channel.  Secret material is never stored in
+    # plaintext: the hash supports diagnostics and the ciphertext is decrypted
+    # only while constructing a SandboxClient.
+    channel_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    private_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tunnel_port: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    tunnel_bind: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tunnel_pubkey: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tunnel_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    action_api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    action_api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tunnel_state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    channel_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)

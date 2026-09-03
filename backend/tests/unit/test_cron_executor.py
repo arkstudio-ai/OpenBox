@@ -245,3 +245,29 @@ async def test_successful_run_injects_and_records(stubbed_pipeline, monkeypatch)
     run = await _run_entry(result["run_id"])
     assert run.status == "ok"
     assert run.total_tokens == 15
+
+
+async def test_desktop_not_ready_skips_before_summary_and_without_retry(monkeypatch):
+    import sandbox
+    from sandbox.wuying_desktop_service import DesktopNotReady
+
+    class PerDesktopProvider:
+        routes_per_user = True
+
+        async def resolve_user_container(self, _owner):
+            raise DesktopNotReady({"state": "not_provisioned"})
+
+    async def summary_must_not_run(_job):
+        raise AssertionError("desktop preflight must happen before model-backed summary")
+
+    monkeypatch.setattr(sandbox, "provider", PerDesktopProvider())
+    monkeypatch.setattr(executor, "_get_session_summary", summary_must_not_run)
+
+    result = await executor.execute_cron_job(_job_dict())
+
+    assert result["status"] == "skipped"
+    assert result["error"] == "DESKTOP_NOT_READY: not_provisioned"
+    run = await _run_entry(result["run_id"])
+    assert run.status == "skipped"
+    assert run.temp_session_id is None
+    assert run.error_message == "DESKTOP_NOT_READY: not_provisioned"

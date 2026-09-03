@@ -87,6 +87,12 @@
     "upload": "Upload a file to the desktop",
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit fullscreen",
-    "keyboard": "Keyboard input"
+    "keyboard": "Keyboard input",
+    "channel": {
+      "up": "Channel online",
+      "down": "Channel offline",
+      "pending": "Channel starting",
+      "revoked": "Channel revoked"
+    }
   }
 }

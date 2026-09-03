@@ -3,6 +3,7 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StringConstraints, field_validator
 
 from auth.middleware import get_current_user
@@ -295,6 +296,28 @@ async def update_session(session_id: str, body: UpdateSessionBody, current_user:
 
 # ─── Messages ───
 
+async def _desktop_route_preflight(user_id: str):
+    """Return a stable 503 before accepting a turn with no runnable desktop."""
+    from sandbox import provider
+
+    if not provider.routes_per_user:
+        return None
+    from sandbox.ownership import owner_for
+    from sandbox.wuying_desktop_service import DesktopNotReady
+
+    try:
+        await provider.resolve_user_container(await owner_for(user_id))
+    except DesktopNotReady as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "DESKTOP_NOT_READY",
+                "detail": "Your cloud desktop is not ready",
+                "desktop": exc.payload,
+            },
+        )
+    return None
+
 @router.get("/session/{session_id}/message")
 async def get_messages(session_id: str, offset: int = 0, limit: int = 200, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
@@ -314,6 +337,9 @@ async def send_message(
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    not_ready = await _desktop_route_preflight(user_id)
+    if not_ready:
+        return not_ready
     if session.status in _ACTIVE_SESSION_STATUSES:
         from session.abort import abort_session_turn
 
@@ -365,6 +391,9 @@ async def send_message_async(
     session = await session_mod.get_session(session_id, user_id=user_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    not_ready = await _desktop_route_preflight(user_id)
+    if not_ready:
+        return not_ready
     if session.status in _ACTIVE_SESSION_STATUSES:
         # The newest instruction wins, as in opencode's cancel(). The marker
         # this leaves is what tells the next turn its predecessor was cut off.

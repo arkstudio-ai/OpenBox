@@ -125,6 +125,12 @@ class SandboxProvider(ABC):
                 fallback = info
         return fallback
 
+    async def resolve_user_container(
+        self, owner: str, project_id: str | None = None
+    ) -> ContainerInfo | None:
+        """Async ownership lookup for providers backed by an external store."""
+        return self.get_user_container(owner, project_id)
+
     def get_container_owner(self, container_id: str) -> str | None:
         owners = getattr(self, "_container_owners", {})
         return owners.get(container_id)
@@ -150,7 +156,7 @@ class SandboxProvider(ABC):
         ]
 
     async def ensure_user_container(self, user_id: str, project_id: str = "default") -> ContainerInfo:
-        existing = self.get_user_container(user_id)
+        existing = await self.resolve_user_container(user_id, project_id)
         if existing:
             if existing.status != ContainerStatus.RUNNING:
                 await self.start_container(existing.id, user_id=user_id)

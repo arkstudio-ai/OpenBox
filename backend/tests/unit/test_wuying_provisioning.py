@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from core.config import OpenBoxConfig
+from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
 from sandbox.wuying_desktop_service import (
     DesktopNotReady,
@@ -66,6 +67,34 @@ def test_password_changes_with_salt(monkeypatch):
     assert wuying_ecd.password_for("user-a") != one
 
 
+async def test_retry_throttled_recovers_after_short_flow_control(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    async def call():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("Throttling.User: flow control")
+        return "ok"
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(wuying_ecd.asyncio, "sleep", no_sleep)
+    assert await wuying_ecd._retry_throttled(call, "CreateUsers") == "ok"
+    assert calls == 3
+    assert sleeps == [1, 2]
+
+
+async def test_retry_throttled_does_not_hide_other_errors():
+    async def call():
+        raise RuntimeError("InvalidParameter")
+
+    with pytest.raises(RuntimeError, match="InvalidParameter"):
+        await wuying_ecd._retry_throttled(call, "CreateUsers")
+
+
 # ---------------------------------------------------------------------------
 # Config surface
 # ---------------------------------------------------------------------------
@@ -79,7 +108,7 @@ def test_provisioning_config_defaults():
     # Alibaba's resolution-adaptive default policy.
     assert cfg.wuying_policy_group_id == ""
     assert cfg.wuying_desktop_type == "eds.enterprise_office.4c8g"
-    assert cfg.wuying_system_disk_size == 40
+    assert cfg.wuying_system_disk_size == 50
     assert cfg.wuying_charge_type == "PostPaid"
     assert cfg.wuying_env_tag == "default"
 
@@ -362,3 +391,75 @@ async def test_release_ghost_deletes_and_forgets(monkeypatch):
     await service.release_ghost(user)
     assert behaviour["deleted"] == ["ecd-new"]
     assert (await service.status(user))["state"] == "not_provisioned"
+
+
+async def test_per_desktop_only_becomes_running_after_channel_verify(monkeypatch):
+    _stub_ecd(monkeypatch)
+    import sandbox.wuying_desktop_service as svc_mod
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+
+    cfg = _config(wuying_password_salt="s", wuying_routing="per_desktop")
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+    calls = []
+
+    async def install(record, **_kwargs):
+        calls.append(("install", record["desktop_id"]))
+        await cloud_desktop_repo.update(
+            record["id"],
+            channel_kind="ssh",
+            tunnel_state="pending",
+        )
+        return await cloud_desktop_repo.get(record["id"])
+
+    async def verify(record, **_kwargs):
+        calls.append(("verify", record["desktop_id"]))
+        await cloud_desktop_repo.update(record["id"], tunnel_state="up")
+        return {"hostname": "desktop-host"}
+
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", install)
+    monkeypatch.setattr(svc_mod.wuying_channel, "verify", verify)
+    service = WuyingDesktopService()
+    user = "user-channel-ready"
+    await service.provision(user)
+    await _drain(service, user)
+
+    state = await service.status(user)
+    assert state["state"] == "running"
+    assert state["channel"]["state"] == "up"
+    assert calls == [("install", "ecd-new"), ("verify", "ecd-new")]
+
+
+async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monkeypatch):
+    """A relay outage must not turn the next click into a second CreateDesktops."""
+    import core.config as config_module
+    import sandbox.wuying_desktop_service as svc_mod
+
+    cfg = OpenBoxConfig(wuying_routing="per_desktop")
+    monkeypatch.setattr(config_module, "get_config", lambda: cfg)
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+
+    async def create(_user_id, _display_name):
+        return "ecd-channel-recovery"
+
+    async def ready(_desktop_id):
+        return None
+
+    async def broken_install(_record):
+        raise RuntimeError("relay temporarily unavailable")
+
+    monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "wait_desktop_ready", ready)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "eu_id_for", lambda _user_id: "obx-channel-recovery")
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
+
+    record = await cloud_desktop_repo.create(
+        "user-channel-recovery", "cn-shanghai", status="creating"
+    )
+    service = svc_mod.WuyingDesktopService()
+    await service._create_flow("user-channel-recovery", record["id"], None)
+
+    saved = await cloud_desktop_repo.get(record["id"])
+    assert saved["desktop_id"] == "ecd-channel-recovery"
+    assert saved["status"] == "starting"
+    assert saved["tunnel_state"] == "down"
+    assert "relay temporarily unavailable" in saved["channel_error"]

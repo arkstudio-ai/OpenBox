@@ -23,6 +23,20 @@ _INTERNAL_PART_COLUMNS = (
     ("created_at", "DATETIME"),
 )
 
+_CLOUD_DESKTOP_COLUMNS = (
+    "channel_kind VARCHAR",
+    "private_ip VARCHAR",
+    "tunnel_port INTEGER",
+    "tunnel_bind VARCHAR",
+    "tunnel_pubkey TEXT",
+    "tunnel_fingerprint VARCHAR",
+    "action_api_key_hash VARCHAR",
+    "action_api_key_ciphertext TEXT",
+    "tunnel_state VARCHAR",
+    "last_seen_at DATETIME",
+    "channel_error TEXT",
+)
+
 
 def _create_current_schema(connection, *, missing_internal_column: str | None = None):
     connection.exec_driver_sql(
@@ -39,6 +53,11 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
         if name != missing_internal_column
     )
     connection.exec_driver_sql(f"CREATE TABLE internal_parts ({internal_columns})")
+    connection.exec_driver_sql(
+        "CREATE TABLE cloud_desktops (id VARCHAR PRIMARY KEY, "
+        + ", ".join(_CLOUD_DESKTOP_COLUMNS)
+        + ")"
+    )
 
 
 def test_readiness_reports_the_private_exposure_schema_as_required():
@@ -51,6 +70,7 @@ def test_readiness_reports_the_private_exposure_schema_as_required():
     assert "sessions.tool_exposure_state" in missing
     assert "parts.canonical_tool_id" in missing
     assert "internal_parts" in missing
+    assert "cloud_desktops" in missing
     engine.dispose()
 
 

@@ -353,12 +353,26 @@ class OpenBoxConfig(BaseModel):
     # "shared" keeps the single pre-provisioned desktop above; "per_user" makes
     # OpenBox create one ECD desktop + one convenience EndUser per user via the
     # ECD OpenAPI (ported from the bossip wuying-bridge integration).
-    wuying_mode: str = "shared"                     # "shared" | "per_user"
+    wuying_mode: Literal["shared", "per_user"] = "shared"
+    # Routing is deliberately independent from provisioning mode so a release
+    # can retain the proven shared execution path while per-desktop routing is
+    # rolled out (or rolled back) without changing the desktop-view contract.
+    wuying_routing: Literal["shared", "per_desktop"] = "shared"
+    wuying_channel: Literal["direct", "ssh"] = "ssh"
+    wuying_relay_host: str = ""
+    wuying_relay_port: int = Field(default=2222, ge=1, le=65535)
+    wuying_relay_user: str = "obxtunnel"
+    wuying_relay_hostkey: str = ""                 # complete known_hosts line
+    wuying_tunnel_bind: str = "172.17.0.1"
+    wuying_tunnel_port_range: str = "18100-18999"
+    wuying_channel_key: str = ""                   # 32-byte base64/hex encryption key
+    internal_api_token: str = ""
+    wuying_health_interval_sec: int = Field(default=30, ge=5, le=3600)
     wuying_image_id: str = ""                       # golden image; required in per_user mode —
                                                     # never fall back to a community image silently
     wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
     wuying_desktop_type: str = "eds.enterprise_office.4c8g"
-    wuying_system_disk_size: int = 40               # GiB
+    wuying_system_disk_size: int = 50               # GiB; v2 golden image target
     # No default on purpose: the policy group pins the session resolution (the
     # deployment standard is "OpenBox Personal 1080p"), and Alibaba's default
     # policy is resolution-adaptive — a desktop created with it drifts away
@@ -605,6 +619,17 @@ def _apply_env_overrides(data: dict) -> dict:
         "wuying_region_id": "WUYING_REGION_ID",
         "wuying_end_user_id": "WUYING_END_USER_ID",
         "wuying_mode": "WUYING_MODE",
+        "wuying_routing": "WUYING_ROUTING",
+        "wuying_channel": "WUYING_CHANNEL",
+        "wuying_relay_host": "WUYING_RELAY_HOST",
+        "wuying_relay_port": "WUYING_RELAY_PORT",
+        "wuying_relay_user": "WUYING_RELAY_USER",
+        "wuying_relay_hostkey": "WUYING_RELAY_HOSTKEY",
+        "wuying_tunnel_bind": "WUYING_TUNNEL_BIND",
+        "wuying_tunnel_port_range": "WUYING_TUNNEL_PORT_RANGE",
+        "wuying_channel_key": "WUYING_CHANNEL_KEY",
+        "internal_api_token": "INTERNAL_API_TOKEN",
+        "wuying_health_interval_sec": "WUYING_HEALTH_INTERVAL_SEC",
         "wuying_image_id": "WUYING_IMAGE_ID",
         "wuying_office_site_id": "WUYING_OFFICE_SITE_ID",
         "wuying_desktop_type": "WUYING_DESKTOP_TYPE",

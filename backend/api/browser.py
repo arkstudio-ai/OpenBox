@@ -33,7 +33,7 @@ class PreferenceUpdate(BaseModel):
     mode: str
 
 
-def _existing_client(user_id: str):
+async def _existing_client(user_id: str):
     """A client for this user's sandbox, without creating one.
 
     Deliberately not `get_client_any`, which acquires a sandbox when none is
@@ -56,7 +56,10 @@ def _existing_client(user_id: str):
 
     try:
         from sandbox import provider
-        container = provider.get_user_container(user_id)
+        from sandbox.ownership import owner_for
+
+        owner = await owner_for(user_id)
+        container = await provider.resolve_user_container(owner)
         if not container or not container.port:
             return None
         return SandboxClient(
@@ -81,7 +84,7 @@ async def _local_status(user_id: str) -> dict:
     """
     from sandbox.browser import browser_status
 
-    client = _existing_client(user_id)
+    client = await _existing_client(user_id)
     if client is None:
         return {"available": False, "reason": "no_sandbox"}
 

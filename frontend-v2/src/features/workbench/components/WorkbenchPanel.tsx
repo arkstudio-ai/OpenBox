@@ -4,6 +4,7 @@
 // the Files tab can collapse to a single column.
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
 import { cn } from "@/shared/lib/cn"
+import { DESKTOP_NOT_READY_EVENT } from "@/shared/events/desktop"
 import { usePanelStore } from "@/features/workbench/stores/panel"
 import { PanelTabBar } from "./PanelTabBar"
 import { MenuTab } from "./MenuTab"
@@ -39,6 +40,12 @@ export function WorkbenchPanel({ sessionId, cronTab }: WorkbenchPanelProps) {
     const onResize = () => setWinW(window.innerWidth)
     window.addEventListener("resize", onResize)
     return () => window.removeEventListener("resize", onResize)
+  }, [])
+
+  useEffect(() => {
+    const openDesktop = () => usePanelStore.getState().openKind("desktop")
+    window.addEventListener(DESKTOP_NOT_READY_EVENT, openDesktop)
+    return () => window.removeEventListener(DESKTOP_NOT_READY_EVENT, openDesktop)
   }, [])
 
   useEffect(() => {

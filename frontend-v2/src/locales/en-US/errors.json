@@ -15,6 +15,7 @@
   "SESSION_QUOTA_EXCEEDED": "Conversations full ({{used}}/{{limit}}). Delete some old ones.",
   "CONCURRENT_AGENT_QUOTA_EXCEEDED": "Too many tasks running ({{used}}/{{limit}}). Please wait.",
   "CONTAINER_QUOTA_EXCEEDED": "Sandboxes full ({{used}}/{{limit}}). Release one.",
+  "DESKTOP_NOT_READY": "Your cloud desktop is not ready. Open the Cloud desktop panel to set it up or check its connection.",
   "runFailed": "The reply failed. Please try again.",
   "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model."
 }

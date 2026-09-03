@@ -1,7 +1,7 @@
 """Users table ORM model."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Integer, Index, Numeric, text
+from sqlalchemy import String, Boolean, Integer, Index, Numeric, ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -16,6 +16,11 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[str] = mapped_column(String(16), server_default="user")
+    default_workspace_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("workspaces.id", name="fk_users_default_workspace", use_alter=True),
+        nullable=True,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     oauth_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

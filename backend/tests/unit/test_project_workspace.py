@@ -4,7 +4,9 @@ A slug is written into a shell command as a path segment, so the validation
 here is the only thing between a project name and an arbitrary path.
 """
 import pytest
+from unittest.mock import AsyncMock
 
+from project import workspace
 from project.workspace import (
     DEFAULT_SLUG,
     ProjectError,
@@ -82,3 +84,24 @@ def test_directory_is_under_the_workspace_root():
 
 def test_the_default_project_has_a_directory_like_any_other():
     assert project_directory(DEFAULT_SLUG) == "/workspace/default"
+
+
+@pytest.mark.asyncio
+async def test_joined_member_reuses_workspace_default_project(monkeypatch):
+    shared = workspace.ProjectInfo(
+        id="project_owner",
+        user_id="owner",
+        workspace_id="ws_shared",
+        name="Default",
+        slug="default",
+    )
+    lookup = AsyncMock(return_value=shared)
+    create = AsyncMock()
+    monkeypatch.setattr(workspace, "get_by_workspace_slug", lookup)
+    monkeypatch.setattr(workspace, "create_project", create)
+
+    result = await workspace.ensure_default_project("joined_member", "ws_shared")
+
+    assert result is shared
+    lookup.assert_awaited_once_with("default", "ws_shared")
+    create.assert_not_awaited()

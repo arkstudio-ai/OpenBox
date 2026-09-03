@@ -16,6 +16,9 @@ export interface TokenUsage {
 
 export interface Session {
   id: string
+  user_id?: string
+  workspace_id?: string
+  owner_username?: string | null
   title: string
   agent: string
   model: string

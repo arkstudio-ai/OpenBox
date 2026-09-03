@@ -651,6 +651,7 @@ async def _create_pending_job(
         asset = FileAsset(
             id=asset_id,
             user_id=ctx.user_id,
+            workspace_id=ctx.workspace_id,
             session_id=ctx.session_id,
             project_id=project_id or None,
             name=name,
@@ -2730,5 +2731,4 @@ video_transcribe_tool = define_tool(
     sandbox_required=False,
     parallel_safe=True,
 )
-
 

@@ -39,6 +39,8 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
         parent_id=ctx.session_id,
         model=child_model,
         user_id=ctx.user_id or "default",
+        workspace_id=(parent_session.workspace_id if parent_session else ctx.workspace_id),
+        project_id=(parent_session.project_id if parent_session else None),
     )
 
     # Share parent's sandbox with the child session so tools can access it

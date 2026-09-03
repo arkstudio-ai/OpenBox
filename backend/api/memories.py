@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from core.log import create_logger
 from memory import service as memory_service
 
 log = create_logger("api.memories")
 
 router = APIRouter(
-    prefix="/api/memories", tags=["memories"], dependencies=[Depends(get_current_user)]
+    prefix="/api/memories", tags=["memories"], dependencies=[Depends(get_workspace)]
 )
 
 
@@ -42,6 +43,7 @@ async def list_memories(
 ):
     rows = await memory_service.search_memories(
         user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"),
         type=type,
         scope=scope,
         status=status,
@@ -56,6 +58,7 @@ async def list_memories(
 async def list_pending(current_user: dict = Depends(get_current_user)):
     rows = await memory_service.search_memories(
         user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"),
         type=memory_service.PENDING_NOTE_TYPE,
         status="CANDIDATE",
         limit=100,
@@ -67,6 +70,7 @@ async def list_pending(current_user: dict = Depends(get_current_user)):
 async def create_note(body: CreateNoteBody, current_user: dict = Depends(get_current_user)):
     row = await memory_service.create_note(
         user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"),
         project_id=body.project_id,
         summary=body.summary,
     )
@@ -79,6 +83,7 @@ async def confirm_proposal(
 ):
     row = await memory_service.confirm_note(
         user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"),
         proposal_id=memory_id,
         edited_summary=body.edited_summary if body else None,
     )
@@ -90,7 +95,9 @@ async def confirm_proposal(
 @router.post("/{memory_id}/reject")
 async def reject_proposal(memory_id: str, current_user: dict = Depends(get_current_user)):
     ok = await memory_service.reject_note(
-        user_id=current_user["user_id"], proposal_id=memory_id
+        user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"),
+        proposal_id=memory_id,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="pending proposal not found")
@@ -102,7 +109,8 @@ async def edit_note(
     memory_id: str, body: EditNoteBody, current_user: dict = Depends(get_current_user)
 ):
     row = await memory_service.edit_note(
-        user_id=current_user["user_id"], memory_id=memory_id, summary=body.summary
+        user_id=current_user["user_id"], workspace_id=current_user.get("workspace_id"),
+        memory_id=memory_id, summary=body.summary
     )
     if row is None:
         raise HTTPException(status_code=404, detail="memory not found")
@@ -112,7 +120,8 @@ async def edit_note(
 @router.delete("/{memory_id}")
 async def delete_memory(memory_id: str, current_user: dict = Depends(get_current_user)):
     ok = await memory_service.delete_memory(
-        user_id=current_user["user_id"], memory_id=memory_id
+        user_id=current_user["user_id"],
+        workspace_id=current_user.get("workspace_id"), memory_id=memory_id
     )
     if not ok:
         raise HTTPException(status_code=404, detail="memory not found")

@@ -122,16 +122,6 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     hashed = hash_password(body.password)
     await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
 
-    # Create default project
-    from db.repository.session_repo import PgSessionRepo  # avoid circular
-    from db.models.project import Project
-    from db.base import get_db_session
-    project_id = generate_id()
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as session:
-        session.add(Project(id=project_id, user_id=user_id, name="Default", slug="default",
-                           created_at=now, updated_at=now))
-
     # Issue tokens
     access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
@@ -141,6 +131,16 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     )
 
     user = await _user_repo.get(user_id)
+    from audit import record
+    await record(
+        user_id,
+        user.get("default_workspace_id"),
+        "auth.register",
+        "user",
+        user_id,
+        None,
+        request,
+    )
     return TokenResponse(access_token=access, user=_safe_user(user))
 
 
@@ -169,6 +169,16 @@ async def login(body: LoginRequest, request: Request, response: Response):
         if count >= 5:
             lock_until = datetime.now(timezone.utc) + timedelta(minutes=15)
             await _user_repo.lock_until(user["id"], lock_until.isoformat())
+            from audit import record
+            await record(
+                user["id"],
+                user.get("default_workspace_id"),
+                "auth.lockout",
+                "user",
+                user["id"],
+                {"locked_until": lock_until.isoformat()},
+                request,
+            )
             raise HTTPException(status_code=423, detail="Account locked for 15 minutes")
         raise _coded_error(401, "AUTH_INVALID_CREDENTIALS", "Invalid credentials")
 
@@ -245,14 +255,17 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
             oauth_provider=PROVIDER, oauth_id=subject, avatar_url=avatar,
         )
 
-        from db.models.project import Project
-        from db.base import get_db_session
-        now = datetime.now(timezone.utc)
-        async with get_db_session() as session:
-            session.add(Project(id=generate_id(), user_id=user_id, name="Default",
-                                slug="default", created_at=now, updated_at=now))
-
         user = await _user_repo.get(user_id)
+        from audit import record
+        await record(
+            user_id,
+            user.get("default_workspace_id"),
+            "auth.register",
+            "user",
+            user_id,
+            {"provider": PROVIDER},
+            request,
+        )
         log.info(f"Provisioned Logto user {username} ({user_id})")
 
     if not user.get("is_active", True):

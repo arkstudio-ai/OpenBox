@@ -33,6 +33,9 @@ class UserSkill(Base):
     owner_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("users.id"), nullable=False
     )
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     install_dir: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -71,7 +74,11 @@ class UserSkill(Base):
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("owner_id", "name", name="uq_user_skills_owner_name"),
+        UniqueConstraint(
+            "workspace_id", "owner_id", "name",
+            name="uq_user_skills_workspace_owner_name",
+        ),
         Index("ix_user_skills_owner_updated", "owner_id", "updated_at"),
+        Index("ix_user_skills_workspace_updated", "workspace_id", "updated_at"),
         Index("ix_user_skills_status_published", "status", "published_at"),
     )

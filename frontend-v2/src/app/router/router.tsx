@@ -16,6 +16,7 @@ const CronRoute = lazy(() => import("@/routes/cron/CronRoute"))
 const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
+const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -39,6 +40,14 @@ export const router = createBrowserRouter([
         ),
       },
       { path: paths.ssoCallback, element: <SsoCallbackRoute /> },
+      {
+        path: routePatterns.invite,
+        element: (
+          <RequireAuth>
+            <InviteRoute />
+          </RequireAuth>
+        ),
+      },
       {
         path: paths.app,
         element: (

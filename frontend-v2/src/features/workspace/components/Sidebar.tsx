@@ -9,6 +9,7 @@ import { useSessionsQuery } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
 import { ProjectTree } from "./ProjectTree"
 import { UserRow } from "./UserRow"
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 
 export function Sidebar() {
   const { t } = useTranslation("workspace")
@@ -94,6 +95,8 @@ export function Sidebar() {
             <PanelLeft size={17} strokeWidth={2.4} />
           </button>
         </div>
+
+        <WorkspaceSwitcher />
 
         {/* DEEIX-style nav rows: left-aligned, icon column, the primary action
             wears a round tinted icon chip instead of a filled pill. */}

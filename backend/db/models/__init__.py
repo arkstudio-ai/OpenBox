@@ -20,10 +20,14 @@ from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
 from db.models.memory import UserMemory
 from db.models.image_gen_cache import ImageGenCache
+from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
+from db.models.internal_task import InternalTaskState
+import db.models.workspace_scope  # noqa: F401,E402
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
     "UserSkill", "SkillInstall", "UserMemory", "ImageGenCache",
+    "Workspace", "WorkspaceMember", "WorkspaceInvitation", "InternalTaskState",
 ]

@@ -4,14 +4,16 @@ import { useQueryClient } from "@tanstack/react-query"
 import { wsClient } from "@/shared/ws/client"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { workspaceKeys } from "../api/keys"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 export function useWorkspaceEvents() {
   const qc = useQueryClient()
   const userId = useAuthStore((s) => s.user?.id ?? "anonymous")
+  const workspaceId = useWorkspaceStore((s) => s.currentId)
 
   useEffect(() => {
     void wsClient.connect()
-    const invalidate = () => void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId) })
+    const invalidate = () => void qc.invalidateQueries({ queryKey: workspaceKeys.sessions(userId, workspaceId) })
     const subs = [
       wsClient.on("session.status", invalidate),
       wsClient.on("session.title", invalidate),
@@ -19,7 +21,7 @@ export function useWorkspaceEvents() {
       wsClient.on("__connected", invalidate),
     ]
     return () => subs.forEach((off) => off())
-  }, [qc, userId])
+  }, [qc, userId, workspaceId])
 
   useEffect(() => {
     return () => {

@@ -3,6 +3,7 @@
   "subtitle": "账号与偏好",
   "nav": {
     "account": "账号",
+    "team": "团队",
     "usage": "用量与消耗",
     "models": "模型",
     "tools": "工具与权限",
@@ -11,6 +12,7 @@
   },
   "hint": {
     "account": "登录方式、身份和会话。",
+    "team": "工作空间成员、角色与邀请。",
     "usage": "各会话的 token 消耗与费用。",
     "models": "默认模型和 agent 的选型。",
     "tools": "哪些动作可以不经确认直接执行。",
@@ -23,6 +25,33 @@
     "emailNone": "未绑定",
     "role": "角色",
     "userId": "用户 ID"
+  },
+  "team": {
+    "members": "成员",
+    "pending": "待接受邀请",
+    "pendingEmpty": "暂无待接受邀请。",
+    "targetPlaceholder": "用户名或邮箱",
+    "invite": "邀请",
+    "remove": "移除",
+    "inviteCreated": "邀请链接已复制：{{url}}",
+    "inviteLink": "邀请链接",
+    "joined": "加入于 {{date}}",
+    "acceptTitle": "工作空间邀请",
+    "acceptHint": "接受后即可加入并切换到该工作空间。",
+    "accept": "接受邀请",
+    "accepted": "邀请已接受，并已切换到该工作空间。",
+    "enterWorkspace": "进入工作空间",
+    "roles": {
+      "owner": "所有者",
+      "admin": "管理员",
+      "member": "成员"
+    },
+    "statuses": {
+      "active": "正常",
+      "invited": "已邀请",
+      "suspended": "已停用",
+      "removed": "已移除"
+    }
   },
   "usage": {
     "contextUsed": "当前会话上下文",

@@ -8,6 +8,7 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import { http } from "@/shared/api/http"
 import type { UserPreferences } from "@/shared/types/api"
+import { useWorkspacesQuery } from "@/shared/api/workspaces"
 
 export default function WorkspaceLayout() {
   useWorkspaceEvents()
@@ -16,6 +17,7 @@ export default function WorkspaceLayout() {
   const panelOpen = usePanelStore((s) => s.open)
   const togglePanel = usePanelStore((s) => s.togglePanel)
   const userId = useAuthStore((s) => s.user?.id)
+  const workspaces = useWorkspacesQuery()
 
   // Hydrate appearance from server prefs once per signed-in user.
   useEffect(() => {
@@ -25,6 +27,15 @@ export default function WorkspaceLayout() {
       .then((prefs) => useAppearanceStore.getState().hydrateFromServer(prefs))
       .catch(() => undefined)
   }, [userId])
+
+  if (workspaces.error) throw workspaces.error
+  if (!workspaces.data) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-bg">
+        <Spinner className="size-6" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink">

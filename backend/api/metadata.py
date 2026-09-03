@@ -5,9 +5,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from auth.middleware import get_current_user, require_admin
+from auth.workspace import get_workspace
 from pydantic import BaseModel
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(get_workspace)])
 
 
 class InstallSkillBody(BaseModel):
@@ -156,6 +157,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
     """
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
+    workspace_id = current_user.get("workspace_id")
 
     library_available = False
     owned_skills: list[dict] = []
@@ -166,7 +168,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
             list_owned_skills,
         )
 
-        owned_skills = await list_owned_skills(user_id)
+        owned_skills = await list_owned_skills(user_id, workspace_id)
         library_available = True
     except (ImportError, RuntimeError):
         # Single-user mode deliberately runs without the central database.
@@ -203,6 +205,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
                         snapshot = await get_owned_skill(
                             user_id,
                             owned["id"],
+                            workspace_id=workspace_id,
                             include_archive=True,
                         )
                         archive = snapshot.get("archive_data") if snapshot else None
@@ -253,7 +256,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
         return merged
 
     try:
-        annotated = await annotate_installed_skills(user_id, merged)
+        annotated = await annotate_installed_skills(user_id, merged, workspace_id)
     except RuntimeError:
         return merged
 
@@ -309,7 +312,8 @@ async def publish_skill(name: str, current_user: dict = Depends(get_current_user
     )
 
     user_id = current_user["user_id"]
-    owned = await get_owned_skill(user_id, name)
+    workspace_id = current_user.get("workspace_id")
+    owned = await get_owned_skill(user_id, name, workspace_id=workspace_id)
     if not owned:
         # A filesystem copy is not proof of authorship.  In particular, store
         # installs and manually uploaded archives must never become publishable
@@ -321,15 +325,15 @@ async def publish_skill(name: str, current_user: dict = Depends(get_current_user
     try:
         install_dir = owned["install_dir"]
         info = await client.get_skill(install_dir)
-        annotated = await annotate_installed_skills(user_id, [info])
+        annotated = await annotate_installed_skills(user_id, [info], workspace_id)
         if not annotated or annotated[0].get("category") != "personal":
             raise HTTPException(
                 status_code=409,
                 detail="The live package is not this user's personal skill",
             )
         archive = await client.download_skill_archive(install_dir)
-        await upsert_personal_snapshot(user_id, info, archive)
-        return await publish_personal_skill(user_id, install_dir)
+        await upsert_personal_snapshot(user_id, info, archive, workspace_id)
+        return await publish_personal_skill(user_id, install_dir, workspace_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -351,7 +355,8 @@ async def download_skill(name: str, current_user: dict = Depends(get_current_use
     )
 
     user_id = current_user["user_id"]
-    owned = await get_owned_skill(user_id, name)
+    workspace_id = current_user.get("workspace_id")
+    owned = await get_owned_skill(user_id, name, workspace_id=workspace_id)
     if not owned:
         raise HTTPException(status_code=404, detail="Personal skill not found")
     # Prefer a fresh snapshot so edits made after creation are included. The
@@ -363,14 +368,16 @@ async def download_skill(name: str, current_user: dict = Depends(get_current_use
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if client:
             info = await client.get_skill(owned["install_dir"])
-            annotated = await annotate_installed_skills(user_id, [info])
+            annotated = await annotate_installed_skills(user_id, [info], workspace_id)
             if annotated and annotated[0].get("category") == "personal":
                 archive = await client.download_skill_archive(owned["install_dir"])
-                await upsert_personal_snapshot(user_id, info, archive)
+                await upsert_personal_snapshot(user_id, info, archive, workspace_id)
     except Exception:
         pass
 
-    row = await get_owned_skill(user_id, owned["id"], include_archive=True)
+    row = await get_owned_skill(
+        user_id, owned["id"], workspace_id=workspace_id, include_archive=True
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Personal skill not found")
     filename = f"{row['name']}.zip"
@@ -411,6 +418,7 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
     """Uninstall a skill from the container."""
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
+    workspace_id = current_user.get("workspace_id")
     try:
         client = await sandbox_manager.get_client_any(user_id=user_id)
         if not client:
@@ -427,6 +435,7 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
                 annotated = await annotate_installed_skills(
                     user_id,
                     [{**live, "source": live.get("source") or "container"}],
+                    workspace_id,
                 )
                 if annotated:
                     category = annotated[0].get("category")
@@ -438,7 +447,7 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
             if category == "personal":
                 from skill.user_library import delete_owned_skill
 
-                await delete_owned_skill(user_id, target)
+                await delete_owned_skill(user_id, target, workspace_id)
             elif category == "store":
                 from skill.user_library import remove_community_installation
 
@@ -549,6 +558,7 @@ async def install_from_catalog(
     from sandbox.manager import sandbox_manager
 
     user_id = current_user["user_id"]
+    workspace_id = current_user.get("workspace_id")
     index = catalog_index()
 
     community_row: dict | None = None
@@ -629,6 +639,7 @@ async def install_from_catalog(
             annotated = await annotate_installed_skills(
                 user_id,
                 [{**conflict, "source": conflict.get("source") or "container"}],
+                workspace_id,
             )
             provenance = annotated[0] if annotated else {}
             if (

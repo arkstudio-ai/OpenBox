@@ -7,6 +7,7 @@ import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
 import { paths } from "@/shared/router/paths"
 import { useWorkspaceUi } from "../stores/ui"
+import { useAuthStore } from "@/shared/api/auth-store"
 
 interface SessionRowProps {
   session: Session
@@ -17,6 +18,7 @@ interface SessionRowProps {
 export function SessionRow({ session, active, onAskDelete }: SessionRowProps) {
   const { t } = useTranslation("workspace")
   const selectProject = useWorkspaceUi((s) => s.selectProject)
+  const currentUserId = useAuthStore((s) => s.user?.id)
   const [hover, setHover] = useState(false)
   const busy = session.status === "busy" || session.status === "finalizing" || session.status === "compacting"
 
@@ -43,10 +45,15 @@ export function SessionRow({ session, active, onAskDelete }: SessionRowProps) {
             aria-label={t("cronRun")}
           />
         )}
-        <span className="min-w-0 flex-1 truncate">{session.title || t("untitledChat")}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {session.title || t("untitledChat")}
+          {session.user_id && session.user_id !== currentUserId && session.owner_username
+            ? ` · ${session.owner_username}`
+            : ""}
+        </span>
       </Link>
       {busy && <Spinner className="size-3 flex-none" />}
-      {hover && (
+      {hover && (!session.user_id || session.user_id === currentUserId) && (
         <button
           type="button"
           title={t("common:action.delete", { ns: "common" })}

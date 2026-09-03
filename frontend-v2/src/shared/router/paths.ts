@@ -4,6 +4,7 @@ export const paths = {
   login: "/login",
   register: "/register",
   ssoCallback: "/callback",
+  invite: (token: string) => `/invite/${encodeURIComponent(token)}`,
   app: "/app",
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
@@ -14,6 +15,7 @@ export const paths = {
 } as const
 
 export const routePatterns = {
+  invite: "/invite/:token",
   chat: "s/:sessionId",
   settings: "settings/:tab?",
   cron: "cron",

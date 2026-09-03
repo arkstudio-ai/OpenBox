@@ -8,12 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from core.log import create_logger
 from project import workspace
 
 log = create_logger("api.projects")
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_workspace)])
 
 
 class CreateProjectBody(BaseModel):
@@ -29,10 +30,11 @@ class UpdateProjectBody(BaseModel):
 @router.get("/project")
 async def list_projects(current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+    workspace_id = current_user["workspace_id"]
     # Guarantees the picker is never empty, even for a brand new account.
-    await workspace.ensure_default_project(user_id)
-    projects = await workspace.list_projects(user_id)
-    counts = await workspace.session_counts(user_id)
+    await workspace.ensure_default_project(user_id, workspace_id)
+    projects = await workspace.list_projects(workspace_id)
+    counts = await workspace.session_counts(workspace_id)
     out = []
     for p in projects:
         p.session_count = counts.get(p.id, 0)
@@ -48,7 +50,8 @@ async def create_project(
     user_id = current_user["user_id"]
     try:
         project = await workspace.create_project(
-            user_id, body.name, slug=body.slug, description=body.description
+            user_id, current_user["workspace_id"], body.name,
+            slug=body.slug, description=body.description
         )
     except workspace.ProjectError as e:
         raise HTTPException(400, str(e))
@@ -68,10 +71,12 @@ async def create_project(
 
 @router.get("/project/{project_id}")
 async def get_project(project_id: str, current_user: dict = Depends(get_current_user)):
-    project = await workspace.get_project(project_id, current_user["user_id"])
+    project = await workspace.get_project(
+        project_id, current_user["user_id"], current_user["workspace_id"]
+    )
     if not project:
         raise HTTPException(404, "Project not found")
-    counts = await workspace.session_counts(current_user["user_id"])
+    counts = await workspace.session_counts(current_user["workspace_id"])
     project.session_count = counts.get(project.id, 0)
     return project.to_dict()
 
@@ -84,7 +89,10 @@ async def update_project(
 ):
     try:
         project = await workspace.rename_project(
-            project_id, current_user["user_id"], body.name
+            project_id,
+            current_user["user_id"],
+            current_user["workspace_id"],
+            body.name,
         )
     except workspace.ProjectError as e:
         raise HTTPException(400, str(e))
@@ -101,7 +109,9 @@ async def delete_project(project_id: str, current_user: dict = Depends(get_curre
     except Exception as e:
         log.debug(f"No sandbox available while deleting {project_id}: {e}")
     try:
-        await workspace.delete_project(project_id, user_id, sandbox=client)
+        await workspace.delete_project(
+            project_id, user_id, current_user["workspace_id"], sandbox=client
+        )
     except workspace.ProjectError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}

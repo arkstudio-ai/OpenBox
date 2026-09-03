@@ -22,6 +22,9 @@ class VideoProduction(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -53,6 +56,7 @@ class VideoProduction(Base):
 
     __table_args__ = (
         Index("ix_video_productions_user_created", "user_id", "created_at"),
+        Index("ix_video_productions_workspace_created", "workspace_id", "created_at"),
         Index("ix_video_productions_session_updated", "session_id", "updated_at"),
     )
 

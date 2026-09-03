@@ -3,9 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { http } from "@/shared/api/http"
 import { DesktopTab } from "./DesktopTab"
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
-}))
+vi.mock("react-i18next", () => {
+  const t = (key: string) => key
+  return { useTranslation: () => ({ t }) }
+})
 
 vi.mock("@/shared/api/http", () => ({
   http: { get: vi.fn() },
@@ -40,11 +41,13 @@ describe("DesktopTab", () => {
   beforeEach(() => {
     handlers.clear()
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
-    vi.mocked(http.get).mockResolvedValue({
-      ticket: "ticket",
-      desktopId: "ecd-test",
-      regionId: "cn-hangzhou",
-    })
+    vi.mocked(http.get)
+      .mockResolvedValueOnce({ state: "running" })
+      .mockResolvedValueOnce({
+        ticket: "ticket",
+        desktopId: "ecd-test",
+        regionId: "cn-hangzhou",
+      })
     Object.assign(window, { Wuying: { WebSDK: { createSession } } })
   })
 

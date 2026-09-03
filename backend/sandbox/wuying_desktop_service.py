@@ -225,29 +225,60 @@ class WuyingDesktopService:
                 record_id, desktop_id=desktop_id, end_user_id=wuying_ecd.eu_id_for(user_id)
             )
             await wuying_ecd.wait_desktop_ready(desktop_id)
-            record = await cloud_desktop_repo.get(record_id)
-            if get_config().wuying_routing == "per_desktop" and record:
-                record = await wuying_channel.install(record)
-                await wuying_channel.verify(record)
-            await cloud_desktop_repo.update(record_id, status="running", error=None)
-            log.info(f"Desktop ready for user {user_id}: {desktop_id}")
         except Exception as e:
             log.error(f"Desktop provisioning failed for user {user_id}: {e}")
             await cloud_desktop_repo.update(record_id, status="failed", error=str(e)[:2000])
+            return
+
+        if get_config().wuying_routing == "per_desktop":
+            try:
+                record = await cloud_desktop_repo.get(record_id)
+                if record:
+                    record = await wuying_channel.install(record)
+                    await wuying_channel.verify(record)
+            except Exception as e:
+                # The billable desktop already exists.  Keep recovering this
+                # assignment instead of marking it failed: provision() treats
+                # failed as permission to create a replacement desktop.
+                log.warning("Desktop channel setup failed for user %s: %s", user_id, e)
+                await cloud_desktop_repo.update(
+                    record_id,
+                    status="starting",
+                    error=str(e)[:2000],
+                    tunnel_state="down",
+                    channel_error=str(e)[:2000],
+                )
+                return
+        await cloud_desktop_repo.update(record_id, status="running", error=None)
+        log.info(f"Desktop ready for user {user_id}: {desktop_id}")
 
     async def _start_flow(self, user_id: str, record_id: str, desktop_id: str) -> None:
         try:
             await wuying_ecd.start_desktop(desktop_id)
             await wuying_ecd.wait_desktop_ready(desktop_id)
-            record = await cloud_desktop_repo.get(record_id)
-            if get_config().wuying_routing == "per_desktop" and record:
-                if not record.get("action_api_key_ciphertext"):
-                    record = await wuying_channel.install(record)
-                await wuying_channel.verify(record)
-            await cloud_desktop_repo.update(record_id, status="running", error=None)
         except Exception as e:
             log.error(f"Desktop start failed for user {user_id}: {e}")
             await cloud_desktop_repo.update(record_id, status="failed", error=str(e)[:2000])
+            return
+
+        if get_config().wuying_routing == "per_desktop":
+            try:
+                record = await cloud_desktop_repo.get(record_id)
+                if record:
+                    if not record.get("action_api_key_ciphertext"):
+                        record = await wuying_channel.install(record)
+                    await wuying_channel.verify(record)
+            except Exception as e:
+                log.warning("Desktop channel recovery failed after start for user %s: %s", user_id, e)
+                await cloud_desktop_repo.update(
+                    record_id,
+                    status="starting",
+                    error=str(e)[:2000],
+                    tunnel_state="down",
+                    channel_error=str(e)[:2000],
+                )
+                return
+        await cloud_desktop_repo.update(record_id, status="running", error=None)
 
     async def _channel_flow(self, user_id: str, record_id: str) -> None:
         try:

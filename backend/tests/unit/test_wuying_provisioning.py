@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from core.config import OpenBoxConfig
+from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
 from sandbox.wuying_desktop_service import (
     DesktopNotReady,
@@ -398,3 +399,39 @@ async def test_per_desktop_only_becomes_running_after_channel_verify(monkeypatch
     assert state["state"] == "running"
     assert state["channel"]["state"] == "up"
     assert calls == [("install", "ecd-new"), ("verify", "ecd-new")]
+
+
+async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monkeypatch):
+    """A relay outage must not turn the next click into a second CreateDesktops."""
+    import core.config as config_module
+    import sandbox.wuying_desktop_service as svc_mod
+
+    cfg = OpenBoxConfig(wuying_routing="per_desktop")
+    monkeypatch.setattr(config_module, "get_config", lambda: cfg)
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+
+    async def create(_user_id, _display_name):
+        return "ecd-channel-recovery"
+
+    async def ready(_desktop_id):
+        return None
+
+    async def broken_install(_record):
+        raise RuntimeError("relay temporarily unavailable")
+
+    monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "wait_desktop_ready", ready)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "eu_id_for", lambda _user_id: "obx-channel-recovery")
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
+
+    record = await cloud_desktop_repo.create(
+        "user-channel-recovery", "cn-shanghai", status="creating"
+    )
+    service = svc_mod.WuyingDesktopService()
+    await service._create_flow("user-channel-recovery", record["id"], None)
+
+    saved = await cloud_desktop_repo.get(record["id"])
+    assert saved["desktop_id"] == "ecd-channel-recovery"
+    assert saved["status"] == "starting"
+    assert saved["tunnel_state"] == "down"
+    assert "relay temporarily unavailable" in saved["channel_error"]

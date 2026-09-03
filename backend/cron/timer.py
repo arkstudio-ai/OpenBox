@@ -16,6 +16,7 @@ from cron.types import (
     STUCK_RUN_MS, TRANSIENT_PATTERNS, CronJobStatus,
 )
 from cron.schedule import compute_next_run_at
+from cron import internal_tasks
 
 log = create_logger("cron.timer")
 
@@ -145,6 +146,8 @@ async def on_timer(state: TimerState) -> None:
             await video_sweep_if_due()
         except Exception as e:
             log.debug(f"Video job recovery sweep error: {e}")
+
+        await internal_tasks.tick()
 
         state.running = False
         arm_timer(state)

@@ -38,7 +38,10 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
         project_id = await project_id_for(notify_session)
 
     if args.action == "list":
-        jobs = await cron_service.list_jobs(ctx.user_id, project_id=project_id or None)
+        jobs = await cron_service.list_jobs(
+            ctx.user_id, project_id=project_id or None,
+            workspace_id=ctx.workspace_id or None,
+        )
         if not jobs:
             return ToolResult(
                 title="No cron jobs",
@@ -95,7 +98,9 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
                 schedule=schedule,
                 task_prompt=args.task,
             )
-            result = await cron_service.add(ctx.user_id, create)
+            result = await cron_service.add(
+                ctx.user_id, create, workspace_id=ctx.workspace_id or None
+            )
             return ToolResult(
                 title=f"Created: {args.name}",
                 output=f"Cron job created successfully.\nID: {result['id']}\nNext run: {result.get('next_run_at', 'N/A')}",
@@ -110,7 +115,9 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
         if not args.job_id:
             return ToolResult(title="Missing job_id", output="Provide the job_id to remove.")
         try:
-            await cron_service.remove(args.job_id, ctx.user_id)
+            await cron_service.remove(
+                args.job_id, ctx.user_id, workspace_id=ctx.workspace_id or None
+            )
             return ToolResult(title="Job removed", output=f"Cron job {args.job_id} has been deleted.")
         except ValueError as e:
             return ToolResult(title="Not found", output=str(e))
@@ -121,7 +128,12 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
         try:
             from cron.types import CronJobUpdate
             enabled = args.action == "enable"
-            await cron_service.update(args.job_id, ctx.user_id, CronJobUpdate(enabled=enabled))
+            await cron_service.update(
+                args.job_id,
+                ctx.user_id,
+                CronJobUpdate(enabled=enabled),
+                workspace_id=ctx.workspace_id or None,
+            )
             return ToolResult(
                 title=f"Job {'enabled' if enabled else 'disabled'}",
                 output=f"Cron job {args.job_id} is now {'enabled' if enabled else 'disabled'}.",

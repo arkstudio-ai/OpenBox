@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, StringConstraints, field_validator
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from auth.quota import check_session_quota, check_concurrent_agents
 from core.config import get_config
 from session import session as session_mod
@@ -13,7 +14,7 @@ from models.message import SessionStatus
 
 _background_tasks = set()  # prevent GC of background tasks
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(get_workspace)])
 
 _ACTIVE_SESSION_STATUSES = {SessionStatus.BUSY, SessionStatus.COMPACTING}
 ReasoningVariant = Annotated[
@@ -164,10 +165,21 @@ async def _remember_variant(
     return selected
 
 
-async def _require_session_owned(session_id: str, user_id: str):
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
+async def _require_session_owned(session_id: str, current_user: dict):
+    session = await session_mod.get_session_in_workspace(
+        session_id, current_user["workspace_id"]
+    )
+    if session is None:
         raise HTTPException(404, "Session not found")
+    if session.user_id != current_user["user_id"]:
+        raise HTTPException(
+            403,
+            detail={
+                "code": "SESSION_READ_ONLY",
+                "message": "Only the session owner can change this session",
+            },
+            headers={"X-Error-Code": "SESSION_READ_ONLY"},
+        )
     return session
 
 
@@ -185,9 +197,7 @@ async def sandbox_status(current_user: dict = Depends(get_current_user)):
 async def get_session_sandbox(session_id: str, current_user: dict = Depends(get_current_user)):
     """Get sandbox container info bound to this session."""
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
 
     from sandbox.manager import sandbox_manager
     info = sandbox_manager.get_info(session_id)
@@ -231,6 +241,7 @@ async def create_session(
         variant=variant,
         title=body.title,
         user_id=user_id,
+        workspace_id=current_user["workspace_id"],
         project_id=body.project_id,
     )
     return session.model_dump()
@@ -243,14 +254,20 @@ async def list_sessions(
 ):
     """Sessions for the user; pass project_id to narrow to one project."""
     user_id = current_user["user_id"]
-    sessions = await session_mod.list_sessions(project_id=project_id, user_id=user_id)
+    sessions = await session_mod.list_sessions(
+        project_id=project_id,
+        user_id=user_id,
+        workspace_id=current_user["workspace_id"],
+    )
     return [s.model_dump() for s in sessions]
 
 
 @router.get("/session/{session_id}")
 async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
+    session = await session_mod.get_session_in_workspace(
+        session_id, current_user["workspace_id"]
+    )
     if not session:
         raise HTTPException(404, "Session not found")
     from project.workspace import workdir_for_session
@@ -264,7 +281,12 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    deleted = await session_mod.delete_session(session_id, user_id=user_id)
+    await _require_session_owned(session_id, current_user)
+    deleted = await session_mod.delete_session(
+        session_id,
+        user_id=user_id,
+        workspace_id=current_user["workspace_id"],
+    )
     if not deleted:
         raise HTTPException(404, "Session not found")
     return {"ok": True}
@@ -273,7 +295,7 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 @router.patch("/session/{session_id}")
 async def update_session(session_id: str, body: UpdateSessionBody, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    current = await _require_session_owned(session_id, user_id)
+    current = await _require_session_owned(session_id, current_user)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     target_model = updates.get("model") or current.model
     if "variant" in body.model_fields_set:
@@ -298,8 +320,14 @@ async def update_session(session_id: str, body: UpdateSessionBody, current_user:
 @router.get("/session/{session_id}/message")
 async def get_messages(session_id: str, offset: int = 0, limit: int = 200, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
-    messages = await session_mod.get_messages(session_id, offset=offset, limit=limit, user_id=user_id)
+    session = await session_mod.get_session_in_workspace(
+        session_id, current_user["workspace_id"]
+    )
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    messages = await session_mod.get_messages(
+        session_id, offset=offset, limit=limit, user_id=session.user_id
+    )
     return [m.model_dump() for m in messages]
 
 
@@ -311,9 +339,7 @@ async def send_message(
 ):
     """Send a message synchronously (blocks until agent completes)."""
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
     if session.status in _ACTIVE_SESSION_STATUSES:
         from session.abort import abort_session_turn
 
@@ -362,9 +388,7 @@ async def send_message_async(
     """Send a message asynchronously (returns immediately, updates via SSE)."""
     user_id = current_user["user_id"]
     config = get_config()
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
     if session.status in _ACTIVE_SESSION_STATUSES:
         # The newest instruction wins, as in opencode's cancel(). The marker
         # this leaves is what tells the next turn its predecessor was cut off.
@@ -408,7 +432,13 @@ async def send_message_async(
     # Attachment cards: a file part per OSS asset on the user message, so the
     # chat renders previews instead of parsing paths out of the text trailer.
     if body.attachments:
-        await _attach_file_parts(session_id, user_msg.id, user_id, body.attachments)
+        await _attach_file_parts(
+            session_id,
+            user_msg.id,
+            user_id,
+            current_user["workspace_id"],
+            body.attachments,
+        )
 
     # F4: Save to prompt history (fire-and-forget)
     try:
@@ -419,12 +449,25 @@ async def send_message_async(
 
     # Launch agent loop in background
     from agent.loop import run_loop
-    task = asyncio.create_task(_run_loop_with_log(session_id, user_id, body.attachments)); _background_tasks.add(task); task.add_done_callback(_background_tasks.discard)
+    task = asyncio.create_task(
+        _run_loop_with_log(
+            session_id,
+            user_id,
+            body.attachments,
+            current_user["workspace_id"],
+        )
+    ); _background_tasks.add(task); task.add_done_callback(_background_tasks.discard)
 
     return {"ok": True}
 
 
-async def _attach_file_parts(session_id: str, message_id: str, user_id: str, asset_ids: list[str]) -> None:
+async def _attach_file_parts(
+    session_id: str,
+    message_id: str,
+    user_id: str,
+    workspace_id: str,
+    asset_ids: list[str],
+) -> None:
     from sqlalchemy import select
     from core.identifier import ascending
     from db.base import get_db_session
@@ -438,6 +481,7 @@ async def _attach_file_parts(session_id: str, message_id: str, user_id: str, ass
                 select(FileAsset).where(
                     FileAsset.id.in_(asset_ids),
                     FileAsset.user_id == user_id,
+                    FileAsset.workspace_id == workspace_id,
                     FileAsset.status == "ready",
                 )
             )
@@ -519,7 +563,7 @@ async def get_step_diff(
     card needs exactly what that step touched, which is this.
     """
     from snapshot import snapshot
-    await _require_session_owned(session_id, current_user["user_id"])
+    await _require_session_owned(session_id, current_user)
     if not from_snapshot or not to_snapshot or from_snapshot == to_snapshot:
         return []
     return await snapshot.diff_full(
@@ -536,7 +580,7 @@ async def set_message_reaction(
 ):
     """Thumbs up / down on an assistant reply (frontend-v2 message meta bar)."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     if body.reaction not in (None, "up", "down"):
         raise HTTPException(400, "reaction must be 'up', 'down' or null")
     await session_mod.set_message_reaction(message_id, session_id, body.reaction)
@@ -555,7 +599,7 @@ async def dismiss_failed_turn(
     here means "that message is not a failure", not "no such session".
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     removed = await session_mod.delete_failed_turn(session_id, message_id, user_id=user_id)
     if not removed:
         raise HTTPException(404, "No failed turn to dismiss at that message")
@@ -581,9 +625,7 @@ async def regenerate_message(
     """
     user_id = current_user["user_id"]
     config = get_config()
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
 
     if session.status in _ACTIVE_SESSION_STATUSES:
         # Same contract as prompt_async: the newest instruction wins, so cancel
@@ -629,9 +671,7 @@ async def fork_session_endpoint(
 ):
     """Fork a session from a specific message point."""
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
 
     from session.fork import fork_session
     new_session = await fork_session(
@@ -651,7 +691,7 @@ async def accept_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session, plan_path_for
 
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     await _update_plan_part_status(session_id, "accepted", user_id=user_id)
 
     session = await get_session(session_id, user_id=user_id)
@@ -677,7 +717,7 @@ async def reject_plan(session_id: str, current_user: dict = Depends(get_current_
     from tool.plan import _update_plan_part_status
     from session.session import get_session
 
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     await _update_plan_part_status(session_id, "rejected", user_id=user_id)
 
     session = await get_session(session_id, user_id=user_id)
@@ -701,7 +741,7 @@ async def abort_session(session_id: str, current_user: dict = Depends(get_curren
     from session.abort import abort_session_turn
 
     user_id = current_user["user_id"]
-    session = await _require_session_owned(session_id, user_id)
+    session = await _require_session_owned(session_id, current_user)
     marked = await abort_session_turn(
         session_id,
         user_id,
@@ -725,7 +765,7 @@ async def summarize_session(
     so the compaction is actually processed (matching opencode's flow).
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     from agent.compaction import create_compaction
     await create_compaction(session_id, auto=False, user_id=user_id)
 
@@ -741,7 +781,7 @@ async def summarize_session(
 async def revert_to_message(session_id: str, message_id: str, current_user: dict = Depends(get_current_user)):
     """Revert session to a specific message (undo changes)."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     from session.revert import revert_to_message as do_revert
     success = await do_revert(session_id, message_id, user_id=user_id)
     if not success:
@@ -753,7 +793,7 @@ async def revert_to_message(session_id: str, message_id: str, current_user: dict
 async def unrevert(session_id: str, current_user: dict = Depends(get_current_user)):
     """Undo a revert."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     from session.revert import unrevert as do_unrevert
     success = await do_unrevert(session_id, user_id=user_id)
     if not success:
@@ -782,9 +822,7 @@ async def execute_command(
     resolved_text = await resolve_command(body.command, body.arguments or "")
 
     # Validate session
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
     if session.status in _ACTIVE_SESSION_STATUSES:
         raise HTTPException(409, "Session is busy")
 
@@ -813,7 +851,7 @@ async def get_todo(session_id: str, current_user: dict = Depends(get_current_use
     # Ownership check is mandatory; todo key is session_id-based.
     # Without this, users can read others' todo lists by guessing IDs.
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
     from session.todo import get_todo
     todo = await get_todo(session_id)
     return todo.model_dump()
@@ -859,7 +897,7 @@ async def add_todo_item(
 ):
     """Add a task the user typed on the card."""
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
 
     subject = body.subject.strip()
     if not subject:
@@ -883,7 +921,7 @@ async def remove_todo_item(
     overruled rather than silently losing a step.
     """
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
 
     from session.todo import add_notice, get_todo, remove_todo_item as remove_item
     before = await get_todo(session_id)
@@ -907,9 +945,7 @@ class PlanUpdateBody(BaseModel):
 async def get_plan(session_id: str, current_user: dict = Depends(get_current_user)):
     """Read plan file content from sandbox."""
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)
@@ -936,9 +972,7 @@ async def update_plan(session_id: str, body: PlanUpdateBody, current_user: dict 
     the agent went off and built something else.
     """
     user_id = current_user["user_id"]
-    session = await session_mod.get_session(session_id, user_id=user_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
+    session = await _require_session_owned(session_id, current_user)
 
     from session.session import plan_path_for
     pp = await plan_path_for(session)
@@ -983,7 +1017,7 @@ async def get_diff(session_id: str, full: bool = False, current_user: dict = Dep
     from db.models.part import Part as PartORM
     from sqlalchemy import select
     user_id = current_user["user_id"]
-    await _require_session_owned(session_id, user_id)
+    await _require_session_owned(session_id, current_user)
 
     # Find first step-start and last step-finish snapshots directly from parts table.
     # This avoids loading all messages/parts (which can be expensive on long sessions).
@@ -1027,7 +1061,12 @@ async def get_diff(session_id: str, full: bool = False, current_user: dict = Dep
         return [{"path": d.path, "additions": d.additions, "deletions": d.deletions, "status": d.status} for d in diffs]
 
 
-async def _run_loop_with_log(session_id: str, user_id: str, attachment_ids: list[str] | None = None):
+async def _run_loop_with_log(
+    session_id: str,
+    user_id: str,
+    attachment_ids: list[str] | None = None,
+    workspace_id: str | None = None,
+):
     """Wrapper that logs exceptions from run_loop.
 
     Attachments land in the sandbox BEFORE the loop starts — the message text
@@ -1041,7 +1080,9 @@ async def _run_loop_with_log(session_id: str, user_id: str, attachment_ids: list
     try:
         if attachment_ids:
             try:
-                await _deliver_attachments(session_id, user_id, attachment_ids)
+                await _deliver_attachments(
+                    session_id, user_id, attachment_ids, workspace_id
+                )
             except Exception as e:
                 import logging
                 logging.getLogger("sessions").warning(f"attachment delivery failed for {session_id}: {e}")
@@ -1052,7 +1093,12 @@ async def _run_loop_with_log(session_id: str, user_id: str, attachment_ids: list
         logging.getLogger("sessions").error(f"run_loop FAILED for {session_id}: {e}", exc_info=True)
 
 
-async def _deliver_attachments(session_id: str, user_id: str, asset_ids: list[str]) -> None:
+async def _deliver_attachments(
+    session_id: str,
+    user_id: str,
+    asset_ids: list[str],
+    workspace_id: str | None = None,
+) -> None:
     """Pull the message's OSS assets into the sandbox via obx-file."""
     from sqlalchemy import select
     from core.oss import get_oss
@@ -1067,6 +1113,7 @@ async def _deliver_attachments(session_id: str, user_id: str, asset_ids: list[st
                 select(FileAsset).where(
                     FileAsset.id.in_(asset_ids),
                     FileAsset.user_id == user_id,
+                    *([FileAsset.workspace_id == workspace_id] if workspace_id else []),
                     FileAsset.status == "ready",
                 )
             )

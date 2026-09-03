@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from core.log import create_logger
 from db.base import get_db_session
 from db.models.video_production import VideoProduction
@@ -22,7 +23,7 @@ log = create_logger("api.video_productions")
 router = APIRouter(
     prefix="/api/video-productions",
     tags=["video-productions"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_workspace)],
 )
 
 
@@ -40,7 +41,7 @@ async def list_productions(
 ):
     async with get_db_session() as db:
         stmt = select(VideoProduction).where(
-            VideoProduction.user_id == current_user["user_id"]
+            VideoProduction.workspace_id == current_user["workspace_id"]
         )
         if session_id:
             stmt = stmt.where(VideoProduction.session_id == session_id)
@@ -70,7 +71,9 @@ async def list_productions(
 async def get_production(production_id: str, current_user: dict = Depends(get_current_user)):
     from video.productions import production_snapshot
 
-    snapshot = await production_snapshot(production_id, current_user["user_id"])
+    snapshot = await production_snapshot(
+        production_id, current_user["user_id"], current_user["workspace_id"]
+    )
     if snapshot is None:
         raise HTTPException(status_code=404, detail="production not found")
     return snapshot
@@ -88,7 +91,9 @@ async def set_segment_feedback(
     if body.feedback == "rejected" and not (body.note or "").strip():
         raise HTTPException(status_code=422, detail="rejected feedback requires a note")
     async with get_db_session() as db:
-        production = await _owned_production(db, production_id, current_user["user_id"])
+        production = await _owned_production(
+            db, production_id, current_user["user_id"], current_user["workspace_id"]
+        )
         if not production:
             raise HTTPException(status_code=404, detail="production not found")
         segments = await _active_segments(db, production.id)

@@ -146,7 +146,9 @@ async def execute(args: SkillManageArgs, ctx: ToolContext) -> ToolResult:
             archive = await ctx.sandbox.download_skill_archive(args.name)
             from skill.user_library import upsert_personal_snapshot
 
-            saved = await upsert_personal_snapshot(ctx.user_id, result, archive)
+            saved = await upsert_personal_snapshot(
+                ctx.user_id, result, archive, ctx.workspace_id or None
+            )
         except Exception as exc:
             rollback = ""
             if created:
@@ -187,7 +189,9 @@ async def execute(args: SkillManageArgs, ctx: ToolContext) -> ToolResult:
         archive = await ctx.sandbox.download_skill_archive(args.name)
         from skill.user_library import upsert_personal_snapshot
 
-        saved = await upsert_personal_snapshot(ctx.user_id, info, archive)
+        saved = await upsert_personal_snapshot(
+            ctx.user_id, info, archive, ctx.workspace_id or None
+        )
         exported = await ctx.sandbox.export_skill_archive(args.name)
     except Exception as exc:
         return ToolResult(title=f"Could not export {args.name}", output=str(exc)[:500])

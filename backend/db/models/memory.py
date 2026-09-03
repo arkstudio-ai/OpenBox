@@ -17,6 +17,9 @@ class UserMemory(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     # bossip workspaceId maps onto OpenBox projects; NULL = user-global.
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     scope: Mapped[str] = mapped_column(String(16), nullable=False)  # SHORT_TERM | LONG_TERM
@@ -38,6 +41,7 @@ class UserMemory(Base):
 
     __table_args__ = (
         Index("ix_user_memories_user_scope_status", "user_id", "scope", "status"),
+        Index("ix_user_memories_workspace_status", "workspace_id", "status"),
         Index("ix_user_memories_user_type_status", "user_id", "type", "status"),
         Index("ix_user_memories_ttl", "ttl"),
     )

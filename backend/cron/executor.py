@@ -20,6 +20,19 @@ async def execute_cron_job(job: dict) -> dict:
     Returns {"status": "ok"|"error"|"skipped", "error"?: str, "summary_text"?: str, ...}
     """
     job_id = job["id"]
+    if not job.get("workspace_id"):
+        from db.base import get_db_session
+        from db.models.cron import CronJob
+        from sqlalchemy import select
+
+        async with get_db_session() as db:
+            workspace_id = (
+                await db.execute(
+                    select(CronJob.workspace_id).where(CronJob.id == job_id)
+                )
+            ).scalar_one_or_none()
+        if workspace_id:
+            job = {**job, "workspace_id": workspace_id}
     user_id = job["user_id"]
     session_id = job.get("session_id")
     job_name = job.get("name", "unnamed")
@@ -340,6 +353,7 @@ async def _create_temp_session(job: dict, locale: str = "zh-CN") -> str:
 
     session = await create_session(
         user_id=job["user_id"],
+        workspace_id=job.get("workspace_id", ""),
         agent=job.get("agent", "build"),
         model=model,
         title=text(locale, "temp_title", name=job.get("name", "task")),

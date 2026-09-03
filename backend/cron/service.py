@@ -63,7 +63,9 @@ class CronService:
 
     # ── CRUD ──
 
-    async def add(self, user_id: str, create: CronJobCreate) -> dict:
+    async def add(
+        self, user_id: str, create: CronJobCreate, workspace_id: str | None = None
+    ) -> dict:
         """Create a new cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -71,6 +73,16 @@ class CronService:
         from cron.validation import validate_create
 
         await validate_create(user_id, create)
+
+        if not workspace_id:
+            from db.models.user import User
+            from sqlalchemy import select
+            async with get_db_session() as db:
+                workspace_id = (
+                    await db.execute(
+                        select(User.default_workspace_id).where(User.id == user_id)
+                    )
+                ).scalar_one_or_none() or "ws_default"
 
         now = datetime.now(timezone.utc)
         job_id = ascending("cron")
@@ -97,6 +109,7 @@ class CronService:
             row = CronJob(
                 id=job_id,
                 user_id=user_id,
+                workspace_id=workspace_id,
                 project_id=create.project_id,
                 session_id=create.session_id,
                 name=create.name,
@@ -134,7 +147,10 @@ class CronService:
 
         return {"id": job_id, "next_run_at": next_run.isoformat() if next_run else None}
 
-    async def update(self, job_id: str, user_id: str, patch: CronJobUpdate) -> dict:
+    async def update(
+        self, job_id: str, user_id: str, patch: CronJobUpdate,
+        workspace_id: str | None = None
+    ) -> dict:
         """Update an existing cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -150,6 +166,7 @@ class CronService:
                 select(CronJob).where(
                     CronJob.id == job_id,
                     CronJob.user_id == user_id,
+                    *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                     CronJob.is_deleted == False,
                 )
             )
@@ -218,7 +235,9 @@ class CronService:
 
         return {"ok": True}
 
-    async def remove(self, job_id: str, user_id: str) -> dict:
+    async def remove(
+        self, job_id: str, user_id: str, workspace_id: str | None = None
+    ) -> dict:
         """Soft-delete a cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -232,6 +251,7 @@ class CronService:
                 .where(
                     CronJob.id == job_id,
                     CronJob.user_id == user_id,
+                    *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                     CronJob.is_deleted == False,
                 )
                 .values(is_deleted=True, enabled=False, updated_at=now)
@@ -242,7 +262,9 @@ class CronService:
         arm_timer(self._state)
         return {"ok": True}
 
-    async def run(self, job_id: str, user_id: str) -> dict:
+    async def run(
+        self, job_id: str, user_id: str, workspace_id: str | None = None
+    ) -> dict:
         """Manually trigger a cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -253,6 +275,7 @@ class CronService:
                 select(CronJob).where(
                     CronJob.id == job_id,
                     CronJob.user_id == user_id,
+                    *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                     CronJob.is_deleted == False,
                 )
             )
@@ -267,6 +290,7 @@ class CronService:
         job_dict = {
             "id": job.id,
             "user_id": job.user_id,
+            "workspace_id": job.workspace_id,
             "project_id": job.project_id,
             "session_id": job.session_id,
             "name": job.name,
@@ -323,7 +347,10 @@ class CronService:
         async with self._state.lock:
             await _apply_job_result(self._state, job_id, result)
 
-    async def pause_all(self, user_id: str, session_id: str | None = None) -> int:
+    async def pause_all(
+        self, user_id: str, session_id: str | None = None,
+        workspace_id: str | None = None
+    ) -> int:
         """Disable all of a user's jobs (optionally one session's). Returns count."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -333,6 +360,7 @@ class CronService:
             update(CronJob)
             .where(
                 CronJob.user_id == user_id,
+                *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                 CronJob.is_deleted == False,  # noqa: E712
                 CronJob.enabled == True,  # noqa: E712
             )
@@ -351,7 +379,10 @@ class CronService:
         arm_timer(self._state)
         return result.rowcount
 
-    async def resume_all(self, user_id: str, session_id: str | None = None) -> int:
+    async def resume_all(
+        self, user_id: str, session_id: str | None = None,
+        workspace_id: str | None = None
+    ) -> int:
         """Re-enable all of a user's jobs and recompute their next fire times."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -364,6 +395,7 @@ class CronService:
             update(CronJob)
             .where(
                 CronJob.user_id == user_id,
+                *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                 CronJob.is_deleted == False,  # noqa: E712
                 CronJob.enabled == False,  # noqa: E712
             )
@@ -378,6 +410,7 @@ class CronService:
         async with get_db_session() as db:
             q = select(CronJob).where(
                 CronJob.user_id == user_id,
+                *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                 CronJob.is_deleted == False,  # noqa: E712
                 CronJob.enabled == True,  # noqa: E712
                 CronJob.next_run_at.is_(None),
@@ -403,6 +436,7 @@ class CronService:
         user_id: str,
         session_id: str | None = None,
         project_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[dict]:
         """List cron jobs, optionally narrowed to one project or notify session."""
         from db.base import get_db_session
@@ -410,9 +444,11 @@ class CronService:
         from sqlalchemy import select
 
         async with get_db_session() as db:
-            query = select(CronJob).where(
-                CronJob.user_id == user_id,
-                CronJob.is_deleted == False,
+            query = select(CronJob).where(CronJob.is_deleted == False)
+            query = query.where(
+                CronJob.workspace_id == workspace_id
+                if workspace_id
+                else CronJob.user_id == user_id
             )
             if session_id:
                 query = query.where(CronJob.session_id == session_id)
@@ -436,7 +472,9 @@ class CronService:
                 job["project_directory"] = None
         return jobs
 
-    async def get_job(self, job_id: str, user_id: str) -> dict | None:
+    async def get_job(
+        self, job_id: str, user_id: str, workspace_id: str | None = None
+    ) -> dict | None:
         """Get a single cron job."""
         from db.base import get_db_session
         from db.models.cron import CronJob
@@ -447,6 +485,7 @@ class CronService:
                 select(CronJob).where(
                     CronJob.id == job_id,
                     CronJob.user_id == user_id,
+                    *([CronJob.workspace_id == workspace_id] if workspace_id else []),
                     CronJob.is_deleted == False,
                 )
             )
@@ -454,13 +493,28 @@ class CronService:
 
         return _job_to_dict(job) if job else None
 
-    async def list_runs(self, job_id: str, user_id: str, limit: int = 20) -> list[dict]:
+    async def list_runs(
+        self, job_id: str, user_id: str, limit: int = 20,
+        workspace_id: str | None = None
+    ) -> list[dict]:
         """Get execution history for a cron job."""
         from db.base import get_db_session
-        from db.models.cron import CronRun
+        from db.models.cron import CronJob, CronRun
         from sqlalchemy import select
 
         async with get_db_session() as db:
+            owned = (
+                await db.execute(
+                    select(CronJob.id).where(
+                        CronJob.id == job_id,
+                        CronJob.user_id == user_id,
+                        *([CronJob.workspace_id == workspace_id] if workspace_id else []),
+                        CronJob.is_deleted.is_(False),
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned is None:
+                return []
             result = await db.execute(
                 select(CronRun)
                 .where(

@@ -207,6 +207,7 @@ async def _owned_row(
     user_id: str,
     identifier: str,
     *,
+    workspace_id: str | None = None,
     for_update: bool = False,
 ) -> UserSkill | None:
     """Resolve an owned row deterministically by id, then name, then directory."""
@@ -218,7 +219,11 @@ async def _owned_row(
     ):
         statement = (
             select(UserSkill)
-            .where(UserSkill.owner_id == user_id, column == value)
+            .where(
+                UserSkill.owner_id == user_id,
+                column == value,
+                *([UserSkill.workspace_id == workspace_id] if workspace_id else []),
+            )
             .order_by(UserSkill.updated_at.desc(), UserSkill.id.desc())
             .limit(1)
         )
@@ -228,6 +233,19 @@ async def _owned_row(
         if row is not None:
             return row
     return None
+
+
+async def _resolve_workspace_id(user_id: str, workspace_id: str | None) -> str:
+    """Keep direct/internal callers compatible while HTTP callers pass selection."""
+    if workspace_id:
+        return workspace_id
+    async with get_db_session() as session:
+        resolved = (
+            await session.execute(
+                select(User.default_workspace_id).where(User.id == user_id)
+            )
+        ).scalar_one_or_none()
+    return resolved or "ws_default"
 
 
 def _apply_snapshot(
@@ -272,6 +290,7 @@ async def upsert_personal_snapshot(
     user_id: str,
     skill_info: Mapping[str, Any],
     archive_data: bytes,
+    workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Create or refresh one user's durable personal-skill snapshot.
 
@@ -280,6 +299,7 @@ async def upsert_personal_snapshot(
     leave any existing public release untouched until an explicit publish.
     """
     user_id = _required_text(user_id, "user_id")
+    workspace_id = await _resolve_workspace_id(user_id, workspace_id)
     if not isinstance(skill_info, Mapping):
         raise ValueError("skill_info must be an object")
     if not isinstance(archive_data, (bytes, bytearray, memoryview)):
@@ -300,6 +320,7 @@ async def upsert_personal_snapshot(
         async with get_db_session() as session:
             statement = select(UserSkill).where(
                 UserSkill.owner_id == user_id,
+                UserSkill.workspace_id == workspace_id,
                 UserSkill.name == name,
             )
             if retry:
@@ -309,6 +330,7 @@ async def upsert_personal_snapshot(
                 row = UserSkill(
                     id=ascending("skill"),
                     owner_id=user_id,
+                    workspace_id=workspace_id,
                     name=name,
                     install_dir=install_dir,
                     description=description,
@@ -361,17 +383,20 @@ async def get_owned_skill(
     user_id: str,
     identifier: str,
     *,
+    workspace_id: str | None = None,
     include_archive: bool = False,
 ) -> dict[str, Any] | None:
     """Get a skill by id, name or install directory, enforcing ownership."""
     user_id = _required_text(user_id, "user_id")
     identifier = _required_text(identifier, "identifier")
     async with get_db_session() as session:
-        row = await _owned_row(session, user_id, identifier)
+        row = await _owned_row(session, user_id, identifier, workspace_id=workspace_id)
         return _snapshot_dict(row, include_archive=include_archive) if row else None
 
 
-async def list_owned_skills(user_id: str) -> list[dict[str, Any]]:
+async def list_owned_skills(
+    user_id: str, workspace_id: str | None = None
+) -> list[dict[str, Any]]:
     """List a user's durable draft snapshots using a JSON-stable contract.
 
     Archive bytes and hashes are intentionally absent.  A restore path first
@@ -384,7 +409,10 @@ async def list_owned_skills(user_id: str) -> list[dict[str, Any]]:
             (
                 await session.execute(
                     select(UserSkill)
-                    .where(UserSkill.owner_id == user_id)
+                    .where(
+                        UserSkill.owner_id == user_id,
+                        *([UserSkill.workspace_id == workspace_id] if workspace_id else []),
+                    )
                     .order_by(UserSkill.updated_at.desc(), UserSkill.id.desc())
                 )
             ).scalars()
@@ -392,12 +420,17 @@ async def list_owned_skills(user_id: str) -> list[dict[str, Any]]:
     return [_snapshot_dict(row) for row in rows]
 
 
-async def publish_personal_skill(user_id: str, identifier: str) -> dict[str, Any]:
+async def publish_personal_skill(
+    user_id: str, identifier: str, workspace_id: str | None = None
+) -> dict[str, Any]:
     """Atomically copy the owner's current draft into the public release."""
     user_id = _required_text(user_id, "user_id")
     identifier = _required_text(identifier, "identifier")
     async with get_db_session() as session:
-        row = await _owned_row(session, user_id, identifier, for_update=True)
+        row = await _owned_row(
+            session, user_id, identifier,
+            workspace_id=workspace_id, for_update=True,
+        )
         if row is None:
             raise LookupError("Personal skill not found")
         if _has_unpublished_changes(row):
@@ -500,6 +533,7 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
 async def annotate_installed_skills(
     user_id: str,
     installed_skills: Sequence[Mapping[str, Any]],
+    workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Attach durable product provenance to a sandbox/host skill listing."""
     user_id = _required_text(user_id, "user_id")
@@ -507,7 +541,10 @@ async def annotate_installed_skills(
         personal = list(
             (
                 await session.execute(
-                    select(UserSkill).where(UserSkill.owner_id == user_id)
+                    select(UserSkill).where(
+                        UserSkill.owner_id == user_id,
+                        *([UserSkill.workspace_id == workspace_id] if workspace_id else []),
+                    )
                 )
             ).scalars()
         )
@@ -687,7 +724,9 @@ async def remove_community_installation(user_id: str, identifier: str) -> bool:
         return bool(result.rowcount)
 
 
-async def delete_owned_skill(user_id: str, identifier: str) -> bool:
+async def delete_owned_skill(
+    user_id: str, identifier: str, workspace_id: str | None = None
+) -> bool:
     """Delete one owned library snapshot and all installation provenance.
 
     Resolution is owner-scoped before either DELETE runs, so another user's
@@ -696,7 +735,10 @@ async def delete_owned_skill(user_id: str, identifier: str) -> bool:
     user_id = _required_text(user_id, "user_id")
     identifier = _required_text(identifier, "identifier")
     async with get_db_session() as session:
-        row = await _owned_row(session, user_id, identifier, for_update=True)
+        row = await _owned_row(
+            session, user_id, identifier,
+            workspace_id=workspace_id, for_update=True,
+        )
         if row is None:
             return False
         await session.execute(
@@ -706,6 +748,7 @@ async def delete_owned_skill(user_id: str, identifier: str) -> bool:
             delete(UserSkill).where(
                 UserSkill.id == row.id,
                 UserSkill.owner_id == user_id,
+                *([UserSkill.workspace_id == workspace_id] if workspace_id else []),
             )
         )
         return bool(result.rowcount)

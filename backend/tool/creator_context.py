@@ -90,6 +90,7 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     user_id = ctx.user_id or "default"
     proposal = await memory_service.propose_note(
         user_id=user_id,
+        workspace_id=ctx.workspace_id or None,
         project_id=ctx.project_id or None,
         summary=args.summary or "",
         session_id=ctx.session_id or None,
@@ -133,7 +134,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
     answer = (answers[0][0] if answers and answers[0] else "").strip()
     if answer == "记住":
         confirmed = await memory_service.confirm_note(
-            user_id=user_id, proposal_id=proposal["id"]
+            user_id=user_id, workspace_id=ctx.workspace_id or None,
+            proposal_id=proposal["id"]
         )
         return ToolResult(
             title="Memory saved",
@@ -141,7 +143,10 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
             metadata={"memory": confirmed, "decision": "confirmed"},
         )
     if answer == "不用记":
-        await memory_service.reject_note(user_id=user_id, proposal_id=proposal["id"])
+        await memory_service.reject_note(
+            user_id=user_id, workspace_id=ctx.workspace_id or None,
+            proposal_id=proposal["id"]
+        )
         return ToolResult(
             title="Memory rejected",
             output="The user declined. Do not save this and do not propose it again.",
@@ -149,7 +154,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
         )
     # Custom text: the user rephrased the memory — confirm with their wording.
     confirmed = await memory_service.confirm_note(
-        user_id=user_id, proposal_id=proposal["id"], edited_summary=answer
+        user_id=user_id, workspace_id=ctx.workspace_id or None,
+        proposal_id=proposal["id"], edited_summary=answer
     )
     return ToolResult(
         title="Memory saved (edited)",
@@ -164,7 +170,8 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
 
     if args.action == "get_user_context":
         assembled = await assemble_user_context(
-            user_id=user_id, project_id=project_id, volatile_limit=args.volatile_limit
+            user_id=user_id, workspace_id=ctx.workspace_id or None,
+            project_id=project_id, volatile_limit=args.volatile_limit
         )
         if not assembled["context"]:
             return ToolResult(
@@ -185,6 +192,7 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
     if args.action == "write_memory":
         row = await memory_service.write_memory(
             user_id=user_id,
+            workspace_id=ctx.workspace_id or None,
             project_id=project_id,
             scope=args.scope or "SHORT_TERM",
             type=args.type or "",
@@ -206,6 +214,7 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
     if args.action == "search_memories":
         rows = await memory_service.search_memories(
             user_id=user_id,
+            workspace_id=ctx.workspace_id or None,
             project_id=project_id,
             type=args.type,
             scope=args.scope,
@@ -220,7 +229,8 @@ async def execute_creator_context(args: CreatorContextArgs, ctx: ToolContext) ->
 
     if args.action == "list_active_memories":
         rows = await memory_service.list_active_memories(
-            user_id=user_id, project_id=project_id
+            user_id=user_id, workspace_id=ctx.workspace_id or None,
+            project_id=project_id
         )
         return ToolResult(
             title=f"Active memories ({len(rows)})",

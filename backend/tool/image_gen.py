@@ -428,6 +428,7 @@ async def _store_output(
                 FileAsset(
                     id=asset_id,
                     user_id=ctx.user_id,
+                    workspace_id=ctx.workspace_id,
                     session_id=ctx.session_id,
                     project_id=project_id or None,
                     name=name,
@@ -612,6 +613,7 @@ async def _store_reused(
             FileAsset(
                 id=asset_id,
                 user_id=ctx.user_id,
+                workspace_id=ctx.workspace_id,
                 session_id=ctx.session_id,
                 project_id=project_id or None,
                 name=name,

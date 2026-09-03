@@ -123,8 +123,10 @@ async def lifespan(app: FastAPI):
 
     # Initialize Cron scheduler
     try:
+        from cron.internal_tasks import register_builtin_tasks
         from cron.service import cron_service
         from cron.executor import execute_cron_job
+        register_builtin_tasks()
         cron_service.set_executor(execute_cron_job)
         await cron_service.start()
         log.info("Cron scheduler initialized")
@@ -262,6 +264,11 @@ def create_app() -> FastAPI:
 
     from api.video_productions import router as video_productions_router
     application.include_router(video_productions_router)
+
+    from api.workspaces import router as workspaces_router
+    from api.admin import router as admin_router
+    application.include_router(workspaces_router)
+    application.include_router(admin_router)
 
     # ── Agent routes ──
     agent_router = APIRouter(prefix="/api/agent", tags=["Agent"])

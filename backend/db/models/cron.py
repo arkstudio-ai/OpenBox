@@ -1,7 +1,7 @@
 """Cron jobs and runs ORM models."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Integer, Index, Text, text
+from sqlalchemy import String, Boolean, ForeignKey, Integer, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, JSONType
@@ -13,6 +13,9 @@ class CronJob(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     # The owning project: a task acts on its files and logs into its cron/.
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Optional notify target — set when created from a chat; results are
@@ -76,6 +79,7 @@ class CronJob(Base):
             "user_id",
             postgresql_where=text("NOT is_deleted"),
         ),
+        Index("ix_cron_jobs_workspace_active", "workspace_id", "is_deleted"),
         # Session's jobs
         Index(
             "ix_cron_jobs_session",

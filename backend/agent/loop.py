@@ -582,6 +582,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 session_id=session_id,
                 run_id=run_id,
                 user_id=user_id,
+                workspace_id=session.workspace_id,
                 project_id=session.project_id or "",
                 agent_id=agent_name,
                 sandbox=sandbox,
@@ -662,6 +663,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 workdir=session_workdir,
                 user_id=user_id,
                 project_id=session.project_id or "",
+                workspace_id=session.workspace_id,
             )
             system.append(build_tool_visibility_fragment(
                 tools.keys(),
@@ -1350,6 +1352,7 @@ async def _build_system_prompt(
     workdir: str = "/workspace",
     user_id: str = "",
     project_id: str = "",
+    workspace_id: str = "",
 ) -> list[str]:
     """Build the system prompt for an LLM call.
 
@@ -1421,9 +1424,10 @@ async def _build_system_prompt(
     if user_id and agent_def.name in ("build", "plan"):
         try:
             from memory.context import assemble_user_context
-            assembled = await assemble_user_context(
-                user_id=user_id, project_id=project_id or None
-            )
+            memory_args = {"user_id": user_id, "project_id": project_id or None}
+            if workspace_id:
+                memory_args["workspace_id"] = workspace_id
+            assembled = await assemble_user_context(**memory_args)
             if assembled["context"]:
                 parts.append("<user_memory>\n" + assembled["context"] + "\n</user_memory>")
         except Exception as e:

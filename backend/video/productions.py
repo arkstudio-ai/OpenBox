@@ -23,15 +23,20 @@ def content_hash(value: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-async def _owned_production(db, production_id: str, user_id: str):
+async def _owned_production(
+    db, production_id: str, user_id: str, workspace_id: str | None = None
+):
     from db.models.video_production import VideoProduction
 
+    conditions = [
+        VideoProduction.id == production_id,
+        VideoProduction.user_id == user_id,
+    ]
+    if workspace_id:
+        conditions.append(VideoProduction.workspace_id == workspace_id)
     return (
         await db.execute(
-            select(VideoProduction).where(
-                VideoProduction.id == production_id,
-                VideoProduction.user_id == user_id,
-            )
+            select(VideoProduction).where(*conditions)
         )
     ).scalar_one_or_none()
 
@@ -168,13 +173,15 @@ async def _refresh_status(db, production, segments: list[Any] | None = None) -> 
     return status
 
 
-async def production_snapshot(production_id: str, user_id: str) -> dict[str, Any] | None:
+async def production_snapshot(
+    production_id: str, user_id: str, workspace_id: str | None = None
+) -> dict[str, Any] | None:
     """Full production snapshot; the public name is imported by the HTTP API."""
     from db.base import get_db_session
     from db.models.video_production import VideoApproval
 
     async with get_db_session() as db:
-        production = await _owned_production(db, production_id, user_id)
+        production = await _owned_production(db, production_id, user_id, workspace_id)
         if not production:
             return None
         segments = await _active_segments(db, production.id)

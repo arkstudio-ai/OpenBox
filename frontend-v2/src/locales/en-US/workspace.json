@@ -18,6 +18,8 @@
   "untitledChat": "Untitled chat",
   "pin": "Pin",
   "settings": "Settings",
+  "readOnlySession": "This conversation belongs to another workspace member and is read-only.",
+  "workspaceSwitcher": "Workspace",
   "share": "Share",
   "shareCopied": "Link copied",
   "openPanel": "Open workspace panel",

@@ -61,9 +61,23 @@ def _not_expired(now: datetime):
     return (UserMemory.ttl.is_(None)) | (UserMemory.ttl > now)
 
 
+async def _resolve_workspace_id(user_id: str, workspace_id: str | None) -> str:
+    if workspace_id:
+        return workspace_id
+    from db.models.user import User
+    async with get_db_session() as db:
+        resolved = (
+            await db.execute(
+                select(User.default_workspace_id).where(User.id == user_id)
+            )
+        ).scalar_one_or_none()
+    return resolved or "ws_default"
+
+
 async def write_memory(
     *,
     user_id: str,
+    workspace_id: str | None = None,
     project_id: str | None = None,
     scope: str,
     type: str,
@@ -81,10 +95,12 @@ async def write_memory(
         raise ValueError(
             f"{type} must go through propose_note, not write_memory"
         )
+    workspace_id = await _resolve_workspace_id(user_id, workspace_id)
     now = _now()
     row = UserMemory(
         id=ascending("memory"),
         user_id=user_id,
+        workspace_id=workspace_id,
         project_id=project_id,
         scope=scope,
         type=type,
@@ -106,6 +122,7 @@ async def write_memory(
 async def search_memories(
     *,
     user_id: str,
+    workspace_id: str | None = None,
     project_id: str | None = None,
     type: str | None = None,
     scope: str | None = None,
@@ -113,7 +130,12 @@ async def search_memories(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     now = _now()
-    stmt = select(UserMemory).where(UserMemory.user_id == user_id, _not_expired(now))
+    stmt = select(UserMemory).where(_not_expired(now))
+    stmt = stmt.where(
+        UserMemory.workspace_id == workspace_id
+        if workspace_id
+        else UserMemory.user_id == user_id
+    )
     if project_id is not None:
         stmt = stmt.where(
             (UserMemory.project_id == project_id) | (UserMemory.project_id.is_(None))
@@ -133,14 +155,18 @@ async def search_memories(
 
 
 async def list_active_memories(
-    *, user_id: str, project_id: str | None = None
+    *, user_id: str, workspace_id: str | None = None, project_id: str | None = None
 ) -> list[dict[str, Any]]:
     now = _now()
     stmt = select(UserMemory).where(
-        UserMemory.user_id == user_id,
         UserMemory.status == "ACTIVE",
         UserMemory.scope.in_(["LONG_TERM", "SHORT_TERM"]),
         _not_expired(now),
+    )
+    stmt = stmt.where(
+        UserMemory.workspace_id == workspace_id
+        if workspace_id
+        else UserMemory.user_id == user_id
     )
     if project_id is not None:
         stmt = stmt.where(
@@ -155,14 +181,17 @@ async def list_active_memories(
 async def propose_note(
     *,
     user_id: str,
+    workspace_id: str | None = None,
     project_id: str | None = None,
     summary: str,
     session_id: str | None = None,
 ) -> dict[str, Any]:
+    workspace_id = await _resolve_workspace_id(user_id, workspace_id)
     now = _now()
     row = UserMemory(
         id=ascending("memory"),
         user_id=user_id,
+        workspace_id=workspace_id,
         project_id=project_id,
         scope="LONG_TERM",
         type=PENDING_NOTE_TYPE,
@@ -180,12 +209,16 @@ async def propose_note(
         return _slim(row)
 
 
-async def _find_pending(db, user_id: str, proposal_id: str | None) -> UserMemory | None:
+async def _find_pending(
+    db, user_id: str, workspace_id: str | None, proposal_id: str | None
+) -> UserMemory | None:
     stmt = select(UserMemory).where(
         UserMemory.user_id == user_id,
         UserMemory.type == PENDING_NOTE_TYPE,
         UserMemory.status == "CANDIDATE",
     )
+    if workspace_id:
+        stmt = stmt.where(UserMemory.workspace_id == workspace_id)
     if proposal_id:
         stmt = stmt.where(UserMemory.id == proposal_id)
     else:
@@ -194,10 +227,11 @@ async def _find_pending(db, user_id: str, proposal_id: str | None) -> UserMemory
 
 
 async def confirm_note(
-    *, user_id: str, proposal_id: str | None = None, edited_summary: str | None = None
+    *, user_id: str, workspace_id: str | None = None,
+    proposal_id: str | None = None, edited_summary: str | None = None
 ) -> dict[str, Any] | None:
     async with get_db_session() as db:
-        row = await _find_pending(db, user_id, proposal_id)
+        row = await _find_pending(db, user_id, workspace_id, proposal_id)
         if row is None:
             return None
         row.type = USER_NOTE_TYPE
@@ -214,9 +248,11 @@ async def confirm_note(
         return _slim(row)
 
 
-async def reject_note(*, user_id: str, proposal_id: str | None = None) -> bool:
+async def reject_note(
+    *, user_id: str, workspace_id: str | None = None, proposal_id: str | None = None
+) -> bool:
     async with get_db_session() as db:
-        row = await _find_pending(db, user_id, proposal_id)
+        row = await _find_pending(db, user_id, workspace_id, proposal_id)
         if row is None:
             return False
         row.status = "DEPRECATED"
@@ -225,13 +261,16 @@ async def reject_note(*, user_id: str, proposal_id: str | None = None) -> bool:
 
 
 async def create_note(
-    *, user_id: str, project_id: str | None = None, summary: str
+    *, user_id: str, workspace_id: str | None = None,
+    project_id: str | None = None, summary: str
 ) -> dict[str, Any]:
     """Directly-active user note (manual creation from a settings UI)."""
+    workspace_id = await _resolve_workspace_id(user_id, workspace_id)
     now = _now()
     row = UserMemory(
         id=ascending("memory"),
         user_id=user_id,
+        workspace_id=workspace_id,
         project_id=project_id,
         scope="LONG_TERM",
         type=USER_NOTE_TYPE,
@@ -249,13 +288,20 @@ async def create_note(
         return _slim(row)
 
 
-async def edit_note(*, user_id: str, memory_id: str, summary: str) -> dict[str, Any] | None:
+async def edit_note(
+    *, user_id: str, workspace_id: str | None = None,
+    memory_id: str, summary: str
+) -> dict[str, Any] | None:
     async with get_db_session() as db:
         row = (
             await db.execute(
                 select(UserMemory).where(
                     UserMemory.id == memory_id,
                     UserMemory.user_id == user_id,
+                    *(
+                        [UserMemory.workspace_id == workspace_id]
+                        if workspace_id else []
+                    ),
                     UserMemory.type == USER_NOTE_TYPE,
                     UserMemory.status != "DEPRECATED",
                 )
@@ -269,13 +315,19 @@ async def edit_note(*, user_id: str, memory_id: str, summary: str) -> dict[str, 
         return _slim(row)
 
 
-async def delete_memory(*, user_id: str, memory_id: str) -> bool:
+async def delete_memory(
+    *, user_id: str, workspace_id: str | None = None, memory_id: str
+) -> bool:
     async with get_db_session() as db:
         row = (
             await db.execute(
                 select(UserMemory).where(
                     UserMemory.id == memory_id,
                     UserMemory.user_id == user_id,
+                    *(
+                        [UserMemory.workspace_id == workspace_id]
+                        if workspace_id else []
+                    ),
                     UserMemory.status != "DEPRECATED",
                 )
             )

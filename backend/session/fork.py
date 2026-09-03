@@ -52,6 +52,7 @@ async def fork_session(
         variant=source.variant,
         title=f"Fork: {source.title or 'Untitled'}",
         user_id=user_id,
+        workspace_id=source.workspace_id,
         project_id=getattr(source, "project_id", None),
     )
 

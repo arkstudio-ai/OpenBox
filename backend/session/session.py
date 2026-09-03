@@ -22,6 +22,9 @@ log = create_logger("session")
 class Session(BaseModel):
     """Session model matching frontend types/session.ts."""
     id: str
+    user_id: str = "default"
+    workspace_id: str = ""
+    owner_username: str = ""
     title: str = ""
     agent: str = "build"
     model: str = ""
@@ -52,6 +55,8 @@ def _orm_to_session(row: SessionORM) -> Session:
     """Convert a SessionORM row to a Pydantic Session model."""
     return Session(
         id=row.id,
+        user_id=row.user_id,
+        workspace_id=row.workspace_id,
         title=row.title or "",
         agent=row.agent or "build",
         model=row.model or "",
@@ -98,11 +103,25 @@ async def create_session(
     title: str | None = None,
     parent_id: str | None = None,
     user_id: str = "default",
+    workspace_id: str = "",
     project_id: str | None = None,
     kind: str = "normal",
 ) -> Session:
     """Create a new session."""
     from core.slug import create as create_slug
+
+    legacy_scope = False
+    if not workspace_id:
+        from db.models.user import User
+        async with get_db_session() as db:
+            workspace_id = (
+                await db.execute(
+                    select(User.default_workspace_id).where(User.id == user_id)
+                )
+            ).scalar_one_or_none() or ""
+    if not workspace_id:
+        workspace_id = "ws_default"
+        legacy_scope = True
 
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -116,12 +135,17 @@ async def create_session(
     # A session always belongs to a project; an unrecognised one (or none at
     # all) lands in the user's default rather than failing the request.
     from project.workspace import resolve_for_session
-    project_id = await resolve_for_session(project_id, user_id)
+    project_id = (
+        await resolve_for_session(project_id, user_id)
+        if legacy_scope
+        else await resolve_for_session(project_id, user_id, workspace_id)
+    )
 
     async with get_db_session() as db:
         row = SessionORM(
             id=session_id,
             user_id=user_id,
+            workspace_id=workspace_id,
             project_id=project_id,
             title=final_title,
             agent=agent,
@@ -140,6 +164,8 @@ async def create_session(
 
     session = Session(
         id=session_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
         title=final_title,
         agent=agent,
         model=model,
@@ -178,32 +204,66 @@ async def project_id_for(session_id: str) -> str:
         )).scalar_one_or_none() or ""
 
 
-async def get_session(session_id: str, project_id: str = "default", user_id: str = "default") -> Session | None:
+async def get_session(
+    session_id: str,
+    project_id: str = "default",
+    user_id: str = "default",
+    workspace_id: str | None = None,
+) -> Session | None:
     """Get a session by ID (user_id required for ownership check)."""
     async with get_db_session() as db:
-        result = await db.execute(
-            select(SessionORM).where(
-                SessionORM.id == session_id,
-                SessionORM.user_id == user_id,
-                SessionORM.is_deleted == False,
-            )
-        )
+        conditions = [
+            SessionORM.id == session_id,
+            SessionORM.user_id == user_id,
+            SessionORM.is_deleted == False,
+        ]
+        if workspace_id:
+            conditions.append(SessionORM.workspace_id == workspace_id)
+        result = await db.execute(select(SessionORM).where(*conditions))
         row = result.scalar_one_or_none()
         if not row:
             return None
         return _orm_to_session(row)
 
 
-async def list_sessions(project_id: str | None = None, user_id: str = "default") -> list[Session]:
-    """Top-level sessions for a user, optionally narrowed to one project.
+async def get_session_in_workspace(session_id: str, workspace_id: str) -> Session | None:
+    """Read a session through workspace membership rather than ownership."""
+    from db.models.user import User
+
+    async with get_db_session() as db:
+        result = (
+            await db.execute(
+                select(SessionORM, User.username)
+                .outerjoin(User, User.id == SessionORM.user_id)
+                .where(
+                    SessionORM.id == session_id,
+                    SessionORM.workspace_id == workspace_id,
+                    SessionORM.is_deleted == False,
+                )
+            )
+        ).one_or_none()
+        if result is None:
+            return None
+        row, username = result
+        item = _orm_to_session(row)
+        item.owner_username = username or row.user_id
+        return item
+
+
+async def list_sessions(
+    project_id: str | None = None,
+    user_id: str = "default",
+    workspace_id: str | None = None,
+) -> list[Session]:
+    """Top-level sessions for a workspace, optionally narrowed to one project.
 
     Passing no project returns every session, which is what the "All projects"
     view in the sidebar shows.
     """
     from sqlalchemy import or_
+    from db.models.user import User
 
     conditions = [
-        SessionORM.user_id == user_id,
         SessionORM.is_deleted == False,  # noqa: E712
         # Top-level chats, plus cron run sessions: those show in the sidebar
         # (clock-badged) even though chat-created ones carry a parent_id.
@@ -213,16 +273,33 @@ async def list_sessions(project_id: str | None = None, user_id: str = "default")
             SessionORM.kind == "cron",
         ),
     ]
+    conditions.append(
+        SessionORM.workspace_id == workspace_id
+        if workspace_id
+        else SessionORM.user_id == user_id
+    )
     if project_id:
         conditions.append(SessionORM.project_id == project_id)
     async with get_db_session() as db:
         result = await db.execute(
-            select(SessionORM).where(*conditions).order_by(SessionORM.created_at.desc())
+            select(SessionORM, User.username)
+            .outerjoin(User, User.id == SessionORM.user_id)
+            .where(*conditions)
+            .order_by(SessionORM.created_at.desc())
         )
-        return [_orm_to_session(r) for r in result.scalars().all()]
+        items = []
+        for row, username in result.all():
+            item = _orm_to_session(row)
+            item.owner_username = username or row.user_id
+            items.append(item)
+        return items
 
 
-async def delete_session(session_id: str, user_id: str = "default") -> bool:
+async def delete_session(
+    session_id: str,
+    user_id: str = "default",
+    workspace_id: str | None = None,
+) -> bool:
     """Soft-delete a session (messages/parts are kept for history).
 
     Also cascade-disables associated cron jobs.
@@ -251,6 +328,8 @@ async def delete_session(session_id: str, user_id: str = "default") -> bool:
                     include_deleted=True,
                 )
             except LookupError:
+                return False
+            if workspace_id and row.workspace_id != workspace_id:
                 return False
             await clear_internal_session_locked(db, row)
             row.is_deleted = True

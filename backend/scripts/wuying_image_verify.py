@@ -36,13 +36,12 @@ unit_env_pattern=$(printf '%s%s' 'Environment=SESSION_API' '_KEY=')
 private_key_hits=$(find / \
   -path /proc -prune -o -path /sys -prune -o -path /dev -prune -o \
   -path /run -prune -o -path /tmp -prune -o -path /var/lib/docker -prune -o \
-  -type f -size -2M -exec sh -c '
-    first=$(head -n 1 "$1" 2>/dev/null || true)
-    printf "%s\\n" "$first" | grep -Eq "$2" && printf "%s\\n" "$1"
-  ' sh {} "$pem_pattern" \; 2>/dev/null || true)
+  -type f -size -2M -exec awk -v pattern="$pem_pattern" \
+    'FNR == 1 { if ($0 ~ pattern) print FILENAME; nextfile }' {} + \
+  2>/dev/null || true)
 inline_key_hits=$(grep -rIl \
   --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude-dir=run \
-  --exclude-dir=tmp --exclude-dir=var/lib/docker \
+  --exclude-dir=tmp --exclude-dir=docker \
   -e "$api_env_pattern" -e "$unit_env_pattern" / 2>/dev/null || true)
 secret_hits=$(printf '%s\n%s\n' "$private_key_hits" "$inline_key_hits" | sed '/^$/d' | sort -u)
 if [ -z "$secret_hits" ]; then

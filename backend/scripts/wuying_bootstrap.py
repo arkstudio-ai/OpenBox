@@ -37,6 +37,90 @@ VIDEO_PRODUCTION_SKILL_DIR = (
 )
 
 
+def install_desktop_tools(d: Desktop) -> None:
+    """Bake the fixed-display helpers that runtime lazy-install used to add."""
+    print("[4/5] desktop tools")
+    sys.path.insert(0, str(REPO / "backend"))
+    from sandbox.desktop import OBX_DISPLAY_SCRIPT, OBX_SHOT_SCRIPT, OBX_X_SCRIPT
+
+    files = {
+        "obx-x": OBX_X_SCRIPT,
+        "obx-display": OBX_DISPLAY_SCRIPT,
+        "obx-shot": OBX_SHOT_SCRIPT,
+    }
+    commands = [
+        "set -eu",
+        "export DEBIAN_FRONTEND=noninteractive",
+        "apt-get update -qq",
+        "apt-get install -y -qq --no-install-recommends xdotool scrot x11-utils python3-pil",
+        "rm -rf /var/lib/apt/lists/*",
+    ]
+    for name, body in files.items():
+        commands.extend(
+            [
+                f"printf '%s' '{base64.b64encode(body.encode()).decode()}' | base64 -d > /usr/local/bin/{name}",
+                f"chmod 755 /usr/local/bin/{name}",
+            ]
+        )
+    d.run("\n".join(commands), timeout=900)
+
+
+def install_image_services(d: Desktop) -> None:
+    """Install disabled, secret-free unit templates for a golden image."""
+    print("[5/5] secret-free systemd templates")
+    d.run(r"""
+set -eu
+systemctl disable --now openbox-action-server openbox-tunnel 2>/dev/null || true
+rm -rf /root/.ssh
+install -d -m 700 /etc/openbox
+find /etc/openbox -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
+cat > /etc/systemd/system/openbox-action-server.service <<'EOF'
+[Unit]
+Description=OpenBox action server (sandbox execution plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/openbox/action.env
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/workspace
+ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
+Restart=always
+RestartSec=3
+MemoryHigh=5G
+MemoryMax=6G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/openbox-tunnel.service <<'EOF'
+[Unit]
+Description=OpenBox per-desktop reverse tunnel
+After=network-online.target openbox-action-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/openbox/tunnel.env
+ExecStart=/bin/sh -ec 'exec /usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes -o UserKnownHostsFile=/etc/openbox/known_hosts -o StrictHostKeyChecking=yes -i /etc/openbox/tunnel_key -p "$RELAY_PORT" -R "$TUNNEL_BIND:$TUNNEL_PORT:127.0.0.1:8000" "$RELAY_USER@$RELAY_HOST"'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl disable openbox-action-server openbox-tunnel 2>/dev/null || true
+test ! -e /root/.ssh
+test -z "$(find /etc/openbox -mindepth 1 -maxdepth 1 -print -quit)"
+""", timeout=300)
+
+
 # --------------------------------------------------------------------------- CLI
 
 def aliyun(*args: str, retries: int = 4) -> str:
@@ -303,7 +387,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--desktop-id", required=True, help="ecd-xxxxxxxx")
     p.add_argument("--region", default="cn-hangzhou")
-    p.add_argument("--relay", required=True, help="user@host of the relay ECS, e.g. root@203.0.113.10")
+    p.add_argument("--relay", default="", help="user@host of the relay ECS, e.g. root@203.0.113.10")
     p.add_argument("--relay-instance", help="ECS instance id; enables automatic authorized_keys install")
     p.add_argument(
         "--relay-region",
@@ -317,17 +401,29 @@ def main() -> int:
     )
     p.add_argument("--api-key", help="SESSION_API_KEY to use (generated when omitted)")
     p.add_argument("--skip-dev-browser", action="store_true", help="skip the browser-automation relay")
+    p.add_argument(
+        "--image-mode",
+        action="store_true",
+        help="bake a disabled, secret-free golden-image source desktop",
+    )
     args = p.parse_args()
     if not 1 <= args.tunnel_port <= 65535:
         p.error("--tunnel-port must be between 1 and 65535")
 
-    api_key = args.api_key or secrets.token_hex(24)
     d = Desktop(args.desktop_id, args.region)
 
     install_runtime(d)
     install_action_server(d)
     if not args.skip_dev_browser:
         install_dev_browser(d)
+    if args.image_mode:
+        install_desktop_tools(d)
+        install_image_services(d)
+        print("\nImage mode complete: services are disabled and /etc/openbox is empty.")
+        return 0
+    if not args.relay:
+        p.error("--relay is required unless --image-mode is used")
+    api_key = args.api_key or secrets.token_hex(24)
     pub = install_services(d, api_key, args.relay, args.tunnel_port)
 
     if args.relay_instance:

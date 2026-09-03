@@ -15,6 +15,9 @@ Three tiers, escalating in side effects:
            Running, mints a connection ticket, then deletes the desktop and
            its EndUser. PostPaid billing charges for the minutes it runs.
            Requires --yes.
+  channel  BILLABLE. Uses the deployment database so the relay's dynamic
+           AuthorizedKeysCommand sees the same row, then provisions, installs,
+           verifies, executes hostname, and revokes/deletes the desktop.
 
 Usage:
   uv run python scripts/wuying_provision_smoke.py check --region cn-hangzhou
@@ -41,6 +44,8 @@ def _apply_env(args: argparse.Namespace) -> None:
     """Config must be seeded before core.config is imported anywhere."""
     os.environ["WUYING_REGION_ID"] = args.region
     os.environ["WUYING_MODE"] = "per_user"
+    if args.tier == "channel":
+        os.environ["WUYING_ROUTING"] = "per_desktop"
     if args.salt:
         os.environ["WUYING_PASSWORD_SALT"] = args.salt
     if args.office_site:
@@ -53,6 +58,19 @@ def _apply_env(args: argparse.Namespace) -> None:
         os.environ["WUYING_DESKTOP_TYPE"] = args.desktop_type
     if args.disk:
         os.environ["WUYING_SYSTEM_DISK_SIZE"] = str(args.disk)
+    for attr, env_name in (
+        ("channel_kind", "WUYING_CHANNEL"),
+        ("relay_host", "WUYING_RELAY_HOST"),
+        ("relay_port", "WUYING_RELAY_PORT"),
+        ("relay_user", "WUYING_RELAY_USER"),
+        ("relay_hostkey", "WUYING_RELAY_HOSTKEY"),
+        ("channel_key", "WUYING_CHANNEL_KEY"),
+        ("tunnel_bind", "WUYING_TUNNEL_BIND"),
+        ("tunnel_port_range", "WUYING_TUNNEL_PORT_RANGE"),
+    ):
+        value = getattr(args, attr, None)
+        if value:
+            os.environ[env_name] = str(value)
 
 
 def _throwaway_user() -> str:
@@ -226,9 +244,97 @@ async def tier_full(args: argparse.Namespace) -> int:
                 print(f"leak sweep failed: {e}", file=sys.stderr)
 
 
+async def tier_channel(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print("channel tier creates a BILLABLE desktop; re-run with --yes to confirm.", file=sys.stderr)
+        return 2
+    if not (args.office_site and args.image_id and args.salt):
+        print("channel tier needs --office-site, --image-id and --salt.", file=sys.stderr)
+        return 2
+
+    from datetime import datetime, timezone
+
+    from core.config import get_config
+    from db.base import ensure_engine, get_db_session
+    from db.models.user import User
+
+    await ensure_engine(get_config())
+    user_id = _throwaway_user()
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        db.add(
+            User(
+                id=user_id,
+                username=user_id,
+                role="user",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    from sqlalchemy import update
+
+    from db.models.user import User as UserModel
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+    from sandbox.channel import route_for_record
+    from sandbox.client import SandboxClient
+    from sandbox.wuying_desktop_service import WuyingDesktopService
+
+    service = WuyingDesktopService()
+    desktop_id = None
+    print(f"throwaway database owner: {user_id}")
+    try:
+        started = time.monotonic()
+        print(f"provision kicked: {await service.provision(user_id, 'channel smoke')}")
+        while True:
+            state = await service.status(user_id)
+            print(f"  [{time.monotonic() - started:5.0f}s] {state}")
+            if state["state"] == "failed" or (
+                state["state"] == "running" and state.get("channel", {}).get("state") == "up"
+            ):
+                break
+            await asyncio.sleep(10)
+        desktop_id = state.get("desktopId")
+        if state["state"] != "running" or state.get("channel", {}).get("state") != "up":
+            print(f"channel provisioning FAILED: {state}", file=sys.stderr)
+            return 1
+
+        record = await cloud_desktop_repo.get_for_user(user_id)
+        host, port, api_key = route_for_record(record)
+        result = await SandboxClient(host=host, port=port, api_key=api_key).execute(
+            "hostname; obx-x xdpyinfo | awk '/dimensions:/{print $2; exit}'",
+            timeout=30,
+        )
+        if result.exit_code != 0:
+            print(f"authenticated execution failed: {result.stderr}", file=sys.stderr)
+            return 1
+        print(f"authenticated route {host}:{port}:\n{result.stdout.rstrip()}")
+        print("\nchannel tier passed.")
+        return 0
+    finally:
+        if args.keep:
+            print(f"--keep: owner {user_id}, desktop {desktop_id} left running")
+        else:
+            try:
+                record = await cloud_desktop_repo.get_for_user(user_id)
+                if record and record.get("desktop_id"):
+                    await service.release_ghost(user_id)
+                elif record:
+                    await cloud_desktop_repo.soft_delete(record["id"])
+            finally:
+                async with get_db_session() as db:
+                    await db.execute(
+                        update(UserModel)
+                        .where(UserModel.id == user_id)
+                        .values(is_deleted=True, is_active=False, deleted_at=datetime.now(timezone.utc))
+                    )
+                print(f"cleanup complete for {user_id}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("tier", choices=["check", "enduser", "full"])
+    parser.add_argument("tier", choices=["check", "enduser", "full", "channel"])
     parser.add_argument("--region", default=os.environ.get("WUYING_REGION_ID", "cn-hangzhou"))
     parser.add_argument("--office-site", default=os.environ.get("WUYING_OFFICE_SITE_ID", ""))
     parser.add_argument("--image-id", default=os.environ.get("WUYING_IMAGE_ID", ""))
@@ -238,10 +344,23 @@ def main() -> int:
     parser.add_argument("--disk", type=int, default=0, help="system disk GiB (must cover the image size)")
     parser.add_argument("--yes", action="store_true", help="confirm the billable full tier")
     parser.add_argument("--keep", action="store_true", help="full tier: keep the desktop instead of deleting")
+    parser.add_argument("--channel-kind", choices=["direct", "ssh"], default="")
+    parser.add_argument("--relay-host", default="")
+    parser.add_argument("--relay-port", type=int, default=0)
+    parser.add_argument("--relay-user", default="")
+    parser.add_argument("--relay-hostkey", default="")
+    parser.add_argument("--channel-key", default="")
+    parser.add_argument("--tunnel-bind", default="")
+    parser.add_argument("--tunnel-port-range", default="")
     args = parser.parse_args()
 
     _apply_env(args)
-    tier = {"check": tier_check, "enduser": tier_enduser, "full": tier_full}[args.tier]
+    tier = {
+        "check": tier_check,
+        "enduser": tier_enduser,
+        "full": tier_full,
+        "channel": tier_channel,
+    }[args.tier]
     return asyncio.run(tier(args)) or 0
 
 

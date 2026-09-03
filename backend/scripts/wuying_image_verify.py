@@ -18,17 +18,19 @@ check root_ssh_absent_or_empty '[ ! -e /root/.ssh ] || [ -z "$(find /root/.ssh -
 check tunnel_disabled '[ "$(systemctl is-enabled openbox-tunnel 2>/dev/null || true)" = disabled ]'
 check action_disabled '[ "$(systemctl is-enabled openbox-action-server 2>/dev/null || true)" = disabled ]'
 check action_uses_envfile 'grep -q "^EnvironmentFile=/etc/openbox/action.env$" /etc/systemd/system/openbox-action-server.service'
-check action_has_no_inline_key '! grep -q "Environment=SESSION_API_KEY=" /etc/systemd/system/openbox-action-server.service'
+check action_has_no_inline_key '! grep -q "Environment=SESSION_API""_KEY=" /etc/systemd/system/openbox-action-server.service'
 check tunnel_uses_envfile 'grep -q "^EnvironmentFile=/etc/openbox/tunnel.env$" /etc/systemd/system/openbox-tunnel.service'
 check tunnel_has_no_legacy_port '! grep -q -- "-R 127.0.0.1:18000" /etc/systemd/system/openbox-tunnel.service'
 check tunnel_has_no_legacy_relay '! grep -q "47.110.66.89" /etc/systemd/system/openbox-tunnel.service'
 check openbox_config_empty '[ -d /etc/openbox ] && [ -z "$(find /etc/openbox -mindepth 1 -print -quit)" ]'
 check display_helper '[ -x /usr/local/bin/obx-display ] && grep -q "target=\"1920x1080\"" /usr/local/bin/obx-display'
 
+private_key_pattern=$(printf '%s%s' 'OPENSSH' ' PRIVATE')
+inline_key_pattern=$(printf '%s%s' 'SESSION_API' '_KEY=')
 secret_hits=$(grep -rIl \
   --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude-dir=run \
   --exclude-dir=tmp --exclude-dir=var/lib/docker \
-  -e 'OPENSSH PRIVATE' -e 'Environment=SESSION_API_KEY=' / 2>/dev/null || true)
+  -e "$private_key_pattern" -e "$inline_key_pattern" / 2>/dev/null || true)
 if [ -z "$secret_hits" ]; then
   echo 'PASS no_baked_secrets'
 else

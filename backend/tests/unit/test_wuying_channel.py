@@ -4,11 +4,14 @@ import os
 import pathlib
 import subprocess
 import sys
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from core.config import OpenBoxConfig
-from db.repository.cloud_desktop_repo import cloud_desktop_repo
+from db.repository.cloud_desktop_repo import PgCloudDesktopRepo, cloud_desktop_repo
 from sandbox.channel import (
     ChannelConfigError,
     action_key_hash,
@@ -72,6 +75,51 @@ async def test_port_allocation_is_distinct_under_concurrency():
     )
     assert sorted(ports) == [18810, 18811]
     assert await cloud_desktop_repo.reserve_tunnel_port(first["id"], 18810, 18811) == ports[0]
+
+
+async def test_port_allocation_retries_a_cross_worker_unique_conflict(monkeypatch):
+    import db.repository.cloud_desktop_repo as repo_module
+
+    attempts = 0
+
+    class FakeScalars:
+        def __init__(self, values):
+            self.values = values
+
+        def __iter__(self):
+            return iter(self.values)
+
+    class FakeResult:
+        def __init__(self, values):
+            self.values = values
+
+        def scalars(self):
+            return FakeScalars(self.values)
+
+    class FakeSession:
+        def __init__(self, attempt):
+            self.attempt = attempt
+
+        async def scalar(self, _statement):
+            return SimpleNamespace(is_deleted=False, tunnel_port=None, updated_at=None)
+
+        async def execute(self, _statement):
+            return FakeResult([] if self.attempt == 1 else [18840])
+
+        async def flush(self):
+            if self.attempt == 1:
+                raise IntegrityError("insert", {}, RuntimeError("unique clash"))
+
+    @asynccontextmanager
+    async def fake_db_session():
+        nonlocal attempts
+        attempts += 1
+        yield FakeSession(attempts)
+
+    monkeypatch.setattr(repo_module, "get_db_session", fake_db_session)
+    port = await PgCloudDesktopRepo().reserve_tunnel_port("cld-conflict", 18840, 18841)
+    assert port == 18841
+    assert attempts == 2
 
 
 async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):

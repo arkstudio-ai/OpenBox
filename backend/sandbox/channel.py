@@ -296,7 +296,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
             host, port, api_key = route_for_record(provisional)
             async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
                 response = await client.get(
-                    f"http://{host}:{port}/system",
+                    f"http://{host}:{port}/system_info",
                     headers={"X-API-Key": api_key},
                 )
             if response.status_code != 200:

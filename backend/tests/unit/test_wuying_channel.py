@@ -14,6 +14,7 @@ from core.config import OpenBoxConfig
 from db.repository.cloud_desktop_repo import PgCloudDesktopRepo, cloud_desktop_repo
 from sandbox.channel import (
     ChannelConfigError,
+    WuyingChannel,
     action_key_hash,
     decrypt_action_key,
     encrypt_action_key,
@@ -204,3 +205,44 @@ async def test_install_can_rotate_action_key(monkeypatch):
     assert first_key != second_key
     assert rotated["action_api_key_hash"] == action_key_hash(second_key)
     assert len(commands) == 2
+
+
+async def test_probe_uses_action_server_system_info_endpoint(monkeypatch):
+    import sandbox.channel as channel_module
+
+    cfg = OpenBoxConfig(wuying_channel_key=KEY_A)
+    monkeypatch.setattr(channel_module, "get_config", lambda: cfg)
+    requested = []
+    updates = []
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, **_kwargs):
+            requested.append(url)
+            return Response()
+
+    async def update(record_id, **values):
+        updates.append((record_id, values))
+
+    monkeypatch.setattr(channel_module.httpx, "AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr(channel_module.cloud_desktop_repo, "update", update)
+    record = {
+        "id": "cld-probe",
+        "channel_kind": "ssh",
+        "tunnel_bind": "172.17.0.1",
+        "tunnel_port": 18850,
+        "tunnel_state": "up",
+        "action_api_key_ciphertext": encrypt_action_key("probe-key", KEY_A),
+    }
+
+    assert await WuyingChannel().probe(record) is True
+    assert requested == ["http://172.17.0.1:18850/system_info"]
+    assert updates[0][1]["tunnel_state"] == "up"

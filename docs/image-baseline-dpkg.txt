@@ -1,5 +1,6 @@
 # openbox-image-v1-shanghai (m-feb7j85i4d4qo09ux)
-# Captured from ecd-4zjxaq5g45dr5qr0i on 2026-09-03.
+# Captured from the installed (dpkg status "ii") packages on
+# ecd-4zjxaq5g45dr5qr0i and audited against ecd-2oi2bfla5bl9erw2h on 2026-09-03.
 accountsservice
 acl
 adcli
@@ -73,7 +74,6 @@ cheese-common
 chrome-gnome-shell
 chrony
 cloud-guest-utils
-cloud-init
 cloud-initramfs-copymods
 cloud-initramfs-dyn-netconf
 colord
@@ -389,7 +389,6 @@ gnome-session-common
 gnome-settings-daemon
 gnome-settings-daemon-common
 gnome-shell
-gnome-shell-compub-0.1-1:amd64
 libmtdev1:amd64
 libmtp-common
 libmtp-runtime
@@ -1339,7 +1338,6 @@ ubuntu-standard
 ubuntu-wallpapers
 ubuntu-wallpapers-jammy
 ucf
-udev
 udisks2
 ufw
 unattended-upgrades

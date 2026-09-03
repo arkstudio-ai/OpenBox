@@ -72,6 +72,10 @@ def install_image_services(d: Desktop) -> None:
 set -eu
 systemctl disable --now openbox-action-server openbox-tunnel 2>/dev/null || true
 rm -rf /root/.ssh
+# Machine host keys identify the source desktop and must not be cloned. Ubuntu
+# cloud-init/ssh-keygen regenerates them for a new instance when sshd is used;
+# OpenBox's execution channel uses its own per-instance key below /etc/openbox.
+rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
 install -d -m 700 /etc/openbox
 find /etc/openbox -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 

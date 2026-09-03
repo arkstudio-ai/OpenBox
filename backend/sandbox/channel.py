@@ -259,11 +259,20 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                     alive = await client.get(f"http://{host}:{port}/alive")
                     alive.raise_for_status()
                 sandbox = SandboxClient(host=host, port=port, api_key=api_key)
-                result = await sandbox.execute(
-                    "hostname; obx-x obx-display; "
-                    "obx-x sh -c \"xrandr --current | grep -qE '1920x1080[^0-9]'\"",
-                    timeout=20,
-                )
+                # obx-display touches the live desktop session and therefore
+                # must obey the same action-server lease as real computer
+                # turns.  A raw execute is correctly rejected with HTTP 423.
+                async with sandbox.desktop_lease(
+                    session_id=f"channel-verify:{record['id']}",
+                    tool_call_id="channel-verify",
+                    wait_timeout=20,
+                    ttl_seconds=60,
+                ):
+                    result = await sandbox.execute(
+                        "hostname; obx-x obx-display; "
+                        "obx-x sh -c \"xrandr --current | grep -qE '1920x1080[^0-9]'\"",
+                        timeout=20,
+                    )
                 if result.exit_code != 0:
                     raise RuntimeError(result.stderr.strip() or "desktop is not 1920x1080")
                 now = datetime.now(timezone.utc)

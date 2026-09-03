@@ -302,10 +302,17 @@ async def tier_channel(args: argparse.Namespace) -> int:
 
         record = await cloud_desktop_repo.get_for_user(user_id)
         host, port, api_key = route_for_record(record)
-        result = await SandboxClient(host=host, port=port, api_key=api_key).execute(
-            "hostname; obx-x xdpyinfo | awk '/dimensions:/{print $2; exit}'",
-            timeout=30,
-        )
+        sandbox = SandboxClient(host=host, port=port, api_key=api_key)
+        async with sandbox.desktop_lease(
+            session_id=f"channel-smoke:{user_id}",
+            tool_call_id="channel-smoke",
+            wait_timeout=30,
+            ttl_seconds=60,
+        ):
+            result = await sandbox.execute(
+                "hostname; obx-x xdpyinfo | awk '/dimensions:/{print $2; exit}'",
+                timeout=30,
+            )
         if result.exit_code != 0:
             print(f"authenticated execution failed: {result.stderr}", file=sys.stderr)
             return 1

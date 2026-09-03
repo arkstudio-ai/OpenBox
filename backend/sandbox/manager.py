@@ -155,7 +155,10 @@ class SandboxManager:
         *,
         user_id: str,
     ) -> SandboxInfo:
-        key = _map_key(user_id)
+        from sandbox.ownership import owner_for
+
+        owner = await owner_for(user_id)
+        key = _map_key(owner)
         async with self._lock:
             acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
         async with acquire_lock:
@@ -163,6 +166,7 @@ class SandboxManager:
                 session_id,
                 project_id,
                 user_id=user_id,
+                owner=owner,
             )
 
     async def _acquire_for_user(
@@ -171,9 +175,24 @@ class SandboxManager:
         project_id: str = "default",
         *,
         user_id: str,
+        owner: str | None = None,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
-        key = _map_key(user_id)
+        if owner is None:
+            from sandbox.ownership import owner_for
+
+            owner = await owner_for(user_id)
+        key = _map_key(owner)
+
+        from sandbox import provider
+
+        # Per-desktop routing is database-authoritative on every acquisition.
+        # This makes a revoke or credential rotation invalidate a cached route
+        # immediately instead of waiting for an unauthenticated /alive probe.
+        authoritative = None
+        per_owner_route = getattr(provider, "routes_per_user", False) is True
+        if per_owner_route:
+            authoritative = await provider.resolve_user_container(owner, project_id)
 
         async with self._lock:
             existing_key = self._session_project.get(session_id)
@@ -181,6 +200,21 @@ class SandboxManager:
                 raise RuntimeError(f"Sandbox session ownership mismatch for {session_id}")
             sandbox = self._project_map.get(key)
             client = self._clients.get(key)
+
+        if authoritative is not None and sandbox is not None:
+            route_changed = (
+                sandbox.container_id != authoritative.id
+                or sandbox.host != authoritative.host
+                or sandbox.port != authoritative.port
+                or sandbox.api_key != (authoritative.api_key or "")
+            )
+            if route_changed:
+                async with self._lock:
+                    if self._project_map.get(key) is sandbox:
+                        self._project_map.pop(key, None)
+                        self._clients.pop(key, None)
+                sandbox = None
+                client = None
 
         # Provider probes and filesystem setup are network operations. The
         # per-user acquire lock already serializes this tenant; holding the
@@ -228,20 +262,22 @@ class SandboxManager:
                 if retained_client is not None:
                     return sandbox
 
-        from sandbox import provider
-
         try:
-            info = provider.get_user_container(user_id)
+            info = (
+                authoritative
+                if per_owner_route
+                else provider.get_user_container(owner)
+            )
             if info:
                 if info.status != ContainerStatus.RUNNING:
-                    await provider.start_container(info.id, user_id=user_id)
-                    info = await provider.get_container(info.id, user_id=user_id)
+                    await provider.start_container(info.id, user_id=owner)
+                    info = await provider.get_container(info.id, user_id=owner)
             else:
                 info = await provider.create_container(
                     name=build_sandbox_name(user_id),
                     image=None,
                     project_id=None,
-                    user_id=user_id,
+                    user_id=owner,
                 )
 
             sandbox = SandboxInfo(

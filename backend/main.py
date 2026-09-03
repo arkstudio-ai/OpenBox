@@ -109,12 +109,19 @@ async def lifespan(app: FastAPI):
 
         view = "the caller's own desktop" if _per_user() else (
             f"{config.wuying_desktop_id or '(unset)'} in {config.wuying_region_id}")
-        log.info(f"Cloud desktop — agent runs on: {get_provider().desktop_id}; view streams: {view}")
+        if config.wuying_routing == "per_desktop":
+            log.info(
+                "Cloud desktop — agent and view route to each caller's assigned "
+                "desktop in %s",
+                config.wuying_region_id,
+            )
+        else:
+            log.info(f"Cloud desktop — agent runs on: {get_provider().desktop_id}; view streams: {view}")
 
     # Per-user ECD fleet patrol (log-only; desktops are subscription-resident)
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
         from sandbox.wuying_desktop_service import wuying_desktop_service
-        wuying_desktop_service.start_patrol()
+        wuying_desktop_service.start_patrol(config.wuying_health_interval_sec)
 
     # Initialize Redis event bus for cross-worker broadcasting (if in multi-user mode)
     if config.jwt_secret:
@@ -250,6 +257,9 @@ def create_app() -> FastAPI:
 
     from api.desktop import router as desktop_router
     application.include_router(desktop_router)
+
+    from api.internal import router as internal_router
+    application.include_router(internal_router)
 
     from api.browser import router as browser_router
     application.include_router(browser_router)

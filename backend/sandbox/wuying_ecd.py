@@ -283,6 +283,8 @@ async def describe_desktop(desktop_id: str) -> dict[str, Any] | None:
         "name": d.desktop_name,
         "status": d.desktop_status,
         "progress": getattr(d, "progress", None),
+        "hostname": getattr(d, "host_name", None),
+        "private_ip": getattr(d, "network_interface_ip", None),
         "end_user_ids": list(getattr(d, "end_user_ids", []) or []),
     }
 
@@ -434,6 +436,8 @@ async def list_desktops(user_id: str | None = None) -> list[dict[str, Any]]:
             "desktop_id": d.desktop_id,
             "name": d.desktop_name,
             "status": d.desktop_status,
+            "hostname": getattr(d, "host_name", None),
+            "private_ip": getattr(d, "network_interface_ip", None),
             "end_user_ids": list(getattr(d, "end_user_ids", []) or []),
             "tags": tags.get(d.desktop_id, {}),
         }

@@ -47,6 +47,16 @@ async def execute_cron_job(job: dict) -> dict:
     locale = await resolve_locale(user_id)
     temp_session_id = None
     try:
+        # A missing per-desktop route is a scheduling skip, not an agent
+        # failure. Check it before summary generation so the skip spends no
+        # model tokens and reaches no retry path.
+        from sandbox import provider
+
+        if provider.routes_per_user:
+            from sandbox.ownership import owner_for
+
+            await provider.resolve_user_container(await owner_for(user_id))
+
         # 1. Generate session summary (or reuse cache)
         context_summary = await _get_session_summary(job)
 
@@ -149,8 +159,23 @@ async def execute_cron_job(job: dict) -> dict:
         raise
 
     except Exception as e:
+        from sandbox.wuying_desktop_service import DesktopNotReady
+
         ended_at = datetime.now(timezone.utc)
         duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        if isinstance(e, DesktopNotReady):
+            reason = f"DESKTOP_NOT_READY: {e.payload.get('state', 'not_ready')}"
+            await _update_run_entry(
+                run_id,
+                job_id,
+                temp_session_id,
+                status="skipped",
+                error_message=reason,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+            )
+            log.info("Cron job %s skipped without retry: %s", job_id, reason)
+            return {"status": "skipped", "error": reason, "run_id": run_id}
         error_msg = str(e)
 
         await _update_run_entry(

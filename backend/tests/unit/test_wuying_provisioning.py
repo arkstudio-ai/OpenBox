@@ -79,7 +79,7 @@ def test_provisioning_config_defaults():
     # Alibaba's resolution-adaptive default policy.
     assert cfg.wuying_policy_group_id == ""
     assert cfg.wuying_desktop_type == "eds.enterprise_office.4c8g"
-    assert cfg.wuying_system_disk_size == 40
+    assert cfg.wuying_system_disk_size == 50
     assert cfg.wuying_charge_type == "PostPaid"
     assert cfg.wuying_env_tag == "default"
 
@@ -362,3 +362,39 @@ async def test_release_ghost_deletes_and_forgets(monkeypatch):
     await service.release_ghost(user)
     assert behaviour["deleted"] == ["ecd-new"]
     assert (await service.status(user))["state"] == "not_provisioned"
+
+
+async def test_per_desktop_only_becomes_running_after_channel_verify(monkeypatch):
+    _stub_ecd(monkeypatch)
+    import sandbox.wuying_desktop_service as svc_mod
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+
+    cfg = _config(wuying_password_salt="s", wuying_routing="per_desktop")
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+    calls = []
+
+    async def install(record, **_kwargs):
+        calls.append(("install", record["desktop_id"]))
+        await cloud_desktop_repo.update(
+            record["id"],
+            channel_kind="ssh",
+            tunnel_state="pending",
+        )
+        return await cloud_desktop_repo.get(record["id"])
+
+    async def verify(record, **_kwargs):
+        calls.append(("verify", record["desktop_id"]))
+        await cloud_desktop_repo.update(record["id"], tunnel_state="up")
+        return {"hostname": "desktop-host"}
+
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", install)
+    monkeypatch.setattr(svc_mod.wuying_channel, "verify", verify)
+    service = WuyingDesktopService()
+    user = "user-channel-ready"
+    await service.provision(user)
+    await _drain(service, user)
+
+    state = await service.status(user)
+    assert state["state"] == "running"
+    assert state["channel"]["state"] == "up"
+    assert calls == [("install", "ecd-new"), ("verify", "ecd-new")]

@@ -319,7 +319,10 @@ async def _ensure_user_container(user_id: str) -> None:
     """Ensure each connected user has exactly one sandbox container."""
     try:
         from sandbox import provider
-        await provider.ensure_user_container(user_id=user_id, project_id="default")
+        from sandbox.ownership import owner_for
+
+        owner = await owner_for(user_id)
+        await provider.ensure_user_container(user_id=owner, project_id="default")
     except Exception as e:
         log.warning(f"Failed to ensure container for user={user_id}: {e}")
 

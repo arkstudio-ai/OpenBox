@@ -177,6 +177,19 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "data",
         "created_at",
     }),
+    "cloud_desktops": frozenset({
+        "channel_kind",
+        "private_ip",
+        "tunnel_port",
+        "tunnel_bind",
+        "tunnel_pubkey",
+        "tunnel_fingerprint",
+        "action_api_key_hash",
+        "action_api_key_ciphertext",
+        "tunnel_state",
+        "last_seen_at",
+        "channel_error",
+    }),
 }
 
 

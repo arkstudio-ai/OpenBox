@@ -118,7 +118,13 @@ async def dev_browser_ws_auto(
             return
         user_id = user_data["user_id"]
 
-    container = provider.get_user_container(user_id)
+    from sandbox.ownership import owner_for
+
+    owner = await owner_for(user_id)
+    try:
+        container = await provider.resolve_user_container(owner)
+    except Exception:
+        container = None
     if not container or container.status != ContainerStatus.RUNNING or not container.port:
         await websocket.accept()
         await websocket.close(code=4004, reason="No running container")

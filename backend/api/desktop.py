@@ -158,7 +158,15 @@ async def desktop_ticket(task_id: str | None = None, user=Depends(get_current_us
             state = e.payload.get("state")
             if state in ("creating", "starting"):
                 return _pending({"pending": True, "state": state})
-            return JSONResponse({"available": False, "reason": state or "not_ready"}, status_code=503)
+            return JSONResponse(
+                {
+                    "available": False,
+                    "reason": state or "not_ready",
+                    "code": "DESKTOP_NOT_READY",
+                    "channel": e.payload.get("channel"),
+                },
+                status_code=503,
+            )
         except DesktopOwnershipError as e:
             log.warning(f"Desktop ownership check failed: {e}")
             return JSONResponse({"available": False, "reason": "ownership"}, status_code=403)

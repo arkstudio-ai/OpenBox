@@ -237,7 +237,7 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
         log.warning(f"Logto sign-in rejected from {ip}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
-    return await _sign_in_logto_identity(claims, response)
+    return await _sign_in_logto_identity(claims, request, response)
 
 
 @router.post("/logto/id-token", response_model=TokenResponse)
@@ -265,10 +265,12 @@ async def logto_id_token(body: LogtoIdTokenRequest, request: Request, response: 
         log.warning(f"Logto sign-in rejected from {ip}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
-    return await _sign_in_logto_identity(claims, response)
+    return await _sign_in_logto_identity(claims, request, response)
 
 
-async def _sign_in_logto_identity(claims: dict, response: Response) -> TokenResponse:
+async def _sign_in_logto_identity(
+    claims: dict, request: Request, response: Response
+) -> TokenResponse:
     """Verified Logto claims in, an OpenBox session out.
 
     Shared by both sign-in shapes — the web's server-side code exchange and the

@@ -8,7 +8,14 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
 import { paths } from "@/shared/router/paths"
 import type { AuthUser, UserPreferences } from "@/shared/types/api"
-import { getLogtoConfig, type LogtoConfig, type LogtoResult } from "@/features/auth/lib/logto"
+import {
+  beginLogtoLogin,
+  getLogtoConfig,
+  takeReturnPath,
+  type LogtoConfig,
+  type LogtoResult,
+  type SsoScreen,
+} from "@/features/auth/lib/logto"
 
 export interface LoginBody {
   username: string
@@ -48,6 +55,28 @@ export function useLogtoConfig() {
 }
 
 /**
+ * Starts a sign-in wherever the deployment keeps its identities.
+ *
+ * With Logto configured it is the only door, so the local username/password
+ * pages are reached only as the fallback for a deployment without one —
+ * turning Logto off must not lock everybody out. The same fallback catches a
+ * redirect that fails to start, which would otherwise be a dead end.
+ */
+export function useSsoEntry(screen: SsoScreen = "sign_in") {
+  const navigate = useNavigate()
+  const { data: logto } = useLogtoConfig()
+  const local = screen === "register" ? paths.register : paths.login
+
+  return useCallback(() => {
+    if (!logto) {
+      navigate(local)
+      return
+    }
+    beginLogtoLogin(logto, { firstScreen: screen }).catch(() => navigate(local))
+  }, [logto, navigate, local, screen])
+}
+
+/**
  * Post-sign-in flow shared by login, register and the SSO callback:
  * seed the auth store, hydrate appearance from server prefs (best-effort),
  * then route into the app (honouring a `from` redirect target).
@@ -66,7 +95,8 @@ export function useCompleteAuth() {
       } catch {
         // Appearance is best-effort; a prefs failure must not block sign-in.
       }
-      navigate(from ?? paths.app, { replace: true })
+      // `from` is empty after an SSO round trip; the stashed copy carries it.
+      navigate(from ?? takeReturnPath() ?? paths.app, { replace: true })
     },
     [navigate, from],
   )

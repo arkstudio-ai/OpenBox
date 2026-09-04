@@ -323,6 +323,25 @@ for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}
 # Deleting the session files closes both: there is no crash to report and
 # nothing to restore. They are pure scratch state; the profile's cookies,
 # logins and history live in other files and survive.
+# The launch runs inside the action container, whose root — and therefore the
+# X session user's /home — is mounted read-only; only /workspace and /tmp are
+# writable there. Chrome then cannot manage its profile's SingletonLock and
+# aborts before opening the debug port. The desktop already has a runner user
+# whose home sits under /workspace for exactly this reason, and that is what a
+# working deployment uses (verified on the shared desktop: Chrome runs as
+# `sandbox` with its profile under /workspace). Switch to it when, and only
+# when, the X user's home cannot actually be written — a real create, because
+# the permission bits still read "writable" for the owner on a read-only mount.
+if ! $SUDO sh -c ': > "$1"' _ "$H/.obx-write-probe" 2>/dev/null; then
+  RUNNER_H=$(getent passwd sandbox | cut -d: -f6)
+  if [ -n "$RUNNER_H" ]; then
+    U=sandbox
+    H="$RUNNER_H"
+    if [ "$(id -un)" = "$U" ]; then SUDO=""; else SUDO="sudo -u $U -H"; fi
+  fi
+else
+  $SUDO rm -f "$H/.obx-write-probe" 2>/dev/null || true
+fi
 PROF="$H/{CHROME_PROFILE}"
 PREF="$PROF/Default/Preferences"
 if [ -f "$PREF" ]; then
@@ -355,7 +374,16 @@ if command -v dbus-run-session >/dev/null 2>&1 \\
         gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin main-switch "<Shift>" >/dev/null 2>&1 || true
       fi
 
-      ibus-daemon --replace --xim --panel=disable >{IBUS_LOG} 2>&1 &
+      # The panel is what draws the candidate list. Started with
+      # --panel=disable there is no way to see or choose a character: the
+      # engine converts, but the reader only ever sees the committed result,
+      # which is not usable pinyin input. Start the real panel when it is
+      # installed and keep "disable" only as the fallback.
+      PANEL=disable
+      for cand in /usr/libexec/ibus-ui-gtk3 /usr/lib/ibus/ibus-ui-gtk3; do
+        if [ -x "$cand" ]; then PANEL="$cand"; break; fi
+      done
+      ibus-daemon --replace --xim --panel="$PANEL" >{IBUS_LOG} 2>&1 &
       # Set the global engine after Chrome has opened an input context. Bound
       # every attempt because IBus otherwise waits 15 seconds when no context
       # exists yet; this helper must never delay Chrome readiness.

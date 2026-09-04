@@ -123,6 +123,8 @@ def _seed_single_user_scope(connection) -> None:
     """Create the stable owner, workspace, and project for desktop mode."""
     from datetime import timezone
 
+    from project.workspace import DEFAULT_NAME, DEFAULT_SLUG
+
     now = datetime.now(timezone.utc).isoformat()
     connection.exec_driver_sql(
         """
@@ -156,9 +158,9 @@ def _seed_single_user_scope(connection) -> None:
         """
         INSERT OR IGNORE INTO projects
             (id, user_id, workspace_id, name, slug, is_deleted, created_at, updated_at)
-        VALUES ('default', 'default', 'ws_default', 'Default', 'default', 0, ?, ?)
+        VALUES ('default', 'default', 'ws_default', ?, ?, 0, ?, ?)
         """,
-        (now, now),
+        (DEFAULT_NAME, DEFAULT_SLUG, now, now),
     )
 
 

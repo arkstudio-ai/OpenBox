@@ -11,6 +11,7 @@ import type { AuthUser } from "@/shared/types/api"
 
 const VERIFIER_KEY = "logto:code_verifier"
 const STATE_KEY = "logto:state"
+const FROM_KEY = "logto:from"
 
 export interface LogtoConfig {
   enabled: boolean
@@ -55,8 +56,33 @@ async function pkceChallenge(verifier: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(digest))
 }
 
+/**
+ * Remember where the visitor was headed before the redirect.
+ *
+ * `RequireAuth` passes the deep link through react-router state, which does not
+ * survive leaving the origin — without this every sign-in would land on the
+ * workspace root instead of the page the person actually asked for.
+ */
+export function rememberReturnPath(from: string | undefined): void {
+  if (from) sessionStorage.setItem(FROM_KEY, from)
+  else sessionStorage.removeItem(FROM_KEY)
+}
+
+/** Reads and clears the path stashed by `rememberReturnPath`. */
+export function takeReturnPath(): string | undefined {
+  const from = sessionStorage.getItem(FROM_KEY)
+  sessionStorage.removeItem(FROM_KEY)
+  return from ?? undefined
+}
+
+/** Which Logto screen the redirect should land on. */
+export type SsoScreen = "sign_in" | "register"
+
 /** Redirects the browser to Logto. Does not return. */
-export async function beginLogtoLogin(config: LogtoConfig): Promise<void> {
+export async function beginLogtoLogin(
+  config: LogtoConfig,
+  opts: { firstScreen?: SsoScreen } = {},
+): Promise<void> {
   const verifier = randomString(32)
   const state = randomString(16)
   sessionStorage.setItem(VERIFIER_KEY, verifier)
@@ -72,6 +98,9 @@ export async function beginLogtoLogin(config: LogtoConfig): Promise<void> {
     code_challenge_method: "S256",
     prompt: "consent",
   })
+  // Logto opens its sign-in screen by default; a "get started" CTA means the
+  // person expects the sign-up form instead.
+  if (opts.firstScreen === "register") params.set("first_screen", "register")
   window.location.assign(`${config.endpoint}/oidc/auth?${params.toString()}`)
 }
 

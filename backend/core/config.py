@@ -450,6 +450,10 @@ class OpenBoxConfig(BaseModel):
     # The browser is a public PKCE client, so no client secret is stored here.
     logto_endpoint: str = ""                 # e.g. https://account.example.com
     logto_app_id: str = ""
+    #: The Logto "Native" application the mobile app signs in with. A native
+    #: client is public — it holds no secret — so it must be its own
+    #: application, and its id is a second valid ID-token audience.
+    logto_native_app_id: str = ""
     # Required only for a confidential app (Logto "Traditional Web"); a SPA /
     # Native app is a public client and leaves this empty.
     logto_app_secret: str = ""
@@ -693,6 +697,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "rate_limit_api": "RATE_LIMIT_API",
         "logto_endpoint": "LOGTO_ENDPOINT",
         "logto_app_id": "LOGTO_APP_ID",
+        "logto_native_app_id": "LOGTO_NATIVE_APP_ID",
         "logto_app_secret": "LOGTO_APP_SECRET",
         "logto_issuer": "LOGTO_ISSUER",
         "logto_jwks_uri": "LOGTO_JWKS_URI",

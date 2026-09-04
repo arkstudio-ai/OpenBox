@@ -1,9 +1,11 @@
-import { AuthShell, RegisterForm } from "@/features/auth"
+import { AuthShell, SsoEntry, RegisterForm } from "@/features/auth"
 
 export default function RegisterRoute() {
   return (
     <AuthShell>
-      <RegisterForm />
+      <SsoEntry screen="register">
+        <RegisterForm />
+      </SsoEntry>
     </AuthShell>
   )
 }

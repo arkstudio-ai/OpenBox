@@ -4,7 +4,7 @@
 
 **一个 AI Agent 执行平台** —— 给大模型一个安全隔离的沙箱,让它读写文件、运行代码、操作浏览器,并配套生产级的编排、上下文管理与多租户隔离。
 
-> 一个通用 Agent 运行时(灵感来自 OpenCode / Claude Code),用 Python 围绕 **Pydantic AI + LiteLLM** 重写,所有文件 / 命令操作都限制在每个 Session 独占的 **Docker / Kubernetes 沙箱**内执行。已部署于 GCP GKE。
+> 一个通用 Agent 运行时(灵感来自 OpenCode / Claude Code),用 Python 围绕 **Pydantic AI + LiteLLM** 重写,所有文件 / 命令操作都限制在每个 Session 独占的 **无影云桌面沙箱**内执行(Docker / Kubernetes 引擎仍保留，但已不是生产路径)。部署在 AWS(开发)与阿里云(生产)，见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
 > **前端方向：**[`frontend-v2/`](frontend-v2/) 是 OpenBox 当前主推且持续开发的 Web UI；原 [`frontend/`](frontend/) 仅作为旧版迁移参考保留。
 
@@ -15,10 +15,10 @@
 | | |
 |---|---|
 | **是什么** | 一个全栈平台:AI 代理在隔离容器中自主执行开发任务(改代码、跑 bash、git、浏览网页),v2 Web UI 实时展示每一次工具调用。 |
-| **核心技术** | FastAPI · Pydantic AI · LiteLLM(100+ 模型)· Docker/K8s 沙箱 · PostgreSQL · Redis · React 19 |
+| **核心技术** | FastAPI · Pydantic AI · LiteLLM(100+ 模型)· 无影云桌面沙箱 · PostgreSQL · Redis · React 19 |
 | **Agent 循环** | Pydantic AI 单轮工具调用 + 自研外层循环:多轮编排、权限检查、重试、上下文压缩 |
 | **隔离** | 每个 Session 独占一个沙箱容器;用户文件 / 命令工具在沙箱内执行,控制面逻辑在宿主机 |
-| **规模** | 本地 Docker,生产 GKE 动态容器池;多租户(工作区 / 项目 / 权限继承) |
+| **规模** | 本地 Docker,生产无影云桌面;多租户(工作区 / 项目 / 权限继承) |
 
 ---
 
@@ -49,8 +49,8 @@
 │  + LiteLLM        │   edit / glob / grep ...     │
 └──────────────────┴────────────────────────────┘
                         │
-                 Docker 容器  (本地)
-                 K8s 容器池   (GKE 生产)
+                 Docker 容器      (本地)
+                 无影云桌面        (生产)
 ```
 
 ### 执行边界(宿主机 vs 沙箱)
@@ -70,7 +70,7 @@
 ## 核心能力
 
 - **Agent 循环**(`backend/agent/`):`loop.py` 外层编排、`compaction.py` 上下文自动摘要、`caching.py` 提示缓存、`retry.py` 重试、`hooks.py` 生命周期钩子。
-- **沙箱管理**(`backend/sandbox/`):`docker.py` + `kubernetes.py` 双引擎、`manager.py` 生命周期(Session 开始建、结束销毁)、GKE 动态容器池。
+- **沙箱管理**(`backend/sandbox/`):`wuying.py`(生产引擎)、`docker.py` / `kubernetes.py`(遗留引擎)、`manager.py` 生命周期(Session 开始建、结束销毁)。
 - **22+ 内置工具**:bash、read、write、edit、glob、grep、mcp、skill、web_fetch、web_search、question、todo、plan、batch……
 - **细粒度权限**(`backend/permission/`):逐工具审批流 + 用户交互式确认。
 - **三层上下文 / 记忆**:内存当前轮 → 数据库压缩历史 → 长期 instruction 文件。
@@ -95,7 +95,7 @@
 - xterm.js 6(PTY)· Vitest + Testing Library · Playwright
 
 **基础设施**
-- GCP GKE(K8s)· Docker Compose(本地依赖)· Makefile 工作流 · Python/Node monorepo
+- AWS EC2(开发)+ 阿里云 ECS(生产),均以 Docker Compose 运行 · Docker Compose(本地依赖)· Makefile 工作流 · Python/Node monorepo
 
 ---
 
@@ -117,9 +117,9 @@ OpenBox/
 ├── frontend-v2/      # 主推的 React 19 UI（持续开发）
 ├── frontend/         # 旧版 v1 UI（仅作迁移参考）
 ├── container/        # 沙箱镜像(action_server)
-├── k8s/              # GKE 部署清单
+├── k8s/              # 遗留 GKE/AKS 清单(冻结，非生产路径)
 ├── docs/             # 架构与设计文档
-└── docker-compose.yml
+└── docker-compose.yml   # 仅本地开发;生产 compose 在服务器上(见 docs/DEPLOY.md)
 ```
 
 ---
@@ -153,13 +153,13 @@ npm run check          # i18n 对齐 + ESLint + TypeScript + Vitest
 npx playwright test    # E2E；需要后端和 devtest 账号
 ```
 
-v2 生产镜像定义在 `frontend-v2/Dockerfile`。GKE 部署清单见 `k8s/`,详见 `docs/gke.md`。
+v2 生产镜像定义在 `frontend-v2/Dockerfile`。镜像如何构建、传输并发布到 AWS 开发机与阿里云生产机，见 [docs/DEPLOY.md](docs/DEPLOY.md)。`k8s/` 里的 GKE/AKS 清单属冻结遗留内容。
 
 ---
 
 ## 文档
 
-设计文档见 [`docs/`](docs/):`OPENAGENT_DESIGN.md`(Agent 架构)、`FRONTEND_DESIGN.md`、`API_INTERFACES.md`、`MULTI_USER_STORAGE_PLAN.md`、`CRON_SYSTEM_PLAN.md`、`PTY_UPGRADE_PLAN.md`、`PERFORMANCE_OPTIMIZATION.md`、`gke.md`、[`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md)(把沙箱跑在阿里云无影云电脑上)。
+设计文档见 [`docs/`](docs/):`OPENAGENT_DESIGN.md`(Agent 架构)、`FRONTEND_DESIGN.md`、`API_INTERFACES.md`、`MULTI_USER_STORAGE_PLAN.md`、`CRON_SYSTEM_PLAN.md`、`PTY_UPGRADE_PLAN.md`、`PERFORMANCE_OPTIMIZATION.md`、[`DEPLOY.md`](docs/DEPLOY.md)(AWS 开发 + 阿里云生产部署)、[`LOGTO_PROD.md`](docs/LOGTO_PROD.md)(各环境 Logto SSO)、[`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md)(把沙箱跑在阿里云无影云电脑上)。
 
 ---
 

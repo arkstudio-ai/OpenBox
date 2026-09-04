@@ -417,6 +417,70 @@ async def kill_command(req: KillRequest):
 
 
 # --- 执行命令 ---
+# The sandbox root is mounted read-only — only /workspace and /tmp accept
+# writes — and systemd starts this service with no HOME. A command that
+# expanded `~` therefore aimed at `/`: `mkdir -p ~/.local/bin` became
+# `/.local/bin` and died with "read-only file system". The sandbox user's
+# passwd row already points at a writable home, so use that for every child.
+_DEFAULT_SANDBOX_HOME = "/workspace/.openbox-home"
+
+
+def _sandbox_home() -> str:
+    """Writable home for spawned commands, matched to the user running them.
+
+    The home has to belong to whoever actually executes the command. Pointing
+    a root-run command at the sandbox user's home looked harmless and was not:
+    root created ~/.local and ~/.npm there with its own ownership and mode
+    0750, and the sandbox user — which is who Chrome and ibus-daemon run as —
+    could no longer write its own home. ibus then died on
+    `PermissionError: '/workspace/.openbox-home/.local/share'` and Chinese
+    pinyin input stopped working on the desktop.
+
+    So: the sandbox user gets its passwd home; anyone else (root, today) gets a
+    sibling of their own. Both live under /workspace because the container's
+    root filesystem is read-only.
+    """
+    try:
+        import pwd
+
+        entry = pwd.getpwuid(os.geteuid())
+        if entry.pw_name == "sandbox":
+            return entry.pw_dir
+    except KeyError:
+        pass
+
+    try:
+        import pwd
+
+        sandbox_home = pwd.getpwnam("sandbox").pw_dir
+    except KeyError:
+        sandbox_home = _DEFAULT_SANDBOX_HOME
+    # A sibling, not a subdirectory: nothing this user writes may land inside
+    # the sandbox user's home. Never /root — that is on the read-only root.
+    home = f"{sandbox_home.rstrip('/')}-{os.geteuid()}"
+    try:
+        os.makedirs(home, mode=0o700, exist_ok=True)
+    except OSError:
+        return os.environ.get("HOME") or _DEFAULT_SANDBOX_HOME
+    return home
+
+
+def _exec_env() -> dict[str, str]:
+    """Environment for a shell command run on the agent's behalf.
+
+    Inherited, minus the secrets. With no explicit `env` the child received
+    this process's own SESSION_API_KEY, so anything the agent ran could read
+    the sandbox's credential and impersonate the backend against it.
+    `_MCP_ENV_DENYLIST` already covers that set for MCP children; the execute
+    paths need the same treatment.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _MCP_ENV_DENYLIST}
+    env["HOME"] = _sandbox_home()
+    if not env.get("USER"):
+        env["USER"] = "sandbox"
+    return env
+
+
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest, request: Request):
     started = time.monotonic()
@@ -433,6 +497,7 @@ async def execute(req: ExecuteRequest, request: Request):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
+            env=_exec_env(),
             start_new_session=True,
         )
         try:
@@ -670,6 +735,7 @@ async def execute_stream(req: ExecuteRequest, request: Request):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir,
+                env=_exec_env(),
                 start_new_session=True,
             )
         except Exception as e:
@@ -956,7 +1022,9 @@ async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
             os.setuid(pw.pw_uid)
             home = pw.pw_dir
         except (KeyError, PermissionError):
-            home = os.environ.get("HOME", "/root")
+            # /root sits on the read-only root filesystem; _sandbox_home()
+            # resolves to the writable /workspace/.openbox-home instead.
+            home = _sandbox_home()
 
         env = {
             "TERM": "xterm-256color",

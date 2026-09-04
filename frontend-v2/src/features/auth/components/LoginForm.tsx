@@ -6,6 +6,7 @@ import { cn } from "@/shared/lib/cn"
 import { useLogin, useCompleteAuth } from "@/features/auth/api/auth"
 import { useAuthErrorMessage } from "@/features/auth/lib/errors"
 import { TextField, PasswordField } from "@/features/auth/components/AuthFields"
+import { SsoButton } from "@/features/auth/components/SsoButton"
 
 /** Card content for the login route (AuthShell supplies the card shell). */
 export function LoginForm() {
@@ -82,6 +83,9 @@ export function LoginForm() {
       >
         {login.isPending ? t("signingIn") : t("signInBtn")}
       </button>
+
+      {/* Renders nothing unless the server has Logto configured. */}
+      <SsoButton />
 
       <span className="mt-5 text-2xs leading-relaxed text-n600">{t("legal")}</span>
       <Link to={paths.register} className="mt-3.5 text-xs text-a700 hover:text-ink">

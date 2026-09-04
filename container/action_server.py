@@ -423,15 +423,43 @@ _DEFAULT_SANDBOX_HOME = "/workspace/.openbox-home"
 
 
 def _sandbox_home() -> str:
-    """Writable home for spawned commands, per the sandbox user's passwd row."""
+    """Writable home for spawned commands, matched to the user running them.
+
+    The home has to belong to whoever actually executes the command. Pointing
+    a root-run command at the sandbox user's home looked harmless and was not:
+    root created ~/.local and ~/.npm there with its own ownership and mode
+    0750, and the sandbox user — which is who Chrome and ibus-daemon run as —
+    could no longer write its own home. ibus then died on
+    `PermissionError: '/workspace/.openbox-home/.local/share'` and Chinese
+    pinyin input stopped working on the desktop.
+
+    So: the sandbox user gets its passwd home; anyone else (root, today) gets a
+    sibling of their own. Both live under /workspace because the container's
+    root filesystem is read-only.
+    """
     try:
         import pwd
 
-        return pwd.getpwnam("sandbox").pw_dir
+        entry = pwd.getpwuid(os.geteuid())
+        if entry.pw_name == "sandbox":
+            return entry.pw_dir
     except KeyError:
         pass
-    # Never fall back to /root: it lives on the read-only root filesystem.
-    return os.environ.get("HOME") or _DEFAULT_SANDBOX_HOME
+
+    try:
+        import pwd
+
+        sandbox_home = pwd.getpwnam("sandbox").pw_dir
+    except KeyError:
+        sandbox_home = _DEFAULT_SANDBOX_HOME
+    # A sibling, not a subdirectory: nothing this user writes may land inside
+    # the sandbox user's home. Never /root — that is on the read-only root.
+    home = f"{sandbox_home.rstrip('/')}-{os.geteuid()}"
+    try:
+        os.makedirs(home, mode=0o700, exist_ok=True)
+    except OSError:
+        return os.environ.get("HOME") or _DEFAULT_SANDBOX_HOME
+    return home
 
 
 def _exec_env() -> dict[str, str]:

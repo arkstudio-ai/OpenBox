@@ -10,7 +10,11 @@ from sandbox.client import SandboxClient, USER_SCOPE_HEADER, user_scope_for
 
 
 @pytest.fixture
-def manager():
+def manager(monkeypatch):
+    async def legacy_owner(_session_id: str, user_id: str) -> str:
+        return user_id
+
+    monkeypatch.setattr("sandbox.ownership.owner_for_session", legacy_owner)
     return SandboxManager()
 
 

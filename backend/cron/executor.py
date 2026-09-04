@@ -66,9 +66,12 @@ async def execute_cron_job(job: dict) -> dict:
         from sandbox import provider
 
         if provider.routes_per_user:
-            from sandbox.ownership import owner_for
+            workspace_id = job.get("workspace_id")
+            if not workspace_id:
+                from sandbox.ownership import owner_for
 
-            await provider.resolve_user_container(await owner_for(user_id))
+                workspace_id = await owner_for(user_id)
+            await provider.resolve_user_container(workspace_id)
 
         # 1. Generate session summary (or reuse cache)
         context_summary = await _get_session_summary(job)

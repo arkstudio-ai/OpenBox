@@ -28,7 +28,11 @@ async def terminal_websocket(websocket: WebSocket, container_id: str, ticket: st
     await websocket.accept()
 
     try:
-        info = await provider.get_container(container_id, user_id=user_id)
+        from sandbox.ownership import owner_for
+
+        info = await provider.get_container(
+            container_id, user_id=await owner_for(user_id)
+        )
     except ValueError:
         await websocket.send_json({"type": "error", "data": "Container not found"})
         await websocket.close()

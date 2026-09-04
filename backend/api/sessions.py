@@ -191,7 +191,9 @@ async def sandbox_status(current_user: dict = Depends(get_current_user)):
     """Check if a sandbox container is available and healthy."""
     user_id = current_user["user_id"]
     from sandbox.manager import sandbox_manager
-    return await sandbox_manager.check_health(user_id=user_id)
+    return await sandbox_manager.check_health(
+        user_id=user_id, workspace_id=current_user["workspace_id"]
+    )
 
 
 @router.get("/session/{session_id}/sandbox")
@@ -202,11 +204,13 @@ async def get_session_sandbox(session_id: str, current_user: dict = Depends(get_
 
     from sandbox.manager import sandbox_manager
     info = sandbox_manager.get_info(session_id)
-    if info and info.user_id and info.user_id != user_id:
+    if info and info.user_id and info.user_id != current_user["workspace_id"]:
         return {"available": False}
     if not info:
         # No sandbox tracked for this session — fall back to health check
-        health = await sandbox_manager.check_health(user_id=user_id)
+        health = await sandbox_manager.check_health(
+            user_id=user_id, workspace_id=current_user["workspace_id"]
+        )
         if health.get("available"):
             return {
                 "available": True,
@@ -318,17 +322,17 @@ async def update_session(session_id: str, body: UpdateSessionBody, current_user:
 
 # ─── Messages ───
 
-async def _desktop_route_preflight(user_id: str):
+async def _desktop_route_preflight(current_user: dict):
     """Return a stable 503 before accepting a turn with no runnable desktop."""
     from sandbox import provider
 
     if not provider.routes_per_user:
         return None
-    from sandbox.ownership import owner_for
+    from sandbox.ownership import owner_for_request
     from sandbox.wuying_desktop_service import DesktopNotReady
 
     try:
-        await provider.resolve_user_container(await owner_for(user_id))
+        await provider.resolve_user_container(await owner_for_request(current_user))
     except DesktopNotReady as exc:
         return JSONResponse(
             status_code=503,
@@ -363,7 +367,7 @@ async def send_message(
     """Send a message synchronously (blocks until agent completes)."""
     user_id = current_user["user_id"]
     session = await _require_session_owned(session_id, current_user)
-    not_ready = await _desktop_route_preflight(user_id)
+    not_ready = await _desktop_route_preflight(current_user)
     if not_ready:
         return not_ready
     if session.status in _ACTIVE_SESSION_STATUSES:
@@ -415,7 +419,7 @@ async def send_message_async(
     user_id = current_user["user_id"]
     config = get_config()
     session = await _require_session_owned(session_id, current_user)
-    not_ready = await _desktop_route_preflight(user_id)
+    not_ready = await _desktop_route_preflight(current_user)
     if not_ready:
         return not_ready
     if session.status in _ACTIVE_SESSION_STATUSES:

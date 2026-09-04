@@ -4,6 +4,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from sandbox import provider
 from models.container import ListFilesRequest
 
@@ -13,8 +14,12 @@ _UPLOAD_CHUNK = 48 * 1024  # keeps each base64 shell command well under ARG_MAX
 router = APIRouter(
     prefix="/api/containers/{container_id}/files",
     tags=["files"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_workspace)],
 )
+
+
+def _owner_id(current_user: dict) -> str:
+    return current_user.get("workspace_id") or current_user["user_id"]
 
 
 @router.post("/list")
@@ -25,7 +30,8 @@ async def list_files(
 ):
     try:
         resp = await provider.forward_to_container(
-            container_id, "POST", "/list_files", user_id=current_user["user_id"], json=req.model_dump()
+            container_id, "POST", "/list_files",
+            user_id=_owner_id(current_user), json=req.model_dump()
         )
         return resp.json()
     except ValueError as e:
@@ -57,7 +63,7 @@ async def upload_file(
     async def run(cmd: str):
         resp = await provider.forward_to_container(
             container_id, "POST", "/execute",
-            user_id=current_user["user_id"],
+            user_id=_owner_id(current_user),
             json={"command": cmd, "timeout": 30},
         )
         if resp.status_code >= 400:
@@ -99,7 +105,7 @@ async def search_files(
     try:
         resp = await provider.forward_to_container(
             container_id, "POST", "/glob",
-            user_id=current_user["user_id"],
+            user_id=_owner_id(current_user),
             json={"pattern": "**/*", "path": path},
         )
         if resp.status_code >= 400:
@@ -136,7 +142,7 @@ async def file_content(
     try:
         resp = await provider.forward_to_container(
             container_id, "POST", "/read_file",
-            user_id=current_user["user_id"],
+            user_id=_owner_id(current_user),
             json={"path": path, "offset": 0, "limit": 5000},
         )
         if resp.status_code == 404:
@@ -166,7 +172,8 @@ async def file_content(
 async def system_info(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
         resp = await provider.forward_to_container(
-            container_id, "GET", "/system_info", user_id=current_user["user_id"]
+            container_id, "GET", "/system_info",
+            user_id=_owner_id(current_user),
         )
         return resp.json()
     except ValueError as e:

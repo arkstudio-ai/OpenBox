@@ -166,6 +166,11 @@ async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):
     route_b = await provider.resolve_user_container("channel-owner-b")
     assert (route_a.id, route_a.port, route_a.api_key) == ("ecd-channel-a", 18821, "key-a")
     assert (route_b.id, route_b.port, route_b.api_key) == ("ecd-channel-b", 18822, "key-b")
+    assert (
+        await provider.get_container("ecd-channel-a", user_id="channel-owner-a")
+    ).id == "ecd-channel-a"
+    with pytest.raises(PermissionError):
+        await provider.get_container("ecd-channel-a", user_id="channel-owner-b")
 
     await cloud_desktop_repo.update(one["id"], tunnel_state="revoked")
     with pytest.raises(DesktopNotReady):

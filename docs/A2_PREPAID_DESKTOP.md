@@ -1,10 +1,9 @@
 # A2 · 包月开通参数 —— 独立执行单
 
 > 2026-09-03。从 `DETAILED_PLAN_M1_M2.md` v2 的 A2 抽出，给 Codex 目标模式单独执行。规模小：一个会话。
-> **本项不买任何包月桌面，不改 gw2 的计费类型。** 交付的是代码、询价校验与鬼桌面语义，真正切 PrePaid 在 A3 入池时做。
+> 原执行边界经产品决策放宽：本项允许为验收新购 **至多一台** 包月桌面，验收完成后立即退订；不改 gw2 的常驻计费配置，现有上海包月机仍留给 A3。
 >
-> 执行者须知：只做本文范围；任何会调用 `CreateDesktops(charge_type=PrePaid)` 的动作都不许发生（每次 = 一个月桌面钱）；
-> 遇到 §9 情形停下来报告。
+> 执行者须知：真机验收限上海、`eds.enterprise_office.4c8g`、50G、1 月、`auto_pay=true`、`auto_renew=false`，询价不得超过 ¥300；使用唯一验收标签，验收后先确认实例唯一性和退款金额，再退订。遇到 §9 情形停下来报告。
 
 ---
 
@@ -64,7 +63,7 @@
 
 ### 4.2 `wuying_ecd.py`
 - `create_desktop`：`charge_type == "PrePaid"` 时追加 `period / period_unit / auto_pay / auto_renew`；PostPaid 不传（用 kwargs 拼装，单测断言两种形态）。
-- 新增 `describe_price(charge_type: str, *, period=None, period_unit=None, amount=1) -> dict{"currency","trade_price","original_price","raw"}`：`DescribePriceRequest(region_id, resource_type="Desktop", instance_type=config.wuying_desktop_type, charge_type, period, period_unit, amount, root_disk_size_gib=config.wuying_system_disk_size, os_type="Linux")`；PostPaid 不传 period。响应字段名以实调为准，先打印 raw 再定解析（**不要猜字段**）。
+- 新增 `describe_price(charge_type: str, *, period=None, period_unit=None, amount=1) -> dict{"currency","trade_price","original_price","raw"}`：当前 ECD `DescribePriceRequest` 实际没有 `charge_type` 字段；用 `period / period_unit` 表达包月询价，PostPaid 则不传这两个字段。其余参数为 `region_id, resource_type="Desktop", instance_type, amount, root_disk_size_gib, os_type="Linux"`。响应先保留 raw，再从 `PriceInfo.Price` 解析。
 - 新增 `renew_desktop(desktop_id, period, period_unit, auto_pay=True, auto_renew=False)`：`RenewDesktopsRequest(region_id, desktop_id=[...], period, period_unit, auto_pay, auto_renew)`，套 `_retry_throttled`。**本项只封装 + 单测打桩，不实调**。
 - `describe_desktop()` 返回体加 `charge_type`、`expired_time`（原样字符串）。
 
@@ -86,7 +85,7 @@ PostPaid: 现行为不变（revoke → delete_desktop → 软删）
 - 文档：`docs/WUYING_SANDBOX.md` 加「包月参数」小节，写清四个配置项、`auto_pay` 的坑、鬼桌面两种分支、Expired 观察待办。
 
 ### 4.6 不做但要记录
-- Expired 保留天数、Expired 期间 RenewDesktops 能否恢复：等 `ecd-8zp47qagrsc95h67t` 10 月初自然到期时观察，在 `WUYING_SANDBOX.md` 留「待观察」条目并写日期。
+- 官方文档已确认 Expired 后保留 15 天、期间可续费、第 16 天自动释放；`RenewDesktops` 对现有上海桌面的真实恢复表现仍等 `ecd-8zp47qagrsc95h67t` 10 月初自然到期时观察。
 
 ---
 
@@ -101,7 +100,7 @@ PostPaid: 现行为不变（revoke → delete_desktop → 软删）
 | AC-5 | 数据 | 迁移可升降；`provision` 后行有 `charge_type`；`_resync` 后 `expires_at` 有值（用打桩的 `describe_desktop` 返回 `expired_time`） |
 | AC-6 | 冒烟保护 | PrePaid 配置下 `full` / `channel` 不带 `--allow-prepaid` 退出 2 且未调 `CreateDesktops`（单测打桩断言） |
 | AC-7 | 测试与不越界 | 后端单测除既有 4 个视频配置用例外全绿；`git diff --stat main` 只含 `core/config.py`、`.env.example`、`sandbox/wuying_ecd.py`、`sandbox/wuying_desktop_service.py`、`db/models/cloud_desktop.py`、一个迁移、`scripts/wuying_provision_smoke.py`、测试、`docs/WUYING_SANDBOX.md` |
-| AC-8 | 零采购 | 执行期间 `describe-desktops`（cn-shanghai / cn-hangzhou）无新增桌面；gw2 `backend.env` 的 `WUYING_CHARGE_TYPE` 未改 |
+| AC-8 | 单台闭环 | 前后清单证明只新增一台唯一验收机；创建、Running、所有权、ticket、通道、bash 均通过；随后退订且清单/退款结果证明该机不再占用；gw2 `backend.env` 的 `WUYING_CHARGE_TYPE` 未改 |
 
 ---
 
@@ -117,7 +116,7 @@ docker exec openbox-backend-1 uv run python scripts/wuying_provision_smoke.py pr
 1. `git log --oneline main..<branch>`、`git diff --stat main`、`alembic heads`。
 2. pytest 输出。
 3. `price` 层完整输出（含 raw JSON）。
-4. 执行前后 `describe-desktops` 两地域的桌面 id 列表（证明零新增）。
+4. 执行前后 `describe-desktops` 两地域的桌面 id 列表、唯一验收标签、退订结果（证明至多一台且已回收）。
 5. gw2 `grep WUYING_CHARGE_TYPE /opt/openbox/config/backend.env`。
 6. §8 填好。
 
@@ -127,7 +126,8 @@ docker exec openbox-backend-1 uv run python scripts/wuying_provision_smoke.py pr
 - 偏离：
 
 ## 9. 停下来报告
-- 任何路径会真的发出 PrePaid `CreateDesktops`。
+- 真机创建将超过一台、询价超过 ¥300、或实例不能由唯一验收标签确认。
+- 退款金额不大于 0，或退款 API 参数/目标身份存在歧义。
 - 接缝尚未合入 main。
 - `DescribePrice` 返回结构与预期不符需要猜字段。
 - 需要改通道/路由代码才能过验收。

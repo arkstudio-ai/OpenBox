@@ -9,6 +9,7 @@ import { Maximize2, Minimize2, RotateCw, Upload } from "lucide-react"
 import { http, ApiError } from "@/shared/api/http"
 import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 const SDK_URL =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/WuyingWebSDK.js"
@@ -560,6 +561,10 @@ function StageOverlay({
   onProvision: () => void
 }) {
   const { t } = useTranslation("workbench")
+  const canProvision = useWorkspaceStore((state) => {
+    const selected = state.items.find((item) => item.id === state.currentId)
+    return selected?.role === "owner" || selected?.role === "admin"
+  })
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card">
       {phase === "loading" ? (
@@ -571,13 +576,17 @@ function StageOverlay({
         <>
           <span className="text-base text-n800">{t("desktop.provision")}</span>
           <span className="max-w-90 text-center text-sm text-n600">{t("desktop.provisionHint")}</span>
-          <button
-            type="button"
-            onClick={onProvision}
-            className="rounded-full bg-ink px-4 py-1.5 text-sm text-bg hover:bg-a800"
-          >
-            {t("desktop.provisionAction")}
-          </button>
+          {canProvision ? (
+            <button
+              type="button"
+              onClick={onProvision}
+              className="rounded-full bg-ink px-4 py-1.5 text-sm text-bg hover:bg-a800"
+            >
+              {t("desktop.provisionAction")}
+            </button>
+          ) : (
+            <span className="text-sm text-n600">{t("desktop.provisionRestricted")}</span>
+          )}
         </>
       ) : (
         <>

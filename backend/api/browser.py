@@ -19,12 +19,17 @@ from pydantic import BaseModel
 
 from api.dev_browser import _active_ws
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from core.log import create_logger
 from session.browser_pref import get_browser_mode, set_browser_mode
 
 log = create_logger("api.browser")
 
-router = APIRouter(prefix="/api/browser", tags=["browser"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/api/browser",
+    tags=["browser"],
+    dependencies=[Depends(get_workspace)],
+)
 
 _MODES = ("auto", "local", "remote")
 
@@ -33,7 +38,7 @@ class PreferenceUpdate(BaseModel):
     mode: str
 
 
-async def _existing_client(user_id: str):
+async def _existing_client(current_user: dict):
     """A client for this user's sandbox, without creating one.
 
     Deliberately not `get_client_any`, which acquires a sandbox when none is
@@ -49,16 +54,16 @@ async def _existing_client(user_id: str):
     from sandbox.client import SandboxClient, user_scope_for
     from sandbox.manager import sandbox_manager
 
+    from sandbox.ownership import owner_for_request
+
+    owner = await owner_for_request(current_user)
     for key, client in sandbox_manager._clients.items():
         sandbox = sandbox_manager._project_map.get(key)
-        if sandbox and sandbox.user_id == user_id:
+        if sandbox and sandbox.user_id == owner:
             return client
 
     try:
         from sandbox import provider
-        from sandbox.ownership import owner_for
-
-        owner = await owner_for(user_id)
         container = await provider.resolve_user_container(owner)
         if not container or not container.port:
             return None
@@ -67,14 +72,14 @@ async def _existing_client(user_id: str):
             port=container.port,
             api_key=container.api_key or "",
             base_url=getattr(provider, "client_base_url", None),
-            user_scope=user_scope_for(user_id),
+            user_scope=user_scope_for(current_user["user_id"]),
         )
     except Exception as e:
         log.debug(f"No existing sandbox to inspect: {e}")
         return None
 
 
-async def _local_status(user_id: str) -> dict:
+async def _local_status(current_user: dict) -> dict:
     """Availability of the cloud desktop's Chrome for this user.
 
     The probe reports the two endpoints; this flattens them into the
@@ -84,7 +89,7 @@ async def _local_status(user_id: str) -> dict:
     """
     from sandbox.browser import browser_status
 
-    client = await _existing_client(user_id)
+    client = await _existing_client(current_user)
     if client is None:
         return {"available": False, "reason": "no_sandbox"}
 
@@ -106,11 +111,12 @@ async def _local_status(user_id: str) -> dict:
     }
 
 
-async def _build_status(user_id: str) -> dict:
+async def _build_status(current_user: dict) -> dict:
     """The effective mode plus the live state of each side."""
+    user_id = current_user["user_id"]
     preference = await get_browser_mode(user_id)
     remote_connected = bool(_active_ws.get(user_id))
-    local = await _local_status(user_id)
+    local = await _local_status(current_user)
 
     # local is pinned; auto and remote ride the extension and fall back to local.
     effective = "remote" if (preference != "local" and remote_connected) else "local"
@@ -126,7 +132,7 @@ async def _build_status(user_id: str) -> dict:
 @router.get("/status")
 async def get_status(current_user: dict = Depends(get_current_user)):
     """What browser the agent would drive right now, and why."""
-    return await _build_status(current_user["user_id"])
+    return await _build_status(current_user)
 
 
 @router.put("/preference")
@@ -137,4 +143,4 @@ async def set_preference(body: PreferenceUpdate, current_user: dict = Depends(ge
         await set_browser_mode(user_id, (body.mode or "").strip())
     except ValueError:
         return JSONResponse({"error": "invalid_mode", "allowed": list(_MODES)}, status_code=400)
-    return await _build_status(user_id)
+    return await _build_status(current_user)

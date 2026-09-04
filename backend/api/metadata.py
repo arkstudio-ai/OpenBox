@@ -11,6 +11,16 @@ from pydantic import BaseModel
 router = APIRouter(dependencies=[Depends(get_workspace)])
 
 
+def _sandbox_scope(current_user: dict) -> dict[str, str]:
+    """Pass workspace routing when a real request resolved one.
+
+    Keeping the argument absent for direct single-user callers also preserves
+    the lightweight test/dev contract of ``get_client_any(user_id=...)``.
+    """
+    workspace_id = current_user.get("workspace_id")
+    return {"workspace_id": workspace_id} if workspace_id else {}
+
+
 class InstallSkillBody(BaseModel):
     url: str | None = None
     name: str | None = None
@@ -177,7 +187,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
     merged: list[dict] = []
     client = None
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             container = await client.list_skills()
             if isinstance(container, list):
@@ -292,7 +302,7 @@ async def get_skill(name: str, current_user: dict = Depends(get_current_user)):
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             return await client.get_skill(name)
     except Exception:
@@ -319,7 +329,7 @@ async def publish_skill(name: str, current_user: dict = Depends(get_current_user
         # installs and manually uploaded archives must never become publishable
         # merely because somebody guessed this endpoint.
         raise HTTPException(status_code=404, detail="Personal skill not found")
-    client = await sandbox_manager.get_client_any(user_id=user_id)
+    client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
     if not client:
         raise HTTPException(status_code=503, detail="No sandbox available")
     try:
@@ -365,7 +375,7 @@ async def download_skill(name: str, current_user: dict = Depends(get_current_use
     # a store install reusing the same slug must not overwrite the author's
     # durable package.
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             info = await client.get_skill(owned["install_dir"])
             annotated = await annotate_installed_skills(user_id, [info], workspace_id)
@@ -399,7 +409,7 @@ async def install_skill(body: InstallSkillBody, current_user: dict = Depends(get
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available. Send a message first to create one.")
         return await client.install_skill(
@@ -420,7 +430,7 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
     user_id = current_user["user_id"]
     workspace_id = current_user.get("workspace_id")
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
 
@@ -471,7 +481,7 @@ async def upload_skill_archive(
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         file_bytes = await file.read()
@@ -504,7 +514,7 @@ async def get_catalog(current_user: dict = Depends(get_current_user)):
     installed_skills: set[str] = set()
     installed_mcp: set[str] = set()
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             for s in await client.list_skills() or []:
                 if s.get("name"):
@@ -577,7 +587,7 @@ async def install_from_catalog(
                 detail=f"Unknown catalog entry: {body.kind}:{body.id}",
             )
 
-    client = await sandbox_manager.get_client_any(user_id=user_id)
+    client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
     if not client:
         raise HTTPException(status_code=503, detail="No sandbox available")
 
@@ -733,7 +743,7 @@ async def get_mcp_status(current_user: dict = Depends(get_current_user)):
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             return await client.list_mcp_servers()
     except Exception:
@@ -747,7 +757,7 @@ async def add_mcp_server(body: AddMcpServerBody, current_user: dict = Depends(ge
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         config = body.model_dump(exclude={"name"}, exclude_none=True)
@@ -764,7 +774,7 @@ async def remove_mcp_server(name: str, current_user: dict = Depends(get_current_
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         return await client.remove_mcp_server(name)
@@ -780,7 +790,7 @@ async def connect_mcp(name: str, current_user: dict = Depends(get_current_user))
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         return await client.connect_mcp(name)
@@ -796,7 +806,7 @@ async def disconnect_mcp(name: str, current_user: dict = Depends(get_current_use
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         return await client.disconnect_mcp(name)
@@ -812,7 +822,7 @@ async def refresh_mcp(name: str, current_user: dict = Depends(get_current_user))
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         result = await client.refresh_mcp_server(name)
@@ -832,7 +842,7 @@ async def list_mcp_resources(current_user: dict = Depends(get_current_user)):
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             return await client.list_mcp_resources()
     except Exception:
@@ -851,7 +861,7 @@ async def read_mcp_resource(body: ReadResourceBody, current_user: dict = Depends
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         return await client.read_mcp_resource(body.server, body.uri)
@@ -867,7 +877,7 @@ async def list_mcp_prompts(current_user: dict = Depends(get_current_user)):
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if client:
             return await client.list_mcp_prompts()
     except Exception:
@@ -887,7 +897,7 @@ async def get_mcp_prompt(body: GetPromptBody, current_user: dict = Depends(get_c
     from sandbox.manager import sandbox_manager
     user_id = current_user["user_id"]
     try:
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
         return await client.get_mcp_prompt(body.server, body.name, body.arguments)

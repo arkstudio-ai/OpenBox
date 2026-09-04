@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, H
 
 from auth.ticket import consume_ticket
 from auth.middleware import is_auth_enabled, get_current_user
+from auth.workspace import get_workspace
 from models.container import ContainerStatus
 from sandbox import provider
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 _http_router = APIRouter(
     prefix="/api/containers",
     tags=["dev-browser"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_workspace)],
 )
 
 _ws_router = APIRouter()
@@ -30,9 +31,12 @@ _active_ws: dict[str, dict] = {}
 
 @_http_router.post("/{container_id}/dev-browser/start")
 async def start_dev_browser(container_id: str, current_user: dict = Depends(get_current_user)):
+    from sandbox.ownership import owner_for_request
+
     try:
         resp = await provider.forward_to_container(
-            container_id, "POST", "/dev-browser/start", user_id=current_user["user_id"]
+            container_id, "POST", "/dev-browser/start",
+            user_id=await owner_for_request(current_user),
         )
         return resp.json()
     except ValueError as e:
@@ -45,9 +49,12 @@ async def start_dev_browser(container_id: str, current_user: dict = Depends(get_
 
 @_http_router.post("/{container_id}/dev-browser/stop")
 async def stop_dev_browser(container_id: str, current_user: dict = Depends(get_current_user)):
+    from sandbox.ownership import owner_for_request
+
     try:
         resp = await provider.forward_to_container(
-            container_id, "POST", "/dev-browser/stop", user_id=current_user["user_id"]
+            container_id, "POST", "/dev-browser/stop",
+            user_id=await owner_for_request(current_user),
         )
         return resp.json()
     except ValueError as e:
@@ -60,9 +67,12 @@ async def stop_dev_browser(container_id: str, current_user: dict = Depends(get_c
 
 @_http_router.get("/{container_id}/dev-browser/status")
 async def get_dev_browser_status_authed(container_id: str, current_user: dict = Depends(get_current_user)):
+    from sandbox.ownership import owner_for_request
+
     try:
         resp = await provider.forward_to_container(
-            container_id, "GET", "/dev-browser/status", user_id=current_user["user_id"]
+            container_id, "GET", "/dev-browser/status",
+            user_id=await owner_for_request(current_user),
         )
         return resp.json()
     except ValueError as e:

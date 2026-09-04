@@ -12,6 +12,12 @@ core = importlib.import_module(
 business = importlib.import_module(
     "db.migrations.versions.d4f6a8b0c2e5_workspace_business_scope"
 )
+desktop_workspace = importlib.import_module(
+    "db.migrations.versions.e6a8c0d2f4b7_workspace_cloud_desktops"
+)
+prepaid = importlib.import_module(
+    "db.migrations.versions.f7b9d1e3a5c8_prepaid_desktop_metadata"
+)
 
 
 def _legacy_schema() -> tuple[sa.Engine, sa.MetaData]:
@@ -130,3 +136,65 @@ def test_workspace_migrations_backfill_non_null_and_round_trip():
             assert connection.execute(
                 sa.text(f"SELECT count(*) FROM {table} WHERE workspace_id IS NULL")
             ).scalar_one() == 0
+
+
+def test_cloud_desktop_workspace_and_prepaid_migrations_round_trip():
+    engine = sa.create_engine("sqlite://")
+    metadata = sa.MetaData()
+    users = sa.Table(
+        "users",
+        metadata,
+        sa.Column("id", sa.String(64), primary_key=True),
+        sa.Column("default_workspace_id", sa.String(64), nullable=False),
+    )
+    sa.Table(
+        "workspaces",
+        metadata,
+        sa.Column("id", sa.String(64), primary_key=True),
+        sa.Column("owner_user_id", sa.String(64), nullable=False),
+    )
+    desktops = sa.Table(
+        "cloud_desktops",
+        metadata,
+        sa.Column("id", sa.String(64), primary_key=True),
+        sa.Column("user_id", sa.String(64), nullable=False),
+        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+    )
+    sa.Index(
+        "ix_cloud_desktops_user_active",
+        desktops.c.user_id,
+        unique=True,
+        sqlite_where=desktops.c.is_deleted == sa.false(),
+    )
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text("INSERT INTO workspaces(id, owner_user_id) VALUES ('ws-1', 'u1')")
+        )
+        connection.execute(users.insert(), {"id": "u1", "default_workspace_id": "ws-1"})
+        connection.execute(desktops.insert(), {"id": "cld-1", "user_id": "u1"})
+
+        _run(connection, desktop_workspace, "upgrade")
+        _run(connection, prepaid, "upgrade")
+        row = connection.execute(
+            sa.text(
+                "SELECT workspace_id, charge_type, expires_at FROM cloud_desktops"
+            )
+        ).one()
+        assert row == ("ws-1", None, None)
+        columns = {c["name"]: c for c in sa.inspect(connection).get_columns("cloud_desktops")}
+        assert columns["workspace_id"]["nullable"] is False
+        assert columns["user_id"]["nullable"] is True
+
+        # Rows adopted from ECD tags need not have a triggering user.  A
+        # downgrade recovers the workspace owner instead of failing NOT NULL.
+        connection.execute(
+            sa.text("UPDATE cloud_desktops SET user_id = NULL WHERE id = 'cld-1'")
+        )
+
+        _run(connection, prepaid, "downgrade")
+        _run(connection, desktop_workspace, "downgrade")
+        assert connection.execute(
+            sa.text("SELECT user_id FROM cloud_desktops")
+        ).scalar_one() == "u1"

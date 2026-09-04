@@ -28,7 +28,7 @@ import hashlib
 from typing import Any
 
 from core.aliyun import load_credentials
-from core.config import get_config
+from core.config import ProvisioningConfigError, get_config
 from core.log import create_logger
 
 log = create_logger("sandbox.wuying_ecd")
@@ -37,16 +37,13 @@ log = create_logger("sandbox.wuying_ecd")
 _TAG_RESOURCE_TYPE = "ALIYUN::GWS::INSTANCE"
 
 TAG_USER = "openbox-user"
+TAG_WORKSPACE = "openbox-workspace"
 TAG_EU = "openbox-eu-id"
 TAG_ENV = "openbox-env"
 
 
 class DesktopOwnershipError(Exception):
     """The desktop exists but is not tagged to the requesting user."""
-
-
-class ProvisioningConfigError(Exception):
-    """per_user mode is enabled but required config is missing."""
 
 
 async def _retry_throttled(call, operation: str, attempts: int = 6):
@@ -237,8 +234,8 @@ async def remove_openbox_end_users(end_user_ids: list[str]) -> list[str]:
 # Desktop lifecycle
 # ---------------------------------------------------------------------------
 
-async def create_desktop(user_id: str, display_name: str | None = None) -> str:
-    """Create a desktop owned by this user's own EndUser; return desktop id."""
+async def create_desktop(workspace_id: str, display_name: str | None = None) -> str:
+    """Create a desktop owned by one workspace's EndUser; return desktop id."""
     from alibabacloud_ecd20200930 import models as ecd_models
 
     config = get_config()
@@ -259,13 +256,13 @@ async def create_desktop(user_id: str, display_name: str | None = None) -> str:
             "a desktop that would drift from what the agent screenshots"
         )
 
-    eu_id, _ = await ensure_end_user(user_id, display_name)
+    eu_id, _ = await ensure_end_user(workspace_id, display_name)
     client = ecd_client()
 
     # DesktopName must stay ascii-safe -> reuse eu_id; the human-readable name
     # lives on the EndUser's real_nick_name. Ownership/lookup always goes
     # through the openbox-user tag.
-    request = ecd_models.CreateDesktopsRequest(
+    request_kwargs: dict[str, Any] = dict(
         region_id=config.wuying_region_id,
         office_site_id=config.wuying_office_site_id,
         policy_group_id=config.wuying_policy_group_id,
@@ -274,7 +271,8 @@ async def create_desktop(user_id: str, display_name: str | None = None) -> str:
         amount=1,
         end_user_id=[eu_id],
         tag=[
-            ecd_models.CreateDesktopsRequestTag(key=TAG_USER, value=user_id),
+            ecd_models.CreateDesktopsRequestTag(key=TAG_USER, value=workspace_id),
+            ecd_models.CreateDesktopsRequestTag(key=TAG_WORKSPACE, value=workspace_id),
             ecd_models.CreateDesktopsRequestTag(key=TAG_EU, value=eu_id),
             ecd_models.CreateDesktopsRequestTag(key=TAG_ENV, value=config.wuying_env_tag),
         ],
@@ -284,12 +282,24 @@ async def create_desktop(user_id: str, display_name: str | None = None) -> str:
             system_disk_size=config.wuying_system_disk_size,
         ),
     )
-    resp = await client.create_desktops_async(request)
+    if config.wuying_charge_type == "PrePaid":
+        request_kwargs.update(
+            period=config.wuying_period,
+            period_unit=config.wuying_period_unit,
+            auto_pay=config.wuying_auto_pay,
+            auto_renew=config.wuying_auto_renew,
+        )
+    request = ecd_models.CreateDesktopsRequest(**request_kwargs)
+    resp = await _retry_throttled(
+        lambda: client.create_desktops_async(request), "CreateDesktops"
+    )
     desktop_ids = resp.body.desktop_id
     if not desktop_ids:
         raise RuntimeError("CreateDesktops returned no desktop id")
     desktop_id = desktop_ids[0]
-    log.info(f"Desktop created: {desktop_id} (user={user_id} -> eu={eu_id})")
+    log.info(
+        f"Desktop created: {desktop_id} (workspace={workspace_id} -> eu={eu_id})"
+    )
     return desktop_id
 
 
@@ -313,6 +323,81 @@ async def describe_desktop(desktop_id: str) -> dict[str, Any] | None:
         "hostname": getattr(d, "host_name", None),
         "private_ip": getattr(d, "network_interface_ip", None),
         "end_user_ids": list(getattr(d, "end_user_ids", []) or []),
+        "charge_type": getattr(d, "charge_type", None),
+        "expired_time": getattr(d, "expired_time", None),
+    }
+
+
+async def describe_price(
+    charge_type: str,
+    *,
+    period: int | None = None,
+    period_unit: str | None = None,
+    amount: int = 1,
+) -> dict[str, Any]:
+    """Query a new-purchase price without creating an order.
+
+    The current ECD DescribePrice OpenAPI has no ChargeType request field.
+    Unlimited subscription pricing is selected by Month/Year period fields;
+    omitting them selects the pay-as-you-go quote.
+    """
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    if charge_type not in {"PostPaid", "PrePaid"}:
+        raise ValueError(f"unsupported charge_type: {charge_type}")
+    config = get_config()
+    kwargs: dict[str, Any] = dict(
+        region_id=config.wuying_region_id,
+        resource_type="Desktop",
+        instance_type=config.wuying_desktop_type,
+        amount=amount,
+        root_disk_size_gib=config.wuying_system_disk_size,
+        os_type="Linux",
+    )
+    if charge_type == "PrePaid":
+        kwargs["period"] = period if period is not None else config.wuying_period
+        kwargs["period_unit"] = (
+            period_unit if period_unit is not None else config.wuying_period_unit
+        )
+    request = ecd_models.DescribePriceRequest(**kwargs)
+    response = await ecd_client().describe_price_async(request)
+    body = response.body
+    raw = body.to_map() if body is not None else {}
+    price_info = getattr(body, "price_info", None)
+    price = getattr(price_info, "price", None)
+    return {
+        "currency": getattr(price, "currency", None),
+        "trade_price": getattr(price, "trade_price", None),
+        "original_price": getattr(price, "original_price", None),
+        "raw": raw,
+    }
+
+
+async def renew_desktop(
+    desktop_id: str,
+    period: int,
+    period_unit: str,
+    auto_pay: bool = True,
+    auto_renew: bool = False,
+) -> dict[str, Any]:
+    """Submit one subscription renewal; callers own all lifecycle decisions."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    request = ecd_models.RenewDesktopsRequest(
+        region_id=get_config().wuying_region_id,
+        desktop_id=[desktop_id],
+        period=period,
+        period_unit=period_unit,
+        auto_pay=auto_pay,
+        auto_renew=auto_renew,
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().renew_desktops_async(request), "RenewDesktops"
+    )
+    body = response.body
+    return {
+        "order_id": getattr(body, "order_id", None),
+        "raw": body.to_map() if body is not None else {},
     }
 
 
@@ -466,25 +551,28 @@ async def list_desktops(user_id: str | None = None) -> list[dict[str, Any]]:
             "hostname": getattr(d, "host_name", None),
             "private_ip": getattr(d, "network_interface_ip", None),
             "end_user_ids": list(getattr(d, "end_user_ids", []) or []),
+            "charge_type": getattr(d, "charge_type", None),
+            "expired_time": getattr(d, "expired_time", None),
             "tags": tags.get(d.desktop_id, {}),
         }
         for d in desktops
     ]
 
 
-async def verify_ownership(desktop_id: str, user_id: str) -> str:
-    """Assert the desktop is tagged to this user; return the eu_id to use.
+async def verify_ownership(desktop_id: str, workspace_id: str) -> str:
+    """Assert the desktop is tagged to this workspace; return its EndUser id.
 
     Prevents user A presenting user B's desktop id to mint B's ticket.
     """
     tags = await desktop_tags(desktop_id)
-    owner = tags.get(TAG_USER)
+    owner = tags.get(TAG_WORKSPACE) or tags.get(TAG_USER)
     if owner is None:
         raise DesktopOwnershipError(
-            f"Desktop {desktop_id} carries no {TAG_USER} tag; refusing (ownership unknown)"
+            f"Desktop {desktop_id} carries no workspace ownership tag; "
+            "refusing (ownership unknown)"
         )
-    if owner != user_id:
+    if owner != workspace_id:
         raise DesktopOwnershipError(
-            f"Desktop {desktop_id} belongs to another user; refusing"
+            f"Desktop {desktop_id} belongs to another workspace; refusing"
         )
-    return tags.get(TAG_EU) or eu_id_for(user_id)
+    return tags.get(TAG_EU) or eu_id_for(workspace_id)

@@ -60,7 +60,9 @@ async def create_project(
     # so a sandbox that is down right now does not block creating the project.
     try:
         from sandbox import sandbox_manager
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(
+            user_id=user_id, workspace_id=current_user["workspace_id"]
+        )
         if client:
             await workspace.ensure_directory(client, project.slug)
     except Exception as e:
@@ -105,7 +107,9 @@ async def delete_project(project_id: str, current_user: dict = Depends(get_curre
     client = None
     try:
         from sandbox import sandbox_manager
-        client = await sandbox_manager.get_client_any(user_id=user_id)
+        client = await sandbox_manager.get_client_any(
+            user_id=user_id, workspace_id=current_user["workspace_id"]
+        )
     except Exception as e:
         log.debug(f"No sandbox available while deleting {project_id}: {e}")
     try:

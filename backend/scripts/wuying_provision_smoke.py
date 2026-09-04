@@ -1,6 +1,6 @@
 """Smoke-test the per-user ECD provisioning chain (WUYING_MODE=per_user).
 
-Three tiers, escalating in side effects:
+Five tiers, escalating in side effects:
 
   check    Read-only, free. Verifies the AK can talk to ECD/EDS in the target
            region and lists office sites, OpenBox-usable images and existing
@@ -10,6 +10,7 @@ Three tiers, escalating in side effects:
            id (create -> sync-poll -> verify -> remove) without touching any
            desktop. Exercises the CreateUsers/DescribeUsers/RemoveUsers path
            end to end.
+  price    Read-only, free. Prints raw and parsed PostPaid/PrePaid prices.
   full     BILLABLE. Provisions a real desktop for a throwaway user through
            WuyingDesktopService (the same code path the API uses), waits for
            Running, mints a connection ticket, then deletes the desktop and
@@ -58,6 +59,12 @@ def _apply_env(args: argparse.Namespace) -> None:
         os.environ["WUYING_DESKTOP_TYPE"] = args.desktop_type
     if args.disk:
         os.environ["WUYING_SYSTEM_DISK_SIZE"] = str(args.disk)
+    if args.charge_type:
+        os.environ["WUYING_CHARGE_TYPE"] = args.charge_type
+    os.environ["WUYING_PERIOD"] = str(args.period)
+    os.environ["WUYING_PERIOD_UNIT"] = args.period_unit
+    os.environ["WUYING_AUTO_PAY"] = "true" if args.auto_pay else "false"
+    os.environ["WUYING_AUTO_RENEW"] = "true" if args.auto_renew else "false"
     for attr, env_name in (
         ("channel_kind", "WUYING_CHANNEL"),
         ("relay_host", "WUYING_RELAY_HOST"),
@@ -75,6 +82,27 @@ def _apply_env(args: argparse.Namespace) -> None:
 
 def _throwaway_user() -> str:
     return f"smoke-{uuid.uuid4().hex[:12]}"
+
+
+def _prepaid_guard(args: argparse.Namespace, tier: str) -> int | None:
+    from core.config import get_config
+
+    if get_config().wuying_charge_type != "PrePaid":
+        return None
+    if not args.allow_prepaid:
+        print(
+            f"{tier} would buy a one-month PrePaid desktop; pass --allow-prepaid explicitly.",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.keep:
+        print(
+            "PrePaid acceptance requires --keep; active subscriptions must be refunded, "
+            "not passed to DeleteDesktops.",
+            file=sys.stderr,
+        )
+        return 2
+    return None
 
 
 async def tier_check(args: argparse.Namespace) -> int:
@@ -144,7 +172,42 @@ async def tier_enduser(args: argparse.Namespace) -> int:
     return 0
 
 
+async def tier_price(args: argparse.Namespace) -> int:
+    import json
+
+    from core.config import get_config
+    from sandbox import wuying_ecd
+
+    config = get_config()
+    quotes = {
+        "PostPaid": await wuying_ecd.describe_price("PostPaid"),
+        "PrePaid": await wuying_ecd.describe_price(
+            "PrePaid", period=1, period_unit="Month"
+        ),
+    }
+    for charge_type, quote in quotes.items():
+        print(f"== {charge_type} ==")
+        print(json.dumps(quote["raw"], ensure_ascii=False, indent=2, sort_keys=True))
+        print(
+            "parsed: "
+            f"currency={quote['currency']} trade_price={quote['trade_price']} "
+            f"original_price={quote['original_price']}"
+        )
+        if charge_type == "PrePaid":
+            price = quote["trade_price"]
+            marker = (
+                "OK"
+                if price is not None and float(price) <= config.pool_max_unit_price_cny
+                else "OVER"
+            )
+            print(f"limit={config.pool_max_unit_price_cny:.2f} CNY/month [{marker}]")
+    return 0
+
+
 async def tier_full(args: argparse.Namespace) -> int:
+    rejected = _prepaid_guard(args, "full tier")
+    if rejected is not None:
+        return rejected
     if not args.yes:
         print("full tier creates a BILLABLE desktop; re-run with --yes to confirm.", file=sys.stderr)
         return 2
@@ -172,7 +235,7 @@ async def tier_full(args: argparse.Namespace) -> int:
     desktop_id: str | None = None
     try:
         started = time.monotonic()
-        state = await service.provision(user_id, "smoke test")
+        state = await service.provision(user_id, display_name="smoke test")
         print(f"provision kicked: {state}")
         while True:
             state = await service.status(user_id)
@@ -245,6 +308,9 @@ async def tier_full(args: argparse.Namespace) -> int:
 
 
 async def tier_channel(args: argparse.Namespace) -> int:
+    rejected = _prepaid_guard(args, "channel tier")
+    if rejected is not None:
+        return rejected
     if not args.yes:
         print("channel tier creates a BILLABLE desktop; re-run with --yes to confirm.", file=sys.stderr)
         return 2
@@ -256,22 +322,15 @@ async def tier_channel(args: argparse.Namespace) -> int:
 
     from core.config import get_config
     from db.base import ensure_engine, get_db_session
-    from db.models.user import User
+    from db.repository.user_repo import PgUserRepo
 
     await ensure_engine(get_config())
     user_id = _throwaway_user()
+    created_user = await PgUserRepo().create(
+        id=user_id, username=user_id, password_hash=None
+    )
+    workspace_id = created_user["default_workspace_id"]
     now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        db.add(
-            User(
-                id=user_id,
-                username=user_id,
-                role="user",
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-            )
-        )
 
     from sqlalchemy import update
 
@@ -283,12 +342,15 @@ async def tier_channel(args: argparse.Namespace) -> int:
 
     service = WuyingDesktopService()
     desktop_id = None
-    print(f"throwaway database owner: {user_id}")
+    print(f"throwaway database owner: user={user_id} workspace={workspace_id}")
     try:
         started = time.monotonic()
-        print(f"provision kicked: {await service.provision(user_id, 'channel smoke')}")
+        print(
+            "provision kicked: "
+            f"{await service.provision(workspace_id, user_id, 'channel smoke')}"
+        )
         while True:
-            state = await service.status(user_id)
+            state = await service.status(workspace_id)
             print(f"  [{time.monotonic() - started:5.0f}s] {state}")
             if state["state"] == "failed" or (
                 state["state"] == "running" and state.get("channel", {}).get("state") == "up"
@@ -300,7 +362,7 @@ async def tier_channel(args: argparse.Namespace) -> int:
             print(f"channel provisioning FAILED: {state}", file=sys.stderr)
             return 1
 
-        record = await cloud_desktop_repo.get_for_user(user_id)
+        record = await cloud_desktop_repo.get_for_workspace(workspace_id)
         host, port, api_key = route_for_record(record)
         sandbox = SandboxClient(host=host, port=port, api_key=api_key)
         async with sandbox.desktop_lease(
@@ -324,9 +386,9 @@ async def tier_channel(args: argparse.Namespace) -> int:
             print(f"--keep: owner {user_id}, desktop {desktop_id} left running")
         else:
             try:
-                record = await cloud_desktop_repo.get_for_user(user_id)
+                record = await cloud_desktop_repo.get_for_workspace(workspace_id)
                 if record and record.get("desktop_id"):
-                    await service.release_ghost(user_id)
+                    await service.release_ghost(workspace_id, actor_user_id=user_id)
                 elif record:
                     await cloud_desktop_repo.soft_delete(record["id"])
             finally:
@@ -341,7 +403,7 @@ async def tier_channel(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("tier", choices=["check", "enduser", "full", "channel"])
+    parser.add_argument("tier", choices=["check", "enduser", "price", "full", "channel"])
     parser.add_argument("--region", default=os.environ.get("WUYING_REGION_ID", "cn-hangzhou"))
     parser.add_argument("--office-site", default=os.environ.get("WUYING_OFFICE_SITE_ID", ""))
     parser.add_argument("--image-id", default=os.environ.get("WUYING_IMAGE_ID", ""))
@@ -349,6 +411,16 @@ def main() -> int:
     parser.add_argument("--env-tag", default=os.environ.get("WUYING_ENV_TAG", "smoke"))
     parser.add_argument("--desktop-type", default="")
     parser.add_argument("--disk", type=int, default=0, help="system disk GiB (must cover the image size)")
+    parser.add_argument(
+        "--charge-type",
+        choices=["PostPaid", "PrePaid"],
+        default=os.environ.get("WUYING_CHARGE_TYPE", "PostPaid"),
+    )
+    parser.add_argument("--period", type=int, default=1)
+    parser.add_argument("--period-unit", choices=["Month", "Year"], default="Month")
+    parser.add_argument("--auto-pay", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--auto-renew", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--allow-prepaid", action="store_true")
     parser.add_argument("--yes", action="store_true", help="confirm the billable full tier")
     parser.add_argument("--keep", action="store_true", help="full tier: keep the desktop instead of deleting")
     parser.add_argument("--channel-kind", choices=["direct", "ssh"], default="")
@@ -365,6 +437,7 @@ def main() -> int:
     tier = {
         "check": tier_check,
         "enduser": tier_enduser,
+        "price": tier_price,
         "full": tier_full,
         "channel": tier_channel,
     }[args.tier]

@@ -98,6 +98,7 @@ def _job_dict(**overrides):
     base = {
         "id": "cron_" + uuid.uuid4().hex[:10],
         "user_id": "u_" + uuid.uuid4().hex[:6],
+        "workspace_id": "ws_" + uuid.uuid4().hex[:6],
         "project_id": "proj_" + uuid.uuid4().hex[:6],
         "session_id": "sess_" + uuid.uuid4().hex[:6],
         "name": "t",

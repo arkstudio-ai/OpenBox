@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace, require_workspace_role
 from core.aliyun import AliyunCredentialsError, load_credentials
 from core.config import get_config
 from core.log import create_logger
@@ -96,7 +97,9 @@ def _pending(payload: dict) -> JSONResponse:
 
 
 @router.get("/status")
-async def desktop_status(user=Depends(get_current_user)):
+async def desktop_status(
+    user=Depends(get_current_user), _workspace=Depends(get_workspace)
+):
     """Provisioning state of the caller's desktop (per_user mode).
 
     Shared mode reports "running" whenever the ticket API is usable, so the
@@ -111,24 +114,37 @@ async def desktop_status(user=Depends(get_current_user)):
 
     from sandbox.wuying_desktop_service import wuying_desktop_service
 
-    state = await wuying_desktop_service.status(user["user_id"])
+    from sandbox.ownership import owner_for_request
+
+    state = await wuying_desktop_service.status(await owner_for_request(user))
     return {**state, "mode": "per_user"}
 
 
 @router.post("/provision")
-async def desktop_provision(user=Depends(get_current_user)):
+async def desktop_provision(
+    user=Depends(get_current_user),
+    _workspace=Depends(require_workspace_role("owner", "admin")),
+):
     """Create (or wake) the caller's own desktop. Idempotent; poll /status."""
     if not _per_user():
         return JSONResponse({"available": False, "reason": "mode"}, status_code=503)
 
     from sandbox.wuying_desktop_service import wuying_desktop_service
 
-    state = await wuying_desktop_service.provision(user["user_id"])
+    from sandbox.ownership import owner_for_request
+
+    state = await wuying_desktop_service.provision(
+        await owner_for_request(user), triggered_by_user_id=user["user_id"]
+    )
     return {**state, "mode": "per_user"}
 
 
 @router.get("/ticket")
-async def desktop_ticket(task_id: str | None = None, user=Depends(get_current_user)):
+async def desktop_ticket(
+    task_id: str | None = None,
+    user=Depends(get_current_user),
+    _workspace=Depends(get_workspace),
+):
     """One-time Wuying connection ticket for the caller's desktop.
 
     202 + {taskId} while the desktop session is still being prepared; the
@@ -151,8 +167,11 @@ async def desktop_ticket(task_id: str | None = None, user=Depends(get_current_us
         from sandbox.wuying_ecd import DesktopOwnershipError
 
         try:
+            from sandbox.ownership import owner_for_request
+
+            workspace_id = await owner_for_request(user)
             desktop_id, end_user_id = await wuying_desktop_service.resolve_ticket_target(
-                user["user_id"]
+                workspace_id
             )
         except DesktopNotReady as e:
             state = e.payload.get("state")
@@ -217,7 +236,11 @@ async def desktop_ticket(task_id: str | None = None, user=Depends(get_current_us
 
                 log.warning(f"Ticket NotFound for {desktop_id}; releasing ghost desktop")
                 try:
-                    await wuying_desktop_service.release_ghost(user["user_id"])
+                    from sandbox.ownership import owner_for_request
+
+                    await wuying_desktop_service.release_ghost(
+                        await owner_for_request(user), actor_user_id=user["user_id"]
+                    )
                 except Exception as release_error:
                     log.warning(f"Ghost release failed: {release_error}")
                 return JSONResponse({"available": False, "reason": "ghost_released"}, status_code=503)

@@ -1,4 +1,4 @@
-"""PostgreSQL/SQLite repository for per-user cloud desktops."""
+"""PostgreSQL/SQLite repository for per-workspace cloud desktops."""
 import asyncio
 from datetime import datetime, timezone
 
@@ -17,10 +17,19 @@ class PgCloudDesktopRepo:
         # tests the transaction isolation its single in-memory connection lacks.
         self._port_lock = asyncio.Lock()
 
-    async def create(self, user_id: str, region_id: str, status: str = "creating", **fields) -> dict:
+    async def create(
+        self,
+        workspace_id: str,
+        region_id: str,
+        status: str = "creating",
+        *,
+        user_id: str | None = None,
+        **fields,
+    ) -> dict:
         now = datetime.now(timezone.utc)
         row = CloudDesktop(
             id=ascending("cld"),
+            workspace_id=workspace_id,
             user_id=user_id,
             region_id=region_id,
             status=status,
@@ -32,11 +41,11 @@ class PgCloudDesktopRepo:
             session.add(row)
         return _to_dict(row)
 
-    async def get_for_user(self, user_id: str) -> dict | None:
+    async def get_for_workspace(self, workspace_id: str) -> dict | None:
         async with get_db_session() as session:
             result = await session.execute(
                 select(CloudDesktop).where(
-                    CloudDesktop.user_id == user_id,
+                    CloudDesktop.workspace_id == workspace_id,
                     CloudDesktop.is_deleted == False,
                 )
             )

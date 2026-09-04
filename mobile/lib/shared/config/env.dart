@@ -9,6 +9,16 @@ abstract final class Env {
     defaultValue: 'http://localhost:8080',
   );
 
+  /// Where Logto hands control back after the hosted sign-in page.
+  ///
+  /// A custom scheme rather than a URL: the browser sheet must reopen *this*
+  /// app, and it has to be registered on the Logto native application for the
+  /// authorize request to be accepted at all.
+  static const String ssoRedirectUri = String.fromEnvironment(
+    'SSO_REDIRECT_URI',
+    defaultValue: 'com.bossip.bipmobile://callback',
+  );
+
   /// WS origin derives from the HTTP origin (`http→ws`, `https→wss`),
   /// same as web `wsBase()`.
   static String get wsBase => apiBase.replaceFirst(RegExp('^http'), 'ws');

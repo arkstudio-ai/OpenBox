@@ -5,6 +5,7 @@ import { useStart } from "./useStart"
 /** Sticky landing header: brand, section labels, language toggle, CTAs. */
 export function LandingTopbar() {
   const { t } = useTranslation("landing")
+  const signIn = useStart("sign_in")
   const start = useStart()
   const nav = t("nav", { returnObjects: true }) as unknown as { product: string; how: string; pricing: string }
 
@@ -18,7 +19,7 @@ export function LandingTopbar() {
           <span className="whitespace-nowrap text-sm text-n700">{nav.pricing}</span>
         </nav>
         <LangPill />
-        <button type="button" onClick={start} className="flex-none px-1.5 text-sm text-n700 hover:text-ink">
+        <button type="button" onClick={signIn} className="flex-none px-1.5 text-sm text-n700 hover:text-ink">
           {t("signIn")}
         </button>
         <button

@@ -56,28 +56,16 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const BrandMark(),
-                  IconButton(
-                    icon: Icon(Icons.create_new_folder_outlined,
-                        size: 19, color: t.n700),
-                    tooltip: i18n.t('workspace:newProject'),
-                    onPressed: () => _promptProjectName(i18n),
-                  ),
-                ],
-              ),
+              const Row(children: [BrandMark()]),
               const SizedBox(height: 8),
               // DEEIX-style nav rows (web Sidebar): left-aligned, icon
               // column; the primary action wears a round tinted icon chip
               // instead of a filled pill.
               InkWell(
                 borderRadius: BorderRadius.circular(Radii.full),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.go(Paths.app);
-                },
+                // The drawer's primary action creates a project; chats are
+                // started inside one from the project's own action sheet.
+                onTap: () => _promptProjectName(i18n),
                 child: SizedBox(
                   height: 40,
                   child: Padding(
@@ -93,7 +81,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          i18n.t('workspace:newChat'),
+                          i18n.t('workspace:newProject'),
                           style: TextStyle(
                             fontSize: FontSizes.base,
                             fontWeight: FontWeight.w500,

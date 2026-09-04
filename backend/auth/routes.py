@@ -47,6 +47,9 @@ class LogtoExchangeRequest(BaseModel):
     code_verifier: str
     redirect_uri: str | None = None
 
+class LogtoIdTokenRequest(BaseModel):
+    id_token: str
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -126,10 +129,11 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     from db.repository.session_repo import PgSessionRepo  # avoid circular
     from db.models.project import Project
     from db.base import get_db_session
+    from project.workspace import DEFAULT_NAME, DEFAULT_SLUG
     project_id = generate_id()
     now = datetime.now(timezone.utc)
     async with get_db_session() as session:
-        session.add(Project(id=project_id, user_id=user_id, name="Default", slug="default",
+        session.add(Project(id=project_id, user_id=user_id, name=DEFAULT_NAME, slug=DEFAULT_SLUG,
                            created_at=now, updated_at=now))
 
     # Issue tokens
@@ -207,9 +211,7 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
     exchange server-side (avoids Logto's CORS allowlist), verify the resulting
     ID token against JWKS, then upsert the user and issue our own JWT.
     """
-    from auth.logto import (
-        PROVIDER, LogtoError, derive_username, exchange_code, is_enabled, verify_id_token,
-    )
+    from auth.logto import LogtoError, exchange_code, is_enabled, verify_id_token
     from core.config import get_config
 
     if not is_enabled():
@@ -225,6 +227,46 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
     except LogtoError as e:
         log.warning(f"Logto sign-in rejected from {ip}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
+
+    return await _sign_in_logto_identity(claims, response)
+
+
+@router.post("/logto/id-token", response_model=TokenResponse)
+async def logto_id_token(body: LogtoIdTokenRequest, request: Request, response: Response):
+    """Trade a verified Logto ID token for an OpenBox session.
+
+    The mobile app runs the PKCE flow itself through Logto's own SDK, which is
+    registered as a public native client and therefore completes the code
+    exchange on the device — there is no code left for this server to redeem.
+    What it hands over is the resulting ID token, and JWKS verification is
+    what makes that safe to trust: same signature, issuer, audience and expiry
+    checks the exchange path applies, landing on the same account.
+    """
+    from auth.logto import LogtoError, is_enabled, verify_id_token
+
+    if not is_enabled():
+        raise HTTPException(status_code=503, detail="Logto is not configured on this server")
+
+    ip = request.client.host if request.client else "unknown"
+    await _check_rate_limit(f"logto:{ip}", limit=20, window=60)
+
+    try:
+        claims = verify_id_token(body.id_token)
+    except LogtoError as e:
+        log.warning(f"Logto sign-in rejected from {ip}: {e}")
+        raise HTTPException(status_code=401, detail=str(e))
+
+    return await _sign_in_logto_identity(claims, response)
+
+
+async def _sign_in_logto_identity(claims: dict, response: Response) -> TokenResponse:
+    """Verified Logto claims in, an OpenBox session out.
+
+    Shared by both sign-in shapes — the web's server-side code exchange and the
+    mobile SDK's ID token — so a person arriving from either client provisions
+    and resolves to exactly one account.
+    """
+    from auth.logto import PROVIDER, derive_username
 
     subject = str(claims["sub"])
     email = claims.get("email")
@@ -247,10 +289,11 @@ async def logto_exchange(body: LogtoExchangeRequest, request: Request, response:
 
         from db.models.project import Project
         from db.base import get_db_session
+        from project.workspace import DEFAULT_NAME, DEFAULT_SLUG
         now = datetime.now(timezone.utc)
         async with get_db_session() as session:
-            session.add(Project(id=generate_id(), user_id=user_id, name="Default",
-                                slug="default", created_at=now, updated_at=now))
+            session.add(Project(id=generate_id(), user_id=user_id, name=DEFAULT_NAME,
+                                slug=DEFAULT_SLUG, created_at=now, updated_at=now))
 
         user = await _user_repo.get(user_id)
         log.info(f"Provisioned Logto user {username} ({user_id})")

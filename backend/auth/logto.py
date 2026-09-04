@@ -41,6 +41,7 @@ def _settings():
         "issuer": (getattr(config, "logto_issuer", "") or (f"{endpoint}/oidc" if endpoint else "")),
         "jwks_uri": (getattr(config, "logto_jwks_uri", "") or (f"{endpoint}/oidc/jwks" if endpoint else "")),
         "app_id": getattr(config, "logto_app_id", "") or "",
+        "native_app_id": getattr(config, "logto_native_app_id", "") or "",
         "app_secret": getattr(config, "logto_app_secret", "") or "",
     }
 
@@ -58,6 +59,9 @@ def public_config() -> dict[str, Any]:
         "endpoint": s["endpoint"],
         "issuer": s["issuer"],
         "app_id": s["app_id"],
+        # Empty until a Native application exists in Logto; the mobile app
+        # treats that as "SSO not available here" and keeps its password form.
+        "native_app_id": s["native_app_id"],
     }
 
 
@@ -80,6 +84,12 @@ def verify_id_token(token: str) -> dict[str, Any]:
 
     Audience is the Logto application ID for an ID token. Signature, issuer,
     audience and expiry are all enforced; a failure raises LogtoError.
+
+    Two applications are accepted: the web app and — when configured — the
+    native one the mobile client uses. They are separate Logto applications
+    because a phone cannot keep a client secret, but a person signing in
+    through either lands on the same Logto identity, so the `sub` claim (which
+    is what the account is keyed on) is the same either way.
     """
     s = _settings()
     if not is_enabled():
@@ -90,14 +100,16 @@ def verify_id_token(token: str) -> dict[str, Any]:
             token,
             signing_key.key,
             algorithms=["RS256", "ES256", "ES384"],
-            audience=s["app_id"],
+            audience=[a for a in (s["app_id"], s["native_app_id"]) if a],
             issuer=s["issuer"],
             options={"require": ["exp", "iat", "sub", "aud", "iss"]},
         )
     except jwt.ExpiredSignatureError as e:
         raise LogtoError("Logto token has expired") from e
     except jwt.InvalidAudienceError as e:
-        raise LogtoError(f"Logto token audience does not match app_id {s['app_id']}") from e
+        raise LogtoError(
+            "Logto token audience does not match any configured app id"
+        ) from e
     except jwt.InvalidIssuerError as e:
         raise LogtoError(f"Logto token issuer does not match {s['issuer']}") from e
     except Exception as e:  # signature, malformed token, JWKS fetch failure

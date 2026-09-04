@@ -15,9 +15,13 @@ import '../auth/widgets/lang_pill.dart';
 class LandingPage extends ConsumerWidget {
   const LandingPage({super.key});
 
-  void _start(BuildContext context, WidgetRef ref) {
+  void _start(BuildContext context, WidgetRef ref, {bool register = false}) {
     final authed = ref.read(authProvider).isAuthenticated;
-    context.go(authed ? Paths.app : Paths.login);
+    if (authed) {
+      context.go(Paths.app);
+      return;
+    }
+    context.go(register ? Paths.register : Paths.login);
   }
 
   @override
@@ -88,7 +92,7 @@ class LandingPage extends ConsumerWidget {
             SizedBox(
               height: 46,
               child: FilledButton(
-                onPressed: () => _start(context, ref),
+                onPressed: () => _start(context, ref, register: true),
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
                   foregroundColor: t.bg,

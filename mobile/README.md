@@ -14,6 +14,23 @@ cd mobile && flutter run
 
 本地联调账号:`devtest / devtest1234`。API 地址通过 `--dart-define=API_BASE=…` 覆盖(默认 `http://localhost:8080`)。
 
+## 单点登录(Logto)
+
+登录/注册两屏由 `SsoGate` 接管,走 [`logto_dart_sdk`](https://pub.dev/packages/logto_dart_sdk):
+SDK 在系统浏览器里跑 PKCE,拿到 id_token 后交给 `POST /api/auth/logto/id-token`,
+服务端验签(JWKS)再发 OpenBox 自己的 JWT —— 与 web 落在同一个账号(都按 Logto 的 `sub` 归并)。
+
+生效需要两件事,缺任一条 app 就退回账号密码表单(部署没接 SSO 时也是这个表单):
+
+1. Logto 控制台建一个 **Native** 应用(手机存不住 client secret,不能复用 web 那个
+   Traditional Web 应用),回调地址填 `com.bossip.bipmobile://callback` ——
+   与 `Env.ssoRedirectUri`、`AndroidManifest.xml` 里 CallbackActivity 的 scheme 一致;
+   换 scheme 用 `--dart-define=SSO_REDIRECT_URI=…`,三处要一起改。
+2. 后端 `.env` 填 `LOGTO_NATIVE_APP_ID=<该 Native 应用的 App ID>`,它同时是
+   id_token 的第二个合法 audience。
+
+iOS 无需额外配置(ASWebAuthenticationSession 直接吃 callbackUrlScheme)。
+
 最低 iOS 版本为 **14.0**(2026-08-26 由 13.0 上调):`file_picker` 12 的 darwin 实现要求 14.0,而 10/11 与 `flutter_secure_storage` 11 的 win32 约束冲突、装不上。
 
 ## 与 frontend-v2 的对应关系

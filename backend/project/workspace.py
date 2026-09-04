@@ -33,8 +33,10 @@ INTERNAL_ROOT = f"{WORKSPACE_ROOT}/.openbox"
 TRASH_ROOT = f"{INTERNAL_ROOT}/trash"
 SNAPSHOT_ROOT = f"{INTERNAL_ROOT}/snapshots"
 
+#: The slug is what the sandbox uses as a directory (/workspace/default), so
+#: it stays ASCII no matter what the project is called on screen.
 DEFAULT_SLUG = "default"
-DEFAULT_NAME = "Default"
+DEFAULT_NAME = "默认空间"
 
 #: A slug becomes a directory name, so it has to be safe as a path segment and
 #: as a shell word. Leading dots are excluded to keep projects out of the same

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
-import { Blocks, Clock, FolderPlus, Layers, PanelLeft, Plus, Search } from "lucide-react"
+import { Blocks, Clock, Layers, PanelLeft, Plus, Search } from "lucide-react"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
@@ -22,9 +22,9 @@ export function Sidebar() {
   const sessions = useSessionsQuery()
   const createProject = useCreateProject()
   const selectedProject = useWorkspaceUi((s) => s.selectedProject)
-  // A stale selection (deleted project) must not silently file new chats
-  // into a project that no longer exists.
-  const newChatProject =
+  // A stale selection (deleted project) must not point the resource centre
+  // at a project that no longer exists.
+  const activeProject =
     selectedProject && (projects.data ?? []).some((p) => p.id === selectedProject)
       ? selectedProject
       : null
@@ -78,15 +78,6 @@ export function Sidebar() {
           <button
             type="button"
             className="flex size-7.5 flex-none items-center justify-center rounded-full text-n700 hover:bg-hairsoft"
-            onClick={() => setDraftOpen(true)}
-            title={t("newProject")}
-            aria-label={t("newProject")}
-          >
-            <FolderPlus size={17} strokeWidth={2.4} />
-          </button>
-          <button
-            type="button"
-            className="flex size-7.5 flex-none items-center justify-center rounded-full text-n700 hover:bg-hairsoft"
             onClick={toggleSidebar}
             title={t("collapse")}
             aria-label={t("collapse")}
@@ -99,15 +90,15 @@ export function Sidebar() {
             wears a round tinted icon chip instead of a filled pill. */}
         <button
           type="button"
-          // Keep the current project: the new chat is created inside it, and
-          // the tree's selection/expansion stays exactly as it was.
-          onClick={() => navigate(newChatProject ? `${paths.app}?project=${newChatProject}` : paths.app)}
+          // The sidebar's primary action opens a project draft; chats are
+          // started inside a project from its own row.
+          onClick={() => setDraftOpen(true)}
           className="group flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium text-ink hover:bg-hairsoft"
         >
           <span className="flex size-7 flex-none items-center justify-center rounded-full bg-n200 transition-transform duration-150 group-hover:scale-105">
             <Plus size={15} strokeWidth={2.5} />
           </span>
-          {t("newChat")}
+          {t("newProject")}
         </button>
 
         <div className="flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 focus-within:bg-hairsoft hover:bg-hairsoft">
@@ -126,7 +117,7 @@ export function Sidebar() {
           type="button"
           // Opens on the project in view, which is the one whose files the
           // person was just looking at.
-          onClick={() => navigate(paths.resources(newChatProject ?? undefined))}
+          onClick={() => navigate(paths.resources(activeProject ?? undefined))}
           className="mt-2.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base text-ink hover:bg-hairsoft"
         >
           <span className="flex size-7 flex-none items-center justify-center">

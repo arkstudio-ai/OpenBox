@@ -179,7 +179,6 @@
     "work": {
       "titleActive": "Working",
       "titleDone": "Work log",
-      "summary": "{{messages}} progress notes · {{screenshots}} visual checkpoints",
       "checkpoint": "Page checkpoint",
       "omitted": "{{count}} repetitive process screenshots folded away"
     }

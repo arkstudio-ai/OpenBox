@@ -179,7 +179,6 @@
     "work": {
       "titleActive": "执行过程中",
       "titleDone": "执行过程",
-      "summary": "{{messages}} 条过程说明 · {{screenshots}} 个过程画面",
       "checkpoint": "页面检查点",
       "omitted": "已折叠另外 {{count}} 张重复过程截图"
     }

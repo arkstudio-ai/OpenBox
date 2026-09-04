@@ -1,10 +1,18 @@
+// The turn's work log: the tool-step prose and the evidence it produced, in
+// the order they happened.
+//
+// This reads in the answer's own column and stays open. It used to sit behind
+// a collapsed trace row, which hid the only account of what the turn actually
+// did — and because `finalMessageIndex` moves prose between "final" and
+// "progress" while a turn streams, a paragraph already on screen would drop
+// into the folded row the moment a tool part landed, reading as if it had been
+// lost. Open and inline, the narration simply accumulates above the answer.
 import { lazy, Suspense, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { ArtifactGroup, WorkEvent } from "../lib/content-view"
 import { isGalleryMedia } from "../lib/media"
 import { AttachmentGallery } from "./AttachmentGallery"
-import { TraceShell } from "./TraceShell"
 
 const Markdown = lazy(() => import("./Markdown"))
 const MAX_COMPUTER_CHECKPOINTS = 3
@@ -24,14 +32,11 @@ function keyComputerIds(events: WorkEvent[]): Set<string> {
 interface Props {
   events: WorkEvent[]
   streaming: boolean
-  defaultOpen?: boolean
 }
 
-export function WorkLogTrace({ events, streaming, defaultOpen }: Props) {
+export function WorkLogTrace({ events, streaming }: Props) {
   const { t } = useTranslation("chat")
   const keyIds = useMemo(() => keyComputerIds(events), [events])
-  const narrationCount = events.filter((event) => event.kind === "narration").length
-  const evidence = events.filter((event): event is ArtifactGroup => event.kind === "artifact")
   const displayed = events.filter(
     (event) =>
       event.kind !== "artifact" || event.artifactKind !== "computer_screenshot" || keyIds.has(event.id),
@@ -39,16 +44,14 @@ export function WorkLogTrace({ events, streaming, defaultOpen }: Props) {
   const hiddenScreenshots = events.length - displayed.length
 
   if (events.length === 0) return null
+
+  const title = streaming ? t("trace.work.titleActive") : t("trace.work.titleDone")
+
   return (
-    <TraceShell
-      title={streaming ? t("trace.work.titleActive") : t("trace.work.titleDone")}
-      subtitle={t("trace.work.summary", {
-        messages: narrationCount,
-        screenshots: evidence.length,
-      })}
-      streaming={streaming}
-      defaultOpen={defaultOpen}
-    >
+    <section aria-label={title} className="mb-3">
+      <div className={cn("mb-1 text-xs font-medium", streaming ? "text-shimmer" : "text-n600")}>
+        {title}
+      </div>
       <ol className="space-y-2">
         {displayed.map((event, index) => (
           <li key={event.id} className="grid grid-cols-[0.875rem_minmax(0,1fr)] gap-x-2 text-xs leading-5">
@@ -79,6 +82,6 @@ export function WorkLogTrace({ events, streaming, defaultOpen }: Props) {
           {t("trace.work.omitted", { count: hiddenScreenshots })}
         </p>
       ) : null}
-    </TraceShell>
+    </section>
   )
 }

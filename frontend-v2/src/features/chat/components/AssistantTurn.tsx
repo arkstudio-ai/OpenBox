@@ -1,8 +1,10 @@
 // One assistant response, laid out exactly like DEEIX-Chat's message-bot:
 // no avatar and no bubble — the turn owns the full column width, with the
-// collapsed trace rows stacked on top, then a separately identified final
-// answer and semantically grouped artifacts. Tool-step prose stays in the work
-// log rather than being concatenated into the answer.
+// collapsed process / thinking / tool-chain rows stacked on top, then one
+// reading column holding the work log and the final answer in order, then the
+// semantically grouped artifacts. Tool-step prose stays in the work log rather
+// than being concatenated into the answer, but the log is open rather than
+// folded: it is the turn's only account of itself.
 import { lazy, Suspense, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import type { MessageWithParts } from "@/shared/types/api"
@@ -108,14 +110,16 @@ export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onS
           calls made outside any task, and on every other turn it is the
           whole chain, exactly as before. */}
       <ToolChainTrace tools={view.tools} streaming={toolsLive} />
-      <WorkLogTrace
-        events={content.workEvents}
-        streaming={preAnswer}
-        defaultOpen={content.incomplete}
-      />
       <SkillJobReceipts parts={parts} />
 
+      {/* The work log and the answer share one column and read in order: the
+          narration stays open and accumulates, then the answer streams in
+          under it. Folding the log away hid the only account of what the turn
+          did — and because `finalMessageIndex` moves prose between "final"
+          and "progress" mid-stream, a paragraph already on screen would drop
+          into the folded row the moment a tool part arrived. */}
       <div className="text-ink w-full max-w-none min-w-0 overflow-hidden text-lg leading-8 [overflow-wrap:anywhere]">
+        <WorkLogTrace events={content.workEvents} streaming={preAnswer} />
         {streaming && !hasActivity ? (
           <ThinkingRow attempt={retry?.attempt} maxAttempts={retry?.maxAttempts} />
         ) : content.hasFinal ? (

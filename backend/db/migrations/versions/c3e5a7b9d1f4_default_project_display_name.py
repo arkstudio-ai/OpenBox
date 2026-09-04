@@ -11,6 +11,15 @@ Create Date: 2026-09-03
 from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
+
+
+def _projects_has_name() -> bool:
+    """Older schemas (and the migration-test fixture) carry a bare projects table."""
+    inspector = sa.inspect(op.get_bind())
+    if "projects" not in inspector.get_table_names():
+        return False
+    return "name" in {c["name"] for c in inspector.get_columns("projects")}
 
 revision: str = "c3e5a7b9d1f4"
 down_revision: Union[str, None] = "f7b9d1e3a5c8"
@@ -19,6 +28,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if not _projects_has_name():
+        return
     op.execute(
         "UPDATE projects SET name = '默认空间' "
         "WHERE slug = 'default' AND name = 'Default'"
@@ -26,6 +37,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if not _projects_has_name():
+        return
     op.execute(
         "UPDATE projects SET name = 'Default' "
         "WHERE slug = 'default' AND name = '默认空间'"

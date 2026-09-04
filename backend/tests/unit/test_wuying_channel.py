@@ -78,6 +78,15 @@ async def test_port_allocation_is_distinct_under_concurrency():
     assert await cloud_desktop_repo.reserve_tunnel_port(first["id"], 18810, 18811) == ports[0]
 
 
+async def test_port_allocation_skips_soft_deleted_rows_with_global_unique_index():
+    first = await cloud_desktop_repo.create("channel-port-old", "cn-shanghai")
+    assert await cloud_desktop_repo.reserve_tunnel_port(first["id"], 18812, 18813) == 18812
+    await cloud_desktop_repo.soft_delete(first["id"])
+
+    second = await cloud_desktop_repo.create("channel-port-new", "cn-shanghai")
+    assert await cloud_desktop_repo.reserve_tunnel_port(second["id"], 18812, 18813) == 18813
+
+
 async def test_port_allocation_retries_a_cross_worker_unique_conflict(monkeypatch):
     import db.repository.cloud_desktop_repo as repo_module
 
@@ -175,6 +184,38 @@ async def test_provider_routes_two_owners_and_rejects_revoked(monkeypatch):
     await cloud_desktop_repo.update(one["id"], tunnel_state="revoked")
     with pytest.raises(DesktopNotReady):
         await provider.resolve_user_container("channel-owner-a")
+
+
+async def test_revoke_releases_port_after_guest_tunnel_stops(monkeypatch):
+    import sandbox.channel as channel_module
+
+    updates = []
+
+    async def update(record_id, **values):
+        updates.append((record_id, values))
+
+    async def run_desktop_command(desktop_id, command, timeout):
+        assert desktop_id == "ecd-revoke"
+        assert "openbox-tunnel" in command
+        assert timeout == 60
+
+    monkeypatch.setattr(channel_module.cloud_desktop_repo, "update", update)
+    monkeypatch.setattr(channel_module, "run_desktop_command", run_desktop_command)
+
+    await WuyingChannel().revoke(
+        {
+            "id": "cld-revoke",
+            "desktop_id": "ecd-revoke",
+            "channel_kind": "ssh",
+            "tunnel_port": 18823,
+            "tunnel_bind": "172.17.0.1",
+        }
+    )
+
+    assert updates == [
+        ("cld-revoke", {"tunnel_state": "revoked"}),
+        ("cld-revoke", {"tunnel_port": None, "tunnel_bind": None}),
+    ]
 
 
 async def test_install_can_rotate_action_key(monkeypatch):

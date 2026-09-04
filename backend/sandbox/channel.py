@@ -318,10 +318,18 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
         if record.get("desktop_id") and record.get("channel_kind") == "ssh":
             try:
                 await run_desktop_command(
-                    record["desktop_id"], "systemctl disable --now openbox-tunnel || true", timeout=60
+                    record["desktop_id"], "systemctl disable --now openbox-tunnel", timeout=60
                 )
             except Exception as exc:
                 log.warning("Could not stop revoked tunnel on %s: %s", record["desktop_id"], exc)
+            else:
+                # The database uniqueness constraint also covers historical
+                # soft-deleted rows. Release the reservation only after the
+                # guest tunnel has stopped, so a future desktop can safely
+                # reuse the relay port without racing a stale listener.
+                await cloud_desktop_repo.update(
+                    record["id"], tunnel_port=None, tunnel_bind=None
+                )
 
 
 wuying_channel = WuyingChannel()

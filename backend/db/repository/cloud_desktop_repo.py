@@ -106,7 +106,6 @@ class PgCloudDesktopRepo:
                         return current.tunnel_port
                     used_result = await session.execute(
                         select(CloudDesktop.tunnel_port).where(
-                            CloudDesktop.is_deleted == False,
                             CloudDesktop.tunnel_port.is_not(None),
                         )
                     )

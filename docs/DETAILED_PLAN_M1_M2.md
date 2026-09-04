@@ -20,7 +20,8 @@
 | A1+B1 接缝 | ⬜ 下一步 | 执行单 `docs/A1B1_MERGE_SEAM.md` |
 | A2 包月参数 | ⬜ 执行单 `docs/A2_PREPAID_DESKTOP.md` | 接缝合并后开；只交代码与询价，gw2 保持 PostPaid 到 A3 |
 | B2 / B3 记账与对账 | ⬜ **移到里程碑二开头** | 顺序 B2 计量层 → B3 对账 → B2 定价与账本 → B4；见「里程碑二」首段 |
-| A3 / B4 / A5 / C5 / E1 / E2 | ⬜ | C5 可随时开；A5 等 A3 合并后；B4 等 B2；E1/E2 等文案 |
+| C5 视频技能对照 | ⬜ 调研完成，执行单 `docs/C5_VIDEO_SKILL_ALIGNMENT.md` | 零冲突可随时开；采纳 24 条 / 有意不同 12 条；不复刻 gate.py |
+| A3 / B4 / A5 / E1 / E2 | ⬜ | A5 等 A3 合并后；B4 等 B2；E1/E2 等文案 |
 
 ---
 

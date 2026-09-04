@@ -62,6 +62,7 @@ Wants=network-online.target
 
 [Service]
 Type=notify
+ExecStartPre=/usr/bin/install -d -m 0755 /run/sshd
 ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_tunnel_config
 ExecStart=/usr/sbin/sshd -D -f /etc/ssh/sshd_tunnel_config
 ExecReload=/bin/kill -HUP $MAINPID

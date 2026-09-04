@@ -4,7 +4,7 @@ English | [中文](README.zh-CN.md)
 
 **An AI Agent execution platform** — give an LLM a safe, isolated sandbox to read, write, run code, and drive a browser, with production-grade orchestration, context management, and multi-tenant isolation.
 
-> A general-purpose agent runtime (inspired by OpenCode/Claude Code), rewritten in Python around **Pydantic AI + LiteLLM**, with every file/command operation confined to a per-session **Docker / Kubernetes sandbox**. Deployed on GCP GKE.
+> A general-purpose agent runtime (inspired by OpenCode/Claude Code), rewritten in Python around **Pydantic AI + LiteLLM**, with every file/command operation confined to a per-session **WUYING cloud-desktop sandbox** (the Docker / Kubernetes providers are retained but are no longer the production path). Deployed on AWS (dev) and Alibaba Cloud (prod) — see [docs/DEPLOY.md](docs/DEPLOY.md).
 
 > **Frontend direction:** [`frontend-v2/`](frontend-v2/) is the primary and actively developed OpenBox web UI. The original [`frontend/`](frontend/) is retained only as a legacy migration reference.
 
@@ -15,10 +15,10 @@ English | [中文](README.zh-CN.md)
 | | |
 |---|---|
 | **What it is** | A full-stack platform where an AI agent autonomously executes development tasks (edit code, run bash, git, browse) inside an isolated container, with the v2 web UI showing every tool call in real time. |
-| **Core stack** | FastAPI · Pydantic AI · LiteLLM (100+ models) · Docker/K8s sandbox · PostgreSQL · Redis · React 19 |
+| **Core stack** | FastAPI · Pydantic AI · LiteLLM (100+ models) · WUYING cloud-desktop sandbox · PostgreSQL · Redis · React 19 |
 | **Agent loop** | Pydantic AI single-turn tool calls wrapped by a custom outer loop: multi-turn orchestration, permission checks, retries, context compaction |
 | **Isolation** | Each session owns a dedicated sandbox container; user file/command tools run inside it, control-plane logic runs on the host |
-| **Scale** | Docker locally, dynamic K8s container pool on GKE; multi-tenant (workspace / project / permission inheritance) |
+| **Scale** | Docker locally, WUYING cloud desktops in production; multi-tenant (workspace / project / permission inheritance) |
 
 ---
 
@@ -49,8 +49,8 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 │  + LiteLLM        │   edit / glob / grep ...     │
 └──────────────────┴────────────────────────────┘
                         │
-                 Docker container  (local)
-                 K8s container pool (GKE prod)
+                 Docker container     (local)
+                 WUYING cloud desktop (production)
 ```
 
 ### Execution boundary (host vs sandbox)
@@ -70,7 +70,7 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 ## Key capabilities
 
 - **Agent loop** (`backend/agent/`): `loop.py` outer orchestration, `compaction.py` auto context summarization, `caching.py` prompt cache, `retry.py` resilient retries, `hooks.py` lifecycle hooks.
-- **Sandbox manager** (`backend/sandbox/`): `docker.py` + `kubernetes.py` dual providers, `manager.py` lifecycle (create on session start, destroy on end), dynamic GKE container pool.
+- **Sandbox manager** (`backend/sandbox/`): `wuying.py` (production provider), `docker.py` / `kubernetes.py` (legacy providers), `manager.py` lifecycle (create on session start, destroy on end).
 - **22+ built-in tools**: bash, read, write, edit, glob, grep, mcp, skill, web_fetch, web_search, question, todo, plan, batch, …
 - **Fine-grained permissions** (`backend/permission/`): per-tool approval flow with interactive user confirmation.
 - **Three-tier context/memory**: in-memory current turn → DB-persisted compacted history → long-term instruction files.
@@ -95,7 +95,7 @@ Most "let an LLM run code" demos break the moment they hit production. OpenBox t
 - xterm.js 6 (PTY) · Vitest + Testing Library · Playwright
 
 **Infrastructure**
-- GCP GKE (K8s) · Docker Compose (local dependencies) · Makefile workflow · Python/Node monorepo
+- AWS EC2 (dev) + Alibaba Cloud ECS (prod), both running Docker Compose · Docker Compose (local dependencies) · Makefile workflow · Python/Node monorepo
 
 ---
 
@@ -117,9 +117,9 @@ OpenBox/
 ├── frontend-v2/      # Primary React 19 UI (active development)
 ├── frontend/         # Legacy v1 UI (migration reference only)
 ├── container/        # sandbox image (action_server)
-├── k8s/              # GKE manifests
+├── k8s/              # legacy GKE/AKS manifests (frozen — not the production path)
 ├── docs/             # architecture & design docs
-└── docker-compose.yml
+└── docker-compose.yml   # local dev only; the production compose lives on the servers (docs/DEPLOY.md)
 ```
 
 ---
@@ -153,13 +153,13 @@ npm run check          # i18n parity + ESLint + TypeScript + Vitest
 npx playwright test    # E2E; requires the backend and a devtest account
 ```
 
-The v2 production image is defined in `frontend-v2/Dockerfile`. Deployment manifests for GKE live in `k8s/`; see `docs/gke.md`.
+The v2 production image is defined in `frontend-v2/Dockerfile`. How that image is built, shipped and released to the AWS dev host and the Alibaba Cloud prod host is documented in [docs/DEPLOY.md](docs/DEPLOY.md). The GKE/AKS manifests in `k8s/` (and `docs/gke.md`) are frozen legacy.
 
 ---
 
 ## Documentation
 
-Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, `gke.md`, [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop).
+Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, [`DEPLOY.md`](docs/DEPLOY.md) (AWS dev + Alibaba Cloud prod deployment), [`LOGTO_PROD.md`](docs/LOGTO_PROD.md) (Logto SSO per environment), [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop), `gke.md` (legacy).
 
 ---
 

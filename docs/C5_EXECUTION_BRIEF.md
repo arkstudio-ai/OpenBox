@@ -17,12 +17,13 @@
    - 成稿卡：讲稿全文 + 时长选项（可以 / 短到约 30 秒 / 长到 60–75 秒 / 需要修改）+ 要不要字幕（默认配）。用户没给时长不单独先问。
    - 拆段卡：每段台词、每段发给模型的 prompt **原文一字不少**、每段秒数、素材清单（哪张图 / 哪段视频用在哪几段）、模型与分辨率、按这稿的总时长（与要求不符时明说）、费用报价（段数、总秒数、`estimate` 结果）。**没点「可以」一次 `submit` 都不许发**。
    - STT 结果卡：每段可播放链接 + 想说的 + 实际念出 + 判定；替换词、或实际时长与计划偏差超过 max(2s, 25%) 的段标红；由用户选重生或接受。
-2. **不再自动生成锚图**：优先用户素材，零素材用文字画面基底各段一字不差，只有用户要求才 `image_gen`；素材被模型拒绝（如 720p SD 档丢视频参考）要告诉用户换模型或素材，不得自己绕。
-3. **改稿链**：讲稿改了 → 拆段与 prompt 作废、重出拆段卡；拆段改了 → 费用作废；只重做受影响段。`state.py check` 报出漂移与受影响段号。
-4. **硬规则进 SKILL.md 顶部**：素材外传红线（禁图床/网盘、禁 ngrok/serveo/`ssh -R`、禁对外监听；401/403 停下不绕路）、交付必须走 `share_file`、不暴露内部 id/路径/工具名、计划工具不是审批。
-5. bossip 的工艺知识移植：军规④写语气不写语速 / ⑥场景堆料克制 / ⑦失败先原样重试一次；病理表；few-shot 中文范例；素材 role 词汇（person/scene/outfit/prop）与「视频锚比图片锚稳」；合规自审清单；讲稿结构模板；样片先行；续跑先读 state；每段提交即记录 job。
-6. 脚本：新增 `split_script.py`；`state.py` 加 `confirm/check/--accept`；`lint_prompt.py` 加两条；全部退出 0；配单测。
-7. 每关一条 15 秒样片实拍验证，三个题材各一条 45–60 秒成片经产品评审。
+2. **用户在前端选的视频模型与分辨率是创作前提**：读模型表后以 `person_selected_model` 的时长上限做拆段边界（Seedance 单段 ≤15s，Wan 3.0 ≤30s），拆段卡明写「按你选的 <模型> <分辨率> 规划」；选定模型做不了这稿时在卡里提议换模型并说明原因，由用户点选，绝不静默换；用户中途换模型视同改稿，重新拆段重出卡（U9）。
+3. **不再自动生成锚图**：优先用户素材，零素材用文字画面基底各段一字不差，只有用户要求才 `image_gen`；素材被模型拒绝（如 720p SD 档丢视频参考）要告诉用户换模型或素材，不得自己绕。
+4. **改稿链**：讲稿改了 → 拆段与 prompt 作废、重出拆段卡；拆段改了 → 费用作废；只重做受影响段。`state.py check` 报出漂移与受影响段号。
+5. **硬规则进 SKILL.md 顶部**：素材外传红线（禁图床/网盘、禁 ngrok/serveo/`ssh -R`、禁对外监听；401/403 停下不绕路）、交付必须走 `share_file`、不暴露内部 id/路径/工具名、计划工具不是审批。
+6. bossip 的工艺知识移植：军规④写语气不写语速 / ⑥场景堆料克制 / ⑦失败先原样重试一次；病理表；few-shot 中文范例；素材 role 词汇（person/scene/outfit/prop）与「视频锚比图片锚稳」；合规自审清单；讲稿结构模板；样片先行；续跑先读 state；每段提交即记录 job。
+7. 脚本：新增 `split_script.py`；`state.py` 加 `confirm/check/--accept`；`lint_prompt.py` 加两条；全部退出 0；配单测。
+8. 每关一条 15 秒样片实拍验证，三个题材各一条 45–60 秒成片经产品评审。
 
 ---
 
@@ -33,6 +34,7 @@
 | 技能目录：`SKILL.md`（160 行，英文）+ `references/{model-guide,prompt-recipes,quality}.md` + `scripts/{plan_shots,lint_prompt,build_ass,compare_transcript,state}.py,{compose,extract_audio}.sh` | `backend/.openbox/skills/video-production/` |
 | SKILL.md 由后端读取并注入；**脚本在桌面上**，路径 `/opt/openbox/skills/video-production/scripts/`，改了脚本要用 `backend/scripts/wuying_deploy_action_server.py` 窄部署到桌面（金镜像里的是构建时的版本） | `SKILL.md:12-16`、`scripts/wuying_deploy_action_server.py:32-36` |
 | 现流程（用户实测）：读模型表 → 出讲稿要一句「可以」→ 自己拆段写 prompt 跑 lint（结果不一定贴出）→ 无锚图就自动 `image_gen` → **无确认直接提交全部段** → 回合内轮询最多 13 次，超了切断回合等用户说「继续」→ 每段抽音频/上传/转写/比对刷屏 → 合成 → 给一个链接 | `SKILL.md` Workflow、`tool/video_production.py:83,2467-2483` |
+| 会话记着用户选的视频模型与分辨率（`sessions.video_model/video_resolution`，前端 composer 写入）；`video_generate(action="models")` 输出第二行 `person_selected_model=<id>`；`submit`/`estimate` 不传 `model` 时默认用它。**没有**注入系统提示，agent 只有调 `models` 才知道 | `tool/video_production.py:1550-1560,1624-1639,1764-1766`、`api/sessions.py:99-125` |
 | `question` 工具：build agent 已放行（默认 deny，agent 覆盖 allow）；调用后 `asyncio.Event`/Redis 等待用户作答，即「挂起等答」 | `agent/agent.py:185`、`agent/loop.py:2401`、`question/question.py:103-150` |
 | 钱与能力在工具层：`submit` 必带 `idempotency_key`；在途去重；日上限 50（背压不是审批）；`action="models"` 读注册表；`action="estimate"` 免费校验；`-1` 智能时长不上线；720p SD 档拒绝视频参考 | `tool/video_production.py:111,158,1673-1689,1714-1755,1774-1832`、`tool/video_providers.py:498-525,610-611` |
 | `lint_prompt.py` 有意 `return 0`；`state.py` 明写 "not a state machine, never blocks"——**保持** | 两脚本文件头 |
@@ -78,6 +80,7 @@
 |---|---|---|
 | AC-1 | 三张卡实跑 | 一次真实会话（不给时长）：成稿卡带时长与字幕选项；拆段卡带每段 prompt 原文、素材清单、总时长、费用；STT 结果卡带链接与判定。三张卡前都有完整内容；**点「可以」之前会话里没有任何 `submit`** |
 | AC-2 | 改稿链 | 成稿确认后改一句台词 → agent 重新拆段并重出拆段卡；只重做受影响段；`state.py check` 报出受影响段号 |
+| AC-3a | 选定模型为准 | 前端选 Wan 3.0 → 拆段卡按 ≤30s 规划并写明模型；改选 Seedance 后再发同一稿 → 单段 ≤15s 且长句被拆开或提示删字；一段需要视频参考且选了 720p SD 档 → 卡里提议换 1080p 并说明，不静默换 |
 | AC-3 | 素材优先 | (a) 传一段人物视频 + 选 720p SD 模型 → 拆段卡说明该档丢视频参考并请换模型/素材，**不调用 `image_gen`**；(b) 不传素材也不要求 → 不调用 `image_gen`，用文字画面基底且各段一字不差 |
 | AC-4 | STT 提醒 | 人为制造一段替换词、一段时长偏差 → 结果卡两段标红并写明原因 |
 | AC-5 | 红线 | SKILL.md 含三类禁令原文与「401/403 停下」；单测断言存在；lint 对 prompt 内 URI 仍 FAIL 提示 |

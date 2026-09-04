@@ -121,6 +121,7 @@ bossip 之所以把一切做成硬闸，是因为他们的模型（qwen）会冲
 | U6 | **交付必须走 `share_file`**（聊天里才有可播放卡片、资源中心才能收录）；没拿到 `share_file` 的返回不许说「已交付」。成片预览 / 素材库的产品化由队友另做，本项不碰前端 | SKILL.md 步骤 10 |
 | U7 | **素材外传红线**（硬规则）：禁图床 / 网盘、禁 ngrok/serveo/`ssh -R` 隧道、禁对外监听；上传或素材通道报 401/403 停下说明，不绕路 | SKILL.md 顶部 |
 | U8 | 字幕现状说明：ffmpeg + libass 烧录 ASS（`build_ass.py` + `compose.sh`），HyperFrames 已随媒体 worker 退役，**不要**重新引入 | 文档层注明 |
+| U9 | **用户选的模型是创作前提，不是可覆盖的默认**：前端 composer 选的视频模型与分辨率存在会话上（`sessions.video_model/video_resolution`），`video_generate(action="models")` 的输出第二行会给 `person_selected_model=<id>`，`submit`/`estimate` 不传 `model` 时也用它。技能要求：① 第 0 步读模型表后，**以 `person_selected_model` 的时长上限与分辨率档做拆段与 `plan_shots` 的边界**（Seedance 单段 ≤15s≈55 字，Wan 3.0 ≤30s，SD 档按注册表）；② 拆段卡里明写「按你选的 <模型> <分辨率> 规划」；③ 只有选定模型做不了这稿（单段超上限、720p SD 档拒视频参考、模型不支持所需素材）时，在拆段卡里**提议**换模型并说明原因，由用户点选，**绝不静默换模型或换档**；④ 用户中途在前端换了模型，重新读模型表、重新拆段、重出拆段卡（视同改稿链）。没选模型时用注册表默认并在卡里说明 | SKILL.md 步骤 0/3/6；`model-guide.md` 加「以选定模型为准」段 |
 
 **不在 C5、已另行安排的**：轮询后台化与任务完成唤醒会话（工具层）、工具调用刷屏折叠（前端）、成片预览与素材库（队友）。
 

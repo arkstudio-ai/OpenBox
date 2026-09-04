@@ -120,7 +120,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
 
 
 def _seed_single_user_scope(connection) -> None:
-    """Create the stable owner/project required by relational desktop data."""
+    """Create the stable owner, workspace, and project for desktop mode."""
     from datetime import timezone
 
     now = datetime.now(timezone.utc).isoformat()
@@ -135,9 +135,28 @@ def _seed_single_user_scope(connection) -> None:
     )
     connection.exec_driver_sql(
         """
+        INSERT OR IGNORE INTO workspaces
+            (id, name, owner_user_id, kind, is_deleted, created_at, updated_at)
+        VALUES ('ws_default', 'Default', 'default', 'personal', 0, ?, ?)
+        """,
+        (now, now),
+    )
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO workspace_members
+            (workspace_id, user_id, role, status, created_at, updated_at)
+        VALUES ('ws_default', 'default', 'owner', 'active', ?, ?)
+        """,
+        (now, now),
+    )
+    connection.exec_driver_sql(
+        "UPDATE users SET default_workspace_id = 'ws_default' WHERE id = 'default'"
+    )
+    connection.exec_driver_sql(
+        """
         INSERT OR IGNORE INTO projects
-            (id, user_id, name, slug, is_deleted, created_at, updated_at)
-        VALUES ('default', 'default', 'Default', 'default', 0, ?, ?)
+            (id, user_id, workspace_id, name, slug, is_deleted, created_at, updated_at)
+        VALUES ('default', 'default', 'ws_default', 'Default', 'default', 0, ?, ?)
         """,
         (now, now),
     )
@@ -176,6 +195,19 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "dedupe_key",
         "data",
         "created_at",
+    }),
+    "cloud_desktops": frozenset({
+        "channel_kind",
+        "private_ip",
+        "tunnel_port",
+        "tunnel_bind",
+        "tunnel_pubkey",
+        "tunnel_fingerprint",
+        "action_api_key_hash",
+        "action_api_key_ciphertext",
+        "tunnel_state",
+        "last_seen_at",
+        "channel_error",
     }),
 }
 

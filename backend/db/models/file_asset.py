@@ -19,6 +19,9 @@ class FileAsset(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: Project the resource is filed under. Null = unfiled (no project context
     #: at upload time), which the UI shows in its own bucket.
@@ -44,5 +47,6 @@ class FileAsset(Base):
 
     __table_args__ = (
         Index("ix_file_assets_user_created", "user_id", "created_at"),
+        Index("ix_file_assets_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_file_assets_user_project", "user_id", "project_id", "created_at"),
     )

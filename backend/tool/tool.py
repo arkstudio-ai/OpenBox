@@ -25,6 +25,7 @@ class ToolContext:
     session_id: str = ""
     origin_session_id: str = ""  # Original session for cron jobs (cron tool uses this)
     user_id: str = ""
+    workspace_id: str = ""
     project_id: str = ""
     sandbox: Any = None  # SandboxClient
     bus: Any = None

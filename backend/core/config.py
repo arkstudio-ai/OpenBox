@@ -11,6 +11,10 @@ from core.log import create_logger
 log = create_logger("config")
 
 
+class ProvisioningConfigError(Exception):
+    """A desktop provisioning setting would create an invalid or unpaid order."""
+
+
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
@@ -353,19 +357,38 @@ class OpenBoxConfig(BaseModel):
     # "shared" keeps the single pre-provisioned desktop above; "per_user" makes
     # OpenBox create one ECD desktop + one convenience EndUser per user via the
     # ECD OpenAPI (ported from the bossip wuying-bridge integration).
-    wuying_mode: str = "shared"                     # "shared" | "per_user"
+    wuying_mode: Literal["shared", "per_user"] = "shared"
+    # Routing is deliberately independent from provisioning mode so a release
+    # can retain the proven shared execution path while per-desktop routing is
+    # rolled out (or rolled back) without changing the desktop-view contract.
+    wuying_routing: Literal["shared", "per_desktop"] = "shared"
+    wuying_channel: Literal["direct", "ssh"] = "ssh"
+    wuying_relay_host: str = ""
+    wuying_relay_port: int = Field(default=2222, ge=1, le=65535)
+    wuying_relay_user: str = "obxtunnel"
+    wuying_relay_hostkey: str = ""                 # complete known_hosts line
+    wuying_tunnel_bind: str = "172.17.0.1"
+    wuying_tunnel_port_range: str = "18100-18999"
+    wuying_channel_key: str = ""                   # 32-byte base64/hex encryption key
+    internal_api_token: str = ""
+    wuying_health_interval_sec: int = Field(default=30, ge=5, le=3600)
     wuying_image_id: str = ""                       # golden image; required in per_user mode —
                                                     # never fall back to a community image silently
     wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
     wuying_desktop_type: str = "eds.enterprise_office.4c8g"
-    wuying_system_disk_size: int = 40               # GiB
+    wuying_system_disk_size: int = 50               # GiB; v2 golden image target
     # No default on purpose: the policy group pins the session resolution (the
     # deployment standard is "OpenBox Personal 1080p"), and Alibaba's default
     # policy is resolution-adaptive — a desktop created with it drifts away
     # from what the agent screenshots. per_user provisioning refuses to create
     # desktops until this is set explicitly, like wuying_image_id.
     wuying_policy_group_id: str = ""
-    wuying_charge_type: str = "PostPaid"
+    wuying_charge_type: Literal["PostPaid", "PrePaid"] = "PostPaid"
+    wuying_period: int = 1
+    wuying_period_unit: Literal["Month", "Year"] = "Month"
+    wuying_auto_pay: bool = True
+    wuying_auto_renew: bool = False
+    pool_max_unit_price_cny: float = Field(default=300.0, gt=0)
     wuying_password_salt: str = ""                  # per-deployment secret for derived EndUser passwords
     wuying_env_tag: str = "default"                 # openbox-env tag; isolates prod/dev sharing one account
 
@@ -375,6 +398,21 @@ class OpenBoxConfig(BaseModel):
     # user's browser but fall back to the cloud one when it disconnects.
     browser_mode: str = "auto"
     browser_chrome_port: int = 9333                 # remote-debugging port of the desktop-local Chrome
+
+    @model_validator(mode="after")
+    def validate_wuying_billing(self) -> "OpenBoxConfig":
+        if self.wuying_charge_type == "PrePaid" and not self.wuying_auto_pay:
+            raise ProvisioningConfigError(
+                "WUYING_AUTO_PAY must be true when WUYING_CHARGE_TYPE=PrePaid; "
+                "otherwise Alibaba Cloud creates an unpaid order instead of a desktop"
+            )
+        allowed = {"Month": {1, 2, 3, 6}, "Year": {1, 2, 3, 4, 5}}
+        if self.wuying_period not in allowed[self.wuying_period_unit]:
+            values = ", ".join(str(v) for v in sorted(allowed[self.wuying_period_unit]))
+            raise ProvisioningConfigError(
+                f"WUYING_PERIOD must be one of {values} for {self.wuying_period_unit}"
+            )
+        return self
 
     # -- OSS asset transfer (browser -> OSS -> cloud desktop) --
     oss_bucket: str = ""                            # empty = OSS transfer disabled
@@ -605,12 +643,28 @@ def _apply_env_overrides(data: dict) -> dict:
         "wuying_region_id": "WUYING_REGION_ID",
         "wuying_end_user_id": "WUYING_END_USER_ID",
         "wuying_mode": "WUYING_MODE",
+        "wuying_routing": "WUYING_ROUTING",
+        "wuying_channel": "WUYING_CHANNEL",
+        "wuying_relay_host": "WUYING_RELAY_HOST",
+        "wuying_relay_port": "WUYING_RELAY_PORT",
+        "wuying_relay_user": "WUYING_RELAY_USER",
+        "wuying_relay_hostkey": "WUYING_RELAY_HOSTKEY",
+        "wuying_tunnel_bind": "WUYING_TUNNEL_BIND",
+        "wuying_tunnel_port_range": "WUYING_TUNNEL_PORT_RANGE",
+        "wuying_channel_key": "WUYING_CHANNEL_KEY",
+        "internal_api_token": "INTERNAL_API_TOKEN",
+        "wuying_health_interval_sec": "WUYING_HEALTH_INTERVAL_SEC",
         "wuying_image_id": "WUYING_IMAGE_ID",
         "wuying_office_site_id": "WUYING_OFFICE_SITE_ID",
         "wuying_desktop_type": "WUYING_DESKTOP_TYPE",
         "wuying_system_disk_size": "WUYING_SYSTEM_DISK_SIZE",
         "wuying_policy_group_id": "WUYING_POLICY_GROUP_ID",
         "wuying_charge_type": "WUYING_CHARGE_TYPE",
+        "wuying_period": "WUYING_PERIOD",
+        "wuying_period_unit": "WUYING_PERIOD_UNIT",
+        "wuying_auto_pay": "WUYING_AUTO_PAY",
+        "wuying_auto_renew": "WUYING_AUTO_RENEW",
+        "pool_max_unit_price_cny": "POOL_MAX_UNIT_PRICE_CNY",
         "wuying_password_salt": "WUYING_PASSWORD_SALT",
         "wuying_env_tag": "WUYING_ENV_TAG",
         "browser_mode": "BROWSER_MODE",
@@ -655,11 +709,12 @@ def _apply_env_overrides(data: dict) -> dict:
             elif field_name in {"db_pool_size", "db_pool_overflow", "jwt_access_expire_minutes",
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
-                                "oss_user_quota_bytes", "wuying_system_disk_size"}:
+                                "oss_user_quota_bytes", "wuying_system_disk_size",
+                                "wuying_period"}:
                 data[field_name] = int(value)
-            elif field_name == "monthly_cost_limit":
+            elif field_name in {"monthly_cost_limit", "pool_max_unit_price_cny"}:
                 data[field_name] = float(value)
-            elif field_name == "debug":
+            elif field_name in {"debug", "wuying_auto_pay", "wuying_auto_renew"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

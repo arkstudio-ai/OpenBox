@@ -71,7 +71,14 @@ async def check_warmup() -> None:
 
         # Check if container is already running
         from sandbox import provider
-        existing = provider.get_user_container(user_id)
+        from sandbox.ownership import owner_for
+
+        owner = await owner_for(user_id)
+        try:
+            existing = await provider.resolve_user_container(owner)
+        except Exception as e:
+            log.info(f"Cron warmup skipped for user {user_id}: {e}")
+            continue
         if existing and existing.status == ContainerStatus.RUNNING:
             _warmup_state[user_id] = {"requested_at": now_ms, "ready": True}
             continue
@@ -81,7 +88,7 @@ async def check_warmup() -> None:
         _warmup_state[user_id] = {"requested_at": now_ms, "ready": False}
 
         try:
-            await provider.ensure_user_container(user_id, project_id)
+            await provider.ensure_user_container(owner, project_id)
             _warmup_state[user_id]["ready"] = True
             log.info(f"Container pre-warmed for user {user_id}")
         except Exception as e:

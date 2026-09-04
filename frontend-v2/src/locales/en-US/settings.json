@@ -3,6 +3,7 @@
   "subtitle": "Account & preferences",
   "nav": {
     "account": "Account",
+    "team": "Team",
     "usage": "Usage & cost",
     "models": "Models",
     "tools": "Tools & permissions",
@@ -11,6 +12,7 @@
   },
   "hint": {
     "account": "Sign-in identity and session.",
+    "team": "Workspace members, roles and invitations.",
     "usage": "Token consumption and cost per chat.",
     "models": "Default model and agent picks.",
     "tools": "Which actions may run without confirmation.",
@@ -23,6 +25,33 @@
     "emailNone": "Not linked",
     "role": "Role",
     "userId": "User ID"
+  },
+  "team": {
+    "members": "Members",
+    "pending": "Invitations for you",
+    "pendingEmpty": "No pending invitations.",
+    "targetPlaceholder": "Username or email",
+    "invite": "Invite",
+    "remove": "Remove",
+    "inviteCreated": "Invitation link copied: {{url}}",
+    "inviteLink": "Invitation link",
+    "joined": "Joined {{date}}",
+    "acceptTitle": "Workspace invitation",
+    "acceptHint": "Accept this invitation to join the workspace.",
+    "accept": "Accept invitation",
+    "accepted": "Invitation accepted. The workspace is now selected.",
+    "enterWorkspace": "Enter workspace",
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member"
+    },
+    "statuses": {
+      "active": "Active",
+      "invited": "Invited",
+      "suspended": "Suspended",
+      "removed": "Removed"
+    }
   },
   "usage": {
     "contextUsed": "Current chat context",

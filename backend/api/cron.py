@@ -1,13 +1,14 @@
 """Cron job management API."""
 from fastapi import APIRouter, Depends, HTTPException
 from auth.middleware import get_current_user
+from auth.workspace import get_workspace
 from cron.types import CronJobCreate, CronJobUpdate
 from cron.service import cron_service
 
 router = APIRouter(
     prefix="/api/cron",
     tags=["cron"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_workspace)],
 )
 
 
@@ -25,7 +26,10 @@ async def list_cron_jobs(
 ):
     """List cron jobs. Optionally filter by project or notify session."""
     user_id = current_user["user_id"]
-    return await cron_service.list_jobs(user_id, session_id=session_id, project_id=project_id)
+    return await cron_service.list_jobs(
+        user_id, session_id=session_id, project_id=project_id,
+        workspace_id=current_user["workspace_id"]
+    )
 
 
 @router.post("/jobs")
@@ -36,7 +40,9 @@ async def create_cron_job(
     """Create a new cron job."""
     user_id = current_user["user_id"]
     try:
-        return await cron_service.add(user_id, body)
+        return await cron_service.add(
+            user_id, body, workspace_id=current_user["workspace_id"]
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -50,7 +56,9 @@ async def update_cron_job(
     """Update a cron job."""
     user_id = current_user["user_id"]
     try:
-        return await cron_service.update(job_id, user_id, body)
+        return await cron_service.update(
+            job_id, user_id, body, workspace_id=current_user["workspace_id"]
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -63,7 +71,9 @@ async def delete_cron_job(
     """Delete a cron job."""
     user_id = current_user["user_id"]
     try:
-        return await cron_service.remove(job_id, user_id)
+        return await cron_service.remove(
+            job_id, user_id, workspace_id=current_user["workspace_id"]
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -76,7 +86,9 @@ async def run_cron_job(
     """Manually trigger a cron job."""
     user_id = current_user["user_id"]
     try:
-        return await cron_service.run(job_id, user_id)
+        return await cron_service.run(
+            job_id, user_id, workspace_id=current_user["workspace_id"]
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -88,7 +100,9 @@ async def pause_all_cron_jobs(
 ):
     """Pause (disable) all cron jobs. Optionally filter by session."""
     user_id = current_user["user_id"]
-    paused = await cron_service.pause_all(user_id, session_id=session_id)
+    paused = await cron_service.pause_all(
+        user_id, session_id=session_id, workspace_id=current_user["workspace_id"]
+    )
     return {"ok": True, "paused": paused}
 
 
@@ -99,7 +113,9 @@ async def resume_all_cron_jobs(
 ):
     """Resume (enable) all cron jobs. Optionally filter by session."""
     user_id = current_user["user_id"]
-    resumed = await cron_service.resume_all(user_id, session_id=session_id)
+    resumed = await cron_service.resume_all(
+        user_id, session_id=session_id, workspace_id=current_user["workspace_id"]
+    )
     return {"ok": True, "resumed": resumed}
 
 
@@ -110,7 +126,9 @@ async def get_cron_job(
 ):
     """Get a specific cron job."""
     user_id = current_user["user_id"]
-    job = await cron_service.get_job(job_id, user_id)
+    job = await cron_service.get_job(
+        job_id, user_id, workspace_id=current_user["workspace_id"]
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -124,4 +142,6 @@ async def list_cron_runs(
 ):
     """Get execution history for a cron job."""
     user_id = current_user["user_id"]
-    return await cron_service.list_runs(job_id, user_id, limit=limit)
+    return await cron_service.list_runs(
+        job_id, user_id, limit=limit, workspace_id=current_user["workspace_id"]
+    )

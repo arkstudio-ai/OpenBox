@@ -23,6 +23,12 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
+# Fail before importing the server stack: a misconfigured systemd unit must
+# never briefly expose an unauthenticated execution plane.
+SESSION_API_KEY = os.environ.get("SESSION_API_KEY", "")
+if __name__ == "__main__" and not SESSION_API_KEY:
+    raise SystemExit("SESSION_API_KEY is required; refusing to start without authentication")
+
 import subprocess
 
 import psutil
@@ -114,9 +120,6 @@ class GrepRequest(BaseModel):
     path: str = "/workspace"
     type: str | None = None  # file type filter, e.g. "py", "js"
     max_results: int = 100
-
-# --- API Key ---
-SESSION_API_KEY = os.environ.get("SESSION_API_KEY", "")
 
 # --- Protected command detection ---
 # The action_server is the ONLY communication channel between the backend and the
@@ -268,7 +271,7 @@ async def authenticate(request: Request, call_next):
     if request.url.path in ("/alive", "/docs", "/openapi.json", "/terminal"):
         return await call_next(request)
     api_key = request.headers.get("X-API-Key", "")
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not SESSION_API_KEY or api_key != SESSION_API_KEY:
         return JSONResponse(status_code=403, content={"detail": "Invalid API Key"})
     return await call_next(request)
 
@@ -916,7 +919,7 @@ def _blocking_read(fd: int, size: int = 4096) -> bytes | None:
 @app.websocket("/terminal")
 async def terminal_ws(ws: WebSocket, api_key: str = Query("")):
     # Authenticate via query parameter (WebSocket doesn't go through HTTP middleware)
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not SESSION_API_KEY or api_key != SESSION_API_KEY:
         await ws.accept()
         await ws.close(code=4003, reason="Invalid API Key")
         return
@@ -1157,7 +1160,7 @@ async def dev_browser_status():
 async def dev_browser_ws(ws: WebSocket, api_key: str = Query("")):
     """WebSocket proxy: forwards extension traffic to the relay server at localhost:9222."""
     # Authenticate
-    if SESSION_API_KEY and api_key != SESSION_API_KEY:
+    if not SESSION_API_KEY or api_key != SESSION_API_KEY:
         await ws.accept()
         await ws.close(code=4003, reason="Invalid API Key")
         return

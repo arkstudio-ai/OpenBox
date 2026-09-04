@@ -118,6 +118,9 @@ function metadataAssetIds(tool: ToolPart): string[] {
   return ids
 }
 
+// This parser mirrors the persisted line protocol; each optional field is an
+// independent branch rather than a domain decision.
+// eslint-disable-next-line complexity
 function parseSegmentRecords(tools: ToolPart[]): Map<string, SegmentRecord> {
   const byOrdinal = new Map<number, SegmentRecord>()
   for (const tool of tools) {
@@ -293,6 +296,8 @@ export function buildAssistantContentView(
   const progress: WorkNarration[] = []
   const artifacts: Array<Omit<ArtifactGroup, "kind" | "parts"> & { part: FilePart }> = []
   let order = 0
+  // Rendering is a single ordered fold over heterogeneous persisted parts.
+  // eslint-disable-next-line complexity
   messages.forEach((message, messageIndex) => {
     const precedingTools: ToolPart[] = []
     for (const part of message.parts) {

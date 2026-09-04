@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from sse_starlette.sse import EventSourceResponse
 
 from auth.middleware import get_current_user, require_admin
+from auth.workspace import get_workspace
 from sandbox import provider
 from models.container import (
     ContainerInfo,
@@ -15,10 +16,18 @@ from models.container import (
     SuccessResponse,
 )
 
-router = APIRouter(prefix="/api/containers", tags=["containers"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/api/containers",
+    tags=["containers"],
+    dependencies=[Depends(get_workspace)],
+)
 
 # Preview proxy: separate router with preview token auth (no JWT — browser accesses via URL)
 preview_router = APIRouter(prefix="/api/containers", tags=["preview"])
+
+
+def _owner_id(current_user: dict) -> str:
+    return current_user.get("workspace_id") or current_user["user_id"]
 
 
 @router.get("/sandbox-image/status", response_model=ImageStatusResponse)
@@ -105,7 +114,9 @@ async def list_all_containers(current_user: dict = Depends(require_admin)):
 @router.get("/{container_id}", response_model=ContainerInfo)
 async def get_container(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        return await provider.get_container(container_id, user_id=current_user["user_id"])
+        return await provider.get_container(
+            container_id, user_id=_owner_id(current_user)
+        )
     except ValueError:
         raise HTTPException(status_code=404, detail="Container not found")
     except PermissionError:
@@ -115,7 +126,9 @@ async def get_container(container_id: str, current_user: dict = Depends(get_curr
 @router.delete("/{container_id}", response_model=SuccessResponse)
 async def delete_container(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        await provider.delete_container(container_id, user_id=current_user["user_id"])
+        await provider.delete_container(
+            container_id, user_id=_owner_id(current_user)
+        )
         return SuccessResponse(message="Container deleted")
     except ValueError:
         raise HTTPException(status_code=404, detail="Container not found")
@@ -126,7 +139,9 @@ async def delete_container(container_id: str, current_user: dict = Depends(get_c
 @router.post("/{container_id}/stop", response_model=SuccessResponse)
 async def stop_container(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        await provider.stop_container(container_id, user_id=current_user["user_id"])
+        await provider.stop_container(
+            container_id, user_id=_owner_id(current_user)
+        )
         return SuccessResponse(message="Container stopped")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -137,7 +152,9 @@ async def stop_container(container_id: str, current_user: dict = Depends(get_cur
 @router.post("/{container_id}/start", response_model=SuccessResponse)
 async def start_container(container_id: str, current_user: dict = Depends(get_current_user)):
     try:
-        await provider.start_container(container_id, user_id=current_user["user_id"])
+        await provider.start_container(
+            container_id, user_id=_owner_id(current_user)
+        )
         return SuccessResponse(message="Container started")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -150,7 +167,8 @@ async def get_listening_ports(container_id: str, current_user: dict = Depends(ge
     """Detect TCP ports with services listening inside the container."""
     try:
         resp = await provider.forward_to_container(
-            container_id, "GET", "/listening_ports", user_id=current_user["user_id"], timeout=5.0,
+            container_id, "GET", "/listening_ports",
+            user_id=_owner_id(current_user), timeout=5.0,
         )
         return resp.json()
     except ValueError as e:
@@ -166,7 +184,9 @@ async def create_preview_access_token(container_id: str, port: int, current_user
     """Create short-lived preview token bound to user + container + port."""
     user_id = current_user["user_id"]
     try:
-        await provider.get_container(container_id, user_id=user_id)
+        await provider.get_container(
+            container_id, user_id=_owner_id(current_user)
+        )
     except ValueError:
         raise HTTPException(status_code=404, detail="Container not found")
     except PermissionError:

@@ -39,6 +39,19 @@ class PgSessionRepo:
             result = await session.execute(q)
             return [_to_dict(r) for r in result.scalars().all()]
 
+    async def list_by_workspace(self, workspace_id: str, project_id: str | None = None,
+                                offset: int = 0, limit: int = 100) -> list[dict]:
+        async with get_db_session() as session:
+            q = select(Session).where(
+                Session.workspace_id == workspace_id,
+                Session.is_deleted == False,
+            )
+            if project_id:
+                q = q.where(Session.project_id == project_id)
+            q = q.order_by(Session.created_at.desc()).offset(offset).limit(limit)
+            result = await session.execute(q)
+            return [_to_dict(r) for r in result.scalars().all()]
+
     async def update(self, session_id: str, user_id: str, **fields) -> dict | None:
         fields["updated_at"] = datetime.now(timezone.utc)
         async with get_db_session() as db:

@@ -4,6 +4,8 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { useSendMessage, type SendMessageVars } from "../api/messages"
 import { makeClientId, optimisticUserMessage } from "../lib/message"
 import { useStreamStore } from "../stores/stream"
+import { ApiError } from "@/shared/api/http"
+import { requestDesktopPanel } from "@/shared/events/desktop"
 
 export interface SendOpts {
   model?: string
@@ -50,6 +52,9 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
         // message sitting in the transcript as though it had been sent, which
         // is the opposite of what happened.
         failed.dropOptimistic(sessionId, clientMessageId)
+        if (err instanceof ApiError && err.code === "DESKTOP_NOT_READY") {
+          requestDesktopPanel()
+        }
         toast("error", errorMessage(err))
         throw err
       }

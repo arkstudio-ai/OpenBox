@@ -114,9 +114,18 @@ class SandboxManager:
         if hasattr(provider, "_container_projects"):
             provider._container_projects.pop(sandbox.container_id, None)
 
-    async def check_health(self, project_id: str = "default", user_id: str = "default") -> dict:
-        """Check if a sandbox is available and healthy for the given user."""
-        key = _map_key(user_id)
+    async def check_health(
+        self,
+        project_id: str = "default",
+        user_id: str = "default",
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Check whether the selected workspace's sandbox is healthy."""
+        if workspace_id is None:
+            from sandbox.ownership import owner_for
+
+            workspace_id = await owner_for(user_id)
+        key = _map_key(workspace_id)
         async with self._lock:
             acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
         async with acquire_lock:
@@ -127,13 +136,13 @@ class SandboxManager:
                     return {
                         "available": True,
                         "container_id": sandbox.container_id,
-                        "container_name": build_sandbox_name(user_id),
+                        "container_name": build_sandbox_name(workspace_id),
                         "status": "running",
                     }
                 await self._cleanup_stale_sandbox(sandbox, key)
 
         from sandbox import provider
-        containers = provider.get_containers_for_user(user_id)
+        containers = provider.get_containers_for_user(workspace_id)
         return {
             "available": False,
             "containers": [
@@ -155,7 +164,10 @@ class SandboxManager:
         *,
         user_id: str,
     ) -> SandboxInfo:
-        key = _map_key(user_id)
+        from sandbox.ownership import owner_for_session
+
+        owner = await owner_for_session(session_id, user_id)
+        key = _map_key(owner)
         async with self._lock:
             acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
         async with acquire_lock:
@@ -163,6 +175,7 @@ class SandboxManager:
                 session_id,
                 project_id,
                 user_id=user_id,
+                owner=owner,
             )
 
     async def _acquire_for_user(
@@ -171,9 +184,24 @@ class SandboxManager:
         project_id: str = "default",
         *,
         user_id: str,
+        owner: str | None = None,
     ) -> SandboxInfo:
         """Acquire a sandbox for a session. Reuses the user's existing container if available."""
-        key = _map_key(user_id)
+        if owner is None:
+            from sandbox.ownership import owner_for_session
+
+            owner = await owner_for_session(session_id, user_id)
+        key = _map_key(owner)
+
+        from sandbox import provider
+
+        # Per-desktop routing is database-authoritative on every acquisition.
+        # This makes a revoke or credential rotation invalidate a cached route
+        # immediately instead of waiting for an unauthenticated /alive probe.
+        authoritative = None
+        per_owner_route = getattr(provider, "routes_per_user", False) is True
+        if per_owner_route:
+            authoritative = await provider.resolve_user_container(owner, project_id)
 
         async with self._lock:
             existing_key = self._session_project.get(session_id)
@@ -181,6 +209,21 @@ class SandboxManager:
                 raise RuntimeError(f"Sandbox session ownership mismatch for {session_id}")
             sandbox = self._project_map.get(key)
             client = self._clients.get(key)
+
+        if authoritative is not None and sandbox is not None:
+            route_changed = (
+                sandbox.container_id != authoritative.id
+                or sandbox.host != authoritative.host
+                or sandbox.port != authoritative.port
+                or sandbox.api_key != (authoritative.api_key or "")
+            )
+            if route_changed:
+                async with self._lock:
+                    if self._project_map.get(key) is sandbox:
+                        self._project_map.pop(key, None)
+                        self._clients.pop(key, None)
+                sandbox = None
+                client = None
 
         # Provider probes and filesystem setup are network operations. The
         # per-user acquire lock already serializes this tenant; holding the
@@ -228,25 +271,30 @@ class SandboxManager:
                 if retained_client is not None:
                     return sandbox
 
-        from sandbox import provider
-
         try:
-            info = provider.get_user_container(user_id)
+            info = (
+                authoritative
+                if per_owner_route
+                else provider.get_user_container(owner)
+            )
             if info:
                 if info.status != ContainerStatus.RUNNING:
-                    await provider.start_container(info.id, user_id=user_id)
-                    info = await provider.get_container(info.id, user_id=user_id)
+                    await provider.start_container(info.id, user_id=owner)
+                    info = await provider.get_container(info.id, user_id=owner)
             else:
                 info = await provider.create_container(
                     name=build_sandbox_name(user_id),
                     image=None,
                     project_id=None,
-                    user_id=user_id,
+                    user_id=owner,
                 )
 
             sandbox = SandboxInfo(
                 container_id=info.id,
-                user_id=user_id,
+                # Despite the legacy field name this is the infrastructure
+                # owner, now a workspace id.  Actor identity remains on the
+                # SandboxClient as its filesystem/user scope.
+                user_id=owner,
                 host=info.host,
                 port=info.port,
                 api_key=info.api_key or "",
@@ -334,16 +382,11 @@ class SandboxManager:
         environment. Destruction belongs to the database-guarded idle reaper
         or an explicit owner action, never this local reference release.
         """
-        expected_key = _map_key(user_id)
         async with self._lock:
             key = self._session_project.get(session_id)
             if not key:
                 log.warning(f"No sandbox found for session {session_id}")
                 return
-            if key != expected_key:
-                raise PermissionError(
-                    f"Sandbox session ownership mismatch for {session_id}"
-                )
             acquire_lock = self._acquire_locks.setdefault(key, asyncio.Lock())
 
         # Serialize provider deletion with this user's health check/cold start.
@@ -376,7 +419,9 @@ class SandboxManager:
 
     async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
-        expected_key = _map_key(user_id)
+        from sandbox.ownership import owner_for_session
+
+        expected_key = _map_key(await owner_for_session(session_id, user_id))
         # Acquire is also the health-checked, per-user serialized fast path.
         # Using it unconditionally keeps map reads and provider lifecycle in one
         # ownership protocol instead of racing a separate probe here.
@@ -404,7 +449,12 @@ class SandboxManager:
                 return None
             return next(iter(self._clients.values()))
 
-    async def get_client_any(self, *, user_id: str) -> SandboxClient | None:
+    async def get_client_any(
+        self,
+        *,
+        user_id: str,
+        workspace_id: str | None = None,
+    ) -> SandboxClient | None:
         """Get any available SandboxClient (not session-specific).
 
         Used by management endpoints (skills, MCP) that operate at the container level.
@@ -416,10 +466,19 @@ class SandboxManager:
             # exposing the raw owner in filesystem/log identifiers.
             import hashlib
 
-            management_session = (
-                "__management__:" + hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+            if workspace_id is None:
+                from sandbox.ownership import owner_for
+
+                workspace_id = await owner_for(user_id)
+            management_session = "__management__:" + hashlib.sha256(
+                f"{workspace_id}:{user_id}".encode("utf-8")
+            ).hexdigest()[:16]
+            await self._acquire_for_user(
+                management_session,
+                "default",
+                user_id=user_id,
+                owner=workspace_id,
             )
-            await self.acquire(management_session, "default", user_id=user_id)
             async with self._lock:
                 key = self._session_project.get(management_session)
                 if key:

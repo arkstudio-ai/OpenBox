@@ -15,13 +15,64 @@ class PgUserRepo:
         # password_hash is None for federated users (Logto/OIDC) — they never
         # authenticate against the local password path.
         now = datetime.now(timezone.utc)
+        from core.identifier import generate_id
+        from db.models.project import Project
+        from db.models.workspace import Workspace, WorkspaceMember
+
+        workspace_id = generate_id()
         user = User(id=id, username=username, password_hash=password_hash,
                     email=email, role=role, oauth_provider=oauth_provider,
                     oauth_id=oauth_id, avatar_url=avatar_url,
                     created_at=now, updated_at=now)
         async with get_db_session() as session:
             session.add(user)
-        return {"id": id, "username": username, "email": email, "role": role}
+            await session.flush()
+            session.add(
+                Workspace(
+                    id=workspace_id,
+                    name=username,
+                    owner_user_id=id,
+                    kind="personal",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            # The user and workspace form a deliberate two-way FK: a workspace
+            # has an owner, while a user points at their default workspace.
+            # Flush the workspace before inserting its member/default project,
+            # then set the user's pointer, so PostgreSQL never observes a child
+            # row whose workspace has not been persisted yet.
+            await session.flush()
+            session.add(
+                WorkspaceMember(
+                    workspace_id=workspace_id,
+                    user_id=id,
+                    role="owner",
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.add(
+                Project(
+                    id=generate_id(),
+                    user_id=id,
+                    workspace_id=workspace_id,
+                    name="Default",
+                    slug="default",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.flush()
+            user.default_workspace_id = workspace_id
+        return {
+            "id": id,
+            "username": username,
+            "email": email,
+            "role": role,
+            "default_workspace_id": workspace_id,
+        }
 
     async def get_by_oauth(self, provider: str, oauth_id: str) -> dict | None:
         async with get_db_session() as session:
@@ -100,5 +151,6 @@ def _to_dict(user: User) -> dict:
         "locked_until": str(user.locked_until) if user.locked_until else None,
         "monthly_cost_limit": float(user.monthly_cost_limit) if user.monthly_cost_limit else None,
         "password_hash": user.password_hash,
+        "default_workspace_id": user.default_workspace_id,
         "created_at": str(user.created_at), "updated_at": str(user.updated_at),
     }

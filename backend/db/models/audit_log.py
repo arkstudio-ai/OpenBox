@@ -12,6 +12,9 @@ class AuditLog(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=True
+    )
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -23,4 +26,5 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_user_created", "user_id", "created_at"),
         Index("ix_audit_logs_action", "action"),
+        Index("ix_audit_logs_workspace_created", "workspace_id", "created_at"),
     )

@@ -3,6 +3,10 @@
   "network": "网络连接失败，请检查网络后重试。",
   "HTTP_401": "登录已过期，请重新登录。",
   "HTTP_403": "没有权限执行这个操作。",
+  "WORKSPACE_FORBIDDEN": "你不是该工作空间的成员。",
+  "WORKSPACE_ROLE_REQUIRED": "当前工作空间角色无权执行此操作。",
+  "SESSION_READ_ONLY": "此会话由其他成员发起，当前为只读。",
+  "INVITATION_EXPIRED": "该工作空间邀请已过期。",
   "HTTP_404": "找不到请求的内容。",
   "HTTP_409": "操作冲突，请刷新后重试。",
   "HTTP_422": "请求参数有误。",
@@ -15,6 +19,7 @@
   "SESSION_QUOTA_EXCEEDED": "对话已满（{{used}}/{{limit}}），请删除旧对话。",
   "CONCURRENT_AGENT_QUOTA_EXCEEDED": "任务并发已满（{{used}}/{{limit}}），请稍候。",
   "CONTAINER_QUOTA_EXCEEDED": "沙箱已满（{{used}}/{{limit}}），请释放一个。",
+  "DESKTOP_NOT_READY": "你的云桌面尚未就绪，请在云桌面面板中开通或检查连接。",
   "runFailed": "这轮回复失败了，请重试。",
   "LLM_UNAVAILABLE": "模型服务暂时不可用，请稍后重试或换一个模型。"
 }

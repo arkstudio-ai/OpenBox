@@ -9,6 +9,7 @@ import { Maximize2, Minimize2, RotateCw, Upload } from "lucide-react"
 import { http, ApiError } from "@/shared/api/http"
 import { Spinner } from "@/shared/ui/Spinner"
 import { cn } from "@/shared/lib/cn"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 const SDK_URL =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/WuyingWebSDK.js"
@@ -57,6 +58,7 @@ interface DesktopStatus {
   mode?: string
   desktopId?: string
   error?: string
+  channel?: { state: string; last_seen_at?: string | null; error?: string }
 }
 
 /** Thrown when the backend says this user's desktop failed to provision. */
@@ -142,6 +144,31 @@ function focusFrame(frame: HTMLIFrameElement | null) {
   }
 }
 
+function useChannelState(phase: Phase) {
+  const [state, setState] = useState("")
+  useEffect(() => {
+    if (phase !== "connected") return
+    const timer = window.setInterval(() => {
+      void http
+        .get<DesktopStatus>("/api/desktop/status")
+        .then((status) => setState(status.channel?.state ?? ""))
+        .catch(() => setState("down"))
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [phase])
+  return [state, setState] as const
+}
+
+function ChannelStatus({ state }: { state: string }) {
+  const { t } = useTranslation("workbench")
+  if (!state) return null
+  return (
+    <span className="flex-none rounded-full bg-hairsoft px-2 py-0.5 text-xs text-n600">
+      {t(`desktop.channel.${state}`, { defaultValue: state })}
+    </span>
+  )
+}
+
 export function DesktopTab() {
   const { t } = useTranslation("workbench")
   const rootRef = useRef<HTMLDivElement>(null)
@@ -155,6 +182,7 @@ export function DesktopTab() {
   const [clipboard, setClipboard] = useState(true)
   const [fs, setFs] = useState<Fullscreen>("off")
   const [attempt, setAttempt] = useState(0)
+  const [channelState, setChannelState] = useChannelState(phase)
   // The connect effect outlives renders; mirror the toggles for it.
   const togglesRef = useRef({ control: false, clipboard: true })
   useEffect(() => {
@@ -180,6 +208,9 @@ export function DesktopTab() {
       }
     }
 
+    // The connection lifecycle deliberately keeps each guarded SDK phase in
+    // one closure so cleanup can invalidate every continuation via `alive`.
+    // eslint-disable-next-line complexity
     void (async () => {
       try {
         // Per-user mode: make sure this user's own desktop exists and is
@@ -190,12 +221,13 @@ export function DesktopTab() {
         const status = await http.get<DesktopStatus>("/api/desktop/status").catch(() => null)
         if (!alive) return
         if (status) {
+          setChannelState(status.channel?.state ?? "")
           if (status.state === "not_provisioned" && status.mode === "per_user") {
             setPhase("provision")
             return
           }
           if (status.state === "failed") throw new ProvisionFailedError(status.error ?? "")
-          if (status.state !== "running" && status.state !== "not_provisioned") {
+          if (status.state && status.state !== "running" && status.state !== "not_provisioned") {
             setDetail(t("desktop.provisioning"))
             await waitDesktopRunning(
               () => alive,
@@ -302,7 +334,7 @@ export function DesktopTab() {
       alive = false
       stop()
     }
-  }, [attempt, t])
+  }, [attempt, t, setChannelState])
 
   // Fit the iframe itself to the stage. Avoid transform: the Web SDK measures
   // its viewport to map mouse coordinates and synthesize IME input.
@@ -434,6 +466,7 @@ export function DesktopTab() {
               : t("desktop.readonly")
             : t(`desktop.${phase}`)}
         </span>
+        <ChannelStatus state={channelState} />
         {phase === "connected" && (
           <>
             <label className="flex flex-none cursor-pointer items-center gap-1.5 text-sm text-n700">
@@ -528,6 +561,10 @@ function StageOverlay({
   onProvision: () => void
 }) {
   const { t } = useTranslation("workbench")
+  const canProvision = useWorkspaceStore((state) => {
+    const selected = state.items.find((item) => item.id === state.currentId)
+    return selected?.role === "owner" || selected?.role === "admin"
+  })
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card">
       {phase === "loading" ? (
@@ -539,13 +576,17 @@ function StageOverlay({
         <>
           <span className="text-base text-n800">{t("desktop.provision")}</span>
           <span className="max-w-90 text-center text-sm text-n600">{t("desktop.provisionHint")}</span>
-          <button
-            type="button"
-            onClick={onProvision}
-            className="rounded-full bg-ink px-4 py-1.5 text-sm text-bg hover:bg-a800"
-          >
-            {t("desktop.provisionAction")}
-          </button>
+          {canProvision ? (
+            <button
+              type="button"
+              onClick={onProvision}
+              className="rounded-full bg-ink px-4 py-1.5 text-sm text-bg hover:bg-a800"
+            >
+              {t("desktop.provisionAction")}
+            </button>
+          ) : (
+            <span className="text-sm text-n600">{t("desktop.provisionRestricted")}</span>
+          )}
         </>
       ) : (
         <>

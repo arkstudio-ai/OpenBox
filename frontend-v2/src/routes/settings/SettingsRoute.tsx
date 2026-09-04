@@ -9,10 +9,13 @@ import {
   ModelsPage,
   BrowserPage,
   AppearancePage,
+  TeamPage,
 } from "@/features/settings"
 
 function ActivePage({ tab }: { tab: SettingsTab }) {
   switch (tab) {
+    case "team":
+      return <TeamPage />
     case "usage":
       return <UsagePage />
     case "models":

@@ -50,6 +50,8 @@ class ProjectError(Exception):
 @dataclass
 class ProjectInfo:
     id: str
+    user_id: str
+    workspace_id: str
     name: str
     slug: str
     description: str | None = None
@@ -65,6 +67,8 @@ class ProjectInfo:
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "user_id": self.user_id,
+            "workspace_id": self.workspace_id,
             "name": self.name,
             "slug": self.slug,
             "description": self.description,
@@ -108,6 +112,8 @@ def validate_slug(slug: str) -> str:
 def _row_to_info(row: ProjectORM) -> ProjectInfo:
     return ProjectInfo(
         id=row.id,
+        user_id=row.user_id,
+        workspace_id=row.workspace_id,
         name=row.name,
         slug=row.slug or row.id,
         description=row.description,
@@ -170,11 +176,11 @@ async def workdir_for_session(session) -> str:
 # CRUD
 # ---------------------------------------------------------------------------
 
-async def list_projects(user_id: str) -> list[ProjectInfo]:
+async def list_projects(workspace_id: str) -> list[ProjectInfo]:
     async with get_db_session() as db:
         rows = (await db.execute(
             select(ProjectORM).where(
-                ProjectORM.user_id == user_id,
+                ProjectORM.workspace_id == workspace_id,
                 ProjectORM.is_deleted == False,  # noqa: E712
             ).order_by(ProjectORM.created_at.asc())
         )).scalars().all()
@@ -186,32 +192,58 @@ async def list_projects(user_id: str) -> list[ProjectInfo]:
     return out
 
 
-async def get_project(project_id: str, user_id: str) -> ProjectInfo | None:
+async def get_project(
+    project_id: str, user_id: str, workspace_id: str | None = None
+) -> ProjectInfo | None:
     async with get_db_session() as db:
-        row = (await db.execute(
-            select(ProjectORM).where(
-                ProjectORM.id == project_id,
-                ProjectORM.user_id == user_id,
-                ProjectORM.is_deleted == False,  # noqa: E712
-            )
-        )).scalar_one_or_none()
+        conditions = [
+            ProjectORM.id == project_id,
+            ProjectORM.user_id == user_id,
+            ProjectORM.is_deleted == False,  # noqa: E712
+        ]
+        if workspace_id:
+            conditions.append(ProjectORM.workspace_id == workspace_id)
+        row = (await db.execute(select(ProjectORM).where(*conditions))).scalar_one_or_none()
     return _row_to_info(row) if row else None
 
 
-async def get_by_slug(slug: str, user_id: str) -> ProjectInfo | None:
+async def get_by_slug(
+    slug: str, user_id: str, workspace_id: str | None = None
+) -> ProjectInfo | None:
+    async with get_db_session() as db:
+        conditions = [
+            ProjectORM.user_id == user_id,
+            ProjectORM.slug == slug,
+            ProjectORM.is_deleted == False,  # noqa: E712
+        ]
+        if workspace_id:
+            conditions.append(ProjectORM.workspace_id == workspace_id)
+        row = (await db.execute(select(ProjectORM).where(*conditions))).scalar_one_or_none()
+    return _row_to_info(row) if row else None
+
+
+async def get_by_workspace_slug(slug: str, workspace_id: str) -> ProjectInfo | None:
+    """Find the shared project namespace entry for a workspace.
+
+    Project mutations remain owner-scoped, but the workspace project list is
+    shared.  In particular, a newly joined member must reuse the workspace's
+    existing default project instead of creating a second ``default`` row
+    owned by themselves.
+    """
     async with get_db_session() as db:
         row = (await db.execute(
             select(ProjectORM).where(
-                ProjectORM.user_id == user_id,
+                ProjectORM.workspace_id == workspace_id,
                 ProjectORM.slug == slug,
                 ProjectORM.is_deleted == False,  # noqa: E712
-            )
+            ).order_by(ProjectORM.created_at.asc()).limit(1)
         )).scalar_one_or_none()
     return _row_to_info(row) if row else None
 
 
 async def create_project(
     user_id: str,
+    workspace_id: str,
     name: str,
     slug: str | None = None,
     description: str | None = None,
@@ -234,7 +266,7 @@ async def create_project(
         candidate = f"project-{generate_id()[:8].lower()}"
     validate_slug(candidate)
 
-    if await get_by_slug(candidate, user_id):
+    if await get_by_slug(candidate, user_id, workspace_id):
         raise ProjectError(f"A project with id '{candidate}' already exists")
 
     now = datetime.now(timezone.utc)
@@ -243,6 +275,7 @@ async def create_project(
         db.add(ProjectORM(
             id=project_id,
             user_id=user_id,
+            workspace_id=workspace_id,
             name=name,
             slug=candidate,
             description=(description or None),
@@ -252,14 +285,17 @@ async def create_project(
 
     _cache_put(project_id, candidate)
     info = ProjectInfo(
-        id=project_id, name=name, slug=candidate, description=description,
+        id=project_id, user_id=user_id, workspace_id=workspace_id,
+        name=name, slug=candidate, description=description,
         created_at=now.isoformat(), updated_at=now.isoformat(),
     )
     log.info(f"Created project {candidate} ({project_id}) for user {user_id}")
     return info
 
 
-async def rename_project(project_id: str, user_id: str, name: str) -> ProjectInfo:
+async def rename_project(
+    project_id: str, user_id: str, workspace_id: str, name: str
+) -> ProjectInfo:
     """Change the display name. The slug — and so the directory — is fixed.
 
     Moving a live directory would invalidate every path the agent has already
@@ -268,32 +304,38 @@ async def rename_project(project_id: str, user_id: str, name: str) -> ProjectInf
     name = (name or "").strip()
     if not name:
         raise ProjectError("Project name is required")
-    existing = await get_project(project_id, user_id)
+    existing = await get_project(project_id, user_id, workspace_id)
     if not existing:
         raise ProjectError("Project not found")
     async with get_db_session() as db:
         await db.execute(
             update(ProjectORM)
-            .where(ProjectORM.id == project_id, ProjectORM.user_id == user_id)
+            .where(
+                ProjectORM.id == project_id,
+                ProjectORM.user_id == user_id,
+                ProjectORM.workspace_id == workspace_id,
+            )
             .values(name=name, updated_at=datetime.now(timezone.utc))
         )
     existing.name = name
     return existing
 
 
-async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
+async def delete_project(
+    project_id: str, user_id: str, workspace_id: str, sandbox=None
+) -> None:
     """Soft-delete a project and move its directory out of the way.
 
     The directory goes to .openbox/trash rather than being removed: an agent
     can put hours of work in there, and a mis-click should not be the end of it.
     """
-    info = await get_project(project_id, user_id)
+    info = await get_project(project_id, user_id, workspace_id)
     if not info:
         raise ProjectError("Project not found")
     if info.slug == DEFAULT_SLUG:
         raise ProjectError("The default project cannot be deleted")
 
-    active = await active_session_count(project_id, user_id)
+    active = await active_session_count(project_id, user_id, workspace_id)
     if active:
         raise ProjectError(
             f"{active} session(s) are still running in this project. "
@@ -304,7 +346,11 @@ async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
     async with get_db_session() as db:
         await db.execute(
             update(ProjectORM)
-            .where(ProjectORM.id == project_id, ProjectORM.user_id == user_id)
+            .where(
+                ProjectORM.id == project_id,
+                ProjectORM.user_id == user_id,
+                ProjectORM.workspace_id == workspace_id,
+            )
             .values(is_deleted=True, deleted_at=now, updated_at=now)
         )
         # Cron jobs belong to the project; they die with it.
@@ -314,6 +360,7 @@ async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
             .where(
                 CronJob.project_id == project_id,
                 CronJob.user_id == user_id,
+                CronJob.workspace_id == workspace_id,
                 CronJob.is_deleted == False,  # noqa: E712
             )
             .values(enabled=False, is_deleted=True, updated_at=now)
@@ -336,7 +383,7 @@ async def delete_project(project_id: str, user_id: str, sandbox=None) -> None:
             log.warning(f"Could not move {info.directory} to trash: {e}")
 
 
-async def active_session_count(project_id: str, user_id: str) -> int:
+async def active_session_count(project_id: str, user_id: str, workspace_id: str) -> int:
     from db.models.session import Session as SessionORM
     from sqlalchemy import func
     async with get_db_session() as db:
@@ -344,13 +391,14 @@ async def active_session_count(project_id: str, user_id: str) -> int:
             select(func.count()).select_from(SessionORM).where(
                 SessionORM.project_id == project_id,
                 SessionORM.user_id == user_id,
+                SessionORM.workspace_id == workspace_id,
                 SessionORM.is_deleted == False,  # noqa: E712
                 SessionORM.status != "idle",
             )
         )).scalar_one()
 
 
-async def session_counts(user_id: str) -> dict[str, int]:
+async def session_counts(workspace_id: str) -> dict[str, int]:
     """Live session count per project, for the picker."""
     from db.models.session import Session as SessionORM
     from sqlalchemy import func
@@ -358,7 +406,7 @@ async def session_counts(user_id: str) -> dict[str, int]:
         rows = (await db.execute(
             select(SessionORM.project_id, func.count())
             .where(
-                SessionORM.user_id == user_id,
+                SessionORM.workspace_id == workspace_id,
                 SessionORM.is_deleted == False,  # noqa: E712
                 SessionORM.parent_id == None,  # noqa: E711
             )
@@ -367,29 +415,31 @@ async def session_counts(user_id: str) -> dict[str, int]:
     return {pid: count for pid, count in rows}
 
 
-async def ensure_default_project(user_id: str) -> ProjectInfo:
+async def ensure_default_project(user_id: str, workspace_id: str) -> ProjectInfo:
     """The project a session lands in when the user did not pick one."""
-    existing = await get_by_slug(DEFAULT_SLUG, user_id)
+    existing = await get_by_workspace_slug(DEFAULT_SLUG, workspace_id)
     if existing:
         _cache_put(existing.id, existing.slug)
         return existing
-    return await create_project(user_id, DEFAULT_NAME, slug=DEFAULT_SLUG)
+    return await create_project(user_id, workspace_id, DEFAULT_NAME, slug=DEFAULT_SLUG)
 
 
-async def resolve_for_session(project_id: str | None, user_id: str) -> str:
+async def resolve_for_session(
+    project_id: str | None, user_id: str, workspace_id: str = "ws_default"
+) -> str:
     """The project id a new session should be filed under.
 
     Accepts a real id, a slug, or nothing at all, so callers that only know the
     directory name do not have to look the id up first.
     """
     if project_id and project_id != DEFAULT_SLUG:
-        if await get_project(project_id, user_id):
+        if await get_project(project_id, user_id, workspace_id):
             return project_id
-        by_slug = await get_by_slug(project_id, user_id)
+        by_slug = await get_by_slug(project_id, user_id, workspace_id)
         if by_slug:
             return by_slug.id
         log.warning(f"Unknown project {project_id!r}, filing session under default")
-    return (await ensure_default_project(user_id)).id
+    return (await ensure_default_project(user_id, workspace_id)).id
 
 
 # ---------------------------------------------------------------------------

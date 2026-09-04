@@ -4,6 +4,8 @@ import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
 import { sendPromptAsync, useCreateSession } from "../api/messages"
 import { makeClientId, optimisticUserMessage } from "../lib/message"
 import { useStreamStore } from "../stores/stream"
+import { ApiError } from "@/shared/api/http"
+import { requestDesktopPanel } from "@/shared/events/desktop"
 
 export interface StartOpts {
   model?: string
@@ -66,6 +68,9 @@ export function useStartChat(
         })
       } catch (err) {
         useStreamStore.getState().setStatus(sessionId, "idle")
+        if (err instanceof ApiError && err.code === "DESKTOP_NOT_READY") {
+          requestDesktopPanel()
+        }
         toast("error", errorMessage(err))
         throw err
       }

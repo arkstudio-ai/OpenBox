@@ -2,6 +2,7 @@
 // errors (ApiError with a stable code for the i18n error map, §10.7).
 import { env } from "@/shared/config/env"
 import { refreshAccessToken, useAuthStore } from "@/shared/api/auth-store"
+import { useWorkspaceStore } from "@/shared/api/workspace-store"
 
 export class ApiError extends Error {
   readonly status: number
@@ -56,6 +57,8 @@ async function doFetch(path: string, options: RequestInit, token: string | null)
     ...((options.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`
+  const workspaceId = useWorkspaceStore.getState().currentId
+  if (workspaceId) headers["X-Workspace-Id"] = workspaceId
   return fetch(`${env.apiBase}${path}`, { ...options, headers, credentials: "include" })
 }
 

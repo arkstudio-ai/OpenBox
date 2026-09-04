@@ -12,6 +12,9 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     slug: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -22,5 +25,13 @@ class Project(Base):
 
     __table_args__ = (
         Index("ix_projects_user_id", "user_id"),
-        Index("ix_projects_user_slug_active", "user_id", "slug", unique=True, postgresql_where=text("is_deleted = false")),
+        Index("ix_projects_workspace_active", "workspace_id", "is_deleted"),
+        Index(
+            "ix_projects_user_slug_active",
+            "workspace_id",
+            "user_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
     )

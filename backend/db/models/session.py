@@ -12,6 +12,9 @@ class Session(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    workspace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=False
+    )
     project_id: Mapped[str] = mapped_column(String(64), ForeignKey("projects.id"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     slug: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -58,5 +61,6 @@ class Session(Base):
         Index("ix_sessions_user_project_active", "user_id", "project_id", "is_deleted"),
         Index("ix_sessions_user_status_active", "user_id", "status", "is_deleted"),
         Index("ix_sessions_user_created", "user_id", "created_at"),
+        Index("ix_sessions_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_sessions_parent", "parent_id"),
     )

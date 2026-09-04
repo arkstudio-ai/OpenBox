@@ -91,7 +91,8 @@ def _render_volatile(volatile: list[UserMemory]) -> str:
 
 
 async def assemble_user_context(
-    *, user_id: str, project_id: str | None = None, volatile_limit: int = 5
+    *, user_id: str, workspace_id: str | None = None,
+    project_id: str | None = None, volatile_limit: int = 5
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     stmt = (
@@ -104,6 +105,8 @@ async def assemble_user_context(
         )
         .order_by(UserMemory.confidence.desc(), UserMemory.updated_at.desc())
     )
+    if workspace_id:
+        stmt = stmt.where(UserMemory.workspace_id == workspace_id)
     if project_id is not None:
         stmt = stmt.where(
             (UserMemory.project_id == project_id) | (UserMemory.project_id.is_(None))

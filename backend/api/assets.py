@@ -22,6 +22,7 @@ from sqlalchemy import select
 from api.asset_kinds import KINDS, kind_of
 from auth.jwt import decode_asset_download_token
 from auth.middleware import get_current_user, get_optional_current_user
+from auth.workspace import get_workspace
 from core.config import get_config
 from core.identifier import ascending
 from core.log import create_logger
@@ -65,7 +66,9 @@ def _oss_or_503():
         raise HTTPException(503, detail=str(e))
 
 
-async def _session_project(db, session_id: str | None, user_id: str) -> str | None:
+async def _session_project(
+    db, session_id: str | None, user_id: str, workspace_id: str
+) -> str | None:
     if not session_id:
         return None
     from db.models.session import Session as SessionRow
@@ -73,14 +76,20 @@ async def _session_project(db, session_id: str | None, user_id: str) -> str | No
     return (
         await db.execute(
             select(SessionRow.project_id).where(
-                SessionRow.id == session_id, SessionRow.user_id == user_id
+                SessionRow.id == session_id,
+                SessionRow.user_id == user_id,
+                SessionRow.workspace_id == workspace_id,
             )
         )
     ).scalar_one_or_none()
 
 
 @router.post("")
-async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_current_user)):
+async def create_asset(
+    body: CreateAssetBody,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Open an upload: record it and hand the browser a presigned PUT URL."""
     oss = _oss_or_503()
     if body.size > _MAX_SIZE:
@@ -94,11 +103,14 @@ async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_c
     mime = (body.mime or "application/octet-stream")[:128]
 
     async with get_db_session() as db:
-        project_id = body.project_id or await _session_project(db, body.session_id, user_id)
+        project_id = body.project_id or await _session_project(
+            db, body.session_id, user_id, current_user["workspace_id"]
+        )
         db.add(
             FileAsset(
                 id=asset_id,
                 user_id=user_id,
+                workspace_id=current_user["workspace_id"],
                 session_id=body.session_id,
                 project_id=project_id,
                 name=name,
@@ -123,14 +135,19 @@ async def create_asset(body: CreateAssetBody, current_user: dict = Depends(get_c
     }
 
 
-async def _owned_asset(db, asset_id: str, user_id: str) -> FileAsset:
+async def _owned_asset(
+    db, asset_id: str, user_id: str, workspace_id: str | None = None
+) -> FileAsset:
+    conditions = [
+        FileAsset.id == asset_id,
+        FileAsset.user_id == user_id,
+        FileAsset.is_deleted.is_(False),
+    ]
+    if workspace_id:
+        conditions.append(FileAsset.workspace_id == workspace_id)
     row = (
         await db.execute(
-            select(FileAsset).where(
-                FileAsset.id == asset_id,
-                FileAsset.user_id == user_id,
-                FileAsset.is_deleted.is_(False),
-            )
+            select(FileAsset).where(*conditions)
         )
     ).scalar_one_or_none()
     if not row:
@@ -170,13 +187,14 @@ async def list_assets(
     limit: int = Query(60, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
 ):
     """The resource centre's listing: project → source → kind, newest first."""
     oss = _oss_or_503()
     user_id = current_user["user_id"]
 
     stmt = select(FileAsset).where(
-        FileAsset.user_id == user_id,
+        FileAsset.workspace_id == current_user["workspace_id"],
         FileAsset.is_deleted.is_(False),
         FileAsset.status == "ready",
         # Desktop screenshots are working bytes, not resources.
@@ -214,7 +232,10 @@ async def list_assets(
 
 
 @router.get("/usage")
-async def asset_usage(current_user: dict = Depends(get_current_user)):
+async def asset_usage(
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Bytes this account holds in the asset bucket, against its ceiling."""
     user_id = current_user["user_id"]
     async with get_db_session() as db:
@@ -222,7 +243,7 @@ async def asset_usage(current_user: dict = Depends(get_current_user)):
             (
                 await db.execute(
                     select(FileAsset.size).where(
-                        FileAsset.user_id == user_id,
+                        FileAsset.workspace_id == current_user["workspace_id"],
                         FileAsset.is_deleted.is_(False),
                         FileAsset.status == "ready",
                         FileAsset.transient.is_(False),
@@ -238,11 +259,17 @@ async def asset_usage(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/{asset_id}/complete")
-async def complete_asset(asset_id: str, current_user: dict = Depends(get_current_user)):
+async def complete_asset(
+    asset_id: str,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Verify the object actually landed in OSS, then mark the record ready."""
     oss = _oss_or_503()
     async with get_db_session() as db:
-        row = await _owned_asset(db, asset_id, current_user["user_id"])
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
         head = await oss.head(row.oss_key)
         if not head:
             raise HTTPException(409, detail="Object not found in OSS — upload did not complete")
@@ -266,11 +293,18 @@ async def complete_asset(asset_id: str, current_user: dict = Depends(get_current
 
 
 @router.get("/{asset_id}/url")
-async def asset_url(asset_id: str, download: bool = False, current_user: dict = Depends(get_current_user)):
+async def asset_url(
+    asset_id: str,
+    download: bool = False,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Fresh presigned GET for previews (they expire; the UI refetches)."""
     oss = _oss_or_503()
     async with get_db_session() as db:
-        row = await _owned_asset(db, asset_id, current_user["user_id"])
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
         if row.status != "ready":
             raise HTTPException(409, detail="Upload not completed")
         return {
@@ -309,7 +343,11 @@ _TEXT_PREVIEW_MAX = 256 * 1024
 
 
 @router.get("/{asset_id}/text")
-async def asset_text(asset_id: str, current_user: dict = Depends(get_current_user)):
+async def asset_text(
+    asset_id: str,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Text body for the preview pane.
 
     The one case where bytes do pass through the backend: a browser `fetch`
@@ -320,7 +358,9 @@ async def asset_text(asset_id: str, current_user: dict = Depends(get_current_use
 
     oss = _oss_or_503()
     async with get_db_session() as db:
-        row = await _owned_asset(db, asset_id, current_user["user_id"])
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
         key, size, mime, name = row.oss_key, row.size, row.mime, row.name
     if size > _TEXT_PREVIEW_MAX:
         raise HTTPException(413, detail="File too large to preview")
@@ -338,20 +378,29 @@ async def asset_text(asset_id: str, current_user: dict = Depends(get_current_use
 
 @router.patch("/{asset_id}")
 async def rename_asset(
-    asset_id: str, body: RenameAssetBody, current_user: dict = Depends(get_current_user)
+    asset_id: str,
+    body: RenameAssetBody,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
 ):
     """Rename the resource. The OSS key is immutable — only the label moves."""
     oss = _oss_or_503()
     name = _clean_name(body.name)
     async with get_db_session() as db:
-        row = await _owned_asset(db, asset_id, current_user["user_id"])
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
         row.name = name
         await db.commit()
         return _to_item(row, oss)
 
 
 @router.delete("/{asset_id}")
-async def delete_asset(asset_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_asset(
+    asset_id: str,
+    current_user: dict = Depends(get_current_user),
+    _workspace: dict = Depends(get_workspace),
+):
     """Drop the object from OSS and tombstone the row.
 
     The row survives because message file-parts point at it; a hard delete
@@ -359,7 +408,9 @@ async def delete_asset(asset_id: str, current_user: dict = Depends(get_current_u
     """
     oss = _oss_or_503()
     async with get_db_session() as db:
-        row = await _owned_asset(db, asset_id, current_user["user_id"])
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"]
+        )
         key = row.oss_key
         row.is_deleted = True
         row.deleted_at = datetime.now(timezone.utc)

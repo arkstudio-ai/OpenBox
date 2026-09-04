@@ -347,24 +347,25 @@ as single-tenant — or switch to per-user desktops, below.
 ## Per-user desktops (WUYING_MODE=per_user)
 
 `WUYING_MODE=per_user` closes the single-tenant gap: OpenBox provisions **one
-ECD desktop per user** through the ECD OpenAPI, with a dedicated convenience
-EndUser per user, instead of pointing everyone at the shared desktop. The
+ECD desktop per workspace** through the ECD OpenAPI, with a dedicated convenience
+EndUser per workspace, instead of pointing everyone at the shared desktop. The
 implementation is ported from bossip's wuying-bridge and keeps its hard-won
 behaviours (EndUser sync wait before CreateDesktops, tag reads through
-ListTagResources, ghost-desktop hard-delete, environment tagging).
+ListTagResources, charge-aware ghost handling, environment tagging).
 
 **How it works**
 
-- Identity: each user id derives a stable EndUser (`obx-<sha256[:16]>`) and a
+- Identity: each workspace id derives a stable EndUser (`obx-<sha256[:16]>`) and a
   salted password (`WUYING_PASSWORD_SALT`). Display names never feed the id.
-- Ownership: desktops carry `openbox-user` / `openbox-eu-id` / `openbox-env`
-  tags. The ticket API verifies the tag before minting a ticket, so one user
-  cannot view another's desktop. `openbox-env` keeps prod and dev sharing one
+- Ownership: desktops carry `openbox-workspace` / `openbox-user` (legacy-compatible)
+  / `openbox-eu-id` / `openbox-env` tags. The ticket API verifies the workspace
+  tag before minting a ticket, so a member cannot cross workspace boundaries.
+  `openbox-env` keeps prod and dev sharing one
   Alibaba Cloud account from adopting or reaping each other's desktops.
-- State: the `cloud_desktops` table records each user's desktop
+- State: the `cloud_desktops` table records each workspace's desktop
   (`backend/db/models/cloud_desktop.py`); a unique partial index enforces one
-  live desktop per user. If the DB forgets a desktop, it is re-adopted by tag.
-- Flow: the 云桌面 tab shows a provisioning opt-in for users without a
+  live desktop per workspace. If the DB forgets a desktop, it is re-adopted by tag.
+- Flow: the 云桌面 tab shows a provisioning opt-in for workspaces without a
   desktop; `POST /api/desktop/provision` creates (2-3 min) or wakes it, the
   frontend polls `GET /api/desktop/status`, and the ticket API rides the same
   202 retry channel while the desktop is creating/starting.
@@ -373,44 +374,92 @@ ListTagResources, ghost-desktop hard-delete, environment tagging).
 — required; there is deliberately no fallback to a community image),
 `WUYING_OFFICE_SITE_ID`, `WUYING_PASSWORD_SALT`, and optionally
 `WUYING_DESKTOP_TYPE` / `WUYING_SYSTEM_DISK_SIZE` / `WUYING_POLICY_GROUP_ID` /
-`WUYING_CHARGE_TYPE` / `WUYING_ENV_TAG`. Build the golden image by
-bootstrapping one desktop with `scripts/wuying_bootstrap.py` and imaging it
-from the ECD console.
+`WUYING_CHARGE_TYPE` / `WUYING_ENV_TAG`. `WUYING_ROUTING=per_desktop` switches
+the execution plane from the legacy endpoint to the caller's assigned row.
+The default is `shared`, so deploying the code alone cannot move an existing
+installation.
 
-**Testing** — `scripts/wuying_provision_smoke.py` exercises the chain in three
+For a subscription desktop, set `WUYING_CHARGE_TYPE=PrePaid` together with
+`WUYING_PERIOD=1`, `WUYING_PERIOD_UNIT=Month`, `WUYING_AUTO_PAY=true`, and
+normally `WUYING_AUTO_RENEW=false`. Month accepts 1/2/3/6; Year accepts 1-5.
+`PrePaid` with `auto_pay=false` is rejected at configuration load because the
+ECD API would only create an unpaid order, not a usable desktop. PostPaid
+requests deliberately omit all four subscription fields. Use
+`POOL_MAX_UNIT_PRICE_CNY` (default 300) as the read-only smoke-test threshold.
+
+Ghost cleanup is charge-aware. The channel is always revoked first. A confirmed
+PostPaid desktop is then deleted; a PrePaid or unclassified desktop is only
+marked reclaimed and soft-deleted locally, preserving paid subscription value.
+Both paths emit audit records. Alibaba Cloud documents a 15-day retention
+window after a subscription expires: the desktop cannot be started, stopped,
+rebooted, connected, or otherwise used during that window, but its data is
+retained and it can still be renewed; automatic release begins on day 16.
+Whether `RenewDesktops` restores the existing Shanghai desktop cleanly remains
+a live-observation item around 2026-10-01.
+
+Build the secret-free golden image with:
+
+```bash
+python backend/scripts/wuying_bootstrap.py --image-mode \
+  --desktop-id ecd-... --region cn-shanghai
+python backend/scripts/wuying_image_verify.py \
+  --desktop-id ecd-... --region cn-shanghai \
+  --baseline docs/image-baseline-dpkg.txt
+```
+
+The verified Shanghai image produced by this procedure on 2026-09-03 is
+`m-ccceuit7jn3xzwx45` (`openbox-image-v2-shanghai`, CUSTOM Linux, 50G). It
+reached `Available` after the verifier passed, and its source desktop was then
+deleted. Configure `WUYING_IMAGE_ID=m-ccceuit7jn3xzwx45` and
+`WUYING_SYSTEM_DISK_SIZE=50` for the Shanghai per-desktop fleet.
+
+Image mode installs runtime, action server, browser relay and the fixed-display
+helpers, but leaves both systemd units disabled. `/etc/openbox` is empty and
+`/root/.ssh` is absent. Instance provisioning writes `/etc/openbox/action.env`
+and, for SSH channels, a new `/etc/openbox/tunnel_key`, `tunnel.env`, and pinned
+`known_hosts`; secrets are therefore unique to the clone and never enter the
+image.
+
+**Testing** — `scripts/wuying_provision_smoke.py` exercises the chain in five
 tiers: `check` (read-only: lists office sites, images, OpenBox desktops),
+`price` (read-only: prints raw and parsed PostPaid/PrePaid quotes),
 `enduser` (free: real EndUser create → sync → remove), and `full` (billable:
 provisions a real desktop through the same service the API uses, waits for
 Running, mints a connection ticket, then deletes everything; `--yes` required,
-`--disk` must cover the image size). Unit coverage lives in
+`--disk` must cover the image size). `channel` is also billable and uses the
+deployment database to exercise create → per-instance credentials → channel
+verify → authenticated hostname → revoke/delete. Under PrePaid, `full` and
+`channel` refuse to run unless both `--allow-prepaid` and `--keep` are supplied:
+active subscription desktops cannot be safely removed with `DeleteDesktops`,
+so refund/退订 is a separate, identity-checked acceptance step. Unit coverage lives in
 `tests/unit/test_wuying_provisioning.py` with the ECD calls stubbed.
 
-**Not yet wired**: the sandbox execution plane (action server) still uses the
-single `WUYING_ENDPOINT` tunnel — per-desktop connectivity (frpc reverse
-tunnels or per-desktop SSH) is the next step. Until then, per_user mode gives
-each user their own *viewable* desktop while command execution stays on the
-shared one.
+The execution gap is wired when both `WUYING_MODE=per_user` and
+`WUYING_ROUTING=per_desktop` are set. The provider then resolves the owner in
+`cloud_desktops`, decrypts that row's action key, and routes through either:
 
-That gap is now enforced rather than merely written down. Production was
-switched to `WUYING_MODE=per_user` on 2026-09-01 anyway, and for the next
-half-day the cloud-desktop tab streamed each caller's own fresh desktop while
-their agent kept working on the shared one. Nothing failed: the agent reported
-"opened Baidu" truthfully, and Baidu really was open — on a machine the person
-could not see.
+- `WUYING_CHANNEL=direct`: `private_ip:8000`, for a standard office network
+  connected to the backend VPC.
+- `WUYING_CHANNEL=ssh`: one reverse-forward port and ed25519 key per desktop.
+  The gateway's isolated sshd asks
+  `GET /api/internal/tunnel-keys?fingerprint=...` for every authentication and
+  receives a `permitlisten`-scoped key only while the row is not revoked.
 
-So `api/desktop._per_user()` now requires two things, not one: the deployment
-asked for per-user desktops **and** the sandbox provider says it routes per
-user (`SandboxProvider.routes_per_user`). `WuyingProvider` declares `False`.
-With only the config half, the view falls back to the shared desktop and logs
-an ERROR, keeping the property that matters: *what you watch is where it runs*.
-When per-desktop connectivity lands, flip that flag and per_user works end to
-end; no other change is needed.
+The action key is AES-GCM encrypted under the 32-byte `WUYING_CHANNEL_KEY` and
+stored with a `v1:` envelope; only its SHA-256 is stored separately. A desktop
+does not reach `running/channel.up` until authenticated command execution and
+the 1920×1080 display both verify. Systemd restores the channel after a reboot,
+and a revoked row is rejected by provider routing immediately.
+
+`api/desktop._per_user()` still requires both the provisioning mode and
+`SandboxProvider.routes_per_user`. Shared routing therefore retains the old
+single endpoint and forces the viewer back to that same desktop; per-desktop
+routing makes both the viewer and agent resolve the caller's assigned desktop.
 
 Startup now logs both planes on one line, e.g.
 
 ```
-Cloud desktop — agent runs on: ecd-4zjxaq5g45dr5qr0i;
-                view streams: ecd-4zjxaq5g45dr5qr0i in cn-shanghai
+Cloud desktop — agent and view route to each caller's assigned desktop in cn-shanghai
 ```
 
 ### The region has to match the desktop

@@ -20,6 +20,19 @@ async def execute_cron_job(job: dict) -> dict:
     Returns {"status": "ok"|"error"|"skipped", "error"?: str, "summary_text"?: str, ...}
     """
     job_id = job["id"]
+    if not job.get("workspace_id"):
+        from db.base import get_db_session
+        from db.models.cron import CronJob
+        from sqlalchemy import select
+
+        async with get_db_session() as db:
+            workspace_id = (
+                await db.execute(
+                    select(CronJob.workspace_id).where(CronJob.id == job_id)
+                )
+            ).scalar_one_or_none()
+        if workspace_id:
+            job = {**job, "workspace_id": workspace_id}
     user_id = job["user_id"]
     session_id = job.get("session_id")
     job_name = job.get("name", "unnamed")
@@ -47,6 +60,19 @@ async def execute_cron_job(job: dict) -> dict:
     locale = await resolve_locale(user_id)
     temp_session_id = None
     try:
+        # A missing per-desktop route is a scheduling skip, not an agent
+        # failure. Check it before summary generation so the skip spends no
+        # model tokens and reaches no retry path.
+        from sandbox import provider
+
+        if provider.routes_per_user:
+            workspace_id = job.get("workspace_id")
+            if not workspace_id:
+                from sandbox.ownership import owner_for
+
+                workspace_id = await owner_for(user_id)
+            await provider.resolve_user_container(workspace_id)
+
         # 1. Generate session summary (or reuse cache)
         context_summary = await _get_session_summary(job)
 
@@ -149,8 +175,23 @@ async def execute_cron_job(job: dict) -> dict:
         raise
 
     except Exception as e:
+        from sandbox.wuying_desktop_service import DesktopNotReady
+
         ended_at = datetime.now(timezone.utc)
         duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        if isinstance(e, DesktopNotReady):
+            reason = f"DESKTOP_NOT_READY: {e.payload.get('state', 'not_ready')}"
+            await _update_run_entry(
+                run_id,
+                job_id,
+                temp_session_id,
+                status="skipped",
+                error_message=reason,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+            )
+            log.info("Cron job %s skipped without retry: %s", job_id, reason)
+            return {"status": "skipped", "error": reason, "run_id": run_id}
         error_msg = str(e)
 
         await _update_run_entry(
@@ -340,6 +381,7 @@ async def _create_temp_session(job: dict, locale: str = "zh-CN") -> str:
 
     session = await create_session(
         user_id=job["user_id"],
+        workspace_id=job.get("workspace_id", ""),
         agent=job.get("agent", "build"),
         model=model,
         title=text(locale, "temp_title", name=job.get("name", "task")),

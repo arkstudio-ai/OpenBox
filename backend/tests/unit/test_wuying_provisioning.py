@@ -1,10 +1,12 @@
 """Per-user Wuying ECD provisioning: derived identity, service state machine,
 ownership verification. All ECD/EDS calls are stubbed — no network."""
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
-from core.config import OpenBoxConfig
+from core.config import OpenBoxConfig, ProvisioningConfigError
+from db.repository.cloud_desktop_repo import cloud_desktop_repo
 from sandbox import wuying_ecd
 from sandbox.wuying_desktop_service import (
     DesktopNotReady,
@@ -66,6 +68,34 @@ def test_password_changes_with_salt(monkeypatch):
     assert wuying_ecd.password_for("user-a") != one
 
 
+async def test_retry_throttled_recovers_after_short_flow_control(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    async def call():
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("Throttling.User: flow control")
+        return "ok"
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(wuying_ecd.asyncio, "sleep", no_sleep)
+    assert await wuying_ecd._retry_throttled(call, "CreateUsers") == "ok"
+    assert calls == 3
+    assert sleeps == [1, 2]
+
+
+async def test_retry_throttled_does_not_hide_other_errors():
+    async def call():
+        raise RuntimeError("InvalidParameter")
+
+    with pytest.raises(RuntimeError, match="InvalidParameter"):
+        await wuying_ecd._retry_throttled(call, "CreateUsers")
+
+
 # ---------------------------------------------------------------------------
 # Config surface
 # ---------------------------------------------------------------------------
@@ -79,9 +109,99 @@ def test_provisioning_config_defaults():
     # Alibaba's resolution-adaptive default policy.
     assert cfg.wuying_policy_group_id == ""
     assert cfg.wuying_desktop_type == "eds.enterprise_office.4c8g"
-    assert cfg.wuying_system_disk_size == 40
+    assert cfg.wuying_system_disk_size == 50
     assert cfg.wuying_charge_type == "PostPaid"
+    assert cfg.wuying_period == 1
+    assert cfg.wuying_period_unit == "Month"
+    assert cfg.wuying_auto_pay is True
+    assert cfg.wuying_auto_renew is False
     assert cfg.wuying_env_tag == "default"
+
+
+def test_prepaid_without_auto_pay_fails_fast():
+    with pytest.raises(ProvisioningConfigError, match="WUYING_AUTO_PAY"):
+        OpenBoxConfig(wuying_charge_type="PrePaid", wuying_auto_pay=False)
+
+
+def test_invalid_charge_type_is_rejected():
+    with pytest.raises(ValueError):
+        OpenBoxConfig(wuying_charge_type="Foo")
+
+
+@pytest.mark.parametrize(
+    ("charge_type", "expected"),
+    [
+        ("PostPaid", (None, None, None, None)),
+        ("PrePaid", (1, "Month", True, False)),
+    ],
+)
+async def test_create_desktop_billing_request_shape(monkeypatch, charge_type, expected):
+    captured = {}
+
+    async def ensure(_workspace_id, _display_name=None):
+        return "obx-test", "unused"
+
+    class Client:
+        async def create_desktops_async(self, request):
+            captured["request"] = request
+            return SimpleNamespace(body=SimpleNamespace(desktop_id=["ecd-test"]))
+
+    monkeypatch.setattr(wuying_ecd, "ensure_end_user", ensure)
+    monkeypatch.setattr(wuying_ecd, "ecd_client", lambda: Client())
+    monkeypatch.setattr(
+        wuying_ecd,
+        "get_config",
+        lambda: _config(
+            wuying_image_id="m-test",
+            wuying_office_site_id="cn-shanghai+dir-test",
+            wuying_policy_group_id="pg-test",
+            wuying_charge_type=charge_type,
+            wuying_period=1,
+            wuying_period_unit="Month",
+            wuying_auto_pay=True,
+            wuying_auto_renew=False,
+        ),
+    )
+
+    assert await wuying_ecd.create_desktop("ws-test") == "ecd-test"
+    request = captured["request"]
+    assert (request.period, request.period_unit, request.auto_pay, request.auto_renew) == expected
+
+
+async def test_describe_price_parses_sdk_shape(monkeypatch):
+    captured = {}
+
+    class Client:
+        async def describe_price_async(self, request):
+            captured["request"] = request
+            price = SimpleNamespace(currency="CNY", trade_price=199.0, original_price=219.0)
+            info = SimpleNamespace(price=price)
+            body = SimpleNamespace(price_info=info, to_map=lambda: {"PriceInfo": {"Price": {"TradePrice": 199.0}}})
+            return SimpleNamespace(body=body)
+
+    monkeypatch.setattr(wuying_ecd, "ecd_client", lambda: Client())
+    result = await wuying_ecd.describe_price("PrePaid", period=1, period_unit="Month")
+    assert result["currency"] == "CNY"
+    assert result["trade_price"] == 199.0
+    assert captured["request"].period == 1
+    assert captured["request"].period_unit == "Month"
+
+
+async def test_renew_desktop_is_wrapped_without_real_call(monkeypatch):
+    captured = {}
+
+    class Client:
+        async def renew_desktops_async(self, request):
+            captured["request"] = request
+            return SimpleNamespace(
+                body=SimpleNamespace(order_id="order-1", to_map=lambda: {"OrderId": "order-1"})
+            )
+
+    monkeypatch.setattr(wuying_ecd, "ecd_client", lambda: Client())
+    result = await wuying_ecd.renew_desktop("ecd-1", 1, "Month")
+    assert result["order_id"] == "order-1"
+    assert captured["request"].desktop_id == ["ecd-1"]
+    assert captured["request"].auto_pay is True
 
 
 async def test_create_desktop_requires_policy_group(monkeypatch):
@@ -238,7 +358,7 @@ async def test_provision_is_idempotent_while_inflight(monkeypatch):
     await _drain(service, user)
     # Only one live record — the unique index would also enforce this.
     from db.repository.cloud_desktop_repo import cloud_desktop_repo
-    record = await cloud_desktop_repo.get_for_user(user)
+    record = await cloud_desktop_repo.get_for_workspace(user)
     assert record["desktop_id"] == "ecd-new"
 
 
@@ -263,6 +383,33 @@ async def test_status_not_provisioned_without_desktop(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
     assert (await service.status("user-none"))["state"] == "not_provisioned"
+
+
+async def test_resync_persists_charge_type_and_expiry(monkeypatch):
+    _stub_ecd(
+        monkeypatch,
+        describe={
+            "desktop_id": "ecd-resync",
+            "status": "Running",
+            "charge_type": "PrePaid",
+            "expired_time": "2026-10-03T08:00Z",
+        },
+    )
+    workspace = "ws-resync"
+    record = await cloud_desktop_repo.create(
+        workspace,
+        "cn-shanghai",
+        status="starting",
+        desktop_id="ecd-resync",
+    )
+    service = WuyingDesktopService()
+
+    state = await service.status(workspace)
+    saved = await cloud_desktop_repo.get_for_workspace(workspace)
+    assert state["state"] == "running"
+    assert saved["charge_type"] == "PrePaid"
+    # SQLite drops offsets on round-trip; PostgreSQL preserves the timezone.
+    assert saved["expires_at"].isoformat().startswith("2026-10-03T08:00:00")
 
 
 async def test_status_adopts_tagged_desktop(monkeypatch):
@@ -318,7 +465,7 @@ async def test_stopped_desktop_wakes_on_ticket(monkeypatch):
     await service.provision(user)
     await _drain(service, user)
     from db.repository.cloud_desktop_repo import cloud_desktop_repo
-    record = await cloud_desktop_repo.get_for_user(user)
+    record = await cloud_desktop_repo.get_for_workspace(user)
     await cloud_desktop_repo.update(record["id"], status="stopped")
 
     with pytest.raises(DesktopNotReady) as excinfo:
@@ -362,3 +509,90 @@ async def test_release_ghost_deletes_and_forgets(monkeypatch):
     await service.release_ghost(user)
     assert behaviour["deleted"] == ["ecd-new"]
     assert (await service.status(user))["state"] == "not_provisioned"
+
+
+async def test_release_prepaid_ghost_never_hard_deletes(monkeypatch):
+    behaviour = _stub_ecd(monkeypatch)
+    service = WuyingDesktopService()
+    workspace = "ws-prepaid-ghost"
+
+    await service.provision(workspace)
+    await _drain(service, workspace)
+    record = await cloud_desktop_repo.get_for_workspace(workspace)
+    await cloud_desktop_repo.update(record["id"], charge_type="PrePaid")
+    await service.release_ghost(workspace)
+
+    assert behaviour.get("deleted", []) == []
+    assert await cloud_desktop_repo.get_for_workspace(workspace) is None
+
+
+async def test_per_desktop_only_becomes_running_after_channel_verify(monkeypatch):
+    _stub_ecd(monkeypatch)
+    import sandbox.wuying_desktop_service as svc_mod
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+
+    cfg = _config(wuying_password_salt="s", wuying_routing="per_desktop")
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+    calls = []
+
+    async def install(record, **_kwargs):
+        calls.append(("install", record["desktop_id"]))
+        await cloud_desktop_repo.update(
+            record["id"],
+            channel_kind="ssh",
+            tunnel_state="pending",
+        )
+        return await cloud_desktop_repo.get(record["id"])
+
+    async def verify(record, **_kwargs):
+        calls.append(("verify", record["desktop_id"]))
+        await cloud_desktop_repo.update(record["id"], tunnel_state="up")
+        return {"hostname": "desktop-host"}
+
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", install)
+    monkeypatch.setattr(svc_mod.wuying_channel, "verify", verify)
+    service = WuyingDesktopService()
+    user = "user-channel-ready"
+    await service.provision(user)
+    await _drain(service, user)
+
+    state = await service.status(user)
+    assert state["state"] == "running"
+    assert state["channel"]["state"] == "up"
+    assert calls == [("install", "ecd-new"), ("verify", "ecd-new")]
+
+
+async def test_channel_failure_keeps_existing_billable_desktop_for_recovery(monkeypatch):
+    """A relay outage must not turn the next click into a second CreateDesktops."""
+    import core.config as config_module
+    import sandbox.wuying_desktop_service as svc_mod
+
+    cfg = OpenBoxConfig(wuying_routing="per_desktop")
+    monkeypatch.setattr(config_module, "get_config", lambda: cfg)
+    monkeypatch.setattr(svc_mod, "get_config", lambda: cfg)
+
+    async def create(_user_id, _display_name):
+        return "ecd-channel-recovery"
+
+    async def ready(_desktop_id):
+        return None
+
+    async def broken_install(_record):
+        raise RuntimeError("relay temporarily unavailable")
+
+    monkeypatch.setattr(svc_mod.wuying_ecd, "create_desktop", create)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "wait_desktop_ready", ready)
+    monkeypatch.setattr(svc_mod.wuying_ecd, "eu_id_for", lambda _user_id: "obx-channel-recovery")
+    monkeypatch.setattr(svc_mod.wuying_channel, "install", broken_install)
+
+    record = await cloud_desktop_repo.create(
+        "user-channel-recovery", "cn-shanghai", status="creating"
+    )
+    service = svc_mod.WuyingDesktopService()
+    await service._create_flow("user-channel-recovery", record["id"], None)
+
+    saved = await cloud_desktop_repo.get(record["id"])
+    assert saved["desktop_id"] == "ecd-channel-recovery"
+    assert saved["status"] == "starting"
+    assert saved["tunnel_state"] == "down"
+    assert "relay temporarily unavailable" in saved["channel_error"]

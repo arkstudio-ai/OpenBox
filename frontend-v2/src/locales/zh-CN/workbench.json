@@ -65,10 +65,11 @@
   },
   "desktop": {
     "loading": "正在连接云桌面…",
-    "provision": "你还没有自己的云电脑",
-    "provisionHint": "开通后将为你创建一台专属云电脑，首次创建约需 2-3 分钟",
+    "provision": "本空间还没有云电脑",
+    "provisionHint": "开通后将为本空间创建一台专属云电脑，首次创建约需 2-3 分钟",
     "provisionAction": "开通云电脑",
-    "provisioning": "正在准备你的云电脑，首次创建约需 2-3 分钟…",
+    "provisionRestricted": "请联系空间所有者或管理员开通",
+    "provisioning": "正在准备本空间的云电脑，首次创建约需 2-3 分钟…",
     "provisionFailed": "云电脑创建失败",
     "provisionRetry": "重新创建",
     "connected": "已连接",
@@ -87,6 +88,12 @@
     "upload": "上传文件到云桌面",
     "fullscreen": "全屏观看",
     "exitFullscreen": "退出全屏",
-    "keyboard": "键盘输入"
+    "keyboard": "键盘输入",
+    "channel": {
+      "up": "通道在线",
+      "down": "通道离线",
+      "pending": "通道启动中",
+      "revoked": "通道已撤销"
+    }
   }
 }

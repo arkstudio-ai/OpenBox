@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
@@ -24,13 +24,30 @@ import {
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
+import { useAuthStore } from "@/shared/api/auth-store"
+import { useTranslation } from "react-i18next"
 
 const EMPTY_MESSAGES: MessageWithParts[] = []
 const EMPTY_PERMS: PermissionRequest[] = []
 const EMPTY_QUESTIONS: QuestionRequest[] = []
 const EMPTY_AGENTS: ChatAgent[] = []
 
+function isReadOnlySession(ownerId: string | undefined, currentUserId: string | undefined) {
+  return Boolean(ownerId && currentUserId && ownerId !== currentUserId)
+}
+
+export function ComposerAccess({ readOnly, children }: { readOnly: boolean; children: ReactNode }) {
+  const { t } = useTranslation("workspace")
+  if (!readOnly) return children
+  return (
+    <div className="border-t border-hair px-5 py-3 text-center text-sm text-n600">
+      {t("readOnlySession")}
+    </div>
+  )
+}
+
 export default function ChatRoute() {
+  const currentUserId = useAuthStore((state) => state.user?.id)
   const { sessionId = "" } = useParams()
   useChatEvents(sessionId)
 
@@ -109,6 +126,7 @@ export default function ChatRoute() {
   const questions = usePendingStore((s) => s.questions.get(sessionId) ?? EMPTY_QUESTIONS)
 
   const loading = messagesQ.isLoading && messages.length === 0
+  const readOnly = isReadOnlySession(session.data?.user_id, currentUserId)
 
   // The task list used to live here, as a card pinned under the last turn,
   // fed by a REST query and thrown away when the run ended. It renders inside
@@ -149,22 +167,24 @@ export default function ChatRoute() {
           onDismiss={() => useStreamStore.getState().clearRunError(sessionId)}
         />
       )}
-      <Composer
-        busy={busy}
-        onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
-        onStop={stop}
-        sessionModel={session.data?.model}
-        sessionVariant={session.data?.variant}
-        sessionVideoModel={session.data?.video_model}
-        sessionVideoResolution={session.data?.video_resolution}
-        sessionKey={sessionId}
-        contextTokens={session.data?.token_usage?.context ?? 0}
-        contextLimit={session.data?.token_usage?.limit ?? 0}
-        agents={agents ?? EMPTY_AGENTS}
-        sessionAgent={sessionAgent}
-        onPickAgent={setPickedAgent}
-        resourceScope={resourceScope}
-      />
+      <ComposerAccess readOnly={readOnly}>
+        <Composer
+          busy={busy}
+          onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
+          onStop={stop}
+          sessionModel={session.data?.model}
+          sessionVariant={session.data?.variant}
+          sessionVideoModel={session.data?.video_model}
+          sessionVideoResolution={session.data?.video_resolution}
+          sessionKey={sessionId}
+          contextTokens={session.data?.token_usage?.context ?? 0}
+          contextLimit={session.data?.token_usage?.limit ?? 0}
+          agents={agents ?? EMPTY_AGENTS}
+          sessionAgent={sessionAgent}
+          onPickAgent={setPickedAgent}
+          resourceScope={resourceScope}
+        />
+      </ComposerAccess>
     </div>
   )
 }

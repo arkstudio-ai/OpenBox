@@ -65,10 +65,11 @@
   },
   "desktop": {
     "loading": "Connecting to the cloud desktop…",
-    "provision": "You don't have a cloud computer yet",
-    "provisionHint": "We'll create a dedicated cloud computer for you; the first setup takes 2-3 minutes",
-    "provisionAction": "Set up my cloud computer",
-    "provisioning": "Preparing your cloud computer — the first setup takes 2-3 minutes…",
+    "provision": "This workspace has no cloud computer yet",
+    "provisionHint": "We'll create a dedicated cloud computer for this workspace; the first setup takes 2-3 minutes",
+    "provisionAction": "Set up cloud computer",
+    "provisionRestricted": "Ask a workspace owner or admin to set it up",
+    "provisioning": "Preparing this workspace's cloud computer — the first setup takes 2-3 minutes…",
     "provisionFailed": "Cloud computer setup failed",
     "provisionRetry": "Try again",
     "connected": "Connected",
@@ -87,6 +88,12 @@
     "upload": "Upload a file to the desktop",
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit fullscreen",
-    "keyboard": "Keyboard input"
+    "keyboard": "Keyboard input",
+    "channel": {
+      "up": "Channel online",
+      "down": "Channel offline",
+      "pending": "Channel starting",
+      "revoked": "Channel revoked"
+    }
   }
 }

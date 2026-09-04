@@ -9,8 +9,12 @@ from db.models.audit_log import AuditLog
 
 class PgAuditRepo:
     async def create(self, user_id: str, action: str, **fields) -> dict:
+        from core.identifier import generate_id
+
         now = datetime.now(timezone.utc)
-        row = AuditLog(user_id=user_id, action=action, created_at=now, **fields)
+        row = AuditLog(
+            id=generate_id(), user_id=user_id, action=action, created_at=now, **fields
+        )
         async with get_db_session() as session:
             session.add(row)
         return {"user_id": user_id, "action": action, **fields, "created_at": str(now)}

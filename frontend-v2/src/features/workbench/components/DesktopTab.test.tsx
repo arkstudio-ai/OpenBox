@@ -40,11 +40,16 @@ describe("DesktopTab", () => {
   beforeEach(() => {
     handlers.clear()
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
-    vi.mocked(http.get).mockResolvedValue({
-      ticket: "ticket",
-      desktopId: "ecd-test",
-      regionId: "cn-hangzhou",
-    })
+    // Answer per endpoint. `DesktopTab` checks /status before asking for a
+    // ticket, and a status whose `state` is neither "running" nor
+    // "not_provisioned" sends it into the provisioning poll — so a single
+    // catch-all response would park the component on the loading screen and
+    // never reach createSession.
+    vi.mocked(http.get).mockImplementation(async (url: string) =>
+      url.startsWith("/api/desktop/status")
+        ? { state: "running", mode: "shared" }
+        : { ticket: "ticket", desktopId: "ecd-test", regionId: "cn-hangzhou" },
+    )
     Object.assign(window, { Wuying: { WebSDK: { createSession } } })
   })
 

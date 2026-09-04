@@ -16,9 +16,10 @@
 | 工作项 | 状态 | 说明 |
 |---|---|---|
 | A1 每桌面通道 | ✅ 已验收、已上线 gw2 | 分支 `codex/a1-desktop-channel`，镜像 v2 `m-ccceuit7jn3xzwx45`，方案乙（gw2 自任中继） |
-| B1 Workspace | ✅ 已验收，待合并 | 分支 `codex/b1-workspace-audit` |
-| A1+B1 接缝 | ⬜ 下一步 | 执行单 `docs/A1B1_MERGE_SEAM.md` |
-| A2 包月参数 | ⬜ 执行单 `docs/A2_PREPAID_DESKTOP.md` | 接缝合并后开；只交代码与询价，gw2 保持 PostPaid 到 A3 |
+| B1 Workspace | ✅ 已验收、已合 main | 分支 `codex/b1-workspace-audit` |
+| A1+B1 接缝 | ✅ 已并入 A2 分支完成（a789456） | 双成员同桌面断言（接缝 AC-2）留到 A3 首台池机分配时补测 |
+| A2 包月参数 | ✅ 已验收、已上线 gw2 | 分支 `codex/a2-prepaid-desktop`；gw2 仍 PostPaid；验收机 `ecd-0b7gj174mc6f23ctq`（PrePaid，10-04 到期）留作池机 |
+| main 合并 | ✅ 2026-09-04 `45481f9` | A1/B1/接缝/A2 全部进 main，后续分支从 main 起 |
 | B2 / B3 记账与对账 | ⬜ **移到里程碑二开头** | 顺序 B2 计量层 → B3 对账 → B2 定价与账本 → B4；见「里程碑二」首段 |
 | C5 视频技能对照 | ⬜ 调研完成，执行单 `docs/C5_VIDEO_SKILL_ALIGNMENT.md` | 零冲突可随时开；采纳 24 条 / 有意不同 12 条；不复刻 gate.py |
 | A3 / B4 / A5 / E1 / E2 | ⬜ | A5 等 A3 合并后；B4 等 B2；E1/E2 等文案 |
@@ -292,7 +293,7 @@ action server 单元内联 `SESSION_API_KEY`。要求：
 标签同步写到 ECD 实例（`openbox-pool`、`openbox-workspace`、`openbox-expires`），DB 为事实源，标签用于收养与对账。
 **v2** 标签读写只用 `ALIYUN::GWS::INSTANCE` 一套命名空间（现有 `ListTagResources` 就是），不要写 `ALIYUN::GWS::DESKTOP`（bossip 踩过：两套互不可见，会把在用机当预热机派出去）。
 
-**v2 首台预热机**：上海现存包月桌面 `ecd-8zp47qagrsc95h67t`（openbox-dev-shanghai，旧镜像 v1，2026-09-01 购）到 A3 时 `RebuildDesktops` 到 v2 镜像后作为第一台 `prewarm` 入池，不再另买；在此之前保持不动。
+**v2 首批预热机（两台，不另买）**：`ecd-8zp47qagrsc95h67t`（openbox-dev-shanghai，v1 镜像，**10-01 到期**）需 `RebuildDesktops` 到 v2；`ecd-0b7gj174mc6f23ctq`（A2 验收机，已是 v2 镜像，**10-04 到期**，通道已撤销、行已软删）直接收养。两台都未开自动续费：A3 若晚于到期日开工，先用 `renew_desktop` 各续一期，否则被阿里云释放。
 
 **状态机**
 - `ensure_prewarm`：巡检每 10 分钟，**以 ECD 侧按标签计数为准**（DB 只做校对），低于 **5** 时补购（PrePaid 一个月 + `auto_pay`，金镜像，策略组 1080p）。

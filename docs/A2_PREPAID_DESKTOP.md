@@ -1,9 +1,9 @@
 # A2 · 包月开通参数 —— 独立执行单
 
 > 2026-09-03。从 `DETAILED_PLAN_M1_M2.md` v2 的 A2 抽出，给 Codex 目标模式单独执行。规模小：一个会话。
-> 原执行边界经产品决策放宽：本项允许为验收新购 **至多一台** 包月桌面，验收完成后立即退订；不改 gw2 的常驻计费配置，现有上海包月机仍留给 A3。
+> 原执行边界经产品决策放宽：本项允许为验收新购 **至多一台** 包月桌面；不改 gw2 的常驻计费配置，现有上海包月机仍留给 A3。2026-09-04 验收完成后，产品进一步决定“先别退”，故验收机保留在云侧，但立即撤销 OpenBox 通道和本地归属。
 >
-> 执行者须知：真机验收限上海、`eds.enterprise_office.4c8g`、50G、1 月、`auto_pay=true`、`auto_renew=false`，询价不得超过 ¥300；使用唯一验收标签，验收后先确认实例唯一性和退款金额，再退订。遇到 §9 情形停下来报告。
+> 执行者须知：真机验收限上海、`eds.enterprise_office.4c8g`、50G、1 月、`auto_pay=true`、`auto_renew=false`，询价不得超过 ¥300；使用唯一验收标签，验收后先确认实例唯一性和退款金额，再按产品当时的明确决定退订或保留。遇到 §9 情形停下来报告。
 
 ---
 
@@ -121,9 +121,38 @@ docker exec openbox-backend-1 uv run python scripts/wuying_provision_smoke.py pr
 6. §8 填好。
 
 ## 8. 执行记录（执行者填写）
-- 分支 / 提交 / 迁移修订：
-- `DescribePrice` 响应字段实际名称：
-- 偏离：
+- 分支 / 提交 / 迁移修订：`codex/a2-prepaid-desktop`；A2 主实现
+  `a789456`，真机验收发现并修复端口回收冲突 `d9d7401`，修复 relay
+  重启运行目录 `0cdcaf4`；Alembic 唯一 head `f7b9d1e3a5c8`。
+- `DescribePrice` 响应字段实际名称：`PriceInfo.Price.Currency`、
+  `TradePrice`、`OriginalPrice`、`DiscountPrice`、`OrderLines`、`Rules`。
+  上海 `eds.enterprise_office.4c8g` + 50G 的 PrePaid 1 月实付
+  **¥105.75**（原价 ¥211.50，合同 5 折；RequestId
+  `01A06A16-67C6-5920-BDFD-FC51E0D1FE7E`）；PostPaid 为
+  **¥0.744086/小时**（RequestId
+  `01A06A16-67BB-5825-AF3D-1B32E99BB735`）。
+- 真机闭环：唯一验收标签 `a2-acceptance-20260904-a789456` 只对应
+  `ecd-0b7gj174mc6f23ctq`；workspace
+  `01M1N35N8HSKZ07302FYE9TN76`；云侧确认 PrePaid、Running、4C8G、
+  50G、到期 `2026-10-04T16:00Z`，BSS 状态为 `ManualRenewal`（未开自动续费）。
+  所有权标签、Running、通道、认证执行
+  均通过；认证路由 `172.17.0.1:18103` 返回主机名
+  `7gj174mc6f23ctq` 与 `1920x1080`。
+- 回收状态：`DescribeRefundPrice(RefundType=RemainRefund)` 返回
+  **¥105.61**（RequestId `01A06A44-F824-50FE-BA67-659BAD7DCA0E`）。
+  按 2026-09-04 产品决定暂不退订；云电脑继续保留。OpenBox 已撤销通道、
+  释放 18103、将本地行标为 `reclaimed` 并软删除，写入
+  `desktop.revoke` / `desktop.ghost` 审计，临时数据库用户已禁用。
+- 部署：gw2 使用 `openbox-backend:20260904-a2-d9d7401` 与同标签前端；
+  前后端健康，常驻 `backend.env` 不含 `WUYING_CHARGE_TYPE`，仍按默认
+  PostPaid。relay 2222 已恢复且通过 systemd drop-in 持久补齐
+  `/run/sshd`。
+- 测试：后端全量为 1297 passed / 3 个既有视频配置失败（A2 无新增失败）；
+  修复后 Wuying 定向用例 47 passed。前端 `npm run check` 通过，27 个文件、
+  189 tests passed。
+- 偏离：AC-8 的“验收后退订”被本节记录的后续产品决定覆盖；退款未提交。
+  真机还暴露了 A1 的两个运行缺陷（软删除端口与全局唯一约束不一致、gw2
+  重启后 `/run/sshd` 缺失），已在上述两个提交中修复并现场复验。
 
 ## 9. 停下来报告
 - 真机创建将超过一台、询价超过 ¥300、或实例不能由唯一验收标签确认。

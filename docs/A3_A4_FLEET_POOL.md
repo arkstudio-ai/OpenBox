@@ -19,7 +19,7 @@
 3. **采购四闸**：单价 ≤ `POOL_MAX_UNIT_PRICE_CNY`、账号余额 ≥ 2×单价、每次 ≤ `POOL_MAX_PURCHASES_PER_TICK`、每日 ≤ `POOL_MAX_PURCHASES_PER_DAY`；以 **ECD 侧按标签计数为准**，DB 只做校对；`POOL_AUTO_PURCHASE` 默认 `false`，关着时只报警不买。
 4. **到期纪律**：prewarm 与 assigned 桌面 `expires_at` 距今 < `POOL_RENEW_BEFORE_DAYS`（默认 3）→ 续一期（`renew_desktop`，A2 已封装）并审计；`retired` 不续。`ModifyDesktopChargeType`（按量转包月）封装但本项不实调。
 5. **开通接入**：`provision()` 在 per_desktop 模式下优先 `assign` 池机，池空时回落现有「即时创建」；DesktopTab 显示「分配中」。
-6. **收养**：后台能把一台现存桌面收进池（写标签 + DB 行）；首批收 A2 验收机 `ecd-0b7gj174mc6f23ctq`。
+6. **收养**：后台能把一台现存桌面收进池（v2 镜像直接收；非 v2 需 `rebuild + approve` 重建后收，数据清空）；只接受 `POOL_ADOPT_ALLOWLIST` 里的 id。首批收 A2 验收机 `ecd-0b7gj174mc6f23ctq`，再按用户清单逐台收养 bossip 舰队的包月机，直到水位 5。
 7. **后台页** `/admin/fleet`（仅 `users.role=admin`）：桌面表（池态、归属、到期、通道、计费）、池水位卡、告警列表（ack/mute）、`ensure` 按钮（带 dry-run）。
 8. 单测全绿；真机验收见 §5。
 
@@ -49,12 +49,12 @@
 ## 3. 必要资料与待拍板
 | # | 项 | 状态 |
 |---|---|---|
-| 1 | **openbox-dev-shanghai 的去留**：它现在是 `demo` 账号的在用桌面，不是闲置机。方案 A：留给 demo，池不收；方案 B：demo 释放后 `RebuildDesktops` 到 v2 入池（数据清空）。执行单默认 **A** | 需确认 |
-| 2 | 预热水位：计划写 5，建议**验证期先 2**（1 台收养 + 1 台新购），跑通后再调 `POOL_TARGET_PREWARM` | 需确认 |
-| 3 | 单价上限 `POOL_MAX_UNIT_PRICE_CNY`（建议 120，现价 105.75）、日采购上限（建议 2） | 需确认 |
-| 4 | 阿里云余额是否足够（每台 ¥105.75）；采购审批人 = 用户本人 | 用户确认 |
-| 5 | 告警推送 webhook（钉钉/飞书 机器人 URL），没有就只进后台 | 可选 |
-| 6 | gw2 部署与回滚照 `docs/DEPLOY.md`；alembic 自动迁移 | 已知 |
+| 1 | **openbox-dev-shanghai 不入池**（2026-09-04 拍板），留给 `demo` 账号；快照规则把它当普通 assigned 桌面对待 | 已定 |
+| 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v2 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认 | **用户提供可移交的桌面 id 清单**（哪几台 bossip-sh-* 可以拿） |
+| 3 | **规格以配置为准，不以单价为准**：`WUYING_DESKTOP_TYPE` 决定新购规格；收养的机器保留原规格，`spec` 列如实记录。**4c8g 还是 6c12g 需在首次新购前确认**；在确认前 `ensure_prewarm` 只报缺口不下单（`POOL_AUTO_PURCHASE=false`）。`POOL_MAX_UNIT_PRICE_CNY` 只是防失控的兜底（按 6c12g 询价设，建议 300），不是选型依据 | 规格待确认 |
+| 4 | 阿里云余额是否足够新购；采购审批人 = 用户本人 | 用户确认 |
+| 5 | **告警 webhook 本版不做**（2026-09-04 拍板），告警只进后台与日志；管理平台搭好后再梳理推送 | 已定 |
+| 6 | gw2 部署与回滚照 `docs/DEPLOY.md`；alembic 自动迁移；**队友也在直接部署 gw2**，部署前先看 `.env` 当前 tag | 已知 |
 
 ---
 
@@ -67,7 +67,7 @@
 - `pool_purchases(id, desktop_id nullable, unit_price, currency, quantity, request_id, status: ordered|created|failed, created_by: system|<user_id>, created_at, error)`——每次真实下单一行，日上限按它数。
 
 ### 4.2 配置（`core/config.py` + `.env.example`）
-`POOL_ENABLED=false`（整个池逻辑开关，关着时 provision 走现有路径）、`POOL_AUTO_PURCHASE=false`、`POOL_TARGET_PREWARM=2`、`POOL_MAX_UNIT_PRICE_CNY=120`、`POOL_MAX_PURCHASES_PER_TICK=1`、`POOL_MAX_PURCHASES_PER_DAY=2`、`POOL_MIN_ACCOUNT_BALANCE_MULTIPLE=2`、`POOL_RENEW_BEFORE_DAYS=3`、`POOL_ASSIGN_ON_PROVISION=true`、`FLEET_SNAPSHOT_INTERVAL_SEC=600`、`FLEET_ALERT_WEBHOOK_URL=`（可选）、`FLEET_CHANNEL_DOWN_ALERT_SEC=600`。
+`POOL_ENABLED=false`（整个池逻辑开关，关着时 provision 走现有路径）、`POOL_AUTO_PURCHASE=false`、`POOL_TARGET_PREWARM=5`、`POOL_MAX_UNIT_PRICE_CNY=300`、`POOL_MAX_PURCHASES_PER_TICK=1`、`POOL_MAX_PURCHASES_PER_DAY=2`、`POOL_MIN_ACCOUNT_BALANCE_MULTIPLE=2`、`POOL_RENEW_BEFORE_DAYS=3`、`POOL_ASSIGN_ON_PROVISION=true`、`FLEET_SNAPSHOT_INTERVAL_SEC=600`、`FLEET_CHANNEL_DOWN_ALERT_SEC=600`。（本版不做 webhook。）
 
 ### 4.3 ECD 封装补齐（`sandbox/wuying_ecd.py`）
 `modify_entitlement(desktop_id, end_user_ids)`、`rebuild_desktop(desktop_id, image_id, after_status="Running")`、`tag_desktop(desktop_id, tags)` / `untag_desktop(desktop_id, keys)`（`ALIYUN::GWS::INSTANCE`）、`list_fleet_desktops()`（按 `openbox-env` 标签分页拉全量，返回 `desktop_id/status/charge_type/expired_time/image_id/desktop_type/end_user_ids/tags`）、`modify_charge_type(...)`（封装 + 单测，不实调）、`query_account_balance()`（新增依赖 `alibabacloud-bssopenapi20171214`，返回可用余额 CNY）。全部套 `_retry_throttled`。
@@ -90,7 +90,7 @@
 | `account_balance_low` | 余额 < 单价 × `POOL_MIN_ACCOUNT_BALANCE_MULTIPLE` | critical |
 
 - **source-health 门控**（借 bossip）：某源本轮 `ok=false` 时，只与该源相关的规则**不产生新告警也不自动关闭**旧告警；三源都 ok 才允许 auto-resolve。
-- 告警生命周期：finding 存在 → upsert `fleet_alerts`（更新 `last_seen_at`）；finding 消失且未 mute → `resolved_at=now`；`ack` 只记人，不影响 resolve；`mute_until` 期间不推送。推送：`log.error` + webhook（若配置），同一告警只在 first_seen 和升级时推一次。
+- 告警生命周期：finding 存在 → upsert `fleet_alerts`（更新 `last_seen_at`）；finding 消失且未 mute → `resolved_at=now`；`ack` 只记人，不影响 resolve；`mute_until` 期间不推送。推送：本版只 `log.error`（critical）/ `log.warning`，同一告警只在 first_seen 和升级时打一次；webhook 留到管理平台搭好后。
 - 注册：`internal_tasks.register("fleet_snapshot", FLEET_SNAPSHOT_INTERVAL_SEC, ...)`。
 
 ### 4.5 池状态机（`sandbox/pool.py`）
@@ -106,7 +106,7 @@
 - `release(desktop_id, actor)`：仅 `assigned` → `revoke` 通道（端口置空）→ `modify_entitlement(desktop, [])`（若 API 不接受空列表则保留 EndUser 只撤通道，写进 §8）→ 标签 `openbox-pool=released`，去 `openbox-workspace/user`（保留 `openbox-eu-id` 便于追溯）→ `pool_state='released', released_at`；DB 行**不软删**（数据与登录态仍在盘上）。审计。
 - `recycle(desktop_id, actor, approve: bool)`：仅 `released|retired→否`；`approve` 必真；`rebuild_desktop(image=WUYING_IMAGE_ID)` → `pool_state='recycling'` → 等 Running → 预热校验 → `pool_state='prewarm'`，清 `workspace_id/user_id/end_user_id`；标签 `openbox-pool=prewarm`。审计 `pool.recycle`。
 - `retire(desktop_id, actor)`：`retired=true`，标签 `openbox-pool=retired`；`renew_expiring` 跳过它；到期后由 ECD 自然释放，规则 `expired` 提醒，人工确认后 `DeleteDesktops`（本项不自动删）。
-- `adopt(desktop_id, pool_state, actor)`：`describe_desktop` + 校验镜像 = v2（不是则拒绝，提示先 recycle）→ 写标签 → 建 DB 行（`prewarm` 时 workspace NULL）→ 审计。
+- `adopt(desktop_id, pool_state, actor, rebuild: bool=False, approve: bool=False)`：`describe_desktop` → 若镜像 ≠ v2：`rebuild=True and approve=True` 才走 `rebuild_desktop(WUYING_IMAGE_ID)`（**数据清空**，先记录原标签与 EndUser 到审计 detail），否则拒绝并提示 → 等 Running → 预热校验 → **换标签**：删 bossip 侧 `purpose/pool/codex-user/spec/environment/managed-by` 等非 openbox 键（`untag_desktop`），写 `openbox-env / openbox-pool / openbox-spec / openbox-image` → `modify_entitlement(desktop, [])` 解绑原 EndUser（若 API 不接受空列表，改为绑池专用 EndUser，写进 §8）→ 建 DB 行（`prewarm` 时 workspace NULL，`spec` 记实际规格如 `6c12g`，`charge_type/expires_at` 取自 ECD）→ 审计 `pool.adopt`。**只接受用户清单里的 desktop id**（配置 `POOL_ADOPT_ALLOWLIST`，逗号分隔），不在清单内的一律拒绝——同账号上还有 bossip 真实用户机，误收会打到线上客户。
 - `renew_expiring()`（internal task，每天 1 次）：`pool_state in (prewarm, assigned)` 且未 `retired` 且 `expires_at − now < POOL_RENEW_BEFORE_DAYS` → `renew_desktop` 一期 → 刷新 `expires_at` → 审计。**首次真实续费前向用户报数**（每台 ¥105.75）。
 
 ### 4.6 后台接口（`api/admin_fleet.py`，`require_admin`）
@@ -127,11 +127,12 @@
 | AC-1 | 对账规则单测 | `reconcile()` 对 10 条规则各至少一条正例一条反例；source-health 门控：ECD 源失败时不新增也不关闭 `ghost/orphan/expired` |
 | AC-2 | 快照实跑 | gw2 上 `fleet_snapshot` 每 10 分钟一行 `fleet_snapshots`（三源 ok），`GET /api/admin/fleet/snapshots/latest` 能看 |
 | AC-3 | 告警生命周期 | 人为制造 ghost（DB 行指向不存在的桌面 id）→ 下一轮出现 critical 告警 → ack → 修正后下一轮 `resolved_at` 非空；mute 期间 webhook 不推 |
-| AC-4 | 收养 | `adopt ecd-0b7gj174mc6f23ctq prewarm` → 标签改写、DB 行 `prewarm/workspace NULL`、下一轮快照 prewarm=1 无 `tag_mismatch` |
+| AC-4 | 收养 v2 机 | `adopt ecd-0b7gj174mc6f23ctq prewarm` → 标签改写、DB 行 `prewarm/workspace NULL`、下一轮快照 prewarm=1 无 `tag_mismatch` |
+| AC-4b | 收养并重建 | 对用户清单里一台 `bossip-sh-*`：不带 `approve` 被拒；带 `rebuild+approve` → 重建到 v2 → Running → 标签只剩 openbox-*、原 EndUser 解绑、DB 行 `prewarm/spec=6c12g` → 快照无 `orphan/tag_mismatch`；不在 allowlist 的 id 被拒。记录耗时 |
 | AC-5 | 采购四闸 | dry-run 报「将购买 1 台，单价 ¥105.75」；把 `POOL_MAX_UNIT_PRICE_CNY=100` → `purchase_blocked` 告警且未下单；`POOL_AUTO_PURCHASE=false` 下 ensure 不下单；单测覆盖日上限与余额闸 |
-| AC-6 | 真买一台 | 用户确认后 `POOL_AUTO_PURCHASE=true` 跑一轮 ensure → `pool_purchases` 一行 `created`、桌面 Running、prewarm=2；ECD 标签正确；然后把开关关回 |
+| AC-6 | 真买一台 | **仅在规格（4c8g/6c12g）确认且收养后仍不足 5 台时做**：用户确认后 `POOL_AUTO_PURCHASE=true` 跑一轮 ensure → `pool_purchases` 一行 `created`、桌面 Running、规格 = `WUYING_DESKTOP_TYPE`；ECD 标签正确；然后把开关关回。规格未确认则本条记「跳过，原因」 |
 | AC-7 | 分配 | 新 workspace 点开通 → `assign` 从池取机，**≤ 2 分钟**通道 up，`bash: hostname` = 该桌面主机名；`expires_at` 距今 ≥ `POOL_RENEW_BEFORE_DAYS`；两个 workspace 并发开通不会拿到同一台（单测 + 实跑各一次） |
-| AC-8 | 释放与回收 | `release` 后该 workspace 会话 `DESKTOP_NOT_READY`、端口释放、标签变 released、DB 行保留；`recycle --approve` → Running → prewarm，耗时记录（bossip 参考 6.5 分钟）；不带 approve 被拒 |
+| AC-8 | 释放与回收 | `release` 后该 workspace 会话 `DESKTOP_NOT_READY`、端口释放、标签变 released、DB 行保留；`recycle --approve` → Running → prewarm，耗时记录（bossip 参考 6.5 分钟）；不带 approve 被拒。80G 盘的收养机重建到 50G 镜像要验证一次成功 |
 | AC-9 | 续期 | 单测：`expires_at` 距今 2 天 → `renew_expiring` 调 `renew_desktop`；`retired` 不调。真机续费本项**不做**（两台池机到期都在验收之后，见 §3） |
 | AC-10 | 后台页 | admin 账号能看三块并完成 ack、dry-run、release；普通账号 403/跳转 |
 | AC-11 | 不越界与测试 | `git diff --stat main` 只含 `backend/sandbox/{fleet,pool}.py`、`wuying_ecd.py`、`wuying_desktop_service.py`、`api/admin_fleet.py`、`core/config.py`、`.env.example`、`pyproject.toml`（bss SDK）、模型与一个迁移、`cron/internal_tasks.py` 注册处、`main.py` 注册、测试、`frontend-v2/src/features/admin/**` 与路由/locale、`docs/WUYING_SANDBOX.md`；后端全量除既有 4 个视频配置用例外全绿；`npm run check` 过 |
@@ -161,9 +162,15 @@ cd frontend-v2 && npm run check
 - ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：
 - 偏离：
 
+## 8.1 首批入池顺序（建议）
+1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（已是 v2，零成本）。
+2. 用户给清单后，逐台 `adopt --rebuild --approve` bossip 包月机，每台先报「将清空该机数据、原 EndUser 解绑」再执行；到 5 台为止。
+3. 仍不足 5 台且规格已确认 → 新购补齐。
+
 ## 9. 停下来报告
 - 任何真实花钱调用前未获确认。
 - ECD 拒绝无 EndUser 创建且池专用 EndUser 方案也不通。
 - `RebuildDesktops` 要求先停机且停机会改变通道/标签之外的东西。
 - 需要改 `backend/tool/`、`billing/`、C5 技能目录或 B1 的 workspace 表。
-- 快照发现共享桌面或 bossip 桌面被本环境标签命中（说明标签过滤有误，立刻停）。
+- 快照发现共享桌面 `ecd-4zjxaq5g45dr5qr0i` 或不在 allowlist 的 bossip 桌面被本环境标签命中（说明标签过滤有误，立刻停）。
+- 收养重建前发现该机仍有 bossip 用户在用（`codex-user` 标签非空且 gateway 仍注册）。

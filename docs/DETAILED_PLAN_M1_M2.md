@@ -25,7 +25,7 @@
 | 待修小项 | ⬜ | ① B1：加「本空间已发出未接受邀请」列表与撤销接口，团队页改接它；② 前端：LLM 上游报错时回合要显示可见错误，不能是空回合；③ 验收机 `ecd-j3daid9t6x8p4wjh7` 解绑或删除 |
 | B2 / B3 记账与对账 | ⬜ **移到里程碑二开头** | 顺序 B2 计量层 → B3 对账 → B2 定价与账本 → B4；见「里程碑二」首段 |
 | C5 视频技能对照 | ⬜ 调研完成，执行单 `docs/C5_VIDEO_SKILL_ALIGNMENT.md` | 零冲突可随时开；采纳 24 条 / 有意不同 12 条；不复刻 gate.py |
-| A3 池 + A4 舰队 v0 | ⬜ 执行单 `docs/A3_A4_FLEET_POOL.md` | 合成一个任务，先快照规则后池；自动采购默认关；openbox-dev-shanghai 现为 demo 在用桌面，默认不入池 |
+| A3 池 + A4 舰队 v0 | ⬜ 执行单 `docs/A3_A4_FLEET_POOL.md` | 已定：水位 5，主要靠收养 bossip 舰队退不掉的包月机（重建到 v2，需用户清单）；规格以 `WUYING_DESKTOP_TYPE` 为准，4c8g/6c12g 待确认后才新购；dev-shanghai 不入池；本版无 webhook |
 | A3 / B4 / A5 / E1 / E2 | ⬜ | A5 等 A3 合并后；B4 等 B2；E1/E2 等文案 |
 
 ---

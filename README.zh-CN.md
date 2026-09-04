@@ -153,13 +153,13 @@ npm run check          # i18n 对齐 + ESLint + TypeScript + Vitest
 npx playwright test    # E2E；需要后端和 devtest 账号
 ```
 
-v2 生产镜像定义在 `frontend-v2/Dockerfile`。镜像如何构建、传输并发布到 AWS 开发机与阿里云生产机，见 [docs/DEPLOY.md](docs/DEPLOY.md)。`k8s/` 里的 GKE/AKS 清单与 `docs/gke.md` 属冻结遗留内容。
+v2 生产镜像定义在 `frontend-v2/Dockerfile`。镜像如何构建、传输并发布到 AWS 开发机与阿里云生产机，见 [docs/DEPLOY.md](docs/DEPLOY.md)。`k8s/` 里的 GKE/AKS 清单属冻结遗留内容。
 
 ---
 
 ## 文档
 
-设计文档见 [`docs/`](docs/):`OPENAGENT_DESIGN.md`(Agent 架构)、`FRONTEND_DESIGN.md`、`API_INTERFACES.md`、`MULTI_USER_STORAGE_PLAN.md`、`CRON_SYSTEM_PLAN.md`、`PTY_UPGRADE_PLAN.md`、`PERFORMANCE_OPTIMIZATION.md`、[`DEPLOY.md`](docs/DEPLOY.md)(AWS 开发 + 阿里云生产部署)、[`LOGTO_PROD.md`](docs/LOGTO_PROD.md)(各环境 Logto SSO)、[`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md)(把沙箱跑在阿里云无影云电脑上)、`gke.md`(遗留)。
+设计文档见 [`docs/`](docs/):`OPENAGENT_DESIGN.md`(Agent 架构)、`FRONTEND_DESIGN.md`、`API_INTERFACES.md`、`MULTI_USER_STORAGE_PLAN.md`、`CRON_SYSTEM_PLAN.md`、`PTY_UPGRADE_PLAN.md`、`PERFORMANCE_OPTIMIZATION.md`、[`DEPLOY.md`](docs/DEPLOY.md)(AWS 开发 + 阿里云生产部署)、[`LOGTO_PROD.md`](docs/LOGTO_PROD.md)(各环境 Logto SSO)、[`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md)(把沙箱跑在阿里云无影云电脑上)。
 
 ---
 

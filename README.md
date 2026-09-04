@@ -153,13 +153,13 @@ npm run check          # i18n parity + ESLint + TypeScript + Vitest
 npx playwright test    # E2E; requires the backend and a devtest account
 ```
 
-The v2 production image is defined in `frontend-v2/Dockerfile`. How that image is built, shipped and released to the AWS dev host and the Alibaba Cloud prod host is documented in [docs/DEPLOY.md](docs/DEPLOY.md). The GKE/AKS manifests in `k8s/` (and `docs/gke.md`) are frozen legacy.
+The v2 production image is defined in `frontend-v2/Dockerfile`. How that image is built, shipped and released to the AWS dev host and the Alibaba Cloud prod host is documented in [docs/DEPLOY.md](docs/DEPLOY.md). The GKE/AKS manifests in `k8s/` are frozen legacy.
 
 ---
 
 ## Documentation
 
-Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, [`DEPLOY.md`](docs/DEPLOY.md) (AWS dev + Alibaba Cloud prod deployment), [`LOGTO_PROD.md`](docs/LOGTO_PROD.md) (Logto SSO per environment), [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop), `gke.md` (legacy).
+Design docs in [`docs/`](docs/): `OPENAGENT_DESIGN.md` (agent architecture), `FRONTEND_DESIGN.md`, `API_INTERFACES.md`, `MULTI_USER_STORAGE_PLAN.md`, `CRON_SYSTEM_PLAN.md`, `PTY_UPGRADE_PLAN.md`, `PERFORMANCE_OPTIMIZATION.md`, [`DEPLOY.md`](docs/DEPLOY.md) (AWS dev + Alibaba Cloud prod deployment), [`LOGTO_PROD.md`](docs/LOGTO_PROD.md) (Logto SSO per environment), [`WUYING_SANDBOX.md`](docs/WUYING_SANDBOX.md) (running the sandbox on an Alibaba Cloud desktop).
 
 ---
 

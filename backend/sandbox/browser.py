@@ -374,7 +374,16 @@ if command -v dbus-run-session >/dev/null 2>&1 \\
         gsettings set com.github.libpinyin.ibus-libpinyin.libpinyin main-switch "<Shift>" >/dev/null 2>&1 || true
       fi
 
-      ibus-daemon --replace --xim --panel=disable >{IBUS_LOG} 2>&1 &
+      # The panel is what draws the candidate list. Started with
+      # --panel=disable there is no way to see or choose a character: the
+      # engine converts, but the reader only ever sees the committed result,
+      # which is not usable pinyin input. Start the real panel when it is
+      # installed and keep "disable" only as the fallback.
+      PANEL=disable
+      for cand in /usr/libexec/ibus-ui-gtk3 /usr/lib/ibus/ibus-ui-gtk3; do
+        if [ -x "$cand" ]; then PANEL="$cand"; break; fi
+      done
+      ibus-daemon --replace --xim --panel="$PANEL" >{IBUS_LOG} 2>&1 &
       # Set the global engine after Chrome has opened an input context. Bound
       # every attempt because IBus otherwise waits 15 seconds when no context
       # exists yet; this helper must never delay Chrome readiness.

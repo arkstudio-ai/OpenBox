@@ -343,6 +343,20 @@ else
   $SUDO rm -f "$H/.obx-write-probe" 2>/dev/null || true
 fi
 PROF="$H/{CHROME_PROFILE}"
+# Reuse a profile that already exists rather than minting a fresh one.
+#
+# A profile is not scratch state: it carries every logged-in session on the
+# desktop. Switching the launch to the runner's home quietly pointed Chrome at
+# an empty directory, and the desktop came back signed out of everything —
+# the sessions were never lost, just orphaned in the old path. A deployment
+# that keeps per-user homes under /workspace already has the real profile
+# there, so prefer it, most recently used first.
+EXISTING=$(ls -dt /workspace/openbox/users/*/.openbox/home/{CHROME_PROFILE} 2>/dev/null | head -1)
+# Plain -w is enough here: every candidate lives on the writable /workspace,
+# so this is an ownership question, not the read-only-mount trap above.
+if [ -n "$EXISTING" ] && $SUDO test -w "$EXISTING"; then
+  PROF="$EXISTING"
+fi
 PREF="$PROF/Default/Preferences"
 if [ -f "$PREF" ]; then
   $SUDO sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$PREF" 2>/dev/null || true
@@ -356,7 +370,7 @@ if command -v dbus-run-session >/dev/null 2>&1 \\
         || [ -x /usr/lib/ibus/ibus-engine-libpinyin ]; }}; then
   ( setsid $SUDO env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
     DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
-    OPENBOX_CHROME_BIN="$BIN" OPENBOX_CHROME_PROFILE="$H/{CHROME_PROFILE}" \\
+    OPENBOX_CHROME_BIN="$BIN" OPENBOX_CHROME_PROFILE="$PROF" \\
     dbus-run-session -- sh -c '
       export GTK_IM_MODULE=ibus
       export QT_IM_MODULE=ibus
@@ -424,7 +438,7 @@ else
     "$BIN" \\
     --remote-debugging-port={CHROME_PORT} \\
     --remote-debugging-address=127.0.0.1 \\
-    --user-data-dir="$H/{CHROME_PROFILE}" \\
+    --user-data-dir="$PROF" \\
     --no-first-run \\
     --no-default-browser-check \\
     --disable-session-crashed-bubble \\

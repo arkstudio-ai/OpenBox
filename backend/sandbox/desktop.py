@@ -122,6 +122,17 @@ settle_ms = max(0, int(sys.argv[4])) if len(sys.argv) > 4 else 0
 interval_ms = max(40, int(sys.argv[5])) if len(sys.argv) > 5 else 120
 threshold = max(0.0, float(sys.argv[6])) if len(sys.argv) > 6 else 0.003
 
+def _is_blank(image):
+    """One flat colour across the frame: nothing was actually captured.
+
+    Sampled, not scanned — a full 4K getdata() would cost more than the grab
+    it is guarding. A genuinely dark screen also lands here, and that is fine:
+    the fallback simply captures the same dark screen a second way.
+    """
+    small = image.convert("RGB").resize((32, 18))
+    return len(set(small.getdata())) <= 1
+
+
 def capture():
     # Pillow's XCB grab reads the root window as raw pixels in ~60ms on the
     # 4K WUYING desktop. `scrot` first PNG-encoded the full 4K frame and then
@@ -129,6 +140,14 @@ def capture():
     # page. Keep scrot only as a compatibility fallback.
     try:
         image = ImageGrab.grab()
+        if _is_blank(image):
+            # The XCB path reads the frame through MIT-SHM, and shared memory
+            # is scoped to the IPC namespace. Run from the action container —
+            # a different namespace from the desktop host — the attach yields
+            # a uniformly black frame and raises nothing, so this fallback
+            # never fired and every screenshot came back blank. scrot speaks
+            # ordinary X protocol and is unaffected.
+            raise RuntimeError("xcb grab returned a blank frame")
         sampler = ScreenSampler()
         try:
             pointer = sampler.pointer()

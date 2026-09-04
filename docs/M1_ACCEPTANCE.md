@@ -25,9 +25,9 @@
 | A1 | U1 登录，**先不开桌面**，直接在聊天发 `bash: hostname` | 前端提示云桌面未就绪并引导到云桌面 tab；接口返回 503 `DESKTOP_NOT_READY` | 截图 + 浏览器 Network 里的 503 响应体 |
 | A2 | U1 到云桌面 tab 点「开通」，等状态到 running 且通道 up（约 1–2 分钟） | `GET /api/desktop/status` 返回 `state=running`、`channel.state=up`、`mode=per_user` | 状态 JSON |
 | A3 | U1 发 `bash: hostname` | 返回值 = 这台桌面的 `DescribeDesktops.host_name`，且 ≠ `0zd5sxxe1uw10r6`（共享桌面） | 聊天截图 + `describe-desktops --desktop-id <id>` 输出 |
-| A4 | 云桌面 tab 连上画面，在桌面里开终端敲 `hostname` | 与 A3 一致 | 桌面截图 |
+| A4 | 云桌面 tab 连上画面，在桌面里开终端敲 `hostname`（画面是 `g.alicdn.com` 跨源 iframe，自动化注不进键鼠；人工手敲，或经聊天通道让 agent 拉起终端显示 hostname 与标记文件） | 与 A3 一致 | 桌面截图 |
 | A5 | 云侧核对这台桌面 | `ChargeType=PostPaid`、`ImageId=m-ccceuit7jn3xzwx45`、`PolicyGroupId=pg-0bbay5jmvosn8b2hc`、标签含 `openbox-workspace=<U1 默认空间 id>` | `describe-desktops` 输出 |
-| A6 | gw2 上看通道 | `ss -ltn` 有一条 `172.17.0.1:181xx`；公网 `nc -zv 106.15.105.236 <port>` 不通 | 两条命令输出 |
+| A6 | gw2 上看通道 | `ss -ltn` 有一条 `172.17.0.1:181xx`；公网探测**不要在本机做**（TUN 代理对任何地址都返回成功），从 EC2 或其它云主机 `nc -zv 106.15.105.236 <port>`，并带一个 2222 正对照、一个随机端口负对照 | 三条探测输出 |
 | A7 | 重启桌面：`aliyun ecd reboot-desktops --api-version 2020-09-30 --region cn-shanghai --biz-region-id cn-shanghai --desktop-id <id>`，计时 | ≤ 3 分钟内 `channel.state` 回到 up；再发一次 `bash: hostname` 成功 | 前后两次状态 JSON 带时间 |
 
 ## B. 团队空间（B1）
@@ -54,7 +54,7 @@
 
 | 步 | 操作 | 通过判据 | 证据 |
 |---|---|---|---|
-| D1 | gw2 容器内：`docker exec openbox-backend-1 uv run python scripts/wuying_provision_smoke.py price` | 打印 PostPaid 每小时价与 PrePaid 一月价（参考：¥0.744/h、¥105.75/月）及 raw；退出码 0 | 完整输出 |
+| D1 | gw2 容器内：`docker exec -w /app openbox-backend-1 python scripts/wuying_provision_smoke.py price`（**不要**用 `uv run`，容器里会重建 venv 下载依赖后超时） | 打印 PostPaid 每小时价与 PrePaid 一月价（参考：¥0.744/h、¥105.75/月）及 raw；退出码 0 | 完整输出 |
 | D2 | gw2：`grep -c '^WUYING_CHARGE_TYPE' /opt/openbox/config/backend.env` | 输出 0（未设，即 PostPaid） | 输出 |
 | D3 | 对比 §0 的基线桌面列表 | 只多出 A2 开的那一台，且是 PostPaid | 两次列表 |
 | D4 | 库里看 A2 那台的行：`select desktop_id,status,tunnel_state,charge_type,workspace_id from cloud_desktops where is_deleted=false` | `charge_type=PostPaid`，`workspace_id` = U1 默认空间 | 查询结果 |
@@ -77,3 +77,10 @@
 
 ## 通过标准
 A1–A7、B1–B8、D1–D4 全部 ✅；C 组按用户决定可跳过但要注明；E 组可选。任何一条不过，先记录现象与响应体，不要自行修代码——回到主对话决定归哪个工作项修。
+
+---
+
+## 2026-09-04 验收结果
+A1–A7 ✅、B2–B8 ✅、D1–D4 ✅、E1 ✅；C 组按用户决定跳过；**B1 半通过**：邀请链接与库行都有，但团队页「待接受邀请」为空——`GET /api/workspaces/invitations/pending` 返回的是「发给我的」邀请，后端没有「本空间已发出未接受」的列表接口，UI 接错数据源，管理员看不到也撤不掉自己发出的邀请。用户口径：团队骨架在即可，暂无协作需求，**里程碑一收口**，B1 邀请列表记为待修小项。
+证据：`docs/M1_ACCEPTANCE_EVIDENCE.md`。关键数字：开通到通道 up 62 秒；重启后通道恢复 31 秒；询价 PostPaid ¥0.744/h、PrePaid ¥105.75/月。
+遗留：验收机 `ecd-j3daid9t6x8p4wjh7`（按量 ¥17.9/天）绑在测试空间 `m1u1-0904` 上，入池前必须解绑，或直接删除；EC2 栈 LLM 上游 503 时前端只显示空回合无报错（单独立项）。

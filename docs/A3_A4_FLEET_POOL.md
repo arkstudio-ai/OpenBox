@@ -56,6 +56,14 @@
 | 4 | 阿里云余额是否足够新购；采购审批人 = 用户本人 | 用户确认 |
 | 5 | **告警 webhook 本版不做**（2026-09-04 拍板），告警只进后台与日志；管理平台搭好后再梳理推送 | 已定 |
 | 6 | gw2 部署与回滚照 `docs/DEPLOY.md`；alembic 自动迁移；**队友也在直接部署 gw2**，部署前先看 `.env` 当前 tag | 已知 |
+| 7 | **环境实查补漏（2026-09-05）** | |
+| 7a | bossip 12 台的策略组都是 `system-all-enabled-policy`（不是 1080p 的 `pg-0bbay5jmvosn8b2hc`）→ `adopt` 必须调 `ModifyDesktopsPolicyGroup` 切到 `WUYING_POLICY_GROUP_ID`，预热校验要断言策略组正确 | 写进 §4.5 |
+| 7b | 12 台都绑着 `bossip-slot2…15` EndUser、全部 Disconnected（无人在用）；重建后必须解绑，否则 bossip 侧账号仍能用无影客户端登进池机 | 写进 §4.5 |
+| 7c | 到期日：001/002 **10-04**，003–006 **10-06**，008–013 10-11/12。首批 5 台取最晚到期的 **009–013**（`ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`），008 作 reserve；**001–006 六台在 10-04/10-06 前要拍板：续一期（6c12g 约 ¥241/台）还是任其到期释放**，任其到期 = 这几台不再算 reserve | 需拍板 |
+| 7d | gw2 `backend.env` 没有 `WUYING_DESKTOP_TYPE`（默认 4c8g）→ 部署本项时加 `WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g` 及全部 `POOL_*` 键 | 部署清单 |
+| 7e | gw2 只有一个 admin 账号 `m1adm-0904`（M1 验收用的测试号），`demo` 是普通用户；后台页要用得把 `demo` 提成 admin（没有提权接口，SQL：`update users set role='admin' where username='demo'`），或直接用 m1adm-0904 | 用户选 |
+| 7f | gw2 后端用的阿里云 AK 是**主账号 AK**（权限不成问题，BSS/重建/续费都能调），但主账号 AK 放在服务器上风险大，且验收人排查时曾把该 AK 打进过会话日志——建议本项上线前**换成 RAM 子账号 AK**（ECD/EDS 全权 + `AliyunBSSReadOnlyAccess`），替换 `/opt/openbox/secrets/aliyun-config.json` 并**吊销旧 AK** | 建议，用户定 |
+| 7g | bossip-gw-1 的 `bossip-autoprovision` 处于 inactive/static，不会再动这批机器；`pool-manager.sh` 是手动脚本。重建后这些机器从 bossip 的 `purpose=codex` 视野里消失即可，不需要通知 bossip 侧代码 | 已确认 |
 
 ---
 
@@ -107,7 +115,7 @@
 - `release(desktop_id, actor)`：仅 `assigned` → `revoke` 通道（端口置空）→ `modify_entitlement(desktop, [])`（若 API 不接受空列表则保留 EndUser 只撤通道，写进 §8）→ 标签 `openbox-pool=released`，去 `openbox-workspace/user`（保留 `openbox-eu-id` 便于追溯）→ `pool_state='released', released_at`；DB 行**不软删**（数据与登录态仍在盘上）。审计。
 - `recycle(desktop_id, actor, approve: bool)`：仅 `released|retired→否`；`approve` 必真；`rebuild_desktop(image=WUYING_IMAGE_ID)` → `pool_state='recycling'` → 等 Running → 预热校验 → `pool_state='prewarm'`，清 `workspace_id/user_id/end_user_id`；标签 `openbox-pool=prewarm`。审计 `pool.recycle`。
 - `retire(desktop_id, actor)`：`retired=true`，标签 `openbox-pool=retired`；`renew_expiring` 跳过它；到期后由 ECD 自然释放，规则 `expired` 提醒，人工确认后 `DeleteDesktops`（本项不自动删）。
-- `adopt(desktop_id, pool_state, actor, rebuild: bool=False, approve: bool=False)`：`describe_desktop` → 若镜像 ≠ v2：`rebuild=True and approve=True` 才走 `rebuild_desktop(WUYING_IMAGE_ID)`（**数据清空**，先记录原标签与 EndUser 到审计 detail），否则拒绝并提示 → 等 Running → 预热校验 → **换标签**：删 bossip 侧 `purpose/pool/codex-user/spec/environment/managed-by` 等非 openbox 键（`untag_desktop`），写 `openbox-env / openbox-pool / openbox-spec / openbox-image` → `modify_entitlement(desktop, [])` 解绑原 EndUser（若 API 不接受空列表，改为绑池专用 EndUser，写进 §8）→ 建 DB 行（`prewarm` 时 workspace NULL，`spec` 记实际规格如 `6c12g`，`charge_type/expires_at` 取自 ECD）→ 审计 `pool.adopt`。**只接受用户清单里的 desktop id**（配置 `POOL_ADOPT_ALLOWLIST`，逗号分隔），不在清单内的一律拒绝——同账号上还有 bossip 真实用户机，误收会打到线上客户。
+- `adopt(desktop_id, pool_state, actor, rebuild: bool=False, approve: bool=False)`：`describe_desktop` → 若镜像 ≠ v2：`rebuild=True and approve=True` 才走 `rebuild_desktop(WUYING_IMAGE_ID)`（**数据清空**，先记录原标签与 EndUser 到审计 detail），否则拒绝并提示 → 等 Running → `ModifyDesktopsPolicyGroup(WUYING_POLICY_GROUP_ID)`（bossip 机是 `system-all-enabled-policy`）→ 预热校验（含策略组断言）→ **换标签**：删 bossip 侧 `purpose/pool/codex-user/spec/environment/managed-by` 等非 openbox 键（`untag_desktop`），写 `openbox-env / openbox-pool / openbox-spec / openbox-image` → `modify_entitlement(desktop, [])` 解绑原 EndUser（若 API 不接受空列表，改为绑池专用 EndUser，写进 §8）→ 建 DB 行（`prewarm` 时 workspace NULL，`spec` 记实际规格如 `6c12g`，`charge_type/expires_at` 取自 ECD）→ 审计 `pool.adopt`。**只接受用户清单里的 desktop id**（配置 `POOL_ADOPT_ALLOWLIST`，逗号分隔），不在清单内的一律拒绝——同账号上还有 bossip 真实用户机，误收会打到线上客户。
 - `renew_expiring()`（internal task，每天 1 次）：`pool_state in (prewarm, assigned)` 且未 `retired` 且 `expires_at − now < POOL_RENEW_BEFORE_DAYS` → `renew_desktop` 一期 → 刷新 `expires_at` → 审计。**首次真实续费前向用户报数**（每台 ¥105.75）。
 
 ### 4.6 后台接口（`api/admin_fleet.py`，`require_admin`）
@@ -165,7 +173,7 @@ cd frontend-v2 && npm run check
 
 ## 8.1 首批入池顺序（建议）
 1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（已是 v2，零成本）。
-2. 用户给清单后，逐台 `adopt --rebuild --approve` bossip 包月机，每台先报「将清空该机数据、原 EndUser 解绑」再执行；到 5 台为止。
+2. 逐台 `adopt --rebuild --approve` bossip 包月机，顺序按到期日从晚到早：013 → 012 → 011 → 010 → 009，每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行；到 5 台为止（含 A2 验收机则 4 台即够，多出的一台也重建，水位按 5 台 prewarm 算）。
 3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。
 4. 其余 7 台 bossip 机打 `openbox-pool=reserve` 标签，不重建，留作扩池储备；快照规则把 `reserve` 当合法状态不报 orphan。
 

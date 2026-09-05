@@ -167,10 +167,26 @@ cd frontend-v2 && npm run check
 6. §8 填好：真实采购台数与金额、`CreateDesktops` 无 EndUser 是否被接受、`ModifyEntitlement` 空列表是否被接受、recycle 耗时。
 
 ## 8. 执行记录（执行者填写）
-- 分支 / 提交 / 迁移修订：
-- 采购与续费明细（台数、金额、RequestId、用户确认时间）：
-- ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：
-- 偏离：
+- 分支 / 提交 / 迁移修订：`codex/a3-fleet-pool`，独立 worktree，起点
+  `e0dd9eb`；A3/A4 本地基础提交 `ae330c0`；迁移 `a3f1e5c7d9b2`（唯一
+  head）。
+- 采购与续费明细（台数、金额、RequestId、用户确认时间）：截至
+  2026-09-05 **0 台、¥0，未发生任何创建/续费/重建/删除**。只读询价：
+  4c8g/50G PostPaid ¥0.744086/小时（RequestId
+  `01A070BB-9BEF-5FA2-9087-DCFB492C0D04`）；6c12g/50G PostPaid
+  ¥1.107454/小时（RequestId `01A070BB-48EE-53E0-B9B2-52AADA8DFE21`）。
+  v3 临时镜像源机的 CreateDesktops 请求已做 CLI dry-run，确认为 1 台、
+  PostPaid、4c8g/50G、v2 镜像、无 EndUser、无生产 `openbox-env` 标签；真实
+  创建仍在等待报价后的明确确认。
+- ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：待真实
+  镜像源机与 A2 单机门禁；当前尚无写调用。
+- 偏离 / 停工证据：2026-09-05 重新只读运行 bossip 权威
+  `/opt/bossip/pool-manager.sh inventory` 后，013–010 并非空闲机，gateway
+  注册表仍分别绑定 `sza7qvgyq0uf`、`8gfv8hh64roz`、`dk5gdk0brman`、
+  `cj0ys22ck10e`；009/008 也仍绑定用户。命中 §9，未执行任何重建。必须先由
+  用户确认业务下线并走 bossip release/catalog 注销，再逐台核验 registry 已清空。
+  OpenBox adopt 已增加硬护栏：legacy `pool` 未到 `reclaim|prewarm`，或未显式
+  `gateway_release_verified=true`，均拒绝收养。
 
 ## 8.1 首批入池顺序（建议）
 0. **先出 v3 镜像**：守护分支**已于 2026-09-05 合入 main（`66bb9de`）并部署 gw2**，本步只剩镜像——在 `wuying_bootstrap.py --image-mode` 里加装 `obx-display-guard`（systemd，root，每 3 秒经 `obx-x` 找 DISPLAY/XAUTHORITY 以 xauth 属主 `runuser` 跑 `obx-display`，钉不住退避 60 秒——实现取自该分支的 `ensure_desktop_tools`）→ 50G 按量机跑 image-mode + `wuying_image_verify.py`（新增断言：`systemctl is-enabled obx-display-guard` = enabled）→ `create-image openbox-image-v3-shanghai` → gw2 `WUYING_IMAGE_ID` 切 v3 → 删临时机。费用约 ¥1。

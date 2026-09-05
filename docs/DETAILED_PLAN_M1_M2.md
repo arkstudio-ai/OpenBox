@@ -21,6 +21,7 @@
 | A2 包月参数 | ✅ 已验收、已上线 gw2 | 分支 `codex/a2-prepaid-desktop`；gw2 仍 PostPaid；验收机 `ecd-0b7gj174mc6f23ctq`（PrePaid，10-04 到期）留作池机 |
 | main 合并 | ✅ 2026-09-04 `45481f9` | A1/B1/接缝/A2 全部进 main，后续分支从 main 起 |
 | origin 合并与生产部署 | ✅ 2026-09-04 | main `b1f77ae`（含 origin 的 Logto SSO / 浏览器与沙箱修复 / 部署文档）已推 origin；gw2 部署 `20260904-main-b1f77ae`，库升到 `c3e5a7b9d1f4`；回滚 tag `20260904-a2-d9d7401`。EC2 开发机仍是队友的 `b3-profile-reuse` |
+| 1080p 守护合并 | ✅ 2026-09-05 `66bb9de` | 未合并分支 `claude/mystifying-leakey-449d79` 合入 main 并部署 gw2（`20260905-main-66bb9de`）；A3 第 0 步只剩把守护烘进 v3 镜像 |
 | **里程碑一验收** | ✅ 2026-09-04 收口 | `docs/M1_ACCEPTANCE.md` + `M1_ACCEPTANCE_EVIDENCE.md`；B1 邀请列表半通过记为待修；C 组（双成员同桌面）用户决定不测 |
 | 待修小项 | ⬜ | ① B1：加「本空间已发出未接受邀请」列表与撤销接口，团队页改接它；② 前端：LLM 上游报错时回合要显示可见错误，不能是空回合；③ 验收机 `ecd-j3daid9t6x8p4wjh7` 解绑或删除 |
 | B2 / B3 记账与对账 | ⬜ **移到里程碑二开头** | 顺序 B2 计量层 → B3 对账 → B2 定价与账本 → B4；见「里程碑二」首段 |

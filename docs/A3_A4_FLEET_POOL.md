@@ -63,7 +63,7 @@
 | 7d | gw2 `backend.env` 没有 `WUYING_DESKTOP_TYPE`（默认 4c8g）→ 部署本项时加 `WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g` 及全部 `POOL_*` 键 | 部署清单 |
 | 7e | gw2 只有一个 admin 账号 `m1adm-0904`（M1 验收用的测试号），`demo` 是普通用户；后台页要用得把 `demo` 提成 admin。**Logto 登录不会带来 admin**：SSO 首登按普通用户建号，`users.role` 只在建号时默认 `user`，没有任何 claim→role 映射，也没有提权接口；只能 SQL：`update users set role='admin' where username='demo'`（角色写在 JWT 里，改完要重新登录）。claim 映射留给里程碑三的运营角色 | SQL 提权 |
 | 7f | gw2 后端用的阿里云 AK 是**主账号 AK**（权限不成问题，BSS/重建/续费都能调），但主账号 AK 放在服务器上风险大，且验收人排查时曾把该 AK 打进过会话日志——建议本项上线前**换成 RAM 子账号 AK**（ECD/EDS 全权 + `AliyunBSSReadOnlyAccess`），替换 `/opt/openbox/secrets/aliyun-config.json` 并**吊销旧 AK** | 建议，用户定 |
-| 7h | **1080p 守护没在 main 里**：`obx-display-guard` 与「播放器连接后钉回 1080p」都在未合并分支 `claude/mystifying-leakey-449d79`（`4a87777`，基于 b8b68e0，改 `sandbox/desktop.py` +146 与 `DesktopTab.tsx` +31），上海共享桌面是手工装的。main 的 DesktopTab 没有 `setResolution`，`ensure_desktop_tools` 也不装守护。试合并只在 `DesktopTab.test.tsx` 冲突。**本项第 0 步：先把该分支合进 main，再用 `wuying_bootstrap.py --image-mode` 出 v3 镜像把守护烘进去（`WUYING_IMAGE_ID` 切 v3），然后才重建 bossip 机**——否则 5 台刚重建完又要再重建一次 | 写进 §8.1 第 0 步 |
+| 7h | **1080p 守护此前没在 main 里（已于 09-05 合并 `66bb9de` 并部署 gw2）**：`obx-display-guard` 与「播放器连接后钉回 1080p」都在未合并分支 `claude/mystifying-leakey-449d79`（`4a87777`，基于 b8b68e0，改 `sandbox/desktop.py` +146 与 `DesktopTab.tsx` +31），上海共享桌面是手工装的。main 的 DesktopTab 没有 `setResolution`，`ensure_desktop_tools` 也不装守护。试合并只在 `DesktopTab.test.tsx` 冲突。**本项第 0 步：先把该分支合进 main，再用 `wuying_bootstrap.py --image-mode` 出 v3 镜像把守护烘进去（`WUYING_IMAGE_ID` 切 v3），然后才重建 bossip 机**——否则 5 台刚重建完又要再重建一次 | 写进 §8.1 第 0 步 |
 | 7g | bossip-gw-1 的 `bossip-autoprovision` 处于 inactive/static，不会再动这批机器；`pool-manager.sh` 是手动脚本。重建后这些机器从 bossip 的 `purpose=codex` 视野里消失即可，不需要通知 bossip 侧代码 | 已确认 |
 
 ---
@@ -173,7 +173,7 @@ cd frontend-v2 && npm run check
 - 偏离：
 
 ## 8.1 首批入池顺序（建议）
-0. **先出 v3 镜像**：合并 `claude/mystifying-leakey-449d79`（解 `DesktopTab.test.tsx` 冲突，跑 `npm run check`）→ 在 `wuying_bootstrap.py --image-mode` 里加装 `obx-display-guard`（systemd，root，每 3 秒经 `obx-x` 找 DISPLAY/XAUTHORITY 以 xauth 属主 `runuser` 跑 `obx-display`，钉不住退避 60 秒——实现取自该分支的 `ensure_desktop_tools`）→ 50G 按量机跑 image-mode + `wuying_image_verify.py`（新增断言：`systemctl is-enabled obx-display-guard` = enabled）→ `create-image openbox-image-v3-shanghai` → gw2 `WUYING_IMAGE_ID` 切 v3 → 删临时机。费用约 ¥1。
+0. **先出 v3 镜像**：守护分支**已于 2026-09-05 合入 main（`66bb9de`）并部署 gw2**，本步只剩镜像——在 `wuying_bootstrap.py --image-mode` 里加装 `obx-display-guard`（systemd，root，每 3 秒经 `obx-x` 找 DISPLAY/XAUTHORITY 以 xauth 属主 `runuser` 跑 `obx-display`，钉不住退避 60 秒——实现取自该分支的 `ensure_desktop_tools`）→ 50G 按量机跑 image-mode + `wuying_image_verify.py`（新增断言：`systemctl is-enabled obx-display-guard` = enabled）→ `create-image openbox-image-v3-shanghai` → gw2 `WUYING_IMAGE_ID` 切 v3 → 删临时机。费用约 ¥1。
 1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（v2 机；`recycle --approve` 一次刷到 v3，顺带验证 recycle 路径）。
 2. 逐台 `adopt --rebuild --approve` bossip 包月机，顺序按到期日从晚到早：013 → 012 → 011 → 010 → 009，每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行；到 5 台为止（含 A2 验收机则 4 台即够，多出的一台也重建，水位按 5 台 prewarm 算）。
 3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。

@@ -11,9 +11,29 @@ import wuying_image_verify  # noqa: E402
 class FakeDesktop:
     def __init__(self):
         self.commands = []
+        self.uploads = []
 
     def run(self, command, timeout):
         self.commands.append((command, timeout))
+
+    def put(self, local, remote, mode="644"):
+        self.uploads.append((local, remote, mode))
+
+
+def test_image_mode_installs_missing_baseline_packages():
+    desktop = FakeDesktop()
+    wuying_bootstrap.install_baseline_packages(desktop)
+    command, timeout = desktop.commands[-1]
+    assert desktop.uploads == [
+        (
+            wuying_bootstrap.IMAGE_BASELINE,
+            "/tmp/openbox-image-baseline.txt",
+            "600",
+        )
+    ]
+    assert timeout == 14_400
+    assert "comm -23" in command
+    assert "xargs -r apt-get install" in command
 
 
 def test_image_mode_bakes_enabled_display_guard():

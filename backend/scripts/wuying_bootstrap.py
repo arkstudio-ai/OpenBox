@@ -35,11 +35,12 @@ TUNNEL_PORT = 18_000        # loopback port on the relay host
 VIDEO_PRODUCTION_SKILL_DIR = (
     REPO / "backend" / ".openbox" / "skills" / "video-production"
 )
+IMAGE_BASELINE = REPO / "docs" / "image-baseline-dpkg.txt"
 
 
 def install_desktop_tools(d: Desktop) -> None:
     """Bake the fixed-display helpers that runtime lazy-install used to add."""
-    print("[4/5] desktop tools")
+    print("[5/6] desktop tools")
     sys.path.insert(0, str(REPO / "backend"))
     from sandbox.desktop import (
         OBX_DISPLAY_GUARD_SCRIPT,
@@ -81,9 +82,30 @@ def install_desktop_tools(d: Desktop) -> None:
     )
 
 
+def install_baseline_packages(d: Desktop) -> None:
+    """Bring a reused desktop up to the golden image's package baseline."""
+    print("[4/6] golden-image package baseline")
+    d.put(IMAGE_BASELINE, "/tmp/openbox-image-baseline.txt", mode="600")
+    d.run(r"""
+set -eu
+sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' /tmp/openbox-image-baseline.txt | LC_ALL=C sort -u > /tmp/openbox-baseline-packages
+dpkg-query -W -f='${binary:Package}\n' | LC_ALL=C sort -u > /tmp/openbox-actual-packages
+LC_ALL=C comm -23 /tmp/openbox-baseline-packages /tmp/openbox-actual-packages > /tmp/openbox-missing-packages
+if [ -s /tmp/openbox-missing-packages ]; then
+  echo "installing $(wc -l < /tmp/openbox-missing-packages) missing baseline packages"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  xargs -r apt-get install -y -qq --no-install-recommends < /tmp/openbox-missing-packages
+  rm -rf /var/lib/apt/lists/*
+else
+  echo "golden-image package baseline already present"
+fi
+""", timeout=14_400)
+
+
 def install_image_services(d: Desktop) -> None:
     """Install disabled, secret-free unit templates for a golden image."""
-    print("[5/5] secret-free systemd templates")
+    print("[6/6] secret-free systemd templates")
     d.run(r"""
 set -eu
 systemctl disable --now openbox-action-server openbox-tunnel 2>/dev/null || true
@@ -257,7 +279,7 @@ def ecs_run(instance: str, region: str, script: str, timeout: int = 300) -> str:
 # ----------------------------------------------------------------------- stages
 
 def install_runtime(d: Desktop) -> None:
-    print("[1/5] runtime")
+    print("[1/6] runtime")
     # Node comes from the npmmirror binary mirror, not NodeSource: from a
     # mainland VPC, GitHub and NodeSource measure in single-digit KB/s.
     d.run(r"""
@@ -275,7 +297,7 @@ echo "python $(python3 -V 2>&1 | cut -d' ' -f2)  ffmpeg $(ffmpeg -version | head
 
 
 def install_action_server(d: Desktop) -> None:
-    print("[2/5] action server")
+    print("[2/6] action server")
     d.put(REPO / "container" / "action_server.py", "/opt/action_server/action_server.py")
     d.run(
         "rm -rf /opt/openbox/skills/video-production && "
@@ -314,7 +336,7 @@ echo "action server dependencies ok"
 
 def install_dev_browser(d: Desktop) -> None:
     """The browser-automation relay. Optional, but /dev-browser/start 500s without it."""
-    print("[3/5] dev-browser relay")
+    print("[3/6] dev-browser relay")
     tgz = pathlib.Path("/tmp/openbox-dev-browser.tgz")
     subprocess.run(
         ["tar", "czf", str(tgz), "--exclude=node_modules", "--exclude=.git", "dev-browser"],
@@ -464,6 +486,7 @@ def main() -> int:
     if not args.skip_dev_browser:
         install_dev_browser(d)
     if args.image_mode:
+        install_baseline_packages(d)
         install_desktop_tools(d)
         install_image_services(d)
         print("\nImage mode complete: services are disabled and /etc/openbox is empty.")

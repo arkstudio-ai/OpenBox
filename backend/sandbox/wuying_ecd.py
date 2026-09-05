@@ -435,12 +435,14 @@ async def rebuild_desktop(
     """Rebuild one desktop; callers must obtain destructive-action approval."""
     from alibabacloud_ecd20200930 import models as ecd_models
 
+    # OperateType controls data-disk replacement and only accepts ``replace``.
+    # Omitting it is the documented default, including for system-disk-only
+    # desktops.  It is not an operation name (``rebuild`` is rejected by ECD).
     request = ecd_models.RebuildDesktopsRequest(
         region_id=get_config().wuying_region_id,
         desktop_id=[desktop_id],
         image_id=image_id,
         after_status=after_status,
-        operate_type="rebuild",
     )
     response = await _retry_throttled(
         lambda: ecd_client().rebuild_desktops_async(request), "RebuildDesktops"

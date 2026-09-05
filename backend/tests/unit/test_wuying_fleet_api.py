@@ -73,6 +73,7 @@ async def test_mutating_wrappers_have_exact_request_shapes(monkeypatch):
     assert calls["rebuild"].desktop_id == ["ecd-1"]
     assert calls["rebuild"].image_id == "img-v3"
     assert calls["rebuild"].after_status == "Running"
+    assert calls["rebuild"].operate_type is None
     assert calls["tag"].resource_type == "ALIYUN::GWS::INSTANCE"
     assert [(item.key, item.value) for item in calls["tag"].tag] == [("a", "1"), ("b", "2")]
     assert calls["untag"].resource_type == "ALIYUN::GWS::INSTANCE"

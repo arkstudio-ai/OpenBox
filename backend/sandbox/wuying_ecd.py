@@ -446,9 +446,28 @@ async def rebuild_desktop(
         lambda: ecd_client().rebuild_desktops_async(request), "RebuildDesktops"
     )
     body = response.body
+    rebuild_results = list(getattr(body, "rebuild_results", None) or [])
+    if not rebuild_results:
+        raise RuntimeError("RebuildDesktops returned no per-desktop result")
+    failures = []
+    mapped_results = []
+    for item in rebuild_results:
+        mapped = item.to_map()
+        mapped_results.append(mapped)
+        code = str(getattr(item, "code", "") or mapped.get("Code") or "").strip()
+        if code.lower() not in {"success", "ok", "200"}:
+            result_desktop_id = (
+                getattr(item, "desktop_id", None) or mapped.get("DesktopId") or desktop_id
+            )
+            message = getattr(item, "message", None) or mapped.get("Message") or ""
+            failures.append(
+                f"{result_desktop_id}: {code or 'Unknown'} {message}".strip()
+            )
+    if failures:
+        raise RuntimeError("RebuildDesktops rejected: " + "; ".join(failures))
     return {
         "request_id": getattr(body, "request_id", None),
-        "results": [item.to_map() for item in (getattr(body, "rebuild_results", None) or [])],
+        "results": mapped_results,
     }
 
 
@@ -536,19 +555,37 @@ async def modify_charge_type(
     }
 
 
-async def wait_desktop_ready(desktop_id: str, timeout_sec: int = 360, poll_interval: int = 5) -> None:
+async def wait_desktop_ready(
+    desktop_id: str,
+    timeout_sec: int = 360,
+    poll_interval: int = 5,
+    *,
+    expected_image_id: str | None = None,
+) -> None:
     deadline = asyncio.get_event_loop().time() + timeout_sec
     while asyncio.get_event_loop().time() < deadline:
         info = await describe_desktop(desktop_id)
         if info is None:
             raise RuntimeError(f"Desktop {desktop_id} does not exist")
-        log.info(f"Desktop {desktop_id}: {info['status']} ({info.get('progress')})")
-        if info["status"] == "Running":
+        log.info(
+            "Desktop %s: %s (%s) image=%s",
+            desktop_id,
+            info["status"],
+            info.get("progress"),
+            info.get("image_id"),
+        )
+        image_ready = (
+            expected_image_id is None or info.get("image_id") == expected_image_id
+        )
+        if info["status"] == "Running" and image_ready:
             return
         if info["status"] in ("Failed", "Error"):
             raise RuntimeError(f"Desktop provisioning failed: {info['status']}")
         await asyncio.sleep(poll_interval)
-    raise TimeoutError(f"Desktop {desktop_id} not Running within {timeout_sec}s")
+    target = f" on image {expected_image_id}" if expected_image_id else ""
+    raise TimeoutError(
+        f"Desktop {desktop_id} not Running{target} within {timeout_sec}s"
+    )
 
 
 async def start_desktop(desktop_id: str) -> None:

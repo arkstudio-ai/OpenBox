@@ -1,5 +1,8 @@
 """Fleet ECD wrappers use the proven INSTANCE tag namespace and safe shapes."""
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from core.config import OpenBoxConfig
 from sandbox import wuying_ecd
@@ -77,6 +80,49 @@ async def test_mutating_wrappers_have_exact_request_shapes(monkeypatch):
     assert calls["charge"].charge_type == "PrePaid"
     assert calls["charge"].auto_pay is True
     assert calls["policy"].policy_group_id == "pg-1"
+
+
+async def test_rebuild_rejects_per_desktop_failure(monkeypatch):
+    class Client:
+        async def rebuild_desktops_async(self, _request):
+            result = SimpleNamespace(
+                code="DesktopStatusNotSupport",
+                desktop_id="ecd-1",
+                message="desktop must be stopped",
+                to_map=lambda: {},
+            )
+            return SimpleNamespace(
+                body=SimpleNamespace(request_id="req-failed", rebuild_results=[result])
+            )
+
+    monkeypatch.setattr(wuying_ecd, "get_config", lambda: _config())
+    monkeypatch.setattr(wuying_ecd, "ecd_client", lambda: Client())
+    with pytest.raises(RuntimeError, match="DesktopStatusNotSupport.*must be stopped"):
+        await wuying_ecd.rebuild_desktop("ecd-1", "img-v3")
+
+
+async def test_wait_ready_requires_target_image_after_rebuild(monkeypatch):
+    states = iter([
+        {"status": "Running", "progress": "17%", "image_id": "img-v2"},
+        {"status": "Rebuilding", "progress": "50%", "image_id": "img-v3"},
+        {"status": "Running", "progress": "100%", "image_id": "img-v3"},
+    ])
+    calls = 0
+
+    async def describe(_desktop_id):
+        nonlocal calls
+        calls += 1
+        return next(states)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(wuying_ecd, "describe_desktop", describe)
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    await wuying_ecd.wait_desktop_ready(
+        "ecd-1", timeout_sec=30, poll_interval=1, expected_image_id="img-v3"
+    )
+    assert calls == 3
 
 
 async def test_list_fleet_is_paginated_and_rechecks_authoritative_tags(monkeypatch):

@@ -16,6 +16,7 @@ from sandbox.pool import (
     PoolStateError,
     STABLE_STATES,
     TRANSIENT_STATES,
+    verify_prewarm,
 )
 
 
@@ -31,6 +32,25 @@ def _config(**overrides):
     )
     values.update(overrides)
     return OpenBoxConfig(**values)
+
+
+async def test_verify_prewarm_rejects_source_image(monkeypatch):
+    monkeypatch.setattr(pool_module, "get_config", lambda: _config())
+
+    async def describe(_desktop_id):
+        return {
+            "status": "Running",
+            "image_id": "img-v2",
+            "policy_group_id": "pg-1080p",
+        }
+
+    async def must_not_run(*_args, **_kwargs):
+        raise AssertionError("tool verification must wait for the target image")
+
+    monkeypatch.setattr(pool_module.wuying_ecd, "describe_desktop", describe)
+    monkeypatch.setattr(pool_module, "run_desktop_command", must_not_run)
+    with pytest.raises(PoolStateError, match="image is img-v2, expected img-v3"):
+        await verify_prewarm("ecd-source")
 
 
 async def _user(prefix: str):

@@ -88,7 +88,14 @@ async def verify_prewarm(desktop_id: str) -> dict[str, Any]:
     info = await wuying_ecd.describe_desktop(desktop_id)
     if not info or info.get("status") != "Running":
         raise PoolStateError(f"desktop {desktop_id} is not Running")
-    expected_policy = get_config().wuying_policy_group_id
+    config = get_config()
+    expected_image = config.wuying_image_id
+    if expected_image and info.get("image_id") != expected_image:
+        raise PoolStateError(
+            f"desktop {desktop_id} image is {info.get('image_id')}, "
+            f"expected {expected_image}"
+        )
+    expected_policy = config.wuying_policy_group_id
     if expected_policy and info.get("policy_group_id") != expected_policy:
         raise PoolStateError(
             f"desktop {desktop_id} policy group is {info.get('policy_group_id')}, "
@@ -271,7 +278,9 @@ class PoolService:
             await wuying_channel.revoke(record)
         await cloud_desktop_repo.update(record["id"], pool_state="recycling")
         await wuying_ecd.rebuild_desktop(desktop_id, config.wuying_image_id)
-        await wuying_ecd.wait_desktop_ready(desktop_id)
+        await wuying_ecd.wait_desktop_ready(
+            desktop_id, timeout_sec=900, expected_image_id=config.wuying_image_id
+        )
         await wuying_ecd.modify_policy_group(desktop_id, config.wuying_policy_group_id)
         await verify_prewarm(desktop_id)
         try:
@@ -410,7 +419,11 @@ class PoolService:
             )
             try:
                 await wuying_ecd.rebuild_desktop(desktop_id, config.wuying_image_id)
-                await wuying_ecd.wait_desktop_ready(desktop_id)
+                await wuying_ecd.wait_desktop_ready(
+                    desktop_id,
+                    timeout_sec=900,
+                    expected_image_id=config.wuying_image_id,
+                )
             except Exception as exc:
                 await cloud_desktop_repo.update(
                     record_id, pool_state="reserve", error=str(exc)[:2000]

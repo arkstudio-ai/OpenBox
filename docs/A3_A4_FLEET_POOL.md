@@ -50,8 +50,8 @@
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | **openbox-dev-shanghai 不入池**（2026-09-04 拍板），留给 `demo` 账号；快照规则把它当普通 assigned 桌面对待 | 已定 |
-| 0 | **基准镜像 = openbox v2 `m-ccceuit7jn3xzwx45` → 本项第 0 步升到 v3（烘入 obx-display-guard，见 7h）**（openbox-image-v2-shanghai，50G，2026-09-05 在 A2 验收机上实查：Ubuntu 22.04.5、Google Chrome 138、ibus + ibus-libpinyin（引擎在 `/usr/libexec/ibus-engine-libpinyin`）、ffmpeg 4.4.2、Noto Sans CJK 35 款、`obx-display/obx-file/obx-shot/obx-x`、xdotool/scrot/wmctrl、node/npm、python3；零运行时秘密，隧道与 action server 单元 disabled）。所有池机——收养的 bossip 机与新购——一律重建/创建到它。`obx-display-guard` 不在镜像里，由后端首次用 computer 工具时 `ensure_desktop_tools` 装，预热校验不检查它。将来要改镜像走 A1 的 `wuying_bootstrap.py --image-mode` + `wuying_image_verify.py` 出 v3，本项不做 | 已定 |
-| 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v2 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认。**清单已定（2026-09-05 用户确认「全部可以」）**：上海 `bossip-sh-001…013` 中除共享桌面 `bossip-sh-007`（`ecd-4zjxaq5g45dr5qr0i`）外的 12 台，写进 `POOL_ADOPT_ALLOWLIST`：`ecd-ijea2hjljf9c4wd1b, ecd-5pvbuskezql1d4h5m, ecd-i4c4x8wpqg1lxktmi, ecd-c4qndqrko3db7kjfz, ecd-i4c4x8wpqg1lxktmj, ecd-gj5j513on7j0u97as, ecd-4y9s9igraz7hc58ea, ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`。先收 5 台到水位，其余 7 台先只打 `openbox-pool=reserve` 标签不重建（保留给后续扩池，重建前照样逐台确认） | 已定 |
+| 0 | **基准镜像 = openbox v2 `m-ccceuit7jn3xzwx45` → 本项第 0 步升到 v3（烘入 obx-display-guard，见 7h）**（openbox-image-v2-shanghai，50G，2026-09-05 在 A2 验收机上实查：Ubuntu 22.04.5、Google Chrome 138、ibus + ibus-libpinyin（引擎在 `/usr/libexec/ibus-engine-libpinyin`）、ffmpeg 4.4.2、Noto Sans CJK 35 款、`obx-display/obx-file/obx-shot/obx-x`、xdotool/scrot/wmctrl、node/npm、python3；零运行时秘密，隧道与 action server 单元 disabled）。用 v2 临时源机运行 A1 的 `wuying_bootstrap.py --image-mode` + `wuying_image_verify.py` 产出 v3；所有池机——收养的 bossip 机与新购——一律重建/创建到 v3 | 已定 |
+| 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v3 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认。**清单已定（2026-09-05 用户确认「全部可以」）**：上海 `bossip-sh-001…013` 中除共享桌面 `bossip-sh-007`（`ecd-4zjxaq5g45dr5qr0i`）外的 12 台，写进 `POOL_ADOPT_ALLOWLIST`：`ecd-ijea2hjljf9c4wd1b, ecd-5pvbuskezql1d4h5m, ecd-i4c4x8wpqg1lxktmi, ecd-c4qndqrko3db7kjfz, ecd-i4c4x8wpqg1lxktmj, ecd-gj5j513on7j0u97as, ecd-4y9s9igraz7hc58ea, ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`。本批先收 A2 与已 release 的 013–010，正好到水位 5；009/008 保持原状作后备，001–006 按既定决策不续，后续处理不混入本批 | 已定 |
 | 3 | **规格已定：6c12g**（`WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g`，gw2 与 `.env.example` 同步改；收养的 bossip 机本来就是 6c12g，池内统一）。`POOL_MAX_UNIT_PRICE_CNY` 只是防失控兜底，按 6c12g/50G 包月询价设（bossip 实测 ¥241.5 原价，合同价待 `describe_price` 实查），建议 300 | 已定 |
 | 4 | 阿里云余额是否足够新购；采购审批人 = 用户本人 | 用户确认 |
 | 5 | **告警 webhook 本版不做**（2026-09-04 拍板），告警只进后台与日志；管理平台搭好后再梳理推送 | 已定 |
@@ -59,7 +59,7 @@
 | 7 | **环境实查补漏（2026-09-05）** | |
 | 7a | bossip 12 台的策略组都是 `system-all-enabled-policy`（不是 1080p 的 `pg-0bbay5jmvosn8b2hc`）→ `adopt` 必须调 `ModifyDesktopsPolicyGroup` 切到 `WUYING_POLICY_GROUP_ID`，预热校验要断言策略组正确 | 写进 §4.5 |
 | 7b | 12 台都绑着 `bossip-slot2…15` EndUser、全部 Disconnected（无人在用）；重建后必须解绑，否则 bossip 侧账号仍能用无影客户端登进池机 | 写进 §4.5 |
-| 7c | 到期日：001/002 **10-04**，003–006 **10-06**，008–013 10-11/12。首批 5 台取最晚到期的 **009–013**（`ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`），008 作 reserve；001–006 六台**不续**（2026-09-05 拍板），任其在 10-04/10-06 到期释放；reserve 只剩 008。快照规则对它们在到期前不报 `expiring_soon`（allowlist 内且 `pool_state=reserve` 且未 adopt 的机器视为「放弃」，标签打 `openbox-pool=abandon`） | 已定 |
+| 7c | 到期日：001/002 **10-04**，003–006 **10-06**，008–013 10-11/12。本批使用 A2 + **010–013**；009/008 保持原状作后备。001–006 六台**不续**（2026-09-05 拍板），任其在 10-04/10-06 到期释放；后续明确纳管为 abandon 时，快照规则不报 `expiring_soon`（allowlist 内且 `pool_state=reserve` 且未 adopt 的机器视为「放弃」，标签打 `openbox-pool=abandon`） | 已定 |
 | 7d | gw2 `backend.env` 没有 `WUYING_DESKTOP_TYPE`（默认 4c8g）→ 部署本项时加 `WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g` 及全部 `POOL_*` 键 | 部署清单 |
 | 7e | gw2 只有一个 admin 账号 `m1adm-0904`（M1 验收用的测试号），`demo` 是普通用户；后台页要用得把 `demo` 提成 admin。**Logto 登录不会带来 admin**：SSO 首登按普通用户建号，`users.role` 只在建号时默认 `user`，没有任何 claim→role 映射，也没有提权接口；只能 SQL：`update users set role='admin' where username='demo'`（角色写在 JWT 里，改完要重新登录）。claim 映射留给里程碑三的运营角色 | SQL 提权 |
 | 7f | gw2 后端用的阿里云 AK 是**主账号 AK**（权限不成问题，BSS/重建/续费都能调），但主账号 AK 放在服务器上风险大，且验收人排查时曾把该 AK 打进过会话日志——建议本项上线前**换成 RAM 子账号 AK**（ECD/EDS 全权 + `AliyunBSSReadOnlyAccess`），替换 `/opt/openbox/secrets/aliyun-config.json` 并**吊销旧 AK** | 建议，用户定 |
@@ -179,8 +179,19 @@ cd frontend-v2 && npm run check
   PostPaid、4c8g/50G、v2 镜像、无 EndUser、无生产 `openbox-env` 标签；真实
   创建仍在等待报价后的明确确认。
 - ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：待真实
-  镜像源机与 A2 单机门禁；当前尚无写调用。
-- 偏离 / 停工证据：2026-09-05 重新只读运行 bossip 权威
+  镜像源机与 A2 单机门禁；当前尚无创建、重建、删除或计费写调用。
+- BossIP 退役释放：2026-09-05 用户明确决定 BossIP 退役，现有真实用户绑定不再
+  作为保护条件，并授权释放首批 013–010。已依次执行 `pool-manager.sh release`
+  （slot15/14/13/12）：013、012、010 各删除 1 条 binding 和 1 条 provisioning
+  job；011 原本无 binding，删除 1 条残留 provisioning job。随后 inventory 确认
+  四台均为 `reclaim` 且绑定用户为 `-`，catalog 确认 slot12–15 均无 binding；
+  云标签逐台确认 `pool=reclaim`，RequestId 分别为
+  `01A070E9-DAE1-593B-A27A-9009765C522C`、
+  `01A070E9-DAE3-597E-8002-EC240D17A8A1`、
+  `01A070E9-DADD-5B2D-9B9C-0202CAAAE90A`、
+  `01A070E9-DAFD-522B-A12F-8EE47C05C069`。本步保留登录态和磁盘数据，未重建；
+  旧 `codex-user=slot*` 标签留待 OpenBox adopt 在 release 门禁通过后统一移除。
+- 前置偏离证据：2026-09-05 重新只读运行 bossip 权威
   `/opt/bossip/pool-manager.sh inventory` 后，013–010 并非空闲机，gateway
   注册表仍分别绑定 `sza7qvgyq0uf`、`8gfv8hh64roz`、`dk5gdk0brman`、
   `cj0ys22ck10e`；009/008 也仍绑定用户。命中 §9，未执行任何重建。必须先由
@@ -189,16 +200,16 @@ cd frontend-v2 && npm run check
   8 月 26 日到期但订阅状态仍为 active；012 的有效期到 9 月 6 日 09:43（北京时间）；
   011 已无 `worker_bindings`/订阅行但 gateway 仍注册，属于跨源漂移。009/008 的
   试用期也已过期但 binding/registry 尚存。未经用户明确批准，不把“到期但未自动改
-  status”推断成可直接下线。
+  status”推断成可直接下线。此阻断随后由上述用户退役决策与逐台 release 闭环。
   OpenBox adopt 已增加硬护栏：legacy `pool` 未到 `reclaim|prewarm`，或未显式
   `gateway_release_verified=true`，均拒绝收养。
 
 ## 8.1 首批入池顺序（建议）
 0. **先出 v3 镜像**：守护分支**已于 2026-09-05 合入 main（`66bb9de`）并部署 gw2**，本步只剩镜像——在 `wuying_bootstrap.py --image-mode` 里加装 `obx-display-guard`（systemd，root，每 3 秒经 `obx-x` 找 DISPLAY/XAUTHORITY 以 xauth 属主 `runuser` 跑 `obx-display`，钉不住退避 60 秒——实现取自该分支的 `ensure_desktop_tools`）→ 50G 按量机跑 image-mode + `wuying_image_verify.py`（新增断言：`systemctl is-enabled obx-display-guard` = enabled）→ `create-image openbox-image-v3-shanghai` → gw2 `WUYING_IMAGE_ID` 切 v3 → 删临时机。费用约 ¥1。
 1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（v2 机；`recycle --approve` 一次刷到 v3，顺带验证 recycle 路径）。
-2. 逐台 `adopt --rebuild --approve` bossip 包月机，顺序按到期日从晚到早：013 → 012 → 011 → 010 → 009，每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行；到 5 台为止（含 A2 验收机则 4 台即够，多出的一台也重建，水位按 5 台 prewarm 算）。
+2. 逐台 `adopt --rebuild --approve` 首批已 release 的 bossip 包月机：013 → 012 → 011 → 010；每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行。连同 A2 验收机正好达到 5 台 prewarm 水位；009/008 不在本批，继续保留。
 3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。
-4. 其余 7 台 bossip 机打 `openbox-pool=reserve` 标签，不重建，留作扩池储备；快照规则把 `reserve` 当合法状态不报 orphan。
+4. 009/008 本批不操作，保持原状作后备；001–006 按不续决策单独收尾，不在本批打标签或重建；共享 007 永不纳管。
 
 ## 9. 停下来报告
 - 任何真实花钱调用前未获确认。
@@ -206,4 +217,5 @@ cd frontend-v2 && npm run check
 - `RebuildDesktops` 要求先停机且停机会改变通道/标签之外的东西。
 - 需要改 `backend/tool/`、`billing/`、C5 技能目录或 B1 的 workspace 表。
 - 快照发现共享桌面 `ecd-4zjxaq5g45dr5qr0i` 或不在 allowlist 的 bossip 桌面被本环境标签命中（说明标签过滤有误，立刻停）。
-- 收养重建前发现该机仍有 bossip 用户在用（`codex-user` 标签非空且 gateway 仍注册）。
+- 收养重建前发现该机 gateway 仍注册（旧 `codex-user` 标签可在已核验 release 后由
+  adopt 清理；未核验 release 仍须停）。

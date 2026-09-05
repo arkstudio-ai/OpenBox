@@ -185,6 +185,11 @@ cd frontend-v2 && npm run check
   注册表仍分别绑定 `sza7qvgyq0uf`、`8gfv8hh64roz`、`dk5gdk0brman`、
   `cj0ys22ck10e`；009/008 也仍绑定用户。命中 §9，未执行任何重建。必须先由
   用户确认业务下线并走 bossip release/catalog 注销，再逐台核验 registry 已清空。
+  同轮只读 catalog 查询进一步确认：013/010 的 `trial-15d` 分别已于 8 月 30 日、
+  8 月 26 日到期但订阅状态仍为 active；012 的有效期到 9 月 6 日 09:43（北京时间）；
+  011 已无 `worker_bindings`/订阅行但 gateway 仍注册，属于跨源漂移。009/008 的
+  试用期也已过期但 binding/registry 尚存。未经用户明确批准，不把“到期但未自动改
+  status”推断成可直接下线。
   OpenBox adopt 已增加硬护栏：legacy `pool` 未到 `reclaim|prewarm`，或未显式
   `gateway_release_verified=true`，均拒绝收养。
 

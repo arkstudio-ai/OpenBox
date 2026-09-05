@@ -192,6 +192,26 @@ async def test_describe_price_parses_sdk_shape(monkeypatch):
     assert captured["request"].period_unit == "Month"
 
 
+async def test_query_account_balance_accepts_bss_thousands_separator(monkeypatch):
+    class Client:
+        async def query_account_balance_async(self):
+            body = SimpleNamespace(
+                data=SimpleNamespace(available_amount="4,086.59", currency="CNY"),
+                request_id="req-balance",
+            )
+            return SimpleNamespace(body=body)
+
+    import alibabacloud_bssopenapi20171214.client as bss_client
+
+    monkeypatch.setattr(bss_client, "Client", lambda _config: Client())
+    result = await wuying_ecd.query_account_balance()
+    assert result == {
+        "available_balance": 4086.59,
+        "currency": "CNY",
+        "request_id": "req-balance",
+    }
+
+
 async def test_renew_desktop_is_wrapped_without_real_call(monkeypatch):
     captured = {}
 

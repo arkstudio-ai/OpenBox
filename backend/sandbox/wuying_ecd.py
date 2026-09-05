@@ -759,7 +759,13 @@ async def query_account_balance() -> dict[str, Any]:
     data = getattr(body, "data", None)
     available = getattr(data, "available_amount", None)
     return {
-        "available_balance": float(available) if available not in (None, "") else None,
+        # BSS formats real account balances with thousands separators (for
+        # example ``4,086.59``), despite exposing the field as a string.
+        "available_balance": (
+            float(str(available).replace(",", "").strip())
+            if available not in (None, "")
+            else None
+        ),
         "currency": getattr(data, "currency", None) or "CNY",
         "request_id": getattr(body, "request_id", None),
     }

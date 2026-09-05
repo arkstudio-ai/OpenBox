@@ -15,7 +15,7 @@
 
 **完成定义**
 1. **快照与对账（A4 v0）**：`fleet_snapshot` 任务每 10 分钟拉 ECD 全量（按 `openbox-env` 标签）与 DB 行，跑 §4.4 的 10 条规则，产生/自动关闭 `fleet_alerts`；后台能看、能 ack、能 mute；可选 webhook 推送。
-2. **池状态机（A3）**：`cloud_desktops.pool_state ∈ prewarm|assigned|released|recycling|retired`；`assign` 在 2 分钟内把一台 prewarm 交给 workspace 并通过 A1 的 `verify`；`release` 保留数据撤访问；`recycle` 用 v2 金镜像 `RebuildDesktops` 后回 prewarm；`retire` 标记不再续期。
+2. **池状态机（A3）**：`cloud_desktops.pool_state ∈ reserve|prewarm|assigned|released|recycling|retired`（`reserve` = 已划归但未重建的储备机，无 DB 通道信息）；`assign` 在 2 分钟内把一台 prewarm 交给 workspace 并通过 A1 的 `verify`；`release` 保留数据撤访问；`recycle` 用 v2 金镜像 `RebuildDesktops` 后回 prewarm；`retire` 标记不再续期。
 3. **采购四闸**：单价 ≤ `POOL_MAX_UNIT_PRICE_CNY`、账号余额 ≥ 2×单价、每次 ≤ `POOL_MAX_PURCHASES_PER_TICK`、每日 ≤ `POOL_MAX_PURCHASES_PER_DAY`；以 **ECD 侧按标签计数为准**，DB 只做校对；`POOL_AUTO_PURCHASE` 默认 `false`，关着时只报警不买。
 4. **到期纪律**：prewarm 与 assigned 桌面 `expires_at` 距今 < `POOL_RENEW_BEFORE_DAYS`（默认 3）→ 续一期（`renew_desktop`，A2 已封装）并审计；`retired` 不续。`ModifyDesktopChargeType`（按量转包月）封装但本项不实调。
 5. **开通接入**：`provision()` 在 per_desktop 模式下优先 `assign` 池机，池空时回落现有「即时创建」；DesktopTab 显示「分配中」。
@@ -50,8 +50,9 @@
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | **openbox-dev-shanghai 不入池**（2026-09-04 拍板），留给 `demo` 账号；快照规则把它当普通 assigned 桌面对待 | 已定 |
-| 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v2 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认 | **用户提供可移交的桌面 id 清单**（哪几台 bossip-sh-* 可以拿） |
-| 3 | **规格以配置为准，不以单价为准**：`WUYING_DESKTOP_TYPE` 决定新购规格；收养的机器保留原规格，`spec` 列如实记录。**4c8g 还是 6c12g 需在首次新购前确认**；在确认前 `ensure_prewarm` 只报缺口不下单（`POOL_AUTO_PURCHASE=false`）。`POOL_MAX_UNIT_PRICE_CNY` 只是防失控的兜底（按 6c12g 询价设，建议 300），不是选型依据 | 规格待确认 |
+| 0 | **基准镜像 = openbox v2 `m-ccceuit7jn3xzwx45`**（openbox-image-v2-shanghai，50G，2026-09-05 在 A2 验收机上实查：Ubuntu 22.04.5、Google Chrome 138、ibus + ibus-libpinyin（引擎在 `/usr/libexec/ibus-engine-libpinyin`）、ffmpeg 4.4.2、Noto Sans CJK 35 款、`obx-display/obx-file/obx-shot/obx-x`、xdotool/scrot/wmctrl、node/npm、python3；零运行时秘密，隧道与 action server 单元 disabled）。所有池机——收养的 bossip 机与新购——一律重建/创建到它。`obx-display-guard` 不在镜像里，由后端首次用 computer 工具时 `ensure_desktop_tools` 装，预热校验不检查它。将来要改镜像走 A1 的 `wuying_bootstrap.py --image-mode` + `wuying_image_verify.py` 出 v3，本项不做 | 已定 |
+| 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v2 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认。**清单已定（2026-09-05 用户确认「全部可以」）**：上海 `bossip-sh-001…013` 中除共享桌面 `bossip-sh-007`（`ecd-4zjxaq5g45dr5qr0i`）外的 12 台，写进 `POOL_ADOPT_ALLOWLIST`：`ecd-ijea2hjljf9c4wd1b, ecd-5pvbuskezql1d4h5m, ecd-i4c4x8wpqg1lxktmi, ecd-c4qndqrko3db7kjfz, ecd-i4c4x8wpqg1lxktmj, ecd-gj5j513on7j0u97as, ecd-4y9s9igraz7hc58ea, ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`。先收 5 台到水位，其余 7 台先只打 `openbox-pool=reserve` 标签不重建（保留给后续扩池，重建前照样逐台确认） | 已定 |
+| 3 | **规格已定：6c12g**（`WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g`，gw2 与 `.env.example` 同步改；收养的 bossip 机本来就是 6c12g，池内统一）。`POOL_MAX_UNIT_PRICE_CNY` 只是防失控兜底，按 6c12g/50G 包月询价设（bossip 实测 ¥241.5 原价，合同价待 `describe_price` 实查），建议 300 | 已定 |
 | 4 | 阿里云余额是否足够新购；采购审批人 = 用户本人 | 用户确认 |
 | 5 | **告警 webhook 本版不做**（2026-09-04 拍板），告警只进后台与日志；管理平台搭好后再梳理推送 | 已定 |
 | 6 | gw2 部署与回滚照 `docs/DEPLOY.md`；alembic 自动迁移；**队友也在直接部署 gw2**，部署前先看 `.env` 当前 tag | 已知 |
@@ -130,7 +131,7 @@
 | AC-4 | 收养 v2 机 | `adopt ecd-0b7gj174mc6f23ctq prewarm` → 标签改写、DB 行 `prewarm/workspace NULL`、下一轮快照 prewarm=1 无 `tag_mismatch` |
 | AC-4b | 收养并重建 | 对用户清单里一台 `bossip-sh-*`：不带 `approve` 被拒；带 `rebuild+approve` → 重建到 v2 → Running → 标签只剩 openbox-*、原 EndUser 解绑、DB 行 `prewarm/spec=6c12g` → 快照无 `orphan/tag_mismatch`；不在 allowlist 的 id 被拒。记录耗时 |
 | AC-5 | 采购四闸 | dry-run 报「将购买 1 台，单价 ¥105.75」；把 `POOL_MAX_UNIT_PRICE_CNY=100` → `purchase_blocked` 告警且未下单；`POOL_AUTO_PURCHASE=false` 下 ensure 不下单；单测覆盖日上限与余额闸 |
-| AC-6 | 真买一台 | **仅在规格（4c8g/6c12g）确认且收养后仍不足 5 台时做**：用户确认后 `POOL_AUTO_PURCHASE=true` 跑一轮 ensure → `pool_purchases` 一行 `created`、桌面 Running、规格 = `WUYING_DESKTOP_TYPE`；ECD 标签正确；然后把开关关回。规格未确认则本条记「跳过，原因」 |
+| AC-6 | 真买一台 | **仅在收养后仍不足 5 台时做**（规格 6c12g 已定）：用户确认后 `POOL_AUTO_PURCHASE=true` 跑一轮 ensure → `pool_purchases` 一行 `created`、桌面 Running、规格 = `WUYING_DESKTOP_TYPE`；ECD 标签正确；然后把开关关回。规格未确认则本条记「跳过，原因」 |
 | AC-7 | 分配 | 新 workspace 点开通 → `assign` 从池取机，**≤ 2 分钟**通道 up，`bash: hostname` = 该桌面主机名；`expires_at` 距今 ≥ `POOL_RENEW_BEFORE_DAYS`；两个 workspace 并发开通不会拿到同一台（单测 + 实跑各一次） |
 | AC-8 | 释放与回收 | `release` 后该 workspace 会话 `DESKTOP_NOT_READY`、端口释放、标签变 released、DB 行保留；`recycle --approve` → Running → prewarm，耗时记录（bossip 参考 6.5 分钟）；不带 approve 被拒。80G 盘的收养机重建到 50G 镜像要验证一次成功 |
 | AC-9 | 续期 | 单测：`expires_at` 距今 2 天 → `renew_expiring` 调 `renew_desktop`；`retired` 不调。真机续费本项**不做**（两台池机到期都在验收之后，见 §3） |
@@ -165,7 +166,8 @@ cd frontend-v2 && npm run check
 ## 8.1 首批入池顺序（建议）
 1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（已是 v2，零成本）。
 2. 用户给清单后，逐台 `adopt --rebuild --approve` bossip 包月机，每台先报「将清空该机数据、原 EndUser 解绑」再执行；到 5 台为止。
-3. 仍不足 5 台且规格已确认 → 新购补齐。
+3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。
+4. 其余 7 台 bossip 机打 `openbox-pool=reserve` 标签，不重建，留作扩池储备；快照规则把 `reserve` 当合法状态不报 orphan。
 
 ## 9. 停下来报告
 - 任何真实花钱调用前未获确认。

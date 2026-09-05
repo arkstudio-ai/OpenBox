@@ -39,6 +39,8 @@ interface WuyingSession {
   setClipboardEnabled?: (on: boolean) => void
   /** Sends a local file to the desktop; showDialog surfaces remote progress UI. */
   uploadFile?: (file: File, showDialog: boolean) => void
+  /** Asks the remote desktop to switch to an explicit mode (degree = rotation). */
+  setResolution?: (width: number, height: number, degree: number) => void
 }
 
 interface WuyingGlobal {
@@ -132,6 +134,20 @@ function setSessionControl(session: WuyingSession | null, on: boolean) {
   // Normal desktop interaction needs absolute coordinates; relative (Server)
   // mode is intended for captured-pointer workloads such as 3D applications.
   if (on) session.setMouseMode?.("Client")
+}
+
+/**
+ * Undo the first-connect resize: the SDK asks the desktop to match the pane
+ * (see `defaultResolution`), but the desktop must stay at the same 1080p the
+ * agent drives and the ECD policy group prescribes.
+ */
+function pinRemoteResolution(session: WuyingSession) {
+  try {
+    if (session.setResolution) session.setResolution(REMOTE_W, REMOTE_H, 0)
+    else console.warn("[desktop] SDK has no setResolution; remote may follow the pane size")
+  } catch (err) {
+    console.warn("[desktop] setResolution failed", err)
+  }
 }
 
 function focusFrame(frame: HTMLIFrameElement | null) {
@@ -270,8 +286,9 @@ export function DesktopTab() {
               // instead of reducing it to physical key scan codes.
               useCustomIme: true,
               disableIME: false,
-              // The agent, screenshots and Wuying policy all use XGA. Never
-              // let a browser resize renegotiate the remote X11 framebuffer.
+              // The agent, screenshots and the ECD policy group all use 1080p.
+              // Never let a browser resize renegotiate the remote X11
+              // framebuffer; this only covers resizes after the first connect.
               resolutionAdaptive: false,
               enableAutoSwitchMouseMode: true,
               // Show media-resume hints without consuming the click that also
@@ -283,8 +300,13 @@ export function DesktopTab() {
             toolbar: { visible: false },
             exitCheck: false,
             reconnectType: "simple",
-            // "B" multiplies by devicePixelRatio and changes across clients.
-            // The fixed server-side policy is authoritative.
+            // Per the Web SDK docs this is the resolution requested on the
+            // FIRST connect: "A" = speed first, the current window size; "B" =
+            // quality first, window size x devicePixelRatio. Neither leaves
+            // the desktop alone — the SDK actively asks the remote X server
+            // to match the player pane (a 592x334 pane produced a 592x334
+            // desktop), and the fixed presets stop at 1600x1200. So "A" is
+            // only the cheapest transient; onConnected pins 1080p right after.
             defaultResolution: "A",
           },
         })
@@ -293,6 +315,7 @@ export function DesktopTab() {
         session.addHandle("onConnected", () => {
           if (!alive || sessionRef.current !== session) return
           setPhase("connected")
+          pinRemoteResolution(session)
           const { control: takeOver, clipboard: clip } = togglesRef.current
           try {
             setSessionControl(session, takeOver)

@@ -8,12 +8,15 @@ desktop rather than assuming:
    an xauth file at a path that changes every boot (`/tmp/xauth_XXXXXX`).
    `obx-x` discovers both from the running session's own process environment.
 
-2. **The viewer used to resize the X screen.** Browser viewport changes made
-   the desktop jump between unrelated coordinate spaces while the model was
-   acting on the previous screenshot. `obx-display` pins X11 to 1920x1080
-   before every capture and input transaction.
+2. **The viewer resizes the X screen.** The Wuying Web SDK asks the desktop
+   to match the player pane on every first connect, so a person opening the
+   云桌面 tab in a small window turns 1920x1080 into 592x334 — and nothing
+   restores it after they leave. `obx-display` pins X11 to 1920x1080 before
+   every capture and input transaction, and `obx-display-guard` (a systemd
+   service) re-pins it every few seconds so the mode also survives the
+   times nobody is acting: people watching, or the desktop sitting idle.
 
-Both are installed as system-level CLIs (like `obx-file`), so the agent can
+All are installed as system-level CLIs (like `obx-file`), so the agent can
 also drive the desktop by hand from the terminal.
 """
 import base64
@@ -97,6 +100,83 @@ while [ "$i" -lt 20 ]; do
 done
 echo "obx-display: requested $target but X reports ${current:-unknown}" >&2
 exit 5
+"""
+
+#: Seconds between guard ticks: long enough to be free, short enough that a
+#: viewer-induced resize is gone before the person notices.
+GUARD_INTERVAL_SEC = 3
+#: Pause after a restore that did not stick, so a stale helper or a client
+#: that re-asserts its own size never turns into a 3-second tug of war.
+GUARD_BACKOFF_SEC = 60
+GUARD_SERVICE = "obx-display-guard"
+GUARD_UNIT_PATH = f"/etc/systemd/system/{GUARD_SERVICE}.service"
+
+OBX_DISPLAY_GUARD_SCRIPT = f"""#!/bin/sh
+# obx-display-guard - pin the X screen to {DESKTOP_W}x{DESKTOP_H}, whoever moved it.
+#
+# The Wuying Web SDK asks the desktop to match the viewer's window on every
+# first connect (uiConfig.defaultResolution "A"), and nothing restores the
+# mode once the person leaves; obx-display only runs ahead of agent actions.
+# This loop runs as a system service and re-pins within a few seconds.
+#
+# Every tick re-discovers the X session through obx-x (the xauth path changes
+# per boot and the session may not exist yet) and runs xrandr as the session
+# owner, so the X server's own access rules stay untouched.
+#
+# The outcome is re-read instead of trusting obx-display's exit code: a stale
+# helper pinning another size (the 2026-08 XGA one) would otherwise be logged
+# as a success and re-run every tick, flapping the screen. Anything that
+# undoes a restore within the same tick earns a long back-off, never a fight.
+target="{DESKTOP_W}x{DESKTOP_H}"
+interval={GUARD_INTERVAL_SEC}
+backoff={GUARD_BACKOFF_SEC}
+export PATH="/usr/local/bin:$PATH"
+
+size() {{ xdpyinfo 2>/dev/null | awk '/dimensions:/{{print $2; exit}}'; }}
+
+tick() {{
+  current=$(size)
+  [ -n "$current" ] || return 0
+  [ "$current" = "$target" ] && return 0
+  owner=$(stat -c %U "${{XAUTHORITY:-/nonexistent}}" 2>/dev/null || true)
+  if [ "$(id -u)" = 0 ] && [ -n "$owner" ] && [ "$owner" != root ]; then
+    runuser -u "$owner" -- env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" obx-display
+  else
+    obx-display
+  fi
+  now=$(size)
+  if [ "$now" = "$target" ]; then
+    echo "obx-display-guard: restored $target (was $current)"
+  else
+    echo "obx-display-guard: obx-display left ${{now:-unknown}} (was $current); backing off ${{backoff}}s" >&2
+    sleep "$backoff"
+  fi
+}}
+
+while :; do
+  # Blank the inherited values so obx-x looks the session up afresh.
+  found=$(DISPLAY= XAUTHORITY= obx-x sh -c 'printf "DISPLAY=%s\\nXAUTHORITY=%s\\n" "$DISPLAY" "$XAUTHORITY"' 2>/dev/null) || found=""
+  if [ -n "$found" ]; then
+    eval "$found"
+    export DISPLAY XAUTHORITY
+    tick
+  fi
+  sleep "$interval"
+done
+"""
+
+OBX_DISPLAY_GUARD_UNIT = f"""[Unit]
+Description=OpenBox display guard (pins the X screen to {DESKTOP_W}x{DESKTOP_H})
+After=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/{GUARD_SERVICE}
+Restart=always
+RestartSec={GUARD_INTERVAL_SEC}
+
+[Install]
+WantedBy=multi-user.target
 """
 
 OBX_SHOT_SCRIPT = '''#!/usr/bin/env python3
@@ -343,6 +423,36 @@ def _install_script(name: str, body: str) -> str:
     )
 
 
+def _install_guard_service() -> str:
+    """Shell that installs + starts the display guard as a systemd service.
+
+    Idempotent on a desktop that already has it: the script and unit are only
+    rewritten (and the service only restarted) when their content changed,
+    so re-running desktop setup on a live desktop is free. Prints one word of
+    outcome for the log. Needs root via `sudo -n` and systemd; anything else
+    (a container sandbox, a locked-down image) skips with exit 0 because the
+    guard is a backstop, not a prerequisite for driving the desktop.
+    """
+    script_b64 = base64.b64encode(OBX_DISPLAY_GUARD_SCRIPT.encode()).decode()
+    unit_b64 = base64.b64encode(OBX_DISPLAY_GUARD_UNIT.encode()).decode()
+    return (
+        "sudo -n true 2>/dev/null || { echo guard-skipped-no-root; exit 0; }; "
+        "command -v systemctl >/dev/null 2>&1 || { echo guard-skipped-no-systemd; exit 0; }; "
+        f'stage=$(mktemp -d "${{TMPDIR:-/tmp}}/.{GUARD_SERVICE}.XXXXXX") && '
+        "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM && "
+        f'printf %s {script_b64} | base64 -d > "$stage/script" && '
+        f'printf %s {unit_b64} | base64 -d > "$stage/unit" && '
+        "changed=0; "
+        f'if ! sudo -n cmp -s "$stage/script" /usr/local/bin/{GUARD_SERVICE} 2>/dev/null; then '
+        f'sudo -n install -m755 "$stage/script" /usr/local/bin/{GUARD_SERVICE} && changed=1; fi; '
+        f'if ! sudo -n cmp -s "$stage/unit" {GUARD_UNIT_PATH} 2>/dev/null; then '
+        f'sudo -n install -m644 "$stage/unit" {GUARD_UNIT_PATH} && sudo -n systemctl daemon-reload && changed=1; fi; '
+        f"sudo -n systemctl enable --now {GUARD_SERVICE} >/dev/null 2>&1; "
+        f'if [ "$changed" = 1 ]; then sudo -n systemctl restart {GUARD_SERVICE}; fi; '
+        f'echo "guard-$(sudo -n systemctl is-active {GUARD_SERVICE} 2>/dev/null || echo unknown)-changed-$changed"'
+    )
+
+
 class NoDesktopError(RuntimeError):
     """The sandbox has no graphical session at all."""
 
@@ -445,7 +555,31 @@ async def ensure_desktop_tools(client, container_key: str) -> None:
         if result.exit_code != 0:
             raise RuntimeError(f"{name} install failed: {result.stderr[:200]}")
 
+    await ensure_display_guard(client, container_key)
+
     _ready.add(container_key)
+
+
+async def ensure_display_guard(client, container_key: str) -> None:
+    """Install/refresh the `obx-display-guard` systemd service (idempotent).
+
+    A missing guard is logged, never raised: the computer tool still pins the
+    mode itself before every action, so the agent keeps working — only the
+    unattended, person-watching case loses its safety net.
+    """
+    try:
+        result = await client.execute(_install_guard_service(), timeout=60)
+    except Exception as e:  # noqa: BLE001 - backstop must not block the tool
+        log.warning(f"display guard install errored for {container_key}: {e}")
+        return
+    outcome = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    if result.exit_code != 0 or not outcome.startswith("guard-active"):
+        log.warning(
+            f"display guard not running for {container_key}: exit={result.exit_code} "
+            f"out={outcome!r} err={result.stderr.strip()[:200]!r}"
+        )
+    else:
+        log.info(f"display guard {outcome} for {container_key}")
 
 
 def x(command: str) -> str:

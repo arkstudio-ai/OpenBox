@@ -168,8 +168,8 @@ cd frontend-v2 && npm run check
 
 ## 8. 执行记录（执行者填写）
 - 分支 / 提交 / 迁移修订：`codex/a3-fleet-pool`，独立 worktree，起点
-  `e0dd9eb`；A3/A4 本地基础提交 `ae330c0`；迁移 `a3f1e5c7d9b2`（唯一
-  head）。
+  `e0dd9eb`；A3/A4 本地基础提交 `ae330c0`，镜像提交 `cca24bb`，余额格式
+  热修 `e348425`；迁移 `a3f1e5c7d9b2`（唯一 head）。
 - 采购与续费明细（台数、金额、RequestId、用户确认时间）：截至
   2026-09-05 **0 台、¥0，未发生任何创建/续费/重建/删除**。只读询价：
   4c8g/50G PostPaid ¥0.744086/小时（RequestId
@@ -183,8 +183,14 @@ cd frontend-v2 && npm run check
   限制与 verifier 完成标记后，最终所有断言 PASS（workspace/data 空、服务 disabled、
   `/etc/openbox` 与 `/root/.ssh` 空、无私钥、1080p guard enabled、1456 个基线包齐全）。
   `CreateImage` 从 Running 的 A2 成功，镜像 `m-71ycatssqymjmum8x` 已 Available，
-  RequestId `01A070FE-1518-55DD-B87E-C6B54F7CA259`。gw2 当前仍配置 v2，随 A3
-  发布一次性切到 v3，避免未部署池代码时单独改生产配置。
+  RequestId `01A070FE-1518-55DD-B87E-C6B54F7CA259`。gw2 随后已随 A3 发布
+  一次性切到 v3，未产生孤立配置漂移。
+- gw2 关闭态发布：amd64 后端/前端 `20260905-a3-cca24bb` 完成首次部署与自动迁移，
+  随后真实 account 快照暴露 BSS 余额 `4,086.59` 千分位解析问题；补测试修复后以
+  `20260905-a3-e348425` 发布。当前 alembic `a3f1e5c7d9b2`，公网首页/Logto 200、
+  匿名 fleet API 401，最新两轮 `ecd/db/account` 三源均 `ok=true` 且日志无错误。
+  配置已切 v3 与 6c12g，但 `POOL_ENABLED=false`、`POOL_AUTO_PURCHASE=false`，不会
+  自动分配、采购或重建。回滚备份戳 `20260905180500`、`20260905181043`。
 - ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：无用户创建因
   复用 A2 而无需实测；空列表解绑与 rebuild 停机要求留给 A2 单机门禁。目前无创建、
   重建、删除或计费写调用；仅有 BossIP release 标签写与上述 CreateImage。
@@ -214,7 +220,7 @@ cd frontend-v2 && npm run check
 
 ## 8.1 首批入池顺序（建议）
 0. **v3 镜像已完成**：复用 A2，不另购机器；`m-71ycatssqymjmum8x` 已 Available。gw2 的 `WUYING_IMAGE_ID` 随 A3 部署切换，不做孤立配置漂移。
-1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（v2 机；`recycle --approve` 一次刷到 v3，顺带验证 recycle 路径）。
+1. `adopt ecd-0b7gj174mc6f23ctq prewarm`：不带 approve 的真机预检已按预期被拒；等待逐台批准后 `rebuild+approve` 刷到 v3，顺带验证单机门禁。
 2. 逐台 `adopt --rebuild --approve` 首批已 release 的 bossip 包月机：013 → 012 → 011 → 010；每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行。连同 A2 验收机正好达到 5 台 prewarm 水位；009/008 不在本批，继续保留。
 3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。
 4. 009/008 本批不操作，保持原状作后备；001–006 按不续决策单独收尾，不在本批打标签或重建；共享 007 永不纳管。

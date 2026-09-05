@@ -40,8 +40,8 @@
 | 内置周期任务：`cron/internal_tasks.register(name, interval_sec, fn)`，单实例抢占 + 退避；`register_builtin_tasks()` 在 `main.py` 集中注册；后台 `GET /api/admin/internal-tasks` | `backend/cron/internal_tasks.py` |
 | 后台：`/api/admin/*` 依赖 `require_admin` + `get_workspace`，现有 `users / workspaces/{id} / audit / internal-tasks` 四个只读接口；**前端没有任何 admin 页面** | `backend/api/admin.py`、`frontend-v2/src/app/router/router.tsx` |
 | 审计：`audit.record(actor_user_id, workspace_id, action, target_type, target_id, detail, request)` | `backend/audit/__init__.py:12` |
-| 现役上海桌面：共享桌面 `ecd-4zjxaq5g45dr5qr0i`（bossip 池 slot8，**不纳管**）；`ecd-8zp47qagrsc95h67t` openbox-dev-shanghai（6c12g，v1 镜像，10-01 到期，**现在是 `demo` 账号默认空间的在用桌面**，通道 up，端口 18103）；`ecd-0b7gj174mc6f23ctq` A2 验收机（4c8g/50G，**v2 镜像**，10-04 到期，通道已撤、行已软删、云侧保留）。两台包月都未开自动续费 | 验收人实查 |
-| 金镜像 v2 `m-ccceuit7jn3xzwx45`（上海，50G）；策略组 `pg-0bbay5jmvosn8b2hc`；办公网络 `cn-shanghai+dir-2879607125`；规格 `eds.enterprise_office.4c8g`；上海 4c8g/50G 包月实付 ¥105.75、按量 ¥0.744/h | A1/A2 记录 |
+| 现役上海桌面：共享桌面 `ecd-4zjxaq5g45dr5qr0i`（bossip 池 slot8，**不纳管**）；`ecd-8zp47qagrsc95h67t` openbox-dev-shanghai（6c12g，v1 镜像，10-01 到期，**现在是 `demo` 账号默认空间的在用桌面**，通道 up，端口 18103）；`ecd-0b7gj174mc6f23ctq` A2 验收机（4c8g/50G，10-04 到期，DB `reclaimed/is_deleted/revoked`，2026-09-05 已清空验收数据并用作 v3 镜像源）。两台包月都未开自动续费 | 验收人实查 |
+| 金镜像 v2 `m-ccceuit7jn3xzwx45`（上海，50G）；v3 `m-71ycatssqymjmum8x`（`openbox-image-v3-shanghai`，50G，Available，含 1080p guard）；策略组 `pg-0bbay5jmvosn8b2hc`；办公网络 `cn-shanghai+dir-2879607125`；规格 `eds.enterprise_office.4c8g`；上海 4c8g/50G 包月实付 ¥105.75、按量 ¥0.744/h | A1/A2/A3 记录 |
 | bossip 参照（只借规则不搬 bash）：`~/arkstudio/bossip/apps/codex/v1/deploy/wuying/FLEET_POOL_MANAGER.md`（五态、双闸、recycle 6.5 分钟、标签命名空间坑）、`apps/center/src/admin-v2/fleet-reconcile.ts`（纯函数对账、source-health 门控：某个数据源本轮拉取失败时不自动关闭它相关的告警）、`ECD_FLEET_PURCHASE_API.md` §0（余额预检 ≥ 单价×2） | bossip 仓库 |
 
 ---
@@ -50,7 +50,7 @@
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | **openbox-dev-shanghai 不入池**（2026-09-04 拍板），留给 `demo` 账号；快照规则把它当普通 assigned 桌面对待 | 已定 |
-| 0 | **基准镜像 = openbox v2 `m-ccceuit7jn3xzwx45` → 本项第 0 步升到 v3（烘入 obx-display-guard，见 7h）**（openbox-image-v2-shanghai，50G，2026-09-05 在 A2 验收机上实查：Ubuntu 22.04.5、Google Chrome 138、ibus + ibus-libpinyin（引擎在 `/usr/libexec/ibus-engine-libpinyin`）、ffmpeg 4.4.2、Noto Sans CJK 35 款、`obx-display/obx-file/obx-shot/obx-x`、xdotool/scrot/wmctrl、node/npm、python3；零运行时秘密，隧道与 action server 单元 disabled）。用 v2 临时源机运行 A1 的 `wuying_bootstrap.py --image-mode` + `wuying_image_verify.py` 产出 v3；所有池机——收养的 bossip 机与新购——一律重建/创建到 v3 | 已定 |
+| 0 | **基准镜像已升到 v3 `m-71ycatssqymjmum8x`（烘入 obx-display-guard，见 7h）**。复用已 reclaimed 的 A2 验收机 `ecd-0b7gj174mc6f23ctq`，没有创建临时机；image-mode 清除 `/workspace`、用户安装态和运行时秘密后，verifier 全项通过。所有池机——收养的 bossip 机与新购——一律重建/创建到 v3 | 已完成 |
 | 2 | **预热水位 5**（已定）。水位主要靠**收养现有包月机**填：账号里有一批退不掉的包月机要重新入池（bossip 舰队 `bossip-sh-*`，6c12g、80G 盘、bossip 金镜像、PrePaid）。收养 = `RebuildDesktops` 到 openbox v3 镜像 + 换标签，**数据清空**，一台一台做、每台单独确认。**清单已定（2026-09-05 用户确认「全部可以」）**：上海 `bossip-sh-001…013` 中除共享桌面 `bossip-sh-007`（`ecd-4zjxaq5g45dr5qr0i`）外的 12 台，写进 `POOL_ADOPT_ALLOWLIST`：`ecd-ijea2hjljf9c4wd1b, ecd-5pvbuskezql1d4h5m, ecd-i4c4x8wpqg1lxktmi, ecd-c4qndqrko3db7kjfz, ecd-i4c4x8wpqg1lxktmj, ecd-gj5j513on7j0u97as, ecd-4y9s9igraz7hc58ea, ecd-c51eyfc786uzimn3o, ecd-4y9s9igraz7hc58eb, ecd-ctazuyee5p8enedta, ecd-b9oizzx4rfhbsm1uh, ecd-glxi1nk433hliivri`。本批先收 A2 与已 release 的 013–010，正好到水位 5；009/008 保持原状作后备，001–006 按既定决策不续，后续处理不混入本批 | 已定 |
 | 3 | **规格已定：6c12g**（`WUYING_DESKTOP_TYPE=eds.enterprise_office.6c12g`，gw2 与 `.env.example` 同步改；收养的 bossip 机本来就是 6c12g，池内统一）。`POOL_MAX_UNIT_PRICE_CNY` 只是防失控兜底，按 6c12g/50G 包月询价设（bossip 实测 ¥241.5 原价，合同价待 `describe_price` 实查），建议 300 | 已定 |
 | 4 | 阿里云余额是否足够新购；采购审批人 = 用户本人 | 用户确认 |
@@ -175,11 +175,19 @@ cd frontend-v2 && npm run check
   4c8g/50G PostPaid ¥0.744086/小时（RequestId
   `01A070BB-9BEF-5FA2-9087-DCFB492C0D04`）；6c12g/50G PostPaid
   ¥1.107454/小时（RequestId `01A070BB-48EE-53E0-B9B2-52AADA8DFE21`）。
-  v3 临时镜像源机的 CreateDesktops 请求已做 CLI dry-run，确认为 1 台、
-  PostPaid、4c8g/50G、v2 镜像、无 EndUser、无生产 `openbox-env` 标签；真实
-  创建仍在等待报价后的明确确认。
-- ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：待真实
-  镜像源机与 A2 单机门禁；当前尚无创建、重建、删除或计费写调用。
+  原临时源机方案只做过 CLI dry-run；用户要求改用现有空闲机后，复用 A2 包月验收机，
+  因此未执行 CreateDesktops、没有新增桌面费用，也没有临时机待删除。
+- v3 镜像：生产 DB 与云侧交叉确认 A2 为 `reclaimed/is_deleted/revoked`、
+  Disconnected 且 Sessions 为空；运行 image-mode 前发现 94MB 验收 workspace 和旧
+  action/tunnel 秘密，已补齐“复用源机必须清空用户态”逻辑。修复阿里云 16KB 命令
+  限制与 verifier 完成标记后，最终所有断言 PASS（workspace/data 空、服务 disabled、
+  `/etc/openbox` 与 `/root/.ssh` 空、无私钥、1080p guard enabled、1456 个基线包齐全）。
+  `CreateImage` 从 Running 的 A2 成功，镜像 `m-71ycatssqymjmum8x` 已 Available，
+  RequestId `01A070FE-1518-55DD-B87E-C6B54F7CA259`。gw2 当前仍配置 v2，随 A3
+  发布一次性切到 v3，避免未部署池代码时单独改生产配置。
+- ECD 行为实测（无用户创建 / 空列表解绑 / rebuild 是否需先 Stop）：无用户创建因
+  复用 A2 而无需实测；空列表解绑与 rebuild 停机要求留给 A2 单机门禁。目前无创建、
+  重建、删除或计费写调用；仅有 BossIP release 标签写与上述 CreateImage。
 - BossIP 退役释放：2026-09-05 用户明确决定 BossIP 退役，现有真实用户绑定不再
   作为保护条件，并授权释放首批 013–010。已依次执行 `pool-manager.sh release`
   （slot15/14/13/12）：013、012、010 各删除 1 条 binding 和 1 条 provisioning
@@ -205,7 +213,7 @@ cd frontend-v2 && npm run check
   `gateway_release_verified=true`，均拒绝收养。
 
 ## 8.1 首批入池顺序（建议）
-0. **先出 v3 镜像**：守护分支**已于 2026-09-05 合入 main（`66bb9de`）并部署 gw2**，本步只剩镜像——在 `wuying_bootstrap.py --image-mode` 里加装 `obx-display-guard`（systemd，root，每 3 秒经 `obx-x` 找 DISPLAY/XAUTHORITY 以 xauth 属主 `runuser` 跑 `obx-display`，钉不住退避 60 秒——实现取自该分支的 `ensure_desktop_tools`）→ 50G 按量机跑 image-mode + `wuying_image_verify.py`（新增断言：`systemctl is-enabled obx-display-guard` = enabled）→ `create-image openbox-image-v3-shanghai` → gw2 `WUYING_IMAGE_ID` 切 v3 → 删临时机。费用约 ¥1。
+0. **v3 镜像已完成**：复用 A2，不另购机器；`m-71ycatssqymjmum8x` 已 Available。gw2 的 `WUYING_IMAGE_ID` 随 A3 部署切换，不做孤立配置漂移。
 1. `adopt ecd-0b7gj174mc6f23ctq prewarm`（v2 机；`recycle --approve` 一次刷到 v3，顺带验证 recycle 路径）。
 2. 逐台 `adopt --rebuild --approve` 首批已 release 的 bossip 包月机：013 → 012 → 011 → 010；每台先报「将清空该机数据、原 EndUser 解绑、策略组切 1080p」再执行。连同 A2 验收机正好达到 5 台 prewarm 水位；009/008 不在本批，继续保留。
 3. 仍不足 5 台 → 按 6c12g 新购补齐（先 dry-run 报价）。

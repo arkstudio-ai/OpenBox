@@ -23,6 +23,8 @@ check tunnel_uses_envfile 'grep -q "^EnvironmentFile=/etc/openbox/tunnel.env$" /
 check tunnel_has_no_legacy_port '! grep -q -- "-R 127.0.0.1:18000" /etc/systemd/system/openbox-tunnel.service'
 check tunnel_has_no_legacy_relay '! grep -q "47.110.66.89" /etc/systemd/system/openbox-tunnel.service'
 check openbox_config_empty '[ -d /etc/openbox ] && [ -z "$(find /etc/openbox -mindepth 1 -print -quit)" ]'
+check workspace_empty '[ -d /workspace ] && [ -z "$(find /workspace -mindepth 1 -print -quit)" ]'
+check data_has_no_user_files '[ -d /data ] && [ -z "$(find /data \( -type f -o -type l \) -print -quit)" ]'
 check display_helper '[ -x /usr/local/bin/obx-display ] && grep -q "target=\"1920x1080\"" /usr/local/bin/obx-display'
 check display_guard_script '[ -x /usr/local/bin/obx-display-guard ] && grep -q "target=\"1920x1080\"" /usr/local/bin/obx-display-guard'
 check display_guard_enabled '[ "$(systemctl is-enabled obx-display-guard 2>/dev/null || true)" = enabled ]'
@@ -67,6 +69,7 @@ else
   printf 'missing: %s\n' "$(printf '%s\n' "$missing" | paste -sd, -)"
   failed=1
 fi
+echo 'OPENBOX_IMAGE_VERIFY_COMPLETE'
 exit "$failed"
 """
 
@@ -82,7 +85,7 @@ def main() -> int:
     desktop.put(args.baseline, "/tmp/openbox-image-baseline.txt", mode="600")
     output = desktop.run(VERIFY_SCRIPT, timeout=600, check=False)
     print(output.rstrip())
-    if "FAIL " in output:
+    if "FAIL " in output or "OPENBOX_IMAGE_VERIFY_COMPLETE" not in output:
         return 1
     print("\nGolden-image verification passed.")
     return 0

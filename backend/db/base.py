@@ -210,6 +210,23 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "tunnel_state",
         "last_seen_at",
         "channel_error",
+        "pool_state",
+        "pool",
+        "assigned_at",
+        "released_at",
+        "spec",
+        "golden_image_id",
+        "last_snapshot_at",
+    }),
+    "fleet_snapshots": frozenset({"id", "taken_at", "source", "ok", "payload", "error"}),
+    "fleet_alerts": frozenset({
+        "id", "rule", "severity", "resource_type", "resource_id", "message",
+        "detail", "first_seen_at", "last_seen_at", "resolved_at", "acked_by",
+        "acked_at", "muted_until",
+    }),
+    "pool_purchases": frozenset({
+        "id", "desktop_id", "unit_price", "currency", "quantity", "request_id",
+        "status", "created_by", "created_at", "error",
     }),
 }
 

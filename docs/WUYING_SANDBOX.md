@@ -397,6 +397,39 @@ retained and it can still be renewed; automatic release begins on day 16.
 Whether `RenewDesktops` restores the existing Shanghai desktop cleanly remains
 a live-observation item around 2026-10-01.
 
+### Fleet snapshots and the warm pool
+
+The A3/A4 fleet layer keeps the ECD account, `cloud_desktops`, and account
+balance observable as three independent sources. The `fleet_snapshot` internal
+task runs every `FLEET_SNAPSHOT_INTERVAL_SEC` (600 by default), stores one row
+per source, retains seven days, and evaluates ten deterministic reconciliation
+rules. Open, acknowledged, muted, and resolved alerts are available under
+`/api/admin/fleet`; a failed source suppresses its dependent findings and no
+alert auto-resolves unless all three sources succeeded in that run.
+
+Pool desktops use six persisted states: `reserve`, `prewarm`, `assigned`,
+`released`, `recycling`, and `retired`. `assigning` is the sole transient state
+used by the atomic `FOR UPDATE SKIP LOCKED` claim. A prewarm row has no workspace
+or channel credentials. Assignment grants the workspace EndUser, writes owner
+tags, installs a fresh per-desktop channel, and verifies authenticated command
+execution plus 1920×1080 before becoming assigned. Release revokes access but
+preserves the disk; an explicitly approved recycle erases it by rebuilding from
+`WUYING_IMAGE_ID` before it can return to prewarm.
+
+Existing desktops can enter the pool only when their exact id is present in
+`POOL_ADOPT_ALLOWLIST`. Adoption records the original tags and EndUsers before
+any destructive call. A different image requires both `rebuild=true` and
+`approve=true`; failure to clear the old EndUser quarantines the row instead of
+making it assignable. The shared desktop `ecd-4zjxaq5g45dr5qr0i` is a hard
+exclusion and must never carry the production OpenBox environment tag.
+
+Both pool use and automatic purchasing are off by default:
+`POOL_ENABLED=false` and `POOL_AUTO_PURCHASE=false`. Production first enables
+pool assignment with automatic purchase still off. Procurement and renewal
+rules must retain their separate price/impact approval gate before any real
+`CreateDesktops`, `RenewDesktops`, `RebuildDesktops`, charge conversion, or
+deletion call.
+
 Build the secret-free golden image with:
 
 ```bash

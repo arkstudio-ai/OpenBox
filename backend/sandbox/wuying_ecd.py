@@ -40,6 +40,9 @@ TAG_USER = "openbox-user"
 TAG_WORKSPACE = "openbox-workspace"
 TAG_EU = "openbox-eu-id"
 TAG_ENV = "openbox-env"
+TAG_POOL = "openbox-pool"
+TAG_SPEC = "openbox-spec"
+TAG_IMAGE = "openbox-image"
 
 
 class DesktopOwnershipError(Exception):
@@ -275,6 +278,11 @@ async def create_desktop(workspace_id: str, display_name: str | None = None) -> 
             ecd_models.CreateDesktopsRequestTag(key=TAG_WORKSPACE, value=workspace_id),
             ecd_models.CreateDesktopsRequestTag(key=TAG_EU, value=eu_id),
             ecd_models.CreateDesktopsRequestTag(key=TAG_ENV, value=config.wuying_env_tag),
+            ecd_models.CreateDesktopsRequestTag(key=TAG_POOL, value="assigned"),
+            ecd_models.CreateDesktopsRequestTag(
+                key=TAG_SPEC, value=config.wuying_desktop_type
+            ),
+            ecd_models.CreateDesktopsRequestTag(key=TAG_IMAGE, value=config.wuying_image_id),
         ],
         desktop_attachment=ecd_models.CreateDesktopsRequestDesktopAttachment(
             image_id=config.wuying_image_id,
@@ -325,6 +333,11 @@ async def describe_desktop(desktop_id: str) -> dict[str, Any] | None:
         "end_user_ids": list(getattr(d, "end_user_ids", []) or []),
         "charge_type": getattr(d, "charge_type", None),
         "expired_time": getattr(d, "expired_time", None),
+        "creation_time": getattr(d, "creation_time", None),
+        "image_id": getattr(d, "image_id", None),
+        "desktop_type": getattr(d, "desktop_type", None),
+        "policy_group_id": getattr(d, "policy_group_id", None),
+        "system_disk_size": getattr(d, "system_disk_size", None),
     }
 
 
@@ -398,6 +411,128 @@ async def renew_desktop(
     return {
         "order_id": getattr(body, "order_id", None),
         "raw": body.to_map() if body is not None else {},
+    }
+
+
+async def modify_entitlement(desktop_id: str, end_user_ids: list[str]) -> str | None:
+    """Replace a desktop's EndUser entitlement set."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    request = ecd_models.ModifyEntitlementRequest(
+        region_id=get_config().wuying_region_id,
+        desktop_id=desktop_id,
+        end_user_id=end_user_ids,
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().modify_entitlement_async(request), "ModifyEntitlement"
+    )
+    return getattr(response.body, "request_id", None)
+
+
+async def rebuild_desktop(
+    desktop_id: str, image_id: str, after_status: str = "Running"
+) -> dict[str, Any]:
+    """Rebuild one desktop; callers must obtain destructive-action approval."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    request = ecd_models.RebuildDesktopsRequest(
+        region_id=get_config().wuying_region_id,
+        desktop_id=[desktop_id],
+        image_id=image_id,
+        after_status=after_status,
+        operate_type="rebuild",
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().rebuild_desktops_async(request), "RebuildDesktops"
+    )
+    body = response.body
+    return {
+        "request_id": getattr(body, "request_id", None),
+        "results": [item.to_map() for item in (getattr(body, "rebuild_results", None) or [])],
+    }
+
+
+async def modify_policy_group(desktop_id: str, policy_group_id: str) -> str | None:
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    request = ecd_models.ModifyDesktopsPolicyGroupRequest(
+        region_id=get_config().wuying_region_id,
+        desktop_id=[desktop_id],
+        policy_group_id=policy_group_id,
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().modify_desktops_policy_group_async(request),
+        "ModifyDesktopsPolicyGroup",
+    )
+    return getattr(response.body, "request_id", None)
+
+
+async def tag_desktop(desktop_id: str, tags: dict[str, str]) -> str | None:
+    """Write tags in the INSTANCE namespace used by ListTagResources."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    request = ecd_models.TagResourcesRequest(
+        region_id=get_config().wuying_region_id,
+        resource_type=_TAG_RESOURCE_TYPE,
+        resource_id=[desktop_id],
+        tag=[
+            ecd_models.TagResourcesRequestTag(key=key, value=value)
+            for key, value in sorted(tags.items())
+        ],
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().tag_resources_async(request), "TagResources"
+    )
+    return getattr(response.body, "request_id", None)
+
+
+async def untag_desktop(desktop_id: str, keys: list[str]) -> str | None:
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    if not keys:
+        return None
+    request = ecd_models.UntagResourcesRequest(
+        region_id=get_config().wuying_region_id,
+        resource_type=_TAG_RESOURCE_TYPE,
+        resource_id=[desktop_id],
+        tag_key=sorted(set(keys)),
+        all=False,
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().untag_resources_async(request), "UntagResources"
+    )
+    return getattr(response.body, "request_id", None)
+
+
+async def modify_charge_type(
+    desktop_id: str,
+    *,
+    charge_type: str = "PrePaid",
+    period: int | None = None,
+    period_unit: str | None = None,
+    auto_pay: bool = True,
+) -> dict[str, Any]:
+    """Wrap PostPaid-to-PrePaid conversion without making policy decisions."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    config = get_config()
+    request = ecd_models.ModifyDesktopChargeTypeRequest(
+        region_id=config.wuying_region_id,
+        desktop_id=[desktop_id],
+        charge_type=charge_type,
+        period=period if period is not None else config.wuying_period,
+        period_unit=period_unit or config.wuying_period_unit,
+        auto_pay=auto_pay,
+    )
+    response = await _retry_throttled(
+        lambda: ecd_client().modify_desktop_charge_type_async(request),
+        "ModifyDesktopChargeType",
+    )
+    body = response.body
+    return {
+        "request_id": getattr(body, "request_id", None),
+        "order_id": getattr(body, "order_id", None),
+        "task_id": getattr(body, "task_id", None),
     }
 
 
@@ -557,6 +692,77 @@ async def list_desktops(user_id: str | None = None) -> list[dict[str, Any]]:
         }
         for d in desktops
     ]
+
+
+async def list_fleet_desktops() -> list[dict[str, Any]]:
+    """List every desktop carrying this environment tag, across all pages."""
+    from alibabacloud_ecd20200930 import models as ecd_models
+
+    config = get_config()
+    client = ecd_client()
+    desktops: list[Any] = []
+    next_token: str | None = None
+    while True:
+        request = ecd_models.DescribeDesktopsRequest(
+            region_id=config.wuying_region_id,
+            max_results=100,
+            next_token=next_token,
+            tag=[ecd_models.DescribeDesktopsRequestTag(
+                key=TAG_ENV, value=config.wuying_env_tag
+            )],
+        )
+        response = await _retry_throttled(
+            lambda: client.describe_desktops_async(request), "DescribeDesktops"
+        )
+        body = response.body
+        desktops.extend(getattr(body, "desktops", None) or [])
+        next_token = getattr(body, "next_token", "") or None
+        if not next_token:
+            break
+    tags = await list_desktop_tags([item.desktop_id for item in desktops])
+    result = []
+    for item in desktops:
+        item_tags = tags.get(item.desktop_id, {})
+        # DescribeDesktops tag filtering has varied across API releases. The
+        # authoritative namespace is checked again before admitting a row.
+        if item_tags.get(TAG_ENV) != config.wuying_env_tag:
+            continue
+        result.append({
+            "desktop_id": item.desktop_id,
+            "name": item.desktop_name,
+            "status": item.desktop_status,
+            "hostname": getattr(item, "host_name", None),
+            "private_ip": getattr(item, "network_interface_ip", None),
+            "end_user_ids": list(getattr(item, "end_user_ids", []) or []),
+            "charge_type": getattr(item, "charge_type", None),
+            "expired_time": getattr(item, "expired_time", None),
+            "creation_time": getattr(item, "creation_time", None),
+            "image_id": getattr(item, "image_id", None),
+            "desktop_type": getattr(item, "desktop_type", None),
+            "policy_group_id": getattr(item, "policy_group_id", None),
+            "system_disk_size": getattr(item, "system_disk_size", None),
+            "tags": item_tags,
+        })
+    return result
+
+
+async def query_account_balance() -> dict[str, Any]:
+    """Return the Alibaba account's available CNY balance."""
+    from alibabacloud_bssopenapi20171214.client import Client
+
+    client = Client(_open_api_config("business.aliyuncs.com"))
+    response = await _retry_throttled(
+        client.query_account_balance_async,
+        "QueryAccountBalance",
+    )
+    body = response.body
+    data = getattr(body, "data", None)
+    available = getattr(data, "available_amount", None)
+    return {
+        "available_balance": float(available) if available not in (None, "") else None,
+        "currency": getattr(data, "currency", None) or "CNY",
+        "request_id": getattr(body, "request_id", None),
+    }
 
 
 async def verify_ownership(desktop_id: str, workspace_id: str) -> str:

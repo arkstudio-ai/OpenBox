@@ -70,6 +70,7 @@
     "provisionAction": "开通云电脑",
     "provisionRestricted": "请联系空间所有者或管理员开通",
     "provisioning": "正在准备本空间的云电脑，首次创建约需 2-3 分钟…",
+    "assigning": "正在从预热池分配云电脑…",
     "provisionFailed": "云电脑创建失败",
     "provisionRetry": "重新创建",
     "connected": "已连接",

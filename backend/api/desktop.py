@@ -175,7 +175,7 @@ async def desktop_ticket(
             )
         except DesktopNotReady as e:
             state = e.payload.get("state")
-            if state in ("creating", "starting"):
+            if state in ("creating", "starting", "assigning"):
                 return _pending({"pending": True, "state": state})
             return JSONResponse(
                 {

@@ -16,10 +16,11 @@ class PgCloudDesktopRepo:
         # avoids needless collisions within one process and also gives SQLite
         # tests the transaction isolation its single in-memory connection lacks.
         self._port_lock = asyncio.Lock()
+        self._pool_lock = asyncio.Lock()
 
     async def create(
         self,
-        workspace_id: str,
+        workspace_id: str | None,
         region_id: str,
         status: str = "creating",
         *,
@@ -68,6 +69,16 @@ class PgCloudDesktopRepo:
             row = result.scalars().first()
             return _to_dict(row) if row else None
 
+    async def get_any_by_desktop_id(self, desktop_id: str) -> dict | None:
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(CloudDesktop)
+                .where(CloudDesktop.desktop_id == desktop_id)
+                .order_by(CloudDesktop.updated_at.desc())
+            )
+            row = result.scalars().first()
+            return _to_dict(row) if row else None
+
     async def get_by_fingerprint(self, fingerprint: str) -> dict | None:
         async with get_db_session() as session:
             result = await session.execute(
@@ -85,6 +96,51 @@ class PgCloudDesktopRepo:
                 select(CloudDesktop).where(CloudDesktop.is_deleted == False)
             )
             return [_to_dict(row) for row in result.scalars().all()]
+
+    async def list_pool_state(self, pool_state: str) -> list[dict]:
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(CloudDesktop).where(
+                    CloudDesktop.pool_state == pool_state,
+                    CloudDesktop.is_deleted.is_(False),
+                )
+            )
+            return [_to_dict(row) for row in result.scalars().all()]
+
+    async def claim_prewarm(
+        self, workspace_id: str, triggered_by_user_id: str | None
+    ) -> dict | None:
+        """Atomically claim the newest-expiring prewarm desktop."""
+        async with self._pool_lock:
+            async with get_db_session() as session:
+                current = await session.scalar(
+                    select(CloudDesktop).where(
+                        CloudDesktop.workspace_id == workspace_id,
+                        CloudDesktop.is_deleted.is_(False),
+                    )
+                )
+                if current is not None:
+                    return _to_dict(current)
+                row = await session.scalar(
+                    select(CloudDesktop)
+                    .where(
+                        CloudDesktop.pool_state == "prewarm",
+                        CloudDesktop.workspace_id.is_(None),
+                        CloudDesktop.is_deleted.is_(False),
+                    )
+                    .order_by(CloudDesktop.expires_at.desc(), CloudDesktop.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+                if row is None:
+                    return None
+                now = datetime.now(timezone.utc)
+                row.pool_state = "assigning"
+                row.workspace_id = workspace_id
+                row.user_id = triggered_by_user_id
+                row.updated_at = now
+                await session.flush()
+                return _to_dict(row)
 
     async def reserve_tunnel_port(self, record_id: str, low: int, high: int) -> int:
         """Reserve the lowest free port, retrying a concurrent unique clash."""

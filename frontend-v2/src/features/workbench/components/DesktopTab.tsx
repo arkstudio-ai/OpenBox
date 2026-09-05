@@ -247,7 +247,7 @@ export function DesktopTab() {
             setDetail(t("desktop.provisioning"))
             await waitDesktopRunning(
               () => alive,
-              () => setDetail(t("desktop.provisioning")),
+              (state) => setDetail(t(state === "assigning" ? "desktop.assigning" : "desktop.provisioning")),
             )
             if (!alive) return
             setDetail("")

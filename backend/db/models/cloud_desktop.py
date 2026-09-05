@@ -1,7 +1,17 @@
 """Cloud desktops table ORM model — one ECD desktop per workspace."""
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, Text, Index, ForeignKey, Integer, DateTime, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -11,8 +21,8 @@ class CloudDesktop(Base):
     __tablename__ = "cloud_desktops"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("workspaces.id"), nullable=False
+    workspace_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("workspaces.id"), nullable=True
     )
     # The user who initiated provisioning. Ownership belongs to workspace_id.
     user_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("users.id"), nullable=True)
@@ -25,6 +35,19 @@ class CloudDesktop(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     charge_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Stable states: reserve, prewarm, assigned, released, recycling, retired.
+    # ``assigning`` is the only transient state and protects concurrent claims.
+    pool_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="assigned"
+    )
+    pool: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    spec: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    golden_image_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Per-desktop execution channel.  Secret material is never stored in
     # plaintext: the hash supports diagnostics and the ciphertext is decrypted
     # only while constructing a SandboxClient.
@@ -45,13 +68,18 @@ class CloudDesktop(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "pool_state IN ('reserve', 'prewarm', 'assigned', 'released', "
+            "'recycling', 'retired', 'assigning')",
+            name="ck_cloud_desktops_pool_state",
+        ),
         # One live desktop per workspace; history rows keep is_deleted=true.
         Index(
             "ix_cloud_desktops_workspace_active",
             "workspace_id",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
-            sqlite_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted = false AND workspace_id IS NOT NULL"),
+            sqlite_where=text("is_deleted = false AND workspace_id IS NOT NULL"),
         ),
         Index("ix_cloud_desktops_desktop_id", "desktop_id"),
     )

@@ -35,6 +35,13 @@ _CLOUD_DESKTOP_COLUMNS = (
     "tunnel_state VARCHAR",
     "last_seen_at DATETIME",
     "channel_error TEXT",
+    "pool_state VARCHAR",
+    "pool VARCHAR",
+    "assigned_at DATETIME",
+    "released_at DATETIME",
+    "spec VARCHAR",
+    "golden_image_id VARCHAR",
+    "last_snapshot_at DATETIME",
 )
 
 
@@ -57,6 +64,21 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
         "CREATE TABLE cloud_desktops (id VARCHAR PRIMARY KEY, "
         + ", ".join(_CLOUD_DESKTOP_COLUMNS)
         + ")"
+    )
+    connection.exec_driver_sql(
+        "CREATE TABLE fleet_snapshots (id VARCHAR PRIMARY KEY, taken_at DATETIME, "
+        "source VARCHAR, ok BOOLEAN, payload TEXT, error TEXT)"
+    )
+    connection.exec_driver_sql(
+        "CREATE TABLE fleet_alerts (id VARCHAR PRIMARY KEY, rule VARCHAR, severity VARCHAR, "
+        "resource_type VARCHAR, resource_id VARCHAR, message TEXT, detail TEXT, "
+        "first_seen_at DATETIME, last_seen_at DATETIME, resolved_at DATETIME, "
+        "acked_by VARCHAR, acked_at DATETIME, muted_until DATETIME)"
+    )
+    connection.exec_driver_sql(
+        "CREATE TABLE pool_purchases (id VARCHAR PRIMARY KEY, desktop_id VARCHAR, "
+        "unit_price NUMERIC, currency VARCHAR, quantity INTEGER, request_id VARCHAR, "
+        "status VARCHAR, created_by VARCHAR, created_at DATETIME, error TEXT)"
     )
 
 

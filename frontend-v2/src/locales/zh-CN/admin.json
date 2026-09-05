@@ -1,0 +1,44 @@
+{
+  "title": "舰队管理",
+  "subtitle": "查看预热池、桌面状态与对账告警。",
+  "loadFailed": "舰队数据加载失败。",
+  "snapshot": "最近快照：{{time}} · {{sources}}",
+  "pool": {
+    "title": "预热池",
+    "watermark": "当前 {{current}} / 目标 {{target}} 台",
+    "autoOn": "自动采购已开启",
+    "autoOff": "自动采购已关闭",
+    "gates": "采购闸：单价 ≤ ¥{{price}} · 每轮 ≤ {{tick}} · 每日 ≤ {{day}} · 余额 ≥ {{multiple}}×单价",
+    "adoptId": "待收养的 ECD 桌面 ID",
+    "reserveState": "储备（不重建）",
+    "prewarmState": "预热（可分配）",
+    "rebuildOnAdopt": "重建到金镜像",
+    "gatewayReleaseVerified": "已核验 bossip gateway 注销",
+    "adopt": "收养",
+    "adoptFailed": "收养失败，请查看服务端错误。",
+    "confirmAdoptRebuild": "确认清空 {{id}} 的全部系统盘数据、解绑原用户并重建到当前金镜像？"
+  },
+  "desktops": {
+    "title": "桌面",
+    "count": "{{count}} 台",
+    "id": "桌面 ID",
+    "state": "池态 / 运行态",
+    "owner": "Workspace",
+    "channel": "通道",
+    "billing": "计费 / 规格",
+    "expires": "到期",
+    "actions": "操作",
+    "release": "释放",
+    "recycle": "重建回池",
+    "retire": "退役",
+    "confirmRelease": "确认撤销该 workspace 的访问并释放桌面？",
+    "confirmRecycle": "确认清空该桌面数据并用当前金镜像重建？",
+    "confirmRetire": "确认将该桌面标记为退役且不再续期？"
+  },
+  "alerts": {
+    "title": "告警",
+    "empty": "当前没有未解决告警。",
+    "ack": "确认",
+    "mute": "静默 24 小时"
+  }
+}

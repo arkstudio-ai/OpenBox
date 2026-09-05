@@ -17,6 +17,7 @@ const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
+const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
           { path: routePatterns.cron, element: <CronRoute /> },
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
+          { path: routePatterns.adminFleet, element: <AdminFleetRoute /> },
         ],
       },
       { path: "*", element: <NotFoundRoute /> },

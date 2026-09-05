@@ -12,6 +12,7 @@ export const paths = {
   skills: "/app/skills",
   resources: (projectId?: string) =>
     projectId ? `/app/resources?project=${projectId}` : "/app/resources",
+  adminFleet: "/app/admin/fleet",
 } as const
 
 export const routePatterns = {
@@ -21,4 +22,5 @@ export const routePatterns = {
   cron: "cron",
   skills: "skills",
   resources: "resources",
+  adminFleet: "admin/fleet",
 } as const

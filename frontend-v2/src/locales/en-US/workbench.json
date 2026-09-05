@@ -70,6 +70,7 @@
     "provisionAction": "Set up cloud computer",
     "provisionRestricted": "Ask a workspace owner or admin to set it up",
     "provisioning": "Preparing this workspace's cloud computer — the first setup takes 2-3 minutes…",
+    "assigning": "Assigning a cloud computer from the warm pool…",
     "provisionFailed": "Cloud computer setup failed",
     "provisionRetry": "Try again",
     "connected": "Connected",

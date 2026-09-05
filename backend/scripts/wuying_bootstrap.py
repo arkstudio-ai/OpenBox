@@ -41,12 +41,19 @@ def install_desktop_tools(d: Desktop) -> None:
     """Bake the fixed-display helpers that runtime lazy-install used to add."""
     print("[4/5] desktop tools")
     sys.path.insert(0, str(REPO / "backend"))
-    from sandbox.desktop import OBX_DISPLAY_SCRIPT, OBX_SHOT_SCRIPT, OBX_X_SCRIPT
+    from sandbox.desktop import (
+        OBX_DISPLAY_GUARD_SCRIPT,
+        OBX_DISPLAY_GUARD_UNIT,
+        OBX_DISPLAY_SCRIPT,
+        OBX_SHOT_SCRIPT,
+        OBX_X_SCRIPT,
+    )
 
     files = {
         "obx-x": OBX_X_SCRIPT,
         "obx-display": OBX_DISPLAY_SCRIPT,
         "obx-shot": OBX_SHOT_SCRIPT,
+        "obx-display-guard": OBX_DISPLAY_GUARD_SCRIPT,
     }
     commands = [
         "set -eu",
@@ -62,6 +69,14 @@ def install_desktop_tools(d: Desktop) -> None:
                 f"chmod 755 /usr/local/bin/{name}",
             ]
         )
+    commands.extend(
+        [
+            f"printf '%s' '{base64.b64encode(OBX_DISPLAY_GUARD_UNIT.encode()).decode()}' | base64 -d > /etc/systemd/system/obx-display-guard.service",
+            "chmod 644 /etc/systemd/system/obx-display-guard.service",
+            "systemctl daemon-reload",
+            "systemctl enable --now obx-display-guard",
+        ]
+    )
     d.run("\n".join(commands), timeout=900)
 
 

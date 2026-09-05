@@ -375,7 +375,7 @@ class OpenBoxConfig(BaseModel):
     wuying_image_id: str = ""                       # golden image; required in per_user mode —
                                                     # never fall back to a community image silently
     wuying_office_site_id: str = ""                 # ECD office site (workspace directory) id
-    wuying_desktop_type: str = "eds.enterprise_office.4c8g"
+    wuying_desktop_type: str = "eds.enterprise_office.6c12g"
     wuying_system_disk_size: int = 50               # GiB; v2 golden image target
     # No default on purpose: the policy group pins the session resolution (the
     # deployment standard is "OpenBox Personal 1080p"), and Alibaba's default
@@ -389,6 +389,17 @@ class OpenBoxConfig(BaseModel):
     wuying_auto_pay: bool = True
     wuying_auto_renew: bool = False
     pool_max_unit_price_cny: float = Field(default=300.0, gt=0)
+    pool_enabled: bool = False
+    pool_auto_purchase: bool = False
+    pool_target_prewarm: int = Field(default=5, ge=0, le=100)
+    pool_max_purchases_per_tick: int = Field(default=1, ge=1, le=10)
+    pool_max_purchases_per_day: int = Field(default=2, ge=1, le=100)
+    pool_min_account_balance_multiple: float = Field(default=2.0, ge=1, le=100)
+    pool_renew_before_days: int = Field(default=3, ge=1, le=30)
+    pool_assign_on_provision: bool = True
+    pool_adopt_allowlist: str = ""
+    fleet_snapshot_interval_sec: int = Field(default=600, ge=60, le=86400)
+    fleet_channel_down_alert_sec: int = Field(default=600, ge=60, le=86400)
     wuying_password_salt: str = ""                  # per-deployment secret for derived EndUser passwords
     wuying_env_tag: str = "default"                 # openbox-env tag; isolates prod/dev sharing one account
 
@@ -669,6 +680,17 @@ def _apply_env_overrides(data: dict) -> dict:
         "wuying_auto_pay": "WUYING_AUTO_PAY",
         "wuying_auto_renew": "WUYING_AUTO_RENEW",
         "pool_max_unit_price_cny": "POOL_MAX_UNIT_PRICE_CNY",
+        "pool_enabled": "POOL_ENABLED",
+        "pool_auto_purchase": "POOL_AUTO_PURCHASE",
+        "pool_target_prewarm": "POOL_TARGET_PREWARM",
+        "pool_max_purchases_per_tick": "POOL_MAX_PURCHASES_PER_TICK",
+        "pool_max_purchases_per_day": "POOL_MAX_PURCHASES_PER_DAY",
+        "pool_min_account_balance_multiple": "POOL_MIN_ACCOUNT_BALANCE_MULTIPLE",
+        "pool_renew_before_days": "POOL_RENEW_BEFORE_DAYS",
+        "pool_assign_on_provision": "POOL_ASSIGN_ON_PROVISION",
+        "pool_adopt_allowlist": "POOL_ADOPT_ALLOWLIST",
+        "fleet_snapshot_interval_sec": "FLEET_SNAPSHOT_INTERVAL_SEC",
+        "fleet_channel_down_alert_sec": "FLEET_CHANNEL_DOWN_ALERT_SEC",
         "wuying_password_salt": "WUYING_PASSWORD_SALT",
         "wuying_env_tag": "WUYING_ENV_TAG",
         "browser_mode": "BROWSER_MODE",
@@ -715,11 +737,17 @@ def _apply_env_overrides(data: dict) -> dict:
                                 "jwt_refresh_expire_days", "max_containers_per_user", "max_sessions_per_user",
                                 "max_concurrent_agents", "browser_chrome_port",
                                 "oss_user_quota_bytes", "wuying_system_disk_size",
-                                "wuying_period"}:
+                                "wuying_period", "pool_target_prewarm",
+                                "pool_max_purchases_per_tick", "pool_max_purchases_per_day",
+                                "pool_renew_before_days", "fleet_snapshot_interval_sec",
+                                "fleet_channel_down_alert_sec"}:
                 data[field_name] = int(value)
-            elif field_name in {"monthly_cost_limit", "pool_max_unit_price_cny"}:
+            elif field_name in {"monthly_cost_limit", "pool_max_unit_price_cny",
+                                "pool_min_account_balance_multiple"}:
                 data[field_name] = float(value)
-            elif field_name in {"debug", "wuying_auto_pay", "wuying_auto_renew"}:
+            elif field_name in {"debug", "wuying_auto_pay", "wuying_auto_renew",
+                                "pool_enabled", "pool_auto_purchase",
+                                "pool_assign_on_provision"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

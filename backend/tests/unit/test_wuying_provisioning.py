@@ -108,7 +108,7 @@ def test_provisioning_config_defaults():
     # session resolution, so provisioning must not silently fall back to
     # Alibaba's resolution-adaptive default policy.
     assert cfg.wuying_policy_group_id == ""
-    assert cfg.wuying_desktop_type == "eds.enterprise_office.4c8g"
+    assert cfg.wuying_desktop_type == "eds.enterprise_office.6c12g"
     assert cfg.wuying_system_disk_size == 50
     assert cfg.wuying_charge_type == "PostPaid"
     assert cfg.wuying_period == 1
@@ -166,6 +166,11 @@ async def test_create_desktop_billing_request_shape(monkeypatch, charge_type, ex
     assert await wuying_ecd.create_desktop("ws-test") == "ecd-test"
     request = captured["request"]
     assert (request.period, request.period_unit, request.auto_pay, request.auto_renew) == expected
+    assert {(tag.key, tag.value) for tag in request.tag} >= {
+        (wuying_ecd.TAG_POOL, "assigned"),
+        (wuying_ecd.TAG_SPEC, request.desktop_attachment.desktop_type),
+        (wuying_ecd.TAG_IMAGE, request.desktop_attachment.image_id),
+    }
 
 
 async def test_describe_price_parses_sdk_shape(monkeypatch):
@@ -383,6 +388,34 @@ async def test_status_not_provisioned_without_desktop(monkeypatch):
     _stub_ecd(monkeypatch)
     service = WuyingDesktopService()
     assert (await service.status("user-none"))["state"] == "not_provisioned"
+
+
+async def test_status_resumes_assignment_interrupted_by_restart(monkeypatch):
+    _stub_ecd(monkeypatch)
+    import sandbox.pool as pool_module
+
+    workspace = "ws-assign-resume"
+    record = await cloud_desktop_repo.create(
+        workspace,
+        "cn-shanghai",
+        status="running",
+        desktop_id="ecd-assign-resume",
+        user_id="user-assign-resume",
+        pool_state="assigning",
+    )
+    calls = []
+
+    async def assign_claimed(claimed, workspace_id, user_id):
+        calls.append((claimed["id"], workspace_id, user_id))
+        await cloud_desktop_repo.update(claimed["id"], pool_state="assigned")
+        return {**claimed, "pool_state": "assigned"}
+
+    monkeypatch.setattr(pool_module.pool_service, "assign_claimed", assign_claimed)
+    service = WuyingDesktopService()
+    assert (await service.status(workspace))["state"] == "assigning"
+    await _drain(service, workspace)
+    assert calls == [(record["id"], workspace, "user-assign-resume")]
+    assert (await cloud_desktop_repo.get(record["id"]))["pool_state"] == "assigned"
 
 
 async def test_resync_persists_charge_type_and_expiry(monkeypatch):

@@ -24,6 +24,9 @@ check tunnel_has_no_legacy_port '! grep -q -- "-R 127.0.0.1:18000" /etc/systemd/
 check tunnel_has_no_legacy_relay '! grep -q "47.110.66.89" /etc/systemd/system/openbox-tunnel.service'
 check openbox_config_empty '[ -d /etc/openbox ] && [ -z "$(find /etc/openbox -mindepth 1 -print -quit)" ]'
 check display_helper '[ -x /usr/local/bin/obx-display ] && grep -q "target=\"1920x1080\"" /usr/local/bin/obx-display'
+check display_guard_script '[ -x /usr/local/bin/obx-display-guard ] && grep -q "target=\"1920x1080\"" /usr/local/bin/obx-display-guard'
+check display_guard_enabled '[ "$(systemctl is-enabled obx-display-guard 2>/dev/null || true)" = enabled ]'
+check display_guard_unit 'grep -q "^ExecStart=/usr/local/bin/obx-display-guard$" /etc/systemd/system/obx-display-guard.service'
 
 # Scan for actual secret-bearing files, not documentation or crypto-library
 # constants containing words such as "OPENSSH PRIVATE".  A PEM private key's

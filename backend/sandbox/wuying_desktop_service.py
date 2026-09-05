@@ -74,6 +74,15 @@ class WuyingDesktopService:
         if workspace_id in self._inflight:
             return self._payload(record)
 
+        if record.get("pool_state") == "assigning":
+            self._spawn(
+                workspace_id,
+                self._assign_pool_flow(
+                    record, workspace_id, record.get("user_id")
+                ),
+            )
+            return self._payload(record)
+
         # No in-flight work but the record says work was happening: the process
         # restarted mid-provision. Re-sync against ECD instead of trusting it.
         if record["status"] in ("creating", "starting"):
@@ -103,6 +112,22 @@ class WuyingDesktopService:
         if record is None or record["status"] == "failed":
             if record is not None:
                 await cloud_desktop_repo.soft_delete(record["id"])
+            from sandbox.pool import pool_service
+
+            claimed = await pool_service.claim(workspace_id, triggered_by_user_id)
+            if claimed is not None:
+                if claimed.get("pool_state") == "assigning":
+                    self._spawn(
+                        workspace_id,
+                        self._assign_pool_flow(
+                            claimed, workspace_id, triggered_by_user_id
+                        ),
+                    )
+                # Another worker may have assigned/created the workspace row
+                # between the initial read and the pool claim transaction.
+                # In that case return the row it found instead of attempting a
+                # second billable desktop and relying on a uniqueness failure.
+                return self._payload(claimed)
             record = await cloud_desktop_repo.create(
                 workspace_id,
                 region_id=get_config().wuying_region_id,
@@ -298,7 +323,8 @@ class WuyingDesktopService:
     # -- internals ----------------------------------------------------------
 
     def _payload(self, record: dict) -> dict:
-        payload = {"state": record["status"]}
+        state = "assigning" if record.get("pool_state") == "assigning" else record["status"]
+        payload = {"state": state}
         if record.get("desktop_id"):
             payload["desktopId"] = record["desktop_id"]
         if record["status"] == "failed" and record.get("error"):
@@ -338,6 +364,8 @@ class WuyingDesktopService:
                     record_id,
                     charge_type=info.get("charge_type") or get_config().wuying_charge_type,
                     expires_at=_parse_expired_time(info.get("expired_time")),
+                    spec=info.get("desktop_type") or get_config().wuying_desktop_type,
+                    golden_image_id=info.get("image_id") or get_config().wuying_image_id,
                 )
         except Exception as e:
             log.error(f"Desktop provisioning failed for workspace {workspace_id}: {e}")
@@ -365,6 +393,28 @@ class WuyingDesktopService:
                 return
         await cloud_desktop_repo.update(record_id, status="running", error=None)
         log.info(f"Desktop ready for workspace {workspace_id}: {desktop_id}")
+
+    async def _assign_pool_flow(
+        self,
+        record: dict,
+        workspace_id: str,
+        triggered_by_user_id: str | None,
+    ) -> None:
+        from sandbox.pool import pool_service
+
+        try:
+            assigned = await pool_service.assign_claimed(
+                record, workspace_id, triggered_by_user_id
+            )
+            log.info(
+                "Pool desktop ready for workspace %s: %s",
+                workspace_id,
+                assigned.get("desktop_id"),
+            )
+        except Exception as exc:
+            # assign_claimed restores the desktop to prewarm. The next explicit
+            # provision request may retry or use the existing create fallback.
+            log.error("Pool assignment failed for workspace %s: %s", workspace_id, exc)
 
     async def _start_flow(
         self, workspace_id: str, record_id: str, desktop_id: str

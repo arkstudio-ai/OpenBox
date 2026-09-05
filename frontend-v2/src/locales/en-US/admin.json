@@ -1,0 +1,44 @@
+{
+  "title": "Fleet management",
+  "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
+  "loadFailed": "Fleet data could not be loaded.",
+  "snapshot": "Latest snapshot: {{time}} · {{sources}}",
+  "pool": {
+    "title": "Warm pool",
+    "watermark": "{{current}} of {{target}} desktops ready",
+    "autoOn": "Automatic purchasing enabled",
+    "autoOff": "Automatic purchasing disabled",
+    "gates": "Purchase gates: unit price ≤ ¥{{price}} · per tick ≤ {{tick}} · per day ≤ {{day}} · balance ≥ {{multiple}}× price",
+    "adoptId": "ECD desktop ID to adopt",
+    "reserveState": "Reserve (no rebuild)",
+    "prewarmState": "Prewarm (assignable)",
+    "rebuildOnAdopt": "Rebuild from golden image",
+    "gatewayReleaseVerified": "BossIP gateway release verified",
+    "adopt": "Adopt",
+    "adoptFailed": "Adoption failed; inspect the server error.",
+    "confirmAdoptRebuild": "Erase all system-disk data on {{id}}, detach its existing user, and rebuild from the current golden image?"
+  },
+  "desktops": {
+    "title": "Desktops",
+    "count": "{{count}} desktops",
+    "id": "Desktop ID",
+    "state": "Pool / runtime state",
+    "owner": "Workspace",
+    "channel": "Channel",
+    "billing": "Billing / spec",
+    "expires": "Expires",
+    "actions": "Actions",
+    "release": "Release",
+    "recycle": "Rebuild",
+    "retire": "Retire",
+    "confirmRelease": "Revoke workspace access and release this desktop?",
+    "confirmRecycle": "Erase this desktop and rebuild it from the current golden image?",
+    "confirmRetire": "Mark this desktop retired so it will no longer be renewed?"
+  },
+  "alerts": {
+    "title": "Alerts",
+    "empty": "There are no open alerts.",
+    "ack": "Acknowledge",
+    "mute": "Mute for 24 hours"
+  }
+}

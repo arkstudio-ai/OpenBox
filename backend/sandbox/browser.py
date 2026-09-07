@@ -338,7 +338,7 @@ fi
 # Reconcile only root browser processes explicitly owned by OpenBox automation;
 # never touch an ordinary user Chrome without the dedicated debug-port flag.
 AUTOMATION_ROOTS=$(python3 - <<'OPENBOX_CHROME_PIDS'
-import pathlib
+import pathlib,shlex
 for proc in pathlib.Path('/proc').iterdir():
     if not proc.name.isdigit():
         continue
@@ -347,6 +347,13 @@ for proc in pathlib.Path('/proc').iterdir():
         text=[arg.decode(errors='replace') for arg in args if arg]
     except OSError:
         continue
+    # The inherited BossIP launcher uses exec -a with one flattened argv
+    # string; newer OpenBox launches expose ordinary NUL-separated arguments.
+    if len(text) == 1 and ' ' in text[0]:
+        try:
+            text=shlex.split(text[0])
+        except ValueError:
+            continue
     if not text or any(arg.startswith('--type=') for arg in text):
         continue
     executable=pathlib.Path(text[0]).name

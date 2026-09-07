@@ -54,6 +54,7 @@ def test_unresponsive_automation_browser_is_reconciled_before_launch():
     assert "any(arg.startswith('--type=')" in script
     assert 'google-chrome.bossip-real' in script
     assert "executable == 'runuser'" in script
+    assert 'text=shlex.split(text[0])' in script
     assert 'recovering unresponsive OpenBox Chrome pid(s)' in script
     assert script.index('AUTOMATION_ROOTS=') < script.index('PREF="$PROF/Default/Preferences"')
     assert 'unable to stop stale OpenBox Chrome' in script

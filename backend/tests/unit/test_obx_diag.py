@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[3] / "container" / "obx_diag.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "sandbox" / "obx_diag.py"
 
 
 def _load():

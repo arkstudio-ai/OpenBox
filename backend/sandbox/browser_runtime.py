@@ -46,7 +46,7 @@ def runtime_files() -> dict[str, str]:
     ]
     return {
         "repair_browser_runtime.py": (root / "browser_runtime_repair.py").read_text(),
-        "obx_diag.py": (root.parents[1] / "container" / "obx_diag.py").read_text(),
+        "obx_diag.py": (root / "obx_diag.py").read_text(),
         "dev-browser-package-lock.json": (root / "assets/dev-browser-package-lock.json").read_text(),
         "dev-browser-sources.json": json.dumps({
             str(path.relative_to(dev_browser)): path.read_text() for path in source_paths

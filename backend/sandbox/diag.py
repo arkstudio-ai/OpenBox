@@ -1,6 +1,6 @@
 """Pull a browser diagnostic snapshot off a desktop, and keep the recent ones.
 
-The collector itself is ``container/obx_diag.py``. It is shipped to every
+The collector itself is ``sandbox/obx_diag.py``. It is shipped to every
 desktop with the browser runtime, but the backend never depends on the copy
 that happens to be installed there: the command built here carries the
 backend's own copy inline, so a desktop whose runtime repair has not landed
@@ -32,7 +32,9 @@ from sandbox import events
 
 log = create_logger("sandbox.diag")
 
-DIAG_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "container" / "obx_diag.py"
+# Lives beside this module so the backend image carries it; container/obx_diag.py
+# is only a repository CLI forwarding here.
+DIAG_SCRIPT_PATH = Path(__file__).resolve().parent / "obx_diag.py"
 #: Where the browser runtime repair installs the collector on the desktop.
 DIAG_TOOL = "/opt/openbox/tools/obx_diag.py"
 #: Marker the action server uses to classify the command without seeing it.

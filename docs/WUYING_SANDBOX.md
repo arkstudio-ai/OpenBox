@@ -413,7 +413,7 @@ conversation's browser history end to end.
 
 To take a fresh one: `POST /api/admin/fleet/desktops/<ecd-id>/diag` with
 `{"via": "auto"}` uses the application channel and falls back to Cloud
-Assistant when the tunnel is down. The collector is `container/obx_diag.py`;
+Assistant when the tunnel is down. The collector is `backend/sandbox/obx_diag.py` (`container/obx_diag.py` only forwards to it);
 the backend ships its own copy inline with every request, so the report format
 never depends on what the desktop has installed. The runtime repair also
 installs it at `/opt/openbox/tools/obx_diag.py` for hands-on use:

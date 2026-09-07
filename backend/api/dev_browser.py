@@ -1,5 +1,4 @@
 import asyncio
-import logging
 
 import websockets
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, HTTPException
@@ -7,10 +6,11 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, H
 from auth.ticket import consume_ticket
 from auth.middleware import is_auth_enabled, get_current_user
 from auth.workspace import get_workspace
+from core.log import create_logger
 from models.container import ContainerStatus
 from sandbox import provider
 
-logger = logging.getLogger(__name__)
+logger = create_logger("api.dev_browser")
 
 # HTTP routes require user auth
 _http_router = APIRouter(
@@ -135,9 +135,14 @@ async def dev_browser_ws_auto(
     owner = ticket_workspace or await owner_for(user_id)
     try:
         container = await provider.resolve_user_container(owner)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"dev-browser ws: cannot resolve container for {owner}: {type(e).__name__}: {e}")
         container = None
     if not container or container.status != ContainerStatus.RUNNING or not container.port:
+        logger.info(
+            f"dev-browser ws: no running container for {owner} "
+            f"(status={getattr(container, 'status', None)}, port={getattr(container, 'port', None)})"
+        )
         await websocket.accept()
         await websocket.close(code=4004, reason="No running container")
         return
@@ -151,8 +156,8 @@ async def dev_browser_ws_auto(
             logger.info(f"Kicking client {active['client_id'][:8]}... replaced by {client_id[:8]}...")
             try:
                 await active["ws"].close(code=4001, reason="Replaced by new client")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"dev-browser ws: closing replaced client failed: {e}")
         _active_ws[user_id] = {"client_id": client_id, "ws": websocket}
 
     container_id = container.id
@@ -171,6 +176,7 @@ async def dev_browser_ws_auto(
                     while True:
                         msg = await websocket.receive()
                         if msg["type"] == "websocket.disconnect":
+                            logger.info(f"dev-browser ws: extension disconnected (user {user_id[:8]})")
                             break
                         if provider.routes_per_user:
                             from sandbox.entitlement import require_sandbox_subscription
@@ -179,8 +185,10 @@ async def dev_browser_ws_auto(
                             await container_ws.send(msg["text"])
                         elif "bytes" in msg and msg["bytes"]:
                             await container_ws.send(msg["bytes"])
-                except (WebSocketDisconnect, Exception):
-                    pass
+                except WebSocketDisconnect:
+                    logger.info(f"dev-browser ws: extension side closed (user {user_id[:8]})")
+                except Exception as e:
+                    logger.warning(f"dev-browser ws: extension->relay pump ended (user {user_id[:8]}): {type(e).__name__}: {e}")
 
             async def ctr_to_ext():
                 try:
@@ -189,8 +197,9 @@ async def dev_browser_ws_auto(
                             await websocket.send_bytes(m)
                         else:
                             await websocket.send_text(m)
-                except Exception:
-                    pass
+                    logger.info(f"dev-browser ws: relay closed the connection (user {user_id[:8]})")
+                except Exception as e:
+                    logger.warning(f"dev-browser ws: relay->extension pump ended (user {user_id[:8]}): {type(e).__name__}: {e}")
 
             pumps = [asyncio.create_task(ext_to_ctr()), asyncio.create_task(ctr_to_ext())]
             if provider.routes_per_user:
@@ -204,11 +213,11 @@ async def dev_browser_ws_auto(
                 t.cancel()
             await asyncio.gather(*pumps, return_exceptions=True)
     except Exception as e:
-        logger.error(f"Failed to connect to container relay: {e}")
+        logger.error(f"Failed to connect to container relay at {container.host}:{container.port}: {type(e).__name__}: {e}")
         try:
             await websocket.send_json({"type": "error", "data": str(e)})
-        except Exception:
-            pass
+        except Exception as send_error:
+            logger.debug(f"dev-browser ws: could not report relay error to extension: {send_error}")
     finally:
         if client_id:
             active = _active_ws.get(user_id)
@@ -217,7 +226,7 @@ async def dev_browser_ws_auto(
         try:
             await websocket.close()
         except Exception:
-            pass
+            pass  # already closed by the other side; nothing to report
 
 
 # Combine all routers

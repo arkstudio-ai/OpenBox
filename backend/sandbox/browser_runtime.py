@@ -12,11 +12,24 @@ import json
 from pathlib import Path
 import uuid
 
+from core.log import create_logger
 from sandbox.browser_runtime_repair import RUNTIME_VERSION
+
+log = create_logger("sandbox.browser_runtime")
 
 
 class BrowserRuntimeUnavailable(RuntimeError):
-    pass
+    """The desktop's browser runtime is not usable.
+
+    `problems` is the verifier's own list when it produced one; `output` is
+    the tail of whatever the failing step printed. Both used to be discarded,
+    leaving "did not pass verification" as the only clue.
+    """
+
+    def __init__(self, message: str, *, problems: list[str] | None = None, output: str = ""):
+        super().__init__(message)
+        self.problems = list(problems or [])
+        self.output = output
 
 
 def runtime_files() -> dict[str, str]:
@@ -32,6 +45,7 @@ def runtime_files() -> dict[str, str]:
     ]
     return {
         "repair_browser_runtime.py": (root / "browser_runtime_repair.py").read_text(),
+        "obx_diag.py": (root.parents[1] / "container" / "obx_diag.py").read_text(),
         "dev-browser-package-lock.json": (root / "assets/dev-browser-package-lock.json").read_text(),
         "dev-browser-sources.json": json.dumps({
             str(path.relative_to(dev_browser)): path.read_text() for path in source_paths
@@ -114,14 +128,37 @@ OPENBOX_RUN
 
 
 def verified_result(output: str) -> dict:
+    """The verifier's JSON line, only when it certifies *this* backend's version.
+
+    A non-passing result still carries the verifier's `problems`; they ride on
+    the exception so the caller can say what is wrong instead of only that
+    something is.
+    """
+    seen = None
     for line in reversed(output.splitlines()):
         try:
             data = json.loads(line)
         except ValueError:
             continue
-        if isinstance(data, dict) and data.get("version") == RUNTIME_VERSION and data.get("ready") is True:
+        if not isinstance(data, dict):
+            continue
+        if data.get("version") == RUNTIME_VERSION and data.get("ready") is True:
             return data
-    raise BrowserRuntimeUnavailable("Browser runtime did not pass the current version's verification")
+        if seen is None:
+            seen = data
+    if seen is None:
+        raise BrowserRuntimeUnavailable(
+            "Browser runtime verifier produced no result", output=output[-1500:]
+        )
+    problems = [str(p) for p in (seen.get("problems") or [])]
+    if seen.get("version") != RUNTIME_VERSION:
+        message = (
+            f"Browser runtime verifier is version {seen.get('version')!r}, "
+            f"this backend requires {RUNTIME_VERSION}"
+        )
+    else:
+        message = "Browser runtime verification failed: " + ("; ".join(problems) or "not ready")
+    raise BrowserRuntimeUnavailable(message, problems=problems, output=output[-1500:])
 
 
 async def ensure_browser_runtime(client) -> dict:
@@ -134,13 +171,24 @@ async def ensure_browser_runtime(client) -> dict:
     if checked.exit_code == 0:
         try:
             return verified_result(checked.stdout or "")
-        except BrowserRuntimeUnavailable:
-            pass  # An older verifier cannot certify this backend's version.
+        except BrowserRuntimeUnavailable as exc:
+            # An older verifier cannot certify this backend's version; a
+            # current one that fails is a real problem. Either way, repair.
+            log.info("browser runtime check did not pass, repairing: %s", exc)
+    else:
+        log.info(
+            "browser runtime check exited %s, repairing: %s",
+            checked.exit_code,
+            ((getattr(checked, "stderr", "") or getattr(checked, "stdout", "") or "").strip())[-300:],
+        )
     result = await client.execute(runtime_install_script(), timeout=350)
     if result.exit_code != 0:
+        tail = ((getattr(result, "stderr", "") or "").strip() or (getattr(result, "stdout", "") or "").strip())[-1500:]
         raise BrowserRuntimeUnavailable(
             "Browser runtime repair failed; desktop cannot be marked ready. "
-            "Check /opt/openbox/backups/browser-runtime-*/npm-install.log on the desktop."
+            f"Installer exited {result.exit_code}: {tail.splitlines()[-1][:300] if tail else 'no output'}. "
+            "Full log: /opt/openbox/backups/browser-runtime-*/npm-install.log on the desktop.",
+            output=tail,
         )
     return verified_result(result.stdout or "")
 
@@ -153,5 +201,8 @@ async def ensure_desktop_browser_runtime(desktop_id: str) -> dict:
         for command in runtime_cloud_commands():
             output = await run_desktop_command(desktop_id, command, timeout=480)
     except Exception as exc:
-        raise BrowserRuntimeUnavailable(f"Browser runtime preparation failed for {desktop_id}") from exc
+        raise BrowserRuntimeUnavailable(
+            f"Browser runtime preparation failed for {desktop_id}: "
+            f"{type(exc).__name__}: {str(exc)[:600]}"
+        ) from exc
     return verified_result(output)

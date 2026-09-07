@@ -15,7 +15,7 @@ def test_payload_fits_cloud_assistant_and_carries_both_pinned_assets():
     assert all(len(base64.b64encode(s.encode())) < 16_384 for s in runtime.runtime_cloud_commands())
     assert '--install-deps' in script and '--register-service' in script
     assert set(runtime.runtime_files()) == {
-        'repair_browser_runtime.py', 'dev-browser-package-lock.json', 'dev-browser-sources.json'
+        'repair_browser_runtime.py', 'obx_diag.py', 'dev-browser-package-lock.json', 'dev-browser-sources.json'
     }
     assert 'pkill' not in script and 'reboot' not in script
     assert "'systemctl','restart'" not in script
@@ -102,7 +102,7 @@ async def test_channel_install_requires_runtime_before_credentials_or_services(m
 async def test_cold_browser_uses_real_display_or_isolated_headless_profile(monkeypatch, display_ready):
     from sandbox import browser
     ready = {'Browser': 'Chrome/151', 'webSocketDebuggerUrl': 'ws://127.0.0.1:9333/test'}
-    monkeypatch.setattr(browser, '_probe_chrome', AsyncMock(side_effect=[None, ready]))
+    monkeypatch.setattr(browser, '_probe_chrome_detailed', AsyncMock(side_effect=[(None, 'connect: refused'), (ready, 'ok')]))
     monkeypatch.setattr(browser, 'ensure_x_helper', AsyncMock())
     monkeypatch.setattr(browser.asyncio, 'sleep', AsyncMock())
     launch = AsyncMock()
@@ -124,7 +124,7 @@ async def test_cold_browser_uses_real_display_or_isolated_headless_profile(monke
 async def test_existing_browser_is_never_restarted_to_change_presentation(monkeypatch):
     from sandbox import browser
     ready = {'Browser': 'Chrome/151', 'User-Agent': 'HeadlessChrome/151', 'webSocketDebuggerUrl': 'ws://local/test'}
-    monkeypatch.setattr(browser, '_probe_chrome', AsyncMock(return_value=ready))
+    monkeypatch.setattr(browser, '_probe_chrome_detailed', AsyncMock(return_value=(ready, 'ok')))
     client = SimpleNamespace(execute=AsyncMock())
     assert await browser.ensure_chrome(client, 'ecd-existing') == ready
     assert browser.is_headless(ready)

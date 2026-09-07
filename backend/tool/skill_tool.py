@@ -243,10 +243,11 @@ async def _browser_readiness(ctx: ToolContext) -> str:
         from sandbox.browser import ensure_browser
         state = await ensure_browser(ctx.sandbox, ctx.session_id, relay_mode(preference))
     except Exception as e:
+        from sandbox.diag import summarize_error
         log.warning(f"browser readiness failed: {e}")
         return (
             f"<browser_mode>preference={preference}; the browser could not be started: "
-            f"{str(e)[:200]}. Report this rather than retrying blindly.</browser_mode>"
+            f"{summarize_error(e)}. Report this rather than retrying blindly.</browser_mode>"
         )
 
     effective = state.get("mode", "unknown")
@@ -255,6 +256,8 @@ async def _browser_readiness(ctx: ToolContext) -> str:
         f"  preference: {preference}",
         f"  running as: {effective}",
     ]
+    if state.get("fallback_reason"):
+        lines.append(f"  fallback reason: {state['fallback_reason']}")
     if effective == "local":
         lines.append("  This is the cloud desktop's Chrome — it does NOT have the user's logins.")
         from sandbox.browser import is_headless

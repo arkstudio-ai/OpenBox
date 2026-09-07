@@ -260,6 +260,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
         deadline = asyncio.get_running_loop().time() + timeout_sec
         last_error = "channel did not answer"
         boot_recovery_attempted = False
+        sandbox = None
         while asyncio.get_running_loop().time() < deadline:
             try:
                 provisional = {**record, "tunnel_state": "up"}
@@ -311,7 +312,20 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 }
             except BrowserRuntimeUnavailable as exc:
                 # Let durable activation retry this desktop, not buy another.
-                await cloud_desktop_repo.update(record["id"], channel_error=str(exc))
+                # The browser layer already snapshotted the desktop for its
+                # own failures; do the same for the readiness checks here.
+                from sandbox.diag import capture_failure
+                diag_id = getattr(exc, "diag_id", "") or getattr(exc.__cause__, "diag_id", "")
+                if not diag_id and sandbox is not None:
+                    diag_id = await capture_failure(
+                        sandbox, container_key=record["desktop_id"], desktop_id=record["desktop_id"],
+                        session_id=f"channel-verify:{record['id']}",
+                        reason="channel.verify", error=exc,
+                    )
+                log.warning("channel verify failed for %s (diag=%s): %s", record["desktop_id"], diag_id, exc)
+                await cloud_desktop_repo.update(
+                    record["id"], channel_error=f"{str(exc)[:1900]} [diag:{diag_id}]" if diag_id else str(exc)
+                )
                 raise
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
                 if not boot_recovery_attempted:
@@ -319,11 +333,15 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                     # A failed boot dependency can keep the action server
                     # offline. Cloud Assistant can repair it without a live
                     # application tunnel or any desktop purchase/rebuild.
+                    log.warning("channel for %s unreachable (%s); attempting boot recovery via Cloud Assistant",
+                                record["desktop_id"], exc)
                     await ensure_desktop_browser_runtime(record["desktop_id"])
                 last_error = f"{type(exc).__name__}: {exc}"[:2000]
+                log.info("channel verify retry for %s: %s", record["desktop_id"], last_error[:300])
                 await asyncio.sleep(3)
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"[:2000]
+                log.warning("channel verify attempt failed for %s: %s", record["desktop_id"], last_error[:500])
                 await asyncio.sleep(3)
         await cloud_desktop_repo.update(
             record["id"], tunnel_state="down", channel_error=last_error

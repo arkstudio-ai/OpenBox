@@ -74,8 +74,11 @@ async def execute(args: BrowserModeArgs, ctx: ToolContext) -> ToolResult:
             live = f" Relay is running in '{relay.get('mode', '?')}' mode."
         elif (status or {}).get("chrome"):
             live = " Cloud Chrome is up; the relay is not started yet."
+        else:
+            problem = ((status or {}).get("problems") or {}).get("chrome")
+            live = f" Cloud Chrome is not reachable ({problem})." if problem else ""
     except Exception as e:
-        log.debug(f"browser status probe skipped: {e}")
+        log.info(f"browser status probe failed: {e}")
 
     return ToolResult(
         title=f"browser mode: {mode}",

@@ -294,6 +294,84 @@ async def latest_snapshot(request: Request, admin: dict = Depends(require_admin)
     return {"taken_at": latest, "sources": [_row(item) for item in rows]}
 
 
+# --- browser diagnostics ---------------------------------------------------
+
+class DiagRequest(BaseModel):
+    session: str = ""
+    lines: int = 60
+    #: `auto` uses the application channel when it is up and falls back to
+    #: Cloud Assistant; `cloud` forces Cloud Assistant (root, no tunnel).
+    via: str = "auto"
+
+
+@router.get("/diag/recent")
+async def recent_diags(limit: int = Query(50, ge=1, le=50), admin: dict = Depends(require_admin)):
+    """Snapshots taken automatically on browser failures (this backend process)."""
+    from sandbox import diag
+
+    return {"items": diag.list_recent(limit)}
+
+
+@router.get("/diag/{diag_id}")
+async def get_diag(diag_id: str, admin: dict = Depends(require_admin)):
+    from sandbox import diag
+
+    record = diag.get(diag_id)
+    if record is None:
+        raise HTTPException(404, detail="diagnostic not found (it may belong to another backend process)")
+    return record
+
+
+@router.post("/desktops/{desktop_id}/diag")
+async def collect_desktop_diag(
+    desktop_id: str,
+    body: DiagRequest,
+    request: Request,
+    admin: dict = Depends(require_admin),
+):
+    """Take a fresh browser snapshot of one desktop, without logging into it."""
+    from db.repository.cloud_desktop_repo import cloud_desktop_repo
+    from sandbox import diag
+    from sandbox.channel import ChannelNotReady, route_for_record
+    from sandbox.client import SandboxClient
+
+    if body.via not in ("auto", "channel", "cloud"):
+        raise HTTPException(422, detail="via must be auto, channel or cloud")
+    desktop = await cloud_desktop_repo.get_by_desktop_id(desktop_id)
+    if desktop is None:
+        raise HTTPException(404, detail="unknown desktop")
+
+    report = None
+    errors: list[str] = []
+    if body.via in ("auto", "channel"):
+        try:
+            host, port, api_key = route_for_record(desktop)
+            client = SandboxClient(host=host, port=port, api_key=api_key)
+            report = await diag.collect_browser_diag(client, session=body.session, lines=body.lines)
+        except (ChannelNotReady, Exception) as exc:
+            errors.append(f"channel: {type(exc).__name__}: {str(exc)[:300]}")
+            if body.via == "channel":
+                raise HTTPException(502, detail=errors[-1]) from exc
+    if report is None:
+        try:
+            report = await diag.collect_desktop_diag(desktop_id, session=body.session, lines=body.lines)
+        except Exception as exc:
+            errors.append(f"cloud_assistant: {type(exc).__name__}: {str(exc)[:300]}")
+            raise HTTPException(502, detail="; ".join(errors)) from exc
+
+    diag_id = diag.remember(
+        report, desktop_id=desktop_id, session_id=body.session,
+        reason="admin.request", note="; ".join(errors),
+    )
+    await record(
+        admin["user_id"], desktop.get("workspace_id"), "desktop.diag",
+        target_type="cloud_desktop", target_id=desktop_id,
+        detail={"via": report.get("via"), "diag_id": diag_id, "lights": (report.get("summary") or {}).get("lights")},
+        request=request,
+    )
+    return {"id": diag_id, "fallback_errors": errors, **report}
+
+
 @router.post("/desktops/{desktop_id}/release")
 async def release_desktop(
     desktop_id: str, admin: dict = Depends(require_admin)

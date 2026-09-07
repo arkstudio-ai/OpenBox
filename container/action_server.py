@@ -51,7 +51,7 @@ if str(_ACTION_SERVER_DIR) not in sys.path:
 
 # --- 启动时间记录 ---
 START_TIME = time.time()
-ACTION_SERVER_VERSION = "2026.08.30-catalogue-projection-v1"
+ACTION_SERVER_VERSION = "2026.09.07-browser-diag-v1"
 CATALOGUE_PROTOCOL_VERSION = 1
 _ACTION_SERVER_BOOT_ID = hashlib.sha256(
     f"{platform.node()}:{START_TIME:.9f}".encode("utf-8")
@@ -75,6 +75,9 @@ class ExecuteResponse(BaseModel):
     exit_code: int
     stdout: str
     stderr: str
+    # Echo of the request's trace so the backend can join its own log line to
+    # the execute_trace journald record without guessing by timestamp.
+    trace: dict | None = None
 
 class DesktopLeaseRequest(BaseModel):
     owner: str
@@ -205,6 +208,16 @@ def _lease_is_live(now: float | None = None) -> bool:
     return bool(_desktop_lease and _desktop_lease["expires_at"] > (now or time.monotonic()))
 
 
+#: Command kinds that touch the live desktop session and therefore need the
+#: lease. Browser probes and diagnostics are read-only loopback calls: they
+#: must work while another turn holds the desktop, or the status page would
+#: report "unavailable" every time the agent is busy.
+_LEASED_KINDS = frozenset({
+    "desktop_input", "desktop_capture", "desktop_oss_upload", "desktop_session",
+    "browser_launch",
+})
+
+
 def _desktop_command_kind(command: str) -> str:
     """Classify without logging command contents, which may contain secrets."""
     lowered = command.lower()
@@ -214,14 +227,26 @@ def _desktop_command_kind(command: str) -> str:
         return "desktop_capture"
     if "/tmp/obx-screen.png" in lowered and "obx-file" in lowered:
         return "desktop_oss_upload"
+    if "--remote-debugging-port" in lowered:
+        return "browser_launch"  # goes through obx-x, so it must stay leased
     if "obx-x" in lowered:
         return "desktop_session"
+    if "obx-diag" in lowered:
+        return "browser_diag"
+    if "obx-chrome-probe" in lowered or "127.0.0.1:9333" in lowered or "127.0.0.1:9222" in lowered:
+        return "browser_probe"
+    if "start-relay" in lowered:
+        return "browser_relay"
+    if "repair_browser_runtime" in lowered:
+        return "browser_runtime"
+    if "npx tsx" in lowered or "dev-browser" in lowered:
+        return "browser_script"
     return "shell"
 
 
 def _requires_desktop_lease(request: Request, command: str) -> bool:
     operation = _trace_value(request, "X-OpenBox-Operation", 48)
-    return operation == "computer" or _desktop_command_kind(command) != "shell"
+    return operation == "computer" or _desktop_command_kind(command) in _LEASED_KINDS
 
 
 async def _validate_desktop_lease(request: Request, command: str) -> None:
@@ -269,11 +294,17 @@ def _emit_execute_trace(
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
     if request.url.path in ("/alive", "/docs", "/openapi.json", "/terminal"):
-        return await call_next(request)
-    api_key = request.headers.get("X-API-Key", "")
-    if not SESSION_API_KEY or api_key != SESSION_API_KEY:
-        return JSONResponse(status_code=403, content={"detail": "Invalid API Key"})
-    return await call_next(request)
+        response = await call_next(request)
+    else:
+        api_key = request.headers.get("X-API-Key", "")
+        if not SESSION_API_KEY or api_key != SESSION_API_KEY:
+            return JSONResponse(status_code=403, content={"detail": "Invalid API Key"})
+        response = await call_next(request)
+    # Echo the caller's request id so its log line can be joined to ours.
+    request_id = _trace_value(request, "X-OpenBox-Request")
+    if request_id:
+        response.headers["X-OpenBox-Request"] = request_id
+    return response
 
 # --- 健康检查 ---
 @app.get("/alive")
@@ -284,12 +315,70 @@ async def alive():
         "capabilities": [
             "desktop_lease_v1",
             "execution_trace_v1",
+            "browser_diag_v1",
             "catalogue_projection_v1",
         ],
         "uptime": round(time.time() - START_TIME, 2),
         "hostname": platform.node(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# --- 浏览器诊断（只读） ---
+DIAG_TOOL = Path("/opt/openbox/tools/obx_diag.py")
+
+
+@app.get("/diag/browser")
+async def browser_diag(session: str = "", lines: int = 60):
+    """One read-only snapshot of the desktop's browser stack.
+
+    Runs the collector the browser runtime repair installed. No lease: it
+    never touches the display, and an operator needs it precisely while a
+    turn is stuck holding the desktop.
+    """
+    if not DIAG_TOOL.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{DIAG_TOOL} is not installed; run the browser runtime repair first",
+        )
+    argv = [sys.executable, str(DIAG_TOOL), "--lines", str(max(1, min(lines, 400)))]
+    clean_session = "".join(ch for ch in session if ch.isalnum() or ch in "-_:.")[:80]
+    if clean_session:
+        argv += ["--session", clean_session]
+    started = time.monotonic()
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "LC_ALL": "C"},
+            start_new_session=True,  # its own group: a timeout kill must not take us down
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
+    except asyncio.TimeoutError:
+        _kill_process_tree(process)
+        raise HTTPException(status_code=504, detail="diagnostic collector timed out after 90s")
+    report = None
+    for line in reversed(stdout.decode("utf-8", "replace").splitlines()):
+        if line.startswith("{"):
+            try:
+                report = json.loads(line)
+            except ValueError:
+                continue
+            break
+    trace_log.info(
+        "diag_browser %s",
+        json.dumps({
+            "session": clean_session,
+            "exit_code": process.returncode,
+            "duration_ms": round((time.monotonic() - started) * 1000),
+            "lights": (report or {}).get("summary", {}).get("lights") if report else None,
+        }, separators=(",", ":"), sort_keys=True),
+    )
+    if report is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"collector exited {process.returncode}: {stderr.decode('utf-8', 'replace')[-400:]}",
+        )
+    return report
 
 
 @app.post("/desktop/lease/acquire")
@@ -518,6 +607,11 @@ async def execute(req: ExecuteRequest, request: Request):
             exit_code=exit_code,
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
+            trace={
+                "request": _trace_value(request, "X-OpenBox-Request"),
+                "kind": _desktop_command_kind(req.command),
+                "duration_ms": round((time.monotonic() - started) * 1000),
+            },
         )
         _emit_execute_trace(request, req.command, started=started, exit_code=exit_code)
         return response
@@ -1150,7 +1244,9 @@ async def dev_browser_start():
 
     relay_dir = BUILTIN_SKILLS_DIR / "dev-browser"
     if not relay_dir.exists():
+        trace_log.warning("dev_browser_start failed: relay dir missing at %s", relay_dir)
         raise HTTPException(status_code=500, detail="dev-browser not installed in container")
+    trace_log.info("dev_browser_start relay_dir=%s", relay_dir)
 
     try:
         _dev_browser_process = subprocess.Popen(
@@ -1187,14 +1283,15 @@ async def dev_browser_stop():
     if not _is_dev_browser_running():
         return {"status": "stopped"}
 
+    trace_log.info("dev_browser_stop pid=%s", _dev_browser_process.pid)
     try:
         _dev_browser_process.terminate()
         try:
             _dev_browser_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             _dev_browser_process.kill()
-    except Exception:
-        pass
+    except Exception as e:
+        trace_log.warning("dev_browser_stop: terminating relay failed: %s", e)
     _dev_browser_process = None
     return {"status": "stopped"}
 
@@ -1208,19 +1305,23 @@ async def dev_browser_status():
     # Query the relay server for extension connection status
     import httpx
     extension_connected = False
+    relay_error = None
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get("http://127.0.0.1:9222/")
             if resp.status_code == 200:
                 data = resp.json()
                 extension_connected = data.get("extensionConnected", False)
-    except Exception:
-        pass
+            else:
+                relay_error = f"HTTP {resp.status_code}"
+    except Exception as e:
+        relay_error = f"{type(e).__name__}: {e}"[:200]
 
     return {
         "status": "running",
         "pid": _dev_browser_process.pid if _dev_browser_process else None,
         "extensionConnected": extension_connected,
+        "relayError": relay_error,
     }
 
 

@@ -105,18 +105,24 @@ async def _local_status(current_user: dict) -> dict:
         state = await browser_status(client)
     except Exception as e:
         log.warning(f"browser_status failed: {e}")
-        return {"available": False, "reason": "error"}
+        return {"available": False, "reason": "error", "detail": f"{type(e).__name__}: {e}"[:200]}
 
     chrome = state.get("chrome") or {}
     relay = state.get("relay") or {}
+    problems = state.get("problems") or {}
     if not chrome:
-        return {"available": False, "reason": "not_started"}
+        # `transport` means the desktop itself did not answer; anything else
+        # means the desktop is fine and Chrome is what is missing.
+        detail = problems.get("chrome") or ""
+        reason = "unreachable" if detail.startswith("transport") else "not_started"
+        return {"available": False, "reason": reason, "detail": detail}
     return {
         "available": True,
         "version": chrome.get("Browser"),
         "presentation": state.get("presentation", "headed"),
         "relayRunning": bool(relay),
         "relayMode": relay.get("mode"),
+        "relayProblem": problems.get("relay"),
     }
 
 

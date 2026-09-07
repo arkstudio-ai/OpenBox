@@ -473,10 +473,11 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
     try:
         state = await ensure_browser(ctx.sandbox, ctx.session_id, relay_mode(preference))
     except Exception as e:
+        from sandbox.diag import summarize_error
         return ToolResult(
             title="could not open the browser",
             output=(
-                f"The managed browser failed to start: {str(e)[:300]}\n"
+                f"The managed browser failed to start: {summarize_error(e)}\n"
                 "Do NOT fall back to clicking a browser icon on the desktop — that "
                 "starts a Chrome with no debug port, which dev-browser cannot drive. "
                 "Report this instead."

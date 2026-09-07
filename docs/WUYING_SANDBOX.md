@@ -391,6 +391,46 @@ worker's login data or loosen another user's directory permissions. Verify CDP,
 relay discovery, and a real `npx tsx` client interaction; an open Chrome window
 alone is not a successful browser-automation check.
 
+**Reading a broken desktop without logging into it (browser diagnostics)**
+Every browser failure the backend hits (`ChromeUnavailable`, `RelayUnavailable`,
+`BrowserRuntimeUnavailable`, a failed channel verify) now takes one read-only
+snapshot of the desktop and cites it: the tool message the model sees ends in
+`[diag:<id>]`, `cloud_desktops.channel_error` carries the same tag, and the
+backend log line `browser failure diag=<id> …` lists the five lights
+(chrome/relay/x/unit/runtime) and the findings. Snapshots for one desktop are
+spaced at least five minutes apart and live in the backend process
+(`GET /api/admin/fleet/diag/recent`, `GET /api/admin/fleet/diag/<id>`); they are
+not durable yet.
+
+To take a fresh one: `POST /api/admin/fleet/desktops/<ecd-id>/diag` with
+`{"via": "auto"}` uses the application channel and falls back to Cloud
+Assistant when the tunnel is down. The collector is `container/obx_diag.py`;
+the backend ships its own copy inline with every request, so the report format
+never depends on what the desktop has installed. The runtime repair also
+installs it at `/opt/openbox/tools/obx_diag.py` for hands-on use:
+
+```bash
+python3 /opt/openbox/tools/obx_diag.py --pretty            # on the desktop
+curl -H "X-API-Key: $KEY" 'http://127.0.0.1:18000/diag/browser?session=<id>'   # through the tunnel
+```
+
+What it reports: the OpenBox Chrome process (allow-listed argv, uid, threads,
+RSS, age, DISPLAY), `/json/version` and the open targets, the profile's
+`DevToolsActivePort` and `SingletonLock` owner, the relay's `GET /` and pid
+file, `obx-x`/`xrandr` resolution and the streaming manager's client count,
+the systemd units' state/`NRestarts`/`TasksCurrent`/`TasksMax` and drop-ins,
+`repair_browser_runtime.py --check`, tails of `/tmp/obx-chrome.log`,
+`/tmp/obx-relay.log` and the action server's `execute_trace` journal lines.
+Command text never appears anywhere: the action server hashes commands and
+classifies them (`browser_probe`, `browser_launch`, `browser_script`, …), and
+now echoes `X-OpenBox-Request` on every response so a backend log line can be
+matched to its journald record by id instead of by timestamp.
+
+The probes behind `GET /api/browser/status` and the `browser_mode` tool tell
+`transport` (the desktop did not answer at all) apart from `connect` (the
+desktop answered, the port did not), `http` and `parse`; a grey dot in the
+settings page now comes with that word.
+
 ## What differs from the Docker and Kubernetes providers
 
 | | Docker / Kubernetes | WUYING |

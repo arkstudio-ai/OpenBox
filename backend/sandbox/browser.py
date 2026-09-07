@@ -22,6 +22,7 @@ import base64
 import json
 import shlex
 import time
+from dataclasses import dataclass
 
 from core.log import create_logger
 
@@ -121,15 +122,64 @@ def _parse_json(text: str | None) -> dict | None:
     return None
 
 
-async def _curl_json(client, url: str, timeout: int = 3) -> dict | None:
+@dataclass
+class Probe:
+    """One loopback probe, with *why* it failed when it did.
+
+    `stage` names the layer that broke: `transport` (the action server or its
+    tunnel did not answer at all), `connect` (curl ran on the desktop but the
+    port did not), `http` (the port answered with an error status) or `parse`
+    (it answered with something that is not JSON). A bare `None` used to stand
+    for all four, which made "Chrome is down" indistinguishable from "the
+    desktop is unreachable".
+    """
+    ok: bool
+    data: dict | None = None
+    stage: str = ""
+    detail: str = ""
+    status: int = 0
+    ms: int = 0
+
+    def describe(self) -> str:
+        if self.ok:
+            return "ok"
+        return f"{self.stage}: {self.detail}"[:200] if self.detail else self.stage
+
+
+_HTTP_MARKER = "OBX_HTTP="
+
+
+async def _probe_url(client, url: str, timeout: int = 3) -> Probe:
     """Fetch and parse a loopback endpoint on the desktop. Never raises."""
+    started = time.monotonic()
+    command = (
+        f"curl -sS --max-time {timeout} -w '\\n{_HTTP_MARKER}%{{http_code}}' {shlex.quote(url)}"
+    )
     try:
-        res = await client.execute(
-            f"curl -s --max-time {timeout} {shlex.quote(url)}", timeout=timeout + 7
-        )
-    except Exception:
-        return None
-    return _parse_json(res.stdout)
+        res = await client.execute(command, timeout=timeout + 7)
+    except Exception as exc:
+        return Probe(False, stage="transport", detail=f"{type(exc).__name__}: {exc}",
+                     ms=round((time.monotonic() - started) * 1000))
+    ms = round((time.monotonic() - started) * 1000)
+    body, status = (getattr(res, "stdout", "") or ""), 0
+    if _HTTP_MARKER in body:
+        body, _, code = body.rpartition(_HTTP_MARKER)
+        status = int(code.strip() or 0) if code.strip().isdigit() else 0
+    if res.exit_code != 0:
+        stderr = getattr(res, "stderr", "") or ""
+        detail = stderr.strip().splitlines()[-1:] or [f"curl exit {res.exit_code}"]
+        return Probe(False, stage="connect", detail=detail[0][:200], status=status, ms=ms)
+    if status and not 200 <= status < 300:
+        return Probe(False, stage="http", detail=f"HTTP {status} {body.strip()[:120]}", status=status, ms=ms)
+    data = _parse_json(body)
+    if data is None:
+        return Probe(False, stage="parse", detail=body.strip()[:120] or "empty body", status=status, ms=ms)
+    return Probe(True, data=data, status=status, ms=ms)
+
+
+async def _curl_json(client, url: str, timeout: int = 3) -> dict | None:
+    """Parsed JSON from a loopback endpoint, or None. Never raises."""
+    return (await _probe_url(client, url, timeout)).data
 
 
 _CHROME_RENDERER_PROBE = r'''import json,sys,urllib.parse,urllib.request
@@ -180,20 +230,39 @@ finally:
 
 def _chrome_renderer_probe_command() -> str:
     payload = base64.b64encode(_CHROME_RENDERER_PROBE.encode()).decode()
-    return f"printf %s {payload} | base64 -d | python3"
+    # The leading no-op lets the action server classify this as a browser
+    # probe in its trace without ever seeing what the command does.
+    return f": obx-chrome-probe; printf %s {payload} | base64 -d | python3"
+
+
+async def _probe_chrome_detailed(client) -> tuple[dict | None, str]:
+    """Chrome metadata when a renderer executes a real CDP command, else why not.
+
+    The reason is the thing worth keeping: the renderer probe writes a precise
+    diagnosis to stderr ("Target closed", "no page target", a timeout) which
+    tells apart a hung renderer from a Chrome that is simply not there.
+    """
+    version = await _probe_url(client, _chrome_url("/json/version"))
+    if not version.ok:
+        return None, f"/json/version {version.describe()}"
+    try:
+        result = await client.execute(_chrome_renderer_probe_command(), timeout=8)
+    except Exception as exc:
+        return None, f"renderer probe transport: {type(exc).__name__}: {exc}"[:200]
+    if result.exit_code != 0:
+        text = getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
+        reason = text.strip().splitlines()
+        return None, (reason[-1] if reason else f"renderer probe exit {result.exit_code}")[:200]
+    data = _parse_json(result.stdout)
+    if data is None:
+        return None, "renderer probe returned no JSON"
+    return data, "ok"
 
 
 async def _probe_chrome(client) -> dict | None:
     """Return Chrome metadata only when a renderer executes a real CDP command."""
-    if not await _curl_json(client, _chrome_url("/json/version")):
-        return None
-    try:
-        result = await client.execute(_chrome_renderer_probe_command(), timeout=8)
-    except Exception:
-        return None
-    if result.exit_code != 0:
-        return None
-    return _parse_json(result.stdout)
+    data, _ = await _probe_chrome_detailed(client)
+    return data
 
 
 #: How long to wait on a command whose only job is to *start* something.
@@ -233,9 +302,9 @@ async def _fire_and_forget(client, command: str) -> None:
 async def _log_tail(client, path: str, lines: int = 40) -> str:
     try:
         res = await client.execute(f"tail -n {lines} {shlex.quote(path)} 2>/dev/null", timeout=10)
-        return (res.stdout or "").strip()
-    except Exception:
-        return ""
+        return (res.stdout or "").strip() or f"({path} is empty or missing)"
+    except Exception as exc:
+        return f"({path} unavailable: {type(exc).__name__}: {exc})"
 
 
 #: Where branded Google Chrome reads enterprise policy on Linux. Confirmed
@@ -689,10 +758,11 @@ async def ensure_chrome(client, container_key: str) -> dict:
     to short-circuit the probe — a rebooted desktop would hand back a dead port.
     Returns the parsed /json/version JSON (webSocketDebuggerUrl, Browser, ...).
     """
-    existing = await _probe_chrome(client)
+    existing, reason = await _probe_chrome_detailed(client)
     if existing:
         _chrome_ready.add(container_key)
         return existing
+    log.info("Chrome on :%d not usable (%s); launching", CHROME_PORT, reason)
 
     # obx-x is what discovers the desktop's X session for the sudo launch below.
     await ensure_x_helper(client, container_key)
@@ -710,14 +780,15 @@ async def ensure_chrome(client, container_key: str) -> dict:
     deadline = time.monotonic() + CHROME_READY_BUDGET
     while time.monotonic() < deadline:
         await asyncio.sleep(1.0)
-        data = await _probe_chrome(client)
+        data, reason = await _probe_chrome_detailed(client)
         if data:
             _chrome_ready.add(container_key)
             return data
 
     raise ChromeUnavailable(
         f"Chrome did not open its debug port on :{CHROME_PORT} within "
-        f"{CHROME_READY_BUDGET}s.\nchrome log:\n{await _log_tail(client, CHROME_LOG)}"
+        f"{CHROME_READY_BUDGET}s (last probe: {reason}).\n"
+        f"chrome log:\n{await _log_tail(client, CHROME_LOG)}"
     )
 
 
@@ -731,35 +802,51 @@ async def ensure_relay(client, container_key: str, mode: str) -> dict:
     if mode not in _VALID_MODES:
         raise ValueError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
 
-    existing = await _curl_json(client, _relay_url())
+    probe = await _probe_url(client, _relay_url())
+    existing = probe.data
     if existing and existing.get("configuredMode") == mode:
         _relay_ready.add(container_key)
         return existing
 
-    log.info("(re)starting dev-browser relay in %s mode", mode)
+    log.info(
+        "(re)starting dev-browser relay in %s mode (was: %s)", mode,
+        f"configuredMode={existing.get('configuredMode')!r}" if existing else probe.describe(),
+    )
     await _fire_and_forget(client, _relay_start_script(mode))
 
     deadline = time.monotonic() + RELAY_READY_BUDGET
     while time.monotonic() < deadline:
         await asyncio.sleep(1.0)
-        data = await _curl_json(client, _relay_url())
-        if data:
+        probe = await _probe_url(client, _relay_url())
+        if probe.data:
             _relay_ready.add(container_key)
-            return data
+            return probe.data
 
     raise RelayUnavailable(
         f"dev-browser relay did not answer on :{RELAY_PORT} within "
-        f"{RELAY_READY_BUDGET}s.\nrelay log:\n{await _log_tail(client, RELAY_LOG)}"
+        f"{RELAY_READY_BUDGET}s (last probe: {probe.describe()}).\n"
+        f"relay log:\n{await _log_tail(client, RELAY_LOG)}"
     )
 
 
 async def browser_status(client) -> dict:
-    """Cheap read-only probe of both endpoints for the API. Never raises."""
-    chrome = await _curl_json(client, _chrome_url("/json/version"))
+    """Cheap read-only probe of both endpoints for the API. Never raises.
+
+    `problems` says why a side is missing, in the probe's stage vocabulary, so
+    the settings page and the browser_mode tool can distinguish "the desktop
+    is unreachable" from "Chrome is not running" instead of showing one grey
+    dot for both.
+    """
+    chrome = await _probe_url(client, _chrome_url("/json/version"))
+    relay = await _probe_url(client, _relay_url())
     return {
-        "chrome": chrome,
-        "presentation": "headless" if is_headless(chrome) else "headed",
-        "relay": await _curl_json(client, _relay_url()),
+        "chrome": chrome.data,
+        "presentation": "headless" if is_headless(chrome.data) else "headed",
+        "relay": relay.data,
+        "problems": {
+            "chrome": None if chrome.ok else chrome.describe(),
+            "relay": None if relay.ok else relay.describe(),
+        },
     }
 
 
@@ -806,10 +893,13 @@ async def _ensure_browser_locked(client, container_key: str, mode: str) -> dict:
 
     # extension / auto: try the user's own browser first, tolerating a relay
     # that cannot even start (fall through to local rather than surfacing it).
+    fallback_reason = None
     try:
         relay = await ensure_relay(client, container_key, mode)
-    except RelayUnavailable:
+    except RelayUnavailable as exc:
         relay = None
+        fallback_reason = str(exc).splitlines()[0][:200]
+        log.warning("relay in %s mode unavailable, falling back to local Chrome: %s", mode, fallback_reason)
 
     if relay and relay.get("extensionConnected"):
         return {"mode": _effective_mode(relay, "extension"), "relay": relay, "chrome": None}
@@ -818,7 +908,12 @@ async def _ensure_browser_locked(client, container_key: str, mode: str) -> dict:
     # agent still has something to drive. Any failure here is a real one.
     chrome = await ensure_chrome(client, container_key)
     relay = await ensure_relay(client, container_key, "local")
-    return {"mode": _effective_mode(relay, "local"), "relay": relay, "chrome": chrome}
+    return {
+        "mode": _effective_mode(relay, "local"),
+        "relay": relay,
+        "chrome": chrome,
+        "fallback_reason": fallback_reason,
+    }
 
 
 async def ensure_browser(client, container_key: str, mode: str) -> dict:
@@ -831,17 +926,28 @@ async def ensure_browser(client, container_key: str, mode: str) -> dict:
     if mode not in _VALID_MODES:
         raise ValueError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
     from core.config import get_config
-    if get_config().sandbox_provider == "wuying":
-        from sandbox.browser_runtime import ensure_browser_runtime
-        # Static runtime work does not touch the GUI. Do it before acquiring
-        # the display lease so npm cannot outlive a turn's GUI lease.
-        await ensure_browser_runtime(client)
-    lease_factory = getattr(client, "desktop_lease", None)
-    if lease_factory is None:
-        return await _ensure_browser_locked(client, container_key, mode)
-    async with lease_factory(
-        session_id=container_key,
-        tool_call_id=f"browser-{container_key}",
-        operation="browser",
-    ):
-        return await _ensure_browser_locked(client, container_key, mode)
+    from sandbox.browser_runtime import BrowserRuntimeUnavailable, ensure_browser_runtime
+    try:
+        if get_config().sandbox_provider == "wuying":
+            # Static runtime work does not touch the GUI. Do it before acquiring
+            # the display lease so npm cannot outlive a turn's GUI lease.
+            await ensure_browser_runtime(client)
+        lease_factory = getattr(client, "desktop_lease", None)
+        if lease_factory is None:
+            return await _ensure_browser_locked(client, container_key, mode)
+        async with lease_factory(
+            session_id=container_key,
+            tool_call_id=f"browser-{container_key}",
+            operation="browser",
+        ):
+            return await _ensure_browser_locked(client, container_key, mode)
+    except (ChromeUnavailable, RelayUnavailable, BrowserRuntimeUnavailable) as exc:
+        # The failure message names the step; the desktop snapshot explains it.
+        # Taken after the lease is released — the collector is read-only and
+        # needs no display, and the turn has already failed.
+        from sandbox.diag import capture_failure
+        await capture_failure(
+            client, container_key=container_key, session_id=container_key,
+            reason=type(exc).__name__, error=exc,
+        )
+        raise

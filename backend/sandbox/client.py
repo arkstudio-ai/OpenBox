@@ -169,6 +169,10 @@ class ExecuteResult:
     exit_code: int
     stdout: str
     stderr: str
+    #: The X-OpenBox-Request id the action server echoed back, when it did.
+    #: Grep it in `journalctl -u openbox-action-server` to find the matching
+    #: execute_trace line.
+    request_id: str = ""
 
 
 @dataclass
@@ -411,6 +415,8 @@ class SandboxClient:
                 exit_code=data["exit_code"],
                 stdout=data["stdout"],
                 stderr=data["stderr"],
+                request_id=(getattr(resp, "headers", None) or {}).get("X-OpenBox-Request", "")
+                or ((data.get("trace") or {}).get("request") or ""),
             )
 
     async def media_queue_status(self) -> dict:

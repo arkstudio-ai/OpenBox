@@ -75,6 +75,20 @@ if [ -z "$DISPLAY" ]; then
   done
 fi
 [ -n "$DISPLAY" ] || { echo "obx-x: no X display found" >&2; exit 3; }
+# A hardened action service (no CAP_SYS_PTRACE) sees the session's pids but
+# may not read their environ, so the display is known and the cookie is not.
+# Try the places display managers keep it; a candidate counts only if the X
+# server actually accepts it.
+if [ -z "$XAUTHORITY" ]; then
+  for a in $(ls -t /tmp/xauth_* /run/user/*/gdm/Xauthority /home/*/.Xauthority /root/.Xauthority 2>/dev/null); do
+    [ -r "$a" ] || continue
+    if command -v xdpyinfo >/dev/null 2>&1; then
+      XAUTHORITY="$a" xdpyinfo >/dev/null 2>&1 || continue
+    fi
+    XAUTHORITY="$a"; export XAUTHORITY
+    break
+  done
+fi
 exec "$@"
 """
 

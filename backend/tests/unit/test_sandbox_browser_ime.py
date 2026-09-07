@@ -60,3 +60,13 @@ def test_unresponsive_automation_browser_is_reconciled_before_launch():
     assert 'unable to stop stale OpenBox Chrome' in script
     assert 'Chrome launched but its renderer did not become healthy' in script
     assert script.count('9>&-') == 2
+
+
+def test_obx_x_falls_back_to_display_manager_xauth_files():
+    """Seen on the shared desktop: a hardened action service (no CAP_SYS_PTRACE)
+    can list gnome-shell but not read its environ, so obx-x found DISPLAY=:1
+    from the socket and no XAUTHORITY at all — Chrome then never reached X."""
+    from sandbox.desktop import OBX_X_SCRIPT
+    assert "/tmp/xauth_*" in OBX_X_SCRIPT and "/run/user/*/gdm/Xauthority" in OBX_X_SCRIPT
+    assert 'XAUTHORITY="$a" xdpyinfo' in OBX_X_SCRIPT
+    assert OBX_X_SCRIPT.index('if [ -z "$XAUTHORITY" ]; then\n  for a in') < OBX_X_SCRIPT.index('exec "$@"')

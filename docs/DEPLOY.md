@@ -5,6 +5,59 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云发布：2026-09-07 dev-browser 平台修复
+
+- 17:40（北京时间）阿里云 gw2 后端已切换至
+  `openbox-backend:20260907-browser-1b5dbdd`，源码 `main@1b5dbdd`，运行时版本
+  `20260907.3`。本机 Docker 构建 `linux/amd64`，私有 OSS 中转、校验 SHA-256
+  后在服务器装载；未在阿里云服务器构建源码。
+- 镜像 ID `sha256:9d57d3651229d9ba67b3b4372b27971f5ed85fd5a7fc02c8fcaa0219552d480f`，
+  传输包 SHA-256 `3f28bee1ad8ac7d95736d66f4056e5ed22dd4f1195dc04ba550087d2e0c77b9c`。
+  镜像检查通过，包含锁定运行时与 A5 的 `segno`，不包含本地 `skill_jobs.db`。
+- 本次仅改 `docker-compose.override.yml` 的 backend image。frontend 保持
+  `openbox-frontend-v2:20260907-a5p2-4667a8c`；frontend、postgres、redis 容器 ID
+  未变，四服务 healthy，迁移仍为 `a5c0d1e2f3a4`，环境仍为 `prod`。
+  `.env`、基础 compose、`config/backend.env`、`config/openbox.json` 均逐字节核对未变。
+  **后续发布必须更新 backend 的 compose override，不能只修改 `.env` 的 tag。**
+- 激活前的配置及经 `pg_restore --list` 校验的数据库备份位于
+  `/opt/openbox/backups/20260907-browser-1b5dbdd/activation-20260907T094029Z/`，
+  目录权限 `0700`。应用回滚可恢复其中的 compose override、仅重建 backend 并
+  等待 healthy 后 reload Nginx；本次无迁移，不需要恢复数据库或用户浏览器数据。
+  传输用临时 OSS 对象已删除，本地及服务器镜像包、历史镜像和备份保留。
+- 发现另一类真实故障：桌面 `ecd-b9oizzx4rfhbsm1uh` 的 action service 原先
+  `TasksMax=512`，`pids.events` 已记录 20 次触顶，Chrome 日志有与测试超时对应的
+  `pthread_create: Resource temporarily unavailable`。Chrome/IBus/Node 的线程均计入
+  上限；已在线提高至 2048，未重启 action service、未改变 6 GiB 的内存硬限制。
+  原属性保存在该桌面的 `/opt/openbox/backups/browser-task-budget-4lvtcpmp/`。
+  随后检测到该桌面 Chrome 已换为新进程，技能原样 `npx --no-install tsx` 的网页、
+  中文输入、点击、快照全部通过；没有再对已恢复的新进程执行重复重启。
+- 相同资源配置已接入版本化修复器及 bootstrap：持久化单独的资源 drop-in，在线
+  修改不足的 live cgroup 限额，保留更高/无限的既有设置。只读检查不要求写锁或
+  systemd D-Bus，兼容旧 action 容器。仅提高上限不能保证恢复已损坏的 renderer，
+  此类浏览器仍需要单独确认后的备份重启，不能把端口通等同于页面操作通。
+- 最终版本在未分配预备机的真实重启后，运行时 `20260907.3` 检查通过，开机服务
+  `active / Result=success / ExecMainStatus=0`，持久化 TasksMax 为 2048。
+  boot ID 为 `355f647c-33db-474b-9e19-040ade25b82a`；随后已归还预热池。
+  没有重启任何已分配用户的云电脑。
+- 本地 **197 项相关回归通过**，覆盖运行时、线程限额、启动/重启门禁、只读兼容、
+  桌面激活、池、浏览器/拼音、租约、技能以及现有订阅/A5 功能。全量测试的旧夹具与
+  私有模型配置失败仍单独记录在下文，不宣称全量测试通过。
+- 旧机 `ecd-8zp47qagrsc95h67t` 还存在 `media.conf` 的 `TasksMax=512`；按 systemd
+  的文件名顺序，它会覆盖早于自己的资源 drop-in，单独 `set-property` 也会在配置
+  重载后回退。最终版本使用 `zz-openbox-browser-resources.conf`，保留原 media
+  文件与内存设置；实际安装、重载后的只读检查及幂等执行均通过。
+- 最终全量结果：**14/14** 台运行时 `20260907.3` 检查通过，开机检查均已启用。
+  17:43 只读快照为 9 台 assigned、5 台 prewarm，激活记录 8 个 ready、1 个 suspended；
+  预备机保留标记已清除，没有新增云电脑、账号或测试订单。
+- **8/8** 个已激活账号经真实的租约及套餐权限检查，通过技能原样
+  `npx --no-install tsx` 连接、公开网页访问、中文填入、按钮点击和无障碍快照。
+  最终版本复测仍为 8/8，前后 Chrome CDP 标识相同，测试页全部关闭；
+  包含验收期间刚从预热池分配的 `ecd-c4qndqrko3db7kjfz`。停用旧机只做管理员
+  运行环境检查，未绕过订阅给它开通浏览器操作；其只读 action 环境也通过新版本检查。
+- 生产域名首页请求成功，`/api/environment` 返回 `{"name":"prod"}`；最后复核四个
+  服务均 healthy、后端源码标记 `1b5dbdd`。未接入图形桌面时的浏览器仍为无头模式，
+  不会显示在 Web SDK 的桌面画面中；工具会明确告知，且不会为切换显示方式关闭会话。
+
 ## 平台修复机制：2026-09-07 dev-browser
 
 - 同一修复器接入云电脑初始化、预热池验收、通道激活、开机前检查和浏览器首次使用；
@@ -50,13 +103,13 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 此处是 14:56 单桌面修复的历史记录；后续平台修复将真源归并到
   `backend/sandbox/browser_runtime_repair.py`，见上方平台修复机制及后续验收记录。
 
-## 当前生产配置：2026-09-07 切换 prod 环境标识
+## 历史配置：2026-09-07 切换 prod 环境标识
 
 - 按用户确认，将阿里云 gw2 的 `/opt/openbox/config/backend.env` 中
   `APP_ENV=staging` 改为 `APP_ENV=prod`。公网 `/api/environment` 已返回
   `{"name":"prod"}`，浏览器刷新后不再显示“内测环境”角标。前端在页面会话中缓存
   环境值，已打开的页面需要刷新。后续发布应保留 `APP_ENV=prod`。
-- 当前前后端镜像统一标签为 `20260907-subscription-129e758`，源码提交为
+- 当时前后端镜像统一标签为 `20260907-subscription-129e758`，源码提交为
   `129e758`，包含订阅驱动的无影云自动开通及统一测试价格。本次仅修改环境标识，
   未重建镜像；专业版、旗舰版的月付和年付总价仍均为 **0.10 元**，免费版仍为 0 元。
   `BILLING_MODE=shadow`、访问控制、订阅、积分与桌面配置均未改动。

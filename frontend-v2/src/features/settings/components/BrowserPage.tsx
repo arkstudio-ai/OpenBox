@@ -36,8 +36,23 @@ function ModeCard({
 }
 
 /** Live line: is the user's own browser connected, is the cloud one available. */
-function StatusLine({ remote, local }: { remote: boolean; local: boolean }) {
+function StatusLine({
+  remote,
+  local,
+  reason,
+  detail,
+}: {
+  remote: boolean
+  local: boolean
+  reason?: string
+  detail?: string
+}) {
   const { t } = useTranslation("settings")
+  // A grey dot used to be all anyone saw. The reason tells "the desktop is
+  // unreachable" apart from "Chrome is not running", which need different fixes.
+  const why = !local && reason
+    ? t(`browser.status.reason.${reason}`, { defaultValue: reason })
+    : ""
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-hair bg-card px-4 py-3.5">
       <span className="text-xs text-n600">{t("browser.status.title")}</span>
@@ -49,7 +64,11 @@ function StatusLine({ remote, local }: { remote: boolean; local: boolean }) {
         <span>
           {t("browser.status.local")} ·{" "}
           {local ? t("browser.status.available") : t("browser.status.unavailable")}
+          {why && <span className="text-n500"> · {why}</span>}
         </span>
+        {!local && detail && (
+          <span className="font-mono text-xs text-n500" title={detail}>{detail}</span>
+        )}
       </div>
     </div>
   )
@@ -77,7 +96,12 @@ export function BrowserPage() {
         ))}
       </div>
 
-      <StatusLine remote={remoteConnected} local={localAvailable} />
+      <StatusLine
+        remote={remoteConnected}
+        local={localAvailable}
+        reason={status.data?.local.reason}
+        detail={status.data?.local.detail}
+      />
 
       {preference === "remote" && !remoteConnected && (
         <span className="text-pretty text-xs text-n600">{t("browser.fallbackHint")}</span>

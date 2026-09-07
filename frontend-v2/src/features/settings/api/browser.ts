@@ -13,7 +13,14 @@ export type BrowserMode = "auto" | "local" | "remote"
 export interface BrowserStatus {
   mode: BrowserMode
   preference: BrowserMode
-  local: { available: boolean; reason?: string }
+  local: {
+    available: boolean
+    /** Why not, when unavailable: `unreachable` (the desktop itself did not
+     *  answer), `not_started` (desktop fine, Chrome down), `no_sandbox`, `error`. */
+    reason?: "unreachable" | "not_started" | "no_sandbox" | "error" | string
+    /** The probe's own words, e.g. `connect: Connection refused`. */
+    detail?: string
+  }
   remote: { connected: boolean }
 }
 

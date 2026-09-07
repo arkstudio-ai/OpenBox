@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { http } from "@/shared/api/http"
-import type { FleetAlert, FleetDesktop, FleetSnapshot, PoolEnsureResult, PoolSummary } from "./types"
+import type {
+  DesktopEvent,
+  DiagCollectResult,
+  DiagRecord,
+  FleetAlert,
+  FleetDesktop,
+  FleetSnapshot,
+  PoolEnsureResult,
+  PoolSummary,
+} from "./types"
 
 
 const keys = {
@@ -9,6 +18,9 @@ const keys = {
   pool: ["admin-fleet", "pool"] as const,
   alerts: ["admin-fleet", "alerts"] as const,
   snapshot: ["admin-fleet", "snapshot"] as const,
+  events: (desktopId: string) => ["admin-fleet", "events", desktopId] as const,
+  diags: (desktopId: string) => ["admin-fleet", "diags", desktopId] as const,
+  diag: (id: string) => ["admin-fleet", "diag", id] as const,
 }
 
 export function useFleetDesktops() {
@@ -101,4 +113,55 @@ export function useAdoptDesktop() {
       gateway_release_verified: input.gatewayReleaseVerified,
     }),
   )
+}
+
+// --- browser diagnostics -----------------------------------------------------
+
+/** The desktop's timeline, newest first. */
+export function useDesktopEvents(desktopId: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.events(desktopId),
+    queryFn: () => http.get<{ items: DesktopEvent[] }>(
+      `/api/admin/fleet/desktops/${encodeURIComponent(desktopId)}/events?limit=200`,
+    ),
+    enabled: enabled && !!desktopId,
+    refetchInterval: 30_000,
+  })
+}
+
+/** Snapshots of one desktop without their report bodies, newest first. */
+export function useDesktopDiags(desktopId: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.diags(desktopId),
+    queryFn: () => http.get<{ items: DiagRecord[] }>(
+      `/api/admin/fleet/diag/recent?desktop_id=${encodeURIComponent(desktopId)}&limit=20`,
+    ),
+    enabled: enabled && !!desktopId,
+  })
+}
+
+/** One snapshot with its full report. */
+export function useDiag(id: string | null) {
+  return useQuery({
+    queryKey: keys.diag(id ?? ""),
+    queryFn: () => http.get<DiagRecord>(`/api/admin/fleet/diag/${encodeURIComponent(id ?? "")}`),
+    enabled: !!id,
+    staleTime: Infinity,
+  })
+}
+
+/** Take a fresh snapshot: through the channel when it is up, else Cloud Assistant. */
+export function useCollectDiag() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ desktopId, via = "auto" }: { desktopId: string; via?: "auto" | "channel" | "cloud" }) =>
+      http.post<DiagCollectResult>(
+        `/api/admin/fleet/desktops/${encodeURIComponent(desktopId)}/diag`,
+        { via, lines: 60 },
+      ),
+    onSuccess: (_result, { desktopId }) => {
+      void client.invalidateQueries({ queryKey: keys.events(desktopId) })
+      void client.invalidateQueries({ queryKey: keys.diags(desktopId) })
+    },
+  })
 }

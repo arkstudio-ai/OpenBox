@@ -14,6 +14,7 @@ import {
   useReleaseDesktop,
   useRetireDesktop,
 } from "./api"
+import { DesktopDiagDrawer } from "./DesktopDiagDrawer"
 
 
 const card = "rounded-xl border border-hair bg-card p-4"
@@ -41,6 +42,7 @@ export function FleetPage() {
   const [adoptRebuild, setAdoptRebuild] = useState(false)
   const [gatewayReleaseVerified, setGatewayReleaseVerified] = useState(false)
   const [ensureMessage, setEnsureMessage] = useState("")
+  const [diagDesktop, setDiagDesktop] = useState<string | null>(null)
 
   if ([pool, desktops, alerts, snapshot].some((query) => query.isPending)) {
     return <div className="flex justify-center py-16"><Spinner className="size-5" /></div>
@@ -208,6 +210,9 @@ export function FleetPage() {
                   <td className="py-2.5 pe-3">{date(desktop.expires_at)}</td>
                   <td className="py-2.5">
                     <div className="flex gap-1.5">
+                      <button className={button} onClick={() => setDiagDesktop(desktop.desktop_id ?? desktop.id)}>
+                        {t("diag.open")}
+                      </button>
                       {desktop.pool_state === "assigned" && (
                         <button className={button} disabled={release.isPending} onClick={() => {
                           if (window.confirm(t("desktops.confirmRelease"))) release.mutate(desktop.desktop_id ?? desktop.id)
@@ -259,6 +264,8 @@ export function FleetPage() {
           ))}
         </div>
       </section>
+
+      {diagDesktop && <DesktopDiagDrawer desktopId={diagDesktop} onClose={() => setDiagDesktop(null)} />}
     </div>
   )
 }

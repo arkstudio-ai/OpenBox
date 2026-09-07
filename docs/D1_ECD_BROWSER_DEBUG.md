@@ -1,4 +1,4 @@
-# D1 · ECD 浏览器调试监控（方案 v1，2026-09-07；L0+L1+L2 已实现，见 §7）
+# D1 · ECD 浏览器调试监控（方案 v1，2026-09-07；L0–L2 + L4 已实现，见 §7）
 
 ## 0. 一句话
 
@@ -205,4 +205,15 @@ L0 + L1 一起（收益最大、无迁移）→ L2 → L4 → L3（视需要）�
   `mem_…` 缓存。admin API：`GET /api/admin/fleet/events?desktop_id=&session=&kind=&status=`、
   `GET /events/{id}`、`GET /desktops/{id}/events`；`diag/recent` 支持 `desktop_id` 过滤。
 
-**未做 / 下一步**：L4 Fleet 抽屉与设置页 `detail` 展示、L3 页面级 ops、L5 告警。
+**L4 已做（同分支，第三个提交）**
+
+- Fleet 页每台桌面多一个「诊断」按钮 → 右侧抽屉 `DesktopDiagDrawer`：最近快照的五灯 + 结论 +
+  采集失败段落、Chrome/Relay/journal 日志尾（折叠）、多快照选择、「重新采集」（auto：通道优先，
+  回落云助手，并显示回落原因）、时间线（kind/status/耗时/摘要/`diag:<id>`，点开看 session /
+  tool_call / request id）。ESC 关闭。
+- 设置页浏览器状态：不可用时显示原因（桌面不可达 / Chrome 未运行 / 没有桌面 / 检查失败）与探针原话。
+- hooks：`useDesktopEvents`、`useDesktopDiags`、`useDiag`、`useCollectDiag`；i18n 键 `admin.diag.*`、
+  `settings.browser.status.reason.*`（中英）。测试 `DesktopDiagDrawer.test.tsx` 4 条。
+- 未做真机 UI 验证（需要 admin 登录 + 有事件数据的后端）；上线后在 gw2 Fleet 页点一台机器即可验。
+
+**未做 / 下一步**：L3 页面级 ops（改 `client.ts`，需再升 RUNTIME_VERSION）、L5 告警。

@@ -57,3 +57,65 @@ export interface FleetSnapshot {
   taken_at?: string | null
   sources: Array<{ source: string; ok: boolean; error?: string | null }>
 }
+
+/** One row of the desktop timeline (`desktop_events`). */
+export interface DesktopEvent {
+  id: string
+  ts: string | null
+  desktop_id?: string | null
+  container_key?: string | null
+  session_id?: string | null
+  tool_call_id?: string | null
+  request_id?: string | null
+  kind: string
+  status: "ok" | "fail" | "timeout" | "info" | string
+  duration_ms?: number | null
+  summary: string
+  diag_id?: string | null
+  detail?: Record<string, unknown> | null
+}
+
+export type DiagLight = "ok" | "degraded" | "down" | "unknown"
+
+export interface DiagSummary {
+  lights: Record<string, DiagLight>
+  findings: string[]
+}
+
+/** A `browser.diag` row, flattened: the event plus what the collector saw. */
+export interface DiagRecord extends DesktopEvent {
+  reason?: string
+  error?: string
+  note?: string
+  collected?: boolean
+  via?: string | null
+  lights?: Record<string, DiagLight> | null
+  findings?: string[] | null
+  report?: DiagReport | null
+}
+
+interface LogTail {
+  path?: string
+  lines?: string[]
+  missing?: boolean
+  error?: string
+}
+
+/** The collector's report; only the parts the drawer renders are typed. */
+export interface DiagReport {
+  diag_version: string
+  collected_at: string
+  elapsed_ms?: number
+  via?: string
+  errors: Array<{ section: string; error: string }>
+  summary: DiagSummary | null
+  chrome?: { log?: LogTail; total_processes?: number; total_threads?: number } | null
+  relay?: { log?: LogTail } | null
+  logs?: { journal?: { lines?: string[]; error?: string; skipped?: boolean } } | null
+  [section: string]: unknown
+}
+
+export interface DiagCollectResult extends DiagReport {
+  id: string
+  fallback_errors: string[]
+}

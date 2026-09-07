@@ -217,3 +217,22 @@ L0 + L1 一起（收益最大、无迁移）→ L2 → L4 → L3（视需要）�
 - 未做真机 UI 验证（需要 admin 登录 + 有事件数据的后端）；上线后在 gw2 Fleet 页点一台机器即可验。
 
 **未做 / 下一步**：L3 页面级 ops（改 `client.ts`，需再升 RUNTIME_VERSION）、L5 告警。
+
+## 8. 上线记录（2026-09-08 凌晨）
+
+- main 已包含 D1 全部提交（2620fcd → cf5eb1d → 35707a8 → 7d59c16 → b569448 → 94b2a98）。
+- AWS：`20260907-d1-94b2a98`。gw2：见 DEPLOY.md 当前发布节。15 台桌面 action server 已更新。
+- 埋点首战：上线 10 分钟内在 gw2 时间线上抓到 RUNTIME_VERSION 触发的修复崩溃，在 AWS 共享桌面上
+  用 `[diag:id]` 记录 + 日志尾 + 单元信息定位到 XAUTHORITY 与 `protected_regular` 两个根因，全程没有
+  手工登录桌面翻日志（云助手只用来确认 sysctl 和文件属主）。
+- 遗留：镜像缺 `container/dev-browser`（构建上下文问题）；L3/L5 未做。
+
+## 9. 「阿里出问题能不能在 AWS 复现」
+
+同一套代码、同一套埋点、同一格式的快照，两边各自的 `desktop_events` 表。做法：在 gw2 Fleet 页把出事
+桌面的快照和时间线拿到（五灯 + findings + 日志尾 + 事件序列），再在 AWS 的共享桌面上用同样的操作
+（或直接 `POST /api/admin/fleet/desktops/{id}/diag`）取一份对照，逐段比 `summary.findings`、`units`、
+`chrome.profiles`、`x`。能复现的是**代码路径和桌面配置类**问题（本次的 XAUTHORITY、protected_regular、
+runtime 版本都属此类）；复现不了的是**per-user 池机特有**的状态（用户 profile、bossip 旧镜像遗留、
+TasksMax drop-in 顺序），因为 AWS 只有一台共享桌面、shared 模式。这类就直接用 gw2 的快照读，
+不必复现。

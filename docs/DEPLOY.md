@@ -5,6 +5,37 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前发布：2026-09-08 D1 浏览器调试监控（AWS + 阿里云 + 15 台桌面）
+
+- 最终镜像 `20260907-d1-94b2a98`（源码 `main@94b2a98`）。AWS 后端/前端已切；阿里云 gw2
+  后端切换见本节末尾的状态行。前端自 `2620fcd` 起无变化，`94b2a98` 的前端 tag 只是重打标签。
+  迁移新增 `b6d1e2f3a4b5`（`desktop_events` 表），两边库均已到该 head。
+- 内容：探针分层（transport/connect/http/parse）、失败自动采集桌面诊断快照并在工具错误里引用
+  `[diag:<id>]`、`desktop_events` 时间线、Fleet 页「诊断」抽屉、设置页浏览器不可用原因。
+  详见 `docs/D1_ECD_BROWSER_DEBUG.md` §7 与 `docs/WUYING_SANDBOX.md`「Reading a broken desktop」。
+- 桌面端：action server `2026.09.07-browser-diag-v1` 已下发 15 台（共享桌面 ecd-4zjxaq5g45dr5qr0i、
+  gw2 的 9 台 assigned 重启生效、5 台 prewarm 只换文件，待分配时随通道安装启动）。
+  文件经私有 OSS 预签名链接分发并校验 SHA-256，临时对象已删。**重启 action server 会连带杀掉
+  它 cgroup 里的 Chrome/relay**（用户登录态在 profile 里不丢，页面状态丢），下一次浏览器使用自动重拉。
+- 发布过程中被埋点当场抓到并修掉的三个问题（都在 `main`）：
+  1. `cf5eb1d`：后端镜像只打包 `backend/`，`container/obx_diag.py` 不在镜像里 → 采集脚本改放
+     `backend/sandbox/obx_diag.py`。
+  2. `35707a8`：**所有历史镜像里都没有 `/container/dev-browser`**，镜像内的 runtime 修复路径
+     （`runtime_install_script` / `ensure_desktop_browser_runtime`）从来跑不了，只是此前
+     RUNTIME_VERSION 一直匹配没触发；`80fb70a` 升到 `.5` 后 gw2 两台桌面通道校验立刻循环失败
+     （时间线里 `browser.runtime_check`/`runtime_repair` fail）。已退回 `20260907.4`，并让该路径报出
+     明确错误。**根治需要把构建上下文改成仓库根目录，属于发布流程改动，未做。**
+  3. `7d59c16` + `94b2a98`：共享桌面的 action server 自 8 月 31 日起带 `runner-isolation.conf`
+     加固（无 CAP_SYS_PTRACE），重启后以 root 跑：`obx-x` 读不到 gnome-shell 的 environ 拿不到
+     XAUTHORITY；且 `/tmp/obx-*.log` 属主仍是旧的 `sandbox` 用户，`fs.protected_regular=2` 让 root
+     的 `>` 重定向失败并被吞进 /dev/null，Chrome/relay 根本没启动。`obx-x` 增加 xauth 文件回退，
+     三个启动脚本先回收日志再重定向。修后共享桌面 `ensure_browser` 17s 成功。
+- 备份：AWS `/opt/openbox/backups/20260907-d1-{2620fcd,35707a8,94b2a98}/<戳>/`，gw2
+  `/opt/openbox/backups/20260907-d1-2620fcd/<戳>/`（含 pg_dump 与 override）。
+- 回滚：改回 `.env`（AWS）/ `docker-compose.override.yml` 的 backend image（gw2）到
+  `20260907-browser-selfheal-73ad1c9`，`docker compose up -d --no-deps backend`；迁移 `b6d1e2f3a4b5`
+  只加表，旧代码不读它，无需降级。
+
 ## 当前阿里云发布：2026-09-07 dev-browser 平台修复
 
 - 17:40（北京时间）阿里云 gw2 后端已切换至

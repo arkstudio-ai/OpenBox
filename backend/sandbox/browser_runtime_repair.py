@@ -20,7 +20,7 @@ import tempfile
 import time
 
 
-RUNTIME_VERSION = "20260907.5"
+RUNTIME_VERSION = "20260907.4"
 SKILL_DIR = Path("/opt/openbox/skills/dev-browser")
 LOCK_FILE = Path("/opt/openbox/tools/dev-browser-package-lock.json")
 SOURCE_BUNDLE = Path("/opt/openbox/tools/dev-browser-sources.json")

@@ -34,9 +34,20 @@ class BrowserRuntimeUnavailable(RuntimeError):
 
 
 def runtime_files() -> dict[str, str]:
-    """Pinned repair code and relay sources shipped to every desktop."""
+    """Pinned repair code and relay sources shipped to every desktop.
+
+    The relay sources live outside the backend package. The backend Docker
+    image is built from ``backend/`` alone and does not carry them, so a
+    repair started from the image cannot proceed; say so plainly instead of
+    surfacing a FileNotFoundError from deep inside the install script.
+    """
     root = Path(__file__).resolve().parent
     dev_browser = root.parents[1] / "container" / "dev-browser"
+    if not (dev_browser / "SKILL.md").exists():
+        raise BrowserRuntimeUnavailable(
+            f"browser runtime sources are not available at {dev_browser}; "
+            "run the repair from a full checkout (bootstrap or scripts), not from the backend image"
+        )
     source_paths = [
         dev_browser / "SKILL.md",
         dev_browser / "package.json",

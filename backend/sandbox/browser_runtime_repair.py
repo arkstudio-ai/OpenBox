@@ -13,15 +13,17 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import tempfile
 import time
 
 
-RUNTIME_VERSION = "20260907.3"
+RUNTIME_VERSION = "20260907.4"
 SKILL_DIR = Path("/opt/openbox/skills/dev-browser")
 LOCK_FILE = Path("/opt/openbox/tools/dev-browser-package-lock.json")
+SOURCE_BUNDLE = Path("/opt/openbox/tools/dev-browser-sources.json")
 SAFE_PATH = "/usr/local/bin:/usr/bin:/bin"
 ACTION_SERVICE = "openbox-action-server.service"
 ACTION_TASKS_MIN = 2048
@@ -163,7 +165,76 @@ def task_budget_problems(systemd_root: Path, cgroup: Path) -> list[str]:
     return []
 
 
-def runtime_problems(skill_dir: Path, lock_file: Path, launcher: Path) -> list[str]:
+def source_problems(skill_dir: Path, source_bundle: Path) -> list[str]:
+    try:
+        sources = json.loads(source_bundle.read_text())
+        if not isinstance(sources, dict) or not sources:
+            return ["dev-browser source bundle is empty"]
+        for relative, expected in sources.items():
+            rel = Path(relative)
+            if rel.is_absolute() or ".." in rel.parts or not isinstance(expected, str):
+                return ["dev-browser source bundle contains an unsafe path"]
+            path = skill_dir / rel
+            if not path.is_file() or path.is_symlink() or path.read_text() != expected:
+                return [f"dev-browser source mismatch: {relative}"]
+    except (OSError, ValueError, UnicodeError):
+        return ["dev-browser source bundle is unavailable"]
+    return []
+
+
+def install_sources(skill_dir: Path, source_bundle: Path, backup: Path) -> bool:
+    """Atomically promote pinned relay sources without replacing node_modules."""
+    sources = json.loads(source_bundle.read_text())
+    if skill_dir.is_symlink():
+        raise RuntimeError("Refusing to replace a symlinked dev-browser directory")
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    changed = False
+    for relative, expected in sources.items():
+        rel = Path(relative)
+        if rel.is_absolute() or ".." in rel.parts or not isinstance(expected, str):
+            raise RuntimeError("Unsafe path in dev-browser source bundle")
+        destination = skill_dir / rel
+        if destination.is_symlink():
+            raise RuntimeError(f"Refusing to replace symlinked source {destination}")
+        if destination.is_file() and destination.read_text() == expected:
+            continue
+        if destination.exists() and not destination.is_file():
+            raise RuntimeError(f"Refusing to replace non-file source {destination}")
+        saved = backup / "sources" / rel
+        if destination.exists():
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(destination, saved)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, staging_name = tempfile.mkstemp(prefix=".openbox-source-", dir=destination.parent)
+        try:
+            with os.fdopen(descriptor, "w") as stream:
+                stream.write(expected)
+            os.chmod(staging_name, 0o644)
+            os.replace(staging_name, destination)
+        finally:
+            Path(staging_name).unlink(missing_ok=True)
+        changed = True
+    return changed
+
+
+def stop_stale_relay(pid_file: Path = Path("/tmp/obx-relay.pid")) -> None:
+    """Stop only the relay process so updated TypeScript loads on next use."""
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+    pid_file.unlink(missing_ok=True)
+
+
+def runtime_problems(skill_dir: Path, lock_file: Path, launcher: Path,
+                     source_bundle: Path = SOURCE_BUNDLE) -> list[str]:
     problems = []
     for name in ("node", "npm", "npx"):
         if not shutil.which(name):
@@ -184,10 +255,8 @@ def runtime_problems(skill_dir: Path, lock_file: Path, launcher: Path) -> list[s
             problems.append("Chrome launcher is not executable")
     except (OSError, UnicodeError, RuntimeError):
         problems.append("Chrome launcher is missing or its profile gate is unrecognized")
-    for relative in ("scripts/start-relay.ts", "src/client.ts", "src/relay.ts", "tsconfig.json"):
-        if not (skill_dir / relative).is_file():
-            problems.append(f"missing dev-browser source: {relative}")
-    return (problems + dependency_problems(skill_dir, lock_file)
+    return (problems + source_problems(skill_dir, source_bundle)
+            + dependency_problems(skill_dir, lock_file)
             + task_budget_problems(SYSTEMD_ROOT, ACTION_CGROUP))
 
 
@@ -347,7 +416,9 @@ def main() -> None:
     args = parser.parse_args()
     os.environ["PATH"] = SAFE_PATH
     if args.check:
-        problems = runtime_problems(SKILL_DIR, args.lock_file, Path('/opt/google/chrome/google-chrome'))
+        problems = runtime_problems(
+            SKILL_DIR, args.lock_file, Path('/opt/google/chrome/google-chrome'), SOURCE_BUNDLE
+        )
         print(json.dumps({"version": RUNTIME_VERSION, "ready": not problems, "problems": problems}))
         raise SystemExit(1 if problems else 0)
     if os.geteuid() != 0:
@@ -360,7 +431,7 @@ def main() -> None:
 def repair_runtime(args) -> None:
     launcher = Path('/opt/google/chrome/google-chrome')
     service_changed = register_boot_service() if args.register_service else False
-    if not runtime_problems(SKILL_DIR, args.lock_file, launcher):
+    if not runtime_problems(SKILL_DIR, args.lock_file, launcher, SOURCE_BUNDLE):
         print(json.dumps({"version": RUNTIME_VERSION, "ready": True, "changed": service_changed}))
         return
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -372,11 +443,15 @@ def repair_runtime(args) -> None:
     for destination in ensure_node_commands(Path("/usr/local/bin"), Path("/opt/bossip/runtime/node/bin")):
         print(f"added_command={destination}", flush=True)
     print(f"chrome_gate_updated={repair_gate(launcher, backup)}", flush=True)
+    sources_changed = install_sources(SKILL_DIR, SOURCE_BUNDLE, backup)
+    print(f"dev_browser_sources_updated={sources_changed}", flush=True)
     if args.install_deps and dependency_problems(SKILL_DIR, args.lock_file):
         install_dependencies(SKILL_DIR, backup, args.registry, args.lock_file)
-    problems = runtime_problems(SKILL_DIR, args.lock_file, launcher)
+    problems = runtime_problems(SKILL_DIR, args.lock_file, launcher, SOURCE_BUNDLE)
     if problems:
         raise RuntimeError("Browser runtime verification failed: " + "; ".join(problems))
+    if sources_changed:
+        stop_stale_relay()
     print(json.dumps({"version": RUNTIME_VERSION, "ready": True, "changed": True}))
 
 

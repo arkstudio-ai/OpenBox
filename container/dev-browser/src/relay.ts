@@ -270,14 +270,14 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     if (existingId) {
       const existing = targets.find((t) => t.id === existingId);
       if (existing) {
-        return { wsEndpoint, name, targetId: existing.id, url: existing.url };
+        return { wsEndpoint, name, targetId: existing.id, url: existing.url, created: false };
       }
       localNamedPages.delete(name);
     }
 
     const created = await chromeJsonNew();
     localNamedPages.set(name, created.id);
-    return { wsEndpoint, name, targetId: created.id, url: created.url };
+    return { wsEndpoint, name, targetId: created.id, url: created.url, created: true };
   }
 
   function sendToPlaywright(message: CDPResponse | CDPEvent, clientId?: string) {
@@ -553,6 +553,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           name,
           targetId: target.targetId,
           url: target.targetInfo.url,
+          created: false,
         });
       }
       // Session no longer valid, remove it
@@ -564,11 +565,13 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       return c.json({ error: "Extension not connected" }, 503);
     }
 
+    let createdTargetId: string | null = null;
     try {
       const result = (await sendToExtension({
         method: "forwardCDPCommand",
         params: { method: "Target.createTarget", params: { url: "about:blank" } },
       })) as { targetId: string };
+      createdTargetId = result.targetId;
 
       // Wait for Target.attachedToTarget event to register the new target
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -582,18 +585,30 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             name,
             targetId: target.targetId,
             url: target.targetInfo.url,
+            created: true,
           });
         }
       }
 
       throw new Error("Target created but not found in registry");
     } catch (err) {
+      if (createdTargetId && extensionWs) {
+        try {
+          await sendToExtension({
+            method: "forwardCDPCommand",
+            params: { method: "Target.closeTarget", params: { targetId: createdTargetId } },
+          });
+        } catch (closeErr) {
+          log("Error closing failed extension target:", closeErr);
+        }
+      }
       log("Error creating tab:", err);
       return c.json({ error: (err as Error).message }, 500);
     }
   });
 
-  // Delete a named page (extension mode: removes the name, doesn't close the tab)
+  // Delete a named page. Extension tabs are normally user-owned and stay open;
+  // `close=true` is reserved for rolling back a target this relay just created.
   app.delete("/pages/:name", async (c) => {
     const name = c.req.param("name");
 
@@ -613,7 +628,19 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       return c.json({ success: deleted });
     }
 
+    const sessionId = namedPages.get(name);
+    const target = sessionId ? connectedTargets.get(sessionId) : undefined;
     const deleted = namedPages.delete(name);
+    if (c.req.query("close") === "true" && target && extensionWs) {
+      try {
+        await sendToExtension({
+          method: "forwardCDPCommand",
+          params: { method: "Target.closeTarget", params: { targetId: target.targetId } },
+        });
+      } catch (err) {
+        log("Error closing rolled-back extension target:", err);
+      }
+    }
     return c.json({ success: deleted });
   });
 

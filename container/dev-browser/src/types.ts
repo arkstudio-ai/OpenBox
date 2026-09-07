@@ -23,6 +23,8 @@ export interface GetPageResponse {
   wsEndpoint: string;
   name: string;
   targetId: string; // CDP target ID for reliable page matching
+  /** True only when this request created a target that failure cleanup may close. */
+  created?: boolean;
 }
 
 export interface ListPagesResponse {

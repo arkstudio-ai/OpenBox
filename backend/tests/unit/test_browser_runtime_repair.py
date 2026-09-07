@@ -273,3 +273,28 @@ def test_legacy_media_dropin_cannot_restore_512_after_reload(tmp_path, monkeypat
     assert repair.register_boot_service() is False
     reload()
     assert live.read_text() == '2048'
+
+
+def test_source_bundle_is_path_safe_and_promoted_atomically(tmp_path):
+    skill = tmp_path / 'skill'
+    skill.mkdir()
+    (skill / 'src').mkdir()
+    (skill / 'src' / 'relay.ts').write_text('old')
+    bundle = tmp_path / 'sources.json'
+    bundle.write_text(json.dumps({'src/relay.ts': 'new', 'src/client.ts': 'client'}))
+    backup = tmp_path / 'backup'
+    backup.mkdir()
+
+    assert repair.install_sources(skill, bundle, backup) is True
+    assert (skill / 'src' / 'relay.ts').read_text() == 'new'
+    assert (skill / 'src' / 'client.ts').read_text() == 'client'
+    assert (backup / 'sources' / 'src' / 'relay.ts').read_text() == 'old'
+    assert repair.source_problems(skill, bundle) == []
+
+
+def test_source_bundle_rejects_parent_traversal(tmp_path):
+    bundle = tmp_path / 'sources.json'
+    bundle.write_text(json.dumps({'../escape': 'bad'}))
+    assert repair.source_problems(tmp_path / 'skill', bundle) == [
+        'dev-browser source bundle contains an unsafe path'
+    ]

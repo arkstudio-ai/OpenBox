@@ -347,60 +347,76 @@ export async function connect(serverUrl = "http://localhost:9222"): Promise<DevB
     const pageInfo = (await res.json()) as GetPageResponse & { url?: string };
     const { targetId } = pageInfo;
 
-    // Connect to browser
-    const b = await ensureConnected();
+    try {
+      // Connect to browser
+      const b = await ensureConnected();
 
     // Determine the effective mode. Only extension mode needs the special
     // page-lookup path; local and launch modes drive a real Chrome where the
     // targetId-based lookup is correct.
-    const infoRes = await fetch(serverUrl);
-    const info = (await infoRes.json()) as ServerInfoResponse;
+      const infoRes = await fetch(serverUrl);
+      const info = (await infoRes.json()) as ServerInfoResponse;
 
-    if (info.chromeAvailable === false) {
-      throw new Error(
-        `Chrome is not reachable in local mode: ${info.error ?? "unknown error"}. ` +
-          `Ensure Chrome is running with --remote-debugging-port.`
-      );
-    }
+      if (info.chromeAvailable === false) {
+        throw new Error(
+          `Chrome is not reachable in local mode: ${info.error ?? "unknown error"}. ` +
+            `Ensure Chrome is running with --remote-debugging-port.`
+        );
+      }
 
-    const isExtensionMode = info.mode === "extension";
+      const isExtensionMode = info.mode === "extension";
 
-    if (isExtensionMode) {
+      if (isExtensionMode) {
       // In extension mode, DON'T use findPageByTargetId as it corrupts page state
       // Instead, find page by URL or use the only available page
-      const allPages = b.contexts().flatMap((ctx) => ctx.pages());
+        const allPages = b.contexts().flatMap((ctx) => ctx.pages());
 
-      if (allPages.length === 0) {
-        throw new Error(`No pages available in browser`);
-      }
+        if (allPages.length === 0) {
+          throw new Error(`No pages available in browser`);
+        }
 
-      if (allPages.length === 1) {
-        return allPages[0]!;
-      }
+        if (allPages.length === 1) {
+          return allPages[0]!;
+        }
 
       // Multiple pages - try to match by URL if available
-      if (pageInfo.url) {
-        const matchingPage = allPages.find((p) => p.url() === pageInfo.url);
-        if (matchingPage) {
-          return matchingPage;
+        if (pageInfo.url) {
+          const matchingPage = allPages.find((p) => p.url() === pageInfo.url);
+          if (matchingPage) {
+            return matchingPage;
+          }
         }
-      }
 
       // Fall back to first page
-      if (!allPages[0]) {
-        throw new Error(`No pages available in browser`);
+        if (!allPages[0]) {
+          throw new Error(`No pages available in browser`);
+        }
+        return allPages[0];
       }
-      return allPages[0];
-    }
 
-    // In local (and launch) mode a real Chrome is driven directly, so the
-    // targetId-based lookup is correct and does not corrupt page state.
-    const page = await findPageByTargetId(b, targetId);
-    if (!page) {
-      throw new Error(`Page "${name}" not found in browser contexts`);
-    }
+      // In local (and launch) mode a real Chrome is driven directly, so the
+      // targetId-based lookup is correct and does not corrupt page state.
+      const page = await findPageByTargetId(b, targetId);
+      if (!page) {
+        throw new Error(`Page "${name}" not found in browser contexts`);
+      }
 
-    return page;
+      return page;
+    } catch (err) {
+      // The relay creates about:blank before Playwright connects. If anything
+      // after creation fails, close only that newly-created target so retries
+      // cannot accumulate visible blank tabs.
+      if (pageInfo.created) {
+        try {
+          await fetch(`${serverUrl}/pages/${encodeURIComponent(name)}?close=true`, {
+            method: "DELETE",
+          });
+        } catch {
+          // Preserve the original connection/navigation failure.
+        }
+      }
+      throw err;
+    }
   }
 
   return {

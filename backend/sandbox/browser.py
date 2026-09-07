@@ -38,6 +38,7 @@ CHROME_LOG = "/tmp/obx-chrome.log"
 IBUS_LOG = "/tmp/obx-ibus.log"
 RELAY_LOG = "/tmp/obx-relay.log"
 RELAY_PID = "/tmp/obx-relay.pid"
+CHROME_LAUNCH_LOCK = "/tmp/obx-chrome-launch.lock"
 
 #: Dedicated profile, relative to the desktop user's home. See the launch script
 #: for why a non-default profile is mandatory.
@@ -129,6 +130,70 @@ async def _curl_json(client, url: str, timeout: int = 3) -> dict | None:
     except Exception:
         return None
     return _parse_json(res.stdout)
+
+
+_CHROME_RENDERER_PROBE = r'''import json,sys,urllib.parse,urllib.request
+from websockets.sync.client import connect
+
+base="http://127.0.0.1:9333"
+created=None
+try:
+    with urllib.request.urlopen(base+"/json/version",timeout=2) as response:
+        version=json.load(response)
+    with urllib.request.urlopen(base+"/json/list",timeout=2) as response:
+        targets=json.load(response)
+    pages=[target for target in targets if target.get("type")=="page" and target.get("webSocketDebuggerUrl")]
+    if not pages:
+        request=urllib.request.Request(base+"/json/new?url="+urllib.parse.quote("about:blank",safe=""),method="PUT")
+        with urllib.request.urlopen(request,timeout=2) as response:
+            created=json.load(response)
+        pages=[created]
+    last_error="no page target"
+    for page in pages[:3]:
+        try:
+            with connect(page["webSocketDebuggerUrl"],open_timeout=2,close_timeout=1) as socket:
+                socket.send(json.dumps({"id":1,"method":"Runtime.evaluate","params":{"expression":"1+1","returnByValue":True}}))
+                while True:
+                    message=json.loads(socket.recv(timeout=2))
+                    if message.get("id")==1:
+                        value=message.get("result",{}).get("result",{}).get("value")
+                        if value != 2:
+                            raise RuntimeError("unexpected Runtime.evaluate result")
+                        print(json.dumps(version,separators=(",",":")))
+                        raise SystemExit(0)
+        except Exception as error:
+            last_error=f"{type(error).__name__}: {error}"
+    raise RuntimeError(last_error)
+except SystemExit:
+    raise
+except Exception as error:
+    print(f"Chrome renderer probe failed: {type(error).__name__}: {error}",file=sys.stderr)
+    raise SystemExit(1)
+finally:
+    if created and created.get("id"):
+        try:
+            urllib.request.urlopen(base+"/json/close/"+created["id"],timeout=2).read()
+        except Exception:
+            pass
+'''
+
+
+def _chrome_renderer_probe_command() -> str:
+    payload = base64.b64encode(_CHROME_RENDERER_PROBE.encode()).decode()
+    return f"printf %s {payload} | base64 -d | python3"
+
+
+async def _probe_chrome(client) -> dict | None:
+    """Return Chrome metadata only when a renderer executes a real CDP command."""
+    if not await _curl_json(client, _chrome_url("/json/version")):
+        return None
+    try:
+        result = await client.execute(_chrome_renderer_probe_command(), timeout=8)
+    except Exception:
+        return None
+    if result.exit_code != 0:
+        return None
+    return _parse_json(result.stdout)
 
 
 #: How long to wait on a command whose only job is to *start* something.
@@ -260,6 +325,79 @@ rm -f /tmp/.obx-chrome-policy.json
 """
 
 
+def _chrome_recovery_guard_script() -> str:
+    """Serialize launch and remove only stale OpenBox automation browsers."""
+    return f"""# Serialize health check, stale-process cleanup and launch across API workers.
+exec 9>{CHROME_LAUNCH_LOCK}
+flock -w 20 9 || {{ echo "another Chrome launch/recovery is still running" >&2; exit 5; }}
+if {_chrome_renderer_probe_command()} >/dev/null 2>&1; then
+  exit 0
+fi
+
+# A dead CDP endpoint can still have a live Chrome browser process behind it.
+# Reconcile only root browser processes explicitly owned by OpenBox automation;
+# never touch an ordinary user Chrome without the dedicated debug-port flag.
+AUTOMATION_ROOTS=$(python3 - <<'OPENBOX_CHROME_PIDS'
+import pathlib
+for proc in pathlib.Path('/proc').iterdir():
+    if not proc.name.isdigit():
+        continue
+    try:
+        args=(proc/'cmdline').read_bytes().split(b'\\0')
+        text=[arg.decode(errors='replace') for arg in args if arg]
+    except OSError:
+        continue
+    if not text or any(arg.startswith('--type=') for arg in text):
+        continue
+    executable=pathlib.Path(text[0]).name
+    browsers={{'chrome','google-chrome','google-chrome-stable','google-chrome.bossip-real','chromium','chromium-browser'}}
+    wrapped=executable == 'runuser' and any(pathlib.Path(arg).name in browsers for arg in text[1:])
+    if executable not in browsers and not wrapped:
+        continue
+    if '--remote-debugging-port={CHROME_PORT}' in text:
+        print(proc.name)
+OPENBOX_CHROME_PIDS
+)
+if [ -n "$AUTOMATION_ROOTS" ]; then
+  echo "recovering unresponsive OpenBox Chrome pid(s): $AUTOMATION_ROOTS" >&2
+  for pid in $AUTOMATION_ROOTS; do
+    kill -TERM "$pid" 2>/dev/null || sudo -n kill -TERM "$pid" 2>/dev/null || true
+  done
+  n=0
+  while [ "$n" -lt 20 ]; do
+    alive=""
+    for pid in $AUTOMATION_ROOTS; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+    [ -z "$alive" ] && break
+    n=$((n + 1))
+    sleep 0.25
+  done
+  for pid in $AUTOMATION_ROOTS; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || sudo -n kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  sleep 0.5
+  for pid in $AUTOMATION_ROOTS; do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "unable to stop stale OpenBox Chrome pid $pid; refusing a duplicate launch" >&2
+      exit 4
+    fi
+  done
+fi"""
+
+
+def _chrome_readiness_wait_script() -> str:
+    return f"""# Hold the launch lock until a renderer executes a CDP command.
+n=0
+while [ "$n" -lt {CHROME_READY_BUDGET} ]; do
+  if {_chrome_renderer_probe_command()} >/dev/null 2>&1; then exit 0; fi
+  n=$((n + 1))
+  sleep 1
+done
+echo "Chrome launched but its renderer did not become healthy" >&2
+exit 6"""
+
+
 def _chrome_launch_script() -> str:
     """Shell that launches a headed, debuggable Chrome as the desktop user.
 
@@ -307,6 +445,7 @@ BIN=""
 for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}; done
 [ -n "$BIN" ] || BIN=$(command -v google-chrome || command -v chromium || true)
 [ -n "$BIN" ] || {{ echo "no chrome binary found" >&2; exit 3; }}
+{_chrome_recovery_guard_script()}
 # An automation browser must start from nothing every time, and two separate
 # mechanisms fight that.
 #
@@ -437,7 +576,7 @@ if command -v dbus-run-session >/dev/null 2>&1 \\
         --use-mock-keychain \\
         --start-maximized \\
         about:blank
-    ' >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+    ' >{CHROME_LOG} 2>&1 </dev/null 9>&- & ) >/dev/null 2>&1 </dev/null
 else
   # Minimal/headless images may not carry IBus; retain the existing browser
   # path so English keyboard and CDP automation still work there.
@@ -460,9 +599,9 @@ else
     --use-mock-keychain \\
     --start-maximized \\
     about:blank \\
-    >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+    >{CHROME_LOG} 2>&1 </dev/null 9>&- & ) >/dev/null 2>&1 </dev/null
 fi
-exit 0
+{_chrome_readiness_wait_script()}
 """
 
 
@@ -516,15 +655,18 @@ fi
 BIN=""
 for c in {" ".join(CHROME_CANDIDATES)}; do [ -x "$c" ] && {{ BIN="$c"; break; }}; done
 [ -n "$BIN" ] || {{ echo "no Chrome binary" >&2; exit 3; }}
+{_chrome_recovery_guard_script()}
 PROF="$H/{CHROME_PROFILE}"
 [ ! -L "$PROF" ]
-# No force-close or cleanup of session data, even if a previous launch hung.
+# Recovery above may stop an unresponsive OpenBox browser, but it never edits
+# this isolated profile's session or login data.
 ( setsid /usr/sbin/runuser -u "$U" -- env HOME="$H" \\
   "$BIN" --headless=new --remote-debugging-port={CHROME_PORT} \\
   --remote-debugging-address=127.0.0.1 --user-data-dir="$PROF" \\
   --no-first-run --no-default-browser-check --password-store=basic \\
   --use-mock-keychain --window-size=1920,1080 about:blank \\
-  >{CHROME_LOG} 2>&1 </dev/null & ) >/dev/null 2>&1 </dev/null
+  >{CHROME_LOG} 2>&1 </dev/null 9>&- & ) >/dev/null 2>&1 </dev/null
+{_chrome_readiness_wait_script()}
 """
 
 
@@ -540,7 +682,7 @@ async def ensure_chrome(client, container_key: str) -> dict:
     to short-circuit the probe — a rebooted desktop would hand back a dead port.
     Returns the parsed /json/version JSON (webSocketDebuggerUrl, Browser, ...).
     """
-    existing = await _curl_json(client, _chrome_url("/json/version"))
+    existing = await _probe_chrome(client)
     if existing:
         _chrome_ready.add(container_key)
         return existing
@@ -561,7 +703,7 @@ async def ensure_chrome(client, container_key: str) -> dict:
     deadline = time.monotonic() + CHROME_READY_BUDGET
     while time.monotonic() < deadline:
         await asyncio.sleep(1.0)
-        data = await _curl_json(client, _chrome_url("/json/version"))
+        data = await _probe_chrome(client)
         if data:
             _chrome_ready.add(container_key)
             return data

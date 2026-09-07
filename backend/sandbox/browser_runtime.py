@@ -19,12 +19,28 @@ class BrowserRuntimeUnavailable(RuntimeError):
     pass
 
 
-def runtime_install_script() -> str:
+def runtime_files() -> dict[str, str]:
+    """Pinned repair code and relay sources shipped to every desktop."""
     root = Path(__file__).resolve().parent
-    files = {
+    dev_browser = root.parents[1] / "container" / "dev-browser"
+    source_paths = [
+        dev_browser / "SKILL.md",
+        dev_browser / "package.json",
+        dev_browser / "tsconfig.json",
+        *sorted((dev_browser / "scripts").glob("*.ts")),
+        *sorted((dev_browser / "src").rglob("*.ts")),
+    ]
+    return {
         "repair_browser_runtime.py": (root / "browser_runtime_repair.py").read_text(),
         "dev-browser-package-lock.json": (root / "assets/dev-browser-package-lock.json").read_text(),
+        "dev-browser-sources.json": json.dumps({
+            str(path.relative_to(dev_browser)): path.read_text() for path in source_paths
+        }, separators=(",", ":")),
     }
+
+
+def runtime_install_script() -> str:
+    files = runtime_files()
     # Base85 leaves room under Cloud Assistant's 16 KiB encoded-command cap.
     payload = base64.b85encode(gzip.compress(json.dumps(files).encode(), mtime=0)).decode()
     # Atomic, fixed-path writes of bundled code, never any home/profile files.

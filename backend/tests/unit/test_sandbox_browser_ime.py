@@ -1,6 +1,6 @@
 """The Wuying browser must join an input-method session, not only X11."""
 
-from sandbox.browser import _chrome_launch_script
+from sandbox.browser import CHROME_LAUNCH_LOCK, _chrome_launch_script
 
 
 def test_chrome_launches_with_an_isolated_ibus_session_when_available():
@@ -21,7 +21,7 @@ def test_chrome_launch_keeps_a_non_ibus_fallback():
 
     assert "Minimal/headless images may not carry IBus" in script
     # Both the IBus branch and the fallback must expose the automation port.
-    assert script.count("--remote-debugging-port=9333") == 2
+    assert script.count("--remote-debugging-address=127.0.0.1") == 2
 
 
 def test_chrome_launch_does_not_require_sudo_in_a_restricted_container():
@@ -45,3 +45,17 @@ def test_active_managed_profile_is_not_mutated_or_force_closed():
     assert guard < script.index('rm -rf "$PROF/Default/Sessions"')
     assert 'kill -0 "$LOCK_PID"' in script
     assert 'kill -TERM "$LOCK_PID"' not in script
+
+
+def test_unresponsive_automation_browser_is_reconciled_before_launch():
+    script = _chrome_launch_script()
+    assert f'exec 9>{CHROME_LAUNCH_LOCK}' in script
+    assert '--remote-debugging-port=9333' in script
+    assert "any(arg.startswith('--type=')" in script
+    assert 'google-chrome.bossip-real' in script
+    assert "executable == 'runuser'" in script
+    assert 'recovering unresponsive OpenBox Chrome pid(s)' in script
+    assert script.index('AUTOMATION_ROOTS=') < script.index('PREF="$PROF/Default/Preferences"')
+    assert 'unable to stop stale OpenBox Chrome' in script
+    assert 'Chrome launched but its renderer did not become healthy' in script
+    assert script.count('9>&-') == 2

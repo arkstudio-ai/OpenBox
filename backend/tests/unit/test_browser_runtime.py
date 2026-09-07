@@ -14,6 +14,9 @@ def test_payload_fits_cloud_assistant_and_carries_both_pinned_assets():
     script = runtime.runtime_install_script()
     assert all(len(base64.b64encode(s.encode())) < 16_384 for s in runtime.runtime_cloud_commands())
     assert '--install-deps' in script and '--register-service' in script
+    assert set(runtime.runtime_files()) == {
+        'repair_browser_runtime.py', 'dev-browser-package-lock.json', 'dev-browser-sources.json'
+    }
     assert 'pkill' not in script and 'reboot' not in script
     assert "'systemctl','restart'" not in script
 
@@ -99,7 +102,7 @@ async def test_channel_install_requires_runtime_before_credentials_or_services(m
 async def test_cold_browser_uses_real_display_or_isolated_headless_profile(monkeypatch, display_ready):
     from sandbox import browser
     ready = {'Browser': 'Chrome/151', 'webSocketDebuggerUrl': 'ws://127.0.0.1:9333/test'}
-    monkeypatch.setattr(browser, '_curl_json', AsyncMock(side_effect=[None, ready]))
+    monkeypatch.setattr(browser, '_probe_chrome', AsyncMock(side_effect=[None, ready]))
     monkeypatch.setattr(browser, 'ensure_x_helper', AsyncMock())
     monkeypatch.setattr(browser.asyncio, 'sleep', AsyncMock())
     launch = AsyncMock()
@@ -113,16 +116,37 @@ async def test_cold_browser_uses_real_display_or_isolated_headless_profile(monke
         assert '/var/lib/openbox/browser' in script
         assert '--no-sandbox' not in script
         assert 'pkill' not in script
+        assert 'recovering unresponsive OpenBox Chrome pid(s)' in script
+        assert 'Chrome launched but its renderer did not become healthy' in script
+        assert '9>&-' in script
 
 
 async def test_existing_browser_is_never_restarted_to_change_presentation(monkeypatch):
     from sandbox import browser
     ready = {'Browser': 'Chrome/151', 'User-Agent': 'HeadlessChrome/151', 'webSocketDebuggerUrl': 'ws://local/test'}
-    monkeypatch.setattr(browser, '_curl_json', AsyncMock(return_value=ready))
+    monkeypatch.setattr(browser, '_probe_chrome', AsyncMock(return_value=ready))
     client = SimpleNamespace(execute=AsyncMock())
     assert await browser.ensure_chrome(client, 'ecd-existing') == ready
     assert browser.is_headless(ready)
     client.execute.assert_not_awaited()
+
+
+async def test_chrome_probe_requires_renderer_cdp_execution(monkeypatch):
+    from sandbox import browser
+    version = {'Browser': 'Chrome/151', 'webSocketDebuggerUrl': 'ws://local/test'}
+    monkeypatch.setattr(browser, '_curl_json', AsyncMock(return_value=version))
+    client = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(
+        exit_code=0, stdout=json.dumps(version))))
+    assert await browser._probe_chrome(client) == version
+    command = client.execute.await_args.args[0]
+    assert 'python3' in command and 'base64 -d' in command
+
+
+async def test_http_only_chrome_is_not_considered_healthy(monkeypatch):
+    from sandbox import browser
+    monkeypatch.setattr(browser, '_curl_json', AsyncMock(return_value={'Browser': 'Chrome/151'}))
+    client = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(exit_code=1, stdout='')))
+    assert await browser._probe_chrome(client) is None
 
 
 @pytest.mark.parametrize('working_browser', [True, False])

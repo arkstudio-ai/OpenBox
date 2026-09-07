@@ -32,6 +32,7 @@ check display_guard_unit 'grep -q "^ExecStart=/usr/local/bin/obx-display-guard$"
 check browser_runtime 'python3 /opt/openbox/tools/repair_browser_runtime.py --check'
 check browser_boot_gate '[ "$(systemctl is-enabled openbox-browser-runtime.service 2>/dev/null || true)" = enabled ]'
 check action_requires_browser 'grep -q "^Requires=openbox-browser-runtime.service$" /etc/systemd/system/openbox-action-server.service.d/browser-runtime.conf'
+check action_browser_tasks_max 'grep -q "^TasksMax=2048$" /etc/systemd/system/openbox-action-server.service.d/zz-openbox-browser-resources.conf'
 
 # Scan for actual secret-bearing files, not documentation or crypto-library
 # constants containing words such as "OPENSSH PRIVATE".  A PEM private key's

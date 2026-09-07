@@ -220,8 +220,8 @@ L0 + L1 一起（收益最大、无迁移）→ L2 → L4 → L3（视需要）�
 
 ## 8. 上线记录（2026-09-08 凌晨）
 
-- main 已包含 D1 全部提交（2620fcd → cf5eb1d → 35707a8 → 7d59c16 → b569448 → 94b2a98）。
-- AWS：`20260907-d1-94b2a98`。gw2：见 DEPLOY.md 当前发布节。15 台桌面 action server 已更新。
+- main 已包含 D1 全部提交（2620fcd → cf5eb1d → 35707a8 → 7d59c16 → b569448 → 94b2a98 → c51a24c）。
+- AWS 与 gw2 后端：`20260907-d1-c51a24c`。15 台桌面 action server 已更新。
 - 埋点首战：上线 10 分钟内在 gw2 时间线上抓到 RUNTIME_VERSION 触发的修复崩溃，在 AWS 共享桌面上
   用 `[diag:id]` 记录 + 日志尾 + 单元信息定位到 XAUTHORITY 与 `protected_regular` 两个根因，全程没有
   手工登录桌面翻日志（云助手只用来确认 sysctl 和文件属主）。

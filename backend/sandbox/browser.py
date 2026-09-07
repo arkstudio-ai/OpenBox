@@ -308,6 +308,23 @@ async def _log_tail(client, path: str, lines: int = 40) -> str:
         return f"({path} unavailable: {type(exc).__name__}: {exc})"
 
 
+def _reclaim_files_script(*paths: str) -> str:
+    """Shell that makes `paths` writable by the current identity before use.
+
+    fs.protected_regular (2 on Ubuntu) refuses to open a file in a sticky
+    directory such as /tmp when another user owns it, root included. A log
+    left behind by a previous runner identity then silently sinks the whole
+    launch: the redirect fails, the error lands in /dev/null, and Chrome or
+    the relay simply never starts. Seen on the shared desktop after the
+    action service switched from the `sandbox` user to root.
+    """
+    files = " ".join(shlex.quote(p) for p in paths)
+    return f"""for f in {files}; do
+  if [ -e "$f" ] && [ "$(stat -c %u "$f" 2>/dev/null)" != "$(id -u)" ]; then rm -f "$f"; fi
+  : > "$f" 2>/dev/null || true
+done"""
+
+
 #: Where branded Google Chrome reads enterprise policy on Linux. Confirmed
 #: loaded from here — chrome://policy lists these entries as
 #: Platform / Machine / Mandatory / OK.
@@ -498,6 +515,7 @@ def _chrome_launch_script() -> str:
     # which is what lets ordinary Google Chrome serve as the automation browser
     # — verified on this desktop: Chrome 151 opens the port on this profile.
     return f"""set -e
+{_reclaim_files_script(CHROME_LOG)}
 U=$(ps -o user= -p "$(pgrep -x gnome-shell | head -n1)" 2>/dev/null | tr -d ' ')
 if [ -z "$U" ] || [ "$U" = root ]; then U=$(stat -c %U /tmp/.X11-unix/X* 2>/dev/null | grep -v '^root$' | head -n1); fi
 if [ -z "$U" ]; then U=$(getent passwd 1000 | cut -d: -f1); fi
@@ -592,6 +610,9 @@ if command -v dbus-run-session >/dev/null 2>&1 \\
    && command -v ibus-daemon >/dev/null 2>&1 \\
    && {{ [ -x /usr/libexec/ibus-engine-libpinyin ] \\
         || [ -x /usr/lib/ibus/ibus-engine-libpinyin ]; }}; then
+  # ibus-daemon opens its log as $U, so the file must belong to $U.
+  {_reclaim_files_script(IBUS_LOG)}
+  [ -z "$SUDO" ] || chown "$U" {IBUS_LOG} 2>/dev/null || true
   ( setsid $SUDO env -u CHROME_HEADLESS -u PLAYWRIGHT_HEADLESS -u PUPPETEER_HEADLESS \\
     DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \\
     OPENBOX_CHROME_BIN="$BIN" OPENBOX_CHROME_PROFILE="$PROF" \\
@@ -696,6 +717,7 @@ def _relay_start_script(mode: str) -> str:
     # pattern also matches the very shell running it (the command line contains
     # the string), so the restart killed itself and the port never opened.
     return f"""set -e
+{_reclaim_files_script(RELAY_LOG)}
 if [ -f {RELAY_PID} ]; then
   kill -TERM "-$(cat {RELAY_PID})" 2>/dev/null || kill -TERM "$(cat {RELAY_PID})" 2>/dev/null || true
   rm -f {RELAY_PID}
@@ -718,6 +740,7 @@ This is browser automation readiness, not a visible desktop. It must not
 create a second X server or interfere with Wuying's eventual desktop session.
 """
     return f"""set -eu
+{_reclaim_files_script(CHROME_LOG)}
 U=obx-browser
 H=/var/lib/openbox/browser
 if ! getent passwd "$U" >/dev/null; then

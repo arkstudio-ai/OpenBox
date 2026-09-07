@@ -197,6 +197,7 @@ def test_service_task_budget_is_persistent_without_restarting(tmp_path, monkeypa
     if pid == '0':
         (cgroup / 'pids.max').unlink()
     monkeypatch.setattr(repair, 'SYSTEMD_ROOT', root)
+    monkeypatch.setattr(repair, 'SYSTEMD_CONTROL_ROOT', tmp_path / 'systemd-control')
     monkeypatch.setattr(repair, 'ACTION_CGROUP', cgroup)
     calls = []
     state = {'current': current}
@@ -207,6 +208,7 @@ def test_service_task_budget_is_persistent_without_restarting(tmp_path, monkeypa
         if command[1] == 'daemon-reload':
             state['current'] = expected
         if command[1] == 'set-property':
+            assert '--runtime' not in command  # legacy /etc pin outranks /run
             (cgroup / 'pids.max').write_text(expected)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(repair.subprocess, 'run', run)

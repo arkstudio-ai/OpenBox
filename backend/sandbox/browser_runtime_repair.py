@@ -26,6 +26,7 @@ SAFE_PATH = "/usr/local/bin:/usr/bin:/bin"
 ACTION_SERVICE = "openbox-action-server.service"
 ACTION_TASKS_MIN = 2048
 SYSTEMD_ROOT = Path("/etc/systemd/system")
+SYSTEMD_CONTROL_ROOT = Path("/etc/systemd/system.control")
 ACTION_CGROUP = Path("/sys/fs/cgroup/system.slice/openbox-action-server.service")
 SERVICE = """[Unit]
 Description=Verify and repair the OpenBox browser runtime
@@ -310,9 +311,20 @@ def register_boot_service() -> bool:
     if int(properties.get("MainPID", "0")) > 0 and (
         not sufficient_task_limit(current) or task_budget_problems(SYSTEMD_ROOT, ACTION_CGROUP)
     ):
-        # Change the kernel limit in place. MemoryMax and the process/browser
-        # lifetime are untouched; the persistent drop-in covers future boots.
-        subprocess.run(["systemctl", "set-property", "--runtime", ACTION_SERVICE,
+        # Persistent system.control settings outrank /run/system.control.
+        # --runtime would be undone by the daemon-reload implicit in `enable`
+        # on legacy guests with a pinned 512 cap. Back up that one property
+        # and persist the live update; never change MemoryMax or restart.
+        control = SYSTEMD_CONTROL_ROOT / (ACTION_SERVICE + ".d/50-TasksMax.conf")
+        if control.is_symlink():
+            raise RuntimeError("Refusing to overwrite a symlinked task-budget property")
+        if control.exists():
+            if backup is None:
+                root = Path('/opt/openbox/backups')
+                root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                backup = Path(tempfile.mkdtemp(prefix='browser-service-', dir=root))
+            shutil.copy2(control, backup / control.name)
+        subprocess.run(["systemctl", "set-property", ACTION_SERVICE,
                         f"TasksMax={target}"], check=True, timeout=20)
         changed = True
     subprocess.run(["systemctl", "enable", "openbox-browser-runtime.service"],

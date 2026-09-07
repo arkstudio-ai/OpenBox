@@ -151,7 +151,7 @@ Restart=always
 RestartSec=3
 MemoryHigh=5G
 MemoryMax=6G
-TasksMax=512
+TasksMax=2048
 
 [Install]
 WantedBy=multi-user.target
@@ -385,7 +385,7 @@ Restart=always
 RestartSec=3
 MemoryHigh=5G
 MemoryMax=6G
-TasksMax=512
+TasksMax=2048
 
 [Install]
 WantedBy=multi-user.target

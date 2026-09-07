@@ -164,3 +164,65 @@ def test_boot_gate_is_noninteractive_and_does_not_start_chrome():
     assert '--register-service' not in repair.SERVICE  # no daemon-reload loop
     assert 'pkill' not in repair.SERVICE
     assert 'npm install' not in repair.SERVICE
+
+
+@pytest.mark.parametrize('value,expected', [('512', False), ('2048', True), ('4096', True),
+                                           ('infinity', True), ('max', True), ('bad', False)])
+def test_task_budget_includes_threads_and_preserves_higher_limits(value, expected):
+    assert repair.sufficient_task_limit(value) is expected
+
+
+def test_task_budget_check_requires_persistent_and_live_limits(tmp_path):
+    root, cgroup = tmp_path / 'systemd', tmp_path / 'cgroup'
+    config = root / (repair.ACTION_SERVICE + '.d/browser-resources.conf')
+    assert repair.task_budget_problems(root, cgroup)
+    config.parent.mkdir(parents=True)
+    config.write_text('[Service]\nTasksMax=2048\n')
+    assert repair.task_budget_problems(root, cgroup) == []  # not started yet
+    cgroup.mkdir()
+    (cgroup / 'pids.max').write_text('512')
+    assert repair.task_budget_problems(root, cgroup)
+    (cgroup / 'pids.max').write_text('2048')
+    assert repair.task_budget_problems(root, cgroup) == []
+
+
+@pytest.mark.parametrize('current,pid,expected,live_update', [
+    ('512', '123', '2048', True), ('512', '0', '2048', False),
+    ('4096', '123', '4096', False), ('infinity', '123', 'infinity', False),
+])
+def test_service_task_budget_is_persistent_without_restarting(tmp_path, monkeypatch, current, pid, expected, live_update):
+    root, cgroup = tmp_path / 'systemd', tmp_path / 'cgroup'
+    cgroup.mkdir()
+    (cgroup / 'pids.max').write_text('max' if current == 'infinity' else current)
+    if pid == '0':
+        (cgroup / 'pids.max').unlink()
+    monkeypatch.setattr(repair, 'SYSTEMD_ROOT', root)
+    monkeypatch.setattr(repair, 'ACTION_CGROUP', cgroup)
+    calls = []
+    state = {'current': current}
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[1] == 'show':
+            return SimpleNamespace(stdout=f"LoadState=loaded\nMainPID={pid}\nTasksMax={state['current']}\n")
+        if command[1] == 'daemon-reload':
+            state['current'] = expected
+        if command[1] == 'set-property':
+            (cgroup / 'pids.max').write_text(expected)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(repair.subprocess, 'run', run)
+    assert repair.register_boot_service() is True
+    config = root / (repair.ACTION_SERVICE + '.d/browser-resources.conf')
+    assert f'TasksMax={expected}' in config.read_text()
+    assert any(c[1] == 'set-property' for c in calls) is live_update
+    assert not any('restart' in c or 'stop' in c for c in calls)
+    assert not any('MemoryMax' in ' '.join(c) for c in calls)
+    assert repair.task_budget_problems(root, cgroup) == []
+    calls.clear()
+    assert repair.register_boot_service() is False
+    assert not any(c[1] in ('daemon-reload', 'set-property') for c in calls)
+
+
+def test_bootstrap_task_limit_matches_runtime_minimum():
+    source = (Path(__file__).resolve().parents[2] / 'scripts/wuying_bootstrap.py').read_text()
+    assert source.count(f'TasksMax={repair.ACTION_TASKS_MIN}') == 2
+    assert 'TasksMax=512' not in source

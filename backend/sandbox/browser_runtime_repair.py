@@ -19,10 +19,14 @@ import tempfile
 import time
 
 
-RUNTIME_VERSION = "20260907.1"
+RUNTIME_VERSION = "20260907.2"
 SKILL_DIR = Path("/opt/openbox/skills/dev-browser")
 LOCK_FILE = Path("/opt/openbox/tools/dev-browser-package-lock.json")
 SAFE_PATH = "/usr/local/bin:/usr/bin:/bin"
+ACTION_SERVICE = "openbox-action-server.service"
+ACTION_TASKS_MIN = 2048
+SYSTEMD_ROOT = Path("/etc/systemd/system")
+ACTION_CGROUP = Path("/sys/fs/cgroup/system.slice/openbox-action-server.service")
 SERVICE = """[Unit]
 Description=Verify and repair the OpenBox browser runtime
 After=network-online.target
@@ -133,6 +137,29 @@ def dependency_problems(skill_dir: Path, lock_file: Path) -> list[str]:
     return []
 
 
+def sufficient_task_limit(value: str) -> bool:
+    """TasksMax counts Chrome/IBus/Node threads as well as processes."""
+    return value in ("max", "infinity") or (value.isdigit() and int(value) >= ACTION_TASKS_MIN)
+
+
+def task_budget_problems(systemd_root: Path, cgroup: Path) -> list[str]:
+    """Read-only check also works in legacy containers without systemd D-Bus."""
+    resource_file = systemd_root / (ACTION_SERVICE + ".d/browser-resources.conf")
+    try:
+        limits = [line.split("=", 1)[1].strip() for line in resource_file.read_text().splitlines()
+                  if line.startswith("TasksMax=")]
+        if not limits or not sufficient_task_limit(limits[-1]):
+            return ["browser service task budget is below the supported minimum"]
+        # Before first boot the action cgroup does not exist yet. In a legacy
+        # container it may not be visible; verify the persistent config there.
+        live_limit = cgroup / "pids.max"
+        if live_limit.exists() and not sufficient_task_limit(live_limit.read_text().strip()):
+            return ["live browser service task budget is below the supported minimum"]
+    except OSError:
+        return ["browser service task budget is not configured"]
+    return []
+
+
 def runtime_problems(skill_dir: Path, lock_file: Path, launcher: Path) -> list[str]:
     problems = []
     for name in ("node", "npm", "npx"):
@@ -157,7 +184,8 @@ def runtime_problems(skill_dir: Path, lock_file: Path, launcher: Path) -> list[s
     for relative in ("scripts/start-relay.ts", "src/client.ts", "src/relay.ts", "tsconfig.json"):
         if not (skill_dir / relative).is_file():
             problems.append(f"missing dev-browser source: {relative}")
-    return problems + dependency_problems(skill_dir, lock_file)
+    return (problems + dependency_problems(skill_dir, lock_file)
+            + task_budget_problems(SYSTEMD_ROOT, ACTION_CGROUP))
 
 
 def install_dependencies(skill_dir: Path, backup: Path, registry: str,
@@ -235,27 +263,61 @@ def runtime_lock(path: Path, timeout: float = 290):
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-def register_boot_service() -> None:
+def register_boot_service() -> bool:
     """Enable future-boot verification without restarting a live user session."""
-    unit = Path("/etc/systemd/system/openbox-browser-runtime.service")
-    dropin = Path("/etc/systemd/system/openbox-action-server.service.d/browser-runtime.conf")
+    result = subprocess.run(
+        ["systemctl", "show", ACTION_SERVICE, "-p", "LoadState", "-p", "MainPID", "-p", "TasksMax"],
+        capture_output=True, text=True, timeout=20,
+    )
+    properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if properties.get("LoadState") not in ("loaded", "not-found"):
+        raise RuntimeError("Cannot inspect the action service task budget")
+    current = properties.get("TasksMax", "0") if properties["LoadState"] == "loaded" else "0"
+    # Keep an operator's higher/unlimited setting; never lower an existing cap.
+    target = current if sufficient_task_limit(current) else str(ACTION_TASKS_MIN)
+    unit = SYSTEMD_ROOT / "openbox-browser-runtime.service"
+    dropin = SYSTEMD_ROOT / (ACTION_SERVICE + ".d/browser-runtime.conf")
+    resources = SYSTEMD_ROOT / (ACTION_SERVICE + ".d/browser-resources.conf")
     desired = {
         unit: SERVICE,
         dropin: "[Unit]\nRequires=openbox-browser-runtime.service\nAfter=openbox-browser-runtime.service\n",
+        resources: f"[Service]\nTasksMax={target}\n",
     }
     changed = False
+    backup = None
     for path, source in desired.items():
         if path.is_symlink():
             raise RuntimeError(f"Refusing to overwrite symlink {path}")
         if not path.exists() or path.read_text() != source:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(source)
-            path.chmod(0o644)
+            if path.exists():
+                if backup is None:
+                    root = Path('/opt/openbox/backups')
+                    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    backup = Path(tempfile.mkdtemp(prefix='browser-service-', dir=root))
+                shutil.copy2(path, backup / path.name)
+            fd, stage = tempfile.mkstemp(prefix='.browser-service-', dir=path.parent)
+            try:
+                with os.fdopen(fd, 'w') as stream:
+                    stream.write(source)
+                os.chmod(stage, 0o644)
+                os.replace(stage, path)
+            finally:
+                Path(stage).unlink(missing_ok=True)
             changed = True
     if changed:
         subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=30)
+    if int(properties.get("MainPID", "0")) > 0 and (
+        not sufficient_task_limit(current) or task_budget_problems(SYSTEMD_ROOT, ACTION_CGROUP)
+    ):
+        # Change the kernel limit in place. MemoryMax and the process/browser
+        # lifetime are untouched; the persistent drop-in covers future boots.
+        subprocess.run(["systemctl", "set-property", "--runtime", ACTION_SERVICE,
+                        f"TasksMax={target}"], check=True, timeout=20)
+        changed = True
     subprocess.run(["systemctl", "enable", "openbox-browser-runtime.service"],
                    capture_output=True, check=True, timeout=30)
+    return changed
 
 
 def main() -> None:
@@ -280,10 +342,9 @@ def main() -> None:
 
 def repair_runtime(args) -> None:
     launcher = Path('/opt/google/chrome/google-chrome')
+    service_changed = register_boot_service() if args.register_service else False
     if not runtime_problems(SKILL_DIR, args.lock_file, launcher):
-        if args.register_service:
-            register_boot_service()
-        print(json.dumps({"version": RUNTIME_VERSION, "ready": True, "changed": False}))
+        print(json.dumps({"version": RUNTIME_VERSION, "ready": True, "changed": service_changed}))
         return
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = Path("/opt/openbox/backups")
@@ -299,8 +360,6 @@ def repair_runtime(args) -> None:
     problems = runtime_problems(SKILL_DIR, args.lock_file, launcher)
     if problems:
         raise RuntimeError("Browser runtime verification failed: " + "; ".join(problems))
-    if args.register_service:
-        register_boot_service()
     print(json.dumps({"version": RUNTIME_VERSION, "ready": True, "changed": True}))
 
 

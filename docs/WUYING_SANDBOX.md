@@ -259,6 +259,16 @@ checks/repairs the pinned runtime before the action server starts. Channel
 activation and pool acceptance run the same installer; a failed repair remains
 retryable on the same desktop and cannot report a successful activation.
 
+Runtime `20260907.2` also requires an action-service task budget of at least
+2048 (threads count toward `TasksMax`). The inherited 512 limit caused real
+`pthread_create` failures and CDP page-init hangs when several browser processes
+coexisted. The installer persists a dedicated resource drop-in and raises a
+running service's limit in place, without a restart or changing `MemoryMax`.
+Existing higher/unlimited operator limits are preserved. Read-only checks verify
+the persistent setting and, where visible, the live cgroup limit. Raising a cap
+cannot recover every renderer already damaged by thread-creation failures;
+such a browser may need a separately approved, backed-up restart.
+
 An unconnected Wuying desktop may have no X session yet. In that case browser
 automation uses a sandboxed, unprivileged headless Chrome with a fresh private
 profile under `/var/lib/openbox/browser`. It does not copy image/user profiles,

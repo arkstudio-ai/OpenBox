@@ -12,8 +12,11 @@ from sandbox import diag
 
 
 @pytest.fixture(autouse=True)
-def fresh_ring():
+async def fresh_store():
+    from sandbox import events
+
     diag.clear()
+    await events.purge(older_than_days=-1)
     yield
     diag.clear()
 
@@ -71,12 +74,14 @@ async def test_capture_failure_records_report_and_cites_it_on_the_exception():
     error = RuntimeError("Chrome did not open its debug port\nchrome log:\n...40 lines...")
     diag_id = await diag.capture_failure(client, container_key="ecd-1", reason="ChromeUnavailable", error=error)
     assert error.diag_id == diag_id
-    stored = diag.get(diag_id)
+    stored = await diag.get(diag_id)
     assert stored["collected"] is True and stored["report"] == {**report, "via": "action_server"}
     assert stored["error"].startswith("RuntimeError: Chrome did not open")
+    assert stored["kind"] == "browser.diag" and stored["lights"] == {"chrome": "down"}
     assert diag.summarize_error(error) == f"Chrome did not open its debug port [diag:{diag_id}]"
-    listed = diag.list_recent()
+    listed = await diag.list_recent()
     assert listed[0]["id"] == diag_id and "report" not in listed[0]
+    assert listed[0]["summary"].startswith("ChromeUnavailable | RuntimeError: Chrome did not open")
 
 
 async def test_repeated_failures_on_one_desktop_do_not_recollect():
@@ -87,15 +92,18 @@ async def test_repeated_failures_on_one_desktop_do_not_recollect():
     second = await diag.capture_failure(client, container_key="ecd-1", reason="r", error="boom again")
     other = await diag.capture_failure(client, container_key="ecd-2", reason="r", error="boom")
     assert client.execute.await_count == 2
-    assert diag.get(first)["collected"] and diag.get(other)["collected"]
-    assert diag.get(second)["collected"] is False and "skipped" in diag.get(second)["note"]
+    assert (await diag.get(first))["collected"] and (await diag.get(other))["collected"]
+    skipped = await diag.get(second)
+    assert skipped["collected"] is False and "skipped" in skipped["note"]
+    assert [row["id"] for row in await diag.list_recent(desktop_id="ecd-2")] == [other]
 
 
 async def test_capture_failure_never_raises_when_the_desktop_is_gone():
     error = RuntimeError("tunnel down")
     diag_id = await diag.capture_failure(SimpleNamespace(), container_key="ecd-x", reason="r", error=error)
-    stored = diag.get(diag_id)
+    stored = await diag.get(diag_id)
     assert stored["collected"] is False and "collection failed" in stored["note"]
+    assert stored["status"] == "fail"
     assert error.diag_id == diag_id
 
 
@@ -106,11 +114,15 @@ def test_summarize_error_keeps_the_headline_only():
     assert diag.summarize_error(RuntimeError("")) == "RuntimeError"
 
 
-def test_ring_is_bounded():
-    for i in range(diag.RECENT_LIMIT + 5):
-        diag.remember(None, reason=str(i))
-    assert len(diag.list_recent()) == diag.RECENT_LIMIT
-    assert diag.list_recent()[0]["reason"] == str(diag.RECENT_LIMIT + 4)
+async def test_snapshot_survives_a_database_outage_in_memory(monkeypatch):
+    from sandbox import events
+
+    monkeypatch.setattr(events, "emit", AsyncMock(return_value=None))
+    diag_id = await diag.remember({"diag_version": "x", "summary": {}}, reason="r")
+    assert diag_id.startswith("mem_")
+    assert (await diag.get(diag_id))["collected"] is True
+    assert (await diag.list_recent())[0]["id"] == diag_id
+    assert await diag.get("missing") is None
 
 
 def test_error_text_includes_causes():

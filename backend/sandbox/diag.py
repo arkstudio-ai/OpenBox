@@ -8,11 +8,12 @@ yet — or whose filesystem is read-only — still answers with the current
 format. When the application tunnel is down the same command goes through ECD
 Cloud Assistant instead.
 
-Snapshots taken automatically on a browser failure are kept in a small
-process-local ring so a tool error can cite ``[diag:<id>]`` and an admin can
-pull the full report from ``/api/admin/fleet/diag/<id>`` without touching the
-desktop again. This is deliberately not durable yet; the events table that
-replaces it is the next layer.
+Every snapshot is stored as a ``browser.diag`` row in ``desktop_events`` so a
+tool error can cite ``[diag:<id>]`` and an admin can pull the full report from
+``/api/admin/fleet/diag/<id>`` without touching the desktop again. When the
+database is unavailable the snapshot falls back to a small process-local ring
+under the same id, so the citation still resolves for as long as the process
+lives.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.log import create_logger
+from sandbox import events
 
 log = create_logger("sandbox.diag")
 
@@ -121,53 +123,111 @@ async def collect_desktop_diag(desktop_id: str, *, session: str = "", lines: int
     return report
 
 
-# --- recent snapshots -------------------------------------------------------
+# --- stored snapshots -------------------------------------------------------
 
-_recent: "OrderedDict[str, dict]" = OrderedDict()
+#: Fallback for snapshots the database refused; same ids, process lifetime only.
+_fallback: "OrderedDict[str, dict]" = OrderedDict()
 _last_capture: dict[str, float] = {}
 
 
-def remember(
+def _record(diag_id: str, ts: str, report: dict | None, *, desktop_id, container_key,
+            session_id, reason, error, note) -> dict:
+    summary = (report or {}).get("summary") or {}
+    return {
+        "id": diag_id,
+        "ts": ts,
+        "desktop_id": desktop_id,
+        "container_key": container_key or desktop_id,
+        "session_id": session_id,
+        "kind": "browser.diag",
+        "status": "ok" if report is not None else "fail",
+        "reason": reason,
+        "error": (error or "")[:8000],
+        "note": note,
+        "collected": report is not None,
+        "via": (report or {}).get("via"),
+        "lights": summary.get("lights"),
+        "findings": summary.get("findings"),
+        "report": report,
+    }
+
+
+async def remember(
     report: dict | None,
     *,
     desktop_id: str = "",
     container_key: str = "",
     session_id: str = "",
+    tool_call_id: str = "",
     reason: str = "",
     error: str = "",
     note: str = "",
 ) -> str:
-    """Keep a snapshot (or just the failure text) and return its id."""
-    diag_id = secrets.token_hex(4)
-    _recent[diag_id] = {
-        "id": diag_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "desktop_id": desktop_id,
-        "container_key": container_key,
-        "session_id": session_id,
-        "reason": reason,
-        "error": (error or "")[:8000],
-        "note": note,
-        "collected": report is not None,
-        "summary": (report or {}).get("summary"),
-        "report": report,
-    }
-    while len(_recent) > RECENT_LIMIT:
-        _recent.popitem(last=False)
+    """Store a snapshot (or just the failure text) and return its id."""
+    record = _record(
+        "", datetime.now(timezone.utc).isoformat(), report, desktop_id=desktop_id,
+        container_key=container_key, session_id=session_id, reason=reason, error=error, note=note,
+    )
+    lights = record["lights"] or {}
+    headline = record["error"].splitlines()[0][:160] if record["error"] else ""
+    summary = " | ".join(part for part in (
+        reason,
+        headline,
+        " ".join(f"{k}={v}" for k, v in lights.items()) if lights else ("" if report else note),
+    ) if part)
+    detail = {k: record[k] for k in ("reason", "error", "note", "collected", "via", "lights", "findings", "report")}
+    event_id = await events.emit(
+        "browser.diag", status=record["status"], desktop_id=desktop_id, container_key=container_key,
+        session_id=session_id, tool_call_id=tool_call_id, summary=summary, detail=detail,
+    )
+    if event_id:
+        return event_id
+    diag_id = "mem_" + secrets.token_hex(4)
+    record["id"] = diag_id
+    _fallback[diag_id] = record
+    while len(_fallback) > RECENT_LIMIT:
+        _fallback.popitem(last=False)
     return diag_id
 
 
-def get(diag_id: str) -> dict | None:
-    return _recent.get(diag_id)
+def _from_event(event: dict) -> dict:
+    detail = event.get("detail") or {}
+    return {**{k: v for k, v in event.items() if k != "detail"}, **detail}
 
 
-def list_recent(limit: int = RECENT_LIMIT) -> list[dict]:
-    rows = list(_recent.values())[-limit:]
-    return [{k: v for k, v in row.items() if k != "report"} for row in reversed(rows)]
+async def get(diag_id: str) -> dict | None:
+    if diag_id in _fallback:
+        return _fallback[diag_id]
+    try:
+        event = await events.get(diag_id)
+    except Exception as exc:
+        log.warning("diag lookup failed for %s: %s", diag_id, exc)
+        return None
+    if not event or event.get("kind") != "browser.diag":
+        return None
+    return _from_event(event)
+
+
+async def list_recent(limit: int = RECENT_LIMIT, *, desktop_id: str = "") -> list[dict]:
+    """Newest first, without the report bodies."""
+    rows: list[dict] = []
+    try:
+        for event in await events.list_events(
+            kind="browser.diag", desktop_id=desktop_id, limit=limit, with_detail=True
+        ):
+            row = _from_event(event)
+            row.pop("report", None)
+            rows.append(row)
+    except Exception as exc:
+        log.warning("diag listing failed: %s", exc)
+    if not desktop_id:
+        rows.extend({k: v for k, v in r.items() if k != "report"} for r in _fallback.values())
+    rows.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    return rows[:limit]
 
 
 def clear() -> None:
-    _recent.clear()
+    _fallback.clear()
     _last_capture.clear()
 
 
@@ -198,11 +258,13 @@ async def capture_failure(
             report = await collect_browser_diag(client, session=session_id)
         except Exception as exc:  # the desktop may be exactly what is broken
             note = f"collection failed: {type(exc).__name__}: {exc}"[:400]
-    diag_id = remember(
+    trace = events.trace_of(client)
+    diag_id = await remember(
         report,
-        desktop_id=desktop_id,
+        desktop_id=desktop_id or getattr(client, "desktop_id", "") or "",
         container_key=container_key,
-        session_id=session_id,
+        session_id=session_id or trace.get("session_id", ""),
+        tool_call_id=trace.get("tool_call_id", ""),
         reason=reason,
         error=text,
         note=note,

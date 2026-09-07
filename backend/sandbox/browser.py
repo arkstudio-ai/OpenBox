@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from core.log import create_logger
 
+from sandbox import events
 from sandbox.desktop import ensure_x_helper, x
 
 log = create_logger("sandbox.browser")
@@ -764,32 +765,38 @@ async def ensure_chrome(client, container_key: str) -> dict:
         return existing
     log.info("Chrome on :%d not usable (%s); launching", CHROME_PORT, reason)
 
-    # obx-x is what discovers the desktop's X session for the sudo launch below.
-    await ensure_x_helper(client, container_key)
-    # Policy must be on disk before Chrome starts: it is read once at launch.
-    await client.execute(_policy_install_script(), timeout=30)
-    display = await client.execute("obx-x xdpyinfo >/dev/null 2>&1", timeout=10)
-    if display.exit_code == 0:
-        log.info("launching headed Chrome with remote debugging on :%d", CHROME_PORT)
-        command = x("sh -c " + shlex.quote(_chrome_launch_script()))
-    else:
-        log.info("no desktop session yet; launching isolated headless Chrome on :%d", CHROME_PORT)
-        command = _headless_chrome_launch_script()
-    await _fire_and_forget(client, command)
+    async with events.span("browser.chrome_launch", client=client, container_key=container_key) as event:
+        event.detail["why"] = reason
+        # obx-x is what discovers the desktop's X session for the sudo launch below.
+        await ensure_x_helper(client, container_key)
+        # Policy must be on disk before Chrome starts: it is read once at launch.
+        await client.execute(_policy_install_script(), timeout=30)
+        display = await client.execute("obx-x xdpyinfo >/dev/null 2>&1", timeout=10)
+        if display.exit_code == 0:
+            log.info("launching headed Chrome with remote debugging on :%d", CHROME_PORT)
+            command = x("sh -c " + shlex.quote(_chrome_launch_script()))
+            event.detail["presentation"] = "headed"
+        else:
+            log.info("no desktop session yet; launching isolated headless Chrome on :%d", CHROME_PORT)
+            command = _headless_chrome_launch_script()
+            event.detail["presentation"] = "headless"
+        await _fire_and_forget(client, command)
 
-    deadline = time.monotonic() + CHROME_READY_BUDGET
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1.0)
-        data, reason = await _probe_chrome_detailed(client)
-        if data:
-            _chrome_ready.add(container_key)
-            return data
+        deadline = time.monotonic() + CHROME_READY_BUDGET
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1.0)
+            data, reason = await _probe_chrome_detailed(client)
+            if data:
+                _chrome_ready.add(container_key)
+                event.summary = f"{event.detail['presentation']} {data.get('Browser', 'Chrome')} up"
+                return data
 
-    raise ChromeUnavailable(
-        f"Chrome did not open its debug port on :{CHROME_PORT} within "
-        f"{CHROME_READY_BUDGET}s (last probe: {reason}).\n"
-        f"chrome log:\n{await _log_tail(client, CHROME_LOG)}"
-    )
+        event.summary = f"Chrome did not answer within {CHROME_READY_BUDGET}s: {reason}"
+        raise ChromeUnavailable(
+            f"Chrome did not open its debug port on :{CHROME_PORT} within "
+            f"{CHROME_READY_BUDGET}s (last probe: {reason}).\n"
+            f"chrome log:\n{await _log_tail(client, CHROME_LOG)}"
+        )
 
 
 async def ensure_relay(client, container_key: str, mode: str) -> dict:
@@ -808,25 +815,28 @@ async def ensure_relay(client, container_key: str, mode: str) -> dict:
         _relay_ready.add(container_key)
         return existing
 
-    log.info(
-        "(re)starting dev-browser relay in %s mode (was: %s)", mode,
-        f"configuredMode={existing.get('configuredMode')!r}" if existing else probe.describe(),
-    )
-    await _fire_and_forget(client, _relay_start_script(mode))
+    why = f"configuredMode={existing.get('configuredMode')!r}" if existing else probe.describe()
+    log.info("(re)starting dev-browser relay in %s mode (was: %s)", mode, why)
 
-    deadline = time.monotonic() + RELAY_READY_BUDGET
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1.0)
-        probe = await _probe_url(client, _relay_url())
-        if probe.data:
-            _relay_ready.add(container_key)
-            return probe.data
+    async with events.span("browser.relay_start", client=client, container_key=container_key) as event:
+        event.detail.update({"mode": mode, "why": why})
+        await _fire_and_forget(client, _relay_start_script(mode))
 
-    raise RelayUnavailable(
-        f"dev-browser relay did not answer on :{RELAY_PORT} within "
-        f"{RELAY_READY_BUDGET}s (last probe: {probe.describe()}).\n"
-        f"relay log:\n{await _log_tail(client, RELAY_LOG)}"
-    )
+        deadline = time.monotonic() + RELAY_READY_BUDGET
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1.0)
+            probe = await _probe_url(client, _relay_url())
+            if probe.data:
+                _relay_ready.add(container_key)
+                event.summary = f"relay up in {mode} mode (reports {probe.data.get('mode')!r})"
+                return probe.data
+
+        event.summary = f"relay did not answer within {RELAY_READY_BUDGET}s: {probe.describe()}"
+        raise RelayUnavailable(
+            f"dev-browser relay did not answer on :{RELAY_PORT} within "
+            f"{RELAY_READY_BUDGET}s (last probe: {probe.describe()}).\n"
+            f"relay log:\n{await _log_tail(client, RELAY_LOG)}"
+        )
 
 
 async def browser_status(client) -> dict:
@@ -927,27 +937,59 @@ async def ensure_browser(client, container_key: str, mode: str) -> dict:
         raise ValueError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
     from core.config import get_config
     from sandbox.browser_runtime import BrowserRuntimeUnavailable, ensure_browser_runtime
-    try:
-        if get_config().sandbox_provider == "wuying":
-            # Static runtime work does not touch the GUI. Do it before acquiring
-            # the display lease so npm cannot outlive a turn's GUI lease.
-            await ensure_browser_runtime(client)
-        lease_factory = getattr(client, "desktop_lease", None)
-        if lease_factory is None:
-            return await _ensure_browser_locked(client, container_key, mode)
-        async with lease_factory(
-            session_id=container_key,
-            tool_call_id=f"browser-{container_key}",
-            operation="browser",
-        ):
-            return await _ensure_browser_locked(client, container_key, mode)
-    except (ChromeUnavailable, RelayUnavailable, BrowserRuntimeUnavailable) as exc:
-        # The failure message names the step; the desktop snapshot explains it.
-        # Taken after the lease is released — the collector is read-only and
-        # needs no display, and the turn has already failed.
-        from sandbox.diag import capture_failure
-        await capture_failure(
-            client, container_key=container_key, session_id=container_key,
-            reason=type(exc).__name__, error=exc,
-        )
-        raise
+    # The tool path keys the browser by session; channel verification keys it
+    # by desktop. Label the timeline row with whichever one this is.
+    is_desktop = container_key.startswith("ecd-")
+    labels = {
+        "container_key": container_key,
+        "desktop_id": container_key if is_desktop else "",
+        "session_id": "" if is_desktop else container_key,
+    }
+    async with events.span("browser.ensure", client=client, **labels) as event:
+        event.detail["requested"] = mode
+        try:
+            if get_config().sandbox_provider == "wuying":
+                # Static runtime work does not touch the GUI. Do it before acquiring
+                # the display lease so npm cannot outlive a turn's GUI lease.
+                await ensure_browser_runtime(client)
+            lease_factory = getattr(client, "desktop_lease", None)
+            if lease_factory is None:
+                state = await _ensure_browser_locked(client, container_key, mode)
+            else:
+                async with lease_factory(
+                    session_id=container_key,
+                    tool_call_id=f"browser-{container_key}",
+                    operation="browser",
+                ):
+                    state = await _ensure_browser_locked(client, container_key, mode)
+        except (ChromeUnavailable, RelayUnavailable, BrowserRuntimeUnavailable) as exc:
+            # The failure message names the step; the desktop snapshot explains
+            # it. Taken after the lease is released — the collector is read-only
+            # and needs no display, and the turn has already failed. The span
+            # closes after this, so its row cites the snapshot.
+            from sandbox.diag import capture_failure
+            await capture_failure(
+                client, container_key=container_key, session_id=labels["session_id"],
+                desktop_id=labels["desktop_id"], reason=type(exc).__name__, error=exc,
+            )
+            raise
+        _describe_state(event, mode, state)
+        return state
+
+
+def _describe_state(event, requested: str, state: dict) -> None:
+    """Fill the browser.ensure row from what actually came up."""
+    chrome = state.get("chrome") or {}
+    relay = state.get("relay") or {}
+    presentation = "headless" if is_headless(chrome) else ("headed" if chrome else "user")
+    event.summary = f"{requested} -> {state.get('mode')} ({presentation})"
+    if state.get("fallback_reason"):
+        event.summary += f"; fell back: {state['fallback_reason']}"
+    event.detail.update({
+        "effective": state.get("mode"),
+        "presentation": presentation,
+        "chrome": chrome.get("Browser"),
+        "relay_mode": relay.get("mode"),
+        "extension_connected": relay.get("extensionConnected"),
+        "fallback_reason": state.get("fallback_reason"),
+    })

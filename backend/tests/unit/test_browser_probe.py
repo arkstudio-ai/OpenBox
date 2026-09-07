@@ -137,11 +137,17 @@ async def test_browser_failure_is_snapshotted_and_cited(monkeypatch):
     with pytest.raises(browser.ChromeUnavailable) as error:
         await browser.ensure_browser(client, "session-1", "local")
     diag_id = error.value.diag_id
-    assert diag.get(diag_id)["report"] == {**report, "via": "action_server"}
-    assert diag.get(diag_id)["reason"] == "ChromeUnavailable"
+    stored = await diag.get(diag_id)
+    assert stored["report"] == {**report, "via": "action_server"}
+    assert stored["reason"] == "ChromeUnavailable" and stored["session_id"] == "session-1"
     assert diag.summarize_error(error.value) == f"Chrome did not open its debug port [diag:{diag_id}]"
     # The snapshot was taken through the same client, after the failure.
     assert "obx-diag" in client.execute.await_args.args[0]
+    # And the bring-up itself is on the timeline, citing the snapshot.
+    from sandbox import events
+    ensure = await events.list_events(kind="browser.ensure", session_id="session-1")
+    assert len(ensure) == 1 and ensure[0]["status"] == "fail" and ensure[0]["diag_id"] == diag_id
+    assert ensure[0]["summary"].startswith("ChromeUnavailable: Chrome did not open")
 
 
 async def test_runtime_problems_survive_into_the_exception():

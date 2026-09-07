@@ -398,9 +398,18 @@ snapshot of the desktop and cites it: the tool message the model sees ends in
 `[diag:<id>]`, `cloud_desktops.channel_error` carries the same tag, and the
 backend log line `browser failure diag=<id> …` lists the five lights
 (chrome/relay/x/unit/runtime) and the findings. Snapshots for one desktop are
-spaced at least five minutes apart and live in the backend process
-(`GET /api/admin/fleet/diag/recent`, `GET /api/admin/fleet/diag/<id>`); they are
-not durable yet.
+spaced at least five minutes apart and are stored as `browser.diag` rows in
+`desktop_events` (`GET /api/admin/fleet/diag/recent?desktop_id=`,
+`GET /api/admin/fleet/diag/<id>`), kept for 30 days.
+
+The same table is the desktop's timeline: every browser bring-up
+(`browser.ensure`, with requested vs effective mode and any fallback reason),
+Chrome and relay launches, failed runtime checks and the repairs they trigger,
+each channel verify with its attempt count, leases that waited over two
+seconds or were refused, and the snapshots themselves. Rows carry the session
+and tool-call ids the action server saw in `X-OpenBox-*`, so
+`GET /api/admin/fleet/desktops/<ecd-id>/events?session=<id>` shows one
+conversation's browser history end to end.
 
 To take a fresh one: `POST /api/admin/fleet/desktops/<ecd-id>/diag` with
 `{"via": "auto"}` uses the application channel and falls back to Cloud

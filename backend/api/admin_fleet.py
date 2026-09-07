@@ -305,21 +305,68 @@ class DiagRequest(BaseModel):
 
 
 @router.get("/diag/recent")
-async def recent_diags(limit: int = Query(50, ge=1, le=50), admin: dict = Depends(require_admin)):
-    """Snapshots taken automatically on browser failures (this backend process)."""
+async def recent_diags(
+    limit: int = Query(50, ge=1, le=200),
+    desktop_id: str = "",
+    admin: dict = Depends(require_admin),
+):
+    """Browser snapshots, newest first, without their report bodies."""
     from sandbox import diag
 
-    return {"items": diag.list_recent(limit)}
+    return {"items": await diag.list_recent(limit, desktop_id=desktop_id)}
 
 
 @router.get("/diag/{diag_id}")
 async def get_diag(diag_id: str, admin: dict = Depends(require_admin)):
     from sandbox import diag
 
-    record = diag.get(diag_id)
+    record = await diag.get(diag_id)
     if record is None:
-        raise HTTPException(404, detail="diagnostic not found (it may belong to another backend process)")
+        raise HTTPException(404, detail="diagnostic not found")
     return record
+
+
+@router.get("/events")
+async def list_events(
+    desktop_id: str = "",
+    session: str = "",
+    kind: str = "",
+    status: str = "",
+    limit: int = Query(100, ge=1, le=500),
+    admin: dict = Depends(require_admin),
+):
+    """The desktop timeline: browser bring-ups, launches, repairs, verifies, leases, diags."""
+    from sandbox import events
+
+    return {"items": await events.list_events(
+        desktop_id=desktop_id, session_id=session, kind=kind, status=status, limit=limit,
+    )}
+
+
+@router.get("/events/{event_id}")
+async def get_event(event_id: str, admin: dict = Depends(require_admin)):
+    from sandbox import events
+
+    event = await events.get(event_id)
+    if event is None:
+        raise HTTPException(404, detail="event not found")
+    return event
+
+
+@router.get("/desktops/{desktop_id}/events")
+async def desktop_events(
+    desktop_id: str,
+    session: str = "",
+    kind: str = "",
+    status: str = "",
+    limit: int = Query(100, ge=1, le=500),
+    admin: dict = Depends(require_admin),
+):
+    from sandbox import events
+
+    return {"items": await events.list_events(
+        desktop_id=desktop_id, session_id=session, kind=kind, status=status, limit=limit,
+    )}
 
 
 @router.post("/desktops/{desktop_id}/diag")
@@ -346,7 +393,7 @@ async def collect_desktop_diag(
     if body.via in ("auto", "channel"):
         try:
             host, port, api_key = route_for_record(desktop)
-            client = SandboxClient(host=host, port=port, api_key=api_key)
+            client = SandboxClient(host=host, port=port, api_key=api_key, desktop_id=desktop_id)
             report = await diag.collect_browser_diag(client, session=body.session, lines=body.lines)
         except (ChannelNotReady, Exception) as exc:
             errors.append(f"channel: {type(exc).__name__}: {str(exc)[:300]}")
@@ -359,9 +406,9 @@ async def collect_desktop_diag(
             errors.append(f"cloud_assistant: {type(exc).__name__}: {str(exc)[:300]}")
             raise HTTPException(502, detail="; ".join(errors)) from exc
 
-    diag_id = diag.remember(
+    diag_id = await diag.remember(
         report, desktop_id=desktop_id, session_id=body.session,
-        reason="admin.request", note="; ".join(errors),
+        reason=f"admin:{admin['user_id']}", note="; ".join(errors),
     )
     await record(
         admin["user_id"], desktop.get("workspace_id"), "desktop.diag",

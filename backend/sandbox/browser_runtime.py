@@ -13,6 +13,7 @@ from pathlib import Path
 import uuid
 
 from core.log import create_logger
+from sandbox import events
 from sandbox.browser_runtime_repair import RUNTIME_VERSION
 
 log = create_logger("sandbox.browser_runtime")
@@ -168,29 +169,40 @@ async def ensure_browser_runtime(client) -> dict:
     checked = await client.execute(
         "python3 /opt/openbox/tools/repair_browser_runtime.py --check", timeout=45
     )
+    why = ""
+    problems: list[str] = []
     if checked.exit_code == 0:
         try:
             return verified_result(checked.stdout or "")
         except BrowserRuntimeUnavailable as exc:
             # An older verifier cannot certify this backend's version; a
             # current one that fails is a real problem. Either way, repair.
+            why, problems = str(exc), exc.problems
             log.info("browser runtime check did not pass, repairing: %s", exc)
     else:
-        log.info(
-            "browser runtime check exited %s, repairing: %s",
-            checked.exit_code,
-            ((getattr(checked, "stderr", "") or getattr(checked, "stdout", "") or "").strip())[-300:],
-        )
-    result = await client.execute(runtime_install_script(), timeout=350)
-    if result.exit_code != 0:
-        tail = ((getattr(result, "stderr", "") or "").strip() or (getattr(result, "stdout", "") or "").strip())[-1500:]
-        raise BrowserRuntimeUnavailable(
-            "Browser runtime repair failed; desktop cannot be marked ready. "
-            f"Installer exited {result.exit_code}: {tail.splitlines()[-1][:300] if tail else 'no output'}. "
-            "Full log: /opt/openbox/backups/browser-runtime-*/npm-install.log on the desktop.",
-            output=tail,
-        )
-    return verified_result(result.stdout or "")
+        why = ((getattr(checked, "stderr", "") or getattr(checked, "stdout", "") or "").strip())[-300:]
+        log.info("browser runtime check exited %s, repairing: %s", checked.exit_code, why)
+    # A passing check every turn is noise; a failing one is the start of a repair.
+    await events.emit(
+        "browser.runtime_check", status="fail", client=client,
+        summary=why or f"verifier exited {checked.exit_code}",
+        detail={"exit_code": checked.exit_code, "problems": problems, "required": RUNTIME_VERSION},
+    )
+    async with events.span("browser.runtime_repair", client=client) as event:
+        result = await client.execute(runtime_install_script(), timeout=350)
+        if result.exit_code != 0:
+            tail = ((getattr(result, "stderr", "") or "").strip() or (getattr(result, "stdout", "") or "").strip())[-1500:]
+            event.detail["installer_tail"] = tail
+            raise BrowserRuntimeUnavailable(
+                "Browser runtime repair failed; desktop cannot be marked ready. "
+                f"Installer exited {result.exit_code}: {tail.splitlines()[-1][:300] if tail else 'no output'}. "
+                "Full log: /opt/openbox/backups/browser-runtime-*/npm-install.log on the desktop.",
+                output=tail,
+            )
+        verified = verified_result(result.stdout or "")
+        event.summary = f"repaired to {verified.get('version')} (changed={verified.get('changed')})"
+        event.detail["result"] = verified
+        return verified
 
 
 async def ensure_desktop_browser_runtime(desktop_id: str) -> dict:

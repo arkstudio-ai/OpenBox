@@ -171,6 +171,10 @@ def register_builtin_tasks() -> None:
     )
     register("renew_expiring", 24 * 60 * 60, run_renew_expiring_task)
 
+    from sandbox.events import run_purge_task
+
+    register("desktop_events_purge", 6 * 60 * 60, run_purge_task)
+
     from platforms.tasks import register_platform_tasks
 
     register_platform_tasks()

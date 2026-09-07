@@ -1,4 +1,4 @@
-# D1 · ECD 浏览器调试监控（方案 v1，2026-09-07；L0+L1 已实现，见 §7）
+# D1 · ECD 浏览器调试监控（方案 v1，2026-09-07；L0+L1+L2 已实现，见 §7）
 
 ## 0. 一句话
 
@@ -188,4 +188,21 @@ L0 + L1 一起（收益最大、无迁移）→ L2 → L4 → L3（视需要）�
    不重发时诊断走内联脚本仍可用，只是没有 `/diag/browser`、请求 id 回显和新分类。
 3. `RUNTIME_VERSION` 升级会让每台桌面在下次浏览器使用/激活时跑一次 repair（无 npm、几秒）。
 
-**未做 / 下一步**：L2 事件表（把环形缓存落库）、L3 页面级 ops、L4 Fleet 抽屉与设置页 `detail` 展示、L5 告警。
+**L2 已做（同分支，第二个提交）**
+
+- 表 `desktop_events`（migration `b6d1e2f3a4b5`，已加入 `_READINESS_SCHEMA`）：
+  ts / desktop_id / container_key / session_id / tool_call_id / request_id / kind / status /
+  duration_ms / summary / detail(JSONB, ≤48KB 自动裁剪) / diag_id。
+- `sandbox/events.py`：`emit()` best-effort 永不抛；`span()` 计时并记 ok/fail/timeout，异常上的
+  `diag_id` 自动带入；`list_events`/`get`/`purge`（30 天，内部任务 `desktop_events_purge` 每 6h）。
+  session/tool_call 从 `SandboxClient._trace` 自动取；`SandboxClient(desktop_id=…)` 新增标签字段，
+  manager 对 `ecd-*` 容器自动填。
+- 埋点：`browser.ensure`（含 requested→effective、presentation、fallback_reason）、
+  `browser.chrome_launch`、`browser.relay_start`、`browser.runtime_check`（只记失败）、
+  `browser.runtime_repair`、`channel.verify`（attempts/boot_recovery/最后错误）、
+  `lease.acquire`（只记等待 ≥2s 或 423 被拒）、`browser.diag`（快照本体存 detail.report）。
+- `sandbox/diag.py` 改为落库：`[diag:<id>]` 现在就是事件 id（`dev_…`）；库不可用时退回进程内
+  `mem_…` 缓存。admin API：`GET /api/admin/fleet/events?desktop_id=&session=&kind=&status=`、
+  `GET /events/{id}`、`GET /desktops/{id}/events`；`diag/recent` 支持 `desktop_id` 过滤。
+
+**未做 / 下一步**：L4 Fleet 抽屉与设置页 `detail` 展示、L3 页面级 ops、L5 告警。

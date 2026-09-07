@@ -253,6 +253,10 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "id", "desktop_id", "unit_price", "currency", "quantity", "request_id",
         "status", "created_by", "created_at", "error",
     }),
+    "desktop_events": frozenset({
+        "id", "ts", "desktop_id", "container_key", "session_id", "tool_call_id",
+        "request_id", "kind", "status", "duration_ms", "summary", "detail", "diag_id",
+    }),
 }
 
 

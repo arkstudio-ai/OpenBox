@@ -163,6 +163,18 @@ _PROCESS_INSTANCE_ID = (
 )
 
 
+#: A lease that took this long to obtain means another turn held the desktop;
+#: worth a timeline row, unlike the thousands of instant acquisitions.
+LEASE_WAIT_NOTEWORTHY_MS = 2000
+
+
+def _safe_json(response) -> dict | str | None:
+    try:
+        return response.json()
+    except Exception:
+        return (getattr(response, "text", "") or "")[:200] or None
+
+
 @dataclass
 class ExecuteResult:
     """Result of a command execution."""
@@ -245,12 +257,16 @@ class SandboxClient:
         workspace_id: str | None = None,
         catalogue_ttl_seconds: float = CATALOGUE_CACHE_TTL_SECONDS,
         catalogue_clock: Callable[[], float] | None = None,
+        desktop_id: str = "",
     ):
         # base_url wins when set — remote providers (wuying) address the action
         # server through a tunnel endpoint rather than a host/port pair.
         self.base_url = base_url.rstrip("/") if base_url else f"http://{host}:{port}"
         self.api_key = api_key
         self.workspace_id = workspace_id
+        #: The ECD desktop behind this client, when the caller knows it. Only
+        #: used to label desktop events; routing never depends on it.
+        self.desktop_id = desktop_id
         self._headers = {"X-API-Key": api_key}
         if user_scope is not None:
             if not _USER_SCOPE_PATTERN.fullmatch(user_scope):
@@ -307,6 +323,17 @@ class SandboxClient:
         finally:
             self._trace.reset(token)
 
+    async def _note_lease(self, status: str, started: float, summary: str, detail: dict) -> None:
+        """Record a slow or refused lease; never let bookkeeping break a turn."""
+        try:
+            from sandbox.events import emit
+            await emit(
+                "lease.acquire", status=status, client=self, summary=summary, detail=detail,
+                duration_ms=round((time.monotonic() - started) * 1000),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.debug("lease event not recorded: %s", exc)
+
     @asynccontextmanager
     async def desktop_lease(
         self,
@@ -336,6 +363,7 @@ class SandboxClient:
             owner = ":".join(part for part in (
                 _PROCESS_INSTANCE_ID, session_id, tool_call_id or secrets.token_hex(6)
             ) if part)
+            lease_started = time.monotonic()
             async with self._client(timeout=wait_timeout + 15) as client:
                 response = await client.post(
                     "/desktop/lease/acquire",
@@ -346,8 +374,20 @@ class SandboxClient:
                         "ttl_seconds": ttl_seconds,
                     },
                 )
+                if getattr(response, "status_code", 200) == 423:
+                    body = _safe_json(response)
+                    holder = body.get("detail") if isinstance(body, dict) else body
+                    await self._note_lease(
+                        "fail", lease_started, f"desktop busy: {str(holder)[:200]}",
+                        {"holder": holder, "wait_timeout": wait_timeout},
+                    )
                 response.raise_for_status()
                 lease = response.json()
+            if lease.get("wait_ms", 0) >= LEASE_WAIT_NOTEWORTHY_MS:
+                await self._note_lease(
+                    "info", lease_started, f"waited {lease['wait_ms']}ms for the desktop",
+                    {"wait_ms": lease["wait_ms"], "reused": lease.get("reused")},
+                )
 
             active = self._trace.get()
             lease_context = self._trace.set(RequestTrace(

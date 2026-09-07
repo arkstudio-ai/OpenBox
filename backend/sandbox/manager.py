@@ -7,6 +7,11 @@ from models.container import ContainerStatus
 from sandbox.client import SandboxClient, user_scope_for
 from sandbox.provider import build_sandbox_name
 
+def _desktop_id_of(container_id: str | None) -> str:
+    """The WUYING provider names containers by their ECD desktop id."""
+    return container_id if container_id and container_id.startswith("ecd-") else ""
+
+
 log = create_logger("sandbox.manager")
 
 
@@ -238,6 +243,7 @@ class SandboxManager:
                         base_url=sandbox.base_url,
                         user_scope=user_scope_for(user_id),
                         workspace_id=owner if per_owner_route else None,
+                        desktop_id=_desktop_id_of(sandbox.id),
                     )
                 async with self._lock:
                     if self._project_map.get(key) is not sandbox:
@@ -311,6 +317,7 @@ class SandboxManager:
                 base_url=getattr(provider, "client_base_url", None),
                 user_scope=user_scope_for(user_id),
                 workspace_id=owner if per_owner_route else None,
+                desktop_id=_desktop_id_of(info.id),
             )
 
             async with self._lock:

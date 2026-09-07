@@ -257,18 +257,34 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
 
     async def verify(self, record: dict, timeout_sec: int = 180) -> dict:
         """Require execution/browser readiness; validate a display when present."""
-        deadline = asyncio.get_running_loop().time() + timeout_sec
+        from sandbox import events
+
+        started = asyncio.get_running_loop().time()
+        deadline = started + timeout_sec
         last_error = "channel did not answer"
         boot_recovery_attempted = False
         sandbox = None
+        attempts = 0
+        desktop_id = record.get("desktop_id") or ""
+
+        async def _outcome(status: str, summary: str, **detail) -> None:
+            await events.emit(
+                "channel.verify", status=status, desktop_id=desktop_id,
+                session_id=f"channel-verify:{record['id']}", summary=summary,
+                duration_ms=round((asyncio.get_running_loop().time() - started) * 1000),
+                detail={"attempts": attempts, "boot_recovery": boot_recovery_attempted, **detail},
+                diag_id=detail.get("diag_id", ""),
+            )
+
         while asyncio.get_running_loop().time() < deadline:
+            attempts += 1
             try:
                 provisional = {**record, "tunnel_state": "up"}
                 host, port, api_key = route_for_record(provisional)
                 async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
                     alive = await client.get(f"http://{host}:{port}/alive")
                     alive.raise_for_status()
-                sandbox = SandboxClient(host=host, port=port, api_key=api_key)
+                sandbox = SandboxClient(host=host, port=port, api_key=api_key, desktop_id=desktop_id)
                 # obx-display touches the live desktop session and therefore
                 # must obey the same action-server lease as real computer
                 # turns.  A raw execute is correctly rejected with HTTP 423.
@@ -304,12 +320,20 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 await cloud_desktop_repo.update(
                     record["id"], tunnel_state="up", last_seen_at=now, channel_error=None
                 )
-                return {
+                verified = {
                     "hostname": result.stdout.splitlines()[0].strip(),
                     "last_seen_at": now,
                     "display_ready": "OPENBOX_NO_DISPLAY" not in result.stdout,
                     "browser_presentation": "headless" if is_headless(browser["chrome"]) else "headed",
                 }
+                await _outcome(
+                    "ok",
+                    f"channel up ({verified['browser_presentation']}, display "
+                    f"{'ready' if verified['display_ready'] else 'absent'}) after {attempts} attempt(s)",
+                    hostname=verified["hostname"], display_ready=verified["display_ready"],
+                    browser_presentation=verified["browser_presentation"],
+                )
+                return verified
             except BrowserRuntimeUnavailable as exc:
                 # Let durable activation retry this desktop, not buy another.
                 # The browser layer already snapshotted the desktop for its
@@ -325,6 +349,10 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
                 log.warning("channel verify failed for %s (diag=%s): %s", record["desktop_id"], diag_id, exc)
                 await cloud_desktop_repo.update(
                     record["id"], channel_error=f"{str(exc)[:1900]} [diag:{diag_id}]" if diag_id else str(exc)
+                )
+                await _outcome(
+                    "fail", f"browser not ready: {str(exc).splitlines()[0][:200]}",
+                    diag_id=diag_id, problems=getattr(exc, "problems", []),
                 )
                 raise
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
@@ -346,6 +374,7 @@ echo OPENBOX_FINGERPRINT="$(ssh-keygen -lf /etc/openbox/tunnel_key.pub -E sha256
         await cloud_desktop_repo.update(
             record["id"], tunnel_state="down", channel_error=last_error
         )
+        await _outcome("timeout", f"no answer in {timeout_sec}s: {last_error[:200]}", last_error=last_error)
         raise ChannelNotReady(last_error)
 
     async def probe(self, record: dict) -> bool:

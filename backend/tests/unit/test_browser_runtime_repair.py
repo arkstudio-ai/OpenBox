@@ -174,7 +174,7 @@ def test_task_budget_includes_threads_and_preserves_higher_limits(value, expecte
 
 def test_task_budget_check_requires_persistent_and_live_limits(tmp_path):
     root, cgroup = tmp_path / 'systemd', tmp_path / 'cgroup'
-    config = root / (repair.ACTION_SERVICE + '.d/browser-resources.conf')
+    config = root / (repair.ACTION_SERVICE + '.d/' + repair.TASK_BUDGET_DROPIN)
     assert repair.task_budget_problems(root, cgroup)
     config.parent.mkdir(parents=True)
     config.write_text('[Service]\nTasksMax=2048\n')
@@ -213,7 +213,7 @@ def test_service_task_budget_is_persistent_without_restarting(tmp_path, monkeypa
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(repair.subprocess, 'run', run)
     assert repair.register_boot_service() is True
-    config = root / (repair.ACTION_SERVICE + '.d/browser-resources.conf')
+    config = root / (repair.ACTION_SERVICE + '.d/' + repair.TASK_BUDGET_DROPIN)
     assert f'TasksMax={expected}' in config.read_text()
     assert any(c[1] == 'set-property' for c in calls) is live_update
     assert not any('restart' in c or 'stop' in c for c in calls)
@@ -228,3 +228,48 @@ def test_bootstrap_task_limit_matches_runtime_minimum():
     source = (Path(__file__).resolve().parents[2] / 'scripts/wuying_bootstrap.py').read_text()
     assert source.count(f'TasksMax={repair.ACTION_TASKS_MIN}') == 2
     assert 'TasksMax=512' not in source
+
+
+def test_legacy_media_dropin_cannot_restore_512_after_reload(tmp_path, monkeypatch):
+    root, control, cgroup = (tmp_path / p for p in ['systemd', 'control', 'cgroup'])
+    dropins = root / (repair.ACTION_SERVICE + '.d')
+    dropins.mkdir(parents=True)
+    media = dropins / 'media.conf'
+    media.write_text('[Service]\nMemoryMax=6G\nTasksMax=512\n')
+    pinned = control / (repair.ACTION_SERVICE + '.d/50-TasksMax.conf')
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text('[Service]\nTasksMax=512\n')
+    cgroup.mkdir()
+    live = cgroup / 'pids.max'
+    live.write_text('512')
+    monkeypatch.setattr(repair, 'SYSTEMD_ROOT', root)
+    monkeypatch.setattr(repair, 'SYSTEMD_CONTROL_ROOT', control)
+    monkeypatch.setattr(repair, 'ACTION_CGROUP', cgroup)
+    monkeypatch.setattr(repair, 'BACKUP_ROOT', tmp_path / 'backups')
+    def reload():
+        files = [pinned, *dropins.glob('*.conf')]
+        for path in sorted(files, key=lambda p: p.name):
+            for line in path.read_text().splitlines():
+                if line.startswith('TasksMax='):
+                    live.write_text(line.split('=', 1)[1])
+    def run(command, **kwargs):
+        if command[1] == 'show':
+            return SimpleNamespace(stdout=f'LoadState=loaded\nMainPID=123\nTasksMax={live.read_text()}\n')
+        if command[1] == 'set-property':
+            assert '--runtime' not in command
+            pinned.write_text('[Service]\n' + command[-1] + '\n')
+            live.write_text(command[-1].split('=', 1)[1])
+        if command[1] in ('daemon-reload', 'enable'):
+            reload()
+        assert command[1] not in ('restart', 'stop')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(repair.subprocess, 'run', run)
+    repair.register_boot_service()
+    assert live.read_text() == '2048'
+    assert repair.task_budget_problems(root, cgroup) == []
+    assert media.read_text() == '[Service]\nMemoryMax=6G\nTasksMax=512\n'
+    saved = list((tmp_path / 'backups').glob('*/50-TasksMax.conf'))
+    assert len(saved) == 1 and 'TasksMax=512' in saved[0].read_text()
+    assert repair.register_boot_service() is False
+    reload()
+    assert live.read_text() == '2048'

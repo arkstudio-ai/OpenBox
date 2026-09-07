@@ -175,3 +175,17 @@ async def test_install_failure_keeps_the_installer_output():
         await runtime.ensure_browser_runtime(client)
     assert "Installer exited 2: npm ERR! 404 Not Found" in str(error.value)
     assert "E404" in error.value.output
+
+
+def test_launch_scripts_reclaim_logs_left_by_another_identity():
+    """fs.protected_regular=2 lets a stale sandbox-owned /tmp log silently sink a
+    root launch: the redirect fails into /dev/null and nothing ever starts."""
+    reclaim = 'rm -f "$f"'
+    headed = browser._chrome_launch_script()
+    assert reclaim in headed and headed.index(browser.CHROME_LOG) < headed.index("pgrep -x gnome-shell")
+    assert headed.index(f"for f in {browser.IBUS_LOG}") < headed.index("ibus-daemon --replace")
+    assert f'chown "$U" {browser.IBUS_LOG}' in headed
+    relay = browser._relay_start_script("local")
+    assert reclaim in relay and relay.index(browser.RELAY_LOG) < relay.index("start-relay")
+    headless = browser._headless_chrome_launch_script()
+    assert reclaim in headless and headless.index(browser.CHROME_LOG) < headless.index("useradd")

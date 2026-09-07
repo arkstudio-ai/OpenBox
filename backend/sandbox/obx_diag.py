@@ -153,7 +153,13 @@ def _proc_start(pid):
 
 def _cmdline(pid):
     raw = _read(f"/proc/{pid}/cmdline", 256 * 1024)
-    return [part for part in raw.split("\0") if part]
+    parts = [part for part in raw.split("\0") if part]
+    # Chrome rewrites its argv in place (process title), after which the
+    # kernel hands back one space-separated blob instead of NUL-separated
+    # arguments. Seen on every Chrome process of a Wuying desktop.
+    if len(parts) == 1 and " --" in parts[0]:
+        parts = parts[0].split()
+    return parts
 
 
 def _filter_chrome_args(argv):

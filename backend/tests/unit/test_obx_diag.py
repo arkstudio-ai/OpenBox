@@ -102,3 +102,15 @@ def test_http_probe_reports_stage():
     mod = _load()
     probe = mod._http_json("http://127.0.0.1:1/", timeout=0.5)
     assert probe["ok"] is False and probe["stage"] == "transport"
+
+
+def test_cmdline_accepts_chromes_space_joined_argv(tmp_path, monkeypatch):
+    """Chrome rewrites its argv (process title), so /proc/<pid>/cmdline comes back
+    space-separated; the collector then saw 12 Chrome processes and no browser."""
+    mod = _load()
+    proc = tmp_path / "proc" / "4242"; proc.mkdir(parents=True)
+    (proc / "cmdline").write_bytes(b"/opt/google/chrome/chrome --remote-debugging-port=9333 --type=zygote --user-data-dir=/p")
+    monkeypatch.setattr(mod, "_read", lambda path, limit=64 * 1024: (tmp_path / path.lstrip("/")).read_bytes().decode())
+    assert mod._cmdline(4242) == ["/opt/google/chrome/chrome", "--remote-debugging-port=9333", "--type=zygote", "--user-data-dir=/p"]
+    (proc / "cmdline").write_bytes(b"/usr/bin/node\x00relay.ts\x00")
+    assert mod._cmdline(4242) == ["/usr/bin/node", "relay.ts"]

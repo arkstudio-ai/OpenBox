@@ -33,6 +33,16 @@ class SkillsApi {
     ];
   }
 
+  /// Whether this deployment queues submissions for an admin to look at.
+  ///
+  /// Fetched here rather than borrowed from chat's config provider: a feature
+  /// reaching sideways into another feature's API layer is the coupling the
+  /// structure exists to prevent (mirrors web `useStoreConfig`).
+  Future<bool> storeReviewRequired() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/agent/config');
+    return asBool(resp.data?['skill_store_review']) ?? false;
+  }
+
   Future<Catalog> catalog() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/agent/catalog');
     return Catalog.fromJson(resp.data ?? const {});
@@ -102,6 +112,15 @@ class SkillsApi {
   Future<void> publishSkill(String installDir) async {
     await _dio.post<dynamic>(
       '/api/agent/skill/${Uri.encodeComponent(installDir)}/publish',
+    );
+  }
+
+  /// Take a release back off the store. The published snapshot survives on the
+  /// server, so this is reversible by publishing again — and it deliberately
+  /// does not touch the copies people already installed.
+  Future<void> withdrawSkill(String installDir) async {
+    await _dio.post<dynamic>(
+      '/api/agent/skill/${Uri.encodeComponent(installDir)}/withdraw',
     );
   }
 
@@ -222,6 +241,13 @@ final skillCatalogProvider = FutureProvider<Catalog>((ref) {
 
 final skillProjectsProvider = FutureProvider<List<(String, String)>>(
   (ref) => ref.watch(skillsApiProvider).listProjects(),
+);
+
+/// False until the config lands: promising a review that is not happening is
+/// the worse of the two wrong answers — it would tell someone their skill is
+/// private while strangers are already installing it.
+final skillStoreReviewProvider = FutureProvider<bool>(
+  (ref) => ref.watch(skillsApiProvider).storeReviewRequired(),
 );
 
 /// One write at a time, and the last failure — shared by the screen and by

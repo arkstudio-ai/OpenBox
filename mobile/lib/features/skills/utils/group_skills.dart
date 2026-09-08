@@ -25,6 +25,9 @@ class SkillGroup {
     this.libraryId,
     this.catalogId,
     this.publishedAt,
+    this.listing,
+    this.listingNote,
+    this.isOfficial = false,
     this.icon,
     this.description,
   });
@@ -51,6 +54,13 @@ class SkillGroup {
   final String? libraryId;
   final String? catalogId;
   final String? publishedAt;
+
+  /// The operator's half of a personal package's story: where its release
+  /// stands on the shelf. See `utils/listing.dart` for why the two axes stay
+  /// separate rather than collapsing into one status.
+  final String? listing; // pending | listed | rejected | delisted
+  final String? listingNote;
+  final bool isOfficial;
   final String? icon;
   final String? description;
 
@@ -102,6 +112,9 @@ List<SkillGroup> groupSkills(List<InstalledSkill> skills) {
       libraryId: first.libraryId,
       catalogId: first.catalogId,
       publishedAt: first.publishedAt,
+      listing: first.listing,
+      listingNote: first.listingNote,
+      isOfficial: first.isOfficial,
       icon: isPack ? null : first.icon,
       description: isPack ? null : first.description,
     ));

@@ -11,6 +11,7 @@ import '../../shared/utils/error_text.dart';
 import '../../shared/widgets/toast.dart';
 import 'api/skills_api.dart';
 import 'utils/group_skills.dart';
+import 'utils/store_sections.dart';
 import 'widgets/create_publish_sheets.dart';
 import 'widgets/install_sheet.dart';
 import 'widgets/mine_list.dart';
@@ -243,13 +244,33 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   }
 
   Future<void> _openPublish(SkillGroup group) async {
+    // The sheet promises different things depending on the deployment, so it
+    // is told rather than left to guess. A config that has not loaded yet
+    // reads as "no review" — the smaller promise of the two.
+    final reviewRequired =
+        ref.read(skillStoreReviewProvider).valueOrNull ?? false;
     await _showSheet(
       (sheetContext, busy, error) => PublishSkillSheet(
         group: group,
+        reviewRequired: reviewRequired,
         busy: busy,
         error: error,
         onConfirm: () async {
           final ok = await _run(() => _api.publishSkill(group.id));
+          if (ok && sheetContext.mounted) Navigator.of(sheetContext).pop();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openWithdraw(SkillGroup group) async {
+    await _showSheet(
+      (sheetContext, busy, error) => WithdrawSkillSheet(
+        group: group,
+        busy: busy,
+        error: error,
+        onConfirm: () async {
+          final ok = await _run(() => _api.withdrawSkill(group.id));
           if (ok && sheetContext.mounted) Navigator.of(sheetContext).pop();
         },
       ),
@@ -438,21 +459,17 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
                     }
                   },
                   publish: _openPublish,
+                  withdraw: _openWithdraw,
                   download: _download,
                 ),
               )
             else
               StoreList(
-                skills: (catalog.valueOrNull?.skills ?? const [])
-                    .where((s) => _matches(
-                        query, [s.title, s.description, s.name, s.tags.join(' ')]))
-                    .toList(),
-                mcp: (catalog.valueOrNull?.mcp ?? const [])
-                    .where((s) => _matches(
-                        query, [s.title, s.description, s.name, s.tags.join(' ')]))
-                    .toList(),
-                showSkills: _filters.kind != 'mcp',
-                showMcp: _filters.kind != 'skill',
+                shelves: buildStoreShelves(
+                  catalog.valueOrNull,
+                  kind: _filters.kind,
+                  query: query,
+                ),
                 onInstall: _openInstall,
               ),
           ],

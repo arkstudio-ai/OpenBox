@@ -28,7 +28,7 @@
 | P1 | A5 授权中心、抖音投稿与聊天二维码 | `c3563d9`、`12ad18f`、`a0f9b65` | 已完成（代码与模拟器）；真机验收待完成 | 多账号、权限、预计到期、视频投稿、同机跳转、二维码备选与服务端状态恢复；本轮未发布，见 §9 |
 | P3 | 舰队管理 | `ae330c0` | 有意省略 | 管理员运维台，按移动端“能力不具备则省略控件”处理 |
 | P3 | 超管系统（舰队 / 技能管理 / 订阅管理） | 分支 `codex/admin-console` | 有意省略 | 与舰队管理同一处理：Web-only 运营台，移动端不加入口和控件；`admin.json` / `admin-skills.json` / `admin-billing.json` 仍按 locale 规则逐字节复制。见 §10 |
-| P2 | 用户侧技能商店改版（来源分区、上架状态、撤回、审核提示） | 分支 `codex/admin-console` | 待对齐 | `store_list.dart`、`mine_list.dart`、`create_publish_sheets.dart` 尚未用新字段；接口向后兼容，当前 App 不改也能继续跑。见 §10 |
+| P2 | 用户侧技能商店改版（来源分区、上架状态、撤回、审核提示） | 分支 `codex/admin-console` | 已完成（代码与单测）；真机验收待完成 | 三个 widget 已接新字段，`listing.dart` / `store_sections.dart` 从 web 逐条移植并有 14 项单测。见 §10 |
 
 ## 1. Locale 同步与工作日志内联常开
 
@@ -254,17 +254,23 @@ Web `/app/admin/fleet` 是仅 `user.role === "admin"` 可见的运维台，覆�
 
 Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理）全部只对 `users.role === "admin"` 开放，后端 `/api/admin/skills/*`、`/api/admin/billing/*` 也只认这一个角色。移动端与 §5 舰队管理同样处理：**不加入口、不加控件**，`admin.json` 与新增的 `admin-skills.json`、`admin-billing.json` 仍按 locale 规则从 `frontend-v2/src/locales/` 逐字节复制（App 不用也要复制过门禁）。若以后确有移动运营场景，单独立项，不能把普通 workspace owner 与平台 admin 权限混在一起。
 
-### 用户侧技能商店：待对齐
+### 用户侧技能商店：已完成（真机待验）
 
-后端与 Web 已改，移动端还没跟。涉及三个文件：
+2026-09-08 补齐，与 Web 同构。纯逻辑从 web 逐条移植成两个新文件，界面三处接上：
 
-| 文件 | 待办 |
-|---|---|
-| `mobile/lib/features/skills/widgets/store_list.dart` | 商店分区从「Skill / MCP」改成按 `origin` 分「官方 / 用户共享 / 第三方」；置顶条目显示「置顶」小标；条目显示 `installs_count` |
-| `mobile/lib/features/skills/widgets/mine_list.dart` | 「我的」个人技能显示 `listing` 状态 chip（待审核 / 已上架 / 已驳回 / 已下架 / 已撤回），驳回与下架展开 `listing_note` 原因；加「撤回发布」（`POST /api/agent/skill/{name}/withdraw`），被驳回或下架后按钮文案改「重新提交」 |
-| `mobile/lib/features/skills/widgets/create_publish_sheets.dart` | 发布确认文案按 `GET /api/agent/config` 的 `skill_store_review` 选：开启时用 `publish.reviewNotice`（提交后由管理员审核），关闭时保留原 `publish.publicNotice` |
+| 文件 | 对应 web | 内容 |
+|---|---|---|
+| `mobile/lib/features/skills/utils/listing.dart` | `lib/listing.ts` | `ListingChip` 五态、色调表、`listingChipFor` / `explainsItself` / `isResubmission` / `canWithdraw` |
+| `mobile/lib/features/skills/utils/store_sections.dart` | `lib/store-sections.ts` | 按 `origin` 分货架、置顶→安装数→字母排序、`total` 与 `sections` 分开（区分「商店是空的」与「你搜不到」） |
+| `widgets/store_list.dart` | `StoreList` + `StoreEntryRow` | 官方 / 用户共享 / 第三方 三段；每行自报 kind、置顶标、安装数（0 不显示） |
+| `widgets/skill_group_section.dart` | `SkillGroupRow` + `ListingBadge` | 单个状态 chip（不是两个 badge 并排）、驳回/下架原因折叠展开、撤回按钮、按状态切「重新提交」 |
+| `widgets/create_publish_sheets.dart` | `PublishSkillDialog` + `WithdrawSkillDialog` | 发布文案按 `skill_store_review` 二选一、重提时回显上次原因、新增 `WithdrawSkillSheet` |
 
-文案已经随 locale 同步到位：`skills.json` 新增 `section.storeOfficial / storeCommunity / storeThirdParty`、`badge.listing.*`、`badge.featured / installs / official`、`action.withdraw / resubmit`、`mine.showReason / hideReason / listingReason`、`publish.reviewNotice / confirmSubmit / resubmitTitle / resubmitBody / confirmResubmit / submitting`、`withdraw.*`、`store.empty`。`mobile/scripts/check_locales.sh` 已通过，所以移动端拿得到这些 key，只差界面接。
+配套改动：`BadgeTone` 增加 `danger` 档（驳回要比下架响）；`InstalledSkill` 增 `listing` / `listingNote` / `isOfficial`，`CatalogEntry` 增 `origin` / `featured` / `official` / `installsCount`；`SkillsApi` 增 `withdrawSkill()` 与 `storeReviewRequired()`。
+
+**`skill_store_review` 走 skills 自己的 API 层**（`skillStoreReviewProvider`），没有借 chat 的 `appConfigProvider`——移动端此前没有跨 feature import 的先例，web 那边也是靠 eslint boundaries 硬拦的，不在这里开第一个口子。配置没到位时按 `false` 兜底，理由同 web：宁可少承诺。
+
+验收：`flutter analyze` 无问题；`flutter test` 85 项全过（新增 `test/features/skills/store_listing_test.dart` 14 项）；文件大小与 locale 门禁通过。**真机未验**。
 
 ### 兼容边界（当前 App 不改也能跑）
 

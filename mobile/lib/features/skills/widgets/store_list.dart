@@ -6,24 +6,21 @@ import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/skill.dart';
+import '../utils/store_sections.dart';
 import 'entry_row.dart';
 
-/// 技能商店 — the catalogue, with what it depends on stated up front
-/// (web `StoreList`).
+/// 技能商店 — the catalogue laid out by shelf (web `StoreList`).
+///
+/// Sections are cut by who published a thing, not by what it technically is,
+/// so a row has to say its own kind rather than inherit it from the heading.
 class StoreList extends ConsumerWidget {
   const StoreList({
     super.key,
-    required this.skills,
-    required this.mcp,
-    required this.showSkills,
-    required this.showMcp,
+    required this.shelves,
     required this.onInstall,
   });
 
-  final List<CatalogEntry> skills;
-  final List<CatalogEntry> mcp;
-  final bool showSkills;
-  final bool showMcp;
+  final StoreShelves shelves;
   final void Function(CatalogEntry entry) onInstall;
 
   @override
@@ -31,12 +28,16 @@ class StoreList extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
 
-    if (skills.isEmpty && mcp.isEmpty) {
+    if (shelves.sections.isEmpty) {
+      // An empty store and a search that matched nothing are different
+      // problems, and only one of them is the person's own doing.
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 48),
         child: Center(
           child: Text(
-            i18n.t('skills:store.noMatch'),
+            i18n.t(shelves.total == 0
+                ? 'skills:store.empty'
+                : 'skills:store.noMatch'),
             style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
           ),
         ),
@@ -46,58 +47,21 @@ class StoreList extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (showSkills && skills.isNotEmpty) ...[
-          _heading(t, i18n.t('skills:section.storeSkills')),
-          for (final entry in skills)
-            _row(
-              context,
-              i18n,
-              entry,
-              badges: [
-                if (entry.publisher != null && entry.publisher!.isNotEmpty)
-                  SkillBadge(text: entry.publisher!),
-                if (entry.community)
-                  SkillBadge(
-                    text: i18n.t('skills:badge.community'),
-                    tone: BadgeTone.ok,
-                  ),
-                // Stated on the card, not just in the sheet: whether a skill
-                // drags a server along changes whether someone wants it.
-                if (entry.requiresMcp.isNotEmpty)
-                  SkillBadge(
-                    text: i18n.t('skills:badge.needsMcp',
-                        vars: {'names': entry.requiresMcp.join(', ')}),
-                    tone: BadgeTone.warn,
-                  ),
-              ],
-            ),
+        for (final section in shelves.sections) ...[
+          _heading(t, i18n.t(_headingKey(section.origin))),
+          for (final entry in section.entries)
+            _row(context, i18n, entry),
           const SizedBox(height: 12),
-        ],
-        if (showMcp && mcp.isNotEmpty) ...[
-          _heading(t, i18n.t('skills:section.storeMcp')),
-          for (final entry in mcp)
-            _row(
-              context,
-              i18n,
-              entry,
-              badges: [
-                if (entry.publisher != null && entry.publisher!.isNotEmpty)
-                  SkillBadge(text: entry.publisher!),
-                SkillBadge(
-                  text: i18n.t(
-                      'skills:upload.transport.${entry.config?.type ?? 'stdio'}'),
-                ),
-                if (entry.requiredEnv.isNotEmpty)
-                  SkillBadge(
-                    text: i18n.t('skills:badge.needsKey'),
-                    tone: BadgeTone.warn,
-                  ),
-              ],
-            ),
         ],
       ],
     );
   }
+
+  static String _headingKey(String origin) => switch (origin) {
+        'official' => 'skills:section.storeOfficial',
+        'third_party' => 'skills:section.storeThirdParty',
+        _ => 'skills:section.storeCommunity',
+      };
 
   Widget _heading(BossipTokens t, String text) => Padding(
         padding: const EdgeInsets.only(bottom: 7),
@@ -111,12 +75,46 @@ class StoreList extends ConsumerWidget {
         ),
       );
 
-  Widget _row(
-    BuildContext context,
-    I18nState i18n,
-    CatalogEntry entry, {
-    required List<Widget> badges,
-  }) {
+  List<Widget> _badges(I18nState i18n, CatalogEntry entry) {
+    final isMcp = entry.kind == 'mcp';
+    return [
+      // Pinned by an operator, so the row says why it is at the top instead
+      // of looking like an accident of sorting.
+      if (entry.featured)
+        SkillBadge(text: i18n.t('skills:badge.featured'), tone: BadgeTone.warn),
+      SkillBadge(
+        text: i18n.t(isMcp ? 'skills:badge.kindMcp' : 'skills:badge.kindSkill'),
+      ),
+      if (entry.publisher != null && entry.publisher!.isNotEmpty)
+        SkillBadge(text: entry.publisher!),
+      if (isMcp) ...[
+        SkillBadge(
+          text: i18n
+              .t('skills:upload.transport.${entry.config?.type ?? 'stdio'}'),
+        ),
+        if (entry.requiredEnv.isNotEmpty)
+          SkillBadge(
+            text: i18n.t('skills:badge.needsKey'),
+            tone: BadgeTone.warn,
+          ),
+      ] else if (entry.requiresMcp.isNotEmpty)
+        // Stated on the card, not just in the sheet: whether a skill drags a
+        // server along changes whether someone wants it at all.
+        SkillBadge(
+          text: i18n.t('skills:badge.needsMcp',
+              vars: {'names': entry.requiresMcp.join(', ')}),
+          tone: BadgeTone.warn,
+        ),
+      // Zero is not evidence of anything — a fresh entry and an ignored one
+      // look identical — so the count appears once it means something.
+      if (entry.installsCount > 0)
+        SkillBadge(
+          text: i18n.t('skills:badge.installs', count: entry.installsCount),
+        ),
+    ];
+  }
+
+  Widget _row(BuildContext context, I18nState i18n, CatalogEntry entry) {
     final t = context.tokens;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -124,7 +122,7 @@ class StoreList extends ConsumerWidget {
         icon: entry.icon,
         name: entry.title,
         description: entry.description,
-        badges: badges,
+        badges: _badges(i18n, entry),
         actions: [
           if (entry.homepage != null && entry.homepage!.isNotEmpty)
             IconAction(

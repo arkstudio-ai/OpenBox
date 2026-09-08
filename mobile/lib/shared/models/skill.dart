@@ -129,6 +129,9 @@ class InstalledSkill {
     this.libraryId,
     this.catalogId,
     this.publishedAt,
+    this.listing,
+    this.listingNote,
+    this.isOfficial = false,
   });
 
   factory InstalledSkill.fromJson(Map<String, dynamic> json) => InstalledSkill(
@@ -144,6 +147,9 @@ class InstalledSkill {
         libraryId: asString(json['library_id']),
         catalogId: asString(json['catalog_id']),
         publishedAt: asString(json['published_at']),
+        listing: asString(json['listing']),
+        listingNote: asString(json['listing_note']),
+        isOfficial: asBool(json['is_official']) ?? false,
       );
 
   final String name;
@@ -162,10 +168,21 @@ class InstalledSkill {
   final String? category; // personal | store | installed | builtin | host
 
   /// Only personal skills can be published; built-in/store installs are null.
-  final String? publicationStatus; // unpublished | published
+  final String? publicationStatus; // unpublished | published | withdrawn
   final String? libraryId;
   final String? catalogId;
   final String? publishedAt;
+
+  /// The operator's half of the story, orthogonal to [publicationStatus]:
+  /// where the release stands on the shelf. Null on a backend that predates
+  /// the moderated store, where anything published was by definition listed.
+  final String? listing; // pending | listed | rejected | delisted
+
+  /// Why it was refused or pulled — the author cannot fix what they cannot read.
+  final String? listingNote;
+
+  /// Published by an admin, so it sits on the official shelf.
+  final bool isOfficial;
 }
 
 class CatalogEnvField {
@@ -205,6 +222,10 @@ class CatalogEntry {
     this.missingMcp = const [],
     this.config,
     this.requiredEnv = const [],
+    this.origin,
+    this.featured = false,
+    this.official = false,
+    this.installsCount = 0,
   });
 
   factory CatalogEntry.fromJson(Map<String, dynamic> json, String kind) =>
@@ -229,6 +250,10 @@ class CatalogEntry {
             .whereType<Map<String, dynamic>>()
             .map(CatalogEnvField.fromJson)
             .toList(),
+        origin: asString(json['origin']),
+        featured: asBool(json['featured']) ?? false,
+        official: asBool(json['official']) ?? false,
+        installsCount: asInt(json['installs_count']) ?? 0,
       );
 
   final String kind; // skill | mcp
@@ -250,6 +275,17 @@ class CatalogEntry {
   final List<String> missingMcp;
   final McpConfig? config;
   final List<CatalogEnvField> requiredEnv;
+
+  /// Which shelf the entry belongs on. Null on a backend that predates
+  /// shelves; the store reads that as `community`, because guessing
+  /// `official` would put a stranger's upload under our name.
+  final String? origin; // official | community | third_party
+
+  /// Pinned by an operator, so the row can say why it is at the top instead
+  /// of looking like an accident of sorting.
+  final bool featured;
+  final bool official;
+  final int installsCount;
 }
 
 class Catalog {

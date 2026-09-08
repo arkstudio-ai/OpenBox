@@ -7,6 +7,7 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/models/skill.dart';
 import '../../../shared/widgets/fold.dart';
 import '../utils/group_skills.dart';
+import '../utils/listing.dart';
 import 'entry_row.dart';
 
 /// Actions a skill row offers (web `SkillGroupActions`).
@@ -15,6 +16,7 @@ class SkillGroupActions {
     required this.uninstall,
     required this.fixDependencies,
     required this.publish,
+    required this.withdraw,
     required this.download,
     required this.busy,
   });
@@ -23,6 +25,7 @@ class SkillGroupActions {
   final void Function(String dir, int count) uninstall;
   final void Function(InstalledSkill skill) fixDependencies;
   final void Function(SkillGroup group) publish;
+  final void Function(SkillGroup group) withdraw;
   final void Function(String dir) download;
   final bool busy;
 }
@@ -49,6 +52,11 @@ class SkillGroupSection extends ConsumerStatefulWidget {
 
 class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
   final _open = <String>{};
+
+  /// Expanded reasons are tracked apart from expanded packs: a rejected pack
+  /// can have both open at once, and one toggle closing the other reads as a
+  /// bug.
+  final _reasons = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +90,11 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
     }.toList();
     final expanded = _open.contains(group.id);
     final actions = widget.actions;
+    final chip = group.isPersonal
+        ? listingChipFor(group.publicationStatus, group.listing)
+        : null;
+    final reason = chip != null && explainsItself(chip) ? group.listingNote : null;
+    final reasonOpen = _reasons.contains(group.id);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -111,12 +124,21 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                 ),
               if (group.isPersonal) ...[
                 SkillBadge(text: i18n.t('skills:badge.personal')),
-                SkillBadge(
-                  text: i18n.t(group.isPublished
-                      ? 'skills:badge.published'
-                      : 'skills:badge.unpublished'),
-                  tone: group.isPublished ? BadgeTone.ok : BadgeTone.warn,
-                ),
+                if (group.isOfficial)
+                  SkillBadge(text: i18n.t('skills:badge.official')),
+                // One chip, not two: `publicationStatus` and `listing` are
+                // separate facts, but a withdrawn-yet-approved package read as
+                // still on sale when they were rendered side by side.
+                if (chip != null)
+                  SkillBadge(
+                    text: i18n.t('skills:badge.listing.${chip.key}'),
+                    tone: listingTones[chip]!,
+                  )
+                else
+                  SkillBadge(
+                    text: i18n.t('skills:badge.unpublished'),
+                    tone: BadgeTone.warn,
+                  ),
               ] else if (group.category == 'store')
                 SkillBadge(text: i18n.t('skills:badge.storeInstalled'))
               else if (group.origin != 'container')
@@ -126,12 +148,21 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
               if (group.isPersonal) ...[
                 IconAction(
                   icon: Icons.cloud_upload_outlined,
-                  tooltip: i18n.t(group.isPublished
-                      ? 'skills:action.updatePublish'
-                      : 'skills:action.publish'),
+                  tooltip: i18n.t(isResubmission(chip)
+                      ? 'skills:action.resubmit'
+                      : group.isPublished
+                          ? 'skills:action.updatePublish'
+                          : 'skills:action.publish'),
                   disabled: actions.busy,
                   onTap: () => actions.publish(group),
                 ),
+                if (canWithdraw(chip))
+                  IconAction(
+                    icon: Icons.cloud_off_outlined,
+                    tooltip: i18n.t('skills:action.withdraw'),
+                    disabled: actions.busy,
+                    onTap: () => actions.withdraw(group),
+                  ),
                 IconAction(
                   icon: Icons.file_download_outlined,
                   tooltip: i18n.t('skills:action.download'),
@@ -160,6 +191,56 @@ class _SkillGroupSectionState extends ConsumerState<SkillGroupSection> {
                 ),
             ],
           ),
+          // A refusal truncated into a badge is a refusal nobody reads. The
+          // reason gets its own line, in full, one tap away.
+          if (reason != null && reason.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 22, top: 4),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() {
+                    reasonOpen
+                        ? _reasons.remove(group.id)
+                        : _reasons.add(group.id);
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Text(
+                      i18n.t(reasonOpen
+                          ? 'skills:mine.hideReason'
+                          : 'skills:mine.showReason'),
+                      style: TextStyle(
+                        fontSize: FontSizes.xs,
+                        color: t.n600,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Fold(
+              open: reasonOpen,
+              child: Container(
+                margin: const EdgeInsets.only(left: 22, top: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                decoration: BoxDecoration(
+                  color: t.hairSoft.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(Radii.md),
+                ),
+                child: Text(
+                  i18n.t('skills:mine.listingReason', vars: {'note': reason}),
+                  style: TextStyle(
+                    fontSize: FontSizes.xs,
+                    height: 1.6,
+                    color: t.n700,
+                  ),
+                ),
+              ),
+            ),
+          ],
           if (group.isPack)
             Fold(
               open: expanded,

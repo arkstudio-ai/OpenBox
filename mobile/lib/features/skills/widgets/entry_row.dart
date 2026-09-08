@@ -80,7 +80,7 @@ class EntryIcon extends StatelessWidget {
   }
 }
 
-enum BadgeTone { muted, ok, warn }
+enum BadgeTone { muted, ok, warn, danger }
 
 class SkillBadge extends StatelessWidget {
   const SkillBadge({super.key, required this.text, this.tone = BadgeTone.muted});
@@ -95,6 +95,9 @@ class SkillBadge extends StatelessWidget {
       BadgeTone.muted => (t.n200, t.n700),
       BadgeTone.ok => (t.s100, t.sage),
       BadgeTone.warn => (t.a200, t.n800),
+      // A refusal has to out-shout a delisting: one is a decision the author
+      // can appeal, the other is the store saying no.
+      BadgeTone.danger => (t.dangerSoft, t.danger),
     };
     return Container(
       constraints: const BoxConstraints(maxWidth: 150),

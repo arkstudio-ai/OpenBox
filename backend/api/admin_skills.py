@@ -359,8 +359,13 @@ async def list_store(
         entries.extend(_community_row(entry) for entry in fetched)
 
     items = _sort_entries(entries, sort)[offset:offset + limit]
+    # A listing spans every tenant, so it belongs to no workspace. Recording the
+    # operator's own workspace here would file cross-tenant views under whatever
+    # space that admin happens to sit in, and a per-workspace audit query would
+    # then show reads that never touched it. Detail endpoints below do carry the
+    # subject's workspace, because there the answer is a single row.
     await record(
-        admin["user_id"], admin.get("workspace_id"), "admin.view_skills",
+        admin["user_id"], None, "admin.view_skills",
         "user_skill", None,
         {"origin": origin, "kind": kind, "listing": listing, "q": q,
          "sort": sort, "offset": offset, "limit": limit},
@@ -459,7 +464,7 @@ async def list_review_queue(
         limit=limit,
     )
     await record(
-        admin["user_id"], admin.get("workspace_id"), "admin.view_skills",
+        admin["user_id"], None, "admin.view_skills",
         "user_skill", None,
         {"state": state, "offset": offset, "limit": limit}, request,
     )
@@ -762,7 +767,7 @@ async def list_installs(
             "installed_at": _at(install.installed_at),
         })
     await record(
-        admin["user_id"], admin.get("workspace_id"), "admin.view_skills",
+        admin["user_id"], None, "admin.view_skills",
         "skill_install", catalog_id,
         {"catalog_id": catalog_id, "user_id": user_id, "q": q,
          "offset": offset, "limit": limit},

@@ -51,14 +51,15 @@
 DesktopSite(
   key="douyin_creator", display="抖音创作者中心", group="douyin",
   login_url="https://creator.douyin.com/", home_url="https://creator.douyin.com/creator-micro/home",
-  cookie_domains=[".douyin.com", "creator.douyin.com"],
-  session_cookies=["sessionid", "sessionid_ss", "sid_tt"],   # 侦察后定
-  light_probe=LightProbe(url="https://creator.douyin.com/web/api/media/user/info/", nickname_path="user.nickname", ok_when="status_code==0"),  # 侦察后定
+  cookie_domains=[".douyin.com"],
+  session_cookies=["sessionid", "sid_tt", "uid_tt", "passport_auth_status"],   # 侦察确认（§3.10）
+  light_probe=LightProbe(url="https://creator.douyin.com/aweme/v1/creator/user_message/unread_count/", ok_when="status_code==0", expired_when="status_code==8"),
+  profile_probe=LightProbe(url="https://creator.douyin.com/aweme/v1/creator/user/info/", nickname_path="douyin_user_verify_info.nick_name", uid_path="douyin_user_verify_info.douyin_unique_id"),
   logout=LogoutRule(domains=[".douyin.com"]),
   sensitive=True,            # 抖音系：L2 每天最多一次，失败不重试
 )
 ```
-首批：`douyin_creator`、`douyin_laike`（life.douyin.com）、`meituan_shopkeeper`（开店宝 e.meituan.com）、`xiaohongshu_creator`（creator.xiaohongshu.com）。后续加 `weixin_channels`（视频号助手）、`kuaishou_creator`。
+首批：`douyin_creator`、`douyin_laike`（life.douyin.com：S2 `/life/gate/v1/user/login_info/`，昵称 `data.name`，店名 `/life/gate/v1/account/detail` → `account_name`）、`meituan_merchant`（美团经营宝 e.dianping.com：S2 `/merchant/portal/common/cityshop`，未登录 `error.code==10008`；用户口中的"开店宝"实为此站）、`xiaohongshu_creator`（creator.xiaohongshu.com，待侦察）。后续加 `weixin_channels`（视频号助手）、`kuaishou_creator`。
 目录通过 `GET /api/platforms` 一并返回（`kind: "desktop"`），前端按 `group` 归卡。
 
 ### 3.2 数据（`platform_accounts` 加列，不建新表）
@@ -146,7 +147,28 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
 3. 退出登录后再抓一次，确认 S2 接口在未登录时的表现（302 / 401 / 空 JSON），作为 `expired` 判据。
 4. `inactivity_ttl` 初值：抖音创作者中心 / 来客暂按 30 天，美团开店宝按 7 天，小红书创作平台按 14 天——**都是假设**，靠上线后的探活数据校准，卡上标"预计"。
 
-### 3.10 边界与风险
+### 3.10 侦察结果（2026-09-08，用户桌面 `ecd-glxi1nk433hliivri`，三站已登录；小红书未登录待补）
+
+方法：云助手在桌面上跑内联 Python，浏览器级 `Storage.getCookies`（只记名字/域/到期/标记，不取值）+ 各标签页 `performance` 资源记录 + 被动监听 45 秒 + 在各自标签页里同源 `fetch` 候选接口，分别带 cookie 与不带 cookie（`credentials: omit`）各调一次。**全程零导航、零刷新。**
+
+| 站 | 会话 cookie（判 S1） | 到期 | S2 接口（同源 GET） | 已登录 | 未登录 | 昵称 |
+|---|---|---|---|---|---|---|
+| 抖音创作者中心 `creator.douyin.com` | `.douyin.com`: `sessionid` `sessionid_ss` `sid_tt` `uid_tt` `x_tt_token`（httpOnly）；`passport_auth_status`（30 天）；`sid_guard` 360 天 | 会话 60 天（2026-11-07） | `/aweme/v1/creator/user_message/unread_count/`（页面自己每几十秒轮询它） | `status_code: 0` | `status_code: 8, "用户未登录"` | ✅ `GET /aweme/v1/creator/user/info/` → `douyin_user_verify_info.nick_name` / `douyin_unique_id` / `avatar_url` / `follower_count`（备选 `/web/api/media/user/info/` → `user.nickname`）。探活用 `unread_count`，昵称每日一次随 S2 取 |
+| 抖音来客 `life.douyin.com` | `.life.douyin.com`: `sessionid_ls` `sid_tt_ls` `uid_tt_ls` `passport_auth_status_ls`（30 天）+ 同上 `.douyin.com` 那套 | 会话 60 天 | `/life/gate/v1/user/login_info/` | `status_code: 0`，`data.login_status: 1`，`data.name`、`role_name`、`user_id` | `status_code: 4000100, "用户鉴权失败"` | ✅ `data.name`；店名/账户用 `/life/gate/v1/account/detail` 的 `account_name` / `account_id` |
+| 美团经营宝 `e.dianping.com`（点评商户平台，用户口中的"开店宝"） | `.dianping.com edper`（httpOnly，400 天）、`.meituan.com com.sankuai.meishi.fe.kdb-bsid`（400 天）、`epassport.meituan.com eplt/eprt`（66 天） | cookie 长期，服务端会话 TTL 未知 | `/merchant/portal/common/cityshop` | `data.currentShopIdStr` | `error.code: 10008, "账号未登陆"` | 接口无昵称；`queryAccountInfo` 需参数，`epassport getBizAccount` 跨域不可用——先只显示"已登录 + 当前门店 ID" |
+
+其他观察：
+- 创作者中心标签页开着时页面自己轮询 `user_message/notice`、`msg/top`、`live_status`（每几十秒一次），**只要标签页不关，天然就是 K2 保活**；来客与经营宝 45 秒内无轮询。
+- 抖音 `passport_auth_status` 只有 30 天，比 `sessionid` 的 60 天短——它可能就是"多久没活动要重新验证"的信号，S1 把它一并纳入判定，预测到期取两者较早者。
+- 美团 cookie 到期都很远，S1 对它几乎无效，只能靠 S2 与 S0。
+- 抖音会话 cookie 全部 httpOnly，页面 JS 读不到，必须走 CDP `Storage.getCookies`。
+- 美团 `queryAccountInfo` 带 cookie 时报 `10004 业务参数为空`，不带时 `606 未登录`——也能当判据，但 `cityshop` 更简单。
+
+`inactivity_ttl` 初值：抖音创作者中心 / 来客按 30 天（对齐 `passport_auth_status`），经营宝按 7 天；上线后用探活数据校准。
+
+侦察脚本与原始输出（脱敏后）留在本次会话的 scratchpad，未入库；正式实现时 `platforms/desktop/cdp.py` 按 §3.3 重写，侦察脚本只作参考：浏览器级 `Storage.getCookies` 一次拿全部站点的 cookie，比逐页 `Network.getCookies` 省一次连接。
+
+### 3.11 边界与风险
 
 | 风险 | 对策 |
 |---|---|
@@ -190,7 +212,7 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
 
 ## 6. 开工前确认（2026-09-08 用户已拍板）
 1. ✅ 首批就这四个站：抖音创作者中心、抖音来客、美团开店宝、小红书创作平台。
-2. ⏳ 用户在 `ecd-glxi1nk433hliivri` 上登录这四个站（我不碰验证码），登录后按 §3.9 的清单侦察。
+2. ✅ 用户已在 `ecd-glxi1nk433hliivri` 上登录抖音创作者中心、抖音来客、美团经营宝三站，侦察结果见 §3.10；小红书创作平台未登录，待补侦察。
 3. ✅ 频率：S1 每 6 小时、S2 每天一次、K1 天级。
 4. ✅ 退出登录限 owner/admin。
 5. 用户要求：探活方式与保活手段要想清楚——见 §3.8 / §3.9；K2 常驻标签页默认关，等 K1 数据说话。

@@ -1,43 +1,80 @@
 {
-  "nav": { "product": "Product", "how": "How it works", "pricing": "Pricing" },
+  "nav": { "capabilities": "Capabilities", "workflow": "How it works", "useCases": "Use cases", "faq": "FAQ" },
   "signIn": "Sign in",
-  "start": "Get started",
-  "badge": "An agent workspace for building a personal brand",
-  "heroTitle": "Turn what you know into a personal brand people can find.",
-  "heroBody": "bossip puts topic research, writing and revision in one workspace. Projects hold the context, conversation moves the work, and every change is reviewed before it ships.",
-  "ctaPrimary": "Get started free",
-  "ctaSecondary": "See how it works",
-  "ctaNote": "No card required · start right away",
-  "mock": {
-    "label": "bossip workspace",
-    "new": "New chat",
-    "ask": "Turn this week's three interviews into one long post, same voice as last time.",
-    "thinking": "Thinking…",
-    "thought": "Thought for 12s",
-    "step1": "Searched 12 similar posts",
-    "step2": "Read topic-bank.md",
-    "step3": "Rewrote the first three paragraphs",
-    "answer": "All three interviews circle the same point: you help clients articulate decisions. I moved that up front and grouped the cases by date.",
-    "diff": "drafts/long-post-v3.md",
-    "review": "Review →",
-    "input": "Keep going…",
-    "projects": ["Personal brand 2026", "Topic bank", "Long-form edits", "Client stories"]
+  "start": "Start now",
+  "hero": {
+    "eyebrow": "Cloud AI workspace for owners and growing teams",
+    "title": "Give your daily operations an AI partner that stays online.",
+    "lede": "BossIP brings marketing, orders, customers, finance, and team management into one workspace, turning ideas into clear next steps.",
+    "primary": "Start now",
+    "secondary": "View capabilities",
+    "metrics": [
+      { "value": "Always on", "label": "Available in the cloud" },
+      { "value": "Full journey", "label": "From growth to review" }
+    ]
   },
-  "featEyebrow": "Three things it takes seriously",
-  "features": [
-    { "title": "Projects, not loose chats", "body": "Topics, source material and drafts live in one project, so the next conversation starts with context already loaded." },
-    { "title": "The whole process is visible", "body": "Search, file reads, commands and edits — every step opens up to show its input and output." },
-    { "title": "Changes get reviewed first", "body": "Every touched line arrives as a diff you approve or reject file by file." }
-  ],
-  "flowEyebrow": "How it works",
-  "flowTitle": "From scattered material to something worth publishing.",
-  "steps": [
-    { "title": "Create a project and drop your material in", "body": "Documents, links, old drafts, interview recordings. The project becomes the memory for that thread." },
-    { "title": "Work it in conversation", "body": "State the goal; the agent plans, researches, writes and revises. You can cut in at any point." },
-    { "title": "Review, then publish", "body": "Read the diff, run the terminal, preview the page in the side panel, and publish once it holds up." }
-  ],
-  "endTitle": "Start with one project.",
-  "endBody": "Sign up and get going — enough to research, write and revise one long piece.",
-  "footer": "© 2026 bossip",
-  "footLinks": { "terms": "Terms", "privacy": "Privacy", "contact": "Contact" }
+  "preview": {
+    "title": "Today's business workspace",
+    "status": "AI online",
+    "rails": ["Plan", "Market", "Finance", "Team"],
+    "kicker": "Recommended next step",
+    "panelTitle": "Weekend bundle launch checklist",
+    "time": "Today 16:30",
+    "tasks": [
+      { "title": "Draft three local campaign messages", "body": "Split selling points by price, time slot, and available inventory." },
+      { "title": "Review margin and stock plan", "body": "Compare ingredient cost, expected sales, and staffing in one table." },
+      { "title": "Align customer-service replies", "body": "Summarize common questions and flag cases that need human review." }
+    ],
+    "signalKicker": "Business signal",
+    "signalValue": "+18%",
+    "signalBody": "Lunch conversion is up from last week"
+  },
+  "band": "One account connects daily decisions, execution tasks, and team collaboration.",
+  "capabilities": {
+    "eyebrow": "Core capabilities",
+    "title": "More than marketing: BossIP helps carry the operational weight.",
+    "items": [
+      { "title": "Marketing growth", "body": "Create campaign plans, ad copy, social content, and channel reviews so growth work closes faster." },
+      { "title": "Store and operations", "body": "Organize orders, inventory, shifts, customer service, and supplier work into clear action lists." },
+      { "title": "Finance and reporting", "body": "Summarize revenue, cost, margin, and cash flow, then explain key changes in plain business language." },
+      { "title": "Business management", "body": "Turn meetings, policies, goals, and projects into structured records with owners and deadlines." }
+    ]
+  },
+  "workflow": {
+    "eyebrow": "How it works",
+    "title": "Start with one request. End with tracked business actions.",
+    "steps": [
+      { "title": "Name the goal", "body": "For example, “plan next week's repeat-purchase offer” or “explain why profit fell this month.”" },
+      { "title": "Break down inputs and tasks", "body": "The AI asks for missing context, organizes files and records, then turns them into executable steps." },
+      { "title": "Execute and review", "body": "Results become reusable templates, reports, and next-round suggestions, reducing repeated setup work." }
+    ]
+  },
+  "useCases": {
+    "eyebrow": "Use cases",
+    "title": "Let BossIP organize the work owners face every day.",
+    "items": [
+      { "title": "Owner-operated and multi-store teams", "body": "New products, local deals, review handling, shift planning, stock prep, and weekly reports." },
+      { "title": "Local commerce and brand teams", "body": "Channel content, creator briefs, campaign budgets, lead follow-up, and performance reviews." },
+      { "title": "Growing companies", "body": "Business analysis, meeting notes, project follow-through, client proposals, and management policies." }
+    ]
+  },
+  "faq": {
+    "eyebrow": "FAQ",
+    "title": "Questions business owners usually ask first.",
+    "items": [
+      { "q": "Is BossIP a chat tool or a business system?", "a": "It is closer to a cloud business assistant that keeps working: you can chat, but it also tracks tasks, source material, and outcomes." },
+      { "q": "Do I need to be technical?", "a": "No. Describe the goal in plain language. It asks for what's missing and handles the spreadsheets, documents, and web pages itself." },
+      { "q": "Can my team use it together?", "a": "Yes. Projects and chats live in a shared workspace. Invite colleagues to share material and split the work." }
+    ]
+  },
+  "final": {
+    "eyebrow": "Ready when you are",
+    "title": "Let AI organize today's operating work before it piles up.",
+    "cta": "Start now"
+  },
+  "footer": {
+    "copy": "Cloud AI workspace for business operations.",
+    "rights": "© 2026 BossIP",
+    "links": { "terms": "Terms", "privacy": "Privacy", "contact": "Contact" }
+  }
 }

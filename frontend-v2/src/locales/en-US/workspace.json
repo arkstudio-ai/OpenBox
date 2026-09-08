@@ -36,19 +36,19 @@
     "afternoon": "Good afternoon, {{name}}.",
     "evening": "Good evening, {{name}}."
   },
-  "emptyHint": "This chat will live under \"{{project}}\". Just say what you want to figure out.",
+  "emptyHint": "This chat will live under \"{{project}}\". Just say what you want to move forward today.",
   "suggestions": [
     {
-      "title": "Analyze this project's code structure",
-      "hint": "read dirs · find entries · map deps"
+      "title": "Write three ad copies for a local group-buy deal",
+      "hint": "split by price · time slot · inventory"
     },
     {
-      "title": "Refactor a gnarly function for me",
-      "hint": "paste code, get a runnable diff"
+      "title": "Tell me why margin dropped this month",
+      "hint": "paste the ledger, get causes and next steps"
     },
     {
-      "title": "Write a script that scrapes a page",
-      "hint": "with retries · lands as CSV"
+      "title": "Turn this week's meeting notes into to-dos",
+      "hint": "owners · deadlines · follow-up cadence"
     }
   ],
   "sandbox": {

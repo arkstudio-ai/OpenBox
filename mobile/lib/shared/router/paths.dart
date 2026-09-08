@@ -33,6 +33,10 @@ abstract final class Paths {
 
   static const String desktop = '/app/desktop';
 
+  static String authCenter({String? jobId}) => jobId == null
+      ? '/app/auth-center'
+      : '/app/auth-center?job=${Uri.encodeComponent(jobId)}';
+
   static String billing([String? tab]) =>
       tab == null ? '/app/billing' : '/app/billing/$tab';
 

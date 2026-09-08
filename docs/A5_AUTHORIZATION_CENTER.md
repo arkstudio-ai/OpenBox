@@ -209,7 +209,7 @@ Redis：`oauth:state:<state>`（600s）、`douyin:client_token:<client_key>`、`
 ### 4.4 与 agent / 技能的接口（P2）
 - 工具 `platform_publish`：输入 `platform="douyin"`、`file`（资源中心路径或 file_asset_id）、`title`、`hashtags`；输出二维码卡片给用户 + `job_id`；不轮询，用户扫码后由 Webhook 更新，用户问时 agent 查 `publish_jobs`。
 - 技能 `douyin-publish`（新，接 C5 结尾"投稿另有技能"）：frontmatter `requires-platforms: [douyin]`；工具执行前查 `platform_accounts` 有 `bound` 行，否则返回结构化错误 `PLATFORM_AUTH_REQUIRED {platform: douyin}`，agent 引导去授权中心，不自行重试。
-- 移动端 1:1 移植（B6）另立。
+- 移动端适配（B6）实现与验收见 §9.5；同机操作优先，扫码为备选，真实客户端链路仍需真机验收。
 
 ---
 
@@ -308,3 +308,13 @@ Redis：`oauth:state:<state>`（600s）、`douyin:client_token:<client_key>`、`
 - **单测** `tests/unit/test_douyin_publish_tool.py` 6 条：注册与 build-only、技能 frontmatter、无绑定→authorize→publish 拒绝、member 不能 authorize、绑定后 publish/result/跨工作空间隔离、PNG 头。
 - 与原 A5 的 `requires-platforms` frontmatter 设计的差异：仓库已把技能字段与运行时解耦（2026-08-30），所以阻断放在工具内部（查 `platform_accounts`），frontmatter 只做文档。
 
+### 9.5 2026-09-07 移动端对齐（代码完成，未发布）
+
+基于 main `205226d` 对齐 A5 P0/P1、预计到期/短链修正及 P2 聊天产物。完整清单与证据见 [`MOBILE_WEB_PARITY.md` §9](MOBILE_WEB_PARITY.md#9-a5-授权中心抖音投稿与聊天二维码2026-09-07)。
+
+- Flutter 侧新增授权中心、工作空间多账号操作与权限、视频投稿表单、原生保存二维码、最近投稿及指定 job 详情；使用现有 REST API，无新增 OAuth 回调地址。授权带 `is_call_app=1`，原 `state`/redirect 不变，用户完成后手动回到 App，页面回前台拉服务端结果。
+- 授权链接 10 分钟有效，投稿采用服务端 `expiresAt`；仅对有效的白名单 URL 提供显式跳转。后台取消轮询，回前台重查；published/failed/expired 不再展示可操作的旧投稿二维码。冷启动恢复服务端任务而非签名 schema，不自动生成重复投稿。
+- 账号/工作空间绑定请求与缓存，发出请求和接收结果均校验；退出/换空间/角色变化销毁旧 UI。解绑需确认；网络错误不自动重试创建投稿。
+- 聊天二维码不再被 16:9 缩略图裁切，授权/结果按钮放在产物下方。工具 metadata 兼容增加：`authorize.expiresAt`、`publish.launchUrl`；后者是原二维码中的短期签名链接，非 OAuth token。只有部署此增量后，新聊天消息才有同机快捷按钮；旧消息继续用 QR/结果入口。
+- 验证：Flutter analyze、65 项 Flutter 测试、23 项相关后端测试、Web check（217 项测试）、locale/文件大小门禁通过，Android debug 与 iOS arm64 simulator 构建通过。iOS 26.5 模拟器接生产，验证空态、授权 QR 生成和原生保存/取消清理；没有真实授权/投稿。本轮未提交推送或部署。
+- 真机发布门禁：Android/iOS 抖音客户端唤起（含未安装）、用户拒绝/接受授权、发布页标题/话题、取消/成功/延迟 Webhook、返回 App 与杀进程后查结果。不得以“成功打开链接”代替这些验收。

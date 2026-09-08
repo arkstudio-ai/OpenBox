@@ -8,6 +8,7 @@ import '../../../shared/widgets/fold.dart';
 import '../utils/content_view.dart';
 import 'attachment_gallery.dart';
 import 'audio_preview.dart';
+import 'traces/douyin_tool_actions.dart';
 
 /// What a turn produced, grouped (web `ResultArtifacts`): the final
 /// deliverable first, then ordinary results, then the segment collection,
@@ -31,8 +32,9 @@ class ResultArtifacts extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final finals = groups.where((g) => g.role == 'final').toList();
-    final segments =
-        groups.where((g) => g.artifactKind == 'video_segment').toList();
+    final segments = groups
+        .where((g) => g.artifactKind == 'video_segment')
+        .toList();
     final ordinary = groups
         .where((g) => g.role != 'final' && g.artifactKind != 'video_segment')
         .toList();
@@ -42,15 +44,16 @@ class ResultArtifacts extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final group in finals)
-            _ArtifactCard(group: group, hero: true),
+          for (final group in finals) _ArtifactCard(group: group, hero: true),
           for (final group in ordinary) _ArtifactCard(group: group),
           if (segments.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.only(top: 2, bottom: 6),
               child: Text(
-                i18n.t('chat:artifacts.segmentCollection',
-                    count: segments.length),
+                i18n.t(
+                  'chat:artifacts.segmentCollection',
+                  count: segments.length,
+                ),
                 style: TextStyle(
                   fontSize: FontSizes.xs,
                   fontWeight: FontWeight.w500,
@@ -97,18 +100,20 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
             ? i18n.t('chat:artifacts.videoSegment')
             : i18n.t('chat:artifacts.segment', vars: {'number': number});
       case 'generated_image':
-        return i18n.t('chat:artifacts.generatedImages',
-            count: group.parts.length);
+        return i18n.t(
+          'chat:artifacts.generatedImages',
+          count: group.parts.length,
+        );
       default:
         return group.label ?? i18n.t('chat:artifacts.result');
     }
   }
 
   IconData get _icon => switch (widget.group.artifactKind) {
-        'generated_image' => Icons.image_outlined,
-        'shared_file' => Icons.folder_zip_outlined,
-        _ => Icons.movie_outlined,
-      };
+    'generated_image' => Icons.image_outlined,
+    'shared_file' => Icons.folder_zip_outlined,
+    _ => Icons.movie_outlined,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -120,7 +125,9 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
         .where((p) => isAudioPart(p) && p.assetId != null)
         .toList();
     final files = group.parts
-        .where((p) => !isGalleryMedia(p) && !(isAudioPart(p) && p.assetId != null))
+        .where(
+          (p) => !isGalleryMedia(p) && !(isAudioPart(p) && p.assetId != null),
+        )
         .toList();
     final transcript = group.metadataString('transcript');
     final revision = group.revision;
@@ -141,8 +148,10 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
               Container(
                 width: 26,
                 height: 26,
-                decoration:
-                    BoxDecoration(color: t.n200, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: t.n200,
+                  shape: BoxShape.circle,
+                ),
                 child: Icon(_icon, size: 14, color: t.n700),
               ),
               const SizedBox(width: 8),
@@ -160,8 +169,10 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
               ),
               if (revision != null && revision > 1)
                 _Pill(
-                  text: i18n
-                      .t('chat:artifacts.revision', vars: {'number': revision}),
+                  text: i18n.t(
+                    'chat:artifacts.revision',
+                    vars: {'number': revision},
+                  ),
                   background: t.n200,
                   foreground: t.n600,
                 ),
@@ -233,6 +244,11 @@ class _ArtifactCardState extends ConsumerState<_ArtifactCard> {
               compact: !widget.hero,
             ),
           ],
+          if (group.artifactKind == 'qr_code' &&
+              group.sourceTool?.tool == 'douyin_publish') ...[
+            const SizedBox(height: 8),
+            DouyinToolActions(part: group.sourceTool!),
+          ],
           for (final part in audio) AudioPreview(part: part),
           if (files.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -268,12 +284,14 @@ class _QaBadge extends ConsumerWidget {
     if (verdict == null) return const SizedBox.shrink();
     final ok = verdict == 'ok';
     final similarity = group.metadataNumber('stt_similarity');
-    final suffix =
-        similarity == null ? '' : ' · ${(similarity * 100).round()}%';
+    final suffix = similarity == null
+        ? ''
+        : ' · ${(similarity * 100).round()}%';
     return Padding(
       padding: const EdgeInsets.only(left: 6),
       child: _Pill(
-        text: (ok
+        text:
+            (ok
                 ? i18n.t('chat:artifacts.sttOk')
                 : i18n.t('chat:artifacts.sttReview')) +
             suffix,

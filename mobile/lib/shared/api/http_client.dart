@@ -29,6 +29,20 @@ Dio buildApiDio({
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) {
+        // A queued platform action can outlive an account/workspace switch.
+        // Check at dispatch too, before attaching the new account's token.
+        if (options.extra.containsKey(requestScopeUserKey) &&
+            (options.extra[requestScopeUserKey] != auth.userId ||
+                options.extra[requestScopeWorkspaceKey] !=
+                    workspace.currentId)) {
+          return handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.cancel,
+              message: 'Request scope changed',
+            ),
+          );
+        }
         final token = auth.accessToken;
         final workspaceId = workspace.currentId;
         if (token != null) {

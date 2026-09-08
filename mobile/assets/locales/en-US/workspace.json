@@ -7,6 +7,8 @@
   "resourceCenter": "Resources",
   "skillCenter": "Skill Centre",
   "resourceCenterHint": "Everything in object storage",
+  "authCenter": "Authorizations",
+  "authCenterHint": "Sign-ins and permissions for each platform",
   "projectName": "Project name",
   "rename": "Rename project",
   "newChatIn": "New chat here",

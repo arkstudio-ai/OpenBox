@@ -29,6 +29,7 @@ I18nBundle _bundle() => I18nBundle({
       'newProject': '新建项目',
       'search': '搜索',
       'resourceCenter': '资源中心',
+      'authCenter': '授权中心',
       'skillCenter': '技能中心',
       'scheduledTasks': '定时任务',
       'billing': '订购',

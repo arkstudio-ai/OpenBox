@@ -36,6 +36,15 @@ flutter build ios --simulator --debug \
 - 套餐价格只读后端目录，当前 Pro/Max 月付和年付总价均为 0.10 元。阿里云 `APP_ENV=prod` 不会自动恢复原价。
 - 模拟器可验证页面、状态和云桌面连接，但不会执行真实支付；支付宝原生客户端唤起仍须在安装支付宝的真机上测试。
 
+### 2026-09-07：授权中心与抖音投稿
+
+- 侧栏“资源中心”下新增“授权中心”，覆盖工作空间多账号、检测、到期提示、重新授权和确认解绑；绑定/解绑限 owner/admin，成员可检测及投稿。
+- 绑定优先显式打开手机上的抖音授权页，保留原生产 OAuth 回调；授权完成后返回 App 查看服务端账号状态。二维码可作为备选，支持原生保存 PNG，不把“已打开抖音”当成成功。
+- 投稿从资源中心选视频，填写标题、话题和公开范围；生成后可打开抖音或用二维码，最终发布仍由用户在抖音确认。后台暂停轮询，回前台重新查询；失败的 POST 不自动重放。
+- 最近投稿来自服务端，支持杀进程后恢复任务状态；短期签名链接只留内存，不自动重新生成，冷启动后可查结果但不能恢复已丢失的快捷链接。
+- 聊天投稿二维码保持完整正方形，下方显示授权/结果入口。新后端工具 metadata 的 `expiresAt` / `launchUrl` 提供同机快捷打开；旧后端和历史消息保持二维码兜底。
+- 本轮通过 65 项 Flutter 回归、23 项相关后端测试和 Android/iOS debug 构建；iOS 模拟器已连接生产验证页面及二维码保存流程。真实授权、抖音原生唤起和实际发布仍待真机验收，本轮代码未部署。详细范围与证据见对齐清单 §9。
+
 ## 单点登录(Logto)
 
 登录/注册两屏由 `SsoGate` 接管,走 [`logto_dart_sdk`](https://pub.dev/packages/logto_dart_sdk):
@@ -94,6 +103,7 @@ iOS 无需额外 SSO 配置(ASWebAuthenticationSession 直接吃 callbackUrlSche
 | Workspace switcher / Team / invite | `active_workspace_store.dart` + 抽屉切换器 + 设置页 Team + `/invite/:token`；所有业务缓存按当前 workspace 隔离，他人会话只读 |
 | Logto logout | `shared/api/logto_session.dart` + `auth_store.dart`：OpenBox session 与 Logto SSO session 同时退出；登录固定 `prompt=login consent` 防止旧 SSO Cookie 静默恢复账号并保留离线授权；Android 完成 end-session 回跳，iOS ephemeral session 与安全存储令牌一并清理 |
 | `/app/billing/:tab?` | `/app/billing/:tab` 订购/用量/订单三页；余额显示在用户行，订单回前台主动核对；支付宝 Android/iOS 原生 SDK 接线见 `docs/BILLING_PLAN.md` §6 |
+| `/app/auth-center` / `douyin_publish` 二维码 | `features/auth_center` + `shared/api/platform_accounts_api.dart`：多账号、同机授权/投稿、QR 原生保存、最近投稿及回前台状态恢复；聊天 QR 完整显示并附快捷操作 |
 | 右侧 WorkbenchPanel(菜单 tab + 审阅/终端/浏览器/文件/云桌面/定时) | 路由 `/app/w/:sessionId` = **菜单页**(`WorkbenchScreen` + `WorkbenchMenu`,与 web `MenuTab` 同一份入口与实时提示);点一行 push `WorkbenchSurfacePage` —— 手机没有 tab 条,返回手势和返回箭头就是 web 那条 tab 条的替代 |
 | DesktopTab(Wuying Web SDK) | `desktop_bridge.dart`(SDK 引导页 + JS 桥)+ `desktop_tab.dart`(Flutter UI)。原生轮询 `/api/desktop/ticket`(202→task_id 重试),WebView 装载 SDK,JS channel 回报 connected/error。**桌面固定 1920×1080**:客户端用 `uiConfig.fixedResolution`/`maxResolution` 锁住分辨率 —— 手机的视口一直在变(旋转/全屏/键盘),不锁住 SDK 会反过来把远端分辨率改掉,agent 看的桌面就在它脚下变形了;iframe **直接定尺**而不是 CSS transform 缩放,变换过的画面会让 SDK 观测到与手指落点不同的坐标系。**横屏全屏**:`SystemChrome` 切 landscape + `immersiveSticky`,`onImmersive` 回调让 `WorkbenchSurfacePage` 摘掉 AppBar(不 push 新路由 —— 重新挂载 WebView 会把流打断);退出/dispose 都恢复竖屏。**指针**:`setMouseMode('Client')` 绝对坐标,手指点哪就点哪(相对模式需要指针锁定,WebView 给不了,实测点击直接失效,所以不提供)。**键盘**:`session.openSoftKeyboard(true)` 打开 SDK 自带的画面内键盘 —— 这是文字进 guest 的唯一通道,带 Esc/F1-F12/Ctrl/Alt 和切 guest 输入法的 中/En 键 |
 | BrowserTab(dev-browser 截图流) | `browser_tab.dart`:原生 WS 客户端,JPEG 帧 → `Image.memory`(gapless),点击/滚动映射回页面像素坐标,4004 → 无沙箱 |
@@ -110,7 +120,7 @@ iOS 无需额外 SSO 配置(ASWebAuthenticationSession 直接吃 callbackUrlSche
 ```
 lib/
   app/        # 组装层:根组件、路由、workspace 壳 —— 只有这里能同时 import 多个 feature
-  features/   # auth / billing / chat / resources / workspace / workbench / skills / settings / landing
+  features/   # auth / auth_center / billing / chat / resources / workspace / workbench / skills / settings / landing
               #   各自 api/ state/ widgets/ utils/;feature 之间禁止互相 import,
               #   跨特性用 shared/events/bus.dart(事件:workspace.refresh、workbench.open)
   shared/     # api(dio/auth)、ws、models(后端 snake_case 契约)、appearance、i18n、router/paths、widgets、utils
@@ -123,6 +133,7 @@ lib/
 ## 协议要点(实现时容易踩的)
 
 - WS 信封 `{type,data}`:路由字段 camelCase(`sessionId`/`messageId`/`partId`),内嵌 message/part 对象 snake_case —— 两层分开解析,勿全局转换。
+- 授权中心 REST 的账号和投稿响应使用 camelCase；投稿请求使用 `file_asset_id` / `private_status` 等 snake_case，不能复用全局键名转换。签名 schema / OAuth state 是短期能力，不记录日志、不写偏好设置。
 - `message.text_delta` 与 `part.delta` 都是**追加**语义;快照合并时 text/reasoning 取更长者、tool 取更高状态(pending<running<completed=error),防止 UI 回退。
 - 权限回复动作用后端原生值 `once`/`always`/`reject`(web 端目前发的 `allow/allow_always` 会被 REST 400 拒)。
 - 问题回复 `answers` 是嵌套数组:每个问题一个 label 数组,按序。

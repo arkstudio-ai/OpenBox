@@ -91,6 +91,7 @@ async def test_status_then_authorize_when_nothing_is_bound(fake_platform):
     auth = await execute_douyin_publish(DouyinPublishArgs(action="authorize"), ctx)
     assert "is_call_app=1" in auth.metadata["authorizeUrl"]
     assert auth.metadata["asset_id"] == "asset_qr_1"
+    assert datetime.fromisoformat(auth.metadata["expiresAt"]) > datetime.now(timezone.utc)
     assert fake_platform.pinned[0]["kind"] == "qr_code"
     # Publishing before anyone scanned is refused with the structured code.
     denied = await execute_douyin_publish(DouyinPublishArgs(action="publish", asset_id="x"), ctx)
@@ -130,6 +131,8 @@ async def test_publish_and_result_after_binding(fake_platform):
         ctx,
     )
     assert "job_id=" in published.output and published.metadata["schemaSource"] == "get_share"
+    assert published.metadata["launchUrl"] == "snssdk1128://webview?url=short"
+    assert published.metadata["expiresAt"]
     assert fake_platform.pinned[-1]["label"] == "抖音投稿二维码" and "老房改造第一集" in fake_platform.pinned[-1]["caption"]
     job_id = published.metadata["job_id"]
 

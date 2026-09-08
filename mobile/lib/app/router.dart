@@ -21,6 +21,7 @@ import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/router/paths.dart';
+import 'auth_center_route.dart';
 import 'workspace_shell.dart';
 
 /// Route table (web `app/router/router.tsx` + guards). Mobile addition:
@@ -93,6 +94,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => ResourcesScreen(
           initialProject: state.uri.queryParameters['project'],
         ),
+      ),
+      GoRoute(
+        path: '/app/auth-center',
+        builder: (context, state) =>
+            AuthCenterRoute(jobId: state.uri.queryParameters['job']),
       ),
       GoRoute(
         path: Paths.skills,

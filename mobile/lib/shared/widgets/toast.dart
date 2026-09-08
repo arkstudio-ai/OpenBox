@@ -55,16 +55,22 @@ Duration _readingTime(String text, String? title) {
 /// Errors are worth keeping on screen; a duplicate of one is not.
 class ToastController extends Notifier<List<ToastItem>> {
   int _seq = 0;
+  final _timers = <int, Timer>{};
 
   @override
-  List<ToastItem> build() => const [];
+  List<ToastItem> build() {
+    ref.onDispose(_cancelTimers);
+    return const [];
+  }
 
-  int push(
-    ToastKind kind,
-    String text, {
-    String? title,
-    Duration? duration,
-  }) {
+  void _cancelTimers() {
+    for (final timer in _timers.values) {
+      timer.cancel();
+    }
+    _timers.clear();
+  }
+
+  int push(ToastKind kind, String text, {String? title, Duration? duration}) {
     final existing = state.where((t) => t.text == text && t.kind == kind);
     if (existing.isNotEmpty) return existing.first.id;
 
@@ -78,7 +84,7 @@ class ToastController extends Notifier<List<ToastItem>> {
       duration: life,
     );
     state = [...state, item];
-    if (life > Duration.zero) Timer(life, () => remove(id));
+    if (life > Duration.zero) _timers[id] = Timer(life, () => remove(id));
     return id;
   }
 
@@ -95,14 +101,19 @@ class ToastController extends Notifier<List<ToastItem>> {
       push(ToastKind.error, text, title: title, duration: duration);
 
   void remove(int id) {
+    _timers.remove(id)?.cancel();
     state = state.where((t) => t.id != id).toList();
   }
 
-  void clear() => state = const [];
+  void clear() {
+    _cancelTimers();
+    state = const [];
+  }
 }
 
-final toastProvider =
-    NotifierProvider<ToastController, List<ToastItem>>(ToastController.new);
+final toastProvider = NotifierProvider<ToastController, List<ToastItem>>(
+  ToastController.new,
+);
 
 /// Overlay host — stack this above the app content.
 class ToastHost extends ConsumerWidget {
@@ -164,18 +175,18 @@ class _ToastCardState extends ConsumerState<_ToastCard>
   }
 
   IconData get _icon => switch (widget.item.kind) {
-        ToastKind.info => Icons.info_outline,
-        ToastKind.success => Icons.check_circle_outline,
-        ToastKind.warning => Icons.warning_amber_outlined,
-        ToastKind.error => Icons.error_outline,
-      };
+    ToastKind.info => Icons.info_outline,
+    ToastKind.success => Icons.check_circle_outline,
+    ToastKind.warning => Icons.warning_amber_outlined,
+    ToastKind.error => Icons.error_outline,
+  };
 
   Color _tone(BossipTokens t) => switch (widget.item.kind) {
-        ToastKind.info => t.n700,
-        ToastKind.success => t.sage,
-        ToastKind.warning => t.n800,
-        ToastKind.error => t.danger,
-      };
+    ToastKind.info => t.n700,
+    ToastKind.success => t.sage,
+    ToastKind.warning => t.n800,
+    ToastKind.error => t.danger,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -253,8 +264,10 @@ class _ToastCardState extends ConsumerState<_ToastCard>
                   onPressed: widget.onDismiss,
                   icon: Icon(Icons.close, size: 14, color: t.n600),
                   visualDensity: VisualDensity.compact,
-                  constraints:
-                      const BoxConstraints.tightFor(width: 26, height: 26),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 26,
+                    height: 26,
+                  ),
                   padding: EdgeInsets.zero,
                 ),
               ),

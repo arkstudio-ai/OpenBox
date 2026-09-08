@@ -148,7 +148,15 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   );
                 },
               ),
-              // 技能中心, between the resource centre and the scheduled
+              _NavRow(
+                icon: Icons.key_outlined,
+                label: i18n.t('workspace:authCenter'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(Paths.authCenter());
+                },
+              ),
+              // 技能中心, between the authorization centre and the scheduled
               // tasks — the same order the web sidebar uses.
               _NavRow(
                 icon: Icons.extension_outlined,

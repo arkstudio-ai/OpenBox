@@ -17,7 +17,7 @@ server-side (segno) and pinned to the reply as image attachments.
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -212,6 +212,7 @@ async def _status(ctx: ToolContext) -> ToolResult:
 
 
 async def _authorize(ctx: ToolContext) -> ToolResult:
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=600)
     role = await _role(ctx)
     if role is not None and role not in ("owner", "admin"):
         return _error(
@@ -246,7 +247,11 @@ async def _authorize(ctx: ToolContext) -> ToolResult:
     return ToolResult(
         title="抖音授权二维码",
         output=output,
-        metadata={"platform": PLATFORM, "authorizeUrl": url, "asset_id": asset_id, "expiresInSeconds": 600},
+        metadata={
+            "platform": PLATFORM, "authorizeUrl": url, "asset_id": asset_id,
+            "expiresInSeconds": 600,
+            "expiresAt": expires_at.isoformat(),
+        },
     )
 
 
@@ -306,6 +311,10 @@ async def _publish(args: DouyinPublishArgs, ctx: ToolContext) -> ToolResult:
             "share_id": job.share_id,
             "asset_id": asset_id,
             "expiresAt": public["expiresAt"],
+            # Same short-lived capability encoded in the attached QR image.
+            # Native clients can explicitly open it on the same phone; it is
+            # not an OAuth token and conveys no extra authority over that QR.
+            "launchUrl": schema,
             "schemaSource": "local" if (job.error or "").startswith("schema_source=local") else "get_share",
         },
     )

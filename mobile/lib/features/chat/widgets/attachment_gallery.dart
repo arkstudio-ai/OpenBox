@@ -96,7 +96,10 @@ class _AttachmentGalleryState extends ConsumerState<AttachmentGallery> {
             physics: const NeverScrollableScrollPhysics(),
             mainAxisSpacing: 6,
             crossAxisSpacing: 6,
-            childAspectRatio: 16 / 9,
+            childAspectRatio:
+                ordered.every((p) => p.relation?.kind == 'qr_code')
+                ? 1
+                : 16 / 9,
             children: [
               for (final part in shown)
                 _MediaThumb(
@@ -176,7 +179,9 @@ class _MediaThumb extends ConsumerWidget {
                 error: (_, _) => _failed(t, i18n),
                 data: (info) => Image.network(
                   info.url,
-                  fit: BoxFit.cover,
+                  fit: part.relation?.kind == 'qr_code'
+                      ? BoxFit.contain
+                      : BoxFit.cover,
                   errorBuilder: (_, _, _) => _failed(t, i18n),
                 ),
               ),

@@ -40,6 +40,7 @@ KINDS = (
     "browser.diag",
     "channel.verify",
     "lease.acquire",
+    "platform.probe",
 )
 
 

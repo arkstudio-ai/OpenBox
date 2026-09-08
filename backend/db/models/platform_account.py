@@ -8,7 +8,7 @@ described, so both can share one table and one page later.
 """
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -39,6 +39,12 @@ class PlatformAccount(Base):
     refresh_token_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     access_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     refresh_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    #: desktop_cookie rows only: the cloud desktop whose Chrome profile holds
+    #: the session. Changes when the workspace's desktop is rebuilt.
+    desktop_id: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    #: desktop_cookie rows only: last probe, redacted (cookie names and expiry
+    #: timestamps, probe status codes; never cookie values).
+    probe_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: Times renew_refresh_token has been used; Douyin allows five.
     renew_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     last_refresh_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -62,6 +68,17 @@ class PlatformAccount(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
             sqlite_where=text("deleted_at IS NULL"),
+        ),
+        # One row per (desktop, site) for the cookie route; external_id is
+        # only known after the first successful profile probe there.
+        Index(
+            "uq_platform_accounts_desktop",
+            "workspace_id",
+            "desktop_id",
+            "platform",
+            unique=True,
+            postgresql_where=text("auth_kind = 'desktop_cookie' AND deleted_at IS NULL"),
+            sqlite_where=text("auth_kind = 'desktop_cookie' AND deleted_at IS NULL"),
         ),
         Index("ix_platform_accounts_workspace", "workspace_id", "platform"),
         Index("ix_platform_accounts_access_due", "status", "access_expires_at"),

@@ -14,6 +14,7 @@ from auth.middleware import get_current_user
 from auth.workspace import get_workspace, require_workspace_role
 from core.log import create_logger
 from core.oss import OssNotConfigured, get_oss
+from db.base import get_db_session
 from platforms import service
 from platforms.errors import PlatformError
 from platforms.registry import get_provider, list_providers
@@ -54,6 +55,10 @@ def _status_for(exc: PlatformError) -> int:
         return 409
     if exc.code == "PLATFORM_API_ERROR":
         return 502
+    if exc.code in ("DESKTOP_UNAVAILABLE", "BROWSER_NOT_RUNNING"):
+        return 503
+    if exc.code == "DESKTOP_BUSY":
+        return 423
     return 400
 
 
@@ -70,6 +75,8 @@ class PublishBody(BaseModel):
 # ── Catalogue ──────────────────────────────────────────────────────────────
 @platforms_router.get("")
 async def list_platforms():
+    from platforms.desktop.sites import list_sites, public_site
+
     out = []
     for provider in list_providers():
         info = provider.info()
@@ -77,11 +84,13 @@ async def list_platforms():
             {
                 "key": info.key,
                 "display": info.display,
+                "kind": "oauth",
                 "capabilities": info.capabilities,
                 "configured": info.configured,
                 "maxGrantDays": info.max_grant_days,
             }
         )
+    out.extend(public_site(site) for site in list_sites())
     return out
 
 
@@ -190,6 +199,74 @@ async def unbind_account(
         "platform_account.unbind", "platform_account", row.id, {"platform": row.platform}, request,
     )
     return {"ok": True, "id": row.id, "status": row.status}
+
+
+# ── Desktop login state (云电脑登录态) ───────────────────────────────────────
+@router.post("/desktop/{site}/open")
+async def open_desktop_login(
+    site: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Push the site's login page to the front of the workspace's cloud desktop."""
+    from platforms.desktop import service as desktop_service
+    from platforms.desktop.sites import get_site
+
+    try:
+        get_site(site)
+    except KeyError:
+        raise HTTPException(404, detail={"code": "PLATFORM_UNKNOWN", "message": f"unknown site {site}"})
+    try:
+        row = await desktop_service.open_login(current_user["workspace_id"], current_user["user_id"], site)
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    await record(
+        current_user["user_id"], current_user["workspace_id"],
+        "platform_account.desktop_login_open", "platform_account", row.id, {"site": site}, request,
+    )
+    return service.to_public(row)
+
+
+@router.post("/desktop/probe")
+async def probe_desktop_logins(
+    current_user: dict = Depends(get_current_user),
+):
+    """Probe every catalogued site on the workspace's desktop (cookie level)."""
+    from platforms.desktop import service as desktop_service
+
+    try:
+        rows = await desktop_service.probe_workspace(
+            current_user["workspace_id"], user_id=current_user["user_id"], level=1,
+            session_id=f"auth-center:{current_user['user_id']}",
+        )
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    return [service.to_public(r) for r in rows]
+
+
+@router.post("/{account_id}/logout")
+async def logout_desktop_login(
+    account_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _role: dict = Depends(_MANAGER),
+):
+    """Delete the site's cookies on the desktop (退出登录)."""
+    from platforms.desktop import service as desktop_service
+
+    try:
+        async with get_db_session() as db:
+            row = await service._owned(db, account_id, current_user["workspace_id"])
+            if row.auth_kind != "desktop_cookie":
+                raise PlatformError("only desktop logins can be logged out here", code="PLATFORM_KIND_MISMATCH")
+        row = await desktop_service.logout(row)
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    await record(
+        current_user["user_id"], current_user["workspace_id"],
+        "platform_account.desktop_logout", "platform_account", row.id, {"site": row.platform}, request,
+    )
+    return service.to_public(row)
 
 
 # ── Publish ────────────────────────────────────────────────────────────────

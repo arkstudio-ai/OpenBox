@@ -141,7 +141,16 @@ def to_public(row: PlatformAccount) -> dict:
         "lastError": row.last_error,
         "boundAt": iso(row.bound_at),
         "boundByUserId": row.bound_by_user_id,
+        **_desktop_extras(row),
     }
+
+
+def _desktop_extras(row: PlatformAccount) -> dict:
+    if row.auth_kind != "desktop_cookie":
+        return {}
+    from platforms.desktop import service as desktop_service
+
+    return desktop_service.public_extras(row)
 
 
 def job_to_public(row: PublishJob) -> dict:
@@ -363,6 +372,10 @@ async def probe(account_id: str, workspace_id: str) -> PlatformAccount:
     now = _now()
     async with get_db_session() as db:
         row = await _owned(db, account_id, workspace_id)
+        if row.auth_kind == "desktop_cookie":
+            from platforms.desktop import service as desktop_service
+
+            return await desktop_service.probe_account(row)
         row.last_probe_at = now
         if row.status == "bound":
             provider = get_provider(row.platform)
@@ -432,6 +445,7 @@ async def refresh_due() -> None:
             select(PlatformAccount)
             .where(
                 PlatformAccount.status == "bound",
+                PlatformAccount.auth_kind == "oauth",
                 PlatformAccount.deleted_at.is_(None),
             )
             .order_by(PlatformAccount.access_expires_at.asc())

@@ -318,3 +318,12 @@ Redis：`oauth:state:<state>`（600s）、`douyin:client_token:<client_key>`、`
 - 聊天二维码不再被 16:9 缩略图裁切，授权/结果按钮放在产物下方。工具 metadata 兼容增加：`authorize.expiresAt`、`publish.launchUrl`；后者是原二维码中的短期签名链接，非 OAuth token。只有部署此增量后，新聊天消息才有同机快捷按钮；旧消息继续用 QR/结果入口。
 - 验证：Flutter analyze、65 项 Flutter 测试、23 项相关后端测试、Web check（217 项测试）、locale/文件大小门禁通过，Android debug 与 iOS arm64 simulator 构建通过。iOS 26.5 模拟器接生产，验证空态、授权 QR 生成和原生保存/取消清理；没有真实授权/投稿。本轮未提交推送或部署。
 - 真机发布门禁：Android/iOS 抖音客户端唤起（含未安装）、用户拒绝/接受授权、发布页标题/话题、取消/成功/延迟 Webhook、返回 App 与杀进程后查结果。不得以“成功打开链接”代替这些验收。
+
+### 9.5 2026-09-08 桌面同步
+
+- 后端侧：gw2/AWS 已在 `20260907-d1-c51a24c`（含 P2）。技能由后端读取注入，桌面上的副本不是必需，但按 C5 的惯例把 `video-production`（SKILL.md 已指向 douyin-publish）与新的 `douyin-publish` 目录同步到了全部云桌面，保持两边一致。
+- 做法：`git archive origin/main` 打包两个技能目录 → 传 OSS `bossip/_deploy-tmp/skills-a5/`（用后删除）→ 云助手 `aliyun ecd run-command`（必须带 `--biz-region-id cn-shanghai`）逐台下载、校验 sha256、备份旧目录到 `/opt/openbox/backups/skills-video-production-<戳>.tgz`、解压到 `/opt/openbox/skills/`。
+- 结果：15/15 成功，`video-production/SKILL.md` = `d93f75e5391b`、`douyin-publish/SKILL.md` = `fbff9b3050fc`（与 origin/main 一致）。含共享桌面 `ecd-4zjxaq5g45dr5qr0i` 与 5 台 prewarm。
+- 库里 4 条 `running` 的桌面在阿里云已不存在（`InvalidDesktopId`）：`ecd-iu2s0ki7ez79l46sm`（andrewwang 第二台）、`ecd-ahkizte0nthlevmrn`、`ecd-ghjuuilmgiylybv0u`、`ecd-ahkizte0nsxv3r30i`（三台 smoke），需要 fleet 侧清理。
+- 金镜像里没有这两个技能目录的新版本；新开的池机第一次仍要同步，或下次烘焙镜像时带上。
+

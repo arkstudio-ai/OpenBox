@@ -276,6 +276,12 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 | 沙箱 | `SANDBOX_PROVIDER=wuying` | `SANDBOX_PROVIDER=wuying` |
 
 
+
+### 2026-09-08：A5 技能同步到全部云桌面
+
+- 15/15 台（含共享桌面与 prewarm）`/opt/openbox/skills/{video-production,douyin-publish}` 已同步到 `origin/main` 版本；旧目录备份在各桌面 `/opt/openbox/backups/`。下发方式见 `docs/A5_AUTHORIZATION_CENTER.md` §9.5。
+- 库里 4 条 `running` 桌面在阿里云已不存在（`InvalidDesktopId`）：`ecd-iu2s0ki7ez79l46sm`、`ecd-ahkizte0nthlevmrn`、`ecd-ghjuuilmgiylybv0u`、`ecd-ahkizte0nsxv3r30i`。
+
 ### 2026-09-07：A5 授权中心（抖音开放平台 OAuth + H5 投稿）
 
 - **17:05 第三版（P2）**：两边 `20260907-a5p2-4667a8c`（`main@4667a8c`，含队友 `4a9725f` 的浏览器运行时修复），新增 `douyin_publish` 工具与 `douyin-publish` 技能，后端依赖加 `segno`。**注意**：gw2 上多了一个 `docker-compose.override.yml`（队友 16:48 用它把 backend 镜像钉在 `20260907-browser-4a9725f`），`.env` 的 tag 对 backend 不再生效；本次把 override 里的 backend 镜像改成本 tag（备份 `docker-compose.override.yml.bak-<戳>`）。后续发 backend 要同时改 override 或删掉里面的 `image:` 行。

@@ -11,6 +11,11 @@ Two very different browsers sit behind the dev-browser skill:
 moment the extension is gone, so a task does not die because someone closed a
 window.
 
+``local`` is the default. Most people use OpenBox from a phone or without the
+extension installed, and starting in ``auto`` made the agent open every
+browser task with a question about an extension they cannot connect. Someone
+who has the extension picks ``auto`` or ``remote`` once in settings.
+
 The preference lives in the existing per-user preferences row rather than a
 table of its own. Note the vocabulary split: the product says ``remote``, the
 relay's own config calls that same mode ``extension`` — `relay_mode` is the
@@ -22,8 +27,8 @@ from db.repository.preference_repo import PgPreferenceRepo
 #: Key inside UserPreference.extra.
 PREF_KEY = "browser_mode"
 
-MODES = ("auto", "local", "remote")
-DEFAULT_MODE = "auto"
+MODES = ("local", "auto", "remote")
+DEFAULT_MODE = "local"
 
 
 class InvalidBrowserMode(ValueError):
@@ -31,7 +36,7 @@ class InvalidBrowserMode(ValueError):
 
 
 async def get_browser_mode(user_id: str) -> str:
-    """The user's stored choice, defaulting to auto."""
+    """The user's stored choice, defaulting to the cloud desktop's Chrome."""
     prefs = await PgPreferenceRepo().get(user_id)
     mode = ((prefs or {}).get("extra") or {}).get(PREF_KEY)
     return mode if mode in MODES else DEFAULT_MODE

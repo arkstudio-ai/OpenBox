@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,6 +7,7 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../api/chat_api.dart';
+import '../../state/pending_store.dart';
 import 'video_approval_detail.dart';
 
 /// Blocking question prompt above the composer (web `QuestionDock`):
@@ -53,6 +55,17 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             widget.request.id,
             List.generate(widget.request.questions.length, _answersFor),
           );
+      // Do not wait for the WS `question.replied` event to take the card
+      // away: the socket may be down while the app is backgrounded.
+      ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
+    } on DioException catch (e) {
+      // 404: the run already consumed or dropped this question. Keeping the
+      // card would only invite more taps that fail the same way.
+      if (e.response?.statusCode == 404) {
+        ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
+      } else {
+        rethrow;
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -119,8 +132,14 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: () =>
-                    ref.read(chatApiProvider).rejectQuestion(widget.request.id),
+                onPressed: () async {
+                  try {
+                    await ref.read(chatApiProvider).rejectQuestion(widget.request.id);
+                  } on DioException catch (e) {
+                    if (e.response?.statusCode != 404) rethrow;
+                  }
+                  ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
+                },
                 child: Text(
                   i18n.t('chat:question.reject'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.n600),

@@ -37,13 +37,20 @@ class PendingStore extends Notifier<PendingState> {
       case 'permission.asked':
         addPermission(PermissionRequest.fromJson(event.data));
       case 'permission.replied':
-        removePermission(asString(event.data['request_id']) ?? '');
+        removePermission(_requestId(event.data));
       case 'question.asked':
         addQuestion(QuestionRequest.fromJson(event.data));
       case 'question.replied' || 'question.rejected':
-        removeQuestion(asString(event.data['request_id']) ?? '');
+        removeQuestion(_requestId(event.data));
     }
   }
+
+  /// The backend's replied/rejected events carry the request under `id`
+  /// (`permission/permission.py`, `question/question.py`); older builds read
+  /// `request_id` only, so an answered card never left the screen and every
+  /// further tap was answered with 404.
+  static String _requestId(Map<String, dynamic> data) =>
+      asString(data['request_id']) ?? asString(data['id']) ?? '';
 
   /// Seed from `GET /api/agent/permission` + `/question` on session open.
   void seed(List<PermissionRequest> permissions, List<QuestionRequest> questions) {

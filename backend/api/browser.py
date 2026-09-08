@@ -4,8 +4,8 @@ The agent can reach the web two ways. **local** is Chrome on the cloud desktop
 (the sandbox), always there but carrying none of the user's logins. **remote**
 is the user's own Chrome, driven through a browser extension that connects back
 here — it has the real sessions, but only while the extension is connected.
-**auto** (the default) prefers remote and falls back to local the moment the
-extension drops.
+**auto** prefers remote and falls back to local the moment the extension
+drops. **local is the default**: most users have no extension to connect.
 
 The chosen mode is a per-user preference. Reads and writes go through
 ``session.browser_pref`` (it lives in the ``extra`` bag of the existing
@@ -31,7 +31,7 @@ router = APIRouter(
     dependencies=[Depends(get_workspace)],
 )
 
-_MODES = ("auto", "local", "remote")
+_MODES = ("local", "auto", "remote")
 
 
 class PreferenceUpdate(BaseModel):

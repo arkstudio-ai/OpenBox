@@ -1,6 +1,7 @@
 // Browser-mode settings hooks. The agent drives either Chrome on the cloud
 // desktop ("local") or the user's own Chrome via the extension ("remote");
 // "auto" prefers remote and falls back to local when the extension is gone.
+// "local" is the default: most users have no extension to connect.
 // Status is live, so the query re-checks reachability rather than trusting a
 // cached value. Components never fetch directly (ENGINEERING_SPEC §7).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"

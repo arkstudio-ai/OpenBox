@@ -24,7 +24,7 @@ log = create_logger("tool.browser_mode")
 
 _DESCRIBE = {
     "auto": "prefer the user's own browser, fall back to the cloud desktop's when it is not connected",
-    "local": "always the cloud desktop's Chrome (no user logins)",
+    "local": "always the cloud desktop's Chrome (no user logins); the default",
     "remote": "always the user's own Chrome via the extension (carries their logins)",
 }
 

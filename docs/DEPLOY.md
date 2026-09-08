@@ -5,7 +5,14 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前发布：2026-09-08 D1 浏览器调试监控（AWS + 阿里云 + 15 台桌面）
+## 当前发布：2026-09-08 20:30 A5 验收回归修复（AWS + 阿里云 + 15 台桌面）
+
+- AWS：backend + frontend `20260908-a5fix-7c891ee`（`main@7c891ee`）；gw2：backend 同 tag（override 的 backend 行已改，`.bak-<戳>` 留档），frontend 仍是队友钉的 `20260908-landing-8b80e28`。无迁移。
+- 修什么：`GET /api/platforms` 默认只返回 OAuth 平台（云电脑站点需 `?kinds=oauth,desktop`），旧前端打开授权中心不再因 `capabilities.includes` 崩溃。
+- 桌面：dev-browser 技能（含登录态前置段）改用 `sandbox.browser_runtime.runtime_cloud_commands()` 生成的分片安装脚本经云助手下发 15 台，桌面 `--check` 保持 `20260907.4 ready`。**禁止直接把 `container/dev-browser/**` 文件拷到桌面**：`--check` 会因与 `dev-browser-sources.json` 不一致而失败，后端随即走镜像内做不到的修复路径，模型看到"浏览器无法启动"。
+- 详见 `docs/A5_DESKTOP_LOGIN_STATE.md` §7.6。
+
+## 上一发布：2026-09-08 D1 浏览器调试监控（AWS + 阿里云 + 15 台桌面）
 
 - 最终镜像 `20260907-d1-c51a24c`（源码 `main@c51a24c`），AWS 与阿里云 gw2 后端均已切换。前端自
   `2620fcd` 起无变化，之后的前端 tag 只是重打标签；gw2 前端容器仍跑 `2620fcd` 镜像（内容相同）。

@@ -259,3 +259,12 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
 - `container/dev-browser/SKILL.md` 新版已同步到全部 15 台云桌面（OSS 临时对象 + 云助手逐台校验 sha256，旧版备份在各桌面 `/opt/openbox/backups/`），`e38f8862…`。
 - **P0–P2 至此全部上线。剩余可选项**：P3 `requires-platforms` 硬阻断；Fleet 抽屉"登录态"分节；小红书侦察；`inactivity_ttl` 用真实数据校准；K2 常驻标签页只在 K1 证实无效时开。
 
+### 7.6 2026-09-08 20:30 Codex 验收回归修复
+
+Codex 按 `docs/A5_VERIFY_CHECKLIST.md` 验收，抓到两处由我引入的回归，当晚修掉：
+
+1. **授权中心整页崩溃**（旧前端 + 新后端）。`GET /api/platforms` 混入了 `kind=desktop` 的四个站点，旧前端把每一项当 OAuth 卡片渲染，`capabilities.includes` 报错。修复 `7c891ee`：目录接口加 `kinds` 参数，**默认只返回 OAuth 平台**，云电脑站点要 `kinds=oauth,desktop` 显式请求；desktop 项补齐 `capabilities: []`、`configured`、`maxGrantDays` 键，形状与 OAuth 项一致。新前端请求 `kinds=oauth,desktop`。加了向后兼容测试。教训：**同一个后端要同时伺候不同版本的前端（gw2 前端被队友钉住），列表接口只能加参数不能改默认形状。**
+2. **模型加载 dev-browser 技能失败**。§7.5 把新版 `SKILL.md` 直接拷到桌面的 `/opt/openbox/skills/dev-browser/`，但桌面的 `repair_browser_runtime.py --check` 会把该目录与 `/opt/openbox/tools/dev-browser-sources.json` 逐文件比对，`SKILL.md` 不一致 → 后端在技能加载时走 runtime 修复分支 → 镜像里没有 `/container/dev-browser` → 抛 `browser runtime sources are not available`，模型看到"浏览器无法启动"，根本没走到 `desktop_login`。**这是不许直接拷贝 dev-browser 源文件到桌面的原因**。处理：先把 15 台桌面的 `SKILL.md` 恢复原版（`e0bd3abf…`，`--check` 回到 ready），再用**正规路径**下发：在完整 checkout 里 `sandbox.browser_runtime.runtime_cloud_commands()` 生成分片安装脚本（10 段，每段 <16 KiB），云助手逐台顺序执行——它同时更新 `dev-browser-sources.json` 与技能目录，然后跑 `--install-deps --register-service` 校验，只停 relay（Chrome 与用户登录态不动）。用户桌面 `ecd-glxi1nk433hliivri` 结果 `dev_browser_sources_updated=True`、`{"version":"20260907.4","ready":true}`，`SKILL.md` = `e38f8862…`（含登录态前置段）。其余 14 台同法下发。以后改 `container/dev-browser/**`（含 SKILL.md）一律走这条路，或 `scripts/wuying_bootstrap.py` 的 dev-browser 步骤。
+
+上线：AWS backend + frontend `20260908-a5fix-7c891ee`；gw2 backend `20260908-a5fix-7c891ee`，frontend 仍是队友钉的 landing（旧前端现在能正常打开授权中心）。Codex 的验收记录与证据在 `docs/A5_VERIFY_CHECKLIST.md` 末尾和 `docs/evidence/a5-verify-20260908/`；其余未验项（扫码发布、退出重登、普通成员、模型 3.1–3.5）待前端切换与用户配合后重跑。
+

@@ -1,6 +1,32 @@
 {
   "title": "Fleet management",
   "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
+  "console": {
+    "title": "Admin console",
+    "subtitle": "Operations view of the fleet, the skill store, and subscriptions."
+  },
+  "nav": {
+    "fleet": "Fleet",
+    "skills": "Skills",
+    "billing": "Subscriptions"
+  },
+  "section": {
+    "fleet": {
+      "title": "Fleet management",
+      "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts."
+    },
+    "skills": {
+      "title": "Skill management",
+      "subtitle": "List and delist store entries, review submissions, and see who installed what."
+    },
+    "billing": {
+      "title": "Subscriptions",
+      "subtitle": "Per-workspace subscriptions, orders, and usage — read only."
+    }
+  },
+  "confirm": {
+    "title": "Confirm this action"
+  },
   "loadFailed": "Fleet data could not be loaded.",
   "snapshot": "Latest snapshot: {{time}} · {{sources}}",
   "pool": {
@@ -50,5 +76,62 @@
     "empty": "There are no open alerts.",
     "ack": "Acknowledge",
     "mute": "Mute for 24 hours"
+  },
+  "diag": {
+    "open": "Diagnose",
+    "title": "Browser diagnostics",
+    "close": "Close",
+    "collect": "Take snapshot",
+    "collecting": "Collecting…",
+    "collectFailed": "Snapshot failed: {{error}}",
+    "collectedVia": "Snapshot taken via {{via}} in {{ms}} ms",
+    "fallback": "Channel unavailable, used Cloud Assistant: {{error}}",
+    "latest": "Latest snapshot {{time}} · {{reason}}",
+    "noSnapshot": "No snapshot yet. Take one to see the desktop's browser stack.",
+    "findings": "Findings",
+    "noFindings": "Nothing unusual found.",
+    "sections": "Sections that failed to collect: {{sections}}",
+    "timeline": "Timeline",
+    "timelineEmpty": "No events recorded for this desktop yet.",
+    "loadFailed": "Diagnostics could not be loaded.",
+    "logs": "Log tails",
+    "chromeLog": "Chrome log",
+    "relayLog": "Relay log",
+    "journal": "Action server trace",
+    "empty": "(empty)",
+    "detail": "Detail",
+    "lights": {
+      "chrome": "Chrome",
+      "relay": "Relay",
+      "x": "Display",
+      "unit": "Services",
+      "runtime": "Runtime"
+    },
+    "light": {
+      "ok": "ok",
+      "degraded": "degraded",
+      "down": "down",
+      "unknown": "unknown"
+    },
+    "kinds": {
+      "browser.ensure": "Browser bring-up",
+      "browser.chrome_launch": "Chrome launch",
+      "browser.relay_start": "Relay start",
+      "browser.runtime_check": "Runtime check",
+      "browser.runtime_repair": "Runtime repair",
+      "browser.diag": "Snapshot",
+      "channel.verify": "Channel verify",
+      "lease.acquire": "Desktop lease"
+    },
+    "duration": "{{ms}} ms",
+    "cites": "diag:{{id}}",
+    "pick": "Choose a snapshot",
+    "freshReason": "just taken",
+    "fields": {
+      "session": "session",
+      "toolCall": "tool call",
+      "request": "request",
+      "event": "event"
+    }
   }
 }

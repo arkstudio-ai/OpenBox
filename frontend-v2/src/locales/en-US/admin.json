@@ -1,6 +1,32 @@
 {
   "title": "Fleet management",
   "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
+  "console": {
+    "title": "Admin console",
+    "subtitle": "Operations view of the fleet, the skill store, and subscriptions."
+  },
+  "nav": {
+    "fleet": "Fleet",
+    "skills": "Skills",
+    "billing": "Subscriptions"
+  },
+  "section": {
+    "fleet": {
+      "title": "Fleet management",
+      "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts."
+    },
+    "skills": {
+      "title": "Skill management",
+      "subtitle": "List and delist store entries, review submissions, and see who installed what."
+    },
+    "billing": {
+      "title": "Subscriptions",
+      "subtitle": "Per-workspace subscriptions, orders, and usage — read only."
+    }
+  },
+  "confirm": {
+    "title": "Confirm this action"
+  },
   "loadFailed": "Fleet data could not be loaded.",
   "snapshot": "Latest snapshot: {{time}} · {{sources}}",
   "pool": {

@@ -1,6 +1,32 @@
 {
   "title": "舰队管理",
   "subtitle": "查看预热池、桌面状态与对账告警。",
+  "console": {
+    "title": "超管系统",
+    "subtitle": "舰队、技能商店与订阅的运营视图。"
+  },
+  "nav": {
+    "fleet": "舰队管理",
+    "skills": "技能管理",
+    "billing": "订阅管理"
+  },
+  "section": {
+    "fleet": {
+      "title": "舰队管理",
+      "subtitle": "查看预热池、桌面状态与对账告警。"
+    },
+    "skills": {
+      "title": "技能管理",
+      "subtitle": "商店条目的上下架、用户投稿审核与安装分布。"
+    },
+    "billing": {
+      "title": "订阅管理",
+      "subtitle": "每个空间的订阅、订单与用量，只读。"
+    }
+  },
+  "confirm": {
+    "title": "确认操作"
+  },
   "loadFailed": "舰队数据加载失败。",
   "snapshot": "最近快照：{{time}} · {{sources}}",
   "pool": {

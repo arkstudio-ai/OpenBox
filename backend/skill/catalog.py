@@ -14,6 +14,11 @@ and then fails at its first tool call.
 ``OPENBOX_CATALOG_URL`` may point at a JSON document with the same shape, which
 is merged over this list by id. That is how an operator ships an internal
 catalogue without forking the backend.
+
+Every entry also declares a ``listing`` — whether the store puts it on the
+shelf. It is only the *default*: the admin console writes ``catalog_overrides``
+rows, and those win, so taking an entry down survives a redeploy while a fresh
+install still starts from the shelf we shipped.
 """
 from __future__ import annotations
 
@@ -24,6 +29,30 @@ from typing import Any
 from core.log import create_logger
 
 log = create_logger("skill.catalog")
+
+#: Shelf states a catalogue entry can be in. Entries live in code and never go
+#: through submission review, so the author-facing states (``pending`` /
+#: ``rejected``) that ``user_skills.listing`` also carries do not apply here.
+LISTED = "listed"
+DELISTED = "delisted"
+
+#: Publisher name that marks an entry as our own rather than somebody else's.
+OFFICIAL_PUBLISHER = "OpenBox"
+
+
+def catalog_entry_id(kind: str, entry_id: str) -> str:
+    """The store-wide key for a catalogue entry: ``skill:web-research``.
+
+    ``skill_installs.catalog_id``, ``catalog_overrides.catalog_id`` and the
+    admin console's routes all address entries by this string, so it is spelled
+    in exactly one place.
+    """
+    return f"{kind}:{entry_id}"
+
+
+def catalog_entry_origin(entry: dict) -> str:
+    """Which shelf an entry belongs on: ours, or a third party's."""
+    return "official" if entry.get("publisher") == OFFICIAL_PUBLISHER else "third_party"
 
 
 #: MCP servers. `config` is exactly the body POST /api/agent/mcp accepts, so the
@@ -39,6 +68,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Model Context Protocol",
         "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
         "tags": ["files", "official"],
+        "listing": LISTED,
         "config": {
             "type": "stdio",
             "command": "npx",
@@ -57,6 +87,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Model Context Protocol",
         "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
         "tags": ["memory", "official"],
+        "listing": LISTED,
         "config": {
             "type": "stdio",
             "command": "npx",
@@ -75,6 +106,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Model Context Protocol",
         "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
         "tags": ["reasoning", "official"],
+        "listing": LISTED,
         "config": {
             "type": "stdio",
             "command": "npx",
@@ -93,6 +125,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Microsoft",
         "homepage": "https://github.com/microsoft/playwright-mcp",
         "tags": ["browser", "automation"],
+        "listing": LISTED,
         "config": {
             "type": "stdio",
             "command": "npx",
@@ -111,6 +144,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Devin",
         "homepage": "https://mcp.deepwiki.com",
         "tags": ["docs", "remote"],
+        "listing": LISTED,
         "config": {
             "type": "remote",
             "url": "https://mcp.deepwiki.com/mcp",
@@ -128,6 +162,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Model Context Protocol",
         "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
         "tags": ["testing", "official"],
+        "listing": LISTED,
         "config": {
             "type": "stdio",
             "command": "npx",
@@ -146,6 +181,7 @@ MCP_CATALOG: list[dict[str, Any]] = [
         "publisher": "Firecrawl",
         "homepage": "https://github.com/firecrawl/firecrawl-mcp-server",
         "tags": ["web", "scraping"],
+        "listing": LISTED,
         # Declared so the install form asks for the key rather than installing a
         # server that connects and then fails on every call.
         "required_env": [
@@ -177,6 +213,11 @@ SKILL_CATALOG: list[dict[str, Any]] = [
         "publisher": "Anthropic",
         "homepage": "https://github.com/anthropics/skills",
         "tags": ["pack", "official", "documents"],
+        # Off the shelf by default: the pack installs a whole collection at
+        # once, which is a poor first impression of a store built around
+        # single, purposeful skills. An operator can shelve it per
+        # deployment from the admin console.
+        "listing": DELISTED,
         "requires_mcp": [],
         "install": {"url": "https://github.com/anthropics/skills.git", "name": "anthropic-skills"},
     },
@@ -192,6 +233,7 @@ SKILL_CATALOG: list[dict[str, Any]] = [
         ),
         "publisher": "OpenBox",
         "tags": ["research", "web"],
+        "listing": LISTED,
         # The workflow tells the model to crawl pages; without Firecrawl it has
         # instructions for tools it does not have.
         "requires_mcp": ["firecrawl"],
@@ -250,6 +292,7 @@ dressed as research is not.
         ),
         "publisher": "OpenBox",
         "tags": ["code", "onboarding"],
+        "listing": LISTED,
         "requires_mcp": ["deepwiki"],
         "install": {
             "name": "repo-explainer",
@@ -303,6 +346,7 @@ fact to the person reading it.
         ),
         "publisher": "OpenBox",
         "tags": ["testing", "browser"],
+        "listing": LISTED,
         "requires_mcp": ["playwright"],
         "install": {
             "name": "browser-qa",
@@ -360,6 +404,30 @@ def _merge_remote(entries: list[dict], remote: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
+async def _apply_shelf_overrides(entries: list[dict], kind: str) -> None:
+    """Overlay the admin console's shelf decisions onto code defaults."""
+    from db.base import get_db_session
+    from db.models.catalog_override import CatalogOverride
+    from sqlalchemy import select
+
+    keys = {catalog_entry_id(kind, e["id"]): e for e in entries if e.get("id")}
+    if not keys:
+        return
+    async with get_db_session() as session:
+        rows = (
+            await session.execute(
+                select(CatalogOverride).where(
+                    CatalogOverride.catalog_id.in_(list(keys))
+                )
+            )
+        ).scalars()
+        for row in rows:
+            entry = keys[row.catalog_id]
+            entry["listing"] = row.listing
+            entry["featured"] = row.featured
+            entry["listing_note"] = row.note
+
+
 async def load_catalog() -> dict[str, list[dict]]:
     """The catalogue the store renders: built-in, plus any operator overlay."""
     skills = [dict(e) for e in SKILL_CATALOG]
@@ -383,14 +451,61 @@ async def load_catalog() -> dict[str, list[dict]]:
             # still perfectly installable without the overlay.
             log.warning(f"Could not load catalog from {url}: {e}")
 
+    for kind, entries in (("skill", skills), ("mcp", mcp)):
+        for entry in entries:
+            entry["catalog_id"] = catalog_entry_id(kind, entry.get("id", ""))
+            entry.setdefault("kind", kind)
+            entry.setdefault("listing", LISTED)
+            entry.setdefault("featured", False)
+            entry.setdefault("listing_note", None)
+            # Third-party entries are somebody else's work under our roof; the
+            # store says so rather than letting them read as ours.
+            entry.setdefault("origin", catalog_entry_origin(entry))
+            entry["official"] = entry["origin"] == "official"
+        try:
+            await _apply_shelf_overrides(entries, kind)
+        except Exception as e:
+            # Single-user mode runs with no central database at all, and a
+            # store that renders its code defaults beats one that 500s. The
+            # cost of falling back is that a delisted entry reappears, so say
+            # so in the log rather than swallowing it.
+            log.warning(f"Could not apply catalog overrides for {kind}: {e}")
+
     return {"skills": skills, "mcp": mcp}
 
 
 def catalog_index() -> dict[str, dict]:
-    """Built-in entries keyed by ``kind:id``, for resolving dependencies."""
+    """Built-in entries keyed by ``kind:id``, for resolving dependencies.
+
+    Deliberately unfiltered by ``listing``: the official content skills declare
+    ``requires_mcp``, and a skill whose server cannot be installed loads and
+    then fails at its first tool call. Filtering here would mean delisting one
+    MCP server silently breaks every skill that depends on it, which is a much
+    larger blast radius than the operator asked for. Shelf state governs what
+    the store *shows*; dependency resolution reads the code catalogue.
+    """
     index: dict[str, dict] = {}
     for entry in SKILL_CATALOG:
-        index[f"skill:{entry['id']}"] = entry
+        index[catalog_entry_id("skill", entry["id"])] = entry
     for entry in MCP_CATALOG:
-        index[f"mcp:{entry['id']}"] = entry
+        index[catalog_entry_id("mcp", entry["id"])] = entry
     return index
+
+
+async def shelf_index() -> dict[str, dict]:
+    """Catalogue entries keyed by ``kind:id``, with shelf state applied.
+
+    The counterpart to :func:`catalog_index` for anything a person asked for
+    *by name*: browsing and installing both have to see the same shelf, or a
+    delisted entry is merely hidden rather than withheld and an operator's
+    decision only costs the person a stale link. Dependency resolution keeps
+    reading the unfiltered index — that carve-out is deliberate and scoped to
+    ``requires_mcp`` alone.
+    """
+    catalog = await load_catalog()
+    return {
+        entry["catalog_id"]: entry
+        for group in (catalog["skills"], catalog["mcp"])
+        for entry in group
+        if entry.get("catalog_id")
+    }

@@ -27,6 +27,8 @@
 | P1 | 积分、套餐、用量与订单 | `bfd08a4` | 已完成（技术接入） | 三页、余额和 App Pay SDK 已接；商户 key 与 iOS 上架策略仍是发布门禁 |
 | P1 | A5 授权中心、抖音投稿与聊天二维码 | `c3563d9`、`12ad18f`、`a0f9b65` | 已完成（代码与模拟器）；真机验收待完成 | 多账号、权限、预计到期、视频投稿、同机跳转、二维码备选与服务端状态恢复；本轮未发布，见 §9 |
 | P3 | 舰队管理 | `ae330c0` | 有意省略 | 管理员运维台，按移动端“能力不具备则省略控件”处理 |
+| P3 | 超管系统（舰队 / 技能管理 / 订阅管理） | 分支 `codex/admin-console` | 有意省略 | 与舰队管理同一处理：Web-only 运营台，移动端不加入口和控件；`admin.json` / `admin-skills.json` / `admin-billing.json` 仍按 locale 规则逐字节复制。见 §10 |
+| P2 | 用户侧技能商店改版（来源分区、上架状态、撤回、审核提示） | 分支 `codex/admin-console` | 待对齐 | `store_list.dart`、`mine_list.dart`、`create_publish_sheets.dart` 尚未用新字段；接口向后兼容，当前 App 不改也能继续跑。见 §10 |
 
 ## 1. Locale 同步与工作日志内联常开
 
@@ -244,6 +246,33 @@ Web `/app/admin/fleet` 是仅 `user.role === "admin"` 可见的运维台，覆�
 - iPhone 17 Pro / iOS 26.5 模拟器保留现有登录，连接生产验证授权中心空态、授权 QR 生成及系统保存面板；取消保存后临时文件已清理。最终安装包复测通过侧栏入口、返回聊天、Home 后回前台，原订购/云桌面入口保留。未绑定真实抖音账号、未发布视频。安全截图：[授权中心空态](evidence/mobile-auth-center-20260907/production-empty.png)；不存档含有效 OAuth state 的二维码截图。
 - [ ] Android/iOS 真机：已装/未装抖音、取消授权、授权成功后返回 App、投稿取消/成功、回调延迟、杀进程后从最近投稿查到最终结果。
 
+## 10. 超管系统与技能商店改版（2026-09-08）
+
+来源：`docs/ADMIN_CONSOLE_SKILL_STORE_PLAN.md`，分支 `codex/admin-console`。这一轮把技能商店从「第三方目录 + 即发即上架」改成「官方技能 + 经审核的用户投稿」，并把 Web 的「舰队管理」升级成「超管系统」。
+
+### 超管系统：有意省略
+
+Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理）全部只对 `users.role === "admin"` 开放，后端 `/api/admin/skills/*`、`/api/admin/billing/*` 也只认这一个角色。移动端与 §5 舰队管理同样处理：**不加入口、不加控件**，`admin.json` 与新增的 `admin-skills.json`、`admin-billing.json` 仍按 locale 规则从 `frontend-v2/src/locales/` 逐字节复制（App 不用也要复制过门禁）。若以后确有移动运营场景，单独立项，不能把普通 workspace owner 与平台 admin 权限混在一起。
+
+### 用户侧技能商店：待对齐
+
+后端与 Web 已改，移动端还没跟。涉及三个文件：
+
+| 文件 | 待办 |
+|---|---|
+| `mobile/lib/features/skills/widgets/store_list.dart` | 商店分区从「Skill / MCP」改成按 `origin` 分「官方 / 用户共享 / 第三方」；置顶条目显示「置顶」小标；条目显示 `installs_count` |
+| `mobile/lib/features/skills/widgets/mine_list.dart` | 「我的」个人技能显示 `listing` 状态 chip（待审核 / 已上架 / 已驳回 / 已下架 / 已撤回），驳回与下架展开 `listing_note` 原因；加「撤回发布」（`POST /api/agent/skill/{name}/withdraw`），被驳回或下架后按钮文案改「重新提交」 |
+| `mobile/lib/features/skills/widgets/create_publish_sheets.dart` | 发布确认文案按 `GET /api/agent/config` 的 `skill_store_review` 选：开启时用 `publish.reviewNotice`（提交后由管理员审核），关闭时保留原 `publish.publicNotice` |
+
+文案已经随 locale 同步到位：`skills.json` 新增 `section.storeOfficial / storeCommunity / storeThirdParty`、`badge.listing.*`、`badge.featured / installs / official`、`action.withdraw / resubmit`、`mine.showReason / hideReason / listingReason`、`publish.reviewNotice / confirmSubmit / resubmitTitle / resubmitBody / confirmResubmit / submitting`、`withdraw.*`、`store.empty`。`mobile/scripts/check_locales.sh` 已通过，所以移动端拿得到这些 key，只差界面接。
+
+### 兼容边界（当前 App 不改也能跑）
+
+- 新字段全部**可选**：`origin`、`listing`、`listing_note`、`featured`、`installs_count`、`is_official`、`skill_store_review` 都是新增键，旧客户端忽略即可。缺省语义：`origin` 按 `community`、`listing` 按 `listed` 处理。
+- `GET /api/agent/catalog` 的**结构没变**（仍是 `{skills, mcp}`），只是内容变少了：未上架的条目不再返回。默认口径下 `anthropic-skills` 从商店消失（代码默认 `delisted`），7 个 MCP 保持上架。这是产品决定，不是移动端的兼容问题。
+- **旧 App 的行为差异**：`SKILL_STORE_REVIEW=true`（默认）时，用户在移动端点「上传到商店」后技能进入待审核，商店里当时看不到，而移动端文案仍写「所有用户都能看到」。这不会报错，但会误导——这是本项待对齐里优先级最高的一条。
+- 移动端目前没有撤回入口，作者只能在 Web 上撤回；已安装的副本在任何情况下都不受下架或撤回影响（§3-Q4），所以移动端沙箱里的技能不会凭空消失。
+
 ## 明确不需要重复移植
 
 - `4a87777` / `66bb9de` 的 1920×1080 固定分辨率：移动端 `desktop_bridge.dart` 已用 `fixedResolution`/`maxResolution` 做到等价效果。
@@ -264,6 +293,7 @@ Web `/app/admin/fleet` 是仅 `user.role === "admin"` 可见的运维台，覆�
 9. **移动端新对话与执行环境入口**：项目行常驻且右侧对齐 `+`（手机没有 hover），点击进入该项目的空会话；空会话不再根据旧 `/api/containers` 列表显示“创建沙箱”，首条消息由后端按 workspace 自动连接无影，真正未就绪时继续走 `DESKTOP_NOT_READY` 云桌面引导。
 10. **订阅驱动无影云**：全局进度、Free 权益边界、到期断开查看连接、作用域隔离、侧栏直达与阿里云 prod 联调已完成，替代旧的手动开通流程，见 §8。
 11. **Android Logto 单一回调**：邀请链接只保留生产 HTTPS App Link；删除 MainActivity 上缺少 host 的自定义 scheme 过滤器。Android 在过滤器未声明 host 时会忽略 `pathPrefix`，旧配置因此同时匹配 `com.bossip.bipmobile://callback`，与 `flutter_web_auth_2.CallbackActivity` 形成两个授权跳转入口。现在该回调仅由 SDK Activity 接收。
+12. **超管系统 + 技能商店**：超管系统与舰队管理一样按 Web-only 处理，移动端只复制 locale；用户侧商店的来源分区、上架状态、撤回与审核文案登记为待对齐，接口对旧客户端保持兼容，见 §10。
 
 ## 完成记录
 

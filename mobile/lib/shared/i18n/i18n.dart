@@ -17,6 +17,8 @@ const _langStorageKey = 'bossip:lang';
 
 const _namespaces = [
   'admin',
+  'admin-billing',
+  'admin-skills',
   'auth',
   'auth-center',
   'billing',

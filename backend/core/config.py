@@ -513,6 +513,13 @@ class OpenBoxConfig(BaseModel):
 
     cron_default_locale: str = "zh-CN"             # injected-text language when the user never chose one
 
+    # -- Skill store --
+    # true: a published skill waits in the admin console's review queue before
+    # the store shows it. false: publishing goes live immediately (the pre-
+    # moderation behaviour) — delisting still applies, and a delisted skill
+    # stays delisted when its author pushes a new version.
+    skill_store_review: bool = True
+
     # -- Agent --
     model: str = "anthropic/claude-sonnet-4-20250514"
     mcp_filter_model: str = ""
@@ -753,6 +760,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "douyin_client_key": "DOUYIN_CLIENT_KEY",
         "douyin_client_secret": "DOUYIN_CLIENT_SECRET",
         "douyin_redirect_uri": "DOUYIN_REDIRECT_URI",
+        "skill_store_review": "SKILL_STORE_REVIEW",
     }
     for field_name, env_var in env_map.items():
         value = os.environ.get(env_var)
@@ -775,7 +783,8 @@ def _apply_env_overrides(data: dict) -> dict:
                 data[field_name] = float(value)
             elif field_name in {"debug", "wuying_auto_pay", "wuying_auto_renew",
                                 "pool_enabled", "pool_auto_purchase",
-                                "pool_auto_renew", "pool_assign_on_provision"}:
+                                "pool_auto_renew", "pool_assign_on_provision",
+                                "skill_store_review"}:
                 data[field_name] = value.lower() == "true"
             else:
                 data[field_name] = value

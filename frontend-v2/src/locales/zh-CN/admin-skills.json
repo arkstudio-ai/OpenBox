@@ -1,0 +1,150 @@
+{
+  "title": "技能管理",
+  "subtitle": "商店条目的上下架、用户投稿审核与安装分布。",
+  "tab": {
+    "store": "商店上架",
+    "review": "投稿审核",
+    "installs": "用户安装"
+  },
+  "list": {
+    "range": "{{from}}–{{to}} / 共 {{total}} 条",
+    "previous": "上一页",
+    "next": "下一页",
+    "loading": "加载中",
+    "error": "数据加载失败，请稍后重试。"
+  },
+  "status": {
+    "listed": "已上架",
+    "delisted": "已下架",
+    "pending": "待审核",
+    "rejected": "已驳回"
+  },
+  "action": {
+    "list": "上架",
+    "delist": "下架",
+    "feature": "置顶",
+    "unfeature": "取消置顶",
+    "markOfficial": "标为官方",
+    "unmarkOfficial": "取消官方",
+    "view": "查看",
+    "approve": "通过",
+    "reject": "驳回",
+    "download": "下载 ZIP",
+    "cancel": "取消"
+  },
+  "store": {
+    "search": "搜索名称、作者或 catalog_id",
+    "searchLabel": "搜索商店条目",
+    "empty": "商店里还没有条目。",
+    "nav": "商店条目分页",
+    "featured": "置顶",
+    "official": "官方",
+    "installsOf": "查看「{{title}}」的安装记录",
+    "filter": {
+      "origin": "来源",
+      "kind": "类型",
+      "listing": "状态"
+    },
+    "origin": {
+      "all": "全部",
+      "official": "官方",
+      "community": "用户共享",
+      "third_party": "第三方"
+    },
+    "kind": {
+      "all": "全部",
+      "skill": "Skill",
+      "mcp": "MCP"
+    },
+    "listing": {
+      "all": "全部",
+      "listed": "上架",
+      "delisted": "下架",
+      "pending": "待审核",
+      "rejected": "已驳回"
+    },
+    "column": {
+      "entry": "名称",
+      "origin": "来源",
+      "author": "作者",
+      "version": "版本",
+      "publishedAt": "发布时间",
+      "installs": "安装数",
+      "status": "状态",
+      "actions": "操作"
+    }
+  },
+  "dialog": {
+    "reason": "原因（必填）",
+    "note": "备注（可选）",
+    "reasonPlaceholder": "写清楚原因，作者会在通知里看到",
+    "reasonRequired": "下架与驳回必须填写原因。",
+    "failed": "操作失败，请稍后重试。",
+    "list": {
+      "title": "上架「{{title}}」",
+      "body": "上架后所有用户都能在商店里看到并安装这条技能。"
+    },
+    "delist": {
+      "title": "下架「{{title}}」",
+      "body": "下架后商店不再展示、也不能再安装；已经装进沙箱的副本不受影响。原因会通知作者。"
+    },
+    "approve": {
+      "title": "通过「{{title}}」",
+      "body": "通过后这条投稿进入商店「用户共享」分区，所有用户可见。"
+    },
+    "reject": {
+      "title": "驳回「{{title}}」",
+      "body": "驳回原因会连同技能名和版本一起通知作者，作者改好后可以重新提交。"
+    }
+  },
+  "review": {
+    "filter": "队列状态",
+    "state": {
+      "pending": "待审核",
+      "rejected": "已驳回"
+    },
+    "queueNav": "审核队列分页",
+    "emptyPending": "没有待审核的投稿。",
+    "emptyRejected": "没有被驳回的投稿。",
+    "pick": "从左侧选一条投稿查看详情。",
+    "submittedAt": "提交于 {{time}}",
+    "skillMd": "SKILL.md",
+    "skillMdNotice": "以纯文本展示，不渲染 Markdown、不执行任何内容。",
+    "skillMdEmpty": "这个包里没有 SKILL.md。",
+    "archiveRefused": "服务端没有打开这个包（体积过大、条目异常多，或不是可读的 ZIP）。下面看不到清单和文件，不代表包是空的——这些字节没有人读过。",
+    "truncated": "内容过长，已截断。",
+    "files": "文件清单（{{count}}）",
+    "filesTruncated": "条目过多，只列出了前面一部分。",
+    "downloadFailed": "下载失败，请稍后重试。",
+    "loadFailed": "审核详情加载失败。",
+    "meta": {
+      "author": "作者",
+      "version": "版本",
+      "submittedAt": "提交时间",
+      "size": "大小",
+      "requiresMcp": "依赖 MCP",
+      "sha256": "SHA-256",
+      "none": "无"
+    },
+    "fileColumn": {
+      "path": "路径",
+      "size": "大小"
+    }
+  },
+  "installs": {
+    "search": "搜索用户名、邮箱或技能名",
+    "searchLabel": "搜索安装记录",
+    "empty": "还没有安装记录。",
+    "nav": "安装记录分页",
+    "filtered": "只看 {{catalog}}",
+    "clearFilter": "清除技能筛选",
+    "footnote": "按安装记录显示；用户在沙箱里手动删除的技能不会实时反映。",
+    "column": {
+      "user": "用户",
+      "skill": "技能",
+      "kind": "类型",
+      "installDir": "安装目录",
+      "installedAt": "安装时间"
+    }
+  }
+}

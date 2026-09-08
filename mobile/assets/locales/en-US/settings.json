@@ -83,7 +83,13 @@
       "connected": "Connected",
       "disconnected": "Not connected",
       "available": "Available",
-      "unavailable": "Unavailable"
+      "unavailable": "Unavailable",
+      "reason": {
+        "unreachable": "Desktop unreachable",
+        "not_started": "Chrome not running",
+        "no_sandbox": "No desktop",
+        "error": "Check failed"
+      }
     },
     "fallbackHint": "The extension isn't connected yet — the cloud browser will be used until it connects."
   },

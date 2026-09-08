@@ -15,6 +15,7 @@ import {
   useRetireDesktop,
 } from "./api"
 import { DesktopDiagDrawer } from "./DesktopDiagDrawer"
+import { ConfirmDialog, type FleetConfirm } from "./ConfirmDialog"
 
 
 const card = "rounded-xl border border-hair bg-card p-4"
@@ -43,6 +44,27 @@ export function FleetPage() {
   const [gatewayReleaseVerified, setGatewayReleaseVerified] = useState(false)
   const [ensureMessage, setEnsureMessage] = useState("")
   const [diagDesktop, setDiagDesktop] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<FleetConfirm | null>(null)
+
+  const runEnsure = (dryRun: boolean) => {
+    ensure.mutate(dryRun, {
+      onSuccess: (result) => setEnsureMessage(t("pool.ensureResult", {
+        status: result.status,
+        current: result.current,
+        target: result.target,
+        quantity: result.quantity,
+      })),
+    })
+  }
+  const runAdopt = (id: string) => {
+    adopt.mutate({ id, poolState: adoptState, rebuild: adoptRebuild, gatewayReleaseVerified }, {
+      onSuccess: () => {
+        setAdoptId("")
+        setAdoptRebuild(false)
+        setGatewayReleaseVerified(false)
+      },
+    })
+  }
 
   if ([pool, desktops, alerts, snapshot].some((query) => query.isPending)) {
     return <div className="flex justify-center py-16"><Spinner className="size-5" /></div>
@@ -91,27 +113,13 @@ export function FleetPage() {
           })}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button className={button} disabled={ensure.isPending} onClick={() => {
-            ensure.mutate(true, {
-              onSuccess: (result) => setEnsureMessage(t("pool.ensureResult", {
-                status: result.status,
-                current: result.current,
-                target: result.target,
-                quantity: result.quantity,
-              })),
-            })
-          }}>{t("pool.dryRun")}</button>
-          <button className={button} disabled={ensure.isPending} onClick={() => {
-            if (!window.confirm(t("pool.confirmEnsure"))) return
-            ensure.mutate(false, {
-              onSuccess: (result) => setEnsureMessage(t("pool.ensureResult", {
-                status: result.status,
-                current: result.current,
-                target: result.target,
-                quantity: result.quantity,
-              })),
-            })
-          }}>{t("pool.ensure")}</button>
+          <button className={button} disabled={ensure.isPending} onClick={() => runEnsure(true)}>
+            {t("pool.dryRun")}
+          </button>
+          <button className={button} disabled={ensure.isPending} onClick={() => setConfirm({
+            body: t("pool.confirmEnsure"),
+            run: () => runEnsure(false),
+          })}>{t("pool.ensure")}</button>
           {ensureMessage && <span className="text-xs text-n600">{ensureMessage}</span>}
           {ensure.isError && <span className="text-xs text-danger">{t("pool.ensureFailed")}</span>}
         </div>
@@ -119,19 +127,17 @@ export function FleetPage() {
           event.preventDefault()
           const id = adoptId.trim()
           if (!id) return
-          if (adoptRebuild && !window.confirm(t("pool.confirmAdoptRebuild", { id }))) return
-          adopt.mutate({
-            id,
-            poolState: adoptState,
-            rebuild: adoptRebuild,
-            gatewayReleaseVerified,
-          }, {
-            onSuccess: () => {
-              setAdoptId("")
-              setAdoptRebuild(false)
-              setGatewayReleaseVerified(false)
-            },
-          })
+          // Rebuilding wipes the system disk, so it is the one adoption path
+          // that has to be confirmed; a plain adopt still goes straight through.
+          if (adoptRebuild) {
+            setConfirm({
+              body: t("pool.confirmAdoptRebuild", { id }),
+              run: () => runAdopt(id),
+              danger: true,
+            })
+            return
+          }
+          runAdopt(id)
         }}>
           <input
             className="min-w-64 rounded-lg border border-hair bg-bg px-3 py-2 text-xs outline-none focus:border-n500"
@@ -177,7 +183,7 @@ export function FleetPage() {
           <span className="text-xs text-n500">{t("desktops.count", { count: desktops.data!.total })}</span>
         </div>
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-left text-xs">
+          <table className="w-full min-w-[1050px] text-start text-xs">
             <thead className="text-n500"><tr>
               <th className="pb-2">{t("desktops.id")}</th>
               <th className="pb-2">{t("desktops.state")}</th>
@@ -189,49 +195,58 @@ export function FleetPage() {
               <th className="pb-2">{t("desktops.actions")}</th>
             </tr></thead>
             <tbody>
-              {desktops.data!.items.map((desktop) => (
-                <tr key={desktop.id} className="border-t border-hair align-top">
-                  <td className="py-2.5 pe-3 font-mono">{desktop.desktop_id ?? desktop.id}</td>
-                  <td className="py-2.5 pe-3">{desktop.pool_state} · {desktop.status}</td>
-                  <td className="py-2.5 pe-3 font-mono">{desktop.workspace_id ?? "—"}</td>
-                  <td className="py-2.5 pe-3 font-mono">
-                    {desktop.ecd_end_users == null
-                      ? t("desktops.unknown")
-                      : desktop.ecd_end_users.length === 0
-                        ? t("desktops.unbound")
-                        : desktop.ecd_end_users.map((user) => (
-                          <span key={user.id} className="block">
-                            {user.username ? `${user.username} · ` : ""}{user.id}
-                          </span>
-                        ))}
-                  </td>
-                  <td className="py-2.5 pe-3">{desktop.tunnel_state}</td>
-                  <td className="py-2.5 pe-3">{desktop.charge_type ?? "—"} · {desktop.spec ?? "—"}</td>
-                  <td className="py-2.5 pe-3">{date(desktop.expires_at)}</td>
-                  <td className="py-2.5">
-                    <div className="flex gap-1.5">
-                      <button className={button} onClick={() => setDiagDesktop(desktop.desktop_id ?? desktop.id)}>
-                        {t("diag.open")}
-                      </button>
-                      {desktop.pool_state === "assigned" && (
-                        <button className={button} disabled={release.isPending} onClick={() => {
-                          if (window.confirm(t("desktops.confirmRelease"))) release.mutate(desktop.desktop_id ?? desktop.id)
-                        }}>{t("desktops.release")}</button>
-                      )}
-                      {["reserve", "prewarm", "released"].includes(desktop.pool_state) && (
-                        <button className={button} disabled={recycle.isPending} onClick={() => {
-                          if (window.confirm(t("desktops.confirmRecycle"))) recycle.mutate(desktop.desktop_id ?? desktop.id)
-                        }}>{t("desktops.recycle")}</button>
-                      )}
-                      {["reserve", "prewarm", "released"].includes(desktop.pool_state) && (
-                        <button className={button} disabled={retire.isPending} onClick={() => {
-                          if (window.confirm(t("desktops.confirmRetire"))) retire.mutate(desktop.desktop_id ?? desktop.id)
-                        }}>{t("desktops.retire")}</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {desktops.data!.items.map((desktop) => {
+                const desktopId = desktop.desktop_id ?? desktop.id
+                return (
+                  <tr key={desktop.id} className="border-t border-hair align-top">
+                    <td className="py-2.5 pe-3 font-mono">{desktopId}</td>
+                    <td className="py-2.5 pe-3">{desktop.pool_state} · {desktop.status}</td>
+                    <td className="py-2.5 pe-3 font-mono">{desktop.workspace_id ?? "—"}</td>
+                    <td className="py-2.5 pe-3 font-mono">
+                      {desktop.ecd_end_users == null
+                        ? t("desktops.unknown")
+                        : desktop.ecd_end_users.length === 0
+                          ? t("desktops.unbound")
+                          : desktop.ecd_end_users.map((user) => (
+                            <span key={user.id} className="block">
+                              {user.username ? `${user.username} · ` : ""}{user.id}
+                            </span>
+                          ))}
+                    </td>
+                    <td className="py-2.5 pe-3">{desktop.tunnel_state}</td>
+                    <td className="py-2.5 pe-3">{desktop.charge_type ?? "—"} · {desktop.spec ?? "—"}</td>
+                    <td className="py-2.5 pe-3">{date(desktop.expires_at)}</td>
+                    <td className="py-2.5">
+                      <div className="flex gap-1.5">
+                        <button className={button} onClick={() => setDiagDesktop(desktopId)}>
+                          {t("diag.open")}
+                        </button>
+                        {desktop.pool_state === "assigned" && (
+                          <button className={button} disabled={release.isPending} onClick={() => setConfirm({
+                            body: t("desktops.confirmRelease"),
+                            run: () => release.mutate(desktopId),
+                            danger: true,
+                          })}>{t("desktops.release")}</button>
+                        )}
+                        {["reserve", "prewarm", "released"].includes(desktop.pool_state) && (
+                          <button className={button} disabled={recycle.isPending} onClick={() => setConfirm({
+                            body: t("desktops.confirmRecycle"),
+                            run: () => recycle.mutate(desktopId),
+                            danger: true,
+                          })}>{t("desktops.recycle")}</button>
+                        )}
+                        {["reserve", "prewarm", "released"].includes(desktop.pool_state) && (
+                          <button className={button} disabled={retire.isPending} onClick={() => setConfirm({
+                            body: t("desktops.confirmRetire"),
+                            run: () => retire.mutate(desktopId),
+                            danger: true,
+                          })}>{t("desktops.retire")}</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -266,6 +281,7 @@ export function FleetPage() {
       </section>
 
       {diagDesktop && <DesktopDiagDrawer desktopId={diagDesktop} onClose={() => setDiagDesktop(null)} />}
+      <ConfirmDialog pending={confirm} onClose={() => setConfirm(null)} />
     </div>
   )
 }

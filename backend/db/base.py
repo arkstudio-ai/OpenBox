@@ -115,6 +115,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_upgrade_desktop_billing_columns)
+        await connection.run_sync(_upgrade_desktop_skill_store_columns)
         await connection.run_sync(_seed_single_user_scope)
     log.info(f"Single-user application database at {database_path}")
     return engine
@@ -131,6 +132,101 @@ def _upgrade_desktop_billing_columns(connection) -> None:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancelled_at DATETIME")
     if "cancellation_reason" not in columns:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancellation_reason VARCHAR(32)")
+
+
+#: The moderated store's additions to ``user_skills``, with the same defaults
+#: migration c8e0a2b4d6f1 writes.
+_DESKTOP_SKILL_COLUMNS = (
+    ("listing", "VARCHAR(16) NOT NULL DEFAULT 'listed'"),
+    ("listing_note", "TEXT"),
+    ("listing_changed_by", "VARCHAR(64)"),
+    ("listing_changed_at", "DATETIME"),
+    ("is_official", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("featured", "BOOLEAN NOT NULL DEFAULT 0"),
+)
+
+
+def _upgrade_desktop_skill_store_columns(connection) -> None:
+    """Retrofit the skill store onto a desktop database create_all cannot touch.
+
+    Desktop mode never runs Alembic, and ``user_skills`` / ``skill_installs``
+    both shipped before the store did: every existing desktop database already
+    has them in the pre-store shape, which ``create_all`` leaves exactly as it
+    found them. Without this the store's first query — ``skill_installs``
+    grouped by ``catalog_id`` — fails with "no such column" and takes browsing,
+    publishing and installing down with it.
+
+    This is migration c8e0a2b4d6f1 restated for the one deployment that cannot
+    run it; the defaults and the backfill are deliberately identical.
+    """
+    inspector = sa.inspect(connection)
+    tables = set(inspector.get_table_names())
+
+    if "user_skills" in tables:
+        columns = {column["name"] for column in inspector.get_columns("user_skills")}
+        for name, ddl in _DESKTOP_SKILL_COLUMNS:
+            if name not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE user_skills ADD COLUMN {name} {ddl}"
+                )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_user_skills_listing_published "
+            "ON user_skills (listing, published_at)"
+        )
+
+    if "skill_installs" not in tables:
+        return
+    installs = {
+        column["name"]: column
+        for column in inspector.get_columns("skill_installs")
+    }
+    if "kind" not in installs:
+        connection.exec_driver_sql(
+            "ALTER TABLE skill_installs ADD COLUMN kind VARCHAR(8) "
+            "NOT NULL DEFAULT 'skill'"
+        )
+    if "catalog_id" not in installs:
+        # Added nullable and then filled: every row that predates the store is
+        # a community install, because the column its key derives from used to
+        # be NOT NULL.
+        connection.exec_driver_sql(
+            "ALTER TABLE skill_installs ADD COLUMN catalog_id VARCHAR(96)"
+        )
+        connection.exec_driver_sql(
+            "UPDATE skill_installs SET catalog_id = 'community:' || user_skill_id "
+            "WHERE catalog_id IS NULL"
+        )
+
+    uniques = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("skill_installs")
+    }
+    old_shape = (
+        not installs["user_skill_id"]["nullable"]
+        or "uq_skill_installs_user_kind_dir" not in uniques
+    )
+    if not old_shape:
+        return
+    # SQLite can neither relax the NOT NULL that a catalogue install violates
+    # (it has no ``user_skills`` row) nor widen a uniqueness key that predates
+    # ``kind``. Rebuild from the model instead — the same shape the migration
+    # leaves on a server, arrived at the way alembic's batch mode would.
+    from db.models.skill_install import SkillInstall
+
+    for index in inspector.get_indexes("skill_installs"):
+        if index.get("name"):
+            connection.exec_driver_sql(f'DROP INDEX IF EXISTS "{index["name"]}"')
+    connection.exec_driver_sql(
+        "ALTER TABLE skill_installs RENAME TO skill_installs_legacy"
+    )
+    SkillInstall.__table__.create(connection)
+    connection.exec_driver_sql(
+        "INSERT INTO skill_installs (id, user_id, user_skill_id, kind, catalog_id, "
+        "name, install_dir, installed_at) "
+        "SELECT id, user_id, user_skill_id, kind, catalog_id, name, install_dir, "
+        "installed_at FROM skill_installs_legacy"
+    )
+    connection.exec_driver_sql("DROP TABLE skill_installs_legacy")
 
 
 def _seed_single_user_scope(connection) -> None:

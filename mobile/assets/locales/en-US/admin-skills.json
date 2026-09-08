@@ -1,0 +1,150 @@
+{
+  "title": "Skill management",
+  "subtitle": "List and delist store entries, review submissions, and see who installed what.",
+  "tab": {
+    "store": "Store listings",
+    "review": "Submissions",
+    "installs": "Installs"
+  },
+  "list": {
+    "range": "{{from}}–{{to}} of {{total}}",
+    "previous": "Previous",
+    "next": "Next",
+    "loading": "Loading",
+    "error": "This list could not be loaded. Try again shortly."
+  },
+  "status": {
+    "listed": "Listed",
+    "delisted": "Delisted",
+    "pending": "In review",
+    "rejected": "Rejected"
+  },
+  "action": {
+    "list": "List",
+    "delist": "Delist",
+    "feature": "Feature",
+    "unfeature": "Unfeature",
+    "markOfficial": "Mark official",
+    "unmarkOfficial": "Unmark official",
+    "view": "View",
+    "approve": "Approve",
+    "reject": "Reject",
+    "download": "Download ZIP",
+    "cancel": "Cancel"
+  },
+  "store": {
+    "search": "Search by title, author, or catalog_id",
+    "searchLabel": "Search store entries",
+    "empty": "The store has no entries yet.",
+    "nav": "Store entry pages",
+    "featured": "Featured",
+    "official": "Official",
+    "installsOf": "See who installed {{title}}",
+    "filter": {
+      "origin": "Origin",
+      "kind": "Kind",
+      "listing": "State"
+    },
+    "origin": {
+      "all": "All",
+      "official": "Official",
+      "community": "Community",
+      "third_party": "Third-party"
+    },
+    "kind": {
+      "all": "All",
+      "skill": "Skill",
+      "mcp": "MCP"
+    },
+    "listing": {
+      "all": "All",
+      "listed": "Listed",
+      "delisted": "Delisted",
+      "pending": "In review",
+      "rejected": "Rejected"
+    },
+    "column": {
+      "entry": "Entry",
+      "origin": "Origin",
+      "author": "Author",
+      "version": "Version",
+      "publishedAt": "Published",
+      "installs": "Installs",
+      "status": "State",
+      "actions": "Actions"
+    }
+  },
+  "dialog": {
+    "reason": "Reason (required)",
+    "note": "Note (optional)",
+    "reasonPlaceholder": "Be specific — the author sees this in their notification",
+    "reasonRequired": "Delisting and rejecting both need a reason.",
+    "failed": "That did not go through. Try again shortly.",
+    "list": {
+      "title": "List {{title}}",
+      "body": "Once listed, every user can find and install this entry from the store."
+    },
+    "delist": {
+      "title": "Delist {{title}}",
+      "body": "The store stops showing it and no one can install it again; copies already in a sandbox keep working. The author is told why."
+    },
+    "approve": {
+      "title": "Approve {{title}}",
+      "body": "Approving moves this submission into the store's community section, visible to everyone."
+    },
+    "reject": {
+      "title": "Reject {{title}}",
+      "body": "The reason reaches the author along with the skill name and version, and they can resubmit after fixing it."
+    }
+  },
+  "review": {
+    "filter": "Queue state",
+    "state": {
+      "pending": "In review",
+      "rejected": "Rejected"
+    },
+    "queueNav": "Review queue pages",
+    "emptyPending": "Nothing is waiting for review.",
+    "emptyRejected": "No submissions have been rejected.",
+    "pick": "Pick a submission on the left to read it.",
+    "submittedAt": "Submitted {{time}}",
+    "skillMd": "SKILL.md",
+    "skillMdNotice": "Shown as plain text — no Markdown rendering, nothing executed.",
+    "skillMdEmpty": "This archive has no SKILL.md.",
+    "archiveRefused": "The server did not open this archive (too large, absurdly many members, or not a readable ZIP). No manifest and no file list below does not mean the package is empty — nobody read these bytes.",
+    "truncated": "Too long to show in full; the rest is cut off.",
+    "files": "Files ({{count}})",
+    "filesTruncated": "Too many entries to list; only the first ones are shown.",
+    "downloadFailed": "The download failed. Try again shortly.",
+    "loadFailed": "This submission could not be loaded.",
+    "meta": {
+      "author": "Author",
+      "version": "Version",
+      "submittedAt": "Submitted",
+      "size": "Size",
+      "requiresMcp": "Requires MCP",
+      "sha256": "SHA-256",
+      "none": "None"
+    },
+    "fileColumn": {
+      "path": "Path",
+      "size": "Size"
+    }
+  },
+  "installs": {
+    "search": "Search by username, email, or skill name",
+    "searchLabel": "Search install records",
+    "empty": "No installs recorded yet.",
+    "nav": "Install record pages",
+    "filtered": "Only {{catalog}}",
+    "clearFilter": "Clear the skill filter",
+    "footnote": "Based on install records; a skill someone deleted by hand inside their sandbox is not reflected here.",
+    "column": {
+      "user": "User",
+      "skill": "Skill",
+      "kind": "Kind",
+      "installDir": "Install directory",
+      "installedAt": "Installed"
+    }
+  }
+}

@@ -6,7 +6,7 @@
 // makes "我的" read as 23 installs when the person performed four, and — worse
 // — the uninstall on any one row is addressed by install_dir, so removing
 // "docx" would take the other 18 with it without saying so.
-import type { InstalledSkill } from "@/features/skills-center/types"
+import type { InstalledSkill, ListingState } from "@/features/skills-center/types"
 
 export interface SkillGroup {
   /** The directory the install produced — what uninstall actually removes. */
@@ -22,7 +22,13 @@ export interface SkillGroup {
   origin: "container" | "builtin" | "host"
   /** Product grouping supplied by the backend's durable install registry. */
   category: "personal" | "store" | "installed" | "builtin" | "host"
-  publicationStatus: "unpublished" | "published" | null
+  publicationStatus: "unpublished" | "published" | "withdrawn" | null
+  /** The operator's shelf decision about this group's public release. */
+  listing: ListingState | null
+  /** Why it was rejected or delisted, when the operator gave a reason. */
+  listingNote?: string
+  /** Published by an admin, so the store shelves it as ours. */
+  isOfficial: boolean
   libraryId?: string
   catalogId?: string
   publishedAt?: string
@@ -66,7 +72,15 @@ export function groupSkills(skills: InstalledSkill[]): SkillGroup[] {
           ? "builtin"
           : "host",
       category,
-      publicationStatus: category === "personal" ? (first.publication_status ?? "unpublished") : null,
+      // `publication_status` is what the sandbox listing carries; `status` is
+      // the same value on a library-only row, which never reached a sandbox.
+      publicationStatus:
+        category === "personal"
+          ? (first.publication_status ?? first.status ?? "unpublished")
+          : null,
+      listing: category === "personal" ? (first.listing ?? null) : null,
+      listingNote: category === "personal" ? (first.listing_note ?? undefined) : undefined,
+      isOfficial: category === "personal" && Boolean(first.is_official),
       libraryId: first.library_id ?? undefined,
       catalogId: first.catalog_id ?? undefined,
       publishedAt: first.published_at ?? undefined,

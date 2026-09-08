@@ -1,0 +1,155 @@
+{
+  "title": "Subscriptions",
+  "subtitle": "Every workspace's subscription, orders and usage. Read-only.",
+  "tabs": {
+    "subscriptions": "Subscriptions",
+    "orders": "Orders"
+  },
+  "list": {
+    "previous": "Previous",
+    "next": "Next",
+    "range": "{{from}}–{{to}} of {{total}}",
+    "loading": "Loading",
+    "error": "This list could not be loaded. Please try again.",
+    "search": "Search",
+    "reset": "Reset"
+  },
+  "common": {
+    "all": "All"
+  },
+  "filters": {
+    "label": "Filters",
+    "plan": "Plan",
+    "state": "Subscription state",
+    "provider": "Payment channel",
+    "status": "Order status",
+    "kind": "Order type",
+    "from": "Start date",
+    "to": "End date",
+    "invalidRange": "The start date must not be after the end date.",
+    "keyword": "Search"
+  },
+  "plans": {
+    "free": "Free",
+    "pro": "Pro",
+    "max": "Max"
+  },
+  "cycles": {
+    "monthly": "Monthly",
+    "yearly": "Yearly"
+  },
+  "states": {
+    "active": "Active",
+    "expired": "Expired",
+    "free": "Free"
+  },
+  "orderStatus": {
+    "pending": "Pending",
+    "paid": "Paid",
+    "cancelled": "Cancelled"
+  },
+  "kinds": {
+    "topup": "Credit top-up",
+    "subscription": "Subscription"
+  },
+  "usageStatus": {
+    "charged": "Charged",
+    "shadow": "Counted",
+    "historical": "Historical estimate",
+    "unpriced": "Awaiting price",
+    "pending": "In progress",
+    "unreported": "Awaiting usage"
+  },
+  "subscriptions": {
+    "nav": "Subscription list",
+    "empty": "No workspace matches these filters.",
+    "searchPlaceholder": "Workspace, username or email",
+    "columns": {
+      "workspace": "Workspace",
+      "owner": "Owner",
+      "plan": "Plan",
+      "cycle": "Cycle",
+      "term": "Start / expiry",
+      "state": "State",
+      "balance": "Balance",
+      "queued": "Queued",
+      "lastPaid": "Last payment"
+    }
+  },
+  "orders": {
+    "nav": "Order list",
+    "empty": "No order matches these filters.",
+    "searchPlaceholder": "Order id, provider id, workspace or user",
+    "cancelled": "Cancellation reason: {{reason}}",
+    "columns": {
+      "id": "Order",
+      "createdAt": "Created",
+      "workspace": "Workspace",
+      "user": "Placed by",
+      "product": "Type and product",
+      "amount": "Amount",
+      "credits": "Credits",
+      "provider": "Channel",
+      "status": "Status",
+      "paidAt": "Paid",
+      "providerOrderId": "Provider id"
+    }
+  },
+  "workspace": {
+    "back": "Back to subscriptions",
+    "loading": "Loading workspace details",
+    "error": "The workspace details could not be loaded. Please try again.",
+    "notFound": "No such workspace.",
+    "deleted": "Deleted",
+    "readOnly": "Read-only view: grants, comped payments and expiry edits are out of scope this round.",
+    "fields": {
+      "kind": "Kind",
+      "owner": "Owner",
+      "members": "Members",
+      "expires": "Expires",
+      "balance": "Balance",
+      "created": "Created",
+      "deletedAt": "Deleted",
+      "queued": "Queued renewals"
+    },
+    "terms": {
+      "title": "Subscription history",
+      "empty": "This workspace has no subscription terms.",
+      "current": "Current",
+      "queued": "Queued",
+      "columns": {
+        "orderId": "Order",
+        "plan": "Plan",
+        "cycle": "Cycle",
+        "startsAt": "Starts",
+        "endsAt": "Ends",
+        "phase": "Phase"
+      }
+    },
+    "orders": {
+      "title": "Orders",
+      "empty": "This workspace has no orders.",
+      "hint": "Latest {{value}}, newest first."
+    },
+    "ledger": {
+      "title": "Credit ledger",
+      "empty": "This workspace has no credit movements.",
+      "hint": "Latest {{value}}, newest first.",
+      "columns": {
+        "createdAt": "Time",
+        "kind": "Kind",
+        "amount": "Change",
+        "balanceAfter": "Balance after",
+        "reference": "Reference"
+      }
+    },
+    "usage": {
+      "title": "Usage, last {{days}} days",
+      "empty": "No usage in the last {{days}} days.",
+      "since": "Since {{time}}",
+      "events": "{{value}} calls",
+      "tokens": "tokens",
+      "credits": "credits"
+    }
+  }
+}

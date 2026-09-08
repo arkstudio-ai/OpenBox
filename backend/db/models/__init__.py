@@ -19,6 +19,7 @@ from db.models.video_job import VideoJob
 from db.models.video_production import VideoApproval, VideoProduction, VideoSegment
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
+from db.models.catalog_override import CatalogOverride
 from db.models.memory import UserMemory
 from db.models.image_gen_cache import ImageGenCache
 from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
@@ -35,7 +36,7 @@ __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
-    "UserSkill", "SkillInstall", "UserMemory", "ImageGenCache",
+    "UserSkill", "SkillInstall", "CatalogOverride", "UserMemory", "ImageGenCache",
     "Workspace", "WorkspaceMember", "WorkspaceInvitation", "InternalTaskState",
     "CreditBalance", "CreditLedger", "UsageEvent", "PaymentOrder", "PaymentOrderRequest", "BillingSubscription",
     "FleetAlert", "FleetSnapshot", "PoolPurchase",

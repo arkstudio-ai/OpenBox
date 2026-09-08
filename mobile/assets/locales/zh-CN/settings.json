@@ -83,7 +83,13 @@
       "connected": "已连接",
       "disconnected": "未连接",
       "available": "可用",
-      "unavailable": "不可用"
+      "unavailable": "不可用",
+      "reason": {
+        "unreachable": "桌面不可达",
+        "not_started": "Chrome 未运行",
+        "no_sandbox": "没有桌面",
+        "error": "检查失败"
+      }
     },
     "fallbackHint": "扩展尚未连接，在连接之前将暂时使用云端浏览器。"
   },

@@ -18,7 +18,10 @@
     "skills": "Skill · {{count}}",
     "mcp": "MCP 服务 · {{count}}",
     "storeSkills": "Skill",
-    "storeMcp": "MCP 服务"
+    "storeMcp": "MCP 服务",
+    "storeOfficial": "官方",
+    "storeCommunity": "用户共享",
+    "storeThirdParty": "第三方"
   },
   "status": {
     "connected": "已连接",
@@ -38,7 +41,19 @@
     "community": "用户共享",
     "builtin": "内置",
     "builtinHint": "预装在沙箱镜像里，不可卸载。附带的脚本和资源 agent 可以直接读取。",
-    "hostHint": "装在后端主机上，不可卸载。只有 SKILL.md 的指令生效——它附带的文件 agent 读不到，因为工具运行在沙箱里。"
+    "hostHint": "装在后端主机上，不可卸载。只有 SKILL.md 的指令生效——它附带的文件 agent 读不到，因为工具运行在沙箱里。",
+    "featured": "置顶",
+    "installs": "{{count}} 次安装",
+    "kindSkill": "Skill",
+    "kindMcp": "MCP",
+    "official": "官方",
+    "listing": {
+      "pending": "待审核",
+      "listed": "已上架",
+      "rejected": "已驳回",
+      "delisted": "已下架",
+      "withdrawn": "已撤回"
+    }
   },
   "action": {
     "add": "添加",
@@ -54,17 +69,23 @@
     "updatePublish": "更新商店版本",
     "download": "下载 ZIP",
     "expand": "展开",
-    "collapse": "收起"
+    "collapse": "收起",
+    "withdraw": "撤回发布",
+    "resubmit": "重新提交"
   },
   "mine": {
     "emptyTitle": "还没有安装任何 Skill 或 MCP",
     "emptyHint": "去技能商店挑一个，或上传你自己的。",
     "browseStore": "浏览技能商店",
     "missingDependency": "依赖的 MCP 未连接：{{names}}",
-    "confirmPack": "「{{name}}」是一个技能包，卸载会同时移除其中全部 {{count}} 个 skill。确定吗？"
+    "confirmPack": "「{{name}}」是一个技能包，卸载会同时移除其中全部 {{count}} 个 skill。确定吗？",
+    "showReason": "查看原因",
+    "hideReason": "收起原因",
+    "listingReason": "原因：{{note}}"
   },
   "store": {
-    "noMatch": "没有匹配的结果。"
+    "noMatch": "没有匹配的结果。",
+    "empty": "商店里还没有条目。"
   },
   "publish": {
     "title": "上传到技能商店",
@@ -74,7 +95,13 @@
     "publicNotice": "上传后，所有用户都能在技能商店中看到并安装这个 Skill。请确认其中不包含密钥、账号或其他私密内容。",
     "confirm": "确认上传",
     "confirmUpdate": "确认更新",
-    "working": "上传中…"
+    "working": "上传中…",
+    "resubmitTitle": "重新提交到技能商店",
+    "resubmitBody": "确认把「{{name}}」重新提交到技能商店？",
+    "reviewNotice": "提交后由管理员审核，通过后所有用户可见并可安装。请确认其中不包含密钥、账号或其他私密内容。",
+    "confirmSubmit": "提交审核",
+    "confirmResubmit": "确认重新提交",
+    "submitting": "提交中…"
   },
   "create": {
     "title": "通过聊天创建 Skill",
@@ -159,5 +186,12 @@
     "working": "处理中…",
     "later": "稍后",
     "fixNow": "一起安装"
+  },
+  "withdraw": {
+    "title": "撤回发布",
+    "body": "确认把「{{name}}」从技能商店撤回？",
+    "notice": "撤回后它不再出现在商店里，也不能被新用户安装；已经装过的用户不受影响。你发布的版本会保留，随时可以重新提交。",
+    "confirm": "确认撤回",
+    "working": "撤回中…"
   }
 }

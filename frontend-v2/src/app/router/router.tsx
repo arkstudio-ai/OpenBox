@@ -1,7 +1,7 @@
 import { lazy } from "react"
-import { createBrowserRouter } from "react-router"
+import { createBrowserRouter, Navigate } from "react-router"
 import { AppErrorBoundary } from "@/app/router/AppErrorBoundary"
-import { RequireAuth, RedirectIfAuthed } from "@/app/router/guards"
+import { RequireAuth, RequireAdmin, RedirectIfAuthed } from "@/app/router/guards"
 import { routePatterns, paths } from "@/app/router/paths"
 
 const LandingRoute = lazy(() => import("@/routes/landing/LandingRoute"))
@@ -19,7 +19,11 @@ const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const AuthCenterRoute = lazy(() => import("@/routes/auth-center/AuthCenterRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
+const AdminRoute = lazy(() => import("@/routes/admin/AdminRoute"))
 const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
+const AdminSkillsRoute = lazy(() => import("@/routes/admin/AdminSkillsRoute"))
+const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
+const AdminWorkspaceRoute = lazy(() => import("@/routes/admin/AdminWorkspaceRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -67,7 +71,28 @@ export const router = createBrowserRouter([
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },
-          { path: routePatterns.adminFleet, element: <AdminFleetRoute /> },
+          {
+            // The console shell sits behind one role check; every column below
+            // it is a plain child, so `RequireAdmin` runs exactly once (§4.2).
+            path: routePatterns.admin,
+            element: (
+              <RequireAdmin>
+                <AdminRoute />
+              </RequireAdmin>
+            ),
+            children: [
+              { index: true, element: <Navigate to={paths.adminFleet} replace /> },
+              { path: routePatterns.adminFleet, element: <AdminFleetRoute /> },
+              { path: routePatterns.adminSkills, element: <AdminSkillsRoute /> },
+              // React Router ranks branches by score before matching, and
+              // `billing/workspaces/:workspaceId` scores higher than
+              // `billing/:tab?` (two static segments beat one dynamic), so the
+              // detail route wins whatever the array order. Listed first anyway
+              // so the file reads the way it resolves.
+              { path: routePatterns.adminWorkspace, element: <AdminWorkspaceRoute /> },
+              { path: routePatterns.adminBilling, element: <AdminBillingRoute /> },
+            ],
+          },
         ],
       },
       { path: "*", element: <NotFoundRoute /> },

@@ -34,6 +34,7 @@ AWS `ai.ueejavelin.org` = **开发环境**（开发者自测，可重置）；�
 | ~~B 线注意~~ | ⚠️ | 队友 andrew 于 09-06 直接把「积分套餐 + 支付宝」推到 main 并部署 gw2（`usage_events / credit_ledger / payment_orders / billing_subscriptions`，`BILLING_MODE=shadow`，专业 599/月、旗舰 2100/月），与本计划 B2/B4 的拆分、价格（499/1999）、积分面值均不同，需对齐 |
 | ~~A3 执行单~~ | | 原行：执行单 `docs/A3_A4_FLEET_POOL.md` | 已定（09-05）：基准镜像 openbox v2 `m-ccceuit7jn3xzwx45`；水位 5，靠收养 bossip-sh-001…013（除 007）12 台重建到 v2，先 5 台其余 reserve；规格 6c12g；dev-shanghai 不入池；本版无 webhook |
 | A5 授权中心 | 🟡 P0+P1 代码完成，待 gw2 部署与真机验收 | 分支 `a5-auth-center`；改走开放平台 OAuth + 侧栏入口，执行单 `docs/A5_AUTHORIZATION_CENTER.md` |
+| 超管系统 + 技能商店 | 🟡 代码完成，待 gw2 部署与 AC 验收 | 分支 `codex/admin-console`，执行单 `docs/ADMIN_CONSOLE_SKILL_STORE_PLAN.md`。技能商店改为「官方技能 + 经审核的用户投稿」，账户菜单「舰队管理」升级为「超管系统」（舰队 / 技能管理 / 订阅管理）。订阅管理本期**只读**（§3-Q5）。里程碑三的「运营后台」与「第一方技能市场」由此提前落一部分；调账、代付、兑换码、运营角色拆分仍在里程碑三 |
 | A3 / B4 / E1 / E2 | ⬜ | B4 等 B2；E1/E2 等文案 |
 
 ---

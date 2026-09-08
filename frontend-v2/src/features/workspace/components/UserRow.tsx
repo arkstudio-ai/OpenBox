@@ -39,10 +39,10 @@ export function UserRow({ sessionCount }: { sessionCount: number }) {
           <MenuItem
             onClick={() => {
               setMenuOpen(false)
-              navigate(paths.adminFleet)
+              navigate(paths.admin)
             }}
           >
-            {t("adminFleet")}
+            {t("adminConsole")}
           </MenuItem>
         )}
         <MenuItem onClick={signOut}>{t("common:action.signOut", { ns: "common" })}</MenuItem>

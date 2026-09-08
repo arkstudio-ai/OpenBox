@@ -9,6 +9,7 @@ import type {
   InstalledSkill,
   McpConfig,
   McpServer,
+  StoreConfig,
 } from "@/features/skills-center/types"
 import { skillCenterKeys } from "./keys"
 
@@ -41,6 +42,28 @@ export function useCatalog() {
     queryKey: skillCenterKeys.catalog(userId),
     queryFn: () => http.get<Catalog>("/api/agent/catalog"),
   })
+}
+
+/** Whether submissions go through review, which is what the publish dialog
+ *  promises the author. Cached long: a deployment switch, not user state. */
+export function useStoreConfig() {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: skillCenterKeys.config(userId),
+    queryFn: () => http.get<StoreConfig>("/api/agent/config"),
+    staleTime: 5 * 60_000,
+  })
+}
+
+/** Whether a publish click submits for review or publishes outright.
+ *
+ *  False until the config lands: promising a review that is not happening is
+ *  the worse of the two wrong answers — it would tell someone their skill is
+ *  private while strangers are already installing it.
+ */
+export function useReviewRequired(): boolean {
+  const { data } = useStoreConfig()
+  return data?.skill_store_review ?? false
 }
 
 /** Projects offered by the chat-creation dialog. Kept in this feature so it
@@ -136,6 +159,21 @@ export function usePublishSkill() {
   return useMutation({
     mutationFn: (installDir: string) =>
       http.post<InstalledSkill>(`/api/agent/skill/${encodeURIComponent(installDir)}/publish`, undefined),
+    onSuccess: refresh,
+  })
+}
+
+/** Pull one's own release back off the shelf.
+ *
+ *  Invalidates exactly what publish does: the row's chip lives in the skill
+ *  list and the entry itself disappears from the catalogue, so refreshing one
+ *  without the other leaves the store advertising something withdrawn.
+ */
+export function useWithdrawSkill() {
+  const refresh = useRefreshAll()
+  return useMutation({
+    mutationFn: (installDir: string) =>
+      http.post<InstalledSkill>(`/api/agent/skill/${encodeURIComponent(installDir)}/withdraw`, undefined),
     onSuccess: refresh,
   })
 }

@@ -1,8 +1,9 @@
 """Config and metadata routes."""
+from datetime import datetime, timezone
 from io import BytesIO
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from auth.middleware import get_current_user, require_admin
 from auth.workspace import get_workspace
@@ -62,6 +63,10 @@ async def get_config():
         "video_models": _video_models(config),
         "default_video_model": config.video_generation.model,
         "default_video_resolution": config.video_generation.default_resolution,
+        # The publish dialog promises different things depending on this: with
+        # review on, "an admin will look at it"; with review off, "everyone can
+        # see it now". The browser cannot guess which promise is true.
+        "skill_store_review": config.skill_store_review,
     }
 
 
@@ -310,9 +315,68 @@ async def get_skill(name: str, current_user: dict = Depends(get_current_user)):
     raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
+async def _notify_admins_of_submission(published: dict, author_id: str) -> None:
+    """Tell every admin a submission is waiting for a verdict (§4.7).
+
+    Sent into the *author's* workspace, because that is the space the package
+    and its audit trail belong to. Best effort throughout: single-user mode has
+    no central database, and nobody's publish should fail because a queue
+    notice could not be written.
+    """
+    try:
+        from core.identifier import ascending
+        from db.base import get_db_session
+        from db.models.notification import Notification
+        from db.models.user import User
+        from db.models.user_skill import UserSkill
+        from sqlalchemy import select
+
+        async with get_db_session() as session:
+            workspace_id = await session.scalar(
+                select(UserSkill.workspace_id).where(UserSkill.id == published["id"])
+            )
+            if not workspace_id:
+                return
+            author = (await session.execute(
+                select(User).where(User.id == author_id)
+            )).scalar_one_or_none()
+            admins = list((await session.execute(
+                select(User.id).where(
+                    User.role == "admin",
+                    User.is_active.is_(True),
+                    User.is_deleted.is_(False),
+                )
+            )).scalars())
+            version = published.get("published_version")
+            body = (
+                f"《{published.get('name')}》{f'v{version} ' if version else ''}"
+                f"由 {author.username if author else author_id} 提交，等待审核。"
+            )
+            now = datetime.now(timezone.utc)
+            for admin_id in admins:
+                session.add(Notification(
+                    id=ascending("ntf"),
+                    workspace_id=workspace_id,
+                    user_id=admin_id,
+                    kind="skill_pending",
+                    title="有新的技能待审核",
+                    body=body,
+                    created_at=now,
+                ))
+    except Exception:
+        # Including RuntimeError: single-user mode runs without the database
+        # that holds both the admin list and the notification.
+        pass
+
+
 @router.post("/skill/{name}/publish")
-async def publish_skill(name: str, current_user: dict = Depends(get_current_user)):
+async def publish_skill(
+    name: str,
+    request: Request = None,
+    current_user: dict = Depends(get_current_user),
+):
     """Publish the owner's current personal-skill snapshot to the shared store."""
+    from core.config import get_config
     from sandbox.manager import sandbox_manager
     from skill.user_library import (
         annotate_installed_skills,
@@ -343,7 +407,13 @@ async def publish_skill(name: str, current_user: dict = Depends(get_current_user
             )
         archive = await client.download_skill_archive(install_dir)
         await upsert_personal_snapshot(user_id, info, archive, workspace_id)
-        return await publish_personal_skill(user_id, install_dir, workspace_id)
+        published = await publish_personal_skill(
+            user_id, install_dir, workspace_id,
+            # Both decisions belong to the HTTP layer: the library is told what
+            # this deployment and this publisher are, never asked to look.
+            review_required=get_config().skill_store_review,
+            publisher_is_admin=current_user.get("role") == "admin",
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -352,6 +422,51 @@ async def publish_skill(name: str, current_user: dict = Depends(get_current_user
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+    from audit import record
+
+    await record(
+        user_id, workspace_id, "skill.publish", "user_skill", published["id"],
+        {"listing": published.get("listing"),
+         "version": published.get("published_version")},
+        request,
+    )
+    if published.get("listing") == "pending":
+        await _notify_admins_of_submission(published, user_id)
+    return published
+
+
+@router.post("/skill/{name}/withdraw")
+async def withdraw_skill(
+    name: str,
+    request: Request = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Take the author's own release out of the store, reversibly.
+
+    Only the author's own package: a store install or a manually uploaded
+    archive is somebody else's release, and owning a copy is not owning it.
+    """
+    from audit import record
+    from skill.user_library import get_owned_skill, withdraw_personal_skill
+
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("workspace_id")
+    owned = await get_owned_skill(user_id, name, workspace_id=workspace_id)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Personal skill not found")
+    try:
+        withdrawn = await withdraw_personal_skill(user_id, owned["id"], workspace_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await record(
+        user_id, workspace_id, "skill.withdraw", "user_skill", withdrawn["id"],
+        {"version": withdrawn.get("published_version")}, request,
+    )
+    return withdrawn
 
 
 @router.get("/skill/{name}/download")
@@ -459,9 +574,11 @@ async def uninstall_skill(name: str, current_user: dict = Depends(get_current_us
 
                 await delete_owned_skill(user_id, target, workspace_id)
             elif category == "store":
-                from skill.user_library import remove_community_installation
+                from skill.user_library import remove_store_installation
 
-                await remove_community_installation(user_id, target)
+                # Narrowed to skills: an MCP server may carry the same name,
+                # and only this caller knows which of the two just went away.
+                await remove_store_installation(user_id, target, kind="skill")
         except RuntimeError:
             pass
         return result
@@ -492,6 +609,48 @@ async def upload_skill_archive(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _catalog_install_counts(entries: list[dict]) -> dict[str, int]:
+    """How many people installed each code-defined catalogue entry.
+
+    Community entries arrive already counted from the library. Single-user mode
+    has no central database, so an unavailable one means "nobody counted" —
+    a store that renders beats a store that 500s over a badge.
+    """
+    ids = [entry["catalog_id"] for entry in entries if entry.get("catalog_id")]
+    if not ids:
+        return {}
+    try:
+        from db.base import get_db_session
+        from db.models.skill_install import SkillInstall
+        from sqlalchemy import func, select
+
+        async with get_db_session() as session:
+            rows = (await session.execute(
+                select(SkillInstall.catalog_id, func.count(SkillInstall.id))
+                .where(SkillInstall.catalog_id.in_(ids))
+                .group_by(SkillInstall.catalog_id)
+            )).all()
+        return {catalog_id: int(count or 0) for catalog_id, count in rows}
+    except (ImportError, RuntimeError):
+        return {}
+
+
+def _shelf_order(entries: list[dict]) -> list[dict]:
+    """Featured first, then what people actually install, then newest.
+
+    Two stable passes rather than one composite key: dates sort as strings and
+    cannot be negated, and an entry that lives in code has no publication date
+    to sort by at all — it lands after everything dated instead of pretending
+    to be the oldest thing in the store.
+    """
+    ordered = sorted(entries, key=lambda e: e.get("title") or e.get("name") or "")
+    ordered.sort(key=lambda e: e.get("published_at") or "", reverse=True)
+    ordered.sort(key=lambda e: (
+        0 if e.get("featured") else 1, -int(e.get("installs_count") or 0),
+    ))
+    return ordered
+
+
 @router.get("/catalog")
 async def get_catalog(current_user: dict = Depends(get_current_user)):
     """The skill store's catalogue, annotated with what is already installed.
@@ -499,11 +658,21 @@ async def get_catalog(current_user: dict = Depends(get_current_user)):
     Installed state is resolved here rather than in the browser: the store and
     the "mine" tab would otherwise each derive it from two lists and drift.
     """
-    from skill.catalog import load_catalog
+    from skill.catalog import LISTED, load_catalog
     from sandbox.manager import sandbox_manager
 
     user_id = current_user["user_id"]
     catalog = await load_catalog()
+    # Only what is on the shelf (§4.5.3). Dependency resolution deliberately
+    # reads the unfiltered catalogue instead (skill.catalog.catalog_index), so
+    # delisting a server does not break every skill that declares it.
+    counts = await _catalog_install_counts(catalog["skills"] + catalog["mcp"])
+    for key in ("skills", "mcp"):
+        catalog[key] = [
+            {**entry, "installs_count": counts.get(entry.get("catalog_id"), 0)}
+            for entry in catalog[key]
+            if entry.get("listing", LISTED) == LISTED
+        ]
     try:
         from skill.user_library import list_published_catalog_entries
 
@@ -542,7 +711,51 @@ async def get_catalog(current_user: dict = Depends(get_current_user)):
             dep for dep in entry.get("requires_mcp", []) if dep not in installed_mcp
         ]
 
+    catalog["skills"] = _shelf_order(catalog["skills"])
+    catalog["mcp"] = _shelf_order(catalog["mcp"])
     return catalog
+
+
+async def _record_catalog_provenance(
+    *, user_id: str, catalog_id: str, kind: str, name: str, install_dir: str, rollback,
+) -> None:
+    """Record who installed a catalogue entry, or undo the install.
+
+    Provenance is what the store counts installs with and what uninstall
+    removes, so an install nobody recorded is one that quietly stops existing
+    for everything except the sandbox. Same discipline as the community branch:
+    if it cannot be written, the package does not stay behind pretending to be
+    accounted for.
+
+    ``RuntimeError`` is the exception, and it means "no database": single-user
+    mode runs without one by design, and refusing every catalogue install there
+    would be a worse answer than installing without provenance nobody reads.
+    """
+    try:
+        from skill.user_library import record_store_installation
+
+        await record_store_installation(
+            user_id=user_id, catalog_id=catalog_id, kind=kind,
+            name=name, install_dir=install_dir,
+        )
+    except (ImportError, RuntimeError):
+        return
+    except Exception as exc:
+        rollback_error = None
+        try:
+            await rollback()
+        except Exception as rollback_exc:
+            rollback_error = str(rollback_exc)
+        detail = (
+            f"'{name}' was installed, but store provenance could not be recorded "
+            f"({exc})."
+        )
+        detail += (
+            f" Rollback of '{install_dir}' also failed: {rollback_error}"
+            if rollback_error
+            else f" The install of '{install_dir}' was rolled back."
+        )
+        raise HTTPException(status_code=500, detail=detail) from exc
 
 
 class InstallCatalogBody(BaseModel):
@@ -564,7 +777,7 @@ async def install_from_catalog(
     then fails at its first tool call, which reads as a broken skill rather
     than a missing dependency.
     """
-    from skill.catalog import catalog_index
+    from skill.catalog import LISTED, catalog_entry_id, catalog_index, shelf_index
     from sandbox.manager import sandbox_manager
 
     user_id = current_user["user_id"]
@@ -580,11 +793,25 @@ async def install_from_catalog(
         if not community_row:
             raise HTTPException(status_code=404, detail="Published skill not found")
     else:
-        entry = index.get(f"{body.kind}:{body.id}")
+        # The requested entry resolves through the shelf, not the raw code
+        # index: delisting stops new installs as well as display (§4.4), and
+        # anyone holding a catalog_id from a cached store page or an install
+        # badge could otherwise install what an operator just took down. Only
+        # the `with_mcp` dependencies below are exempt, and only because a
+        # skill whose server is missing is broken in a harder-to-read way.
+        entry = (await shelf_index()).get(f"{body.kind}:{body.id}")
         if not entry:
             raise HTTPException(
                 status_code=404,
                 detail=f"Unknown catalog entry: {body.kind}:{body.id}",
+            )
+        if entry.get("listing", LISTED) != LISTED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{entry.get('title') or entry.get('name') or body.id}' is no "
+                    "longer available in the store."
+                ),
             )
 
     client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
@@ -608,6 +835,16 @@ async def install_from_catalog(
         except Exception as e:
             status = "error"
             error = str(e)
+        # An MCP server is addressed by its name; that is also the "directory"
+        # a second install of the same name would replace.
+        await _record_catalog_provenance(
+            user_id=user_id,
+            catalog_id=catalog_entry_id("mcp", mcp_entry["id"]),
+            kind="mcp",
+            name=mcp_entry["name"],
+            install_dir=mcp_entry["name"],
+            rollback=lambda: client.remove_mcp_server(mcp_entry["name"]),
+        )
         return {"kind": "mcp", "id": mcp_entry["id"], "name": mcp_entry["name"],
                 "status": status, "error": error}
 
@@ -624,7 +861,7 @@ async def install_from_catalog(
     if body.kind == "skill" and body.id.startswith("community:"):
         from skill.user_library import (
             annotate_installed_skills,
-            record_community_installation,
+            record_store_installation,
         )
 
         row = community_row
@@ -680,9 +917,9 @@ async def install_from_catalog(
             else row["install_dir"]
         )
         try:
-            await record_community_installation(
+            await record_store_installation(
                 user_id=user_id,
-                user_skill_id=row["id"],
+                catalog_id=row["catalog_id"],
                 name=row["name"],
                 install_dir=installed_dir,
             )
@@ -721,8 +958,21 @@ async def install_from_catalog(
         result = await client.install_skill(
             url=spec.get("url"), name=spec.get("name"), content=spec.get("content"),
         )
+        reported = result if isinstance(result, dict) else {}
+        installed_name = reported.get("name") or entry["name"]
+        installed_dir = (
+            reported.get("install_dir") or spec.get("name") or installed_name
+        )
+        await _record_catalog_provenance(
+            user_id=user_id,
+            catalog_id=catalog_entry_id("skill", entry["id"]),
+            kind="skill",
+            name=installed_name,
+            install_dir=installed_dir,
+            rollback=lambda: client.uninstall_skill(installed_dir),
+        )
         installed.append({"kind": "skill", "id": entry["id"],
-                          "name": result.get("name") or entry["name"], "status": "installed"})
+                          "name": installed_name, "status": "installed"})
 
     return {"ok": True, "installed": installed}
 
@@ -777,7 +1027,17 @@ async def remove_mcp_server(name: str, current_user: dict = Depends(get_current_
         client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
         if not client:
             raise HTTPException(status_code=503, detail="No sandbox available")
-        return await client.remove_mcp_server(name)
+        result = await client.remove_mcp_server(name)
+        try:
+            from skill.user_library import remove_store_installation
+
+            # A store-installed server leaves provenance behind; the install
+            # count and the console's install list would otherwise keep
+            # claiming this user still has it.
+            await remove_store_installation(user_id, name, kind="mcp")
+        except (ImportError, RuntimeError):
+            pass
+        return result
     except HTTPException:
         raise
     except Exception as e:

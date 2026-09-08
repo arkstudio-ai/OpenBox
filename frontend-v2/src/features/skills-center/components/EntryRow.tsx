@@ -11,7 +11,7 @@ export function Badge({
   title,
 }: {
   children: ReactNode
-  tone?: "muted" | "ok" | "warn"
+  tone?: "muted" | "ok" | "warn" | "danger"
   /** The consequence behind a short label, for anyone who wonders. */
   title?: string
 }) {
@@ -19,6 +19,9 @@ export function Badge({
     muted: "bg-n200 text-n700",
     ok: "bg-s100 text-sage",
     warn: "bg-a200 text-n800",
+    // dangerink over dangersoft: the softer red is the pair that stays legible
+    // in dark mode, where plain danger on a tint goes muddy.
+    danger: "bg-dangersoft text-dangerink",
   } as const
   return (
     <span

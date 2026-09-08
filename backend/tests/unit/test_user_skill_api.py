@@ -5,14 +5,19 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from api import metadata
+from core.config import get_config
+from db.base import get_db_session
+from db.models.notification import Notification
+from db.models.skill_install import SkillInstall
 from db.repository.user_repo import PgUserRepo
 from skill.user_library import (
     annotate_installed_skills,
     get_owned_skill,
     publish_personal_skill,
-    record_community_installation,
+    record_store_installation,
     upsert_personal_snapshot,
 )
 
@@ -22,7 +27,9 @@ class FakeSkillSandbox:
         self.installed = installed or []
         self.uploads: list[tuple[bytes, str, str]] = []
         self.uninstalls: list[str] = []
+        self.installs: list[dict] = []
         self.added_mcp: list[tuple[str, dict]] = []
+        self.removed_mcp: list[str] = []
         self.connected_mcp: list[str] = []
 
     async def list_skills(self):
@@ -47,6 +54,19 @@ class FakeSkillSandbox:
     async def connect_mcp(self, name: str):
         self.connected_mcp.append(name)
 
+    async def remove_mcp_server(self, name: str):
+        self.added_mcp = [item for item in self.added_mcp if item[0] != name]
+        self.removed_mcp.append(name)
+        return {"ok": True, "name": name}
+
+    async def install_skill(self, *, url=None, name=None, content=None):
+        self.installs.append({"url": url, "name": name, "content": content})
+        install_dir = name or "installed"
+        self.installed.append(
+            {"name": install_dir, "install_dir": install_dir, "source": "container"}
+        )
+        return {"name": install_dir, "install_dir": install_dir}
+
     async def upload_skill_archive(self, data: bytes, filename: str, name: str):
         self.uploads.append((data, filename, name))
         self.installed.append({"name": name, "install_dir": name, "source": "container"})
@@ -60,6 +80,18 @@ class FakeSkillSandbox:
             if item.get("install_dir") != name and item.get("name") != name
         ]
         return {"ok": True, "name": name}
+
+
+@pytest.fixture
+async def clean_overrides():
+    """Catalogue shelf decisions are global rows; do not leak them between tests."""
+    yield
+    from sqlalchemy import delete
+
+    from db.models.catalog_override import CatalogOverride
+
+    async with get_db_session() as session:
+        await session.execute(delete(CatalogOverride))
 
 
 @pytest.fixture
@@ -283,7 +315,7 @@ async def test_community_install_conflict_and_provenance_failure_roll_back_exact
     async def fail_record(**kwargs):
         raise RuntimeError("provenance database unavailable")
 
-    monkeypatch.setattr("skill.user_library.record_community_installation", fail_record)
+    monkeypatch.setattr("skill.user_library.record_store_installation", fail_record)
     with pytest.raises(HTTPException) as failed:
         await metadata.install_from_catalog(
             metadata.InstallCatalogBody(id=catalog_id, kind="skill"),
@@ -334,9 +366,9 @@ async def test_uninstall_deletes_personal_owner_row_but_only_store_provenance(
         b"PK\x03\x04published-package",
     )
     published = await publish_personal_skill(owner_id, store_owner["id"])
-    await record_community_installation(
+    await record_store_installation(
         user_id=buyer_id,
-        user_skill_id=published["id"],
+        catalog_id=f"community:{published['id']}",
         name=store_slug,
         install_dir=store_slug,
     )
@@ -365,3 +397,301 @@ async def test_uninstall_deletes_personal_owner_row_but_only_store_provenance(
         [{"name": store_slug, "install_dir": store_slug, "source": "container"}],
     )
     assert hypothetical_live_copy[0]["category"] == "installed"
+
+
+async def _installs(user_id: str) -> dict[str, str]:
+    """Recorded store provenance for one user, keyed by catalogue id."""
+    async with get_db_session() as session:
+        rows = (await session.execute(
+            select(SkillInstall).where(SkillInstall.user_id == user_id)
+        )).scalars()
+        return {row.catalog_id: row.kind for row in rows}
+
+
+@pytest.mark.asyncio
+async def test_catalogue_install_records_provenance_and_uninstall_clears_it(
+    monkeypatch, skill_api_users
+):
+    _, buyer_id, _ = skill_api_users
+    sandbox = FakeSkillSandbox()
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+
+    shelf = {
+        entry["catalog_id"]: entry
+        for entry in (await metadata.get_catalog(
+            current_user={"user_id": buyer_id}
+        ))["skills"]
+    }
+    # Q3: the Anthropic pack ships off the shelf, so the store does not show it.
+    assert "skill:anthropic-skills" not in shelf
+    assert shelf["skill:web-research"]["origin"] == "official"
+    assert shelf["skill:web-research"]["official"] is True
+    assert shelf["skill:web-research"]["installs_count"] == 0
+
+    result = await metadata.install_from_catalog(
+        metadata.InstallCatalogBody(
+            id="web-research", kind="skill", with_mcp=["firecrawl"],
+        ),
+        current_user={"user_id": buyer_id},
+    )
+    assert [item["kind"] for item in result["installed"]] == ["mcp", "skill"]
+    # The key is the catalogue entry's, not a community row's (AC-9).
+    assert await _installs(buyer_id) == {
+        "mcp:firecrawl": "mcp", "skill:web-research": "skill",
+    }
+
+    listed = await metadata.list_skills(current_user={"user_id": buyer_id})
+    entry = next(item for item in listed if item.get("name") == "web-research")
+    assert entry["category"] == "store"
+    assert entry["catalog_id"] == "skill:web-research"
+
+    counted = await metadata.get_catalog(current_user={"user_id": buyer_id})
+    installed = next(
+        item for item in counted["skills"] if item["catalog_id"] == "skill:web-research"
+    )
+    assert installed["installs_count"] == 1
+
+    await metadata.uninstall_skill("web-research", current_user={"user_id": buyer_id})
+    assert await _installs(buyer_id) == {"mcp:firecrawl": "mcp"}
+
+    await metadata.remove_mcp_server("firecrawl", current_user={"user_id": buyer_id})
+    assert sandbox.removed_mcp == ["firecrawl"]
+    assert await _installs(buyer_id) == {}
+
+
+@pytest.mark.asyncio
+async def test_catalogue_install_rolls_back_when_provenance_fails(
+    monkeypatch, skill_api_users
+):
+    _, buyer_id, _ = skill_api_users
+    sandbox = FakeSkillSandbox()
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+
+    async def fail_record(**kwargs):
+        raise ValueError("catalog_id disagrees with kind")
+
+    monkeypatch.setattr("skill.user_library.record_store_installation", fail_record)
+    with pytest.raises(HTTPException) as failed:
+        await metadata.install_from_catalog(
+            metadata.InstallCatalogBody(id="web-research", kind="skill"),
+            current_user={"user_id": buyer_id},
+        )
+    assert failed.value.status_code == 500
+    assert "provenance" in failed.value.detail
+    assert "rolled back" in failed.value.detail
+    assert sandbox.uninstalls == ["web-research"]
+    assert await _installs(buyer_id) == {}
+
+
+@pytest.mark.asyncio
+async def test_delisted_catalogue_entries_cannot_be_installed_by_id(
+    monkeypatch, skill_api_users, clean_overrides
+):
+    """Q4/AC-10: delisting withholds an entry, it does not merely hide it.
+
+    The store filters what it shows, but a catalog_id is readable from a stale
+    store response or an install-count badge, so the install endpoint has to
+    apply the same shelf — otherwise an operator's decision costs a determined
+    caller one hand-written request.
+    """
+    _, buyer_id, _ = skill_api_users
+    sandbox = FakeSkillSandbox()
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+    from skill.user_library import set_listing
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+
+    # A code default: the Anthropic pack ships delisted.
+    with pytest.raises(HTTPException) as off_shelf:
+        await metadata.install_from_catalog(
+            metadata.InstallCatalogBody(id="anthropic-skills", kind="skill"),
+            current_user={"user_id": buyer_id},
+        )
+    assert off_shelf.value.status_code == 409
+    assert sandbox.installs == []
+    assert await _installs(buyer_id) == {}
+
+    # An operator decision, on a skill and on a server.
+    await set_listing("skill:web-research", "delisted", note="malware", actor_user_id="op")
+    await set_listing("mcp:playwright", "delisted", note="unmaintained", actor_user_id="op")
+    for entry_id, kind in (("web-research", "skill"), ("playwright", "mcp")):
+        with pytest.raises(HTTPException) as blocked:
+            await metadata.install_from_catalog(
+                metadata.InstallCatalogBody(id=entry_id, kind=kind),
+                current_user={"user_id": buyer_id},
+            )
+        assert blocked.value.status_code == 409
+    assert sandbox.installs == []
+    assert sandbox.added_mcp == []
+    assert await _installs(buyer_id) == {}
+
+    # An unknown id is still a 404, not a shelf decision.
+    with pytest.raises(HTTPException) as unknown:
+        await metadata.install_from_catalog(
+            metadata.InstallCatalogBody(id="no-such-entry", kind="skill"),
+            current_user={"user_id": buyer_id},
+        )
+    assert unknown.value.status_code == 404
+
+    # Relisting restores it without any other change.
+    await set_listing("skill:web-research", "listed", actor_user_id="op")
+    result = await metadata.install_from_catalog(
+        metadata.InstallCatalogBody(id="web-research", kind="skill"),
+        current_user={"user_id": buyer_id},
+    )
+    assert [item["id"] for item in result["installed"]] == ["web-research"]
+    assert await _installs(buyer_id) == {"skill:web-research": "skill"}
+
+
+@pytest.mark.asyncio
+async def test_delisted_mcp_still_installs_as_a_declared_dependency(
+    monkeypatch, skill_api_users, clean_overrides
+):
+    """§4.4's one carve-out: delisting a server must not break its skills."""
+    _, buyer_id, _ = skill_api_users
+    sandbox = FakeSkillSandbox()
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+    from skill.user_library import set_listing
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+    await set_listing("mcp:firecrawl", "delisted", note="rate limits", actor_user_id="op")
+
+    result = await metadata.install_from_catalog(
+        metadata.InstallCatalogBody(
+            id="web-research", kind="skill", with_mcp=["firecrawl"],
+        ),
+        current_user={"user_id": buyer_id},
+    )
+    assert [item["kind"] for item in result["installed"]] == ["mcp", "skill"]
+    assert await _installs(buyer_id) == {
+        "mcp:firecrawl": "mcp", "skill:web-research": "skill",
+    }
+
+
+@pytest.mark.asyncio
+async def test_publish_listing_follows_the_review_switch_and_the_publisher(
+    monkeypatch, skill_api_users
+):
+    owner_id, _, suffix = skill_api_users
+    config = get_config()
+    slug = f"reviewed-{suffix}"
+    sandbox = FakeSkillSandbox(
+        installed=[{"name": slug, "install_dir": slug, "source": "container"}]
+    )
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+    await upsert_personal_snapshot(
+        owner_id,
+        {"name": slug, "install_dir": slug, "description": "Queue me", "files": []},
+        b"PK\x03\x04queued-snapshot",
+    )
+
+    admin_id = f"skill_api_admin_{suffix}"
+    await PgUserRepo().create(
+        id=admin_id, username=f"admin-{suffix}", password_hash="unused", role="admin",
+    )
+
+    monkeypatch.setattr(config, "skill_store_review", True)
+    queued = await metadata.publish_skill(slug, current_user={"user_id": owner_id})
+    assert queued["listing"] == "pending"
+    assert queued["is_official"] is False
+    # Nobody sees a queued submission until somebody looks at it, so every
+    # admin is told there is something to look at.
+    async with get_db_session() as session:
+        pending = list((await session.execute(
+            select(Notification).where(
+                Notification.user_id == admin_id, Notification.kind == "skill_pending",
+            )
+        )).scalars())
+    assert len(pending) == 1
+    assert slug in pending[0].body
+
+    monkeypatch.setattr(config, "skill_store_review", False)
+    direct = await metadata.publish_skill(slug, current_user={"user_id": owner_id})
+    assert direct["listing"] == "listed"
+    assert direct["is_official"] is False
+
+    monkeypatch.setattr(config, "skill_store_review", True)
+    official = await metadata.publish_skill(
+        slug, current_user={"user_id": owner_id, "role": "admin"},
+    )
+    # An admin publishing is the store's own editorial act: no queue, and the
+    # entry lands on the official shelf.
+    assert official["listing"] == "listed"
+    assert official["is_official"] is True
+
+
+@pytest.mark.asyncio
+async def test_withdraw_is_author_only_and_takes_the_entry_off_the_shelf(
+    monkeypatch, skill_api_users
+):
+    owner_id, buyer_id, suffix = skill_api_users
+    slug = f"withdrawn-{suffix}"
+    sandbox = FakeSkillSandbox(
+        installed=[{"name": slug, "install_dir": slug, "source": "container"}]
+    )
+
+    async def client_for(*, user_id: str):
+        return sandbox
+
+    from sandbox.manager import sandbox_manager
+
+    monkeypatch.setattr(sandbox_manager, "get_client_any", client_for)
+    created = await upsert_personal_snapshot(
+        owner_id,
+        {"name": slug, "install_dir": slug, "description": "Take me back", "files": []},
+        b"PK\x03\x04withdrawable",
+    )
+    published = await publish_personal_skill(owner_id, created["id"])
+    catalog_id = f"community:{published['id']}"
+    listed = await metadata.get_catalog(current_user={"user_id": buyer_id})
+    assert catalog_id in {entry["id"] for entry in listed["skills"]}
+
+    # Owning an installed copy is not owning the release.
+    with pytest.raises(HTTPException) as stranger:
+        await metadata.withdraw_skill(slug, current_user={"user_id": buyer_id})
+    assert stranger.value.status_code == 404
+
+    withdrawn = await metadata.withdraw_skill(slug, current_user={"user_id": owner_id})
+    assert withdrawn["publication_status"] == "withdrawn"
+    gone = await metadata.get_catalog(current_user={"user_id": buyer_id})
+    assert catalog_id not in {entry["id"] for entry in gone["skills"]}
+    # Idempotent: withdrawing twice is not an error.
+    assert (await metadata.withdraw_skill(
+        slug, current_user={"user_id": owner_id},
+    ))["publication_status"] == "withdrawn"
+
+    draft_slug = f"draft-{suffix}"
+    await upsert_personal_snapshot(
+        owner_id,
+        {"name": draft_slug, "install_dir": draft_slug, "description": "", "files": []},
+        b"PK\x03\x04never-published",
+    )
+    with pytest.raises(HTTPException) as never:
+        await metadata.withdraw_skill(draft_slug, current_user={"user_id": owner_id})
+    assert never.value.status_code == 400

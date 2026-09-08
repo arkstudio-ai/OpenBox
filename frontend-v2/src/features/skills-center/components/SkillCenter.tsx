@@ -21,14 +21,18 @@ import {
   useMcpServers,
   usePublishSkill,
   useRemoveMcpServer,
+  useReviewRequired,
   useSkillProjects,
   useUninstallSkill,
   useUploadSkillArchive,
+  useWithdrawSkill,
 } from "@/features/skills-center/api/skills-center"
 import type { CenterTab, InstalledSkill, KindFilter } from "@/features/skills-center/types"
 import type { SkillGroup } from "@/features/skills-center/lib/group-skills"
 import type { ParsedMcpEntry } from "@/features/skills-center/lib/parse-mcp-config"
 import { useDependencyResolver } from "@/features/skills-center/hooks/useDependencies"
+import { useMineLists } from "@/features/skills-center/hooks/useMineLists"
+import { useStoreShelves } from "@/features/skills-center/hooks/useStoreShelves"
 import { DependencyDialog, type Dependency, type DependencyTarget } from "./DependencyDialog"
 import { InstallDialog, type InstallTarget } from "./InstallDialog"
 import { MineList } from "./MineList"
@@ -37,15 +41,27 @@ import { PublishSkillDialog } from "./PublishSkillDialog"
 import { SkillCenterToolbar } from "./SkillCenterToolbar"
 import { StoreList } from "./StoreList"
 import { UploadDialog } from "./UploadDialog"
-
-function matches(query: string, ...fields: (string | undefined)[]): boolean {
-  const q = query.trim().toLowerCase()
-  if (!q) return true
-  return fields.some((f) => (f ?? "").toLowerCase().includes(q))
-}
+import { WithdrawSkillDialog } from "./WithdrawSkillDialog"
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+/** Whether a modal is up. An action error raised inside one belongs in that
+ *  dialog, not on the page behind it where nobody looks. */
+function anyDialogOpen(...targets: unknown[]): boolean {
+  return targets.some(Boolean)
+}
+
+/** The load failure that matters for the tab in view.
+ *
+ *  Reported as a banner above whatever did load rather than instead of it: an
+ *  unreachable sandbox still leaves a browsable store, and a store that failed
+ *  still leaves the list of what is already installed. Replacing the page with
+ *  the error would take away the half that still works. */
+function activeLoadError(tab: CenterTab, skills: unknown, servers: unknown, catalog: unknown) {
+  if (tab === "store") return catalog
+  return skills || servers
 }
 
 export function SkillCenter() {
@@ -59,11 +75,13 @@ export function SkillCenter() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [publishTarget, setPublishTarget] = useState<SkillGroup | null>(null)
+  const [withdrawTarget, setWithdrawTarget] = useState<SkillGroup | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const skills = useInstalledSkills()
   const servers = useMcpServers()
   const catalog = useCatalog()
+  const reviewRequired = useReviewRequired()
   const projects = useSkillProjects(createOpen)
 
   const installFromCatalog = useInstallFromCatalog()
@@ -75,39 +93,17 @@ export function SkillCenter() {
   const installSkill = useInstallSkill()
   const uploadArchive = useUploadSkillArchive()
   const publishSkill = usePublishSkill()
+  const withdrawSkill = useWithdrawSkill()
   const downloadSkill = useDownloadSkillArchive()
   const createSkillChat = useCreateSkillChat()
 
   const mcpServers = useMemo(() => servers.data ?? [], [servers.data])
   const unmetFor = useDependencyResolver(mcpServers, catalog.data?.mcp ?? [])
 
-  // Every skill the agent can reach is listed, including the ones baked into
-  // the sandbox image and the ones living on the backend. Hiding those made the
-  // list an inventory of what is removable rather than of what the agent has,
-  // so a capability like dev-browser was simply invisible. Removability is a
-  // property of a row, not a reason to omit it.
-  const mineSkills = useMemo(
-    () => (skills.data ?? []).filter((s) => matches(query, s.name, s.description)),
-    [skills.data, query],
-  )
-  const mineServers = useMemo(
-    () => mcpServers.filter((s) => matches(query, s.name, s.url ?? s.command ?? "")),
-    [mcpServers, query],
-  )
-  const storeSkills = useMemo(
-    () =>
-      (catalog.data?.skills ?? []).filter((s) =>
-        matches(query, s.title, s.description, s.name, s.tags?.join(" ")),
-      ),
-    [catalog.data, query],
-  )
-  const storeMcp = useMemo(
-    () =>
-      (catalog.data?.mcp ?? []).filter((s) =>
-        matches(query, s.title, s.description, s.name, s.tags?.join(" ")),
-      ),
-    [catalog.data, query],
-  )
+  const mine = useMineLists(skills.data, mcpServers, query)
+  // The store's own grouping — by who published a thing, not by what it is —
+  // lives in a hook so this component stays a wiring diagram.
+  const shelves = useStoreShelves(catalog.data, kind, query)
 
   const mutating = [
     installFromCatalog.isPending,
@@ -122,9 +118,11 @@ export function SkillCenter() {
     connectMcp.isPending,
     disconnectMcp.isPending,
     publishSkill.isPending,
+    withdrawSkill.isPending,
     downloadSkill.isPending,
   ].some(Boolean)
   const loading = tab === "mine" ? skills.isLoading || servers.isLoading : catalog.isLoading
+  const loadError = activeLoadError(tab, skills.error, servers.error, catalog.error)
 
   function run<T>(promise: Promise<T>, onDone?: (value: T) => void) {
     setActionError(null)
@@ -225,9 +223,18 @@ export function SkillCenter() {
         }}
       />
 
-      {actionError && !installTarget && !uploadOpen && !createOpen && !publishTarget && (
-        <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">{actionError}</p>
-      )}
+      {actionError &&
+        !anyDialogOpen(installTarget, uploadOpen, createOpen, publishTarget, withdrawTarget) && (
+          <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">
+            {actionError}
+          </p>
+        )}
+
+      {loadError ? (
+        <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">
+          {errorText(loadError)}
+        </p>
+      ) : null}
 
       {loading ? (
         <div className="flex flex-col gap-1.5">
@@ -237,8 +244,8 @@ export function SkillCenter() {
         </div>
       ) : tab === "mine" ? (
         <MineList
-          skills={mineSkills}
-          servers={mineServers}
+          skills={mine.skills}
+          servers={mine.servers}
           unmetFor={unmetFor}
           showSkills={showSkills}
           showMcp={showMcp}
@@ -269,15 +276,16 @@ export function SkillCenter() {
               setActionError(null)
               setPublishTarget(group)
             },
+            withdrawSkill: (group) => {
+              setActionError(null)
+              setWithdrawTarget(group)
+            },
             downloadSkill: (dir) => run(downloadSkill.mutateAsync(dir)),
           }}
         />
       ) : (
         <StoreList
-          skills={storeSkills}
-          mcp={storeMcp}
-          showSkills={showSkills}
-          showMcp={showMcp}
+          shelves={shelves}
           onInstallSkill={(entry) => {
             setActionError(null)
             setInstallTarget({ kind: "skill", entry })
@@ -345,6 +353,7 @@ export function SkillCenter() {
       {publishTarget ? (
         <PublishSkillDialog
           target={publishTarget}
+          reviewRequired={reviewRequired}
           busy={publishSkill.isPending}
           error={actionError}
           onCancel={() => {
@@ -352,6 +361,21 @@ export function SkillCenter() {
             setActionError(null)
           }}
           onConfirm={() => run(publishSkill.mutateAsync(publishTarget.id), () => setPublishTarget(null))}
+        />
+      ) : null}
+
+      {withdrawTarget ? (
+        <WithdrawSkillDialog
+          target={withdrawTarget}
+          busy={withdrawSkill.isPending}
+          error={actionError}
+          onCancel={() => {
+            setWithdrawTarget(null)
+            setActionError(null)
+          }}
+          onConfirm={() =>
+            run(withdrawSkill.mutateAsync(withdrawTarget.id), () => setWithdrawTarget(null))
+          }
         />
       ) : null}
 

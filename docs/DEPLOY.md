@@ -242,16 +242,18 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
   把同一账号重新登录。对照 `workspace/bossip` 后改为一次完整页面导航到
   `GET /api/auth/logto/logout`：后端在同一个 302 响应中撤销/删除 OpenBox refresh
   Cookie，再跳 Logto `{issuer}/session/end`；前端不再提前渲染登录页。
-- Web 和移动端的新 authorize 都使用 `prompt=login consent`：`login` 防止系统浏览器
-  残留 SSO Cookie 静默恢复刚退出的账号，`consent` 保留 `offline_access` 所需语义。
-  移动端退出还会调用 Logto Dart SDK `signOut(postLogoutRedirectUri)`，并在失败路径
-  强制删除 SDK 的 access/refresh/ID token。
+- Web authorize 使用 `prompt=login consent`：`login` 防止持久浏览器残留 SSO Cookie
+  静默恢复刚退出的账号，`consent` 保留 `offline_access` 所需语义。移动端在
+  2026-09-08 Android 实测后改为 `prompt=consent`；其 SDK 已启用 ephemeral Custom
+  Tab，退出还会调用 `signOut(postLogoutRedirectUri)`，并在失败路径强制删除 SDK 的
+  access/refresh/ID token。移动端强制 `login` 会在当前生产 Logto 上卡进
+  `/oidc/session/end/confirm` 的空白 `Submitting Callback` 页。
 - 自动验证：Web i18n/lint/typecheck 与 31 个测试文件、206 项测试通过（lint 只有
   24 条既有 warning）；移动端 locale 逐字节门禁、`flutter analyze`、26 项测试通过；
   后端认证相关 29 项测试通过。Android release APK 和 iOS no-codesign release 均
   已重新构建。
 - 生产验证：四个容器 healthy，首页与 Logto config 均为 200，退出路由为 302 且
-  同时返回 `refresh_token Max-Age=0` 和 Logto end-session Location；生产静态包含
+  同时返回 `refresh_token Max-Age=0` 和 Logto end-session Location；Web 生产静态包含
   `login consent`。真实 Chrome 先在同一退出实现中从 `andrewwang` 点击登出并稳定
   回首页；最终标签部署后再点击登录，停在 Logto“登录你的账号”页，不再静默回到
   原账号。

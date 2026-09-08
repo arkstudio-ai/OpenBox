@@ -59,11 +59,13 @@ class SdkLogtoSession implements LogtoSession {
     await client.signIn(
       Env.ssoRedirectUri,
       firstScreen: register ? FirstScreen.register : FirstScreen.signIn,
-      // Same fallback as the production bossip client: even if a system
-      // browser retained a cookie, the previous account is never reused
-      // silently after the person explicitly signed out. Keep consent because
-      // Logto's SDK requests offline access for refresh tokens.
-      extraParams: const {'prompt': 'login consent'},
+      // flutter_web_auth_2 5.x gives this flow an ephemeral browser session,
+      // while signOut below explicitly ends the centralized session. Forcing
+      // `login` against the production Logto sends a freshly authenticated
+      // interaction through /oidc/session/end/confirm and strands Android on
+      // its blank "Submitting Callback" page. Keep `consent` because the SDK
+      // requests offline_access for refresh tokens.
+      extraParams: const {'prompt': 'consent'},
     );
     final idToken = await client.idToken;
     if (idToken == null) throw StateError('Logto returned no id token');

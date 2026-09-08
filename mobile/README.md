@@ -67,10 +67,11 @@ URIs**。`AuthController.signOut()` 先撤销 OpenBox refresh cookie 并清理�
 `Env.ssoPostLogoutRedirectUri = com.bossip.bipmobile://callback`，可用
 `--dart-define=SSO_POST_LOGOUT_REDIRECT_URI=…` 覆盖。
 
-登录请求固定包含 `prompt=login`，与生产 `workspace/bossip` 的原生实现保持
-一致；实际组合值为 `login consent`，因为 SDK 同时请求离线 refresh token。这里的
-`login` 不能删：如果系统浏览器残留了旧 SSO Cookie，退出后的下一次登录也必须
-出现 Logto 登录页，不能静默恢复刚退出的账号。
+登录请求固定使用 `prompt=consent`，保留 SDK 请求离线 refresh token 所需的授权
+语义。`logto_dart_sdk` 4 / `flutter_web_auth_2` 5 在 Android 使用 ephemeral Custom
+Tab，退出时也会显式完成 Logto end-session；不要额外追加 `login`。生产实测该值会把
+刚通过密码验证的交互送进 `/oidc/session/end/confirm`，并卡在空白的
+`Submitting Callback` 页面，无法正常回跳 App。
 
 iOS 无需额外 SSO 配置(ASWebAuthenticationSession 直接吃 callbackUrlScheme)。当前生产 Native App ID、redirect 与本地管理隧道见 [`docs/LOGTO_PROD.md`](../docs/LOGTO_PROD.md)。
 
@@ -101,7 +102,7 @@ iOS 无需额外 SSO 配置(ASWebAuthenticationSession 直接吃 callbackUrlSche
 | 技能中心(`features/skills-center`,双栏 + 弹窗) | `/app/skills`(`SkillsScreen`):我的/商店切页 + 类型 chip + 搜索,五个弹窗全部改成底部抽屉;技能包折叠、依赖补装、发布确认、聊天创建都在 |
 | 左侧 Sidebar | 抽屉 `SessionDrawer`；手机没有 hover，项目行常驻显示 `+` 新建对话入口，不把核心动作藏在长按菜单里 |
 | Workspace switcher / Team / invite | `active_workspace_store.dart` + 抽屉切换器 + 设置页 Team + `/invite/:token`；所有业务缓存按当前 workspace 隔离，他人会话只读 |
-| Logto logout | `shared/api/logto_session.dart` + `auth_store.dart`：OpenBox session 与 Logto SSO session 同时退出；登录固定 `prompt=login consent` 防止旧 SSO Cookie 静默恢复账号并保留离线授权；Android 完成 end-session 回跳，iOS ephemeral session 与安全存储令牌一并清理 |
+| Logto logout | `shared/api/logto_session.dart` + `auth_store.dart`：OpenBox session 与 Logto SSO session 同时退出；移动端登录使用 `prompt=consent`，由 ephemeral 浏览会话与显式 end-session 避免复用旧账号；Android 完成回跳，iOS ephemeral session 与安全存储令牌一并清理 |
 | `/app/billing/:tab?` | `/app/billing/:tab` 订购/用量/订单三页；余额显示在用户行，订单回前台主动核对；支付宝 Android/iOS 原生 SDK 接线见 `docs/BILLING_PLAN.md` §6 |
 | `/app/auth-center` / `douyin_publish` 二维码 | `features/auth_center` + `shared/api/platform_accounts_api.dart`：多账号、同机授权/投稿、QR 原生保存、最近投稿及回前台状态恢复；聊天 QR 完整显示并附快捷操作 |
 | 右侧 WorkbenchPanel(菜单 tab + 审阅/终端/浏览器/文件/云桌面/定时) | 路由 `/app/w/:sessionId` = **菜单页**(`WorkbenchScreen` + `WorkbenchMenu`,与 web `MenuTab` 同一份入口与实时提示);点一行 push `WorkbenchSurfacePage` —— 手机没有 tab 条,返回手势和返回箭头就是 web 那条 tab 条的替代 |

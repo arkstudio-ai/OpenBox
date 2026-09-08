@@ -154,13 +154,18 @@ path. Therefore a discovery/revocation/browser failure cannot restore the
 local session; centralized logout remains best-effort when the identity server
 itself is unreachable.
 
-Both Web and mobile authorize requests also include `prompt=login`. The actual
-value is `login consent`, retaining `consent` because the clients request
-`offline_access`, as required by Logto's guidance. The `login` part is a
-defense-in-depth invariant copied from the production `workspace/bossip`
-native flow: if a platform browser keeps a stale SSO cookie or a centralized
-logout is interrupted, starting a new login must show Logto's login screen
-instead of silently restoring the account that was explicitly signed out.
+Web authorize requests include `prompt=login consent`: `login` protects the
+persistent browser flow from silently restoring the account after an
+interrupted logout, while `consent` is retained for `offline_access`.
+
+Mobile authorize requests use `prompt=consent`. The current Dart SDK opens an
+ephemeral browser session and mobile sign-out explicitly completes Logto's
+end-session flow, so the additional `login` prompt is unnecessary. On Android
+against the production Logto deployment, `login consent` sent a newly verified
+interaction through `/oidc/session/end/confirm` and left Chrome on a blank
+`Submitting Callback` page. Keeping the same PKCE request and changing only the
+prompt to `consent` produced the registered custom-scheme callback and completed
+the OpenBox token exchange.
 
 Production registration was read back from the self-hosted Logto database on
 2026-09-06:

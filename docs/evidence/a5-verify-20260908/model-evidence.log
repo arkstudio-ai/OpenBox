@@ -1,0 +1,17 @@
+status=Success
+2026-09-08 11:55:47,054 [openbox.config] INFO Loaded config from /app/openbox.json
+2026-09-08 11:55:47,093 [openbox.db] INFO Database engine initialized: postgres:5432/openbox
+2026-09-08 11:55:47,170 [openbox.db] INFO Database engine closed
+{"keys": ["id", "tool", "type", "error", "input", "state", "title", "output", "status", "call_id", "duration", "metadata", "message_id", "session_id"], "tool": "skill", "canonical_tool_id": null, "state_status": "completed", "state_keys": []}
+| `local` | Chrome on this cloud desktop | **Only the sites the person logged into here** — ask `desktop_login` first |
+1. `desktop_login(action="status", site="<site key>")`. `bound` → go ahead, the cookies
+   are in this profile. `DESKTOP_LOGIN_REQUIRED` → step 2.
+2. `desktop_login(action="open", site=...)` pushes the login page to the front of the
+3. `desktop_login(action="probe", site=...)` after they say done. Only then continue.
+waited for them; the `<browser_mode>` block at the end of the skill output tells you
+Only start it by hand if the `<browser_mode>` block reported a failure — and then say
+> run dies on `SyntaxError: Unexpected token ':'` — you pay a full round trip to learn it.
+// Wrong: TypeScript syntax will fail at runtime
+## Error Recovery
+<browser_mode>preference=local; the browser could not be started: browser runtime sources are not available at /container/dev-browser; run the repair from a full checkout (bootstrap or scripts), not from the backend image [diag:dev_01M20DRFHSG889CY8K4AGP0QHA]. Report this rather than retrying blindly.</browser_mode>
+

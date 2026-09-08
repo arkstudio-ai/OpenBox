@@ -1,0 +1,42 @@
+status=Success
+2026-09-08T19:48:31+08:00
+openbox-backend-1 openbox-backend:20260908-a5p2-499e8a9 Up 23 minutes (healthy)
+openbox-frontend-1 openbox-frontend-v2:20260908-landing-8b80e28 Up 2 hours (healthy)
+openbox-redis-1 public.ecr.aws/docker/library/redis:7-alpine Up 6 days (healthy)
+openbox-postgres-1 public.ecr.aws/docker/library/postgres:16-alpine Up 6 days (healthy)
+ version_num  
+--------------
+ b8e3f5a7c9d1
+(1 row)
+
+               id                |     platform     |   auth_kind    | status |     nickname      |         last_probe_at         |          last_ok_at           | renew_count |      access_expires_at       |      refresh_expires_at       |      desktop_id       | token_storage 
+---------------------------------+------------------+----------------+--------+-------------------+-------------------------------+-------------------------------+-------------+------------------------------+-------------------------------+-----------------------+---------------
+ pacc_01M1XF9C2AB6Z6WWXKTQ1DJ4H4 | douyin           | oauth          | bound  | 用户2087843173024 | 2026-09-07 08:31:07.106276+00 | 2026-09-07 08:31:07.106276+00 |           0 | 2026-09-22 08:20:51.39368+00 | 2026-10-07 08:20:51.393662+00 |                       | encrypted_v1
+ pacc_01M208MPBNHFG6E9Q1DY72ZC8G | douyin_creator   | desktop_cookie | bound  | 用户2087843173024 | 2026-09-08 10:22:23.946786+00 | 2026-09-08 10:22:23.946786+00 |           0 |                              |                               | ecd-glxi1nk433hliivri | null
+ pacc_01M208MPBPTRMWCXNY9WV2X0J3 | douyin_laike     | desktop_cookie | bound  | 用户4929490571108 | 2026-09-08 10:22:23.946786+00 | 2026-09-08 10:22:23.946786+00 |           0 |                              |                               | ecd-glxi1nk433hliivri | null
+ pacc_01M208MPBPTRMWCXNY9WV2X0J4 | meituan_merchant | desktop_cookie | bound  |                   | 2026-09-08 10:22:23.946786+00 | 2026-09-08 10:22:23.946786+00 |           0 |                              |                               | ecd-glxi1nk433hliivri | null
+(4 rows)
+
+               id               | status  | share_id | item_id | error 
+--------------------------------+---------+----------+---------+-------
+ pub_01M1XFBFKV2C4RW8N27RG6EF2W | pending |          |         | 
+(1 row)
+
+              ts               | status | duration_ms |                                summary                                 
+-------------------------------+--------+-------------+------------------------------------------------------------------------
+ 2026-09-08 11:09:48.438288+00 | fail   |         325 | URLError: <urlopen error [Errno 111] Connection refused>
+ 2026-09-08 11:09:34.127527+00 | ok     |         294 | probe douyin_creator,douyin_laike,meituan_merchant,xiaohongshu_creator
+ 2026-09-08 11:09:16.558898+00 | fail   |         273 | URLError: <urlopen error [Errno 111] Connection refused>
+(3 rows)
+
+           name           |          last_run_at          | last_status 
+--------------------------+-------------------------------+-------------
+ platform_token_keepalive | 2026-09-08 08:02:33.131762+00 | ok
+ desktop_login_probe      | 2026-09-08 11:09:48.454819+00 | ok
+(2 rows)
+
+ kind | title | read_at 
+------+-------+---------
+(0 rows)
+
+

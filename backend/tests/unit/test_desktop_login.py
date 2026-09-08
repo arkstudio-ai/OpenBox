@@ -219,3 +219,16 @@ def test_desktop_routes_are_not_shadowed_by_account_id_routes():
     paths = [r.path for r in router.routes]
     assert paths.index("/api/platform-accounts/desktop/probe") < paths.index("/api/platform-accounts/{account_id}/probe")
     assert paths.index("/api/platform-accounts/desktop/{site}/open") < paths.index("/api/platform-accounts/{account_id}/probe")
+
+
+@pytest.mark.asyncio
+async def test_platform_catalogue_is_backward_compatible():
+    """Old frontends only asked for OAuth platforms and read `capabilities` unguarded."""
+    from api.platform_accounts import list_platforms
+
+    legacy = await list_platforms(kinds="oauth")
+    assert all(entry["kind"] == "oauth" and isinstance(entry["capabilities"], list) for entry in legacy)
+    both = await list_platforms(kinds="oauth,desktop")
+    desktop = [e for e in both if e["kind"] == "desktop"]
+    assert {e["key"] for e in desktop} == {"douyin_creator", "douyin_laike", "meituan_merchant", "xiaohongshu_creator"}
+    assert all(isinstance(e["capabilities"], list) and "configured" in e for e in desktop)

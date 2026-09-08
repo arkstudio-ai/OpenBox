@@ -35,7 +35,7 @@ export function usePlatforms() {
   const userId = useUserId()
   return useQuery({
     queryKey: authCenterKeys.platforms(userId),
-    queryFn: () => http.get<Platform[]>("/api/platforms"),
+    queryFn: () => http.get<Platform[]>("/api/platforms?kinds=oauth,desktop"),
     staleTime: 5 * 60_000,
   })
 }

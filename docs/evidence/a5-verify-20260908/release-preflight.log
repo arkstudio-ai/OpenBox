@@ -1,0 +1,20 @@
+status=Success
+-rw-r--r-- 1 root root 378 Sep  8 19:25 docker-compose.override.yml
+10:    image: openbox-backend:20260908-a5p2-499e8a9
+11:  frontend:
+12:    image: openbox-frontend-v2:20260908-landing-8b80e28
+candidate_id=sha256:b81312e96904480c08673d1c4d4d7d8f979cbb39177980ff0385322523b2f440 created=2026-09-08T11:00:56.074589514Z size=72308925
+ role  | count 
+-------+-------
+ owner |     1
+(1 row)
+
+     platform     | refresh_storage 
+------------------+-----------------
+ douyin_creator   | null
+ meituan_merchant | null
+ douyin           | encrypted_v1
+ douyin_laike     | null
+(4 rows)
+
+

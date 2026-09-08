@@ -74,23 +74,33 @@ class PublishBody(BaseModel):
 
 # ── Catalogue ──────────────────────────────────────────────────────────────
 @platforms_router.get("")
-async def list_platforms():
+async def list_platforms(kinds: str = Query("oauth")):
+    """Platform catalogue. `kinds=oauth,desktop` adds the cloud-desktop sites.
+
+    Desktop sites are opt-in so a frontend built before they existed keeps
+    working: it only ever asked for OAuth platforms and reads `capabilities`
+    without a guard. Every entry carries the OAuth-shaped keys regardless.
+    """
     from platforms.desktop.sites import list_sites, public_site
 
+    wanted = {k.strip() for k in kinds.split(",") if k.strip()} or {"oauth"}
     out = []
-    for provider in list_providers():
-        info = provider.info()
-        out.append(
-            {
-                "key": info.key,
-                "display": info.display,
-                "kind": "oauth",
-                "capabilities": info.capabilities,
-                "configured": info.configured,
-                "maxGrantDays": info.max_grant_days,
-            }
-        )
-    out.extend(public_site(site) for site in list_sites())
+    if "oauth" in wanted:
+        for provider in list_providers():
+            info = provider.info()
+            out.append(
+                {
+                    "key": info.key,
+                    "display": info.display,
+                    "kind": "oauth",
+                    "capabilities": info.capabilities,
+                    "configured": info.configured,
+                    "maxGrantDays": info.max_grant_days,
+                }
+            )
+    if "desktop" in wanted:
+        for site in list_sites():
+            out.append({"capabilities": [], "configured": True, "maxGrantDays": None, **public_site(site)})
     return out
 
 

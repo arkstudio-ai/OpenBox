@@ -1,0 +1,79 @@
+
+> openbox-frontend-v2@2.0.0 check
+> npm run check:i18n && npm run lint && tsc -b && npm run test
+
+
+> openbox-frontend-v2@2.0.0 check:i18n
+> node scripts/check-i18n.mjs
+
+i18n parity OK
+
+> openbox-frontend-v2@2.0.0 lint
+> eslint .
+
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/app/providers/AppProviders.tsx
+  6:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/app/router/router.tsx
+   7:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+   8:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+   9:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  10:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  11:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  12:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  13:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  14:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  15:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  16:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  17:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  18:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  19:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  20:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  21:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+  22:7  warning  Fast refresh only works when a file only exports components. Move your component(s) to a separate file. If all exports are HOCs, add them to the `extraHOCs` option  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/auth-center/components/DesktopLoginCard.tsx
+  218:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/chat/components/tool/QuestionAnswered.tsx
+  15:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/chat/lib/content-view.ts
+  382:3  warning  Unused eslint-disable directive (no problems were reported from 'complexity')
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/cron/components/CronStatusPill.tsx
+  12:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/skills-center/components/McpConfigForm.tsx
+  30:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/workspace/components/ProjectRow.tsx
+  78:13  warning  Unused eslint-disable directive (no problems were reported from 'jsx-a11y/no-autofocus')
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/features/workspace/components/Sidebar.tsx
+  195:15  warning  Unused eslint-disable directive (no problems were reported from 'jsx-a11y/no-autofocus')
+
+/Users/wxy/openbox-a5-docs/frontend-v2/src/shared/ui/Toast.tsx
+  52:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  67:17  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+✖ 26 problems (0 errors, 26 warnings)
+  0 errors and 3 warnings potentially fixable with the `--fix` option.
+
+
+> openbox-frontend-v2@2.0.0 test
+> vitest run
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:9:32). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /Users/wxy/openbox-a5-docs/frontend-v2
+
+
+ Test Files  35 passed (35)
+      Tests  223 passed (223)
+   Start at  19:48:20
+   Duration  2.16s (transform 2.49s, setup 0ms, import 5.29s, tests 1.95s, environment 17.76s)
+

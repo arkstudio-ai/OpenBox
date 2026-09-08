@@ -6,7 +6,7 @@ import {
   type BrowserMode,
 } from "@/features/settings/api/browser"
 
-const MODES: BrowserMode[] = ["auto", "local", "remote"]
+const MODES: BrowserMode[] = ["local", "auto", "remote"]
 
 /** One selectable browser-mode card: title + one-line explanation. */
 function ModeCard({
@@ -79,7 +79,7 @@ export function BrowserPage() {
   const status = useBrowserStatus()
   const update = useUpdateBrowserPreference()
 
-  const preference = status.data?.preference ?? "auto"
+  const preference = status.data?.preference ?? "local"
   const remoteConnected = status.data?.remote.connected ?? false
   const localAvailable = status.data?.local.available ?? false
 

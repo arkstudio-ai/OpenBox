@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/models/interaction.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/ws/ws_client.dart';
+import 'question_draft.dart';
 
 /// Pending permission/question requests grouped by session, mirroring
 /// frontend-v2 `features/chat/stores/pending.ts` + its WS wiring.
@@ -53,7 +54,10 @@ class PendingStore extends Notifier<PendingState> {
       asString(data['request_id']) ?? asString(data['id']) ?? '';
 
   /// Seed from `GET /api/agent/permission` + `/question` on session open.
-  void seed(List<PermissionRequest> permissions, List<QuestionRequest> questions) {
+  void seed(
+    List<PermissionRequest> permissions,
+    List<QuestionRequest> questions,
+  ) {
     final permMap = <String, List<PermissionRequest>>{};
     for (final p in permissions) {
       permMap.putIfAbsent(p.sessionId, () => []).add(p);
@@ -63,6 +67,9 @@ class PendingStore extends Notifier<PendingState> {
       questionMap.putIfAbsent(q.sessionId, () => []).add(q);
     }
     state = PendingState(permissions: permMap, questions: questionMap);
+    ref.read(questionDraftProvider.notifier).keepOnly({
+      for (final q in questions) q.id,
+    });
   }
 
   void addPermission(PermissionRequest request) {
@@ -102,6 +109,7 @@ class PendingStore extends Notifier<PendingState> {
   }
 
   void removeQuestion(String requestId) {
+    ref.read(questionDraftProvider.notifier).discard(requestId);
     state = PendingState(
       permissions: state.permissions,
       questions: {
@@ -112,5 +120,6 @@ class PendingStore extends Notifier<PendingState> {
   }
 }
 
-final pendingProvider =
-    NotifierProvider<PendingStore, PendingState>(PendingStore.new);
+final pendingProvider = NotifierProvider<PendingStore, PendingState>(
+  PendingStore.new,
+);

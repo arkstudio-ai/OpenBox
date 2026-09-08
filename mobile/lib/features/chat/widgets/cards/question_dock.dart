@@ -8,10 +8,15 @@ import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
+import '../../state/question_draft.dart';
 import 'video_approval_detail.dart';
 
-/// Blocking question prompt above the composer (web `QuestionDock`):
+/// Blocking question prompt at the end of the transcript (web `QuestionDock`):
 /// answers post as one label-array per question, in order.
+///
+/// Everything that has to survive a rebuild lives in [questionDraftProvider],
+/// not here: this card sits in a lazy list, so its element is discarded the
+/// moment the rows above it change length or it scrolls out of view.
 class QuestionDock extends ConsumerStatefulWidget {
   const QuestionDock({super.key, required this.request});
 
@@ -22,11 +27,25 @@ class QuestionDock extends ConsumerStatefulWidget {
 }
 
 class _QuestionDockState extends ConsumerState<QuestionDock> {
-  late final List<Set<String>> _selected =
-      List.generate(widget.request.questions.length, (_) => <String>{});
-  late final List<TextEditingController> _custom = List.generate(
-      widget.request.questions.length, (_) => TextEditingController());
+  late final List<TextEditingController> _custom;
   bool _submitting = false;
+
+  int get _count => widget.request.questions.length;
+
+  @override
+  void initState() {
+    super.initState();
+    // Seeded from the draft so a card rebuilt after being scrolled away comes
+    // back with what was already typed in it.
+    final draft = ref
+        .read(questionDraftProvider.notifier)
+        .of(widget.request.id, _count);
+    _custom = [
+      for (final text in draft.custom)
+        TextEditingController(text: text)
+          ..selection = TextSelection.collapsed(offset: text.length),
+    ];
+  }
 
   @override
   void dispose() {
@@ -36,33 +55,25 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     super.dispose();
   }
 
-  List<String> _answersFor(int index) {
-    final custom = _custom[index].text.trim();
-    return [
-      ..._selected[index],
-      if (custom.isNotEmpty) custom,
-    ];
-  }
-
-  bool get _complete => List.generate(widget.request.questions.length, _answersFor)
-      .every((answers) => answers.isNotEmpty);
-
-  Future<void> _submit() async {
-    if (!_complete || _submitting) return;
+  Future<void> _submit(QuestionDraft draft) async {
+    if (!draft.complete || _submitting) return;
     setState(() => _submitting = true);
+    // Read before awaiting: a transcript row arriving mid-request destroys
+    // this element, and `ref` is unusable afterwards. That is what left an
+    // answered card on screen — the reply landed, the agent moved on, and the
+    // card that could no longer be dismissed took every further tap.
+    final api = ref.read(chatApiProvider);
+    final pending = ref.read(pendingProvider.notifier);
     try {
-      await ref.read(chatApiProvider).replyQuestion(
-            widget.request.id,
-            List.generate(widget.request.questions.length, _answersFor),
-          );
+      await api.replyQuestion(widget.request.id, draft.answers);
       // Do not wait for the WS `question.replied` event to take the card
       // away: the socket may be down while the app is backgrounded.
-      ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
+      pending.removeQuestion(widget.request.id);
     } on DioException catch (e) {
       // 404: the run already consumed or dropped this question. Keeping the
       // card would only invite more taps that fail the same way.
       if (e.response?.statusCode == 404) {
-        ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
+        pending.removeQuestion(widget.request.id);
       } else {
         rethrow;
       }
@@ -71,10 +82,25 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     }
   }
 
+  Future<void> _reject() async {
+    final api = ref.read(chatApiProvider);
+    final pending = ref.read(pendingProvider.notifier);
+    try {
+      await api.rejectQuestion(widget.request.id);
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 404) rethrow;
+    }
+    pending.removeQuestion(widget.request.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    final draft =
+        ref.watch(questionDraftProvider)[widget.request.id] ??
+        QuestionDraft.empty(_count);
+    final complete = draft.complete;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       padding: const EdgeInsets.all(14),
@@ -83,7 +109,11 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         borderRadius: BorderRadius.circular(Radii.xl),
         border: Border.all(color: t.hair),
         boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
         ],
       ),
       child: Column(
@@ -106,7 +136,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                 children: [
                   for (final (index, question)
                       in widget.request.questions.indexed)
-                    _question(t, i18n, index, question),
+                    _question(t, i18n, index, question, draft),
                 ],
               ),
             ),
@@ -115,41 +145,39 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
           Row(
             children: [
               FilledButton(
-                onPressed: _complete && !_submitting ? _submit : null,
+                onPressed: complete && !_submitting
+                    ? () => _submit(draft)
+                    : null,
                 style: FilledButton.styleFrom(
                   backgroundColor: t.ink,
                   foregroundColor: t.bg,
                   disabledBackgroundColor: t.ink.withValues(alpha: 0.4),
                   disabledForegroundColor: t.bg,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Radii.full),
                   ),
                 ),
-                child: Text(i18n.t('chat:question.submit'),
-                    style: const TextStyle(fontSize: FontSizes.sm)),
+                child: Text(
+                  i18n.t('chat:question.submit'),
+                  style: const TextStyle(fontSize: FontSizes.sm),
+                ),
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: () async {
-                  try {
-                    await ref.read(chatApiProvider).rejectQuestion(widget.request.id);
-                  } on DioException catch (e) {
-                    if (e.response?.statusCode != 404) rethrow;
-                  }
-                  ref.read(pendingProvider.notifier).removeQuestion(widget.request.id);
-                },
+                onPressed: _submitting ? null : _reject,
                 child: Text(
                   i18n.t('chat:question.reject'),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
                 ),
               ),
               const Spacer(),
-              if (!_complete && widget.request.questions.length > 1)
+              if (!complete && _count > 1)
                 Text(
-                  i18n.t('chat:question.needAll',
-                      vars: {'count': widget.request.questions.length}),
+                  i18n.t('chat:question.needAll', vars: {'count': _count}),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
                 ),
             ],
@@ -160,8 +188,13 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
   }
 
   Widget _question(
-      BossipTokens t, I18nState i18n, int index, QuestionItem question) {
-    final selected = _selected[index];
+    BossipTokens t,
+    I18nState i18n,
+    int index,
+    QuestionItem question,
+    QuestionDraft draft,
+  ) {
+    final selected = draft.picked[index];
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -179,7 +212,11 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ),
           Text(
             question.question,
-            style: TextStyle(fontSize: FontSizes.base, color: t.ink, height: 1.5),
+            style: TextStyle(
+              fontSize: FontSizes.base,
+              color: t.ink,
+              height: 1.5,
+            ),
           ),
           VideoApprovalDetail(item: question),
           const SizedBox(height: 6),
@@ -189,8 +226,10 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             children: [
               for (final option in question.options)
                 ChoiceChip(
-                  label: Text(option.label,
-                      style: const TextStyle(fontSize: FontSizes.sm)),
+                  label: Text(
+                    option.label,
+                    style: const TextStyle(fontSize: FontSizes.sm),
+                  ),
                   selected: selected.contains(option.label),
                   showCheckmark: false,
                   selectedColor: t.a200,
@@ -199,14 +238,16 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                     color: selected.contains(option.label) ? t.a700 : t.hair,
                   ),
                   labelStyle: TextStyle(color: t.ink),
-                  onSelected: (on) => setState(() {
-                    if (!question.multiple) selected.clear();
-                    if (on) {
-                      selected.add(option.label);
-                    } else {
-                      selected.remove(option.label);
-                    }
-                  }),
+                  onSelected: (on) => ref
+                      .read(questionDraftProvider.notifier)
+                      .toggle(
+                        widget.request.id,
+                        _count,
+                        index,
+                        option.label,
+                        multiple: question.multiple,
+                        on: on,
+                      ),
                 ),
             ],
           ),
@@ -214,14 +255,18 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             const SizedBox(height: 6),
             TextField(
               controller: _custom[index],
-              onChanged: (_) => setState(() {}),
+              onChanged: (text) => ref
+                  .read(questionDraftProvider.notifier)
+                  .write(widget.request.id, _count, index, text),
               style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
               decoration: InputDecoration(
                 hintText: i18n.t('chat:question.answer'),
                 hintStyle: TextStyle(fontSize: FontSizes.sm, color: t.n500),
                 isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(Radii.md),
                   borderSide: BorderSide(color: t.hair),

@@ -108,14 +108,19 @@ class ChatScreen extends ConsumerWidget {
         },
       if (busy && (rows.isEmpty || rows.last is UserRowData))
         TypingRow(retry: retry),
-      for (final permission in permissions) PermissionCard(request: permission),
+      // Keyed by request id (web `key={p.id}` / `key={q.id}`): without it a
+      // card sliding into the slot a just-answered one left behind is updated
+      // in place and inherits its state.
+      for (final permission in permissions)
+        PermissionCard(key: ValueKey(permission.id), request: permission),
       // At the end of the transcript, inside the scroller, because it reads as
       // the next turn in the conversation. It used to sit below the list as a
       // sibling of it, and a tall one — a segment approval carries three
       // scripts and their prompts — took the whole column: the list is an
       // Expanded, so it was free to shrink to nothing and the conversation
       // could not be scrolled at all while the run waited.
-      for (final question in questions) QuestionDock(request: question),
+      for (final question in questions)
+        QuestionDock(key: ValueKey(question.id), request: question),
     ];
 
     return Column(

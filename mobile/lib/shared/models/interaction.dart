@@ -37,9 +37,9 @@ class QuestionOption {
   const QuestionOption({required this.label, this.description});
 
   factory QuestionOption.fromJson(Map<String, dynamic> json) => QuestionOption(
-        label: asString(json['label']) ?? '',
-        description: asString(json['description']),
-      );
+    label: asString(json['label']) ?? '',
+    description: asString(json['description']),
+  );
 
   final String label;
   final String? description;
@@ -51,23 +51,24 @@ class QuestionItem {
     this.header,
     this.options = const [],
     this.multiple = false,
-    this.custom = false,
+    this.custom = true,
     this.detail,
   });
 
   factory QuestionItem.fromJson(Map<String, dynamic> json) => QuestionItem(
-        question: asString(json['question']) ?? '',
-        header: asString(json['header']),
-        options: asList(json['options'])
-            .whereType<Map<String, dynamic>>()
-            .map(QuestionOption.fromJson)
-            .toList(),
-        multiple: asBool(json['multiple']) ?? false,
-        custom: asBool(json['custom']) ?? false,
-        detail: json['detail'] is Map<String, dynamic>
-            ? json['detail'] as Map<String, dynamic>
-            : null,
-      );
+    question: asString(json['question']) ?? '',
+    header: asString(json['header']),
+    options: asList(
+      json['options'],
+    ).whereType<Map<String, dynamic>>().map(QuestionOption.fromJson).toList(),
+    multiple: asBool(json['multiple']) ?? false,
+    // Absent means allowed — only an explicit false closes the text box
+    // (web `item.custom !== false`; the backend's own default is true).
+    custom: asBool(json['custom']) ?? true,
+    detail: json['detail'] is Map<String, dynamic>
+        ? json['detail'] as Map<String, dynamic>
+        : null,
+  );
 
   final String question;
   final String? header;
@@ -93,10 +94,9 @@ class QuestionRequest {
       QuestionRequest(
         id: asString(json['id']) ?? '',
         sessionId: asString(json['session_id']) ?? '',
-        questions: asList(json['questions'])
-            .whereType<Map<String, dynamic>>()
-            .map(QuestionItem.fromJson)
-            .toList(),
+        questions: asList(
+          json['questions'],
+        ).whereType<Map<String, dynamic>>().map(QuestionItem.fromJson).toList(),
         tool: asString(json['tool']),
         createdAt: asDate(json['created_at']),
       );

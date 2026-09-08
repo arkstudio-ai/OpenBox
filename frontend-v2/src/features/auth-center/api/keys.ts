@@ -9,4 +9,6 @@ export const authCenterKeys = {
   job: (userId: string, jobId: string) => ["auth-center", userId, "job", jobId] as const,
   videos: (userId: string, workspaceId: string) =>
     ["auth-center", userId, "videos", workspaceId] as const,
+  notifications: (userId: string, workspaceId: string) =>
+    ["auth-center", userId, "notifications", workspaceId] as const,
 }

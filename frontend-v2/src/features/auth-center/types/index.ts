@@ -5,13 +5,33 @@ export type PlatformCapability = "login" | "publish"
 export interface Platform {
   key: string
   display: string
-  capabilities: PlatformCapability[]
+  /** "oauth": open-platform grant; "desktop": a site the person logs into on the cloud desktop. */
+  kind?: "oauth" | "desktop"
+  capabilities?: PlatformCapability[]
   /** False when the deployment has no client key for it; the card is shown greyed. */
-  configured: boolean
-  maxGrantDays: number | null
+  configured?: boolean
+  maxGrantDays?: number | null
+  /** desktop sites */
+  group?: string
+  loginUrl?: string
+  sensitive?: boolean
+  inactivityTtlDays?: number
+  reconPending?: boolean
 }
 
-export type AccountStatus = "bound" | "expired" | "revoked"
+export type AccountStatus = "bound" | "expired" | "revoked" | "unknown" | "desktop_offline"
+
+/** Redacted probe summary for a desktop login row — names and timestamps only. */
+export interface DesktopProbeDetail {
+  cookieOk?: boolean | null
+  sessionCookies?: Record<string, (number | null)[] | null> | null
+  earliestExpiry?: number | null
+  reason?: string | null
+  via?: string | null
+  probe?: { status?: number | null; code?: unknown; error?: string | null } | null
+  display?: Record<string, string | number | boolean> | null
+  lastLevel2At?: string | null
+}
 
 export interface PlatformAccount {
   id: string
@@ -35,6 +55,25 @@ export interface PlatformAccount {
   lastError: string | null
   boundAt: string | null
   boundByUserId: string
+  /** desktop_cookie rows only */
+  desktopId?: string | null
+  siteDisplay?: string
+  probeDetail?: DesktopProbeDetail
+  predictedExpiresAt?: string | null
+}
+
+export interface AppNotification {
+  id: string
+  kind: string
+  title: string
+  body: string
+  readAt: string | null
+  createdAt: string | null
+}
+
+export interface NotificationPage {
+  items: AppNotification[]
+  unread: number
 }
 
 export type PublishStatus = "pending" | "published" | "failed" | "expired"

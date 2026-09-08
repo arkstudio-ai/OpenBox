@@ -30,13 +30,14 @@ export function PlatformCard({
   onPublish,
 }: Props) {
   const { t } = useTranslation("auth-center")
-  const canPublish = platform.capabilities.includes("publish") && accounts.some((a) => a.status === "bound")
+  const capabilities = platform.capabilities ?? []
+  const canPublish = capabilities.includes("publish") && accounts.some((a) => a.status === "bound")
 
   return (
     <section className="border-hair bg-card flex flex-col gap-3 rounded-2xl border p-4.5">
       <header className="flex flex-wrap items-center gap-2">
         <span className="text-ink text-lg font-medium">{platform.display}</span>
-        {platform.capabilities.map((cap) => (
+        {capabilities.map((cap) => (
           <span key={cap} className="bg-n200 text-n700 rounded-full px-2 py-0.5 text-2xs font-medium">
             {t(`capability.${cap}`)}
           </span>

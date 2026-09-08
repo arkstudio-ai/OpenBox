@@ -17,6 +17,8 @@ const STATUS_CLASS: Record<PlatformAccount["status"], string> = {
   bound: "bg-a200 text-a700",
   expired: "bg-dangersoft text-dangerink",
   revoked: "bg-n200 text-n700",
+  unknown: "bg-n200 text-n700",
+  desktop_offline: "bg-n200 text-n700",
 }
 
 function daysUntil(iso: string | null): number | null {

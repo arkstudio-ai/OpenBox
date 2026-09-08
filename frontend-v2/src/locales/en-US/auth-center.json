@@ -72,7 +72,11 @@
     "bound": "Account connected",
     "unbound": "Account disconnected",
     "probeOk": "Authorization is valid",
-    "probeExpired": "Authorization expired — re-authorize"
+    "probeExpired": "Authorization expired — re-authorize",
+    "desktopLoginOpened": "Login page opened on the cloud desktop — scan there",
+    "desktopLoggedIn": "Signed in on the cloud desktop",
+    "desktopLoginTimeout": "No sign-in detected within three minutes; press Check later",
+    "desktopLoggedOut": "Signed out of that site"
   },
   "state": {
     "error": "Failed to load",
@@ -125,6 +129,45 @@
     "PUBLISH_STAGE_FAILED": "Could not prepare the video, try again",
     "PUBLISH_JOB_NOT_FOUND": "Posting record not found",
     "WORKSPACE_ROLE_REQUIRED": "Only workspace admins can connect or disconnect accounts",
-    "WORKSPACE_FORBIDDEN": "No access to this workspace"
+    "WORKSPACE_FORBIDDEN": "No access to this workspace",
+    "DESKTOP_UNAVAILABLE": "The cloud desktop is offline or not provisioned",
+    "DESKTOP_BUSY": "The cloud desktop is in use, try again later",
+    "BROWSER_NOT_RUNNING": "The browser on the cloud desktop is not running; open the desktop first",
+    "PLATFORM_KIND_MISMATCH": "This account is not a desktop login"
+  },
+  "desktop": {
+    "title": "Cloud desktop logins",
+    "subtitle": "Sites you signed into in the cloud desktop's browser stay signed in there until they expire. This only checks whether the session is still valid; it never drives the page for you.",
+    "desktopId": "desktop …{{id}}",
+    "probeAll": "Check all",
+    "reconPending": "not reconnoitred yet",
+    "status": {
+      "bound": "Signed in",
+      "expired": "Expired",
+      "unknown": "Unconfirmed",
+      "desktop_offline": "Desktop offline",
+      "revoked": "Signed out",
+      "none": "Not signed in",
+      "awaiting": "Waiting for scan…"
+    },
+    "predicted": "Expected to need a new sign-in by {{date}} (about {{days}} days)",
+    "awaitingHint": "The login page is open on the cloud desktop — scan there; this turns green once you're in.",
+    "display": {
+      "account": "Store: {{name}}"
+    },
+    "actions": {
+      "login": "Sign in",
+      "relogin": "Sign in again",
+      "logout": "Sign out",
+      "viewDesktop": "View desktop"
+    }
+  },
+  "desktopLogout": {
+    "title": "Sign out of this site?",
+    "body": "Clears the “{{name}}” session cookies in the cloud desktop's browser; the agent can no longer act as that account until you scan again."
+  },
+  "notifications": {
+    "title": "{{count}} unread notifications",
+    "markRead": "Mark read"
   }
 }

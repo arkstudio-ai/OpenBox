@@ -3,27 +3,40 @@
 // Binding leaves the app: the backend hands back the platform's authorize URL,
 // the person scans there, and the platform redirects to the backend callback,
 // which lands them back here with `?bound=` or `?error=` in the URL.
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useSearchParams } from "react-router"
-import { Dialog, DialogActions, DialogBody, DialogTitle } from "@/shared/ui/Dialog"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { ApiError } from "@/shared/api/http"
 import {
   useCanManageAccounts,
+  useMarkNotificationRead,
+  useNotifications,
   usePlatformAccounts,
   usePlatforms,
   useProbeAccount,
   useStartAuthorize,
   useUnbindAccount,
 } from "../api/platform-accounts"
+import { useDesktopLogin } from "../hooks/useDesktopLogin"
 import type { PlatformAccount } from "../types"
+import { ConfirmDialog } from "./ConfirmDialog"
+import { DesktopLoginCard } from "./DesktopLoginCard"
+import { NotificationStrip } from "./NotificationStrip"
 import { PlatformCard } from "./PlatformCard"
 import { PublishDialog } from "./PublishDialog"
 
 function errorCode(e: unknown): string {
   return e instanceof ApiError ? e.code : "PLATFORM_ERROR"
+}
+
+function useFailToast() {
+  const { t } = useTranslation("auth-center")
+  return useCallback(
+    (e: unknown) => toast.error(t(`errors.${errorCode(e)}`, { defaultValue: t("errors.PLATFORM_ERROR") })),
+    [t],
+  )
 }
 
 export function AuthCenter() {
@@ -35,9 +48,13 @@ export function AuthCenter() {
   const startAuthorize = useStartAuthorize()
   const probe = useProbeAccount()
   const unbind = useUnbindAccount()
+  const notifications = useNotifications()
+  const markRead = useMarkNotificationRead()
   const [pendingUnbind, setPendingUnbind] = useState<PlatformAccount | null>(null)
   const [publishFor, setPublishFor] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const fail = useFailToast()
+  const desktop = useDesktopLogin(fail)
 
   // The OAuth round trip reports back through the URL; read it once, say
   // what happened, and clean the address bar so a reload does not repeat it.
@@ -57,6 +74,7 @@ export function AuthCenter() {
   const byPlatform = useMemo(() => {
     const map = new Map<string, PlatformAccount[]>()
     for (const a of accounts.data ?? []) {
+      if (a.authKind === "desktop_cookie") continue
       const list = map.get(a.platform) ?? []
       list.push(a)
       map.set(a.platform, list)
@@ -66,7 +84,7 @@ export function AuthCenter() {
 
   const onBind = (platform: string) => {
     startAuthorize.mutate(platform, {
-      onError: (e) => toast.error(t(`errors.${errorCode(e)}`, { defaultValue: t("errors.PLATFORM_ERROR") })),
+      onError: fail,
     })
   }
 
@@ -77,7 +95,7 @@ export function AuthCenter() {
         if (row.status === "bound") toast.success(t("toast.probeOk"))
         else toast.warning(t("toast.probeExpired"))
       },
-      onError: (e) => toast.error(t(`errors.${errorCode(e)}`, { defaultValue: t("errors.PLATFORM_ERROR") })),
+      onError: fail,
       onSettled: () => setBusyId(null),
     })
   }
@@ -89,7 +107,7 @@ export function AuthCenter() {
     setBusyId(target.id)
     unbind.mutate(target.id, {
       onSuccess: () => toast.success(t("toast.unbound")),
-      onError: (e) => toast.error(t(`errors.${errorCode(e)}`, { defaultValue: t("errors.PLATFORM_ERROR") })),
+      onError: fail,
       onSettled: () => setBusyId(null),
     })
   }
@@ -118,8 +136,9 @@ export function AuthCenter() {
       </div>
     )
   }
-  const list = platforms.data ?? []
-  if (list.length === 0) {
+  const list = (platforms.data ?? []).filter((p) => (p.kind ?? "oauth") === "oauth")
+  const desktopSites = (platforms.data ?? []).filter((p) => p.kind === "desktop")
+  if (list.length === 0 && desktopSites.length === 0) {
     return (
       <div className="border-hair text-n600 rounded-xl border border-dashed px-4 py-10 text-center text-sm">
         {t("state.noPlatforms")}
@@ -129,6 +148,7 @@ export function AuthCenter() {
 
   return (
     <div className="flex flex-col gap-4">
+      <NotificationStrip items={notifications.data?.items ?? []} onRead={(id) => markRead.mutate(id)} />
       {list.map((platform) => (
         <PlatformCard
           key={platform.key}
@@ -144,24 +164,37 @@ export function AuthCenter() {
         />
       ))}
 
-      <Dialog open={pendingUnbind !== null} onClose={() => setPendingUnbind(null)}>
-        <DialogTitle>{t("unbind.title")}</DialogTitle>
-        <DialogBody>
-          {t("unbind.body", { name: pendingUnbind?.nickname || pendingUnbind?.externalId || "" })}
-        </DialogBody>
-        <DialogActions>
-          <button type="button" className="text-md text-n700" onClick={() => setPendingUnbind(null)}>
-            {t("common:action.cancel", { ns: "common" })}
-          </button>
-          <button
-            type="button"
-            className="bg-danger text-md text-bg rounded-full px-4.5 py-2 font-medium"
-            onClick={confirmUnbind}
-          >
-            {t("actions.unbind")}
-          </button>
-        </DialogActions>
-      </Dialog>
+      {desktopSites.length > 0 ? (
+        <DesktopLoginCard
+          sites={desktopSites}
+          accounts={accounts.data ?? []}
+          canManage={canManage}
+          busy={desktop.busy || busyId !== null}
+          awaitingSite={desktop.awaiting?.site ?? null}
+          onOpenLogin={desktop.onOpenLogin}
+          onProbe={onProbe}
+          onProbeAll={desktop.onProbeAll}
+          onLogout={desktop.setPendingLogout}
+        />
+      ) : null}
+
+      <ConfirmDialog
+        open={desktop.pendingLogout !== null}
+        title={t("desktopLogout.title")}
+        body={t("desktopLogout.body", { name: desktop.pendingLogout?.siteDisplay || desktop.pendingLogout?.platform || "" })}
+        confirmLabel={t("desktop.actions.logout")}
+        onCancel={() => desktop.setPendingLogout(null)}
+        onConfirm={desktop.confirmLogout}
+      />
+
+      <ConfirmDialog
+        open={pendingUnbind !== null}
+        title={t("unbind.title")}
+        body={t("unbind.body", { name: pendingUnbind?.nickname || pendingUnbind?.externalId || "" })}
+        confirmLabel={t("actions.unbind")}
+        onCancel={() => setPendingUnbind(null)}
+        onConfirm={confirmUnbind}
+      />
 
       {/* Keyed on the platform so closing and reopening starts from a blank form. */}
       <PublishDialog

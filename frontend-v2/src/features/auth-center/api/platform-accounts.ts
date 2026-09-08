@@ -4,6 +4,7 @@ import { http } from "@/shared/api/http"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type {
+  NotificationPage,
   Platform,
   PlatformAccount,
   PublishJob,
@@ -80,6 +81,57 @@ export function useProbeAccount() {
     mutationFn: (id: string) =>
       http.post<PlatformAccount>(`/api/platform-accounts/${encodeURIComponent(id)}/probe`, undefined),
     onSettled: refresh,
+  })
+}
+
+/** 去登录: push the site's login page to the front of the cloud desktop. */
+export function useOpenDesktopLogin() {
+  const refresh = useRefreshAccounts()
+  return useMutation({
+    mutationFn: (site: string) =>
+      http.post<PlatformAccount>(`/api/platform-accounts/desktop/${encodeURIComponent(site)}/open`, undefined),
+    onSuccess: refresh,
+  })
+}
+
+/** Cookie-level probe of every catalogued site on the workspace desktop. */
+export function useProbeDesktopLogins() {
+  const refresh = useRefreshAccounts()
+  return useMutation({
+    mutationFn: () => http.post<PlatformAccount[]>("/api/platform-accounts/desktop/probe", undefined),
+    onSettled: refresh,
+  })
+}
+
+/** 退出登录: delete that site's cookies on the desktop. */
+export function useLogoutDesktopLogin() {
+  const refresh = useRefreshAccounts()
+  return useMutation({
+    mutationFn: (id: string) =>
+      http.post<PlatformAccount>(`/api/platform-accounts/${encodeURIComponent(id)}/logout`, undefined),
+    onSuccess: refresh,
+  })
+}
+
+export function useNotifications() {
+  const userId = useUserId()
+  const workspaceId = useWorkspaceId()
+  return useQuery({
+    queryKey: authCenterKeys.notifications(userId, workspaceId),
+    queryFn: () => http.get<NotificationPage>("/api/notifications?unread=true&limit=20"),
+    staleTime: 60_000,
+  })
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient()
+  const userId = useUserId()
+  const workspaceId = useWorkspaceId()
+  return useMutation({
+    mutationFn: (id: string) => http.post(`/api/notifications/${encodeURIComponent(id)}/read`, undefined),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: authCenterKeys.notifications(userId, workspaceId) })
+    },
   })
 }
 

@@ -19,7 +19,7 @@ This skill drives one of two browsers. They are not interchangeable:
 
 | Mode | Which browser | Has the user's logins |
 |---|---|---|
-| `local` | Chrome on this cloud desktop | **No** |
+| `local` | Chrome on this cloud desktop | **Only the sites the person logged into here** — ask `desktop_login` first |
 | `extension` | The user's OWN Chrome, via the Dev Browser extension | **Yes** |
 
 `auto` (the default) prefers the user's own browser and **falls back to the cloud
@@ -35,9 +35,24 @@ fewer hops. Prefer it for anything that does not need the user's identity.
 curl -s http://localhost:9222/ | head -c 300
 ```
 
-`mode` is the effective mode, `configuredMode` is what was requested. If a task needs a
-site the user is logged into and `mode` is `local`, stop and ask the user — either they
-connect their own browser, or they accept logging in on the cloud one.
+`mode` is the effective mode, `configuredMode` is what was requested.
+
+## Login state on the cloud desktop (`local` mode)
+
+The person may already be logged into some sites in this Chrome — the 授权中心 keeps
+track of which. **Before automating any site that needs their account** (抖音创作者中心,
+抖音来客, 美团经营宝/点评商户平台, 小红书创作平台 …):
+
+1. `desktop_login(action="status", site="<site key>")`. `bound` → go ahead, the cookies
+   are in this profile. `DESKTOP_LOGIN_REQUIRED` → step 2.
+2. `desktop_login(action="open", site=...)` pushes the login page to the front of the
+   cloud desktop. Tell the person to scan in the desktop panel and to say when done.
+3. `desktop_login(action="probe", site=...)` after they say done. Only then continue.
+
+Never navigate to a login page yourself, never type passwords or verification codes,
+and never decide "logged in / not logged in" from a screenshot — the probe is the
+source of truth. If `status` says the tool does not apply (the person is using their
+own browser via the extension), just work in their browser.
 
 ## Setup — there isn't any
 

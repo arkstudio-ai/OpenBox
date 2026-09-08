@@ -65,6 +65,7 @@ def register_builtin_tools() -> None:
     from tool.capability_search import capability_search_tool
     from tool.video_production import video_generate_tool, video_transcribe_tool
     from tool.douyin_publish import douyin_publish_tool
+    from tool.desktop_login import desktop_login_tool
 
     for tool in [
         bash_tool, read_tool, write_tool, edit_tool, apply_patch_tool,
@@ -74,7 +75,7 @@ def register_builtin_tools() -> None:
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
         video_generate_tool, video_transcribe_tool,
         computer_tool, browser_mode_tool, skill_manage_tool,
-        creator_context_tool, capability_search_tool, douyin_publish_tool,
+        creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
     ]:
         register(tool)
 

@@ -263,11 +263,13 @@ Web `/app/admin/fleet` 是仅 `user.role === "admin"` 可见的运维台，覆�
 8. **移动端 Composer 控件**：移动端有意隐藏“执行/方案”入口，并把思考强度并入模型二级菜单；Web 保持原交互。
 9. **移动端新对话与执行环境入口**：项目行常驻且右侧对齐 `+`（手机没有 hover），点击进入该项目的空会话；空会话不再根据旧 `/api/containers` 列表显示“创建沙箱”，首条消息由后端按 workspace 自动连接无影，真正未就绪时继续走 `DESKTOP_NOT_READY` 云桌面引导。
 10. **订阅驱动无影云**：全局进度、Free 权益边界、到期断开查看连接、作用域隔离、侧栏直达与阿里云 prod 联调已完成，替代旧的手动开通流程，见 §8。
+11. **Android Logto 单一回调**：邀请链接只保留生产 HTTPS App Link；删除 MainActivity 上缺少 host 的自定义 scheme 过滤器。Android 在过滤器未声明 host 时会忽略 `pathPrefix`，旧配置因此同时匹配 `com.bossip.bipmobile://callback`，与 `flutter_web_auth_2.CallbackActivity` 形成两个授权跳转入口。现在该回调仅由 SDK Activity 接收。
 
 ## 完成记录
 
 | 日期 | 功能块 | 提交 | 验收证据 |
 |---|---|---|---|
+| 2026-09-08 | Android Logto 回调去重 | 本轮改动 | Manifest 回归测试、`flutter analyze` 与 Gradle merged-manifest 构建通过；合并清单确认 MainActivity 只处理 HTTPS 邀请，`com.bossip.bipmobile://callback` 只剩 `flutter_web_auth_2.CallbackActivity` |
 | 2026-09-07 | 订阅驱动无影云与 prod 移动端对齐 | 本轮改动，Web/服务端基线 `129e758` | 44 项 Flutter 测试、analyze、locale/文件大小门禁与 iOS 模拟器构建通过；iPhone 17 Pro 实连阿里云验证就绪提示、0.10 元月付/年付、桌面画面及前后台/全屏恢复 |
 | 2026-09-06 | Locale + WorkLog | 本次提交 | locale byte diff 通过；`flutter analyze` 与 Flutter tests 通过 |
 | 2026-09-06 | Workspace + Team + invite | 本次提交 | 请求作用域与 refresh 双保护；路由/权限静态校验通过 |

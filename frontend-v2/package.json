@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "check": "npm run check:i18n && npm run lint && tsc -b && npm run test"
+    "check:seo": "node scripts/check-seo-landing.mjs",
+    "check": "npm run check:i18n && npm run check:seo && npm run lint && tsc -b && npm run test"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

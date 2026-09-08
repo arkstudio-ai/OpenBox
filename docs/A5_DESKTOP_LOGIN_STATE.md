@@ -216,3 +216,19 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
 3. ✅ 频率：S1 每 6 小时、S2 每天一次、K1 天级。
 4. ✅ 退出登录限 owner/admin。
 5. 用户要求：探活方式与保活手段要想清楚——见 §3.8 / §3.9；K2 常驻标签页默认关，等 K1 数据说话。
+
+---
+
+## 7. 执行记录
+
+### 7.1 2026-09-08 P0 落地（在用户桌面 `ecd-glxi1nk433hliivri` 上验证）
+
+- **代码**：`backend/platforms/desktop/{sites,cdp,service}.py`；`platform_accounts` 加 `desktop_id`、`probe_detail`，迁移 `b8e3f5a7c9d1`（接在 D1 的 `b6d1e2f3a4b5` 后）；`desktop_events` 新增 `platform.probe`；API 加 `POST /api/platform-accounts/desktop/{site}/open`、`POST /desktop/probe`、`POST /{id}/logout`，`/{id}/probe` 按 `auth_kind` 分流，`GET /api/platforms` 带 `kind:"desktop"` 的站点；OAuth 续期任务改为只取 `auth_kind='oauth'` 行。
+- **脚本形态**：一段内联 Python（`cdp.SCRIPT`，约 10 KB）base64 进一条 shell 命令，经动作服务器 `client.execute` 在桌面上跑；浏览器级 `Storage.getCookies` 一次拿全站 cookie（只保留名/域/到期）；S2 优先在已开着的该站标签页里同源 `fetch`，没有标签页才 `Target.createTarget(background)` 打 JSON 地址并在 6 秒内关掉；`open` 用 `/json/new` + `/json/activate`；`logout` 逐条 `Network.deleteCookies`。
+- **服务语义**：`probe_workspace(level=1|2)`——6 小时一级、每日一次二级（每站 `last_level2_at` 间隔 ≥20h，`recon_pending` 站永不二级）；桌面上已登录但没人登记的站会**自动登记**；桌面 id 变化 → 全部置 `unknown` + 通知 `desktop_login_reset`；失效 → `desktop_login_expired`，同一站 23h 内不重复；桌面忙（租约 423）→ `DESKTOP_BUSY` 跳过；隧道不通 → 行置 `desktop_offline`。`predicted_expiry = min(最早会话 cookie 到期, last_ok_at + inactivity_ttl)`。
+- **真机**：脚本以 level 2 + profile 在用户桌面上跑一次（云助手通道）：创作者中心 `bound`（昵称、抖音号、粉丝数到手）、来客 `bound`（昵称、角色"商家子账号"、店名"芊屿芊浔美甲美睫(汉街北门店)"、account_id）、经营宝 `bound`（`cityshop` 有返回，`shop_id` 为 -1 说明该账号当前未选门店）、小红书 0 cookie → `unknown`。三站 S2 都走了"已开标签页同源 fetch"（`via: tab`），零新标签零导航。抖音会话 cookie 到期 2026-11-07，`passport_auth_status` 到期 2026-10-08 → 预计到期取 10-08。
+- **单测**：`tests/unit/test_desktop_login.py` 10 条（目录与侦察值一致、脚本不带 cookie 值、cookie/接口判定、二级探活节奏、自动登记、失效通知去重、桌面更换重置、打开登录页与退出、离线、到期预测）。
+- **上线与端到端（18:20）**：backend `20260908-a5p0-f160cf7` 发到 gw2 与 AWS（两边 backend 现在都由 `docker-compose.override.yml` 钉镜像，发版要改 override 的 `image:` 行；gw2 前端被钉在队友的 `landing-8b80e28`，本期未动），迁移 `b6d1e2f3a4b5 → b8e3f5a7c9d1` 两边跑完，gw2 发布前有库备份 `backups/pre-a5p0-20260908181953.sql.gz`。
+  在 gw2 容器里对 `bbdwxh_admin` 的工作空间（桌面 `ecd-glxi1nk433hliivri`，通道 ssh/up）跑 `probe_workspace(level=2, force_level2=True, lease=True)`：**1.4 秒**返回，三站自动登记为 `bound`（创作者中心昵称与抖音号、来客昵称/角色/店名、经营宝当前门店 -1），`predicted_expiry` 抖音两站 = 2026-10-08（`passport_auth_status` 到期），经营宝 = 2026-09-15（7 天不活动假设）；`desktop_events` 记到一条 `platform.probe ok 1438ms`。S2 全部经"已开标签页同源 fetch"，桌面上无任何可见动作。
+- **未做（P1/P2）**：定时任务注册、前端卡组、`desktop_login` 工具与 dev-browser 技能前置段、Fleet 抽屉分节。
+

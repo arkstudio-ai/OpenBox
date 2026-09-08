@@ -277,6 +277,14 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
 
 
+
+### 2026-09-08 18:20：A5 二期 P0（云电脑登录态）
+
+- 两边 backend `20260908-a5p0-f160cf7`（`main@f160cf7`），迁移 `b6d1e2f3a4b5 → b8e3f5a7c9d1`（`platform_accounts` 加 `desktop_id`、`probe_detail`）。gw2 发布前备份 `backups/pre-a5p0-20260908181953.sql.gz`。
+- **两边现在都有 `docker-compose.override.yml` 钉 backend 镜像**（AWS 的钉在 `20260908-d1-a0fd70a`、gw2 的钉在 `20260908-browser-4a9725f` 之后又被改过），`.env` 的 `OPENBOX_IMAGE_TAG` 对 backend 已不生效；本次把两边 override 的 backend 行改到本 tag（各留 `.bak-<戳>`）。gw2 的 override 还钉了 frontend `20260908-landing-8b80e28`，本次未动前端。
+- EC2 → gw2 传镜像改为 `docker save | gzip > /tmp/x.tgz` → `scp` → `docker load`（管道直传会卡）。
+- 验证：gw2 容器内对用户工作空间跑桌面登录态探活 1.4 秒返回，三站 `bound`，`desktop_events` 有 `platform.probe`。
+
 ### 2026-09-08：A5 技能同步到全部云桌面
 
 - 15/15 台（含共享桌面与 prewarm）`/opt/openbox/skills/{video-production,douyin-publish}` 已同步到 `origin/main` 版本；旧目录备份在各桌面 `/opt/openbox/backups/`。下发方式见 `docs/A5_AUTHORIZATION_CENTER.md` §9.5。

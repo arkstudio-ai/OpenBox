@@ -279,6 +279,12 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
 
 
+
+### 2026-09-08 19:30：A5 二期 P2（desktop_login 工具 + dev-browser 技能前置检查）
+
+- AWS：`20260908-a5p2-499e8a9`（backend + frontend）；gw2：backend `20260908-a5p2-499e8a9`，frontend 未动（同上一条）。无迁移。
+- 桌面侧：`/opt/openbox/skills/dev-browser/SKILL.md` 已按 main 同步到 15 台桌面。
+
 ### 2026-09-08 19:10：A5 二期 P1（云电脑登录态卡组 + 定时探活）
 
 - AWS：`20260908-a5p1-9848834`（backend + frontend）。gw2：backend `20260908-a5p1-9848834`，**frontend 未动**（仍为队友钉的 `20260908-landing-8b80e28`，其提交 `8b80e28` 不在 main）。

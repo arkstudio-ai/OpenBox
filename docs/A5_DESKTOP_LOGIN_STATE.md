@@ -247,3 +247,15 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
 - gw2：**只切了 backend** 到 `20260908-a5p1-9848834`；frontend 仍是队友用 override 钉的 `20260908-landing-8b80e28`，因为 `8b80e28` 不在 main 上，换成 main 构建会把他们的落地页改动冲掉。**gw2 上要看到"云电脑登录态"卡，得等落地页合进 main 再统一发前端**（或用户拍板先换）。
 - gw2 容器内确认：`desktop_login_probe` 已注册（与 `platform_token_keepalive` 并列），桌面路由排在 `/{account_id}/probe` 之前，库 `b8e3f5a7c9d1`。定时任务下一轮起会按 6 小时探活；06:00–09:00 那轮带二级。
 
+### 7.4 2026-09-08 P2 落地（模型侧）
+
+- **工具** `backend/tool/desktop_login.py`（build agent 独占）：`status` 只读授权中心记录不碰桌面（含预计到期、店名），指定站点未登录时返回结构化 `DESKTOP_LOGIN_REQUIRED`，extension 模式返回"不适用"；`open` 推登录页到云电脑并告诉模型让用户扫码；`probe` 强制二级探活确认。站点参数接受 key 或中文名。
+- **技能** `container/dev-browser/SKILL.md`：两浏览器表里 `local` 一行改为"只有用户在此登录过的站点，先问 desktop_login"；新增"Login state on the cloud desktop"一节：status → open → probe，禁止自己开登录页、填验证码、靠截图判断登录。已同步到全部云桌面（§7.5）。
+- **单测** `tests/unit/test_desktop_login_tool.py` 5 条：注册与技能前置段、全站状态与缺站标记、extension 不适用、open→probe 往返、结构化错误。
+
+### 7.5 2026-09-08 19:30 P2 上线
+
+- AWS：backend + frontend `20260908-a5p2-499e8a9`；gw2：backend `20260908-a5p2-499e8a9`（frontend 仍是队友钉的 landing，同 §7.3）。gw2 容器内确认 `desktop_login` 已注册且在 build agent 工具表中（33 个内置工具）。
+- `container/dev-browser/SKILL.md` 新版已同步到全部 15 台云桌面（OSS 临时对象 + 云助手逐台校验 sha256，旧版备份在各桌面 `/opt/openbox/backups/`），`e38f8862…`。
+- **P0–P2 至此全部上线。剩余可选项**：P3 `requires-platforms` 硬阻断；Fleet 抽屉"登录态"分节；小红书侦察；`inactivity_ttl` 用真实数据校准；K2 常驻标签页只在 K1 证实无效时开。
+

@@ -210,3 +210,12 @@ def test_predicted_expiry_takes_the_earlier_bound():
     assert service.predicted_expiry(row) == NOW + timedelta(days=30)  # inactivity ttl wins
     row.probe_detail = {"earliest_expiry": TS + 86400 * 3}
     assert service.predicted_expiry(row) == NOW + timedelta(days=3)
+
+
+def test_desktop_routes_are_not_shadowed_by_account_id_routes():
+    """POST /desktop/probe must reach the desktop handler, not /{account_id}/probe."""
+    from api.platform_accounts import router
+
+    paths = [r.path for r in router.routes]
+    assert paths.index("/api/platform-accounts/desktop/probe") < paths.index("/api/platform-accounts/{account_id}/probe")
+    assert paths.index("/api/platform-accounts/desktop/{site}/open") < paths.index("/api/platform-accounts/{account_id}/probe")

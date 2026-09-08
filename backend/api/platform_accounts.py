@@ -156,52 +156,8 @@ async def oauth_callback(
     return RedirectResponse(f"{target}?platform={platform}&bound={row.id}", status_code=302)
 
 
-@router.post("/{account_id}/probe")
-async def probe_account(account_id: str, current_user: dict = Depends(get_current_user)):
-    try:
-        row = await service.probe(account_id, current_user["workspace_id"])
-    except PlatformError as exc:
-        raise _http_error(exc, _status_for(exc))
-    return service.to_public(row)
-
-
-@router.post("/{account_id}/refresh")
-async def refresh_account(
-    account_id: str,
-    request: Request,
-    current_user: dict = Depends(get_current_user),
-    _role: dict = Depends(_MANAGER),
-):
-    try:
-        row = await service.refresh_account(account_id, current_user["workspace_id"])
-    except PlatformError as exc:
-        raise _http_error(exc, _status_for(exc))
-    await record(
-        current_user["user_id"], current_user["workspace_id"],
-        "platform_account.refresh", "platform_account", row.id, {"status": row.status}, request,
-    )
-    return service.to_public(row)
-
-
-@router.delete("/{account_id}")
-async def unbind_account(
-    account_id: str,
-    request: Request,
-    current_user: dict = Depends(get_current_user),
-    _role: dict = Depends(_MANAGER),
-):
-    try:
-        row = await service.unbind(account_id, current_user["workspace_id"])
-    except PlatformError as exc:
-        raise _http_error(exc, _status_for(exc))
-    await record(
-        current_user["user_id"], current_user["workspace_id"],
-        "platform_account.unbind", "platform_account", row.id, {"platform": row.platform}, request,
-    )
-    return {"ok": True, "id": row.id, "status": row.status}
-
-
 # ── Desktop login state (云电脑登录态) ───────────────────────────────────────
+# Declared before the /{account_id}/... routes: "desktop" must not be read as an id.
 @router.post("/desktop/{site}/open")
 async def open_desktop_login(
     site: str,
@@ -267,6 +223,51 @@ async def logout_desktop_login(
         "platform_account.desktop_logout", "platform_account", row.id, {"site": row.platform}, request,
     )
     return service.to_public(row)
+
+
+@router.post("/{account_id}/probe")
+async def probe_account(account_id: str, current_user: dict = Depends(get_current_user)):
+    try:
+        row = await service.probe(account_id, current_user["workspace_id"])
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    return service.to_public(row)
+
+
+@router.post("/{account_id}/refresh")
+async def refresh_account(
+    account_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _role: dict = Depends(_MANAGER),
+):
+    try:
+        row = await service.refresh_account(account_id, current_user["workspace_id"])
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    await record(
+        current_user["user_id"], current_user["workspace_id"],
+        "platform_account.refresh", "platform_account", row.id, {"status": row.status}, request,
+    )
+    return service.to_public(row)
+
+
+@router.delete("/{account_id}")
+async def unbind_account(
+    account_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _role: dict = Depends(_MANAGER),
+):
+    try:
+        row = await service.unbind(account_id, current_user["workspace_id"])
+    except PlatformError as exc:
+        raise _http_error(exc, _status_for(exc))
+    await record(
+        current_user["user_id"], current_user["workspace_id"],
+        "platform_account.unbind", "platform_account", row.id, {"platform": row.platform}, request,
+    )
+    return {"ok": True, "id": row.id, "status": row.status}
 
 
 # ── Publish ────────────────────────────────────────────────────────────────

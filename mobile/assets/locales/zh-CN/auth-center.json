@@ -72,7 +72,11 @@
     "bound": "账号已绑定",
     "unbound": "账号已解绑",
     "probeOk": "授权正常",
-    "probeExpired": "授权已失效，请重新授权"
+    "probeExpired": "授权已失效，请重新授权",
+    "desktopLoginOpened": "登录页已推到云电脑，请扫码",
+    "desktopLoggedIn": "云电脑登录成功",
+    "desktopLoginTimeout": "三分钟内没有检测到登录，稍后可再点「检测」",
+    "desktopLoggedOut": "已退出该站点登录"
   },
   "state": {
     "error": "加载失败",
@@ -125,6 +129,45 @@
     "PUBLISH_STAGE_FAILED": "视频准备失败，请重试",
     "PUBLISH_JOB_NOT_FOUND": "投稿记录不存在",
     "WORKSPACE_ROLE_REQUIRED": "只有工作空间管理员可以绑定或解绑账号",
-    "WORKSPACE_FORBIDDEN": "没有该工作空间的权限"
+    "WORKSPACE_FORBIDDEN": "没有该工作空间的权限",
+    "DESKTOP_UNAVAILABLE": "云电脑不在线或还没开通，无法操作",
+    "DESKTOP_BUSY": "云电脑正在被使用，稍后再试",
+    "BROWSER_NOT_RUNNING": "云电脑上的浏览器没有运行，先在工作台打开云电脑",
+    "PLATFORM_KIND_MISMATCH": "这个账号不是云电脑登录，无法退出"
+  },
+  "desktop": {
+    "title": "云电脑登录态",
+    "subtitle": "你在云电脑浏览器里登录过的站点会留在那台机器上直到过期。这里只读取登录是否有效，不会替你操作页面。",
+    "desktopId": "云电脑 …{{id}}",
+    "probeAll": "全部检测",
+    "reconPending": "待侦察，暂不可检测",
+    "status": {
+      "bound": "已登录",
+      "expired": "已失效",
+      "unknown": "待确认",
+      "desktop_offline": "云电脑离线",
+      "revoked": "已退出",
+      "none": "未登录",
+      "awaiting": "等待扫码…"
+    },
+    "predicted": "预计 {{date}} 需重新登录（约 {{days}} 天）",
+    "awaitingHint": "登录页已推到云电脑，请在那里扫码；登录成功后这里自动变绿。",
+    "display": {
+      "account": "店铺：{{name}}"
+    },
+    "actions": {
+      "login": "去登录",
+      "relogin": "重新登录",
+      "logout": "退出登录",
+      "viewDesktop": "查看云电脑"
+    }
+  },
+  "desktopLogout": {
+    "title": "退出这个站点的登录？",
+    "body": "会清除云电脑浏览器里「{{name}}」的登录 cookie，模型将无法再以该身份操作，需要时可再次扫码登录。"
+  },
+  "notifications": {
+    "title": "{{count}} 条未读通知",
+    "markRead": "已读"
   }
 }

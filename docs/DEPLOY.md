@@ -278,6 +278,13 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
 
 
+
+### 2026-09-08 19:10：A5 二期 P1（云电脑登录态卡组 + 定时探活）
+
+- AWS：`20260908-a5p1-9848834`（backend + frontend）。gw2：backend `20260908-a5p1-9848834`，**frontend 未动**（仍为队友钉的 `20260908-landing-8b80e28`，其提交 `8b80e28` 不在 main）。
+- 无新迁移（仍 `b8e3f5a7c9d1`）。新增内部任务 `desktop_login_probe`（6h）。
+- 两边 `docker-compose.override.yml` 的 backend 行已改到本 tag；gw2 的 frontend 行未改。
+
 ### 2026-09-08 18:20：A5 二期 P0（云电脑登录态）
 
 - 两边 backend `20260908-a5p0-f160cf7`（`main@f160cf7`），迁移 `b6d1e2f3a4b5 → b8e3f5a7c9d1`（`platform_accounts` 加 `desktop_id`、`probe_detail`）。gw2 发布前备份 `backups/pre-a5p0-20260908181953.sql.gz`。

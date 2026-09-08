@@ -232,3 +232,18 @@ status 取值扩为 bound | expired | revoked | unknown | desktop_offline
   在 gw2 容器里对 `bbdwxh_admin` 的工作空间（桌面 `ecd-glxi1nk433hliivri`，通道 ssh/up）跑 `probe_workspace(level=2, force_level2=True, lease=True)`：**1.4 秒**返回，三站自动登记为 `bound`（创作者中心昵称与抖音号、来客昵称/角色/店名、经营宝当前门店 -1），`predicted_expiry` 抖音两站 = 2026-10-08（`passport_auth_status` 到期），经营宝 = 2026-09-15（7 天不活动假设）；`desktop_events` 记到一条 `platform.probe ok 1438ms`。S2 全部经"已开标签页同源 fetch"，桌面上无任何可见动作。
 - **未做（P1/P2）**：定时任务注册、前端卡组、`desktop_login` 工具与 dev-browser 技能前置段、Fleet 抽屉分节。
 
+### 7.2 2026-09-08 P1 落地
+
+- **定时任务** `desktop_login_probe`（`platforms/desktop/tasks.py`）：每 6 小时一次；上海时间 06:00–09:00 的那一轮跑二级，其余一级；只取 `pool_state=assigned` 且 `tunnel_state=up` 的桌面；5 小时内探过的工作空间跳过；每台随机 0–20 秒抖动；桌面忙（租约 423）计 `busy` 跳过，隧道不通计 `unreachable`。
+- **授权中心"云电脑登录态"卡组**（`DesktopLoginCard.tsx` + `useDesktopLogin` 钩子）：站点目录每站一行，状态徽标（已登录 / 已失效 / 待确认 / 云电脑离线 / 已退出 / 未登录 / 等待扫码）、昵称、店名与角色、"预计 X 需重新登录（约 N 天）"、上次检测、失败原因；按钮：去登录 / 重新登录（推登录页到云电脑 + 打开桌面面板 + 每 5 秒轮询 3 分钟）、检测、退出登录（确认框，owner/admin）、全部检测、查看云电脑。小红书标"待侦察"并禁用去登录。
+- **通知条** `NotificationStrip`：拉 `GET /api/notifications?unread=true`，逐条"已读"。
+- **本地验证**（SQLite + Redis + JWT 模式，塞入三行桌面登录态与一条通知，`cloud_desktops` 隧道置 down）：深色与浅色两种主题截图正常；"重新登录"在桌面离线时提示"云电脑不在线或还没开通"；已读后通知条消失。**发现并修复**：`/api/platform-accounts/desktop/probe` 被先声明的 `/{account_id}/probe` 抢先匹配（"账号不存在"），已把桌面路由移到 id 路由之前并加了一条路由顺序单测。
+- **检查**：后端 `test_desktop_login*` 15 条 + 前端 `npm run check` 全绿（223 条含 `DesktopLoginCard.test.tsx` 2 条）。
+- **上线**：AWS 与 gw2 见 §7.3。
+
+### 7.3 2026-09-08 19:10 P1 上线
+
+- AWS：backend + frontend `20260908-a5p1-9848834`（含路由顺序修复）。
+- gw2：**只切了 backend** 到 `20260908-a5p1-9848834`；frontend 仍是队友用 override 钉的 `20260908-landing-8b80e28`，因为 `8b80e28` 不在 main 上，换成 main 构建会把他们的落地页改动冲掉。**gw2 上要看到"云电脑登录态"卡，得等落地页合进 main 再统一发前端**（或用户拍板先换）。
+- gw2 容器内确认：`desktop_login_probe` 已注册（与 `platform_token_keepalive` 并列），桌面路由排在 `/{account_id}/probe` 之前，库 `b8e3f5a7c9d1`。定时任务下一轮起会按 6 小时探活；06:00–09:00 那轮带二级。
+

@@ -41,6 +41,7 @@ class FakeSandbox:
 
 class FakeOss:
     bucket = "b"; host = "b.oss-cn-shanghai.aliyuncs.com"; endpoint = "oss-cn-shanghai.aliyuncs.com"; region = "cn-shanghai"
+    internal_host = "b.oss-cn-shanghai-internal.aliyuncs.com"
 
     def presign_put(self, key, mime, expires_sec=600, internal=False):
         return f"https://{self.host}/{key}?put"
@@ -127,6 +128,30 @@ async def test_direct_media_url_is_sampled_transcribed_analysed_and_cached(env):
     # force re-runs
     forced = await execute(VideoAnalyzeArgs(source=url, force=True), ctx)
     assert forced.metadata.get("cached") is None and _kv(forced)["job_id"] != kv["job_id"]
+
+
+async def test_own_bucket_url_is_signed_for_ffmpeg_and_cached_by_unsigned_key(env):
+    """A bare URL into the private asset bucket 403s in ffprobe; it must be presigned,
+    and the cache key must be the stable unsigned object so a re-run hits the cache."""
+    oss, calls = env
+    sb = FakeSandbox()
+    ctx, aid = await _ctx(sb)
+    key = f"assets/{ctx.user_id}/{aid}/留白装修口播15秒.mp4"
+    from urllib.parse import quote
+    url = f"https://{oss.host}/{quote(key)}"
+    result = await execute(VideoAnalyzeArgs(source=url), ctx)
+    kv = _kv(result)
+    assert kv["status"] == "completed"
+    assert any(f"{key}?get" in c and "ffprobe" in c for c in sb.commands), sb.commands[:2]
+    # no douyin Referer for our own bucket
+    assert not any("Referer:" in c for c in sb.commands)
+    # oss:// spelling and the percent-encoded https spelling resolve to the same cached job
+    again = await execute(VideoAnalyzeArgs(source=f"oss://{oss.bucket}/{key}"), ctx)
+    assert again.metadata["cached"] is True and _kv(again)["job_id"] == kv["job_id"]
+    # someone else's object in our bucket is refused, not signed
+    other = await execute(VideoAnalyzeArgs(source=f"https://{oss.host}/assets/u_other/x/hot.mp4"), ctx)
+    assert other.title == "Analysis refused" and "not your asset" in other.output
+    assert not any("u_other" in c for c in sb.commands)
 
 
 async def test_owned_asset_is_materialised_and_foreign_or_non_video_refused(env, monkeypatch):

@@ -1,4 +1,5 @@
 .env
+.env.*
 openbox.json
 .venv/
 __pycache__/

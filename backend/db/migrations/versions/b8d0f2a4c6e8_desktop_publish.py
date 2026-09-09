@@ -1,13 +1,13 @@
 """Desktop (创作者中心) publish route: job details and the per-account auto-publish breaker.
 
-Revision ID: a6c8e0f2b4d6
+Revision ID: b8d0f2a4c6e8
 Revises: f2a4c6e8b0d3
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "a6c8e0f2b4d6"
+revision = "b8d0f2a4c6e8"
 down_revision = "f2a4c6e8b0d3"
 branch_labels = None
 depends_on = None

@@ -10,10 +10,18 @@ test('concurrent requests and a relay restart reuse the same real Chrome target'
   const dir = mkdtempSync(join(tmpdir(), 'obx-relay-'));
   const targets = new Map<string, object>();
   let created = 0;
+  let holdNextList = false;
+  let releaseList: (() => void) | undefined;
   const chrome = createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/json/version') return res.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1/browser/stable' }));
-    if (req.url === '/json/list') return res.end(JSON.stringify([...targets.values()]));
+    if (req.url === '/json/list') {
+      const response = JSON.stringify([...targets.values()]);
+      if (holdNextList) {
+        holdNextList = false; releaseList = () => res.end(response); return;
+      }
+      return res.end(response);
+    }
     if (req.url?.startsWith('/json/new')) {
       const id = `target-${++created}`;
       const target = { id, type: 'page', url: 'about:blank' };
@@ -33,8 +41,8 @@ test('concurrent requests and a relay restart reuse the same real Chrome target'
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   let relay = await serveRelay({ mode: 'local', port, chromePort, stateDirectory: dir });
   const base = `http://127.0.0.1:${port}`;
-  const getPage = async () => {
-    const response = await fetch(`${base}/pages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'laike' }) });
+  const getPage = async (name = 'laike') => {
+    const response = await fetch(`${base}/pages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
     assert.equal(response.status, 200); return response.json() as Promise<{ targetId: string }>;
   };
   try {
@@ -48,6 +56,15 @@ test('concurrent requests and a relay restart reuse the same real Chrome target'
     assert.equal(created, 1);
     assert.equal((await fetch(`${base}/pages/laike`, { method: 'DELETE' })).status, 200);
     assert.equal(targets.size, 0);
+    holdNextList = true;
+    const staleList = fetch(`${base}/pages`);
+    while (!releaseList) await new Promise(resolve => setTimeout(resolve, 1));
+    const concurrent = await getPage('new-page');
+    releaseList();
+    await staleList;
+    assert.deepEqual(await (await fetch(`${base}/pages`)).json(), { pages: ['new-page'] });
+    assert.equal((await getPage('new-page')).targetId, concurrent.targetId);
+    assert.equal(created, 2);
   } finally {
     await relay.stop();
     chrome.closeAllConnections();

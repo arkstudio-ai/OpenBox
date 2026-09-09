@@ -529,8 +529,13 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     if (effectiveMode() === "local") {
       const discovery = await discoverChromeWsEndpoint();
       if (!discovery.chromeAvailable) return c.json({ error: discovery.error }, 503);
+      // Only prune mappings observed before the async list request. A page
+      // created concurrently may be absent from that older Chrome response.
+      const observed = [...localNamedPages];
       const liveIds = new Set((await chromeJsonList()).map(t => t.id));
-      for (const [name, id] of localNamedPages) if (!liveIds.has(id)) localNamedPages.delete(name);
+      for (const [name, id] of observed) {
+        if (!liveIds.has(id) && localNamedPages.get(name) === id) localNamedPages.delete(name);
+      }
       localPageState.save();
     }
     const names = effectiveMode() === "local" ? localNamedPages.keys() : namedPages.keys();

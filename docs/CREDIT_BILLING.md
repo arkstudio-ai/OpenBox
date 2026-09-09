@@ -244,3 +244,10 @@ uv run --extra test pytest tests/unit/test_alipay.py tests/unit/test_billing.py 
 真实浏览器验证：本轮开始时为 4 条订单（3 条已取消、1 条待支付）。复用用户原有标签，两次点击专业版月付订购、进入真实支付宝 0.10 元收银台、展开订单详情并返回。两次商户订单号均为 `pay_01M1TBZDGBNF3TQJX6WR2GS56F`；结束后页面与数据库仍为 4 条订单，同一待付款订单累计对应 4 个请求键。余额保持 10 积分，没有实际付款。真实弹窗截图保存在 `/tmp/openbox-billing-verification/checkout-progress-live.png`，收银台订单详情保存在 `/tmp/openbox-billing-verification/reused-order-cashier-live.png`。
 
 验证通过：205 项前端单元测试、语言/类型/代码检查、生产构建；5 项隔离 PostgreSQL 集成测试（包含 12 个不同请求键并发只产生一笔订单）；15 项账单浏览器模拟测试分批通过。新增浏览器用例覆盖慢响应期间连续点击、页面离开前仍显示弹窗、退出收银台后再次订购、错误恢复和重试请求键、继续支付及充值入口。浏览器夹具与真实商户验证分别记录，模拟测试不执行真实付款。
+
+## 2026-09-09 媒体计费第一条：视频云端合成（video_compose）
+
+`rates.json` 新增 `media` 段（IMS 云剪辑官方价，按输出分钟、按短边定档、不足 1 分钟按 1 分钟、失败不计费）。
+`billing/media.py`：`quote_compose` 提交前报价；`precheck_compose` 在 enforce 下校验会话 workspace 余额；
+`settle_compose` 在 IMS 成功后按实际时长写一条 `usage_events`（kind=`video_compose`，幂等键 `compose:<job_id>`），
+enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写仍未落账。详见 `docs/VIDEO_RENDER_ENGINE_SELECTION.md` §5.5。

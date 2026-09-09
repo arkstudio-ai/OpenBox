@@ -24,6 +24,7 @@ DOOM_LOOP_THRESHOLD = 3
 _REPEATABLE_POLL_ACTIONS = {
     "video_generate": frozenset({"wait", "status"}),
     "video_transcribe": frozenset({"wait", "status"}),
+    "video_compose": frozenset({"wait", "status"}),
 }
 
 

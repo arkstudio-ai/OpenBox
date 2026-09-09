@@ -64,6 +64,12 @@ async def sweep_if_due() -> None:
         return
     _last_sweep_at_ms = now_ms
     await sweep()
+    try:
+        from video.compose_recovery import sweep as compose_sweep
+
+        await compose_sweep()
+    except Exception as exc:  # never let the composition sweep block segment recovery
+        log.warning(f"compose recovery sweep failed: {type(exc).__name__}")
 
 
 async def sweep() -> int:

@@ -210,6 +210,25 @@
     // }
   },
 
+  // Cloud composition of an OpenBox timeline on Aliyun IMS (video_compose tool;
+  // docs/VIDEO_RENDER_ENGINE_SELECTION.md). Reads shots from and writes the MP4
+  // to the OSS asset bucket — the same OSS_BUCKET / OSS_REGION from the env
+  // file — so nothing leaves the account. Credentials are the Alibaba Cloud
+  // access key the OSS transfer already uses (ALIBABA_CLOUD_ACCESS_KEY_ID /
+  // _SECRET, or the aliyun CLI profile). One-off per account: activate IMS in
+  // the console and grant it the OSS service role, otherwise every call is 403.
+  "video_compose": {
+    "provider": "ims",
+    // Empty = the bucket's region. Keep them equal; cross-region reads fail.
+    "region": "",
+    // Empty = ice.{region}.aliyuncs.com
+    "endpoint": "",
+    "bitrate_kbps": 2500,
+    "poll_interval_seconds": 5,
+    // Per-user daily ceiling on composition submits (0 = off). Back-pressure, not approval.
+    "daily_job_limit": 100
+  },
+
   // Context compaction settings
   "compaction": {
     "auto": true,

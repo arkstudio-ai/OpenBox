@@ -64,6 +64,7 @@ def register_builtin_tools() -> None:
     from tool.creator_context import creator_context_tool
     from tool.capability_search import capability_search_tool
     from tool.video_production import video_generate_tool, video_transcribe_tool
+    from tool.video_compose import video_compose_tool
     from tool.douyin_publish import douyin_publish_tool
     from tool.desktop_login import desktop_login_tool
 
@@ -73,7 +74,7 @@ def register_builtin_tools() -> None:
         todo_write_tool, todo_read_tool, plan_enter_tool, plan_exit_tool,
         skill_tool, skill_search_tool, web_fetch_tool, web_search_tool, invalid_tool,
         multiedit_tool, cron_tool, view_image_tool, share_file_tool, image_gen_tool,
-        video_generate_tool, video_transcribe_tool,
+        video_generate_tool, video_transcribe_tool, video_compose_tool,
         computer_tool, browser_mode_tool, skill_manage_tool,
         creator_context_tool, capability_search_tool, douyin_publish_tool, desktop_login_tool,
     ]:

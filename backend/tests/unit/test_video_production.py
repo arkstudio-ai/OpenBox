@@ -1287,6 +1287,9 @@ def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
         "question",
         "video_generate",
         "video_transcribe",
+        # 2026-09-09: cloud composition (IMS) for cuts that need effects; the
+        # ffmpeg path in the sandbox stays for plain concat + burnt captions.
+        "video_compose",
         "image_gen",
         "creator_context",
         "share_file",

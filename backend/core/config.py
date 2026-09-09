@@ -309,6 +309,28 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class VideoComposeConfig(BaseModel):
+    """Cloud composition of an OpenBox timeline (docs/VIDEO_RENDER_ENGINE_SELECTION.md).
+
+    The renderer is Aliyun IMS; assets are read from and the MP4 is written to
+    the configured OSS asset bucket, so nothing leaves the account. IMS must be
+    activated and authorised for OSS in the console once per account.
+    """
+
+    provider: str = "ims"
+    #: IMS region. Empty = the OSS bucket's region, which is the only choice
+    #: that keeps reads and writes inside one region.
+    region: str = ""
+    #: Override the API endpoint; default ``ice.{region}.aliyuncs.com``.
+    endpoint: str = ""
+    bitrate_kbps: int = Field(default=2500, ge=500, le=20_000)
+    poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    #: Per-user daily ceiling on composition submits. Back-pressure, not an
+    #: approval: composition is billed per output minute, cheaply, but a loop
+    #: that resubmits forever still needs a stop.
+    daily_job_limit: int = Field(default=100, ge=0, le=10_000)
+
+
 # ---------------------------------------------------------------------------
 # Unified root config
 # ---------------------------------------------------------------------------
@@ -537,6 +559,7 @@ class OpenBoxConfig(BaseModel):
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
+    video_compose: VideoComposeConfig = VideoComposeConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

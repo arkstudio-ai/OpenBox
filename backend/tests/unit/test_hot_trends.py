@@ -174,6 +174,29 @@ async def test_auto_falls_back_to_public_when_douhot_is_not_bound(world, monkeyp
     assert "不支持按类目" in refused.output
 
 
+async def test_workspace_without_douhot_still_reads_todays_shared_douhot_snapshot(world, monkeypatch):
+    fixed = "2026-09-10-" + uuid.uuid4().hex[:6]
+    monkeypatch.setattr(ts, "day_key", lambda when=None: fixed)
+    bound = _ctx()
+    a = await execute(HotTrendsArgs(), bound)  # bound workspace collects 热点宝 total board
+    assert a.metadata["source"] == "douhot" and a.metadata["cached"] is False
+    world["sites"] = {"douyin_hot": "none"}
+    other = _ctx()
+    # auto from an unbound workspace: today's 热点宝 snapshot is shared, no desktop driven, nothing billed
+    b = await execute(HotTrendsArgs(), other)
+    assert b.metadata["source"] == "douhot" and b.metadata["cached"] is True and b.metadata["snapshot_id"] == a.metadata["snapshot_id"]
+    assert len(world["runs"]) == 1
+    # explicit douhot read also works from cache; a board nobody collected is refused with the authorisation hint
+    c = await execute(HotTrendsArgs(source="douhot"), other)
+    assert c.metadata["cached"] is True
+    d = await execute(HotTrendsArgs(source="douhot", board="video_like"), other)
+    assert d.metadata.get("refused") and "授权中心" in d.output and len(world["runs"]) == 1
+    # refresh from the unbound workspace cannot drive 热点宝: auto falls through to its own public collection
+    world["value"] = PUBLIC
+    e = await execute(HotTrendsArgs(refresh=True), other)
+    assert e.metadata["source"] == "douyin_public" and e.metadata["cached"] is False and len(world["runs"]) == 2
+
+
 async def test_failure_is_visible_stored_and_not_retried_inside_the_interval(world, monkeypatch):
     fixed = "2026-09-10-" + uuid.uuid4().hex[:6]
     monkeypatch.setattr(ts, "day_key", lambda when=None: fixed)

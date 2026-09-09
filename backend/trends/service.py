@@ -184,19 +184,59 @@ async def run_page(caller: Caller, *, url: str, expression: str, wait_resource: 
 
 
 # ── collection ─────────────────────────────────────────────────────────────
+def _applicable(source: HotSource, board: str | None, window_hours: int | None, category: str | None):
+    """(board, window) for this source, or None when the request cannot mean this source."""
+    try:
+        brd = source.board(board) if board else source.default_board()
+    except KeyError:
+        return None
+    window = window_hours if window_hours is not None else source.default_window()
+    if window not in source.windows_hours:
+        return None
+    if category and not source.supports_category:
+        return None
+    return brd, window
+
+
+async def _fresh_snapshot(key: str, cache_hours: int) -> HotTrendSnapshot | None:
+    row = await _get_snapshot(key)
+    if row is not None and row.status == "ok" and _now() - _aware(row.fetched_at) <= timedelta(hours=cache_hours):
+        return row
+    return None
+
+
 async def get_trends(caller: Caller, *, source_key: str = "auto", board: str | None = None, window_hours: int | None = None,
                      category: str | None = None, limit: int = 20, refresh: bool = False) -> TrendResult:
     from core.config import get_config
 
     cfg = get_config().hot_trends
+    candidates = [get_source(source_key)] if source_key != "auto" else [get_source(k) for k in AUTO_ORDER]
+    day = day_key()
+    # Shared cache first: a board someone already collected today is everyone's,
+    # whether or not this workspace could have collected it itself (plan §7 A3).
+    if not refresh:
+        for source in candidates:
+            fit = _applicable(source, board, window_hours, category)
+            if fit is None:
+                continue
+            brd, window = fit
+            row = await _fresh_snapshot(cache_key(source.key, brd.key, window, category, day), cfg.cache_hours)
+            if row is not None:
+                return _result(row, cached=True, limit=limit)
+    # Live collection needs entitlement: the first candidate this workspace may drive.
     source = await pick_source(caller.workspace_id, source_key)
-    brd = source.board(board) if board else source.default_board()
-    window = window_hours if window_hours is not None else source.default_window()
-    if window not in source.windows_hours:
-        raise TrendsRefusal(f"{source.label} 支持的时间窗（小时）：{', '.join(map(str, source.windows_hours))}")
-    if category and not source.supports_category:
+    fit = _applicable(source, board, window_hours, category)
+    if fit is None:
+        try:
+            brd = source.board(board) if board else source.default_board()
+        except KeyError:
+            raise TrendsRefusal(f"{source.label} 没有榜单 {board!r}；可选：{', '.join(b.key for b in source.boards)}")
+        window = window_hours if window_hours is not None else source.default_window()
+        if window not in source.windows_hours:
+            raise TrendsRefusal(f"{source.label} 支持的时间窗（小时）：{', '.join(map(str, source.windows_hours))}")
         raise TrendsRefusal(f"{source.label} 不支持按类目筛选；去掉 category 或改用 source=douhot。")
-    key = cache_key(source.key, brd.key, window, category, day_key())
+    brd, window = fit
+    key = cache_key(source.key, brd.key, window, category, day)
 
     async def _serve_cached() -> TrendResult | None:
         row = await _get_snapshot(key)

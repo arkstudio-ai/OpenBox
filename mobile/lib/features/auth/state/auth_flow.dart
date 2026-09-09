@@ -67,6 +67,9 @@ class AuthFlow {
   Future<void> _completeAuth(Map<String, dynamic> tokenResponse) async {
     final token = asString(tokenResponse['access_token']) ?? '';
     final user = AuthUser.fromJson(asMap(tokenResponse['user']));
+    if (token.trim().isEmpty || user.id.trim().isEmpty) {
+      throw const FormatException('Incomplete authentication response');
+    }
     _ref.read(authProvider.notifier).setAuth(token, user);
     try {
       final prefs = await _ref

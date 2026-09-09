@@ -3,6 +3,19 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('browser callback keeps isolated affinities without a separate auth task', () {
+    final manifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    final callback = RegExp(
+      r'<activity\s+android:name="\.AuthCallbackActivity"[^>]*>',
+    ).firstMatch(manifest)?.group(0);
+    expect(callback, isNotNull);
+    expect(callback, contains('android:launchMode="singleTop"'));
+    expect(callback, contains('android:taskAffinity=""'));
+    expect(manifest, isNot(contains('android:launchMode="singleTask"')));
+  });
+
   test('Logto callback has exactly one Android activity handler', () {
     final manifest = File(
       'android/app/src/main/AndroidManifest.xml',
@@ -23,7 +36,7 @@ void main() {
     expect(callbackHandlers, hasLength(1));
     expect(
       callbackHandlers.single,
-      contains('com.linusu.flutter_web_auth_2.CallbackActivity'),
+      contains('.AuthCallbackActivity'),
     );
     // Android ignores path/pathPrefix when an intent filter has no host. Such
     // a filter would therefore also match ://callback and recreate the chooser.

@@ -37,6 +37,7 @@ class _SsoGateState extends ConsumerState<SsoGate> {
   bool _failed = false;
 
   Future<void> _start(LogtoSso sso) async {
+    if (_busy) return;
     setState(() => _busy = true);
     try {
       await ref

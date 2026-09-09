@@ -36,16 +36,17 @@
                 <data android:scheme="https" android:host="ai.bossipai.com.cn" android:pathPrefix="/invite/"/>
             </intent-filter>
         </activity>
-        <!-- Where the sign-in browser returns: flutter_web_auth_2 (used by
-             the Logto SDK) catches the redirect scheme here and hands the
-             result back to the Dart side. The scheme must match
+        <!-- Where the sign-in browser returns: our task-aware callback hands
+             the URI to flutter_web_auth_2 (used by the Logto SDK) and returns
+             to the original Flutter task. The SDK validates PKCE/state and
+             exchanges the code on the Dart side. The scheme must match
              Env.ssoRedirectUri and the Logto native application. Keep this
              as the only handler for com.bossip.bipmobile://callback: invite
              links use the verified HTTPS route above. A custom-scheme invite
              filter with no host would ignore pathPrefix on Android and also
              match this callback, producing a two-item app chooser. -->
         <activity
-            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:name=".AuthCallbackActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity="">

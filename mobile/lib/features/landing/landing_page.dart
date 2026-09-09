@@ -28,18 +28,21 @@ class LandingPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final features = i18n.tList('landing:features');
+    final features = i18n.tList('landing:capabilities.items');
     return Scaffold(
       backgroundColor: t.bg,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: 8,
               children: [
                 const BrandMark(dot: true),
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     const LangPill(),
                     const SizedBox(width: 10),
@@ -47,8 +50,7 @@ class LandingPage extends ConsumerWidget {
                       onPressed: () => _start(context, ref),
                       child: Text(
                         i18n.t('landing:signIn'),
-                        style:
-                            TextStyle(fontSize: FontSizes.sm, color: t.ink),
+                        style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
                       ),
                     ),
                   ],
@@ -64,14 +66,14 @@ class LandingPage extends ConsumerWidget {
                 color: t.card,
               ),
               child: Text(
-                i18n.t('landing:badge'),
+                i18n.t('landing:hero.eyebrow'),
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: FontSizes.xs, color: t.n700),
               ),
             ),
             const SizedBox(height: 20),
             Text(
-              i18n.t('landing:heroTitle'),
+              i18n.t('landing:hero.title'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: FontSizes.hero,
@@ -83,10 +85,13 @@ class LandingPage extends ConsumerWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              i18n.t('landing:heroBody'),
+              i18n.t('landing:hero.lede'),
               textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontSize: FontSizes.base, height: 1.7, color: t.n700),
+              style: TextStyle(
+                fontSize: FontSizes.base,
+                height: 1.7,
+                color: t.n700,
+              ),
             ),
             const SizedBox(height: 24),
             SizedBox(
@@ -101,16 +106,18 @@ class LandingPage extends ConsumerWidget {
                   ),
                 ),
                 child: Text(
-                  i18n.t('landing:ctaPrimary'),
+                  i18n.t('landing:hero.primary'),
                   style: const TextStyle(
-                      fontSize: FontSizes.base, fontWeight: FontWeight.w500),
+                    fontSize: FontSizes.base,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 10),
             Center(
               child: Text(
-                i18n.t('landing:ctaNote'),
+                i18n.t('landing:band'),
                 style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
               ),
             ),
@@ -140,9 +147,10 @@ class LandingPage extends ConsumerWidget {
                       Text(
                         feature['body'] as String? ?? '',
                         style: TextStyle(
-                            fontSize: FontSizes.sm,
-                            height: 1.6,
-                            color: t.n600),
+                          fontSize: FontSizes.sm,
+                          height: 1.6,
+                          color: t.n600,
+                        ),
                       ),
                     ],
                   ),

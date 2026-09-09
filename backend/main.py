@@ -152,10 +152,17 @@ async def lifespan(app: FastAPI):
 
     from sandbox.desktop_activation import desktop_activation_service
     desktop_activation_service.start()
+    from question.continuation import question_worker
+    from question.legacy import reconcile_legacy_questions
+    legacy_questions = await reconcile_legacy_questions()
+    if legacy_questions:
+        log.info("Closed %s legacy questions requiring fresh confirmation", legacy_questions)
+    question_worker.start()
 
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await question_worker.stop()
     await desktop_activation_service.stop()
 
     if config.sandbox_provider == "wuying" and config.wuying_mode == "per_user":
@@ -184,23 +191,8 @@ async def lifespan(app: FastAPI):
             if remaining:
                 log.warning(f"{len(remaining)} session(s) still active after 30s timeout")
 
-    # Mark lingering BUSY sessions as ERROR (multi-user mode)
-    if config.jwt_secret:
-        try:
-            from db.base import _engine
-            if _engine is not None:
-                from db.base import get_db_session
-                from db.models.session import Session as SessionModel
-                from sqlalchemy import update
-                async with get_db_session() as db:
-                    await db.execute(
-                        update(SessionModel)
-                        .where(SessionModel.status.in_(("busy", "compacting")))
-                        .values(status="error")
-                    )
-                log.info("Marked lingering active sessions as ERROR")
-        except Exception as e:
-            log.warning(f"Could not mark BUSY sessions as ERROR: {e}")
+    # Execution leases recover interrupted runs. Never mark every busy
+    # session as failed here: other workers may still be executing them.
 
     # Close Redis event bus
     try:

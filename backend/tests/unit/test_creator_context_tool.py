@@ -79,8 +79,10 @@ async def test_get_user_context_empty_and_populated(monkeypatch):
 async def test_proposal_confirmed(monkeypatch):
     ctx = await _make_ctx()
 
-    async def approve(session_id, questions, tool=None, user_id="default"):
+    async def approve(session_id, questions, tool=None, user_id="default", *, continuation=None):
         assert questions[0].detail["kind"] == "memory_proposal"
+        assert continuation["kind"] == "memory_proposal"
+        assert continuation["memory_id"] == questions[0].detail["memory_id"]
         return [["记住"]]
 
     monkeypatch.setattr("tool.creator_context.question_mod.ask", approve)
@@ -97,7 +99,7 @@ async def test_proposal_confirmed(monkeypatch):
 async def test_proposal_rejected(monkeypatch):
     ctx = await _make_ctx()
 
-    async def reject(session_id, questions, tool=None, user_id="default"):
+    async def reject(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["不用记"]]
 
     monkeypatch.setattr("tool.creator_context.question_mod.ask", reject)
@@ -112,7 +114,7 @@ async def test_proposal_rejected(monkeypatch):
 async def test_proposal_custom_text_confirms_with_edit(monkeypatch):
     ctx = await _make_ctx()
 
-    async def custom(session_id, questions, tool=None, user_id="default"):
+    async def custom(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["其实是主营和田玉"]]
 
     monkeypatch.setattr("tool.creator_context.question_mod.ask", custom)
@@ -128,7 +130,7 @@ async def test_proposal_custom_text_confirms_with_edit(monkeypatch):
 async def test_proposal_dismissed_stays_pending_and_out_of_context(monkeypatch):
     ctx = await _make_ctx()
 
-    async def dismiss(session_id, questions, tool=None, user_id="default"):
+    async def dismiss(session_id, questions, tool=None, user_id="default", *, continuation=None):
         raise QuestionRejectedError("dismissed")
 
     monkeypatch.setattr("tool.creator_context.question_mod.ask", dismiss)

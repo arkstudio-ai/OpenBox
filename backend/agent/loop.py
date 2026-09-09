@@ -307,7 +307,7 @@ async def _upsert_plan_part(
     log.info(f"[PlanPart] Created PlanPart for message {message_id[:12]}")
 
 
-async def run_loop(session_id: str, user_id: str = "default") -> MessageWithParts | None:
+async def run_loop(session_id: str, user_id: str = "default", *, expected_generation: int | None = None) -> MessageWithParts | None:
     """Run the agent loop for a session.
 
     This is the core orchestration function. It:
@@ -323,7 +323,16 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         log.error(f"Session {session_id} not found")
         return None
 
+    from question import runtime as question_runtime
+    ticket = await question_runtime.start_run(session_id, user_id, expected_generation=expected_generation)
+    if ticket is None:
+        return None
+    run_context = question_runtime.current_run.set(ticket)
     abort = register_run(session_id)
+    lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
+    failed = False
+    interrupted = False
+    run_message_ids: set[str] = set()
 
     try:
         # F2: Load persisted permission rules (once per user)
@@ -381,12 +390,14 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             except Exception as e:
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
-        run_id = uuid.uuid4().hex
+        run_id = ticket.run_id
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
         last_step_info = None  # Persists an explicit aborted boundary between steps.
 
         while True:
+            if not await question_runtime.still_current(ticket):
+                abort.set()
             if abort.is_set():
                 log.info(f"Session {session_id} aborted")
                 if last_step_info and last_step_info.finish in (None, "unknown", "tool_calls", "tool-calls"):
@@ -1071,6 +1082,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 user_id=user_id,
             )
             last_step_info = assistant_info
+            run_message_ids.add(assistant_info.id)
 
             # Step start with snapshot
             start_snapshot = await snapshot.track(session_id, sandbox) if sandbox is not None else None
@@ -1105,6 +1117,9 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             if user_variant is None:
                 user_variant = getattr(session, "variant", None)
 
+            if not await question_runtime.still_current(ticket, progress=True):
+                abort.set()
+                break
             result = await process_step(
                 session_id=session_id,
                 user_id=user_id,
@@ -1168,6 +1183,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                 break
 
             if result.outcome is StepOutcome.ERROR:
+                failed = True
                 break
 
             # The structured answer arrived — the run is done, whatever the
@@ -1275,7 +1291,7 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
                     created_at=id_to_iso(assistant_info.id),
                 )
                 break
-            elif finish_reason == "aborted":
+            elif finish_reason in {"aborted", "waiting_input"}:
                 break
             elif finish_reason == "compact":
                 finish_reason_prev = "compact"
@@ -1310,6 +1326,9 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             try:
                 final_msgs = await get_messages(session_id, user_id=user_id)
                 for msg in final_msgs:
+                    msg_id = msg.get("id") if isinstance(msg, dict) else getattr(msg, "id", None)
+                    if msg_id not in run_message_ids:
+                        continue
                     role = msg.role if isinstance(msg.role, str) else msg.role.value
                     if role != "assistant":
                         continue
@@ -1350,12 +1369,17 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
             except Exception as prune_err:
                 log.warning(f"Tool prune error: {prune_err}")
 
-        task = asyncio.create_task(_post_loop_cleanup())
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+        # Finish cleanup before releasing this execution slot. A background
+        # cleanup could otherwise settle the next resumed run's todo state.
+        if await question_runtime.still_current(ticket):
+            await _post_loop_cleanup()
         return last_assistant_msg
 
+    except asyncio.CancelledError:
+        interrupted = True
+        raise
     except Exception as e:
+        failed = True
         log.error(f"Agent loop error for session {session_id}: {e}")
         bus.publish(SESSION_ERROR, {
             "userId": user_id,
@@ -1365,7 +1389,15 @@ async def run_loop(session_id: str, user_id: str = "default") -> MessageWithPart
         await set_session_status(session_id, SessionStatus.ERROR, user_id=user_id)
         return None
     finally:
-        clear_abort(session_id, abort)
+        try:
+            lease_task.cancel()
+            await asyncio.gather(lease_task, return_exceptions=True)
+            await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted)
+        except LookupError:
+            pass  # The owner deleted this session while its run was stopping.
+        finally:
+            question_runtime.current_run.reset(run_context)
+            clear_abort(session_id, abort)
 
 
 async def _build_system_prompt(

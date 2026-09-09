@@ -66,8 +66,9 @@ function mapParts(
 const TOOL_STATUS_RANK: Record<ToolStatus, number> = {
   pending: 0,
   running: 1,
-  completed: 2,
-  error: 2,
+  waiting_input: 2,
+  completed: 3,
+  error: 3,
 }
 
 /** Reconcile one live part with a durable snapshot.

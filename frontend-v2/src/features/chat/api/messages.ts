@@ -3,6 +3,7 @@ import { useAuthStore } from "@/shared/api/auth-store"
 import { http } from "@/shared/api/http"
 import type { MessageWithParts, Session } from "@/shared/types/api"
 import { chatKeys } from "./keys"
+import { usePendingStore } from "../stores/pending"
 
 export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
@@ -64,8 +65,17 @@ export function useSendMessage(sessionId: string) {
 }
 
 export function useAbortSession(sessionId: string) {
+  const qc = useQueryClient()
+  const userId = useUserId()
   return useMutation({
     mutationFn: () => http.post<{ ok: boolean }>(`/api/agent/session/${sessionId}/abort`),
+    onMutate: () => (usePendingStore.getState().questions.get(sessionId) ?? []).map((q) => q.id),
+    onSuccess: (_result, _vars, oldQuestions) => {
+      for (const id of oldQuestions ?? []) usePendingStore.getState().removeQuestion(id)
+      void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })
+      void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+      void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
+    },
   })
 }
 

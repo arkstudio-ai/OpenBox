@@ -3,7 +3,16 @@ import 'token_usage.dart';
 
 /// Mirrors backend `Session.model_dump()` / TS `Session`
 /// (frontend-v2 `shared/types/api.ts:17-31`).
-enum SessionStatus { idle, busy, retry, error, compacting, finalizing }
+enum SessionStatus {
+  idle,
+  busy,
+  retry,
+  error,
+  compacting,
+  finalizing,
+  waitingInput,
+  queued,
+}
 
 SessionStatus sessionStatusFrom(String? value) => switch (value) {
   'busy' => SessionStatus.busy,
@@ -11,6 +20,8 @@ SessionStatus sessionStatusFrom(String? value) => switch (value) {
   'error' => SessionStatus.error,
   'compacting' => SessionStatus.compacting,
   'finalizing' => SessionStatus.finalizing,
+  'waiting_input' => SessionStatus.waitingInput,
+  'queued' => SessionStatus.queued,
   _ => SessionStatus.idle,
 };
 

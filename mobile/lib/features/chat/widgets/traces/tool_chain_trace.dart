@@ -16,11 +16,7 @@ import 'trace_shell.dart';
 /// per-call dot (danger=failed, accent pulse=running, n500=done), kind label
 /// + detail, tap to expand request/response.
 class ToolChainTrace extends ConsumerWidget {
-  const ToolChainTrace({
-    super.key,
-    required this.turn,
-    required this.active,
-  });
+  const ToolChainTrace({super.key, required this.turn, required this.active});
 
   final AssistantTurnData turn;
 
@@ -30,9 +26,11 @@ class ToolChainTrace extends ConsumerWidget {
 
   /// The call in flight, else the last one that finished.
   MessagePart? get _current {
-    final running = turn.toolChain.where((p) =>
-        p is ToolPart &&
-        (p.status == ToolStatus.running || p.status == ToolStatus.pending));
+    final running = turn.toolChain.where(
+      (p) =>
+          p is ToolPart &&
+          (p.status == ToolStatus.running || p.status == ToolStatus.pending),
+    );
     if (running.isNotEmpty) return running.last;
     return turn.toolChain.isEmpty ? null : turn.toolChain.last;
   }
@@ -48,8 +46,7 @@ class ToolChainTrace extends ConsumerWidget {
         return '${i18n.t('chat:kind.task')} ${current.description}';
       }
     }
-    return i18n.t('chat:trace.tool.summaryCount',
-        count: turn.toolChain.length);
+    return i18n.t('chat:trace.tool.summaryCount', count: turn.toolChain.length);
   }
 
   @override
@@ -96,30 +93,30 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
 
     final (label, detail, status) = switch (part) {
       ToolPart() => (
-          i18n.t('chat:kind.${toolKindKey(part.tool)}'),
-          toolDetail(part),
-          part.status,
-        ),
+        i18n.t('chat:kind.${toolKindKey(part.tool)}'),
+        toolDetail(part),
+        part.status,
+      ),
       SubtaskPart() => (
-          i18n.t('chat:kind.task'),
-          part.description,
-          part.status == 'error' ? ToolStatus.error : ToolStatus.completed,
-        ),
+        i18n.t('chat:kind.task'),
+        part.description,
+        part.status == 'error' ? ToolStatus.error : ToolStatus.completed,
+      ),
       _ => ('', '', ToolStatus.completed),
     };
 
     final dot = switch (status) {
       ToolStatus.error => Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(color: t.danger, shape: BoxShape.circle),
-        ),
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(color: t.danger, shape: BoxShape.circle),
+      ),
       ToolStatus.running || ToolStatus.pending => PulseDot(color: t.a700),
-      ToolStatus.completed => Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(color: t.n500, shape: BoxShape.circle),
-        ),
+      ToolStatus.completed || ToolStatus.waitingInput => Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(color: t.n500, shape: BoxShape.circle),
+      ),
     };
 
     return InkWell(
@@ -173,7 +170,9 @@ class _ToolRowState extends ConsumerState<_ToolRow> {
                         Text(
                           i18n.t('chat:toolStatus.failed'),
                           style: TextStyle(
-                              fontSize: FontSizes.xs, color: t.danger),
+                            fontSize: FontSizes.xs,
+                            color: t.danger,
+                          ),
                         ),
                     ],
                   ),

@@ -331,10 +331,18 @@ async def delete_session(
                 return False
             if workspace_id and row.workspace_id != workspace_id:
                 return False
+            from question import runtime
+            execution = await runtime.execution_locked(db, session_id, user_id)
+            invalidated_questions = await runtime.invalidate_locked(db, execution, "cancelled")
+            execution.run_id = None
+            execution.lease_until = None
             await clear_internal_session_locked(db, row)
             row.is_deleted = True
             row.deleted_at = now
             row.updated_at = now
+    runtime.publish_invalidated(invalidated_questions)
+    from session.status import trigger_abort
+    trigger_abort(session_id)
     # Cascade: cron jobs are project-scoped and outlive conversations. The
     # deleted session merely stops being their notify target.
     try:
@@ -390,6 +398,16 @@ async def update_session(session_id: str, user_id: str = "default", **kwargs) ->
 
 async def set_session_status(session_id: str, status: SessionStatus, user_id: str = "default") -> None:
     """Update session status and broadcast SSE event."""
+    from question import runtime
+    ticket = runtime.current_run.get()
+    if ticket and ticket.session_id == session_id:
+        async with runtime.transaction(session_id, user_id) as (db, session, execution):
+            if not runtime.owns(execution, ticket):
+                return
+            value = await runtime.waiting_status(db, execution) if status == SessionStatus.IDLE else status.value
+            session.status = value
+        runtime.publish_status(session_id, user_id, value)
+        return
     await update_session(session_id, user_id=user_id, status=status)
     bus.publish(SESSION_STATUS, {
         "userId": user_id,
@@ -511,7 +529,11 @@ async def create_user_message(
         synthetic=synthetic,
     )
 
-    async with get_db_session() as db:
+    from question import runtime
+    invalidated_questions = []
+    async with runtime.transaction(session_id, user_id) as (db, _, execution):
+        if not synthetic:
+            invalidated_questions = await runtime.invalidate_locked(db, execution)
         msg_row = MessageORM(
             id=msg_id,
             session_id=session_id,
@@ -537,6 +559,10 @@ async def create_user_message(
         )
         db.add(part_row)
 
+    if not synthetic:
+        from session.status import discard_pending_abort
+        discard_pending_abort(session_id)
+    runtime.publish_invalidated(invalidated_questions)
     from bus.events import MESSAGE_CREATED
     from models.message import id_to_iso
     msg = MessageWithParts(
@@ -820,6 +846,7 @@ async def delete_messages_from(
     )
 
     doomed: list[str] = []
+    invalidated_questions = []
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
@@ -847,6 +874,9 @@ async def delete_messages_from(
             )).scalars().all())
 
             if doomed:
+                from question import runtime
+                execution = await runtime.execution_locked(db, session_id, user_id)
+                invalidated_questions = await runtime.invalidate_locked(db, execution)
                 # Lock order is session -> private event -> public part/message.
                 await delete_internal_parts_for_messages_locked(db, session_row, doomed)
                 await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
@@ -861,6 +891,8 @@ async def delete_messages_from(
             )
             last_user = survivor.scalar_one_or_none()
 
+    from question.runtime import publish_invalidated
+    publish_invalidated(invalidated_questions)
     log.info(f"Regenerate: dropped {len(doomed)} message(s) from {message_id} in {session_id}")
     return last_user
 

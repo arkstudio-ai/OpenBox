@@ -286,6 +286,15 @@ def get_engine() -> AsyncEngine:
 # small, explicit list beside the engine avoids reporting a healthy service
 # whose first session query will fail with UndefinedColumnError.
 _READINESS_SCHEMA: dict[str, frozenset[str]] = {
+    "session_executions": frozenset({
+        "session_id", "user_id", "generation", "run_id", "run_generation", "lease_until",
+        "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at",
+    }),
+    "question_checkpoints": frozenset({
+        "id", "session_id", "user_id", "generation", "message_id", "part_id", "status",
+        "questions", "answers", "draft", "draft_revision", "continuation", "applied",
+        "created_at", "updated_at", "expires_at",
+    }),
     "desktop_activations": frozenset({
         "workspace_id", "request_id", "user_id", "state", "step", "attempts", "error",
         "next_run_at", "lease_owner", "lease_until", "purchase_kind", "purchase_started_at",

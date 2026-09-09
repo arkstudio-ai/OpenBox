@@ -7,6 +7,7 @@ import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/message.dart';
+import '../../shared/models/session.dart';
 import '../../shared/router/paths.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
@@ -42,7 +43,8 @@ class ChatScreen extends ConsumerWidget {
     final pending = ref.watch(pendingProvider);
     final messages = stream.messagesOf(sessionId);
     final liveStatus = stream.statusOf(sessionId);
-    final busy = isBusyStatus(liveStatus ?? sessionState.session?.status);
+    final status = liveStatus ?? sessionState.session?.status;
+    final busy = isBusyStatus(status);
     final retry = stream.retryOf(sessionId);
     final runError = stream.runErrorOf(sessionId);
     final currentUserId = ref.watch(authProvider).user?.id;
@@ -121,6 +123,34 @@ class ChatScreen extends ConsumerWidget {
       // could not be scrolled at all while the run waited.
       for (final question in questions)
         QuestionDock(key: ValueKey(question.id), request: question),
+      if (!readOnly &&
+          (status == SessionStatus.waitingInput ||
+              status == SessionStatus.queued))
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Wrap(
+            spacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                ref
+                    .watch(i18nProvider)
+                    .t(
+                      status == SessionStatus.waitingInput
+                          ? 'chat:question.agentWaiting'
+                          : 'chat:question.queued',
+                    ),
+              ),
+              TextButton(
+                onPressed: () =>
+                    ref.read(chatSessionProvider(sessionId).notifier).stop(),
+                child: Text(
+                  ref.watch(i18nProvider).t('chat:question.cancelWaiting'),
+                ),
+              ),
+            ],
+          ),
+        ),
     ];
 
     return Column(

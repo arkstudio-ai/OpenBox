@@ -3,7 +3,7 @@ import { useParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
-import type { MessageWithParts, PermissionRequest, QuestionRequest } from "@/shared/types/api"
+import type { MessageWithParts, PermissionRequest, QuestionRequest, SessionStatus } from "@/shared/types/api"
 import {
   ChatFlow,
   Composer,
@@ -42,6 +42,17 @@ export function ComposerAccess({ readOnly, children }: { readOnly: boolean; chil
   return (
     <div className="border-t border-hair px-5 py-3 text-center text-sm text-n600">
       {t("readOnlySession")}
+    </div>
+  )
+}
+
+function WaitingForInput({ status, onCancel }: { status?: SessionStatus; onCancel: () => void }) {
+  const { t } = useTranslation("chat")
+  if (status !== "waiting_input" && status !== "queued") return null
+  return (
+    <div className="text-n600 mx-auto flex w-full max-w-190 items-center justify-between px-4 py-2 text-xs" role="status">
+      <span>{t(status === "waiting_input" ? "question.agentWaiting" : "question.queued")}</span>
+      <button type="button" className="underline" onClick={onCancel}>{t("question.cancelWaiting")}</button>
     </div>
   )
 }
@@ -96,8 +107,7 @@ export default function ChatRoute() {
   const send = useSendChat(sessionId)
   const abort = useAbortSession(sessionId)
   const stop = () => {
-    abort.mutate()
-    useStreamStore.getState().setStatus(sessionId, "idle")
+    if (!abort.isPending) abort.mutate(undefined, { onError: (error) => toast("error", errorMessage(error)) })
   }
 
   // Which agent this conversation answers as. The session record is the
@@ -161,6 +171,7 @@ export default function ChatRoute() {
       )}
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}
+      <WaitingForInput status={recoveredStatus} onCancel={stop} />
       {runError && (
         <RunErrorNotice
           message={runError}

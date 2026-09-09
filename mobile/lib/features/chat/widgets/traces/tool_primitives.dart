@@ -93,14 +93,11 @@ class ToolSourceLinks extends ConsumerWidget {
       children: [
         for (final (index, url) in unique.indexed)
           GestureDetector(
-            onTap: () => launchUrl(
-              Uri.parse(url),
-              mode: LaunchMode.externalApplication,
-            ),
+            onTap: () =>
+                launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
             child: Container(
               constraints: const BoxConstraints(maxWidth: 220),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
                 color: t.bg.withValues(alpha: 0.55),
                 border: Border.all(color: t.hair),
@@ -108,8 +105,10 @@ class ToolSourceLinks extends ConsumerWidget {
               ),
               child: Text(
                 safeHostname(url).isEmpty
-                    ? i18n.t('chat:toolDetail.sourceFallback',
-                        vars: {'index': index + 1})
+                    ? i18n.t(
+                        'chat:toolDetail.sourceFallback',
+                        vars: {'index': index + 1},
+                      )
                     : safeHostname(url),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -147,7 +146,8 @@ class _ToolDetailTextState extends ConsumerState<ToolDetailText> {
     if (widget.text.trim().isEmpty) return const SizedBox.shrink();
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final clamp = widget.text.split('\n').length > _collapsedLines ||
+    final clamp =
+        widget.text.split('\n').length > _collapsedLines ||
         widget.text.length > 520;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -170,9 +170,9 @@ class _ToolDetailTextState extends ConsumerState<ToolDetailText> {
             child: Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(
-                i18n.t(_open
-                    ? 'chat:toolDetail.collapse'
-                    : 'chat:toolDetail.expand'),
+                i18n.t(
+                  _open ? 'chat:toolDetail.collapse' : 'chat:toolDetail.expand',
+                ),
                 style: TextStyle(fontSize: FontSizes.xs, color: t.a700),
               ),
             ),
@@ -193,9 +193,10 @@ class StatusLine extends ConsumerWidget {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
     final text = switch (status) {
-      ToolStatus.running || ToolStatus.pending =>
-        i18n.t('chat:toolStatus.running'),
+      ToolStatus.running ||
+      ToolStatus.pending => i18n.t('chat:toolStatus.running'),
       ToolStatus.error => i18n.t('chat:toolStatus.failed'),
+      ToolStatus.waitingInput => i18n.t('chat:question.waiting'),
       ToolStatus.completed => i18n.t('chat:toolStatus.completed'),
     };
     return Text(
@@ -213,14 +214,14 @@ class ToolBlocks extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final (index, child) in children.indexed) ...[
-            if (index > 0) const SizedBox(height: 7),
-            child,
-          ],
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final (index, child) in children.indexed) ...[
+        if (index > 0) const SizedBox(height: 7),
+        child,
+      ],
+    ],
+  );
 }
 
 class ToolBlock extends StatelessWidget {
@@ -231,7 +232,7 @@ class ToolBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [ToolMiniLabel(label), child],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [ToolMiniLabel(label), child],
+  );
 }

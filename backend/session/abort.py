@@ -140,6 +140,11 @@ async def abort_session_turn(
     from session.status import trigger_abort
 
     trigger_abort(session_id)
+    # A preemption invalidates questions only when the replacement message
+    # commits. If sending fails, the saved question is still answerable.
+    if reason != "preempted":
+        from question.runtime import cancel_session
+        await cancel_session(session_id, user_id)
     await session_mod.set_session_status(session_id, SessionStatus.IDLE, user_id=user_id)
     if not was_active:
         return False

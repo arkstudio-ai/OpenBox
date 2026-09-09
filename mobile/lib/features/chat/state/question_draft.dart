@@ -1,103 +1,319 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// What has been chosen so far on one pending question request, held outside
-/// the card that shows it.
-///
-/// The card cannot own this. It renders at the end of the transcript, inside
-/// a lazily built `ListView`, so its element is thrown away whenever the rows
-/// above it change length — a turn arrives, the typing row appears, a
-/// permission card comes and goes — and again whenever it scrolls out of the
-/// viewport. Every one of those took the chosen options with it and left a
-/// card whose 确认 was disabled again: tapping an option looked like it did
-/// nothing. Web has no equivalent problem — its dock is keyed by request id
-/// in a list that is never virtualised, so it simply stays mounted.
-class QuestionDraft {
-  const QuestionDraft({required this.picked, required this.custom});
+import '../../../shared/api/auth_store.dart';
+import '../../../shared/api/providers.dart';
+import '../../../shared/models/interaction.dart';
+import '../api/chat_api.dart';
+import 'pending_store.dart';
 
-  factory QuestionDraft.empty(int questions) => QuestionDraft(
-    picked: List.generate(questions, (_) => const <String>{}),
-    custom: List.filled(questions, ''),
+/// Switching to an option preserves typed text, but never submits both on a
+/// single-choice question. The active answer is explicit, not a default.
+class QuestionDraft {
+  const QuestionDraft({
+    required this.picked,
+    required this.custom,
+    required this.useCustom,
+    this.revision = 0,
+    this.dirty = false,
+    this.saving = false,
+    this.submitting = false,
+    this.saveError,
+  });
+
+  factory QuestionDraft.empty(int count) => QuestionDraft(
+    picked: List.generate(count, (_) => <String>{}),
+    custom: List.filled(count, ''),
+    useCustom: List.filled(count, false),
   );
 
-  /// Chosen option labels, one set per question.
-  final List<Set<String>> picked;
-
-  /// Typed answers, one per question.
-  final List<String> custom;
-
-  /// The chosen labels plus any typed answer, in the order asked — the shape
-  /// `POST /api/agent/question/{id}` expects.
-  List<String> answersAt(int index) {
-    final typed = custom[index].trim();
-    return [...picked[index], if (typed.isNotEmpty) typed];
+  factory QuestionDraft.fromAnswers(
+    List<QuestionDraftAnswer> answers,
+    int count,
+    int revision,
+  ) {
+    final rows = List.generate(
+      count,
+      (i) => i < answers.length ? answers[i] : const QuestionDraftAnswer(),
+    );
+    return QuestionDraft(
+      picked: rows.map((r) => r.selected.toSet()).toList(),
+      custom: rows.map((r) => r.custom).toList(),
+      useCustom: rows.map((r) => r.useCustom).toList(),
+      revision: revision,
+    );
   }
 
-  List<List<String>> get answers =>
-      List.generate(picked.length, answersAt, growable: false);
+  final List<Set<String>> picked;
+  final List<String> custom;
+  final List<bool> useCustom;
+  final int revision;
+  final bool dirty;
+  final bool saving;
+  final bool submitting;
+  final String? saveError;
 
-  bool get complete => answers.every((answers) => answers.isNotEmpty);
+  List<List<String>> get answers => List.generate(
+    picked.length,
+    (i) => useCustom[i]
+        ? (custom[i].trim().isEmpty ? <String>[] : [custom[i].trim()])
+        : picked[i].toList(),
+  );
+  bool get complete =>
+      answers.isNotEmpty && answers.every((row) => row.isNotEmpty);
+  List<QuestionDraftAnswer> get wire => List.generate(
+    picked.length,
+    (i) => QuestionDraftAnswer(
+      selected: picked[i].toList(),
+      custom: custom[i],
+      useCustom: useCustom[i],
+    ),
+  );
+  String get payload => jsonEncode(wire.map((item) => item.toJson()).toList());
 
-  QuestionDraft _copy({List<Set<String>>? picked, List<String>? custom}) =>
-      QuestionDraft(
-        picked: picked ?? this.picked,
-        custom: custom ?? this.custom,
-      );
+  QuestionDraft copy({
+    List<Set<String>>? picked,
+    List<String>? custom,
+    List<bool>? useCustom,
+    int? revision,
+    bool? dirty,
+    bool? saving,
+    bool? submitting,
+    String? saveError,
+    bool clearError = false,
+  }) => QuestionDraft(
+    picked: picked ?? this.picked,
+    custom: custom ?? this.custom,
+    useCustom: useCustom ?? this.useCustom,
+    revision: revision ?? this.revision,
+    dirty: dirty ?? this.dirty,
+    saving: saving ?? this.saving,
+    submitting: submitting ?? this.submitting,
+    saveError: clearError ? null : saveError ?? this.saveError,
+  );
 }
 
-/// Drafts by request id. Entries are dropped with the request itself
-/// (`PendingStore.removeQuestion` / `seed`), so nothing outlives the card it
-/// belongs to.
+/// Outside the virtualised card, scoped to the signed-in user, cached locally
+/// immediately and saved with a server revision after a short debounce.
 class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
-  @override
-  Map<String, QuestionDraft> build() => const {};
+  final _timers = <String, Timer>{};
+  int _epoch = 0;
+  String _userId = 'anonymous';
 
-  QuestionDraft of(String requestId, int questions) {
-    final draft = state[requestId];
-    if (draft != null && draft.picked.length == questions) return draft;
-    return QuestionDraft.empty(questions);
+  @override
+  Map<String, QuestionDraft> build() {
+    _userId = ref.watch(authProvider.select((s) => s.userId));
+    _epoch++;
+    ref.onDispose(() {
+      _epoch++;
+      for (final timer in _timers.values) {
+        timer.cancel();
+      }
+      _timers.clear();
+    });
+    return const {};
+  }
+
+  String key(String id) => 'openbox:question-draft:$_userId:$id';
+
+  QuestionDraft of(String id, int count) =>
+      state[id] ?? QuestionDraft.empty(count);
+
+  void hydrate(QuestionRequest request) {
+    final existing = state[request.id];
+    if (existing != null && request.draftRevision <= existing.revision) return;
+    if (existing != null &&
+        (existing.dirty || existing.saving || existing.submitting)) {
+      return;
+    }
+    var draft = QuestionDraft.fromAnswers(
+      request.draft,
+      request.questions.length,
+      request.draftRevision,
+    );
+    if (existing == null) {
+      try {
+        final raw = ref.read(prefsProvider).getString(key(request.id));
+        final cached = raw == null
+            ? null
+            : jsonDecode(raw) as Map<String, dynamic>;
+        if (cached?['revision'] == request.draftRevision &&
+            cached?['draft'] is List &&
+            (cached!['draft'] as List).length == request.questions.length) {
+          final answers = (cached['draft'] as List)
+              .cast<Map<String, dynamic>>()
+              .map(QuestionDraftAnswer.fromJson)
+              .toList();
+          final local = QuestionDraft.fromAnswers(
+            answers,
+            request.questions.length,
+            request.draftRevision,
+          );
+          draft = local.copy(dirty: local.payload != draft.payload);
+        }
+      } catch (_) {
+        /* A corrupt cache cannot hide a server draft. */
+      }
+    }
+    state = {...state, request.id: draft};
+    if (draft.dirty) _schedule(request.id);
+  }
+
+  void _cache(String id, QuestionDraft draft) {
+    unawaited(
+      ref
+          .read(prefsProvider)
+          .setString(
+            key(id),
+            jsonEncode({
+              'revision': draft.revision,
+              'draft': draft.wire.map((r) => r.toJson()).toList(),
+            }),
+          )
+          .catchError((Object _) => false),
+    );
+  }
+
+  void _edit(String id, QuestionDraft draft) {
+    if (draft.submitting) return;
+    final next = draft.copy(dirty: true, clearError: true);
+    state = {...state, id: next};
+    _cache(id, next);
+    _schedule(id);
   }
 
   void toggle(
-    String requestId,
-    int questions,
+    String id,
+    int count,
     int index,
     String label, {
     required bool multiple,
     required bool on,
   }) {
-    final draft = of(requestId, questions);
+    final draft = of(id, count);
     final chosen = multiple ? {...draft.picked[index]} : <String>{};
-    if (on) {
-      chosen.add(label);
+    on ? chosen.add(label) : chosen.remove(label);
+    _edit(
+      id,
+      draft.copy(
+        picked: [...draft.picked]..[index] = chosen,
+        useCustom: [...draft.useCustom]..[index] = false,
+      ),
+    );
+  }
+
+  void write(String id, int count, int index, String text) {
+    final draft = of(id, count);
+    _edit(
+      id,
+      draft.copy(
+        custom: [...draft.custom]..[index] = text,
+        useCustom: [...draft.useCustom]..[index] = true,
+      ),
+    );
+  }
+
+  void setSubmitting(String id, bool value) {
+    final draft = state[id];
+    if (draft == null) return;
+    state = {...state, id: draft.copy(submitting: value)};
+    if (value) {
+      _timers.remove(id)?.cancel();
     } else {
-      chosen.remove(label);
+      _schedule(id);
     }
-    final picked = [...draft.picked]..[index] = chosen;
-    state = {...state, requestId: draft._copy(picked: picked)};
   }
 
-  void write(String requestId, int questions, int index, String text) {
-    final draft = of(requestId, questions);
-    if (draft.custom[index] == text) return;
-    final custom = [...draft.custom]..[index] = text;
-    state = {...state, requestId: draft._copy(custom: custom)};
+  void _schedule(String id) {
+    _timers.remove(id)?.cancel();
+    final draft = state[id];
+    if (draft == null ||
+        !draft.dirty ||
+        draft.saving ||
+        draft.submitting ||
+        draft.saveError != null) {
+      return;
+    }
+    _timers[id] = Timer(
+      const Duration(milliseconds: 400),
+      () => unawaited(save(id)),
+    );
   }
 
-  void discard(String requestId) {
-    if (!state.containsKey(requestId)) return;
+  Future<void> save(String id) async {
+    final draft = state[id];
+    if (draft == null || !draft.dirty || draft.saving || draft.submitting) {
+      return;
+    }
+    final epoch = _epoch;
+    state = {...state, id: draft.copy(saving: true, clearError: true)};
+    try {
+      final response = await ref
+          .read(chatApiProvider)
+          .saveQuestionDraft(id, draft.wire, draft.revision);
+      if (epoch != _epoch || !state.containsKey(id)) return;
+      final live = state[id]!;
+      final saved = live.copy(
+        revision: response.draftRevision,
+        dirty: live.payload != draft.payload,
+        saving: false,
+      );
+      state = {...state, id: saved};
+      _cache(id, saved);
+      _schedule(id);
+    } catch (error) {
+      if (epoch != _epoch || !state.containsKey(id)) return;
+      final code = error is DioException ? error.response?.statusCode : null;
+      if (code == 404 || code == 410) {
+        ref.read(pendingProvider.notifier).removeQuestion(id);
+      } else {
+        state = {
+          ...state,
+          id: state[id]!.copy(
+            saving: false,
+            saveError: code == 409 ? 'conflict' : 'failed',
+          ),
+        };
+      }
+    }
+  }
+
+  Future<void> retry(String id) async {
+    final epoch = _epoch;
+    if (state[id]?.saveError == 'conflict') {
+      try {
+        final latest = await ref.read(chatApiProvider).getQuestion(id);
+        if (epoch != _epoch || !state.containsKey(id)) return;
+        if (latest.status != 'pending') {
+          ref.read(pendingProvider.notifier).removeQuestion(id);
+          return;
+        }
+        state = {...state, id: state[id]!.copy(revision: latest.draftRevision)};
+      } catch (_) {
+        return;
+      }
+    }
+    await save(id);
+  }
+
+  void discard(String id) {
+    _timers.remove(id)?.cancel();
+    unawaited(
+      ref.read(prefsProvider).remove(key(id)).catchError((Object _) => false),
+    );
     state = {
-      for (final entry in state.entries)
-        if (entry.key != requestId) entry.key: entry.value,
+      for (final e in state.entries)
+        if (e.key != id) e.key: e.value,
     };
   }
 
-  /// Drop drafts for requests that are no longer pending.
-  void keepOnly(Set<String> requestIds) {
-    final next = {
-      for (final entry in state.entries)
-        if (requestIds.contains(entry.key)) entry.key: entry.value,
-    };
-    if (next.length != state.length) state = next;
+  void keepOnly(Set<String> ids) {
+    for (final id in state.keys.toList()) {
+      if (!ids.contains(id)) discard(id);
+    }
   }
 }
 

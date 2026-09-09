@@ -46,8 +46,10 @@ export interface WsEventMap {
   "permission.asked": PermissionRequest
   "permission.replied": { request_id: string; action?: string }
   "question.asked": QuestionRequest
-  "question.replied": { request_id: string }
-  "question.rejected": { request_id: string }
+  "question.updated": QuestionRequest
+  "question.replied": { request_id?: string; id?: string; session_id?: string }
+  "question.rejected": { request_id?: string; id?: string; session_id?: string }
+  "question.cancelled": { request_id?: string; id?: string; session_id?: string; status?: string }
 
   // Cron lifecycle (backend cron/executor + timer). Payloads are camelCase
   // like every other bus event; jobs/status queries invalidate on these.

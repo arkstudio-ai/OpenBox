@@ -13,6 +13,8 @@ Use this tool when you need to ask the user questions during execution. This all
 Usage notes:
 - When `custom` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
 - Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
+- Ask related independent questions together in one call (1-4 questions); do not put this tool inside batch
+- Recommendations are suggestions, not user answers. Never label an option as already selected or treat a default as submitted
 - If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\
 """
 
@@ -30,7 +32,7 @@ class QuestionItem(BaseModel):
 
 
 class QuestionArgs(BaseModel):
-    questions: list[QuestionItem] = Field(description="1-4 questions to ask the user")
+    questions: list[QuestionItem] = Field(min_length=1, max_length=4, description="1-4 questions to ask the user together in one card")
 
 
 async def execute(args: QuestionArgs, ctx: ToolContext) -> ToolResult:
@@ -83,4 +85,5 @@ question_tool = define_tool(
     parameters=QuestionArgs,
     execute=execute,
     sandbox_required=False,
+    parallel_safe=False,
 )

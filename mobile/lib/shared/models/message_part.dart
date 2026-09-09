@@ -125,12 +125,13 @@ sealed class MessagePart {
   }
 }
 
-enum ToolStatus { pending, running, completed, error }
+enum ToolStatus { pending, running, completed, error, waitingInput }
 
 ToolStatus toolStatusFrom(String? value) => switch (value) {
   'running' => ToolStatus.running,
   'completed' => ToolStatus.completed,
   'error' => ToolStatus.error,
+  'waiting_input' => ToolStatus.waitingInput,
   _ => ToolStatus.pending,
 };
 

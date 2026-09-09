@@ -285,8 +285,9 @@ async def _handle_client_message(user_id: str, user_role: str, msg: dict):
         from session.session import get_session
         session = await get_session(session_id, user_id=user_id)
         if session:
-            from session.status import trigger_abort
-            trigger_abort(session_id)
+            from session.abort import abort_session_turn
+            await abort_session_turn(session_id, user_id, reason="user_stop",
+                                     was_active=session.status in {"busy", "retry", "compacting"})
 
     elif msg_type == "build.start":
         if user_role != "admin":

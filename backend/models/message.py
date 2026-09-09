@@ -21,6 +21,8 @@ class SessionStatus(str, Enum):
     RETRY = "retry"
     ERROR = "error"
     COMPACTING = "compacting"
+    WAITING_INPUT = "waiting_input"
+    QUEUED = "queued"
 
 
 class ToolStatus(str, Enum):
@@ -28,6 +30,7 @@ class ToolStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     ERROR = "error"
+    WAITING_INPUT = "waiting_input"
 
 
 # ─── Token Usage ───

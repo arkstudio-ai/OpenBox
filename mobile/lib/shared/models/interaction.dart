@@ -88,6 +88,11 @@ class QuestionRequest {
     required this.questions,
     this.tool,
     this.createdAt,
+    this.generation = 0,
+    this.status = 'pending',
+    this.draft = const [],
+    this.draftRevision = 0,
+    this.expiresAt,
   });
 
   factory QuestionRequest.fromJson(Map<String, dynamic> json) =>
@@ -99,6 +104,14 @@ class QuestionRequest {
         ).whereType<Map<String, dynamic>>().map(QuestionItem.fromJson).toList(),
         tool: asString(json['tool']),
         createdAt: asDate(json['created_at']),
+        generation: asInt(json['generation']) ?? 0,
+        status: asString(json['status']) ?? 'pending',
+        draft: asList(json['draft'])
+            .whereType<Map<String, dynamic>>()
+            .map(QuestionDraftAnswer.fromJson)
+            .toList(),
+        draftRevision: asInt(json['draft_revision']) ?? 0,
+        expiresAt: asDate(json['expires_at']),
       );
 
   final String id;
@@ -106,4 +119,34 @@ class QuestionRequest {
   final List<QuestionItem> questions;
   final String? tool;
   final DateTime? createdAt;
+  final int generation;
+  final String status;
+  final List<QuestionDraftAnswer> draft;
+  final int draftRevision;
+  final DateTime? expiresAt;
+}
+
+class QuestionDraftAnswer {
+  const QuestionDraftAnswer({
+    this.selected = const [],
+    this.custom = '',
+    this.useCustom = false,
+  });
+
+  factory QuestionDraftAnswer.fromJson(Map<String, dynamic> json) =>
+      QuestionDraftAnswer(
+        selected: asList(json['selected']).whereType<String>().toList(),
+        custom: asString(json['custom']) ?? '',
+        useCustom: asBool(json['use_custom']) ?? false,
+      );
+
+  final List<String> selected;
+  final String custom;
+  final bool useCustom;
+
+  Map<String, dynamic> toJson() => {
+    'selected': selected,
+    'custom': custom,
+    'use_custom': useCustom,
+  };
 }

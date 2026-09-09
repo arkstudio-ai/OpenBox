@@ -21,10 +21,16 @@ export function questionPairs(part: ToolPart): Array<{ question: string; answer:
 export function QuestionAnswered({ part }: { part: ToolPart }) {
   const { t } = useTranslation("chat")
   const pairs = questionPairs(part)
-  if (pairs.length === 0) return null
+  const state = part.metadata?.question_status
+  const stateLabel = state === "superseded" ? t("question.superseded")
+    : state === "cancelled" ? t("question.cancelled")
+    : state === "expired" ? t("question.expired")
+    : part.status === "waiting_input" ? t("question.waiting") : null
+  if (pairs.length === 0 && !stateLabel) return null
 
   return (
     <div className="flex flex-col gap-2">
+      {stateLabel && <span className="text-n600 text-xs">{stateLabel}</span>}
       {pairs.map(({ question, answer }) => (
         <div key={question} className="flex flex-col gap-0.5">
           <span className="text-n600 text-xs">{question}</span>

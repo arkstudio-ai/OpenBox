@@ -857,7 +857,10 @@ async def process_step(
             tool_info = execution_tools.get(str(canonical_id))
             return bool(tool_info and getattr(tool_info, "parallel_safe", False))
 
+        questions_waiting = False
+
         async def execute_one(tc_event: dict):
+            nonlocal questions_waiting
             if abort.is_set():
                 return None
 
@@ -917,6 +920,21 @@ async def process_step(
                         f"Tool '{tool_name}' is not materialized for this step. "
                         f"Available: {', '.join(visible_wire_names)}"
                     )
+                await save_part(tool_part, user_id=user_id)
+                return None
+
+            # A durable ask returns immediately, but that is not permission
+            # to execute the rest of the model's batch. Independent questions
+            # may still be collected; other calls must be replanned after the
+            # answer instead of silently crossing the human-input boundary.
+            is_question = canonical_tool_id in {"question", "plan_enter"} or (
+                canonical_tool_id == "creator_context" and tool_args.get("action") == "propose_memory"
+            )
+            if questions_waiting and not is_question:
+                tool_part.status = ToolStatus.ERROR
+                tool_part.title = "Waiting for user input"
+                tool_part.error = "Not executed: answer the pending questions first, then re-evaluate this operation. No approval was granted."
+                tool_part.metadata = {"blocked": True}
                 await save_part(tool_part, user_id=user_id)
                 return None
 
@@ -993,7 +1011,18 @@ async def process_step(
                 except (asyncio.CancelledError, Exception):
                     pass
                 return None
-            result = exec_task.result()
+            from question.question import QuestionSuspended
+            try:
+                result = exec_task.result()
+            except QuestionSuspended as suspended:
+                questions_waiting = True
+                tool_part.status = ToolStatus.WAITING_INPUT
+                tool_part.title = "Waiting for your answer"
+                tool_part.metadata = {**(tool_part.metadata or {}), "question_id": suspended.request_id,
+                                      "question_status": "pending"}
+                # ask() atomically saved the waiting part and its details.
+                from tool.tool import ToolResult
+                return tool_part, ToolResult(metadata={"waiting_input": True})
 
             tool_part.status = (
                 ToolStatus.COMPLETED
@@ -1034,8 +1063,12 @@ async def process_step(
                     log.warning(f"Unknown agent for switch: {agent_switch}")
 
             completed_tool_parts.append(tool_part)
+            if result.metadata.get("waiting_input"):
+                finish_reason = "waiting_input"
             if result.metadata.get("plan_ready"):
                 finish_reason = "stop"
+        if questions_waiting:
+            finish_reason = "waiting_input"
 
     except ContextOverflowError:
         await create_compaction(session_id, auto=True, user_id=user_id,

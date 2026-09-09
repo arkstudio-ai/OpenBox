@@ -589,7 +589,14 @@ class _QuestionAnswered extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pairs = questionPairs(part.metadata);
-    if (pairs.isEmpty) {
+    final status = part.metadata['question_status'];
+    final label = switch (status) {
+      'superseded' => 'superseded',
+      'cancelled' => 'cancelled',
+      'expired' => 'expired',
+      _ => part.status == ToolStatus.waitingInput ? 'waiting' : null,
+    };
+    if (pairs.isEmpty && label == null) {
       return _GenericOutput(
         part: part,
         failed: part.status == ToolStatus.error,
@@ -600,6 +607,11 @@ class _QuestionAnswered extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (label != null)
+          Text(
+            i18n.t('chat:question.$label'),
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
         for (final (question, answer) in pairs)
           Padding(
             padding: const EdgeInsets.only(bottom: 7),

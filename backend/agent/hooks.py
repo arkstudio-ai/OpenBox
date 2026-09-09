@@ -46,6 +46,9 @@ class ToolHooks:
         part_id: str = "",
     ) -> ToolResult:
         """Wrap a tool execution with hooks."""
+        from question.runtime import still_current
+        if not await still_current():
+            return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
         start_time = time.time()
         blocked = await self.authorize_tool(tool_id, args)
         if blocked is not None:
@@ -101,6 +104,8 @@ class ToolHooks:
 
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
+            if not await still_current(progress=True):
+                return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
             request_context = getattr(ctx.sandbox, "request_context", None)
             if request_context is not None:
                 async with request_context(
@@ -112,6 +117,9 @@ class ToolHooks:
             else:
                 result = await execute_fn(args, ctx)
         except Exception as e:
+            from question.question import QuestionSuspended
+            if isinstance(e, QuestionSuspended):
+                raise
             from sandbox.entitlement import SandboxSubscriptionRequired
             if isinstance(e, SandboxSubscriptionRequired):
                 return ToolResult(title="Sandbox unavailable", output=e.detail,

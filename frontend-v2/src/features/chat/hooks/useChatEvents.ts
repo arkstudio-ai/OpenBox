@@ -68,8 +68,9 @@ export function useChatEvents(sessionId: string): void {
         )
         // The terminal idle/error edge is also a consistency barrier: pull
         // the final full parts in case this tab missed the last delta/update.
-        if (d.status === "idle" || d.status === "error") {
+        if (d.status === "idle" || d.status === "error" || d.status === "waiting_input" || d.status === "queued") {
           void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.sessionId) })
+          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
         }
       }),
       wsClient.on("session.finalizing", (d) => stream.setStatus(d.sessionId, "finalizing")),
@@ -98,9 +99,19 @@ export function useChatEvents(sessionId: string): void {
       ),
       wsClient.on("permission.asked", (d) => pending.addPermission(d)),
       wsClient.on("permission.replied", (d) => pending.removePermission(d.request_id)),
-      wsClient.on("question.asked", (d) => pending.addQuestion(d)),
-      wsClient.on("question.replied", (d) => pending.removeQuestion(d.request_id)),
-      wsClient.on("question.rejected", (d) => pending.removeQuestion(d.request_id)),
+      wsClient.on("question.asked", (d) => {
+        pending.addQuestion(d)
+        void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+      }),
+      wsClient.on("question.updated", (d) => pending.addQuestion(d)),
+      ...(["question.replied", "question.rejected", "question.cancelled"] as const).map((event) =>
+        wsClient.on(event, (d) => {
+          const id = d.request_id ?? d.id
+          if (id) pending.removeQuestion(id)
+          void qc.invalidateQueries({ queryKey: chatKeys.questions(userId) })
+          if (d.session_id) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, d.session_id) })
+        }),
+      ),
       wsClient.on("__connected", () => {
         if (sessionId) void qc.invalidateQueries({ queryKey: chatKeys.messages(userId, sessionId) })
         if (sessionId) void qc.invalidateQueries({ queryKey: ["session", userId, sessionId] })

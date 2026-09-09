@@ -2,7 +2,7 @@
 // These are transport-level shapes shared across features; feature-internal
 // view models live in each feature's own types/.
 
-export type SessionStatus = "idle" | "busy" | "finalizing" | "retry" | "error" | "compacting"
+export type SessionStatus = "idle" | "busy" | "finalizing" | "retry" | "error" | "compacting" | "waiting_input" | "queued"
 
 export interface TokenUsage {
   input: number
@@ -53,7 +53,7 @@ export interface Project {
 }
 
 export type PlanStatus = "writing" | "ready" | "accepted" | "rejected"
-export type ToolStatus = "pending" | "running" | "completed" | "error"
+export type ToolStatus = "pending" | "running" | "completed" | "error" | "waiting_input"
 
 export interface TextPart {
   type: "text"
@@ -355,6 +355,17 @@ export interface QuestionRequest {
   /** The tool call waiting on this, when it came from one. */
   tool?: { messageID?: string; callID?: string } | null
   created_at?: string
+  generation?: number
+  status?: "pending" | "answered" | "rejected" | "superseded" | "cancelled" | "expired"
+  draft?: QuestionDraftAnswer[]
+  draft_revision?: number
+  expires_at?: string | null
+}
+
+export interface QuestionDraftAnswer {
+  selected: string[]
+  custom: string
+  use_custom: boolean
 }
 
 export interface ContainerInfo {

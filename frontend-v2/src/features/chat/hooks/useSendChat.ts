@@ -6,6 +6,7 @@ import { makeClientId, optimisticUserMessage } from "../lib/message"
 import { useStreamStore } from "../stores/stream"
 import { ApiError } from "@/shared/api/http"
 import { requestDesktopPanel } from "@/shared/events/desktop"
+import { usePendingStore } from "../stores/pending"
 
 export interface SendOpts {
   model?: string
@@ -28,6 +29,8 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
       if (!trimmed) return
       const clientMessageId = makeClientId()
       const store = useStreamStore.getState()
+      const previousStatus = store.status.get(sessionId) ?? "idle"
+      const oldQuestions = usePendingStore.getState().questions.get(sessionId) ?? []
       store.addMessage(sessionId, optimisticUserMessage(sessionId, trimmed, clientMessageId))
       store.setStatus(sessionId, "busy")
       store.clearRunError(sessionId)
@@ -45,9 +48,12 @@ export function useSendChat(sessionId: string): (text: string, opts?: SendOpts) 
         // mutateAsync rather than mutate: the composer restores the draft on a
         // rejection, and it can only do that if the failure reaches it.
         await mutateAsync(vars)
+        // The committed new message supersedes only the questions visible
+        // before this send, never a newer ask that raced the HTTP response.
+        for (const question of oldQuestions) usePendingStore.getState().removeQuestion(question.id)
       } catch (err) {
         const failed = useStreamStore.getState()
-        failed.setStatus(sessionId, "idle")
+        failed.setStatus(sessionId, previousStatus)
         // Take the optimistic echo back down. Leaving it there showed the
         // message sitting in the transcript as though it had been sent, which
         // is the opposite of what happened.

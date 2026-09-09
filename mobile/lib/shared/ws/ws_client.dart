@@ -23,7 +23,8 @@ class WsEvent {
   final String type;
   final Map<String, dynamic> data;
 
-  String? get sessionId => asString(data['sessionId']);
+  String? get sessionId =>
+      asString(data['sessionId']) ?? asString(data['session_id']);
 }
 
 class AgentWsClient {

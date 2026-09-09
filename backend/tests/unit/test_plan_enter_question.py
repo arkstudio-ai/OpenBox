@@ -22,9 +22,10 @@ def captured(monkeypatch):
     """Answer any question immediately, recording who it was addressed to."""
     seen: dict = {}
 
-    async def fake_ask(session_id, questions, tool=None, user_id="default"):
+    async def fake_ask(session_id, questions, tool=None, user_id="default", *, continuation=None):
         seen["user_id"] = user_id
         seen["header"] = questions[0].header
+        assert continuation["kind"] == "plan_enter"
         return [["Yes"]]
 
     monkeypatch.setattr("question.question.ask", fake_ask)
@@ -69,7 +70,7 @@ async def test_the_switch_message_belongs_to_the_real_user_too(captured):
 async def test_saying_no_keeps_build_mode(monkeypatch):
     from tool.plan import PlanRejectedError
 
-    async def say_no(session_id, questions, tool=None, user_id="default"):
+    async def say_no(session_id, questions, tool=None, user_id="default", *, continuation=None):
         return [["No"]]
 
     monkeypatch.setattr("question.question.ask", say_no)
@@ -82,18 +83,7 @@ async def test_saying_no_keeps_build_mode(monkeypatch):
         await execute_enter(PlanEnterArgs(), ToolContext(session_id="s1", user_id=USER))
 
 
-def test_a_question_is_only_pending_for_its_own_user():
-    # The property the bug violated: one user's pending list never shows
-    # another's, so a misaddressed question is invisible rather than merely
-    # misfiled.
-    q_mod._pending.clear()
-    try:
-        req = q_mod.QuestionRequest(
-            id="q1", user_id="default", session_id="s1",
-            questions=[q_mod.Question(question="?", header="H", options=[])],
-        )
-        q_mod._pending["q1"] = q_mod.PendingQuestion(request=req)
-        assert q_mod.list_pending(user_id=USER) == []
-        assert len(q_mod.list_pending(user_id="default")) == 1
-    finally:
-        q_mod._pending.clear()
+async def test_a_missing_users_durable_pending_list_is_empty():
+    # Cross-user isolation is covered with real SQL checkpoints in
+    # test_durable_questions; there is no process-local pending dictionary.
+    assert await q_mod.list_pending(user_id=USER) == []

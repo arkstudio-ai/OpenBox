@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
+import '../../../../shared/events/bus.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
+import '../../../../shared/widgets/toast.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
@@ -28,7 +30,7 @@ class QuestionDock extends ConsumerStatefulWidget {
 
 class _QuestionDockState extends ConsumerState<QuestionDock> {
   late final List<TextEditingController> _custom;
-  bool _submitting = false;
+  String? _submitError;
 
   int get _count => widget.request.questions.length;
 
@@ -56,42 +58,54 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
   }
 
   Future<void> _submit(QuestionDraft draft) async {
-    if (!draft.complete || _submitting) return;
-    setState(() => _submitting = true);
+    if (!draft.complete || draft.submitting) return;
+    await _resolve(draft.answers);
+  }
+
+  Future<void> _resolve(List<List<String>>? answers) async {
+    final drafts = ref.read(questionDraftProvider.notifier);
+    if (drafts.of(widget.request.id, _count).submitting) return;
+    drafts.setSubmitting(widget.request.id, true);
+    setState(() => _submitError = null);
     // Read before awaiting: a transcript row arriving mid-request destroys
     // this element, and `ref` is unusable afterwards. That is what left an
     // answered card on screen — the reply landed, the agent moved on, and the
     // card that could no longer be dismissed took every further tap.
     final api = ref.read(chatApiProvider);
     final pending = ref.read(pendingProvider.notifier);
+    final toast = ref.read(toastProvider.notifier);
+    final i18n = ref.read(i18nProvider);
+    final events = ref.read(appEventBusProvider);
     try {
-      await api.replyQuestion(widget.request.id, draft.answers);
+      if (answers == null) {
+        await api.rejectQuestion(widget.request.id);
+      } else {
+        await api.replyQuestion(widget.request.id, answers);
+      }
       // Do not wait for the WS `question.replied` event to take the card
       // away: the socket may be down while the app is backgrounded.
       pending.removeQuestion(widget.request.id);
-    } on DioException catch (e) {
-      // 404: the run already consumed or dropped this question. Keeping the
-      // card would only invite more taps that fail the same way.
-      if (e.response?.statusCode == 404) {
+      events.emit('question.resolved', {'sessionId': widget.request.sessionId});
+    } catch (error) {
+      final code = error is DioException ? error.response?.statusCode : null;
+      if (code == 404 || code == 410) {
         pending.removeQuestion(widget.request.id);
+        toast.error(i18n.t('chat:question.gone'));
+        await pending.refreshQuestions();
       } else {
-        rethrow;
+        final message = i18n.t(
+          code == 409 ? 'chat:question.conflict' : 'chat:question.submitFailed',
+        );
+        if (mounted) setState(() => _submitError = message);
+        toast.error(message);
+        if (code == 409) await pending.refreshQuestions();
       }
     } finally {
-      if (mounted) setState(() => _submitting = false);
+      drafts.setSubmitting(widget.request.id, false);
     }
   }
 
-  Future<void> _reject() async {
-    final api = ref.read(chatApiProvider);
-    final pending = ref.read(pendingProvider.notifier);
-    try {
-      await api.rejectQuestion(widget.request.id);
-    } on DioException catch (e) {
-      if (e.response?.statusCode != 404) rethrow;
-    }
-    pending.removeQuestion(widget.request.id);
-  }
+  Future<void> _reject() => _resolve(null);
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +115,20 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         ref.watch(questionDraftProvider)[widget.request.id] ??
         QuestionDraft.empty(_count);
     final complete = draft.complete;
+    ref.listen(
+      questionDraftProvider.select((drafts) => drafts[widget.request.id]),
+      (_, next) {
+        if (next == null) return;
+        for (var i = 0; i < _custom.length; i++) {
+          if (_custom[i].text != next.custom[i]) {
+            _custom[i].value = TextEditingValue(
+              text: next.custom[i],
+              selection: TextSelection.collapsed(offset: next.custom[i].length),
+            );
+          }
+        }
+      },
+    );
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       padding: const EdgeInsets.all(14),
@@ -142,10 +170,12 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             ),
           ),
           const SizedBox(height: 10),
-          Row(
+          Wrap(
+            spacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               FilledButton(
-                onPressed: complete && !_submitting
+                onPressed: complete && !draft.submitting
                     ? () => _submit(draft)
                     : null,
                 style: FilledButton.styleFrom(
@@ -162,26 +192,66 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                   ),
                 ),
                 child: Text(
-                  i18n.t('chat:question.submit'),
+                  i18n.t(
+                    draft.submitting
+                        ? 'chat:question.submitting'
+                        : 'chat:question.submit',
+                  ),
                   style: const TextStyle(fontSize: FontSizes.sm),
                 ),
               ),
-              const SizedBox(width: 8),
               TextButton(
-                onPressed: _submitting ? null : _reject,
+                onPressed: draft.submitting ? null : _reject,
                 child: Text(
-                  i18n.t('chat:question.reject'),
+                  i18n.t(
+                    _count > 1 ? 'chat:question.skipAll' : 'chat:question.skip',
+                  ),
                   style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
                 ),
               ),
-              const Spacer(),
-              if (!complete && _count > 1)
+              if (_count > 1)
                 Text(
-                  i18n.t('chat:question.needAll', vars: {'count': _count}),
+                  i18n.t(
+                    'chat:question.progress',
+                    vars: {
+                      'count': _count,
+                      'answered': draft.answers
+                          .where((a) => a.isNotEmpty)
+                          .length,
+                    },
+                  ),
                   style: TextStyle(fontSize: FontSizes.xs, color: t.n500),
                 ),
             ],
           ),
+          if (_submitError != null)
+            Text(
+              _submitError!,
+              style: TextStyle(color: t.n700, fontSize: FontSizes.xs),
+            ),
+          if (draft.saving)
+            Text(
+              i18n.t('chat:question.saving'),
+              style: TextStyle(color: t.n500, fontSize: FontSizes.xs),
+            ),
+          if (draft.saveError != null) ...[
+            Text(
+              i18n.t(
+                draft.saveError == 'conflict'
+                    ? 'chat:question.draftConflict'
+                    : 'chat:question.draftFailed',
+              ),
+              style: TextStyle(color: t.n700, fontSize: FontSizes.xs),
+            ),
+            TextButton(
+              onPressed: draft.submitting
+                  ? null
+                  : () => ref
+                        .read(questionDraftProvider.notifier)
+                        .retry(widget.request.id),
+              child: Text(i18n.t('chat:question.retrySave')),
+            ),
+          ],
         ],
       ),
     );
@@ -194,7 +264,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
     QuestionItem question,
     QuestionDraft draft,
   ) {
-    final selected = draft.picked[index];
+    final selected = draft.useCustom[index] ? <String>{} : draft.picked[index];
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -211,7 +281,9 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
             ),
           Text(
-            question.question,
+            _count > 1
+                ? '${index + 1}. ${question.question}'
+                : question.question,
             style: TextStyle(
               fontSize: FontSizes.base,
               color: t.ink,
@@ -238,16 +310,18 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                     color: selected.contains(option.label) ? t.a700 : t.hair,
                   ),
                   labelStyle: TextStyle(color: t.ink),
-                  onSelected: (on) => ref
-                      .read(questionDraftProvider.notifier)
-                      .toggle(
-                        widget.request.id,
-                        _count,
-                        index,
-                        option.label,
-                        multiple: question.multiple,
-                        on: on,
-                      ),
+                  onSelected: draft.submitting
+                      ? null
+                      : (on) => ref
+                            .read(questionDraftProvider.notifier)
+                            .toggle(
+                              widget.request.id,
+                              _count,
+                              index,
+                              option.label,
+                              multiple: question.multiple,
+                              on: on,
+                            ),
                 ),
             ],
           ),
@@ -255,11 +329,17 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
             const SizedBox(height: 6),
             TextField(
               controller: _custom[index],
+              enabled: !draft.submitting,
+              maxLength: 5000,
+              onTap: () => ref
+                  .read(questionDraftProvider.notifier)
+                  .write(widget.request.id, _count, index, _custom[index].text),
               onChanged: (text) => ref
                   .read(questionDraftProvider.notifier)
                   .write(widget.request.id, _count, index, text),
               style: TextStyle(fontSize: FontSizes.sm, color: t.ink),
               decoration: InputDecoration(
+                counterText: '',
                 hintText: i18n.t('chat:question.answer'),
                 hintStyle: TextStyle(fontSize: FontSizes.sm, color: t.n500),
                 isDense: true,

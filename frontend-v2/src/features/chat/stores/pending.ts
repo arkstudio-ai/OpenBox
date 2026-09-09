@@ -9,6 +9,7 @@ type QsMap = Map<string, QuestionRequest[]>
 interface PendingState {
   permissions: PermMap
   questions: QsMap
+  closedQuestions: Set<string>
   setPermissions: (items: PermissionRequest[]) => void
   addPermission: (item: PermissionRequest) => void
   removePermission: (requestId: string) => void
@@ -52,10 +53,29 @@ function remove<T extends { id: string }>(prev: Map<string, T[]>, requestId: str
 export const usePendingStore = create<PendingState>((set) => ({
   permissions: new Map(),
   questions: new Map(),
+  closedQuestions: new Set(),
   setPermissions: (items) => set({ permissions: groupBySession(items) }),
   addPermission: (item) => set((s) => ({ permissions: add(s.permissions, item) })),
   removePermission: (requestId) => set((s) => ({ permissions: remove(s.permissions, requestId) })),
-  setQuestions: (items) => set({ questions: groupBySession(items) }),
-  addQuestion: (item) => set((s) => ({ questions: add(s.questions, item) })),
-  removeQuestion: (requestId) => set((s) => ({ questions: remove(s.questions, requestId) })),
+  setQuestions: (items) => set((s) => ({ questions: groupBySession(items.filter((q) =>
+    !s.closedQuestions.has(q.id) && (!q.status || q.status === "pending")).map((q) => {
+    const live = s.questions.get(q.session_id)?.find((item) => item.id === q.id)
+    return live && (live.draft_revision ?? 0) > (q.draft_revision ?? 0) ? live : q
+  })) })),
+  addQuestion: (item) => set((s) => {
+    if (s.closedQuestions.has(item.id) || (item.status && item.status !== "pending")) return s
+    const questions = new Map(s.questions)
+    const list = questions.get(item.session_id) ?? []
+    const existing = list.find((q) => q.id === item.id)
+    if (existing && (existing.draft_revision ?? 0) >= (item.draft_revision ?? 0)) return s
+    questions.set(item.session_id, existing ? list.map((q) => q.id === item.id ? item : q) : [...list, item])
+    return { questions }
+  }),
+  removeQuestion: (requestId) => set((s) => {
+    const closedQuestions = new Set(s.closedQuestions)
+    closedQuestions.add(requestId)
+    // Bound transport tombstones; server snapshots remain authoritative.
+    if (closedQuestions.size > 1000) closedQuestions.delete(closedQuestions.values().next().value!)
+    return { questions: remove(s.questions, requestId), closedQuestions }
+  }),
 }))

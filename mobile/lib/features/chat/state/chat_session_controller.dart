@@ -23,7 +23,11 @@ import 'stream_store.dart';
 /// refetch, send/stop/regenerate. Streaming frames land in
 /// [chatStreamProvider]; this controller only converges snapshots.
 class ChatSessionState {
-  const ChatSessionState({this.loading = true, this.session, this.failed = false});
+  const ChatSessionState({
+    this.loading = true,
+    this.session,
+    this.failed = false,
+  });
 
   final bool loading;
   final Session? session;
@@ -46,10 +50,11 @@ String makeClientId() {
   return 'cmid-$now-$rand';
 }
 
-class ChatSessionController
-    extends FamilyNotifier<ChatSessionState, String> {
+class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   Timer? _poll;
   StreamSubscription<WsEvent>? _wsSub;
+  StreamSubscription<AppEvent>? _appSub;
+  int _fetchSequence = 0;
   bool _disposed = false;
 
   String get _sessionId => arg;
@@ -59,14 +64,26 @@ class ChatSessionController
     _disposed = false;
     unawaited(_wsSub?.cancel());
     _wsSub = ref.read(wsClientProvider).events.listen(_onWsEvent);
+    unawaited(_appSub?.cancel());
+    _appSub = ref.read(appEventBusProvider).on('question.resolved').listen((
+      event,
+    ) {
+      if (event.payload['sessionId'] == _sessionId) {
+        unawaited(_refetch());
+        unawaited(_seedPending());
+      }
+    });
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_isBusy) unawaited(_refetch());
+      if (_isBusy || state.session?.status == SessionStatus.queued) {
+        unawaited(_refetch());
+      }
     });
     ref.onDispose(() {
       _disposed = true;
       _poll?.cancel();
       unawaited(_wsSub?.cancel());
+      unawaited(_appSub?.cancel());
     });
     unawaited(ref.read(wsClientProvider).connect());
     unawaited(_initialLoad());
@@ -82,7 +99,8 @@ class ChatSessionController
     for (final m in stream.messagesOf(_sessionId)) {
       for (final p in m.parts) {
         if (p is ToolPart &&
-            (p.status == ToolStatus.running || p.status == ToolStatus.pending)) {
+            (p.status == ToolStatus.running ||
+                p.status == ToolStatus.pending)) {
           return true;
         }
       }
@@ -93,13 +111,21 @@ class ChatSessionController
   void _onWsEvent(WsEvent event) {
     if (event.type == '__connected') {
       unawaited(_refetch());
+      unawaited(_seedPending());
       return;
     }
     if (event.sessionId != _sessionId) return;
+    if (event.type.startsWith('question.')) {
+      unawaited(_seedPending());
+      unawaited(_refetch());
+    }
     if (event.type == 'session.status') {
       final status = ref.read(chatStreamProvider).statusOf(_sessionId);
       // Terminal transition → one consistency-barrier refetch.
-      if (status == SessionStatus.idle || status == SessionStatus.error) {
+      if (status == SessionStatus.idle ||
+          status == SessionStatus.error ||
+          status == SessionStatus.waitingInput ||
+          status == SessionStatus.queued) {
         unawaited(_refetch());
       }
     }
@@ -113,30 +139,30 @@ class ChatSessionController
   }
 
   Future<void> _seedPending() async {
-    try {
-      final api = ref.read(chatApiProvider);
-      final results =
-          await Future.wait([api.listPermissions(), api.listQuestions()]);
-      ref.read(pendingProvider.notifier).seed(
-            (results[0] as List).cast(),
-            (results[1] as List).cast(),
-          );
-    } catch (_) {
-      // Pending seeds are best-effort; WS events keep them current.
-    }
+    if (_disposed) return;
+    // All controllers share one ordering guard: an older reconnect response
+    // must not replace questions already fetched by a newer request.
+    await ref.read(pendingProvider.notifier).refreshAll();
   }
 
   Future<void> _refetch() async {
     final api = ref.read(chatApiProvider);
+    final sequence = ++_fetchSequence;
+    final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
     try {
       final results = await Future.wait<dynamic>([
         api.listMessages(_sessionId),
         api.getSession(_sessionId),
       ]);
-      if (_disposed) return;
+      if (_disposed || sequence != _fetchSequence) return;
       final messages = results[0] as List<ChatMessage>;
       final session = results[1] as Session;
       ref.read(chatStreamProvider.notifier).setMessages(_sessionId, messages);
+      if (ref.read(chatStreamProvider).statusOf(_sessionId) == statusAtStart) {
+        ref
+            .read(chatStreamProvider.notifier)
+            .setStatus(_sessionId, session.status);
+      }
       state = state.copyWith(session: session, loading: false, failed: false);
     } catch (_) {
       if (!_disposed) state = state.copyWith(loading: false, failed: true);
@@ -158,6 +184,15 @@ class ChatSessionController
     final video = ref.read(pickedVideoProvider(_sessionId));
     final cmid = makeClientId();
     final stream = ref.read(chatStreamProvider.notifier);
+    final oldQuestions = ref
+        .read(pendingProvider)
+        .questionsOf(_sessionId)
+        .map((q) => q.id)
+        .toList();
+    final previousStatus =
+        ref.read(chatStreamProvider).statusOf(_sessionId) ??
+        state.session?.status ??
+        SessionStatus.idle;
     stream.addMessage(
       _sessionId,
       ChatMessage(
@@ -172,7 +207,9 @@ class ChatSessionController
     stream.setStatus(_sessionId, SessionStatus.busy);
     stream.clearRunError(_sessionId);
     try {
-      await ref.read(chatApiProvider).promptAsync(
+      await ref
+          .read(chatApiProvider)
+          .promptAsync(
             _sessionId,
             text: text,
             clientMessageId: cmid,
@@ -183,8 +220,15 @@ class ChatSessionController
             videoResolution: video?.resolution,
             attachments: attachments,
           );
+      if (!_disposed) {
+        final pending = ref.read(pendingProvider.notifier);
+        for (final id in oldQuestions) {
+          pending.removeQuestion(id);
+        }
+        unawaited(pending.refreshQuestions());
+      }
     } catch (error) {
-      stream.setStatus(_sessionId, SessionStatus.idle);
+      stream.setStatus(_sessionId, previousStatus);
       // Take the optimistic echo back down. Leaving it there showed the
       // message sitting in the transcript as though it had been sent, which
       // is the opposite of what happened.
@@ -226,18 +270,38 @@ class ChatSessionController
     await _refetch();
   }
 
-  /// Stop generation (web `stop()`): abort + optimistic idle.
+  /// Cancel running/queued/waiting work only after the server accepts it.
   Future<void> stop() async {
-    ref.read(chatStreamProvider.notifier).setStatus(_sessionId, SessionStatus.idle);
+    final oldQuestions = ref
+        .read(pendingProvider)
+        .questionsOf(_sessionId)
+        .map((question) => question.id)
+        .toList();
     try {
       await ref.read(chatApiProvider).abort(_sessionId);
-    } catch (_) {
-      // Already idle server-side is fine.
+      if (_disposed) return;
+      ref
+          .read(chatStreamProvider.notifier)
+          .setStatus(_sessionId, SessionStatus.idle);
+      final pending = ref.read(pendingProvider.notifier);
+      for (final id in oldQuestions) {
+        pending.removeQuestion(id);
+      }
+      unawaited(pending.refreshQuestions());
+      await _refetch();
+    } catch (error) {
+      if (!_disposed) {
+        ref
+            .read(toastProvider.notifier)
+            .error(errorText(ref.read(i18nProvider), error));
+      }
     }
   }
 
   Future<void> regenerate(String messageId, {String? model}) async {
-    await ref.read(chatApiProvider).regenerate(_sessionId, messageId, model: model);
+    await ref
+        .read(chatApiProvider)
+        .regenerate(_sessionId, messageId, model: model);
     ref.read(chatStreamProvider.notifier).clearMessages(_sessionId);
     await _refetch();
   }
@@ -249,13 +313,16 @@ class ChatSessionController
   }
 }
 
-final chatSessionProvider = NotifierProvider.family<ChatSessionController,
-    ChatSessionState, String>(ChatSessionController.new);
+final chatSessionProvider =
+    NotifierProvider.family<ChatSessionController, ChatSessionState, String>(
+      ChatSessionController.new,
+    );
 
 /// Unsent per-session model pick (web `stores/model-choice.ts`); null means
 /// "keep the session's model".
-final pickedModelProvider =
-    StateProvider.family<String?, String>((ref, sessionId) => null);
+final pickedModelProvider = StateProvider.family<String?, String>(
+  (ref, sessionId) => null,
+);
 
 /// A video model and the resolution chosen with it (web
 /// `stores/video-model-choice.ts`). The pair travels together because neither
@@ -270,11 +337,13 @@ class VideoPick {
 
 /// Unsent per-session video pick; null means "keep whatever the session
 /// records". No default is substituted here — for video that pin costs money.
-final pickedVideoProvider =
-    StateProvider.family<VideoPick?, String>((ref, sessionId) => null);
+final pickedVideoProvider = StateProvider.family<VideoPick?, String>(
+  (ref, sessionId) => null,
+);
 
 /// Unsent reasoning pick, keyed by [reasoningKey] — a conversation *and* a
 /// model. A null state means nothing was picked for that pair, which is not
 /// the same as picking "default" (see [Variant]).
-final pickedVariantProvider =
-    StateProvider.family<Variant?, String>((ref, key) => null);
+final pickedVariantProvider = StateProvider.family<Variant?, String>(
+  (ref, key) => null,
+);

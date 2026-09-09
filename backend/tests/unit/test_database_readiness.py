@@ -46,6 +46,11 @@ _CLOUD_DESKTOP_COLUMNS = (
 
 
 def _create_current_schema(connection, *, missing_internal_column: str | None = None):
+    from db.models.question import QuestionCheckpoint, SessionExecution
+    from db.models.desktop_activation import DesktopActivation
+    from db.models.desktop_event import DesktopEvent
+    for model in (QuestionCheckpoint, SessionExecution, DesktopActivation, DesktopEvent):
+        model.__table__.create(connection)
     from db.models.billing import BillingSubscription, CreditBalance, CreditLedger, PaymentOrder, PaymentOrderRequest, UsageEvent
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)
@@ -121,6 +126,16 @@ def test_readiness_accepts_the_complete_current_schema():
     with engine.begin() as connection:
         _create_current_schema(connection)
         assert _missing_readiness_schema(connection) == ()
+    engine.dispose()
+
+
+@pytest.mark.parametrize("table", ["question_checkpoints", "session_executions"])
+def test_readiness_requires_the_durable_question_migration(table):
+    engine = sa.create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        _create_current_schema(connection)
+        connection.exec_driver_sql(f"DROP TABLE {table}")
+        assert _missing_readiness_schema(connection) == (table,)
     engine.dispose()
 
 

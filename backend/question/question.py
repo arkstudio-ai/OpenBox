@@ -1,18 +1,19 @@
-"""Question system: LLM asks user structured questions, waits for answers."""
-import asyncio
-import json
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+"""Durable human-input checkpoints. Asking suspends; replying schedules work."""
+from __future__ import annotations
+
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from bus import bus
-from bus.events import QUESTION_ASKED, QUESTION_REPLIED, QUESTION_REJECTED
 from core.identifier import generate_id
-from core.log import create_logger
-
-log = create_logger("question")
+from db.base import get_db_session
+from db.models.part import Part
+from db.models.question import QuestionCheckpoint, SessionExecution
+from db.models.session import Session
+from question import runtime
 
 
 class QuestionOption(BaseModel):
@@ -23,13 +24,16 @@ class QuestionOption(BaseModel):
 class Question(BaseModel):
     question: str
     header: str = ""
-    options: list[QuestionOption] = []
-    multiple: bool = False  # Allow selecting multiple choices
-    custom: bool = True  # Allow typing a custom "Other" answer (default: true)
-    # Optional structured context for first-party confirmation cards. Keeping
-    # this generic lets older stored requests (which do not have it) continue
-    # to deserialize while richer system workflows can show what is approved.
+    options: list[QuestionOption] = Field(default_factory=list)
+    multiple: bool = False
+    custom: bool = True
     detail: dict[str, Any] | None = None
+
+
+class DraftAnswer(BaseModel):
+    selected: list[str] = Field(default_factory=list)
+    custom: str = Field(default="", max_length=5000)
+    use_custom: bool = False
 
 
 class QuestionRequest(BaseModel):
@@ -37,237 +41,242 @@ class QuestionRequest(BaseModel):
     user_id: str = "default"
     session_id: str
     questions: list[Question]
-    tool: dict | None = None  # { "messageID": str, "callID": str }
+    tool: dict | None = None
     created_at: str = ""
+    generation: int = 0
+    status: str = "pending"
+    draft: list[DraftAnswer] = Field(default_factory=list)
+    draft_revision: int = 0
+    expires_at: str | None = None
 
 
 class QuestionReply(BaseModel):
     id: str
-    answers: list[list[str]]  # One string[] per question (selected labels)
-
-
-@dataclass
-class PendingQuestion:
-    """A question waiting for user response."""
-    request: QuestionRequest
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    answers: list[list[str]] | None = None  # One string[] per question
-    rejected: bool = False
+    answers: list[list[str]]
 
 
 class QuestionRejectedError(Exception):
-    """Raised when the user dismisses/rejects a question."""
     pass
 
 
-# State
-_pending: dict[str, PendingQuestion] = {}
+class QuestionSuspended(Exception):
+    """Control flow, not a failed tool. The checkpoint is already committed."""
+    def __init__(self, request_id: str):
+        super().__init__("Waiting for user input")
+        self.request_id = request_id
 
 
-def _get_redis_client():
-    """Get the Redis client from the bus module, if available."""
-    return bus._redis_client
+class QuestionGone(Exception):
+    def __init__(self, status: str):
+        super().__init__(f"Question is {status}")
+        self.status = status
 
 
-async def _wait_via_redis(request_id: str, pending: PendingQuestion) -> None:
-    """Wait for a question reply via Redis Pub/Sub channel."""
-    redis_client = _get_redis_client()
-    channel_name = f"question_reply:{request_id}"
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(channel_name)
-    try:
-        while True:
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=1.0
-            )
-            if message is not None and message["type"] == "message":
-                try:
-                    reply_data = json.loads(message["data"])
-                    if reply_data.get("rejected"):
-                        pending.rejected = True
-                    else:
-                        pending.answers = reply_data.get("answers")
-                    return
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    log.warning(f"Invalid question reply message: {e}")
-            else:
-                await asyncio.sleep(0.01)
-    finally:
-        try:
-            await pubsub.unsubscribe(channel_name)
-            await pubsub.aclose()
-        except Exception:
-            pass
+class QuestionConflict(Exception):
+    pass
+
+
+def _request(row: QuestionCheckpoint) -> QuestionRequest:
+    return QuestionRequest(
+        id=row.id, user_id=row.user_id, session_id=row.session_id,
+        questions=row.questions, generation=row.generation, status=row.status,
+        tool={"messageID": row.message_id, "callID": row.part_id} if row.part_id else None,
+        draft=row.draft, draft_revision=row.draft_revision,
+        created_at=runtime.utc(row.created_at).isoformat(),
+        expires_at=runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
+    )
+
+
+def _event(row: QuestionCheckpoint) -> dict:
+    return {"userId": row.user_id, "session_id": row.session_id,
+            "id": row.id, "request_id": row.id, "status": row.status}
+
+
+def validate_answers(questions: list[Question], answers: list[list[str]], *, partial: bool = False) -> list[list[str]]:
+    if not isinstance(answers, list) or any(
+        not isinstance(values, list) or any(not isinstance(value, str) for value in values)
+        for values in answers
+    ):
+        raise ValueError("Answers must be arrays of strings")
+    if len(questions) != len(answers):
+        raise ValueError("Provide one answer array per question")
+    clean = []
+    for question, values in zip(questions, answers):
+        labels = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if not partial and not labels:
+            raise ValueError("Answer every question before submitting")
+        if not question.multiple and len(labels) > 1:
+            raise ValueError("This question accepts only one answer")
+        if any(len(label) > 5000 for label in labels) or len(labels) > 100:
+            raise ValueError("Answer is too long")
+        if not question.custom and any(label not in {o.label for o in question.options} for label in labels):
+            raise ValueError("Choose one of the offered options")
+        clean.append(labels)
+    return clean
 
 
 async def ask(
-    session_id: str,
-    questions: list[Question],
-    tool: dict | None = None,
-    user_id: str = "default",
+    session_id: str, questions: list[Question], tool: dict | None = None,
+    user_id: str = "default", *, continuation: dict | None = None,
+    expires_at: datetime | None = None,
 ) -> list[list[str]]:
-    """Ask the user questions and wait for answers.
-
-    Returns list of answers, one string[] per question (selected labels).
-    """
-    request_id = generate_id()
-    request = QuestionRequest(
-        id=request_id,
-        user_id=user_id,
-        session_id=session_id,
-        questions=questions,
-        tool=tool,
-        created_at=datetime.now(timezone.utc).isoformat(),
-    )
-
-    pending = PendingQuestion(request=request)
-    _pending[request_id] = pending
-
-    redis_client = _get_redis_client()
-
-    if redis_client is not None:
-        # Store request data in Redis for cross-worker access
-        try:
-            await redis_client.setex(
-                f"question_req:{request_id}",
-                300,  # TTL 300s
-                json.dumps(request.model_dump()),
+    if not 1 <= len(questions) <= 4:
+        raise ValueError("Ask between 1 and 4 questions at once")
+    continuation = continuation or {"kind": "question"}
+    if continuation.get("kind") not in {"question", "plan_enter", "memory_proposal"}:
+        raise ValueError("Unsupported question continuation")
+    ticket = runtime.current_run.get()
+    part_id = (tool or {}).get("callID")
+    message_id = (tool or {}).get("messageID")
+    async with runtime.transaction(session_id, user_id) as (db, session, execution):
+        if session.parent_id and session.kind != "cron":
+            raise ValueError("Return this clarification to the parent agent; subagents cannot ask the user directly")
+        if ticket and (ticket.session_id != session_id or ticket.user_id != user_id or not runtime.owns(execution, ticket)):
+            raise QuestionGone("superseded")
+        if not part_id or not message_id:
+            raise ValueError("A durable question requires a persisted tool call to receive its answer")
+        request = None
+        if part_id:
+            existing = await db.scalar(select(QuestionCheckpoint).where(QuestionCheckpoint.part_id == part_id))
+            if existing:
+                if existing.user_id != user_id or existing.session_id != session_id:
+                    raise KeyError("Question not found")
+                if existing.status != "pending":
+                    raise QuestionGone(existing.status)
+                if existing.generation != execution.generation:
+                    raise QuestionGone("superseded")
+                if existing.message_id != message_id or existing.questions != [q.model_dump() for q in questions]:
+                    raise QuestionConflict("An existing question's content cannot be replaced")
+                request = _request(existing)
+        if request is None:
+            if continuation["kind"] == "memory_proposal":
+                continuation = {**continuation, "workspace_id": session.workspace_id}
+            part = await db.get(Part, part_id) if part_id else None
+            if part_id and (part is None or part.session_id != session_id or part.user_id != user_id or part.message_id != message_id):
+                raise KeyError("Question tool call not found")
+            if part and (part.canonical_tool_id or part.data.get("tool")) not in {"question", "plan_enter", "creator_context"}:
+                raise ValueError("Question tools must be called directly, not inside a batch")
+            if part and continuation["kind"] != {
+                "question": "question", "plan_enter": "plan_enter", "creator_context": "memory_proposal",
+            }[part.canonical_tool_id or part.data.get("tool")]:
+                raise ValueError("Saved continuation does not match the question's tool")
+            row = QuestionCheckpoint(
+                id=generate_id(), session_id=session_id, user_id=user_id,
+                generation=execution.generation, message_id=message_id, part_id=part_id,
+                status="pending", questions=[q.model_dump() for q in questions],
+                draft=[DraftAnswer().model_dump() for _ in questions], draft_revision=0,
+                continuation=continuation, applied=False,
+                created_at=runtime.now(), updated_at=runtime.now(), expires_at=expires_at,
             )
-        except Exception as e:
-            log.warning(f"Failed to store question request in Redis: {e}")
-
-    # Publish SSE event
-    bus.publish(QUESTION_ASKED, {**request.model_dump(), "userId": user_id})
-
-    if redis_client is not None:
-        # Wait via Redis Pub/Sub for cross-worker support
-        try:
-            await _wait_via_redis(request_id, pending)
-        except Exception as e:
-            log.warning(f"Redis wait failed, falling back to local: {e}")
-            await pending.event.wait()
-    else:
-        # Fallback: local asyncio.Event wait
-        await pending.event.wait()
-
-    # Clean up pending
-    _pending.pop(request_id, None)
-
-    if pending.rejected:
-        raise QuestionRejectedError("User dismissed this question.")
-
-    return pending.answers or []
+            db.add(row)
+            await db.flush()
+            if part:
+                part.data = {**part.data, "status": "waiting_input", "title": "Waiting for your answer",
+                             "metadata": {**(part.data.get("metadata") or {}),
+                                 "question_id": row.id, "question_status": "pending",
+                                 "questions": [q.question for q in questions]}}
+            if not runtime.is_live(execution):
+                session.status = "waiting_input"
+            request = _request(row)
+    bus.publish("question.asked", {**request.model_dump(), "userId": user_id})
+    if request.tool:
+        async with get_db_session() as db:
+            saved_part = await db.get(Part, request.tool["callID"])
+            if saved_part:
+                bus.publish("part.updated", {"userId": user_id, "sessionId": session_id,
+                    "messageId": saved_part.message_id, "part": saved_part.data})
+    raise QuestionSuspended(request.id)
 
 
-async def reply(request_id: str, answers: list[list[str]], user_id: str = "default") -> None:
-    """Handle user reply to a question."""
-    redis_client = _get_redis_client()
-
-    # Try to load request from Redis (cross-worker scenario)
-    request_data = None
-    if redis_client is not None:
-        try:
-            raw = await redis_client.get(f"question_req:{request_id}")
-            if raw:
-                request_data = json.loads(raw)
-                await redis_client.delete(f"question_req:{request_id}")
-        except Exception as e:
-            log.warning(f"Failed to read question request from Redis: {e}")
-
-    # Check local pending dict
-    pending = _pending.pop(request_id, None)
-
-    owner_id = pending.request.user_id if pending is not None else (request_data or {}).get("user_id")
-    if owner_id and owner_id != user_id:
-        if pending is not None:
-            _pending[request_id] = pending
-        raise PermissionError("Question request does not belong to current user")
-    if pending is None and request_data is None:
-        raise KeyError("Question request not found")
-
-    if pending is not None:
-        # Local worker owns this request
-        pending.answers = answers
-        pending.event.set()
-
-    # Publish reply via Redis channel for cross-worker delivery
-    if redis_client is not None:
-        reply_payload = json.dumps({"answers": answers})
-        try:
-            await redis_client.publish(f"question_reply:{request_id}", reply_payload)
-        except Exception as e:
-            log.warning(f"Failed to publish question reply to Redis: {e}")
-
-    # Determine session_id for the bus event
-    session_id = None
-    if pending is not None:
-        session_id = pending.request.session_id
-    elif request_data is not None:
-        session_id = request_data.get("session_id")
-
-    bus.publish(QUESTION_REPLIED, {
-        "userId": user_id,
-        "id": request_id,
-        "session_id": session_id or "",
-    })
+async def _owned_request(request_id: str, user_id: str) -> QuestionCheckpoint:
+    async with get_db_session() as db:
+        row = await db.scalar(select(QuestionCheckpoint).join(Session, Session.id == QuestionCheckpoint.session_id).where(
+            QuestionCheckpoint.id == request_id, QuestionCheckpoint.user_id == user_id,
+            Session.user_id == user_id, Session.is_deleted == False,  # noqa: E712
+        ))
+        if row is None:
+            raise KeyError("Question not found")
+        return row
 
 
-async def reject(request_id: str, user_id: str = "default") -> None:
-    """Handle user rejection/dismissal of a question."""
-    redis_client = _get_redis_client()
-
-    # Try to load request from Redis (cross-worker scenario)
-    request_data = None
-    if redis_client is not None:
-        try:
-            raw = await redis_client.get(f"question_req:{request_id}")
-            if raw:
-                request_data = json.loads(raw)
-                await redis_client.delete(f"question_req:{request_id}")
-        except Exception as e:
-            log.warning(f"Failed to read question request from Redis: {e}")
-
-    # Check local pending dict
-    pending = _pending.pop(request_id, None)
-
-    owner_id = pending.request.user_id if pending is not None else (request_data or {}).get("user_id")
-    if owner_id and owner_id != user_id:
-        if pending is not None:
-            _pending[request_id] = pending
-        raise PermissionError("Question request does not belong to current user")
-    if pending is None and request_data is None:
-        raise KeyError("Question request not found")
-
-    if pending is not None:
-        # Local worker owns this request
-        pending.rejected = True
-        pending.event.set()
-
-    # Publish rejection via Redis channel for cross-worker delivery
-    if redis_client is not None:
-        reply_payload = json.dumps({"rejected": True})
-        try:
-            await redis_client.publish(f"question_reply:{request_id}", reply_payload)
-        except Exception as e:
-            log.warning(f"Failed to publish question rejection to Redis: {e}")
-
-    # Determine session_id for the bus event
-    session_id = None
-    if pending is not None:
-        session_id = pending.request.session_id
-    elif request_data is not None:
-        session_id = request_data.get("session_id")
-
-    bus.publish(QUESTION_REJECTED, {
-        "userId": user_id,
-        "id": request_id,
-        "session_id": session_id or "",
-    })
+def _check_pending(row: QuestionCheckpoint, execution: SessionExecution) -> None:
+    if row.generation != execution.generation:
+        raise QuestionGone("superseded")
+    if row.status != "pending":
+        raise QuestionGone(row.status)
+    if row.expires_at and runtime.utc(row.expires_at) <= runtime.now():
+        raise QuestionGone("expired")
 
 
-def list_pending(user_id: str | None = None) -> list[QuestionRequest]:
-    """List all pending questions."""
-    requests = [p.request for p in _pending.values()]
-    if user_id is None:
-        return requests
-    return [r for r in requests if r.user_id == user_id]
+async def reply(request_id: str, answers: list[list[str]], user_id: str = "default") -> dict:
+    return await _resolve(request_id, user_id, answers)
+
+
+async def get_request(request_id: str, user_id: str) -> QuestionRequest:
+    return _request(await _owned_request(request_id, user_id))
+
+
+async def reject(request_id: str, user_id: str = "default") -> dict:
+    return await _resolve(request_id, user_id, None)
+
+
+async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | None) -> dict:
+    owned = await _owned_request(request_id, user_id)
+    async with runtime.transaction(owned.session_id, user_id) as (db, session, execution):
+        row = await db.get(QuestionCheckpoint, request_id)
+        status = "rejected" if answers is None else "answered"
+        clean = None if answers is None else validate_answers([Question(**q) for q in row.questions], answers)
+        if row.generation != execution.generation:
+            raise QuestionGone("superseded")
+        if row.status in ("answered", "rejected"):
+            if row.status != status or row.answers != clean:
+                raise QuestionConflict("An answer has already been accepted")
+            return {"ok": True, "status": row.status, "session_id": row.session_id}
+        _check_pending(row, execution)
+        row.status, row.answers, row.updated_at = status, clean, runtime.now()
+        execution.resume_pending = True
+        execution.resume_error = None
+        execution.next_attempt_at = None
+        execution.updated_at = runtime.now()
+        await db.flush()
+        if not runtime.is_live(execution):
+            session.status = await runtime.waiting_status(db, execution)
+        session_status = session.status
+    bus.publish("question.rejected" if answers is None else "question.replied", _event(row))
+    runtime.publish_status(row.session_id, user_id, session_status)
+    return {"ok": True, "status": row.status, "session_id": row.session_id}
+
+
+async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, user_id: str = "default") -> QuestionRequest:
+    owned = await _owned_request(request_id, user_id)
+    async with runtime.transaction(owned.session_id, user_id) as (db, _, execution):
+        row = await db.get(QuestionCheckpoint, request_id)
+        _check_pending(row, execution)
+        if revision != row.draft_revision:
+            raise QuestionConflict("Draft changed in another tab; reload before saving")
+        questions = [Question(**q) for q in row.questions]
+        if len(draft) != len(questions):
+            raise ValueError("Provide one draft per question")
+        for question, item in zip(questions, draft):
+            if item.custom and not question.custom:
+                raise ValueError("Free text is not allowed for this question")
+            validate_answers([question.model_copy(update={"custom": False})], [item.selected], partial=True)
+        row.draft = [item.model_dump() for item in draft]
+        row.draft_revision += 1
+        row.updated_at = runtime.now()
+        request = _request(row)
+    bus.publish("question.updated", {**request.model_dump(), "userId": user_id})
+    return request
+
+
+async def list_pending(user_id: str) -> list[QuestionRequest]:
+    async with get_db_session() as db:
+        rows = (await db.scalars(select(QuestionCheckpoint)
+            .join(SessionExecution, SessionExecution.session_id == QuestionCheckpoint.session_id)
+            .join(Session, Session.id == QuestionCheckpoint.session_id)
+            .where(QuestionCheckpoint.user_id == user_id, Session.user_id == user_id,
+                   Session.is_deleted == False,  # noqa: E712
+                   QuestionCheckpoint.status == "pending",
+                   QuestionCheckpoint.generation == SessionExecution.generation)
+            .order_by(QuestionCheckpoint.created_at))).all()
+        return [_request(row) for row in rows if not row.expires_at or runtime.utc(row.expires_at) > runtime.now()]

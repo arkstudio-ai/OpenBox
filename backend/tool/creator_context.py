@@ -5,7 +5,7 @@ native tool. Identity always comes from ToolContext — there is no
 user id argument, which removes the impersonation surface the MCP
 version had to guard with token plumbing.
 
-The propose→confirm channel is synchronous here: bossip parked proposals
+The propose→confirm channel uses durable human input: bossip parked proposals
 as PENDING_NOTE rows for a later web confirmation, while OpenBox has
 interactive approval cards, so `propose_memory` writes the pending row
 and immediately asks the user. A dismissed card leaves the row pending —
@@ -119,6 +119,8 @@ async def _handle_proposal(args: CreatorContextArgs, ctx: ToolContext) -> ToolRe
             tool={"messageID": ctx.message_id, "callID": ctx.part_id}
             if ctx.part_id
             else None,
+            continuation={"kind": "memory_proposal", "memory_id": proposal["id"],
+                          "workspace_id": proposal.get("workspace_id") or ctx.workspace_id},
         )
     except QuestionRejectedError:
         return ToolResult(

@@ -13,14 +13,23 @@ export function useSessionQuery(sessionId: string) {
   const userId = useUserId()
   return useQuery({
     queryKey: ["session", userId, sessionId],
-    queryFn: () => http.get<Session>(`/api/agent/session/${sessionId}`),
+    queryFn: async () => {
+      const statusAtStart = useStreamStore.getState().status.get(sessionId)
+      const session = await http.get<Session>(`/api/agent/session/${sessionId}`)
+      // Reconnect/HTTP-only replies must replace a stale waiting status, but
+      // never overwrite a newer WebSocket transition received during this read.
+      if (useStreamStore.getState().status.get(sessionId) === statusAtStart) {
+        useStreamStore.getState().setStatus(sessionId, session.status)
+      }
+      return session
+    },
     enabled: sessionId.length > 0,
     staleTime: 30_000,
     refetchOnMount: "always",
     // The DB status is the recovery source when WebSocket events were missed.
     // Keep polling only while it says work is live; the idle response stops
     // the timer, so completed conversations stay quiet.
-    refetchInterval: (query) => (isBusyStatus(query.state.data?.status) ? 1_000 : false),
+    refetchInterval: (query) => (isBusyStatus(query.state.data?.status) || query.state.data?.status === "queued" ? 1_000 : false),
   })
 }
 

@@ -88,6 +88,7 @@ async def execute_enter(args: PlanEnterArgs, ctx: ToolContext) -> ToolResult:
         # dialog never reached anyone and the tool blocked until the run was
         # killed — build mode could propose plan mode but never enter it.
         user_id=ctx.user_id or "default",
+        continuation={"kind": "plan_enter", "plan_path": rel_path},
     )
 
     first_answer = answers[0][0] if answers and answers[0] else "No"
@@ -121,6 +122,7 @@ plan_enter_tool = define_tool(
     parameters=PlanEnterArgs,
     execute=execute_enter,
     sandbox_required=False,
+    parallel_safe=False,
 )
 
 

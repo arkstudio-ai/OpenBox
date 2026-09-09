@@ -45,6 +45,8 @@ function StatusLine({ status }: { status: ToolStatus }) {
   const running = status === "running" || status === "pending"
   const text = running
     ? t("toolStatus.running")
+    : status === "waiting_input"
+      ? t("question.waiting")
     : status === "error"
       ? t("toolStatus.failed")
       : t("toolStatus.completed")

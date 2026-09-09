@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/api/auth_store.dart';
 import '../../../shared/models/interaction.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/ws/ws_client.dart';
+import '../api/chat_api.dart';
 import 'question_draft.dart';
 
 /// Pending permission/question requests grouped by session, mirroring
@@ -24,12 +26,21 @@ class PendingState {
 
 class PendingStore extends Notifier<PendingState> {
   StreamSubscription<WsEvent>? _sub;
+  final _closed = <String>{};
+  int _epoch = 0;
+  int _refreshSequence = 0;
 
   @override
   PendingState build() {
+    ref.watch(authProvider.select((s) => s.userId));
+    _closed.clear();
+    _epoch++;
     _sub?.cancel();
     _sub = ref.watch(wsClientProvider).events.listen(_onWsEvent);
-    ref.onDispose(() => _sub?.cancel());
+    ref.onDispose(() {
+      _epoch++;
+      _sub?.cancel();
+    });
     return const PendingState();
   }
 
@@ -39,9 +50,9 @@ class PendingStore extends Notifier<PendingState> {
         addPermission(PermissionRequest.fromJson(event.data));
       case 'permission.replied':
         removePermission(_requestId(event.data));
-      case 'question.asked':
+      case 'question.asked' || 'question.updated':
         addQuestion(QuestionRequest.fromJson(event.data));
-      case 'question.replied' || 'question.rejected':
+      case 'question.replied' || 'question.rejected' || 'question.cancelled':
         removeQuestion(_requestId(event.data));
     }
   }
@@ -63,12 +74,24 @@ class PendingStore extends Notifier<PendingState> {
       permMap.putIfAbsent(p.sessionId, () => []).add(p);
     }
     final questionMap = <String, List<QuestionRequest>>{};
-    for (final q in questions) {
-      questionMap.putIfAbsent(q.sessionId, () => []).add(q);
+    for (final q in questions.where(
+      (q) => !_closed.contains(q.id) && q.status == 'pending',
+    )) {
+      final existing = state
+          .questionsOf(q.sessionId)
+          .where((item) => item.id == q.id)
+          .firstOrNull;
+      final latest =
+          existing != null && existing.draftRevision > q.draftRevision
+          ? existing
+          : q;
+      questionMap.putIfAbsent(q.sessionId, () => []).add(latest);
+      ref.read(questionDraftProvider.notifier).hydrate(latest);
     }
     state = PendingState(permissions: permMap, questions: questionMap);
     ref.read(questionDraftProvider.notifier).keepOnly({
-      for (final q in questions) q.id,
+      for (final list in questionMap.values)
+        for (final q in list) q.id,
     });
   }
 
@@ -96,19 +119,32 @@ class PendingStore extends Notifier<PendingState> {
   }
 
   void addQuestion(QuestionRequest request) {
-    if (request.id.isEmpty) return;
+    if (request.id.isEmpty ||
+        _closed.contains(request.id) ||
+        request.status != 'pending') {
+      return;
+    }
     final list = state.questionsOf(request.sessionId);
-    if (list.any((q) => q.id == request.id)) return;
+    final existing = list.where((q) => q.id == request.id).firstOrNull;
+    if (existing != null && existing.draftRevision >= request.draftRevision) {
+      return;
+    }
+    ref.read(questionDraftProvider.notifier).hydrate(request);
     state = PendingState(
       permissions: state.permissions,
       questions: {
         ...state.questions,
-        request.sessionId: [...list, request],
+        request.sessionId: existing == null
+            ? [...list, request]
+            : [for (final q in list) q.id == request.id ? request : q],
       },
     );
   }
 
   void removeQuestion(String requestId) {
+    if (requestId.isEmpty) return;
+    _closed.add(requestId);
+    if (_closed.length > 1000) _closed.remove(_closed.first);
     ref.read(questionDraftProvider.notifier).discard(requestId);
     state = PendingState(
       permissions: state.permissions,
@@ -117,6 +153,31 @@ class PendingStore extends Notifier<PendingState> {
           entry.key: entry.value.where((q) => q.id != requestId).toList(),
       },
     );
+  }
+
+  Future<void> refreshQuestions() => _refresh(includePermissions: false);
+
+  Future<void> refreshAll() => _refresh(includePermissions: true);
+
+  Future<void> _refresh({required bool includePermissions}) async {
+    final epoch = _epoch;
+    final sequence = ++_refreshSequence;
+    try {
+      final api = ref.read(chatApiProvider);
+      final results = await Future.wait<dynamic>([
+        api.listQuestions(),
+        if (includePermissions) api.listPermissions(),
+      ]);
+      if (epoch != _epoch || sequence != _refreshSequence) return;
+      seed(
+        includePermissions
+            ? results[1] as List<PermissionRequest>
+            : state.permissions.values.expand((list) => list).toList(),
+        results[0] as List<QuestionRequest>,
+      );
+    } catch (_) {
+      /* A failed read must not discard pending cards or drafts. */
+    }
   }
 }
 

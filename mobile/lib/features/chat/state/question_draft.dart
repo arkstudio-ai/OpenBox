@@ -22,6 +22,7 @@ class QuestionDraft {
     this.saving = false,
     this.submitting = false,
     this.saveError,
+    this.page = 0,
   });
 
   factory QuestionDraft.empty(int count) => QuestionDraft(
@@ -39,11 +40,15 @@ class QuestionDraft {
       count,
       (i) => i < answers.length ? answers[i] : const QuestionDraftAnswer(),
     );
+    final firstEmpty = rows.indexWhere(
+      (row) => row.useCustom ? row.custom.trim().isEmpty : row.selected.isEmpty,
+    );
     return QuestionDraft(
       picked: rows.map((r) => r.selected.toSet()).toList(),
       custom: rows.map((r) => r.custom).toList(),
       useCustom: rows.map((r) => r.useCustom).toList(),
       revision: revision,
+      page: firstEmpty >= 0 ? firstEmpty : (count > 0 ? count - 1 : 0),
     );
   }
 
@@ -55,6 +60,9 @@ class QuestionDraft {
   final bool saving;
   final bool submitting;
   final String? saveError;
+
+  /// Local-only page position; never part of the answer or server revision.
+  final int page;
 
   List<List<String>> get answers => List.generate(
     picked.length,
@@ -84,6 +92,7 @@ class QuestionDraft {
     bool? submitting,
     String? saveError,
     bool clearError = false,
+    int? page,
   }) => QuestionDraft(
     picked: picked ?? this.picked,
     custom: custom ?? this.custom,
@@ -93,6 +102,7 @@ class QuestionDraft {
     saving: saving ?? this.saving,
     submitting: submitting ?? this.submitting,
     saveError: clearError ? null : saveError ?? this.saveError,
+    page: page ?? this.page,
   );
 }
 
@@ -153,11 +163,16 @@ class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
             request.draftRevision,
           );
           draft = local.copy(dirty: local.payload != draft.payload);
+          final page = cached['page'];
+          if (page is int && page >= 0 && page < request.questions.length) {
+            draft = draft.copy(page: page);
+          }
         }
       } catch (_) {
         /* A corrupt cache cannot hide a server draft. */
       }
     }
+    if (existing != null) draft = draft.copy(page: existing.page);
     state = {...state, request.id: draft};
     if (draft.dirty) _schedule(request.id);
   }
@@ -171,6 +186,7 @@ class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
             jsonEncode({
               'revision': draft.revision,
               'draft': draft.wire.map((r) => r.toJson()).toList(),
+              'page': draft.page,
             }),
           )
           .catchError((Object _) => false),
@@ -183,6 +199,16 @@ class QuestionDraftStore extends Notifier<Map<String, QuestionDraft>> {
     state = {...state, id: next};
     _cache(id, next);
     _schedule(id);
+  }
+
+  void setPage(String id, int count, int page) {
+    final draft = of(id, count);
+    if (draft.submitting || page < 0 || page >= count || page == draft.page) {
+      return;
+    }
+    final next = draft.copy(page: page);
+    state = {...state, id: next};
+    _cache(id, next);
   }
 
   void toggle(

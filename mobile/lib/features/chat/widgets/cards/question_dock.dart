@@ -107,6 +107,21 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
 
   Future<void> _reject() => _resolve(null);
 
+  void _goTo(int page) {
+    if (page < 0 || page >= _count) return;
+    final drafts = ref.read(questionDraftProvider.notifier);
+    if (drafts.of(widget.request.id, _count).submitting) return;
+    FocusScope.of(context).unfocus();
+    drafts.setPage(widget.request.id, _count, page);
+  }
+
+  void _completePage(int page) {
+    final draft = ref
+        .read(questionDraftProvider.notifier)
+        .of(widget.request.id, _count);
+    if (draft.answers[page].isNotEmpty && page < _count - 1) _goTo(page + 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -115,6 +130,8 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
         ref.watch(questionDraftProvider)[widget.request.id] ??
         QuestionDraft.empty(_count);
     final complete = draft.complete;
+    if (_count == 0) return const SizedBox.shrink();
+    final page = draft.page.clamp(0, _count - 1);
     ref.listen(
       questionDraftProvider.select((drafts) => drafts[widget.request.id]),
       (_, next) {
@@ -147,25 +164,78 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            i18n.t('chat:question.title'),
-            style: TextStyle(
-              fontSize: FontSizes.sm,
-              fontWeight: FontWeight.w600,
-              color: t.n800,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              if (_count > 1)
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: draft.submitting || page == 0
+                        ? null
+                        : () => _goTo(page - 1),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    ),
+                    icon: const Icon(Icons.chevron_left, size: 18),
+                    label: Text(
+                      i18n.t('chat:question.previous'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              Semantics(
+                liveRegion: true,
+                label: i18n.t(
+                  'chat:question.page',
+                  vars: {'current': page + 1, 'count': _count},
+                ),
+                child: ExcludeSemantics(
+                  child: Text(
+                    '${page + 1}/$_count',
+                    style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
+                  ),
+                ),
+              ),
+              if (_count > 1)
+                Expanded(
+                  child: TextButton(
+                    onPressed: draft.submitting || page == _count - 1
+                        ? null
+                        : () => _goTo(page + 1),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            i18n.t('chat:question.next'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right, size: 18),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 300),
             child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final (index, question)
-                      in widget.request.questions.indexed)
-                    _question(t, i18n, index, question, draft),
-                ],
+              key: ValueKey('${widget.request.id}:$page'),
+              child: _question(
+                t,
+                i18n,
+                page,
+                widget.request.questions[page],
+                draft,
               ),
             ),
           ),
@@ -281,9 +351,7 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
             ),
           Text(
-            _count > 1
-                ? '${index + 1}. ${question.question}'
-                : question.question,
+            question.question,
             style: TextStyle(
               fontSize: FontSizes.base,
               color: t.ink,
@@ -312,16 +380,19 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
                   labelStyle: TextStyle(color: t.ink),
                   onSelected: draft.submitting
                       ? null
-                      : (on) => ref
-                            .read(questionDraftProvider.notifier)
-                            .toggle(
-                              widget.request.id,
-                              _count,
-                              index,
-                              option.label,
-                              multiple: question.multiple,
-                              on: on,
-                            ),
+                      : (on) {
+                          ref
+                              .read(questionDraftProvider.notifier)
+                              .toggle(
+                                widget.request.id,
+                                _count,
+                                index,
+                                option.label,
+                                multiple: question.multiple,
+                                on: on,
+                              );
+                          if (on && !question.multiple) _completePage(index);
+                        },
                 ),
             ],
           ),
@@ -331,6 +402,10 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               controller: _custom[index],
               enabled: !draft.submitting,
               maxLength: 5000,
+              textInputAction: index < _count - 1
+                  ? TextInputAction.next
+                  : TextInputAction.done,
+              onSubmitted: (_) => _completePage(index),
               onTap: () => ref
                   .read(questionDraftProvider.notifier)
                   .write(widget.request.id, _count, index, _custom[index].text),
@@ -358,6 +433,19 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
               ),
             ),
           ],
+          if (index < _count - 1 &&
+              (question.multiple || draft.useCustom[index]))
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                i18n.t(
+                  question.multiple
+                      ? 'chat:question.multipleNextHint'
+                      : 'chat:question.customNextHint',
+                ),
+                style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+              ),
+            ),
         ],
       ),
     );

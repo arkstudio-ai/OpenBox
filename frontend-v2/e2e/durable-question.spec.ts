@@ -25,6 +25,7 @@ async function fixture(
   let question = structuredClone(initialQuestion)
   let pending = !options.delayList
   const answers: unknown[] = []
+  const rejections: string[] = []
   const errors: string[] = []
   page.on("pageerror", (error) => errors.push(error.message))
   await page.route("**/api/**", async (route) => {
@@ -61,6 +62,11 @@ async function fixture(
     }
     if (path === "/api/agent/question/fixture-ask" && method === "GET")
       return route.fulfill({ json: question })
+    if (path === "/api/agent/question/fixture-ask/reject" && method === "POST") {
+      rejections.push("fixture-ask")
+      pending = false
+      return route.fulfill({ json: { ok: true, session_id: "fixture-session" } })
+    }
     if (path === "/api/agent/question/fixture-ask" && method === "POST") {
       answers.push(route.request().postDataJSON())
       await options.holdAnswer
@@ -77,13 +83,17 @@ async function fixture(
     return route.fulfill({ json: [] })
   })
   await page.goto("/e2e/fixtures/durable-question.html")
-  return { answers, errors }
+  return { answers, rejections, errors }
 }
 
 async function fillAll(page: Page) {
   await expect(page.getByRole("button", { name: "确认", exact: true })).toBeDisabled()
+  await expect(page.getByText("1/3", { exact: true })).toBeVisible()
+  await expect(page.getByRole("textbox", { name: "请选择字幕", exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "30秒", exact: true }).click()
+  await expect(page.getByText("2/3", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "保留", exact: true }).click()
+  await expect(page.getByText("3/3", { exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "确认", exact: true })).toBeDisabled()
   await page.getByRole("textbox", { name: "请选择语气", exact: true }).fill("自然轻松")
 }
@@ -94,6 +104,9 @@ for (const width of [320, 390, 1280]) {
     const state = await fixture(page)
     await fillAll(page)
     await expect(page.getByRole("button", { name: "确认", exact: true })).toBeEnabled()
+    await expect(page.getByRole("button", { name: "确认", exact: true })).toBeInViewport()
+    await expect(page.getByRole("button", { name: "上一题", exact: true })).toBeInViewport()
+    await expect(page.getByRole("button", { name: "下一题", exact: true })).toBeDisabled()
     const send = page.getByRole("button", { name: "发送", exact: true })
     await expect(send).toBeInViewport()
     const bounds = await send.boundingBox()
@@ -140,7 +153,9 @@ test("an in-flight answer disables every control and sends only once", async ({ 
   })
   await fillAll(page)
   await page.getByRole("button", { name: "确认", exact: true }).click()
-  await expect(page.getByRole("button", { name: "30秒", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "轻松", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "上一题", exact: true })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "下一题", exact: true })).toBeDisabled()
   await expect(page.getByRole("button", { name: "跳过全部", exact: true })).toBeDisabled()
   await expect(page.getByRole("textbox", { name: "请选择语气", exact: true })).toBeDisabled()
   await expect.poll(() => state.answers.length).toBe(1)
@@ -171,14 +186,55 @@ test("saved mixed-answer drafts survive a complete page reload", async ({ page }
     (response) => response.url().endsWith("/fixture-ask/draft") && response.status() === 200,
   )
   await page.reload()
-  await expect(page.getByRole("button", { name: "30秒", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  )
+  await expect(page.getByText("3/3", { exact: true })).toBeVisible()
+  await expect(page.getByRole("textbox", { name: "请选择语气", exact: true })).toHaveValue("自然轻松")
+  await page.getByRole("button", { name: "上一题", exact: true }).click()
   await expect(page.getByRole("button", { name: "保留", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   )
-  await expect(page.getByRole("textbox", { name: "请选择语气", exact: true })).toHaveValue("自然轻松")
+  await page.getByRole("button", { name: "上一题", exact: true }).click()
+  await expect(page.getByRole("button", { name: "30秒", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  )
   await expect(page.getByRole("button", { name: "确认", exact: true })).toBeEnabled()
+})
+
+test("custom input advances only on completion; earlier answers remain editable", async ({ page }) => {
+  const state = await fixture(page)
+  const input = page.getByRole("textbox", { name: "请选择时长", exact: true })
+  await input.fill("45秒")
+  await expect(page.getByText("1/3", { exact: true })).toBeVisible()
+  await input.press("Enter")
+  await expect(page.getByText("2/3", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "上一题", exact: true }).click()
+  await expect(input).toHaveValue("45秒")
+  await page.getByRole("button", { name: "60秒", exact: true }).click()
+  await page.getByRole("button", { name: "保留", exact: true }).click()
+  await page.getByRole("button", { name: "轻松", exact: true }).click()
+  await expect(page.getByText("3/3", { exact: true })).toBeVisible()
+  expect(state.answers).toEqual([])
+  await page.getByRole("button", { name: "确认", exact: true }).click()
+  await expect.poll(() => state.answers.length).toBe(1)
+  expect(state.answers[0]).toEqual({ answers: [["60秒"], ["保留"], ["轻松"]] })
+})
+
+test("manual next can review unanswered pages, but cannot submit incomplete answers", async ({ page }) => {
+  await fixture(page)
+  await page.getByRole("button", { name: "下一题", exact: true }).click()
+  await page.getByRole("button", { name: "下一题", exact: true }).click()
+  await page.getByRole("button", { name: "轻松", exact: true }).click()
+  await expect(page.getByRole("button", { name: "确认", exact: true })).toBeDisabled()
+  await page.getByRole("button", { name: "上一题", exact: true }).click()
+  await expect(page.getByText("2/3", { exact: true })).toBeVisible()
+})
+
+test("skip from an intermediate page resolves the whole ask without a partial answer", async ({ page }) => {
+  const state = await fixture(page)
+  await page.getByRole("button", { name: "30秒", exact: true }).click()
+  await page.getByRole("button", { name: "跳过全部", exact: true }).click()
+  await expect(page.getByRole("button", { name: "确认", exact: true })).toHaveCount(0)
+  expect(state.rejections).toEqual(["fixture-ask"])
+  expect(state.answers).toEqual([])
 })

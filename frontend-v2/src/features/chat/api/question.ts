@@ -86,7 +86,11 @@ export function questionDraftKey(userId: string, requestId: string): string {
 }
 
 export function clearQuestionDraft(userId: string, requestId: string): void {
-  try { localStorage.removeItem(questionDraftKey(userId, requestId)) } catch { /* private browsing */ }
+  try {
+    const key = questionDraftKey(userId, requestId)
+    localStorage.removeItem(key)
+    localStorage.removeItem(`${key}:page`)
+  } catch { /* private browsing */ }
 }
 
 export function saveQuestionDraft(requestId: string, draft: QuestionDraftAnswer[], revision: number) {

@@ -5,6 +5,27 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云发布：2026-09-09 video_compose（IMS 云端合成 + 合成计费）
+
+- 18:31:16–18:31:34（北京时间）gw2 后端切换至 `20260909-compose-93a6e62`，源码 `feat/video-compose-ims@93a6e62`
+  （基于 `main@ac0861c`，PR [#3](https://github.com/arkstudio-ai/OpenBox/pull/3)）；前端继续 `20260909-admin-skills-d445b9f`。
+  **无数据库迁移**，`alembic current` 前后均为 `e1f3a5b7c9d2`。只重建 backend，18 秒 healthy。
+- 内容：`video_compose` 平台原子工具（自有时间线 → IMS Timeline 编译层，六条规则）、IMS 客户端、补扫、
+  合成计费（`rates.json` media 段，validate 报价 / enforce 余额门 / 成功后按实际时长落账 `usage_events.kind=video_compose`）、
+  技能第 8 步双路径 + 第四张「合成确认」卡。详见 `docs/VIDEO_RENDER_ENGINE_SELECTION.md`。
+- 配置：`config/openbox.json` 新增 `video_compose` 段（region 留空跟 `OSS_REGION=cn-shanghai`），其余
+  `backend.env` / `.env` / 基础 compose 未改；只改 override 的 backend image。
+- 本地以 `git archive 93a6e62` 干净导出、`docker build --platform linux/amd64 -f backend/Dockerfile .` 构建；
+  中转包 SHA-256 `cbf52b043ddfc96904498e4302125b0199b3fa6a934d9b3c8bfc6c31909c3104`，服务器装载后
+  image ID `sha256:930af19cd4ae6f08c60d8f30be43ad308f45c823db665b77b50c8bc6fef6b04d` 与本机一致。OSS 中转对象已删。
+- 切换前确认无运行中会话、无在途视频任务。备份 `/opt/openbox/backups/20260909-compose-93a6e62/activation-20260909T103107Z/`
+  （0700，含 `preflight.dump` 3.3 MB、经 `pg_restore -l` 校验、配置与 compose 文件、`old_image.txt`）；镜像包在
+  `releases/20260909-compose-93a6e62/`。
+- 容器内验收：34 个内置工具含 `video_compose`；`get_config().video_compose` 读到新段；OSS `bossip/cn-shanghai`；
+  用只读 `GetMediaProducingJob` 查历史任务，IMS 自 gw2 可达。`/api/environment` 仍为 `prod`（角标）。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-qwh-56ef0f8`（`old_image.txt`），恢复备份的
+  `openbox.json`，`docker compose up -d --no-deps backend`。无迁移，不需恢复数据库。
+
 ## 当前阿里云发布：2026-09-09 QWH 云电脑恢复与页面持久化
 
 - gw2 后端于 17:51:36–17:51:56 切换至 `20260909-qwh-56ef0f8`，源码 `main@56ef0f8`；前端继续使用 `20260909-admin-skills-d445b9f`。没有数据库迁移，AWS 开发环境未发布。

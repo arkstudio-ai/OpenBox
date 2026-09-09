@@ -103,3 +103,21 @@
   `platforms/desktop/service.run_command_on_desktop` 抽出来给两者共用（lease、timeline span、错误映射一致）。真机四条脚本（美食视频榜 6 条 code 0、话题榜、公开热榜 20+ 条、直链解析拿到 douyinvod）均通过；
   直链解析要跳过页面里的 `uuu_265.mp4`（H.265 探测用静态片）。
 - 未做：24 小时连续频控观测；热点宝登录失效时脚本会因 `location.host` 变成 open.douyin.com 而报 `redirected`，工具层先看授权中心状态再采。
+
+## C2 表单事实与真机结果（2026-09-10 凌晨）
+
+- 上传页 `creator-micro/content/upload`：若上次「暂存离开」留有草稿，页面先弹「你还有上次未发布的视频，是否继续编辑？继续编辑 / 放弃」，脚本点「放弃」。
+  `input[type=file]` `setInputFiles` 后 2 秒表单就绪（1.7 MB 测试片）。上传进度以页面里的 `NN%` 文本体现，
+  完成的可靠信号是 `<video>` 预览有媒体（duration>0）且无百分比文本、有「重新上传」。
+- 标题 `input[placeholder*=作品标题]`（30 字计数 `N/30`）；简介是 contenteditable `.zone-container`，键入 `#词 ` 自动成话题标签（计数 `N / 1000`）。
+- 自主声明：点「请选择自主声明」开弹窗，选项是 `label.semi-radio`（点内部 span 会被 label 拦截，要点 label），单选：内容由AI生成 / 个人观点 / 转载 / 含营销推广信息 / 虚构演绎 / 无需添加；「确定」后行内显示所选。
+- 谁可以看 / 保存权限 / 发布时间 是 `input.radio-native-*`（type=checkbox 表现为单选）+ 文本 label；**点文本不生效**，要对 native input 调 `click()`。
+  定时发布勾选后出现 `input[placeholder="日期和时间"]`，默认值形如 `2026-09-10 03:05`，规则「支持 2 小时后及 14 天内」。
+- 关联热点：点「点击输入热点词」后出现一个空 placeholder 的 `semi-input` 并聚焦；键入词后 2.5 秒内未出现候选下拉，Enter 也没挂上（行内仍空）→ 先按 best effort 处理，返回 `hot_word_attached=false`。
+- 发文助手会显示「检测中」→「作品未见异常」；风控词匹配时要排除「无需添加自主声明」「作品未见异常」这两段固定文案。
+- 真机：dry_run（填表+截图+暂存离开）成功；真实发布《自动发布验证 仅自己可见 01》（仅自己可见、AI 声明）成功，点发布 1.2 秒后跳到 `content/manage`。
+  内容管理页卡片没有 `/video/<id>` 链接；作品 id 从页面自己请求的 `GET /janus/douyin/creator/pc/work_list?status=0&count=1…`（签名 URL，页面内原样回放）
+  的 `aweme_list[0]` 取：`aweme_id`、`item_title`、`desc`、`share_url`、`status_value`（141）。第二次真实发布回读到 `7683584584923106586`。
+- 降级演练：`simulate_risk=true` 在点发布前注入假验证码遮罩，脚本在 `evidence` 步返回 `risk=验证码`、不点发布、留截图；服务层据此熔断账号并写通知（单测覆盖）。
+- 脚本通过 `platforms/desktop/service.run_command_on_desktop` 下发，gzip+base64 内嵌 TS，写到 `/opt/openbox/skills/dev-browser/tmp/obx-publish.ts` 后 `npx tsx` 运行；证据截图留在桌面 `tmp/obx-publish-<job>.png`。
+

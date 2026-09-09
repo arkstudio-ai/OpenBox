@@ -258,6 +258,18 @@
     "media_link_ttl_hours": 6
   },
 
+  // desktop_publish: post to 抖音创作者中心 via the cloud desktop (transitional route).
+  // default_mode "auto" = desktop route, "package" = QR package route (the one global switch).
+  "desktop_publish": {
+    "default_mode": "auto",
+    "daily_limit": 3,
+    "min_interval_minutes": 90,
+    "window_start_hour": 8,
+    "window_end_hour": 23,
+    "upload_timeout_seconds": 420,
+    "max_title_chars": 30
+  },
+
   // Context compaction settings
   "compaction": {
     "auto": true,

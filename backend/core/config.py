@@ -324,6 +324,36 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class DesktopPublishConfig(BaseModel):
+    """`desktop_publish`: post to 抖音创作者中心 through the workspace's cloud desktop.
+
+    A known transitional route (plan §1.5): the person's own login state, in
+    the person's own desktop, with human-paced limits. Every limit here is a
+    deployment default; a marketing template may tighten (never loosen) it.
+    `default_mode` is the one switch that flips the deployment between the
+    desktop route and the QR package route (plan §7 C4).
+    """
+
+    #: auto = desktop route by default; package = QR package by default.
+    default_mode: Literal["auto", "package"] = "auto"
+    #: Posts per account per Asia/Shanghai day through the desktop route.
+    daily_limit: int = Field(default=3, ge=1, le=20)
+    #: Minimum minutes between two desktop posts of one account.
+    min_interval_minutes: int = Field(default=90, ge=1, le=1440)
+    #: Posting hours (Asia/Shanghai), inclusive start, exclusive end.
+    window_start_hour: int = Field(default=8, ge=0, le=23)
+    window_end_hour: int = Field(default=23, ge=1, le=24)
+    #: Seconds to wait for the creator-center upload to finish.
+    upload_timeout_seconds: int = Field(default=420, ge=60, le=1800)
+    #: Title cap enforced by the creator-center form.
+    max_title_chars: int = Field(default=30, ge=10, le=55)
+    #: Page text that means "stop automating this account now".
+    risk_patterns: list[str] = Field(default_factory=lambda: [
+        "验证码", "滑动验证", "安全验证", "操作频繁", "操作过于频繁", "账号异常", "账号存在风险",
+        "风险提示", "违规", "封禁", "限制发布", "请稍后再试", "captcha", "verify",
+    ])
+
+
 class HotTrendsConfig(BaseModel):
     """`hot_trends`: hot-list collection through the workspace's cloud desktop.
 
@@ -617,6 +647,7 @@ class OpenBoxConfig(BaseModel):
     video_compose: VideoComposeConfig = VideoComposeConfig()
     video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()
     hot_trends: HotTrendsConfig = HotTrendsConfig()
+    desktop_publish: DesktopPublishConfig = DesktopPublishConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

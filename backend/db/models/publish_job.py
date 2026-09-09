@@ -35,6 +35,9 @@ class PublishJob(Base):
     video_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     from_open_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Route-specific record. Desktop (创作者中心) route: mode, visibility,
+    #: declaration, hot_word, scheduled_at, elapsed_ms, evidence asset, risk signal.
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)

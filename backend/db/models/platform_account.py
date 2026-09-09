@@ -51,6 +51,11 @@ class PlatformAccount(Base):
     last_probe_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_ok_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Desktop auto-publish circuit breaker (plan §7 C3): set on any risk
+    #: signal, cleared only by a person. While set, publishing degrades to the
+    #: QR package route.
+    auto_publish_disabled_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    auto_publish_disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     bound_at: Mapped[datetime] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)

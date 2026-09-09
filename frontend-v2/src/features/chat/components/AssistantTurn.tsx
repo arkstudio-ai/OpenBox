@@ -32,6 +32,8 @@ interface Props {
   meta: AssistantTurnMeta
   /** This is the live turn. */
   streaming: boolean
+  /** The current turn is paused for input or queued after an answer. */
+  awaitingInput?: boolean
   /** Set while a stalled run is retrying, so the wait can say which try. */
   retry?: { attempt: number; maxAttempts: number }
   /** Abort the run — offered by the task card while one is in flight. */
@@ -68,11 +70,11 @@ function needsFinalLabel(content: ContentView, view: TurnView): boolean {
   )
 }
 
-export function AssistantTurn({ messages, sessionId, meta, streaming, retry, onStop, todoEditable }: Props) {
+export function AssistantTurn({ messages, sessionId, meta, streaming, awaitingInput = false, retry, onStop, todoEditable }: Props) {
   const { t } = useTranslation("chat")
   const parts = useMemo(() => messages.flatMap((message) => message.parts), [messages])
   const view = useMemo(() => buildTurnView(parts), [parts])
-  const content = useMemo(() => buildAssistantContentView(messages, streaming), [messages, streaming])
+  const content = useMemo(() => buildAssistantContentView(messages, streaming, awaitingInput), [messages, streaming, awaitingInput])
   // "Thinking" is the state of having nothing yet — not of having no prose
   // yet. Once reasoning or a tool call has arrived the turn is visibly
   // working, and each of those blocks carries its own live heading, so a

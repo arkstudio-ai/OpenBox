@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { useMatch, useNavigate } from "react-router"
+import { useLocation, useMatch, useNavigate } from "react-router"
 import { Blocks, Clock, CreditCard, KeyRound, Layers, PanelLeft, Plus, Search } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { BrandMark } from "@/shared/ui/BrandMark"
@@ -11,14 +11,17 @@ import { useWorkspaceUi } from "../stores/ui"
 import { ProjectTree } from "./ProjectTree"
 import { UserRow } from "./UserRow"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
+import { useSidebarLayout } from "../hooks/useSidebarLayout"
 
 export function Sidebar() {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
   const width = useWorkspaceUi((s) => s.sidebarWidth)
-  const collapsed = useWorkspaceUi((s) => s.sidebarCollapsed)
-  const toggleSidebar = useWorkspaceUi((s) => s.toggleSidebar)
+  const { compact, open, close } = useSidebarLayout()
+  const closeMobile = useWorkspaceUi((s) => s.closeMobileSidebar)
+  const location = useLocation()
+  const navigationRef = useRef<HTMLElement>(null)
   const setSidebarWidth = useWorkspaceUi((s) => s.setSidebarWidth)
 
   const projects = useProjectsQuery()
@@ -34,6 +37,30 @@ export function Sidebar() {
   const [draftName, setDraftName] = useState("")
   const [query, setQuery] = useState("")
   const dragStart = useRef<{ x: number; w: number } | null>(null)
+
+  useEffect(() => { closeMobile() }, [location.pathname, closeMobile])
+  useEffect(() => {
+    if (!compact || !open) return
+    const previous = document.activeElement as HTMLElement | null
+    const node = navigationRef.current
+    const focusable = () => [...(node?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled):not([tabindex="-1"]), a[href], input:not(:disabled)',
+    ) ?? [])].filter((element) => element.getClientRects().length > 0)
+    focusable()[0]?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close()
+      if (event.key !== "Tab") return
+      const items = focusable()
+      const target = event.shiftKey ? items.at(-1) : items[0]
+      if ((event.shiftKey && document.activeElement === items[0]) ||
+          (!event.shiftKey && document.activeElement === items.at(-1))) {
+        event.preventDefault()
+        target?.focus()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => { window.removeEventListener("keydown", onKey); previous?.focus() }
+  }, [compact, open, close])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -66,12 +93,20 @@ export function Sidebar() {
     document.body.style.userSelect = "none"
   }
 
-  if (collapsed) return null
+  if (!open) return null
 
   return (
+    <>
+    {compact && <button type="button" aria-label={t("collapse")} onClick={close}
+      className="fixed inset-0 z-40 bg-black/30" tabIndex={-1} />}
     <aside
-      className="border-hair bg-rail relative flex min-h-0 flex-none flex-col border-e"
-      style={{ width }}
+      ref={navigationRef}
+      role={compact ? "dialog" : undefined}
+      aria-modal={compact ? true : undefined}
+      aria-label={compact ? t("workspaceSwitcher") : undefined}
+      className={cn("border-hair bg-rail flex min-h-0 flex-none flex-col border-e",
+        compact ? "fixed inset-y-0 start-0 z-50 shadow-pop" : "relative")}
+      style={{ width, maxWidth: compact ? "calc(100vw - 3rem)" : undefined }}
     >
       <div className="flex min-h-0 flex-1 flex-col ps-4.5 pe-3 pt-3.5 pb-2.5">
         <div className="flex items-center gap-2.5 pt-0.5 pb-4">
@@ -79,7 +114,7 @@ export function Sidebar() {
           <button
             type="button"
             className="text-n700 hover:bg-hairsoft flex size-7.5 flex-none items-center justify-center rounded-full"
-            onClick={toggleSidebar}
+            onClick={close}
             title={t("collapse")}
             aria-label={t("collapse")}
           >
@@ -208,13 +243,14 @@ export function Sidebar() {
 
         <UserRow sessionCount={(sessions.data ?? []).length} />
       </div>
-      <button
+      {!compact && <button
         type="button"
         aria-hidden
         tabIndex={-1}
         onMouseDown={startDrag}
         className="absolute -end-1 top-0 bottom-0 z-6 w-2 cursor-col-resize"
-      />
+      />}
     </aside>
+    </>
   )
 }

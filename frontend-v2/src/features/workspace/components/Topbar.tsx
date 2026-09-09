@@ -4,7 +4,7 @@ import { useLocation, useParams } from "react-router"
 import { PanelLeft, PanelRight, Upload } from "lucide-react"
 import { useCopy } from "@/shared/hooks/useCopy"
 import { toast } from "@/shared/ui/Toast"
-import { useWorkspaceUi } from "../stores/ui"
+import { useSidebarLayout } from "../hooks/useSidebarLayout"
 import { useProjectsQuery } from "../api/projects"
 import { useSessionsQuery } from "../api/sessions"
 import { paths } from "@/shared/router/paths"
@@ -22,8 +22,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
   const { t } = useTranslation("workspace")
   const { sessionId } = useParams()
   const location = useLocation()
-  const collapsed = useWorkspaceUi((s) => s.sidebarCollapsed)
-  const toggleSidebar = useWorkspaceUi((s) => s.toggleSidebar)
+  const sidebar = useSidebarLayout()
   const sessions = useSessionsQuery()
   const projects = useProjectsQuery()
   const { copy } = useCopy()
@@ -65,12 +64,12 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
   }
 
   return (
-    <div className="flex h-15.5 flex-none items-center gap-3 ps-6.5 pe-4.5">
-      {collapsed && (
+    <div className="flex h-15.5 flex-none items-center gap-2 px-3 sm:gap-3 sm:ps-6.5 sm:pe-4.5">
+      {!sidebar.open && (
         <button
           type="button"
           className="text-n700 hover:bg-n200 flex size-8 flex-none items-center justify-center rounded-full"
-          onClick={toggleSidebar}
+          onClick={sidebar.toggle}
           title={t("expand")}
           aria-label={t("expand")}
         >
@@ -79,7 +78,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
       )}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden">
         <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
-        <span className="text-n600 min-w-0 flex-none truncate text-sm">{subtitle}</span>
+        <span className="text-n600 hidden min-w-0 flex-none truncate text-sm sm:block">{subtitle}</span>
       </div>
       <EnvBadge />
       {!isSettings && !isResources && !isBilling && statusSlot}

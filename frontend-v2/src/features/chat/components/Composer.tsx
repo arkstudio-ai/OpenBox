@@ -94,7 +94,7 @@ function SendButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={stop ? t("composer.stop") : t("send")}
-      className="bg-ink text-bg flex size-10 flex-none items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+      className="bg-ink text-bg ms-auto flex size-10 flex-none items-center justify-center rounded-full transition-opacity disabled:opacity-40 sm:ms-0"
     >
       {stop ? (
         <Square className="size-3.5 fill-current" strokeWidth={0} />
@@ -247,7 +247,7 @@ export function Composer({
       : t("composer.placeholder")
 
   return (
-    <div className="flex-none px-6.5 pt-1 pb-5">
+    <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
@@ -287,7 +287,7 @@ export function Composer({
             {mentionSlot}
           </div>
 
-          <div className="flex items-center gap-1 px-3 pb-1">
+          <div className="flex flex-wrap items-center gap-1 px-3 pb-1">
             <ComposerActions
               disabled={!running}
               title={running ? t("attachTitle") : t("attachNeedSandbox")}

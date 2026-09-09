@@ -92,6 +92,10 @@ class ChatScreen extends ConsumerWidget {
               turn: row,
               sessionId: sessionId,
               streaming: busy && index == rows.length - 1,
+              awaitingInput:
+                  index == rows.length - 1 &&
+                  (status == SessionStatus.waitingInput ||
+                      status == SessionStatus.queued),
               retry: busy && index == rows.length - 1 ? retry : null,
               todoEditable: index == lastTodoIndex,
               onStop: busy && index == rows.length - 1

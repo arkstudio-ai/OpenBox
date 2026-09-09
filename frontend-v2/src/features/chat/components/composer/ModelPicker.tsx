@@ -23,7 +23,7 @@ export function ModelPicker({ models, activeId, onPick }: Props) {
   const activeName = activeId ? modelLabel(activeId, models) : ""
 
   return (
-    <div className="relative ms-auto">
+    <div className="relative ms-auto min-w-0 max-w-full">
       <Menu open={open} onClose={() => setOpen(false)} className="end-0 bottom-10 w-60">
         {models.map((m) => (
           <button
@@ -51,10 +51,10 @@ export function ModelPicker({ models, activeId, onPick }: Props) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={t("model.pick")}
-        className="hover:bg-hairsoft flex h-8 items-center gap-2 rounded-full px-3"
+        className="hover:bg-hairsoft flex h-8 max-w-full items-center gap-2 rounded-full px-3"
       >
-        <ModelLogo id={activeId ?? ""} className="text-ink size-4" />
-        <span className="text-ink text-sm font-medium">{activeName}</span>
+        <ModelLogo id={activeId ?? ""} className="text-ink size-4 flex-none" />
+        <span className="text-ink truncate text-sm font-medium">{activeName}</span>
         <span className="text-n600 text-2xs">▾</span>
       </button>
     </div>

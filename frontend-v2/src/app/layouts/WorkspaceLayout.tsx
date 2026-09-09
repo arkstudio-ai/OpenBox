@@ -49,8 +49,8 @@ export default function WorkspaceLayout() {
       </Suspense>
       <main
         className={cn(
-          "flex min-h-0 flex-1 flex-col overflow-hidden",
-          isSettings || isBilling ? "min-w-0" : "min-w-105",
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          !isSettings && !isBilling && "md:min-w-105",
         )}
       >
         <Topbar

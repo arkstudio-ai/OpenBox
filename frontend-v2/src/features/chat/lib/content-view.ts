@@ -60,7 +60,7 @@ function textParts(message: MessageWithParts): TextPart[] {
 }
 
 function isToolStepFinish(finish: string | null | undefined): boolean {
-  return finish === "tool_calls" || finish === "tool-calls" || finish === "compact" || finish === "aborted"
+  return finish === "tool_calls" || finish === "tool-calls" || finish === "compact" || finish === "aborted" || finish === "waiting_input"
 }
 
 /** Locate the one assistant step whose prose is the user-facing answer.
@@ -355,6 +355,7 @@ function buildArtifactEntry(
 export function buildAssistantContentView(
   messages: MessageWithParts[],
   streaming: boolean,
+  awaitingInput = false,
 ): AssistantContentView {
   const finalIndex = finalMessageIndex(messages, streaming)
   const finalParts = finalIndex >= 0 ? textParts(messages[finalIndex]) : []
@@ -415,6 +416,10 @@ export function buildAssistantContentView(
   const workEvidence = verification ? evidence.filter((group) => group.id !== verification.id) : evidence
   const workEvents: WorkEvent[] = [...progress, ...workEvidence].sort((a, b) => a.order - b.order)
   const hasWork = progress.length > 0 || tools.length > 0 || groups.length > 0
+  // A durable pause deliberately has no final prose. Preserve this meaning
+  // for replaced/cancelled ask history whose last step remains waiting_input.
+  const suspended = awaitingInput || messages.at(-1)?.finish === "waiting_input" ||
+    tools.some((tool) => tool.status === "waiting_input")
 
   return {
     finalText,
@@ -424,6 +429,6 @@ export function buildAssistantContentView(
     workEvents,
     resultGroups: results,
     verification,
-    incomplete: !streaming && !hasFinal && hasWork,
+    incomplete: !streaming && !hasFinal && hasWork && !suspended,
   }
 }

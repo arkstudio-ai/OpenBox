@@ -11,7 +11,12 @@ export function useQuestionsQuery() {
   const userId = useUserId()
   return useQuery({
     queryKey: chatKeys.questions(userId),
-    queryFn: () => http.get<QuestionRequest[]>("/api/agent/question"),
+    queryFn: async ({ signal }) => {
+      const read = usePendingStore.getState().beginQuestionRead()
+      const items = await http.get<QuestionRequest[]>("/api/agent/question", { signal })
+      return { items, read }
+    },
+    refetchOnMount: "always",
   })
 }
 

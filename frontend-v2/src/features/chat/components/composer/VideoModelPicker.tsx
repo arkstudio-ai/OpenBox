@@ -42,7 +42,7 @@ export function VideoModelPicker({ models, activeId, activeResolution, onPick }:
   }
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 max-w-full">
       <Menu open={open} onClose={() => setOpen(false)} className="end-0 bottom-10 w-80">
         {models.map((m) => {
           const tiers = m.resolutions ?? []
@@ -96,12 +96,12 @@ export function VideoModelPicker({ models, activeId, activeResolution, onPick }:
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={t("videoModel.pick")}
-        className="hover:bg-hairsoft flex h-8 items-center gap-2 rounded-full px-3"
+        className="hover:bg-hairsoft flex h-8 max-w-full items-center gap-2 rounded-full px-3"
       >
-        <Clapperboard className="text-ink size-4" />
-        <span className="text-ink text-sm font-medium">{activeName}</span>
+        <Clapperboard className="text-ink size-4 flex-none" />
+        <span className="text-ink truncate text-sm font-medium">{activeName}</span>
         {activeResolution && (
-          <span className="text-n600 text-2xs tabular-nums">{activeResolution}</span>
+          <span className="text-n600 text-2xs flex-none tabular-nums">{activeResolution}</span>
         )}
         <span className="text-n600 text-2xs">▾</span>
       </button>

@@ -37,6 +37,7 @@ class AssistantTurn extends ConsumerWidget {
     this.retry,
     this.onStop,
     this.todoEditable = false,
+    this.awaitingInput = false,
   });
 
   final AssistantTurnData turn;
@@ -44,6 +45,7 @@ class AssistantTurn extends ConsumerWidget {
 
   /// This turn is the live one and the session is busy.
   final bool streaming;
+  final bool awaitingInput;
 
   /// Set while a stalled run is retrying, so the wait can say which try.
   final RetryProgress? retry;
@@ -63,7 +65,11 @@ class AssistantTurn extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
-    final content = buildAssistantContentView(turn.messages, streaming);
+    final content = buildAssistantContentView(
+      turn.messages,
+      streaming,
+      awaitingInput: awaitingInput,
+    );
 
     // "Thinking" is the state of having nothing yet — not of having no prose
     // yet. Once reasoning or a tool call has arrived the turn is visibly

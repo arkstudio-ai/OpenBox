@@ -46,9 +46,13 @@ export function ComposerAccess({ readOnly, children }: { readOnly: boolean; chil
   )
 }
 
+function isAwaitingInput(status?: SessionStatus) {
+  return status === "waiting_input" || status === "queued"
+}
+
 function WaitingForInput({ status, onCancel }: { status?: SessionStatus; onCancel: () => void }) {
   const { t } = useTranslation("chat")
-  if (status !== "waiting_input" && status !== "queued") return null
+  if (!isAwaitingInput(status)) return null
   return (
     <div className="text-n600 mx-auto flex w-full max-w-190 items-center justify-between px-4 py-2 text-xs" role="status">
       <span>{t(status === "waiting_input" ? "question.agentWaiting" : "question.queued")}</span>
@@ -80,7 +84,7 @@ export default function ChatRoute() {
     if (permsQ.data) usePendingStore.getState().setPermissions(permsQ.data)
   }, [permsQ.data])
   useEffect(() => {
-    if (questionsQ.data) usePendingStore.getState().setQuestions(questionsQ.data)
+    if (questionsQ.data?.items) usePendingStore.getState().setQuestions(questionsQ.data.items, questionsQ.data.read)
   }, [questionsQ.data])
   useEffect(() => {
     if (messagesQ.error) toast("error", errorMessage(messagesQ.error))
@@ -167,7 +171,9 @@ export default function ChatRoute() {
           <Spinner className="size-6" />
         </div>
       ) : (
-        <ChatFlow turns={turns} sessionId={sessionId} busy={busy} footer={footer} onStop={stop} retry={retry} />
+        <ChatFlow turns={turns} sessionId={sessionId} busy={busy}
+          awaitingInput={isAwaitingInput(recoveredStatus)}
+          footer={footer} onStop={stop} retry={retry} />
       )}
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}

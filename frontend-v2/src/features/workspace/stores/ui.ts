@@ -10,6 +10,7 @@ export type SessionFilter = "chats" | "cron"
 interface WorkspaceUiState {
   sidebarWidth: number
   sidebarCollapsed: boolean
+  mobileSidebarOpen: boolean
   expanded: Record<string, boolean>
   selectedProject: string | null
   // Per-project sidebar filter: plain conversations (default) or cron runs.
@@ -17,6 +18,8 @@ interface WorkspaceUiState {
   sessionFilter: Record<string, SessionFilter>
   setSidebarWidth: (w: number) => void
   toggleSidebar: () => void
+  toggleMobileSidebar: () => void
+  closeMobileSidebar: () => void
   toggleProject: (id: string) => void
   isExpanded: (id: string) => boolean
   selectProject: (id: string | null) => void
@@ -57,6 +60,9 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
   return {
     sidebarWidth: Math.min(420, Math.max(220, local.sidebarWidth ?? 280)),
     sidebarCollapsed: local.sidebarCollapsed ?? false,
+    mobileSidebarOpen: false,
+    toggleMobileSidebar: () => set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),
+    closeMobileSidebar: () => set({ mobileSidebarOpen: false }),
     expanded: local.expanded ?? {},
     selectedProject: local.selectedProject ?? null,
     sessionFilter: {},

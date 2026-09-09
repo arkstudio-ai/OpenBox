@@ -29,11 +29,15 @@ class PendingStore extends Notifier<PendingState> {
   final _closed = <String>{};
   int _epoch = 0;
   int _refreshSequence = 0;
+  int _questionRevision = 0;
+  final _questionVersions = <String, int>{};
 
   @override
   PendingState build() {
     ref.watch(authProvider.select((s) => s.userId));
     _closed.clear();
+    _questionRevision = 0;
+    _questionVersions.clear();
     _epoch++;
     _sub?.cancel();
     _sub = ref.watch(wsClientProvider).events.listen(_onWsEvent);
@@ -67,8 +71,9 @@ class PendingStore extends Notifier<PendingState> {
   /// Seed from `GET /api/agent/permission` + `/question` on session open.
   void seed(
     List<PermissionRequest> permissions,
-    List<QuestionRequest> questions,
-  ) {
+    List<QuestionRequest> questions, {
+    int? readRevision,
+  }) {
     final permMap = <String, List<PermissionRequest>>{};
     for (final p in permissions) {
       permMap.putIfAbsent(p.sessionId, () => []).add(p);
@@ -88,6 +93,27 @@ class PendingStore extends Notifier<PendingState> {
       questionMap.putIfAbsent(q.sessionId, () => []).add(latest);
       ref.read(questionDraftProvider.notifier).hydrate(latest);
     }
+    final receivedIds = {
+      for (final list in questionMap.values)
+        for (final q in list) q.id,
+    };
+    for (final list in state.questions.values) {
+      for (final live in list) {
+        if (receivedIds.contains(live.id)) continue;
+        if (readRevision != null &&
+            (_questionVersions[live.id] ?? 0) > readRevision &&
+            !_closed.contains(live.id)) {
+          questionMap.putIfAbsent(live.sessionId, () => []).add(live);
+          receivedIds.add(live.id);
+        } else {
+          _closed.add(live.id);
+        }
+      }
+    }
+    while (_closed.length > 1000) {
+      _closed.remove(_closed.first);
+    }
+    _questionVersions.removeWhere((id, _) => !receivedIds.contains(id));
     state = PendingState(permissions: permMap, questions: questionMap);
     ref.read(questionDraftProvider.notifier).keepOnly({
       for (final list in questionMap.values)
@@ -130,6 +156,7 @@ class PendingStore extends Notifier<PendingState> {
       return;
     }
     ref.read(questionDraftProvider.notifier).hydrate(request);
+    _questionVersions[request.id] = ++_questionRevision;
     state = PendingState(
       permissions: state.permissions,
       questions: {
@@ -144,6 +171,8 @@ class PendingStore extends Notifier<PendingState> {
   void removeQuestion(String requestId) {
     if (requestId.isEmpty) return;
     _closed.add(requestId);
+    _questionRevision++;
+    _questionVersions.remove(requestId);
     if (_closed.length > 1000) _closed.remove(_closed.first);
     ref.read(questionDraftProvider.notifier).discard(requestId);
     state = PendingState(
@@ -162,6 +191,7 @@ class PendingStore extends Notifier<PendingState> {
   Future<void> _refresh({required bool includePermissions}) async {
     final epoch = _epoch;
     final sequence = ++_refreshSequence;
+    final readRevision = _questionRevision;
     try {
       final api = ref.read(chatApiProvider);
       final results = await Future.wait<dynamic>([
@@ -174,6 +204,7 @@ class PendingStore extends Notifier<PendingState> {
             ? results[1] as List<PermissionRequest>
             : state.permissions.values.expand((list) => list).toList(),
         results[0] as List<QuestionRequest>,
+        readRevision: readRevision,
       );
     } catch (_) {
       /* A failed read must not discard pending cards or drafts. */

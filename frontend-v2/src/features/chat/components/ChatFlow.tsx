@@ -51,6 +51,7 @@ interface Props {
   turns: Turn[]
   sessionId: string
   busy: boolean
+  awaitingInput?: boolean
   /** Pending cards rendered below the last turn, inside the scroll area. */
   footer?: ReactNode
   /** Abort the run; the live turn's task card offers it. */
@@ -60,7 +61,7 @@ interface Props {
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -93,6 +94,7 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
             meta={turn.meta}
             sessionId={sessionId}
             streaming={busy && i === turns.length - 1}
+            awaitingInput={awaitingInput && i === turns.length - 1}
             retry={busy && i === turns.length - 1 ? retry : undefined}
             onStop={onStop}
             todoEditable={turn.key === lastTodoKey}
@@ -103,7 +105,7 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
       list.push({ key: "typing", node: <TypingRow retry={retry} /> })
     }
     return list
-  }, [turns, sessionId, busy, onStop, lastTodoKey, retry])
+  }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry])
 
   const atBottomRef = useRef(true)
   const onScroll = useCallback(() => {
@@ -160,7 +162,7 @@ export function ChatFlow({ turns, sessionId, busy, footer, onStop, retry }: Prop
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="scr h-full overflow-y-auto overscroll-contain px-6.5 pt-1.5 pb-2 [overflow-anchor:none]"
+        className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-190 flex-col gap-6 pb-4">
           {virtual ? (

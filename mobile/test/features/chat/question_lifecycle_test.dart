@@ -81,6 +81,47 @@ Future<ProviderContainer> _container(_Api api) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+    'a pending HTTP snapshot cannot erase an ask received during the read',
+    () async {
+      final api = _Api()..holdReads = true;
+      final container = await _container(api);
+      final pending = container.read(pendingProvider.notifier);
+      final read = pending.refreshQuestions();
+      pending.addQuestion(_question('arrived-over-ws'));
+      api.reads.single.complete([]);
+      await read;
+      expect(
+        container.read(pendingProvider).questionsOf('s1').single.id,
+        'arrived-over-ws',
+      );
+    },
+  );
+
+  test(
+    'a fresh empty snapshot closes offline-resolved asks against late events',
+    () async {
+      final api = _Api();
+      final container = await _container(api);
+      final pending = container.read(pendingProvider.notifier);
+      pending.addQuestion(_question('old'));
+      await pending.refreshQuestions();
+      pending.addQuestion(_question('old'));
+      expect(container.read(pendingProvider).questionsOf('s1'), isEmpty);
+    },
+  );
+
+  test('failed refresh preserves pending input and its draft', () async {
+    final api = _Api()..holdReads = true;
+    final container = await _container(api);
+    final pending = container.read(pendingProvider.notifier);
+    pending.addQuestion(_question('kept'));
+    final read = pending.refreshQuestions();
+    api.reads.single.completeError(Exception('offline'));
+    await read;
+    expect(container.read(pendingProvider).questionsOf('s1').single.id, 'kept');
+  });
+
   test('a delayed stop acknowledgement cannot remove a newer ask', () async {
     final api = _Api()..questions = [_question('old')];
     final container = await _container(api);

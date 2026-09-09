@@ -49,7 +49,7 @@ deploying from this task.
   records rather than executing compute. `expires_at` is optional and does not
   imply a default approval.
 
-## Verification (2026-09-09, local only)
+## Initial verification (2026-09-09, local only)
 
 - `backend/tests/unit/test_durable_questions.py`: 34 tests, passed on both
   SQLite and an isolated PostgreSQL 16 database. The PostgreSQL fixture disables
@@ -83,6 +83,20 @@ deploying from this task.
   an old computer-tool test context lacking `sandbox_error`, a test importing the
   absent `_desktop_route_preflight`, and five video model/config assertions.
   Their unrelated implementation/configuration was not changed for this task.
+
+## Extended positive/negative regression (2026-09-09)
+
+The follow-up found and fixed stale HTTP snapshots deleting newer WebSocket
+asks in both clients, misleading missing-final warnings while waiting/queued,
+and clipped mobile-web navigation/composer controls. The expanded results,
+state matrix, real-environment evidence and explicit limitations are recorded in
+[durable-ask-state-matrix.md](durable-ask-state-matrix.md).
+
+Latest gates: 124 related backend tests; 78 durable-question cases repeated on
+PostgreSQL; 384 web unit tests plus check/build; 11 isolated Chromium tests;
+104 Flutter tests plus analyzer. All these gates passed. The full backend unit
+suite is 1,793 passed / the same seven pre-existing unrelated failures, not all
+green. No production rollout was performed.
 
 ## Release handoff (not executed)
 

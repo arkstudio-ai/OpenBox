@@ -10,7 +10,8 @@ library;
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 
-typedef ArtifactRole = String; // input | evidence | intermediate | result | final
+typedef ArtifactRole =
+    String; // input | evidence | intermediate | result | final
 
 sealed class WorkEvent {
   WorkEvent({required this.id, required this.order});
@@ -23,11 +24,7 @@ sealed class WorkEvent {
 }
 
 class WorkNarration extends WorkEvent {
-  WorkNarration({
-    required super.id,
-    required super.order,
-    required this.text,
-  });
+  WorkNarration({required super.id, required super.order, required this.text});
 
   final String text;
 }
@@ -110,14 +107,17 @@ String? _asText(Object? value) =>
 int? _asNumber(Object? value) =>
     value is num && value.isFinite ? value.toInt() : null;
 
-List<TextPart> _textParts(ChatMessage message) =>
-    message.parts.whereType<TextPart>().where((p) => p.text.isNotEmpty).toList();
+List<TextPart> _textParts(ChatMessage message) => message.parts
+    .whereType<TextPart>()
+    .where((p) => p.text.isNotEmpty)
+    .toList();
 
 bool _isToolStepFinish(String? finish) =>
     finish == 'tool_calls' ||
     finish == 'tool-calls' ||
     finish == 'compact' ||
-    finish == 'aborted';
+    finish == 'aborted' ||
+    finish == 'waiting_input';
 
 String? _toolOutput(ToolPart? tool) {
   final output = tool?.output;
@@ -163,15 +163,18 @@ int _finalMessageIndex(List<ChatMessage> messages, bool streaming) {
   if (streaming && newest >= 0) {
     final message = messages[newest];
     final hasText = _textParts(message).any((p) => !p.isCommentary);
-    final hasTool = message.parts
-        .any((p) => p is ToolPart || p is SubtaskPart);
-    if (hasText && !hasTool && !_isToolStepFinish(message.finish)) return newest;
+    final hasTool = message.parts.any((p) => p is ToolPart || p is SubtaskPart);
+    if (hasText && !hasTool && !_isToolStepFinish(message.finish)) {
+      return newest;
+    }
   }
 
   // Compatibility for early OpenBox rows, which predate finish persistence.
   if (messages.every((m) => m.finish == null && m.error == null)) {
     for (var index = newest; index >= 0; index -= 1) {
-      if (_textParts(messages[index]).any((p) => p.channel == null)) return index;
+      if (_textParts(messages[index]).any((p) => p.channel == null)) {
+        return index;
+      }
     }
   }
   return -1;
@@ -202,8 +205,9 @@ List<String> _metadataAssetIds(ToolPart tool) {
   return ids;
 }
 
-final _segmentLinePattern =
-    RegExp(r'^segment_(\d+)_(id|revision|script|transcript|stt)=(.*)$');
+final _segmentLinePattern = RegExp(
+  r'^segment_(\d+)_(id|revision|script|transcript|stt)=(.*)$',
+);
 
 Map<String, _SegmentRecord> _parseSegmentRecords(List<ToolPart> tools) {
   final byOrdinal = <int, _SegmentRecord>{};
@@ -214,8 +218,10 @@ Map<String, _SegmentRecord> _parseSegmentRecords(List<ToolPart> tools) {
       final match = _segmentLinePattern.firstMatch(line);
       if (match == null) continue;
       final ordinal = int.tryParse(match.group(1)!) ?? 0;
-      final record =
-          byOrdinal.putIfAbsent(ordinal, () => _SegmentRecord(ordinal: ordinal));
+      final record = byOrdinal.putIfAbsent(
+        ordinal,
+        () => _SegmentRecord(ordinal: ordinal),
+      );
       final value = match.group(3)!;
       switch (match.group(2)) {
         case 'id':
@@ -247,13 +253,17 @@ Map<String, _SegmentRecord> _parseSegmentRecords(List<ToolPart> tools) {
   for (final tool in tools) {
     if (tool.tool != 'video_transcribe') continue;
     final output = _toolOutput(tool);
-    final segmentId = _toolInputValue(tool, 'segment_id') ??
+    final segmentId =
+        _toolInputValue(tool, 'segment_id') ??
         _outputValue(output, 'segment_id');
     if (segmentId == null) continue;
-    final record = records[segmentId] ?? _SegmentRecord(ordinal: 0, id: segmentId);
+    final record =
+        records[segmentId] ?? _SegmentRecord(ordinal: 0, id: segmentId);
     record.transcript = _outputValue(output, 'transcript') ?? record.transcript;
     record.sttVerdict = _outputValue(output, 'verdict') ?? record.sttVerdict;
-    final similarity = double.tryParse(_outputValue(output, 'similarity') ?? '');
+    final similarity = double.tryParse(
+      _outputValue(output, 'similarity') ?? '',
+    );
     if (similarity != null) record.sttSimilarity = similarity;
     records[segmentId] = record;
   }
@@ -312,7 +322,8 @@ _SegmentRecord? _segmentFor(
   ToolPart? tool,
   Map<String, _SegmentRecord> records,
 ) {
-  final id = _asText(part.relation?.metadata['segment_id']) ??
+  final id =
+      _asText(part.relation?.metadata['segment_id']) ??
       _toolInputValue(tool, 'segment_id') ??
       _outputValue(_toolOutput(tool), 'segment_id');
   if (id != null && records.containsKey(id)) return records[id];
@@ -342,12 +353,17 @@ int _resultOrder(ArtifactGroup group) {
 /// Build the assistant view over a turn's messages.
 AssistantContentView buildAssistantContentView(
   List<ChatMessage> messages,
-  bool streaming,
-) {
+  bool streaming, {
+  bool awaitingInput = false,
+}) {
   final finalIndex = _finalMessageIndex(messages, streaming);
-  final finalParts = finalIndex >= 0 ? _textParts(messages[finalIndex]) : <TextPart>[];
-  final finalText =
-      finalParts.where((p) => !p.isCommentary).map((p) => p.text).join();
+  final finalParts = finalIndex >= 0
+      ? _textParts(messages[finalIndex])
+      : <TextPart>[];
+  final finalText = finalParts
+      .where((p) => !p.isCommentary)
+      .map((p) => p.text)
+      .join();
   final hasFinal = finalText.trim().isNotEmpty;
 
   final tools = [
@@ -372,7 +388,8 @@ AssistantContentView buildAssistantContentView(
       order += 1;
       if (part is ToolPart) precedingTools.add(part);
       if (part is TextPart) {
-        final isFinalPart = messageIndex == finalIndex &&
+        final isFinalPart =
+            messageIndex == finalIndex &&
             !part.isCommentary &&
             !_isToolStepFinish(message.finish);
         if (!isFinalPart && part.text.trim().isNotEmpty) {
@@ -383,8 +400,12 @@ AssistantContentView buildAssistantContentView(
       }
       if (part is! FilePart) continue;
 
-      final sourceTool =
-          _sourceForFile(part, precedingTools, toolsById, toolsByAsset);
+      final sourceTool = _sourceForFile(
+        part,
+        precedingTools,
+        toolsById,
+        toolsByAsset,
+      );
       final artifactKind = _inferKind(part, sourceTool);
       final role = _inferRole(part, artifactKind);
       final segment = _segmentFor(part, sourceTool, segmentRecords);
@@ -395,24 +416,28 @@ AssistantContentView buildAssistantContentView(
       if (segment?.sttVerdict != null && metadata['stt_verdict'] == null) {
         metadata['stt_verdict'] = segment!.sttVerdict;
       }
-      if (segment?.sttSimilarity != null && metadata['stt_similarity'] == null) {
+      if (segment?.sttSimilarity != null &&
+          metadata['stt_similarity'] == null) {
         metadata['stt_similarity'] = segment!.sttSimilarity;
       }
       final toolOutput = _toolOutput(sourceTool);
-      final segmentId = _asText(metadata['segment_id']) ??
+      final segmentId =
+          _asText(metadata['segment_id']) ??
           _toolInputValue(sourceTool, 'segment_id') ??
           _outputValue(toolOutput, 'segment_id');
-      final productionId = _asText(metadata['production_id']) ??
+      final productionId =
+          _asText(metadata['production_id']) ??
           _toolInputValue(sourceTool, 'production_id') ??
           _outputValue(toolOutput, 'production_id');
-      final groupId = _asText(part.relation?.groupId) ??
+      final groupId =
+          _asText(part.relation?.groupId) ??
           (artifactKind == 'video_segment' && segmentId != null
               ? 'video:${productionId ?? "unknown"}:segment:$segmentId'
               : artifactKind == 'video_final' && productionId != null
-                  ? 'video:$productionId:final'
-                  : sourceTool != null
-                      ? 'tool:${sourceTool.id}'
-                      : 'file:${part.id}');
+              ? 'video:$productionId:final'
+              : sourceTool != null
+              ? 'tool:${sourceTool.id}'
+              : 'file:${part.id}');
 
       final existing = groups[groupId];
       if (existing != null) {
@@ -439,24 +464,26 @@ AssistantContentView buildAssistantContentView(
   final ordered = groups.values.toList()
     ..sort((a, b) => a.order.compareTo(b.order));
   final evidence = ordered.where((g) => g.role == 'evidence').toList();
-  final results = ordered
-      .where((g) => g.role != 'evidence' && g.role != 'input')
-      .toList()
-    ..sort((a, b) {
-      final byRole = _resultOrder(a) - _resultOrder(b);
-      if (byRole != 0) return byRole;
-      if (a.artifactKind == 'video_segment' && b.artifactKind == 'video_segment') {
-        return (a.ordinal ?? 1 << 30).compareTo(b.ordinal ?? 1 << 30);
-      }
-      return a.order.compareTo(b.order);
-    });
+  final results =
+      ordered.where((g) => g.role != 'evidence' && g.role != 'input').toList()
+        ..sort((a, b) {
+          final byRole = _resultOrder(a) - _resultOrder(b);
+          if (byRole != 0) return byRole;
+          if (a.artifactKind == 'video_segment' &&
+              b.artifactKind == 'video_segment') {
+            return (a.ordinal ?? 1 << 30).compareTo(b.ordinal ?? 1 << 30);
+          }
+          return a.order.compareTo(b.order);
+        });
 
   // Computer-use produces one screenshot per action. Keep checkpoints in the
   // work log, but surface the last frame as final verification only when the
   // turn has no richer deliverable of its own.
-  final computerEvidence =
-      evidence.where((g) => g.artifactKind == 'computer_screenshot').toList();
-  final verification = hasFinal && results.isEmpty && computerEvidence.isNotEmpty
+  final computerEvidence = evidence
+      .where((g) => g.artifactKind == 'computer_screenshot')
+      .toList();
+  final verification =
+      hasFinal && results.isEmpty && computerEvidence.isNotEmpty
       ? computerEvidence.last
       : null;
   final workEvidence = verification == null
@@ -464,8 +491,11 @@ AssistantContentView buildAssistantContentView(
       : evidence.where((g) => g.id != verification.id).toList();
   final workEvents = <WorkEvent>[...progress, ...workEvidence]
     ..sort((a, b) => a.order.compareTo(b.order));
-  final hasWork =
-      progress.isNotEmpty || tools.isNotEmpty || ordered.isNotEmpty;
+  final hasWork = progress.isNotEmpty || tools.isNotEmpty || ordered.isNotEmpty;
+  final suspended =
+      awaitingInput ||
+      (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
+      tools.any((tool) => tool.status == ToolStatus.waitingInput);
 
   return AssistantContentView(
     finalText: finalText,
@@ -475,6 +505,6 @@ AssistantContentView buildAssistantContentView(
     workEvents: workEvents,
     resultGroups: results,
     verification: verification,
-    incomplete: !streaming && !hasFinal && hasWork,
+    incomplete: !streaming && !hasFinal && hasWork && !suspended,
   );
 }

@@ -115,6 +115,9 @@ describe("DesktopTab", () => {
     render(<DesktopTab />)
 
     await waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+    // SDK creation and React's connected UI are different readiness points.
+    // Wait for the visible control before inspecting or interacting with it.
+    const control = await screen.findByRole("checkbox", { name: "desktop.allowControl" })
     const stage = screen.getByTestId("desktop-stage")
     const frame = stage.querySelector("iframe")
     expect(frame).not.toBeNull()
@@ -146,7 +149,7 @@ describe("DesktopTab", () => {
     expect(session.enableInput).not.toHaveBeenCalled()
     expect(session.enableKeyBoard).toHaveBeenLastCalledWith(false)
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "desktop.allowControl" }))
+    fireEvent.click(control)
     expect(session.setInputEnabled).toHaveBeenLastCalledWith(true)
     expect(session.enableKeyBoard).toHaveBeenLastCalledWith(true)
     expect(session.setTouchEnabled).toHaveBeenLastCalledWith(true)

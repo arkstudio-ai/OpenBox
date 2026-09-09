@@ -50,8 +50,36 @@
 - 未做：真实上传→填标题/话题→AI 声明→发布。原因：会在该账号产生草稿/作品，需要你指定测试号并确认后再做。
 - 下一步（需确认）：用测试号走一遍到「发布」按钮前一步（不点发布），记录上传耗时、表单字段的 DOM、AI 声明开关位置、可见范围与定时发布选项。
 
+## A（续）· 热点宝授权后（用户扫码后 22:10）
+
+- 登录态：cookie 全部落在 `.douhot.douyin.com`（`sessionid_douhot`、`sid_tt_douhot`、`uid_tt_douhot`…），**过期时间约 +60 天**（1794146215 ≈ 2026-11-08）；
+  与 `.douyin.com` 的创作者中心 cookie 完全独立 → 站点条目 `cookie_domains=(".douhot.douyin.com",)`。
+- **探活接口**：`GET https://douhot.douyin.com/douhot/v1/user/user_info` → HTTP 200，`{code:0, data:{user_id, douyin_uid, nickname, avatar_url, follower_count, …}}`，
+  `code_path="code"`, `ok_values=(0,)`，昵称/粉丝数字段现成，可直接做 `LightProbe` 与 `profile_probe`。失效判据待观察（未登录时 code 非 0）。
+- 榜单页 `https://douhot.douyin.com/square/hotspot?active_tab=hotspot_all`（标题「抖音热榜广场」）：视频榜（总榜 / 低粉爆款 / 高完播 / 高涨粉 / 高点赞）、
+  话题榜、飙升话题榜、搜索榜、飙升搜索榜，时间窗 近1小时/1天/3天/7天，带垂类筛选；每条含标题+话题、作者+粉丝数、发布时间、播放量。
+- **数据接口**（均带 `msToken, X-Bogus, _signature` 签名参数 → 只能在页面上下文里通过浏览器发起，不能裸 HTTP 调）：
+  `/douhot/v1/material/video_billboard`、`/douhot/v1/material/challenge_billboard`、`/douhot/v1/dashboard/hot_search/query_list`、
+  `/douhot/v1/common/category`（垂类）、`/douhot/v1/material/content_tag`。A3 的采集方式定为：dev-browser 打开页面 → `page.evaluate(fetch(...))` 复用页面签名，或直接读 DOM。
+- 截图：`spike/douhot-2.png`（我的数据首页）、`spike/douhot-3.png`（热榜广场）。
+
+## C（续）· 上传演练（测试号，未发布）
+
+- 用桌面 ffmpeg 生成 5s 720x1280 测试片（1.7 MB），`page.setInputFiles` 到 `input[type=file]` → 页面自动跳到
+  `/creator-micro/content/post/video?enter_from=publish_page`，表单在 60s 内就绪（小文件实际远快于此，本次探测正则写错未测到精确值）。
+- 表单结构：**作品描述** = 标题 input（placeholder「填写作品标题，为作品获得更多流量」，0/30）+ 简介 contenteditable（0/1000，支持 `#话题` `@好友`，
+  下方有推荐话题）；官方活动；设置封面（竖 3:4 / 横 4:3，AI 推荐封面）；添加合集；**自主声明**（弹窗单选：`内容由AI生成` / 个人观点 / 转载 /
+  `内容含营销推广信息` / 虚构演绎 / 无需添加）；扩展信息：添加标签（位置）、**关联热点**（输入热点词）；发布设置：谁可以看（公开/好友/仅自己）、
+  保存权限、发布时间（立即 / **定时发布**）；底部按钮 `发布` / `暂存离开`；右侧「发文助手 · 快速检测：作品未见异常」。
+- 全部字段可由 DOM 定位（文本/placeholder/role 稳定）；`自主声明` 需先点开弹窗再选单选。截图 `spike/upload-form-1/2/3.png`。
+- 演练以「暂存离开」结束，测试号内容管理里留有一条草稿，未发布任何内容。
+- 结论：自动发布技能的全部输入都有落点：标题 ≤30 字（**比开放平台 H5 投稿的 55 字更短**，文案生成要按 30 字约束）、简介 ≤1000 字含话题、
+  AI 声明必选 `内容由AI生成`（营销类再加 `含营销推广信息`）、关联热点可填热点词、定时发布可用于节奏控制。
+
 ## 对计划的修正
 - A1 热点宝站点条目 = 独立 OAuth 授权，需用户扫码一次（模版创建流程里加一步「授权热点宝」）。
 - A3 的 `hot_trends` 第一版数据源改为**公开热榜 + 热点宝（已授权时）**双源，热榜零门槛。
 - B3 加硬约束：帧数不足即失败；分析结果缓存按视频 id。
 - 媒体直链 fallback 列入 A3。
+- 热点宝站点条目参数已齐（cookie 域、探活接口、判据）；采集必须走页面上下文（签名参数）。
+- 自动发布：标题按 ≤30 字生成；`自主声明=内容由AI生成`；`关联热点` 直接回填当次跟的热点词；`定时发布` 承担节奏控制。

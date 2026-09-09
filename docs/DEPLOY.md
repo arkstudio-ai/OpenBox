@@ -5,7 +5,26 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 独立视频附件交付的分段折叠（仅前端）
+## 当前阿里云发布：2026-09-09 热点宝授权站点 + video_analyze 多模态拆解（仅后端）
+
+- 23:37:16–23:37:35（北京时间）gw2 backend 切换至 `20260909-analyze-d054271`，源码 `main@d054271`
+  （PR [#8](https://github.com/arkstudio-ai/OpenBox/pull/8) A1+B3 与 PR [#6](https://github.com/arkstudio-ai/OpenBox/pull/6) 首稿确认卡修复
+  的合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。backend 19 秒 healthy。frontend 保持同事发布的
+  `20260909-direct-video-0a92fd8`（已核对在 main 上，本次 main 是线上超集），postgres/redis 未动。
+- 内容：授权中心新增 `douyin_hot`（抖音热点宝，独立 OAuth 会话，cookie 域 `.douhot.douyin.com`，探针 `user_info` code==0，
+  60 天不活跃 TTL）；新工具 `video_analyze`（抽帧 + 转写 → `openai/gemini-3.7-flash` 结构化拆解，缓存到 `video_jobs kind=analyze`，
+  按 `video_analyze` 计量；帧数不足 `min_frames` 直接失败而不让模型臆测）；`video-production` skill 把口播长度校对提前到卡 1 之前。
+- 本地 `git archive d054271` 干净导出，`docker build --platform linux/amd64 -f backend/Dockerfile .`；中转包 SHA-256
+  `5ec10a254fb9ff6f95c254a7fcc661a964686ca8f90140ecaae9cab376b41cf8`，装载后 image ID
+  `sha256:e658bd7a8d26d5457d9d6c32e1c98789f50f9296c4b7d5d4695e0b14a66a80ab` 与本机一致。OSS 中转对象已删，`_deploy-tmp/` 为空。
+- 切换前 0 个活动会话。备份 `/opt/openbox/backups/20260909-analyze-d054271/activation-20260909T153708Z/`（0700；`preflight.dump`
+  经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-analyze-d054271/`。仅 override 的 backend image 改变。
+- 容器内验收：35 个工具，含 `video_analyze`、`video_compose`；`video_analysis` 配置 8 帧/720 宽/转写开；站点列表含 `douyin_hot`。
+  用管理员云桌面对 bbdwxh_admin 工作区做 level-2 探针，热点宝状态 `bound`（19 个 cookie，会话 cookie 到期 2026-11-08，测试号
+  `用户2087843173024`）。公网首页/API 4 组采样全 200，切换后无 traceback。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-media-998219e`，`docker compose up -d --no-deps backend`；无需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 独立视频附件交付的分段折叠（仅前端）
 
 - 21:04:10–21:04:36（北京时间）gw2 frontend 发布 `20260909-direct-video-0a92fd8`，源码
   `main@0a92fd8` 已推送。修复 `video_generate → share_file → 最终答复` 没有 `video_final`

@@ -124,6 +124,8 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
         lines.append(f"upload_ms={res['upload'].get('ms')}")
     if res.get("publish_ms") is not None:
         lines.append(f"publish_ms={res['publish_ms']}")
+    if args.hot_word:
+        lines.append(f"hot_word_attached={'true' if res.get('hot_word_attached') else 'false'}")
     if res.get("evidence_path"):
         lines.append(f"evidence={res['evidence_path']} (on the desktop)")
     if res.get("dry_run"):

@@ -5,7 +5,30 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-10 热点采集工具 hot_trends（前后端，含迁移）
+## 当前阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
+
+- 01:23:12–01:23:32（北京时间）gw2 backend 切换至 `20260910-publish2-2e44c01`，源码 `main@2e44c01`
+  （PR [#13](https://github.com/arkstudio-ai/OpenBox/pull/13) desktop_publish + PR [#14](https://github.com/arkstudio-ai/OpenBox/pull/14) 迁移 id 修正）。
+  **含迁移** `b8d0f2a4c6e8`（`publish_jobs.details`、`platform_accounts.auto_publish_disabled_at/_reason`），`alembic current` = `b8d0f2a4c6e8 (head)`。
+  frontend 保持 `20260910-trends-7959132`，postgres/redis 未动。backend 20 秒 healthy，公网 5 组采样全 200。
+- **第一次尝试失败并自动回滚**（01:16:23–01:19:28，镜像 `20260910-publish-2334751`，`main@2334751`）：容器启动 `alembic upgrade head` 报
+  `Revision a6c8e0f2b4d6 is present more than once` / 多 head——新迁移随手取的 id 与既有 `a6c8e0f2b4d6_media_gen_routing_dedupe.py` 重复。
+  健康检查 3 分钟未过 → 脚本按预案回滚：镜像回 `20260910-trends-7959132`，库始终停在 `f2a4c6e8b0d3`（升级未执行，无 schema 变更），
+  回滚期间约 3 分钟后端不可用。补救：改 id 为 `b8d0f2a4c6e8`，镜像内 `ScriptDirectory.get_heads()` 单 head 后再发；
+  新增单测 `tests/unit/test_migration_heads.py`（PR [#15](https://github.com/arkstudio-ai/OpenBox/pull/15)）拦截重复 id / 多 head。
+  **教训：新迁移发布前必须先看 `alembic heads`。**
+- 内容：`desktop_publish` 工具 + `douyin-desktop-publish` 技能——用云电脑上已登录的创作者中心自动发布；mode 三层优先级（账号熔断 > 请求 > `desktop_publish.default_mode`）、
+  每账号每日上限/最小间隔/发布时段、风控词熔断 + 站内通知 + 降级到投稿包；每次尝试记 `publish_jobs(platform=douyin_creator)`。
+- 包 SHA-256 `f38fcd91e2d26f63115ba2929c2421f9f663e8603e0180891bcf05ecc393bb4a`，image ID 与本机一致（见 `releases/20260910-publish2-2e44c01/`）。
+  两次尝试的 OSS 中转对象均已删除。备份 `/opt/openbox/backups/20260910-publish-2334751/activation-20260909T171616Z/` 与
+  `/opt/openbox/backups/20260910-publish2-2e44c01/activation-20260909T172304Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验）。
+- 容器内真机验收（管理员工作空间，走 action-server 路由）：`precheck` 正确判定登录 ok、`mode=auto`、01:24 不在发布时段 → `can_auto_publish=false`；
+  `publish dry_run=true` 26.7 秒完成——把 14.4 秒 IMS 成片投递到云电脑、桌面 Chrome 填表（AI 声明、仅自己可见）、截图、暂存离开，记 `status=draft`；
+  `status` 列出该记录。脚本级真机：两次「仅自己可见」真实发布成功（回读作品 id）、假验证码降级演练命中。
+- 回滚：**先降迁移再换镜像**——`docker compose run --rm --no-deps --entrypoint alembic backend downgrade f2a4c6e8b0d3`，
+  再把 override 的 backend image 改回 `openbox-backend:20260910-trends-7959132`，`up -d --no-deps backend`。降级只丢两列/一列附加字段。
+
+## 历史阿里云发布：2026-09-10 热点采集工具 hot_trends（前后端，含迁移）
 
 - 00:43:42–00:44:29（北京时间）gw2 backend → frontend 串行切换至 `20260910-trends-7959132`，源码 `main@7959132`
   （PR [#11](https://github.com/arkstudio-ai/OpenBox/pull/11) 合并提交）。**含迁移** `f2a4c6e8b0d3`（新表 `hot_trend_snapshots`、`hot_media_links`），

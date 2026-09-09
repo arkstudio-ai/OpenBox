@@ -82,29 +82,59 @@ async def run_on_desktop(
     tool_call_id: str = "",
 ) -> dict:
     """Execute one cdp action on the desktop and return its parsed JSON."""
+    return await run_command_on_desktop(
+        record,
+        cdp.build_command(payload),
+        parse=cdp.parse_output,
+        summary=f"{payload['action']} {','.join(s['key'] for s in payload['sites'])}",
+        operation="login-state",
+        lease=lease,
+        session_id=session_id,
+        tool_call_id=tool_call_id or f"login-{payload['action']}-{secrets.token_hex(4)}",
+    )
+
+
+async def run_command_on_desktop(
+    record: dict,
+    command: str,
+    *,
+    parse,
+    summary: str,
+    operation: str,
+    lease: bool,
+    timeout: int = COMMAND_TIMEOUT,
+    lease_ttl: float = 60.0,
+    span_kind: str = "platform.probe",
+    session_id: str = "auth-center",
+    tool_call_id: str = "",
+) -> dict:
+    """Run one self-contained desktop script and return `parse(stdout)`.
+
+    Shared by the login-state probe and hot-list collection: one lease and
+    timeline protocol, one mapping of transport failures to platform errors.
+    """
     from sandbox.events import span
 
     client = _client_for(record)
-    command = cdp.build_command(payload)
-    tool_call_id = tool_call_id or f"login-{payload['action']}-{secrets.token_hex(4)}"
+    tool_call_id = tool_call_id or f"{operation}-{secrets.token_hex(4)}"
 
     async def _execute():
-        result = await client.execute(command, timeout=COMMAND_TIMEOUT)
+        result = await client.execute(command, timeout=timeout)
         if result.exit_code != 0:
             text = (result.stderr or result.stdout or "").strip().splitlines()
             raise BrowserNotRunning((text[-1] if text else f"exit {result.exit_code}")[:200])
-        return cdp.parse_output(result.stdout)
+        return parse(result.stdout)
 
     async with span(
-        "platform.probe", client=client, desktop_id=record["desktop_id"],
+        span_kind, client=client, desktop_id=record["desktop_id"],
         session_id=session_id, tool_call_id=tool_call_id,
     ) as event:
-        event.summary = f"{payload['action']} {','.join(s['key'] for s in payload['sites'])}"[:200]
+        event.summary = summary[:200]
         try:
             if lease:
                 async with client.desktop_lease(
                     session_id=session_id, tool_call_id=tool_call_id,
-                    operation="login-state", wait_timeout=5.0, ttl_seconds=60.0,
+                    operation=operation, wait_timeout=5.0, ttl_seconds=lease_ttl,
                 ):
                     data = await _execute()
             else:

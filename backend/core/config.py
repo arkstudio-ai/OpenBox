@@ -324,6 +324,28 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class HotTrendsConfig(BaseModel):
+    """`hot_trends`: hot-list collection through the workspace's cloud desktop.
+
+    One live collection per (source, board, window, category) per day is
+    shared by every customer; `min_interval_seconds` and `max_fetches_per_day`
+    bound how often any desktop browser is driven for the whole deployment.
+    """
+
+    #: A snapshot younger than this is served from the shared cache.
+    cache_hours: int = Field(default=24, ge=1, le=168)
+    #: Never collect the same key twice within this many seconds, even on refresh.
+    min_interval_seconds: int = Field(default=300, ge=10, le=86400)
+    #: Live collections per source per day across all customers.
+    max_fetches_per_day: int = Field(default=48, ge=1, le=1000)
+    #: Items requested from the source per collection (callers slice `limit`).
+    fetch_size: int = Field(default=50, ge=10, le=100)
+    #: Seconds to wait for the board page and its own API calls.
+    page_timeout_seconds: int = Field(default=40, ge=10, le=120)
+    #: How long a resolved direct media link is trusted before re-resolving.
+    media_link_ttl_hours: int = Field(default=6, ge=1, le=72)
+
+
 class VideoAnalysisConfig(BaseModel):
     """`video_analyze`: sampled frames + transcript → structured analysis.
 
@@ -594,6 +616,7 @@ class OpenBoxConfig(BaseModel):
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
     video_compose: VideoComposeConfig = VideoComposeConfig()
     video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()
+    hot_trends: HotTrendsConfig = HotTrendsConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

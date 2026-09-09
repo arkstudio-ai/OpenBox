@@ -247,6 +247,17 @@
     "transcribe": true
   },
 
+  // hot_trends: hot-list collection via the workspace's cloud desktop.
+  // One collection per (source, board, window, category) per day is shared by all customers.
+  "hot_trends": {
+    "cache_hours": 24,
+    "min_interval_seconds": 300,
+    "max_fetches_per_day": 48,
+    "fetch_size": 50,
+    "page_timeout_seconds": 40,
+    "media_link_ttl_hours": 6
+  },
+
   // Context compaction settings
   "compaction": {
     "auto": true,

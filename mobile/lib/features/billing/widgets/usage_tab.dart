@@ -409,6 +409,7 @@ const _mediaKinds = {
   'video_generate',
   'video_transcribe',
   'image_gen',
+  'hot_trends',
 };
 
 List<Widget> _usageDetailTexts(I18nState i18n, UsageEntry entry) {
@@ -429,6 +430,13 @@ List<Widget> _usageDetailTexts(I18nState i18n, UsageEntry entry) {
         : rounded.toString();
     items.add(
       Text(i18n.t('billing:usage.media.duration', vars: {'value': shown})),
+    );
+  }
+  if (tokens.items != null) {
+    items.add(
+      Text(
+        i18n.t('billing:usage.media.items', vars: {'value': tokens.items}),
+      ),
     );
   }
   if (tokens.images != null) {

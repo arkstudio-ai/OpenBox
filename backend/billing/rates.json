@@ -331,6 +331,15 @@
         "min_minutes": 1,
         "source": "docs/BILLING_PLAN.md §2 占位"
       }
+    },
+    "hot-trends": {
+      "_comment": "Hot-list collection, credits per live collection (cache hits are free). Covers our desktop-browser time; placeholder until ops sets a sale price (docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §5).",
+      "default": {
+        "vendor": "openbox-desktop",
+        "currency": "CNY",
+        "per_fetch": "0.20",
+        "source": "docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §5 占位"
+      }
     }
   }
 }

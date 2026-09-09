@@ -191,10 +191,10 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
-| C1 | spike：测试抖音号，dev-browser 走 creator.douyin.com 上传→标题/介绍/话题→AI 生成声明→发布→回读作品 id；记 DOM 稳定性、耗时、失败形态 | — | 3d | 连续 10 次发布成功率、每次耗时、出现过的拦截/验证码；输出 spike 记录 |
-| C2 | 技能 `douyin-desktop-publish`：输入成片 asset_id + 标题/介绍/话题；前置 `desktop_login(status)`；上传成功写 `publish_jobs`（A5 已有表，`auth_kind=desktop_cookie`）；输出作品 id | C1 | 4d | 真机 5 次；每次都有 publish_jobs 记录 |
-| C3 | 风控与降级：每账号每日上限、最小间隔、发布时段窗口；DOM 变化/验证码/风控文案 → 停用该账号自动发布、改产扫码投稿包（`douyin_publish`）、推送；登录态失效 → 推送重登 | C2 | 3d | 用假验证码页演练降级路径一次；配置项进模版 |
-| C4 | 切换开关：`publish_mode = auto \| package`，运行期与模版级都可改；默认值集中一处 | C2 | 0.5d | 改一个配置即全局切默认 |
+| C1 ✅ | spike：测试抖音号，dev-browser 走 creator.douyin.com 上传→标题/介绍/话题→AI 生成声明→发布→回读作品 id；记 DOM 稳定性、耗时、失败形态 | — | 3d | 2026-09-10 完成：表单全部字段可稳定定位（见 M0 记录「C2 表单事实」）；1.7 MB 测试片表单 2 秒就绪、发布点击到内容管理 1.2 秒；未遇验证码。**连续 10 次成功率未测**（先以每账号每日 3 条的节奏上线观察） |
+| C2 ✅ | 平台工具 `desktop_publish`（`tool/desktop_publish.py`，服务 `publish/desktop_service.py`，脚本 `publish/desktop_script.py`）+ 技能 `douyin-desktop-publish`：`precheck / publish / status / enable_auto`；成片由 OSS 复制到云电脑 `/workspace/uploads/`，Playwright 脚本在带登录态的桌面 Chrome 里填表并点发布；每次尝试一条 `publish_jobs(platform=douyin_creator)`，dry_run 记 `draft` 不计入预算；`details` 存可见范围/声明/上传耗时/截图路径 | C1 | 4d | 2026-09-10 落地，9 项单测；真机：dry_run 一次（暂存离开留草稿）+ 真实发布两次（仅自己可见，均成功，第二次回读到作品 id `7683584584923106586`，点发布到落地 1.0–1.2 秒）。作品 id 由内容管理页自身的 `work_list` 接口在页面内回放取得；`关联热点` 挂载仍未成功（best effort，返回 `hot_word_attached=false`） |
+| C3 ✅ | `publish/desktop_policy.py`：每账号每日上限 / 最小间隔 / 发布时段（`DesktopPublishConfig`，模版只能收紧）；脚本任一阶段命中 `risk_patterns`（验证码、滑动验证、操作频繁、账号异常…）或登录跳转 → 该账号 `auto_publish_disabled_at` 熔断、写 `notifications(desktop_publish_degraded)`、工具返回 `degrade=true` 让技能改走 `douyin_publish`；登录失效写 `desktop_login_expired`；只有人能 `enable_auto` | C2 | 3d | 2026-09-10 落地；`simulate_risk=true` 注入假验证码遮罩演练降级（单测覆盖，真机演练见 M0 记录）。推送仍是站内通知，E 完成后接移动端 |
+| C4 ✅ | `desktop_publish.default_mode = auto \| package`（`openbox.json`）是唯一全局默认；工具/模版参数 `mode` 可覆盖；账号熔断优先于两者 | C2 | 0.5d | 2026-09-10 落地，单测覆盖三层优先级 |
 
 ### D · 技能与 cron 模版（marketing-autopilot）
 

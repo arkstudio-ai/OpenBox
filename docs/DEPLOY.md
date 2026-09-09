@@ -12,6 +12,30 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 桌面：dev-browser 技能（含登录态前置段）改用 `sandbox.browser_runtime.runtime_cloud_commands()` 生成的分片安装脚本经云助手下发 15 台，桌面 `--check` 保持 `20260907.4 ready`。**禁止直接把 `container/dev-browser/**` 文件拷到桌面**：`--check` 会因与 `dev-browser-sources.json` 不一致而失败，后端随即走镜像内做不到的修复路径，模型看到"浏览器无法启动"。
 - 详见 `docs/A5_DESKTOP_LOGIN_STATE.md` §7.6。
 
+## 历史前端发布：2026-09-08 经营定位落地页与静态 SEO
+
+- 两边 frontend 均为 `openbox-frontend-v2:20260908-landing-3f7f308`，源码为 PR #2 的
+  `3f7f308`（= `origin/main@6ed65f3` + 落地页一提交，PR 发布时尚未合并）。EC2
+  `/opt/openbox/build-main` 构建（镜像 ID `28d7e2114d51`），`docker save` 落盘后
+  scp 到 gw2 装载，传输包 SHA-256
+  `fdf77a5ce0ea8cf7e13044b6105d4f0701f7853010a043d19a2bfe0cdcb0080c`。
+- 仅重建 frontend（`docker compose up -d --no-deps frontend`）；backend 两边仍为
+  `20260907-d1-c51a24c`，无迁移，postgres/redis 未动。随本次一起发出的还有 main 上
+  未发布的前端提交 `78700b8`（移动端授权中心与投稿）。
+- **AWS 的 `docker-compose.override.yml` 现在也把 backend 钉在
+  `openbox-backend:20260907-d1-c51a24c`**，与 gw2 同一约定：`.env` 的
+  `OPENBOX_IMAGE_TAG` 只驱动 frontend，发 backend 必须改 override 的 `image:`。
+- 内容：落地页 `/` 改为老板/经营团队定位（参考 PR #1 的 VI 与文案，PR #1 不合并）；
+  `index.html` 补静态 title/description/canonical/OG/JSON-LD，新增 `og-image.png`、
+  `apple-touch-icon.png`、`robots.txt`（屏蔽 /app、/api/、/login、/register、/invite/）；
+  工作台空白页三条引导改为经营场景。
+- 验收：gw2 公网 `https://ai.bossipai.com.cn/` 200，title 为「BossIP | 云端 AI 经营工作台」，
+  `/og-image.png` 200 image/png，`/robots.txt` 200，`/api/environment` 仍为 `prod`；
+  AWS 经令牌闸门同样 200，环境 `dev`。浏览器无控制台错误。
+- 备份：gw2 `/opt/openbox/backups/20260908-landing-3f7f308/activation-<戳>/`、AWS 同路径
+  （各含 `.env`、两份 compose）。回滚：`.env` 的 tag 改回 `20260907-d1-c51a24c` 后
+  `docker compose up -d --no-deps frontend`，旧镜像仍在机上。
+
 ## 上一发布：2026-09-08 D1 浏览器调试监控（AWS + 阿里云 + 15 台桌面）
 
 - 最终镜像 `20260907-d1-c51a24c`（源码 `main@c51a24c`），AWS 与阿里云 gw2 后端均已切换。前端自

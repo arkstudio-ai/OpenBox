@@ -1,8 +1,10 @@
 import { LandingTopbar } from "./LandingTopbar"
 import { LandingHero } from "./LandingHero"
-import { LandingMock } from "./LandingMock"
-import { LandingFeatures } from "./LandingFeatures"
+import { LandingBand } from "./LandingBand"
+import { LandingCapabilities } from "./LandingCapabilities"
 import { LandingFlow } from "./LandingFlow"
+import { LandingUseCases } from "./LandingUseCases"
+import { LandingFaq } from "./LandingFaq"
 import { LandingOutro } from "./LandingOutro"
 
 export default function LandingRoute() {
@@ -11,9 +13,11 @@ export default function LandingRoute() {
       <LandingTopbar />
       <main className="flex-1">
         <LandingHero />
-        <LandingMock />
-        <LandingFeatures />
+        <LandingBand />
+        <LandingCapabilities />
         <LandingFlow />
+        <LandingUseCases />
+        <LandingFaq />
         <LandingOutro />
       </main>
     </div>

@@ -1,0 +1,22 @@
+# Backend builds use the repository root so recovery assets are included.
+**
+!backend/
+!backend/**
+!container/
+!container/dev-browser/
+!container/dev-browser/**
+**/.env
+**/.env.*
+**/openbox.json
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.DS_Store
+**/*.log
+backend/tests/
+backend/docs/
+backend/.openbox/*.db
+backend/.openbox/*.db-*
+container/dev-browser/tests/

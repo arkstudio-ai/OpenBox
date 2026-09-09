@@ -217,7 +217,7 @@ def test_service_task_budget_is_persistent_without_restarting(tmp_path, monkeypa
     assert f'TasksMax={expected}' in config.read_text()
     assert any(c[1] == 'set-property' for c in calls) is live_update
     assert not any('restart' in c or 'stop' in c for c in calls)
-    assert not any('MemoryMax' in ' '.join(c) for c in calls)
+    assert not any('MemoryMax=' in ' '.join(c) for c in calls)
     assert repair.task_budget_problems(root, cgroup) == []
     calls.clear()
     assert repair.register_boot_service() is False
@@ -298,3 +298,32 @@ def test_source_bundle_rejects_parent_traversal(tmp_path):
     assert repair.source_problems(tmp_path / 'skill', bundle) == [
         'dev-browser source bundle contains an unsafe path'
     ]
+
+
+@pytest.mark.parametrize('high,maximum,migrate', [
+    (5 * 1024**3, 6 * 1024**3, True),
+    (4 * 1024**3, 6 * 1024**3, False),
+    (5 * 1024**3, 8 * 1024**3, False),
+])
+def test_only_legacy_memory_soft_limit_is_migrated(tmp_path, monkeypatch, high, maximum, migrate):
+    root, cgroup = tmp_path / 'systemd', tmp_path / 'cgroup'
+    monkeypatch.setattr(repair, 'SYSTEMD_ROOT', root)
+    monkeypatch.setattr(repair, 'SYSTEMD_CONTROL_ROOT', tmp_path / 'control')
+    monkeypatch.setattr(repair, 'ACTION_CGROUP', cgroup)
+    monkeypatch.setattr(repair, 'BACKUP_ROOT', tmp_path / 'backups')
+    calls = []
+    state = {'high': high}
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[1] == 'show':
+            return SimpleNamespace(stdout=f"LoadState=loaded\nMainPID=123\nTasksMax=2048\nMemoryHigh={state['high']}\nMemoryMax={maximum}\n")
+        if 'MemoryHigh=6G' in command:
+            state['high'] = 6 * 1024**3
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(repair.subprocess, 'run', run)
+    repair.register_boot_service()
+    assert any('MemoryHigh=6G' in c for c in calls) is migrate
+    assert not any('MemoryMax=' in ' '.join(c) or 'restart' in c or 'stop' in c for c in calls)
+    calls.clear()
+    assert repair.register_boot_service() is False
+    assert not any(c[1] in ('daemon-reload', 'set-property') for c in calls)

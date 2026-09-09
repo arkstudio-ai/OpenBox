@@ -34,19 +34,13 @@ class BrowserRuntimeUnavailable(RuntimeError):
 
 
 def runtime_files() -> dict[str, str]:
-    """Pinned repair code and relay sources shipped to every desktop.
-
-    The relay sources live outside the backend package. The backend Docker
-    image is built from ``backend/`` alone and does not carry them, so a
-    repair started from the image cannot proceed; say so plainly instead of
-    surfacing a FileNotFoundError from deep inside the install script.
-    """
+    """Pinned repair code and relay sources shipped in the production image."""
     root = Path(__file__).resolve().parent
     dev_browser = root.parents[1] / "container" / "dev-browser"
     if not (dev_browser / "SKILL.md").exists():
         raise BrowserRuntimeUnavailable(
             f"browser runtime sources are not available at {dev_browser}; "
-            "run the repair from a full checkout (bootstrap or scripts), not from the backend image"
+            "build the backend image from the repository root with backend/Dockerfile"
         )
     source_paths = [
         dev_browser / "SKILL.md",
@@ -220,6 +214,14 @@ async def ensure_desktop_browser_runtime(desktop_id: str) -> dict:
     """Works even when a pool desktop's application tunnel is revoked."""
     from sandbox.channel import run_desktop_command
 
+    # A healthy desktop must not require uploading or installing anything.
+    try:
+        checked = await run_desktop_command(
+            desktop_id, "python3 /opt/openbox/tools/repair_browser_runtime.py --check", timeout=60
+        )
+        return verified_result(checked)
+    except Exception:
+        pass  # Missing, old or unhealthy runtime: repair with the bundled sources.
     try:
         for command in runtime_cloud_commands():
             output = await run_desktop_command(desktop_id, command, timeout=480)

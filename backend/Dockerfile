@@ -12,12 +12,15 @@ COPY --from=uv /uv /bin/uv
 
 WORKDIR /app
 ENV PYTHONPATH=/app
-COPY pyproject.toml uv.lock* ./
+COPY backend/pyproject.toml backend/uv.lock* ./
 RUN uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirements.txt && \
     uv pip install --system --no-cache -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
-COPY . .
+COPY backend/ .
+COPY container/dev-browser/ /container/dev-browser/
+# Verify the actual release artifact can construct every recovery payload.
+RUN python -c "from sandbox.browser_runtime import runtime_files; runtime_files()"
 
 EXPOSE 8080
 CMD ["/bin/sh", "-ec", "alembic upgrade head\nexec uvicorn main:app --host 0.0.0.0 --port 8080"]

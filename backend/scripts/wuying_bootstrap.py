@@ -149,7 +149,7 @@ WorkingDirectory=/workspace
 ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
 Restart=always
 RestartSec=3
-MemoryHigh=5G
+MemoryHigh=6G
 MemoryMax=6G
 TasksMax=2048
 
@@ -383,7 +383,7 @@ WorkingDirectory=/workspace
 ExecStart=/usr/bin/python3 /opt/action_server/action_server.py --port 8000
 Restart=always
 RestartSec=3
-MemoryHigh=5G
+MemoryHigh=6G
 MemoryMax=6G
 TasksMax=2048
 

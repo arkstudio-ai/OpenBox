@@ -534,7 +534,7 @@ LOGTO_POST_LOGOUT_REDIRECT_URI: https://ai.ueejavelin.org            # 生产为
 
 ```bash
 cd /opt/openbox/src && git pull
-docker build -t openbox-backend:<TAG>     backend/
+docker build -f backend/Dockerfile -t openbox-backend:<TAG> .
 docker build -t openbox-frontend-v2:<TAG> frontend-v2/
 cd /opt/openbox && sed -i "s/^OPENBOX_IMAGE_TAG=.*/OPENBOX_IMAGE_TAG=<TAG>/" .env
 docker compose up -d
@@ -548,7 +548,7 @@ Tag 规则：`<日期>-<批次>-<git短sha>`，例如 `20260904-a2-d9d7401`。
 本地构建须指定 `linux/amd64`（Mac 是 arm64，服务器是 x86_64）：
 
 ```bash
-docker build --platform linux/amd64 -t openbox-backend:<TAG>     backend/
+docker build --platform linux/amd64 -f backend/Dockerfile -t openbox-backend:<TAG> .
 docker build --platform linux/amd64 -t openbox-frontend-v2:<TAG> frontend-v2/
 docker save openbox-backend:<TAG>     | gzip -1 > backend.tgz
 docker save openbox-frontend-v2:<TAG> | gzip -1 > frontend.tgz

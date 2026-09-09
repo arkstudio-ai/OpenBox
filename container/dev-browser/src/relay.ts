@@ -7,6 +7,7 @@
  */
 
 import { Hono } from "hono";
+import { LocalPageState } from "./page-state.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { WSContext } from "hono/ws";
@@ -29,6 +30,8 @@ export interface RelayOptions {
   chromePort?: number;
   /** Local mode: host of the local Chrome's CDP endpoint (default 127.0.0.1) */
   chromeHost?: string;
+  /** Private registry directory; shared across relay restarts, never Chrome profiles. */
+  stateDirectory?: string;
 }
 
 export interface RelayServer {
@@ -133,7 +136,9 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   // State
   const connectedTargets = new Map<string, ConnectedTarget>();
   const namedPages = new Map<string, string>(); // name -> sessionId (extension mode)
-  const localNamedPages = new Map<string, string>(); // name -> Chrome targetId (local mode)
+  const localPageState = new LocalPageState(chromeBase, options.stateDirectory);
+  const localNamedPages = localPageState.pages;
+  const creatingPages = new Map<string, Promise<unknown>>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
 
@@ -201,6 +206,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       if (cachedChromeWsEndpoint && cachedChromeWsEndpoint !== data.webSocketDebuggerUrl) {
         log("Chrome restarted; CDP endpoint changed");
       }
+      localPageState.restore(data.webSocketDebuggerUrl);
       cachedChromeWsEndpoint = data.webSocketDebuggerUrl;
       return { chromeAvailable: true, wsEndpoint: data.webSocketDebuggerUrl };
     } catch (err) {
@@ -255,6 +261,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     name: string;
     targetId: string;
     url: string;
+    created: boolean;
   }> {
     const discovery = await discoverChromeWsEndpoint();
     if (!discovery.chromeAvailable) {
@@ -273,10 +280,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         return { wsEndpoint, name, targetId: existing.id, url: existing.url, created: false };
       }
       localNamedPages.delete(name);
+      localPageState.save();
     }
 
     const created = await chromeJsonNew();
     localNamedPages.set(name, created.id);
+    localPageState.save();
     return { wsEndpoint, name, targetId: created.id, url: created.url, created: true };
   }
 
@@ -516,7 +525,14 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   });
 
   // List named pages
-  app.get("/pages", (c) => {
+  app.get("/pages", async (c) => {
+    if (effectiveMode() === "local") {
+      const discovery = await discoverChromeWsEndpoint();
+      if (!discovery.chromeAvailable) return c.json({ error: discovery.error }, 503);
+      const liveIds = new Set((await chromeJsonList()).map(t => t.id));
+      for (const [name, id] of localNamedPages) if (!liveIds.has(id)) localNamedPages.delete(name);
+      localPageState.save();
+    }
     const names = effectiveMode() === "local" ? localNamedPages.keys() : namedPages.keys();
     return c.json({
       pages: Array.from(names),
@@ -536,7 +552,14 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     // endpoints. body.viewport is intentionally ignored (see getOrCreateLocalPage).
     if (effectiveMode() === "local") {
       try {
-        return c.json(await getOrCreateLocalPage(name));
+        // Concurrent requests for the same name must share a single target.
+        let pending = creatingPages.get(name);
+        if (!pending) {
+          pending = getOrCreateLocalPage(name);
+          creatingPages.set(name, pending);
+        }
+        try { return c.json(await pending as Record<string, unknown>); }
+        finally { if (creatingPages.get(name) === pending) creatingPages.delete(name); }
       } catch (err) {
         log("Error creating local page:", err);
         return c.json({ error: (err as Error).message }, 503);
@@ -616,8 +639,11 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       // Local mode owns a dedicated automation Chrome, so closing the tab is the
       // right cleanup (unlike extension mode, which must never touch the user's
       // own tabs). Best-effort: ignore if the target is already gone.
+      const discovery = await discoverChromeWsEndpoint();
+      if (!discovery.chromeAvailable) return c.json({ error: discovery.error }, 503);
       const targetId = localNamedPages.get(name);
       const deleted = localNamedPages.delete(name);
+      localPageState.save();
       if (targetId) {
         try {
           await chromeJsonClose(targetId);

@@ -180,3 +180,22 @@ async def test_channel_readiness_checks_real_browser_without_requiring_web_sdk_l
         with pytest.raises(runtime.BrowserRuntimeUnavailable):
             await channel.WuyingChannel().verify({'id':'test','desktop_id':'ecd-test'})
         assert all(c.kwargs.get('tunnel_state') != 'up' for c in update.await_args_list)
+
+
+async def test_cloud_runtime_checks_healthy_guest_without_building_install_payload(monkeypatch):
+    from sandbox import channel
+    check = AsyncMock(return_value=json.dumps({'version':runtime.RUNTIME_VERSION,'ready':True}))
+    monkeypatch.setattr(channel, 'run_desktop_command', check)
+    monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda: pytest.fail('healthy guest must not be reinstalled'))
+    assert (await runtime.ensure_desktop_browser_runtime('ecd-test'))['ready']
+    assert check.await_count == 1
+    assert check.await_args.args[1].endswith('--check')
+
+
+async def test_cloud_runtime_repairs_failed_check_with_bundled_sources(monkeypatch):
+    from sandbox import channel
+    command = AsyncMock(side_effect=[RuntimeError('not installed'),json.dumps({'version':runtime.RUNTIME_VERSION,'ready':True})])
+    monkeypatch.setattr(channel, 'run_desktop_command', command)
+    monkeypatch.setattr(runtime, 'runtime_cloud_commands', lambda:['install bundle'])
+    assert (await runtime.ensure_desktop_browser_runtime('ecd-test'))['ready']
+    assert command.await_args.args[1] == 'install bundle'

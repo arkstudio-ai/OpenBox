@@ -192,9 +192,13 @@ async def test_rejection_guard_is_scoped_to_user_session_model_and_route(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ratio,size", [("9:16", "720x1280"), ("16:9", "1280x720")])
-async def test_real_http_client_submits_size_and_reuses_accepted_task(monkeypatch, ratio, size):
-    entry = legacy_entry()
+@pytest.mark.parametrize("ratio", ["9:16", "16:9"])
+@pytest.mark.parametrize("resolution,dimensions", [("480p", (480,854)), ("512p", (512,912)),
+    ("720p", (720,1280)), ("768p", (768,1344)), ("1080p", (1080,1920)), ("2k", (1440,2560))])
+async def test_real_http_client_submits_size_and_reuses_accepted_task(monkeypatch, ratio, resolution, dimensions):
+    width,height=dimensions if ratio=="9:16" else dimensions[::-1]
+    size=f"{width}x{height}"
+    entry = legacy_entry(resolutions=[resolution])
     config = OpenBoxConfig(video_generation=VideoGenerationConfig(model=entry.id, models=[entry], dedupe=False))
     ctx = await new_context()
     target = route()
@@ -216,7 +220,7 @@ async def test_real_http_client_submits_size_and_reuses_accepted_task(monkeypatc
 
     client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client(transport=httpx.MockTransport(handler), **kw))
-    args = vp.VideoGenerateArgs(action="submit", model=entry.id, prompt="cat", resolution="720p",
+    args = vp.VideoGenerateArgs(action="submit", model=entry.id, prompt="cat", resolution=resolution,
                                 ratio=ratio, duration=4, idempotency_key="same")
     first = await vp.execute_generate(args, ctx)
     assert first.metadata["status"] == "queued", first.output

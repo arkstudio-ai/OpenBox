@@ -122,10 +122,11 @@ class VideoGenerateArgs(BaseModel):
             "same id. Never silently substitute another model."
         ),
     )
-    resolution: Literal["480p", "720p", "1080p"] | None = Field(
+    resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
         default=None,
         description=(
-            "Output resolution. If the person selected a resolution in the composer, "
+            "A resolution tier supported by action=models (including MiniMax 512p/768p/2k). "
+            "If the person selected a resolution in the composer, "
             "omit this field or pass that exact value; changing it requires the person "
             "to update the composer selection first."
         ),

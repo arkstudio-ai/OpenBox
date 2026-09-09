@@ -85,6 +85,32 @@ SITES: tuple[DesktopSite, ...] = (
         inactivity_ttl_days=30,
     ),
     DesktopSite(
+        # 抖音热点宝. Established 2026-09-09 (docs/spikes/M0_AUTOPILOT_SPIKES_20260909.md
+        # §A 续): it does NOT share the creator-centre session — opening it
+        # redirects to an open.douyin.com OAuth page ("使用抖音账号登录 生活服务热点中心")
+        # that the person scans once; the resulting cookies live on
+        # .douhot.douyin.com and were observed to expire ~60 days out.
+        key="douyin_hot",
+        display="抖音热点宝",
+        group="douyin",
+        login_url="https://douhot.douyin.com/",
+        home_url="https://douhot.douyin.com/analysis",
+        cookie_domains=(".douhot.douyin.com", "douhot.douyin.com"),
+        session_cookies=("sessionid_douhot", "sid_tt_douhot", "uid_tt_douhot"),
+        session_probe=LightProbe(
+            # The 我的数据 page calls this on load. Logged in: {code: 0, data: {...}}.
+            url="https://douhot.douyin.com/douhot/v1/user/user_info",
+            code_path="code",
+            ok_values=(0,),
+            nickname_path="data.nickname",
+            uid_path="data.douyin_uid",
+            display_paths={"followers": "data.follower_count"},
+        ),
+        logout_domains=(".douhot.douyin.com", "douhot.douyin.com"),
+        sensitive=True,
+        inactivity_ttl_days=60,
+    ),
+    DesktopSite(
         key="douyin_laike",
         display="抖音来客",
         group="douyin",

@@ -77,7 +77,7 @@ def test_registered_build_only_and_skill_preface():
 async def test_status_reports_all_sites_and_flags_the_missing_one(world):
     world["rows"] = [_row("douyin_creator"), _row("douyin_laike", display={"account_name": "芊屿店"})]
     result = await execute_desktop_login(DesktopLoginArgs(action="status"), _ctx())
-    assert result.metadata["sites"] == {"douyin_creator": "bound", "douyin_laike": "bound", "meituan_merchant": "none", "xiaohongshu_creator": "none"}
+    assert result.metadata["sites"] == {"douyin_creator": "bound", "douyin_hot": "none", "douyin_laike": "bound", "meituan_merchant": "none", "xiaohongshu_creator": "none"}
     assert "芊屿店" in result.output and "需要登录的站点" in result.output
 
     ok = await execute_desktop_login(DesktopLoginArgs(action="status", site="抖音来客"), _ctx())

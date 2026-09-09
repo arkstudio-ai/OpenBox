@@ -324,6 +324,24 @@ class VideoTranscriptionConfig(BaseModel):
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
 
 
+class VideoAnalysisConfig(BaseModel):
+    """`video_analyze`: sampled frames + transcript → structured analysis.
+
+    Frames are extracted with ffmpeg in the person's sandbox, staged in the
+    OSS asset bucket, and shown to a vision-capable chat model. Without frames
+    the model confidently invents the picture (measured 2026-09-09), so
+    `min_frames` is a hard floor, not a preference.
+    """
+
+    model: str = "openai/gemini-3.7-flash"
+    frames: int = Field(default=8, ge=4, le=16)
+    min_frames: int = Field(default=4, ge=1, le=16)
+    frame_width: int = Field(default=720, ge=240, le=1920)
+    max_video_seconds: int = Field(default=600, ge=10, le=3600)
+    timeout_seconds: int = Field(default=180, ge=30, le=600)
+    transcribe: bool = True
+
+
 class VideoComposeConfig(BaseModel):
     """Cloud composition of an OpenBox timeline (docs/VIDEO_RENDER_ENGINE_SELECTION.md).
 
@@ -575,6 +593,7 @@ class OpenBoxConfig(BaseModel):
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
     video_compose: VideoComposeConfig = VideoComposeConfig()
+    video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

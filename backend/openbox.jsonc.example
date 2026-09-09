@@ -234,6 +234,19 @@
     "daily_job_limit": 100
   },
 
+  // video_analyze: sampled frames (ffmpeg in the sandbox) + transcript → structured
+  // analysis by a vision-capable chat model. min_frames is a hard floor: with no
+  // frames the model invents the picture.
+  "video_analysis": {
+    "model": "openai/gemini-3.7-flash",
+    "frames": 8,
+    "min_frames": 4,
+    "frame_width": 720,
+    "max_video_seconds": 600,
+    "timeout_seconds": 180,
+    "transcribe": true
+  },
+
   // Context compaction settings
   "compaction": {
     "auto": true,

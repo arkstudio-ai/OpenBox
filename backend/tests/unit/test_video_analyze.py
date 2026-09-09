@@ -185,6 +185,23 @@ async def test_too_few_frames_is_a_failure_not_a_text_fallback(env):
     assert job.status == "failed" and "frame" in job.error
 
 
+async def test_retry_after_failure_reuses_the_job_and_clears_the_stale_error(env):
+    """Same source after a failed attempt: the failed row is retried, and the
+    completed output must not still show the previous attempt's error."""
+    sb = FakeSandbox(ffmpeg=False)
+    ctx, _ = await _ctx(sb)
+    url = "https://v11-weba.douyinvod.com/retry/video.mp4"
+    failed = await execute(VideoAnalyzeArgs(source=url), ctx)
+    assert failed.metadata["status"] == "failed" and "no ffmpeg" in failed.output
+    sb.ffmpeg = True
+    ok = await execute(VideoAnalyzeArgs(source=url), ctx)
+    kv = _kv(ok)
+    assert kv["status"] == "completed" and kv["job_id"] == failed.metadata["job_id"]
+    assert "error=" not in ok.output
+    again = await execute(VideoAnalyzeArgs(source=url), ctx)
+    assert again.metadata["cached"] is True and "error=" not in again.output
+
+
 async def test_missing_ffmpeg_and_overlong_video_are_refused(env):
     ctx, _ = await _ctx(FakeSandbox(ffmpeg=False))
     result = await execute(VideoAnalyzeArgs(source="https://v1.douyinvod.com/x.mp4"), ctx)

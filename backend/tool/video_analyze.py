@@ -355,7 +355,10 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
             "transcript_error": transcript.get("error"), "usage": usage, "credits": _fmt(total) if total else None,
             "oss_prefix": staged["prefix"],
         }
-        await vp._update_job(job.id, status="completed", result_data=result, completed_at=datetime.now(timezone.utc), attempt=1)
+        # A retried key reuses the failed row: clear its old error so the
+        # completed output never carries a stale "error=" line.
+        await vp._update_job(job.id, status="completed", error=None, result_data=result,
+                             completed_at=datetime.now(timezone.utc), attempt=1)
     except AnalysisParseError as exc:
         await vp._update_job(job.id, status="failed", error=f"analysis unparseable: {exc}", completed_at=datetime.now(timezone.utc))
         return ToolResult(title="Analysis failed", output=str(exc), metadata={"job_id": job.id, "status": "failed"})

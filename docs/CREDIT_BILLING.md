@@ -251,3 +251,10 @@ uv run --extra test pytest tests/unit/test_alipay.py tests/unit/test_billing.py 
 `billing/media.py`：`quote_compose` 提交前报价；`precheck_compose` 在 enforce 下校验会话 workspace 余额；
 `settle_compose` 在 IMS 成功后按实际时长写一条 `usage_events`（kind=`video_compose`，幂等键 `compose:<job_id>`），
 enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写仍未落账。详见 `docs/VIDEO_RENDER_ENGINE_SELECTION.md` §5.5。
+
+## 2026-09-09 媒体计费第二条：视频生成（video_generate）
+
+`rates.json` `media.video-gen`：按模型 × 分辨率的每秒积分（当前为 BILLING_PLAN §5.1 的上游刊例成本价，无毛利，运营改数即改售价；
+未列出的模型/档位记 `unpriced` 不扣）。`estimate` 返回 `estimated_credits`；enforce 下 submit 前校验余额；片段在
+`_finalize_segment` 完成时按申请时长结算一条 `usage_events(kind=video_generate)`，幂等键 `generate:<job_id>`。
+跨用户复用（dedupe）的片段不产生供应商费用，也不落账。BILLING_REVIEW_2026-09-07 的 B2' 至此覆盖视频合成与生成；图片与转写仍未落账。

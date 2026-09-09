@@ -36,9 +36,27 @@ function UsageRow({ entry }: { entry: UsageEntry }) {
         <span className="line-clamp-2 text-sm">{entry.session_title}</span>
       )}
       <div className="text-n600 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-        <span>{t("usage.input", { value: formatNumber(entry.tokens.input ?? 0) })}</span>
-        <span>{t("usage.output", { value: formatNumber(entry.tokens.output ?? 0) })}</span>
-        <span>{t("usage.cache", { value: formatNumber(entry.tokens.cache ?? 0) })}</span>
+        {entry.kind.startsWith("video_") ? (
+          <>
+            {entry.tokens.duration_sec != null && (
+              <span>{t("usage.media.duration", { value: formatNumber(Math.round(entry.tokens.duration_sec * 10) / 10) })}</span>
+            )}
+            {entry.tokens.minutes_billed != null && (
+              <span>{t("usage.media.minutesBilled", { value: formatNumber(entry.tokens.minutes_billed) })}</span>
+            )}
+            {entry.tokens.seconds_billed != null && (
+              <span>{t("usage.media.secondsBilled", { value: formatNumber(entry.tokens.seconds_billed) })}</span>
+            )}
+            {entry.tokens.tier && <span>{t("usage.media.tier", { value: entry.tokens.tier })}</span>}
+            {entry.tokens.resolution && <span>{t("usage.media.resolution", { value: entry.tokens.resolution })}</span>}
+          </>
+        ) : (
+          <>
+            <span>{t("usage.input", { value: formatNumber(entry.tokens.input ?? 0) })}</span>
+            <span>{t("usage.output", { value: formatNumber(entry.tokens.output ?? 0) })}</span>
+            <span>{t("usage.cache", { value: formatNumber(entry.tokens.cache ?? 0) })}</span>
+          </>
+        )}
       </div>
       <div className="text-2xs text-n600 flex flex-wrap items-center justify-between gap-1">
         <time dateTime={entry.created_at}>{formatDateTime(entry.created_at)}</time>

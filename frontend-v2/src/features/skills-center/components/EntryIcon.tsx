@@ -1,10 +1,9 @@
 // The icon column shared by every row in the centre.
 //
-// Icons are emoji rather than image assets: they need no upload path, no
-// serving route and no cache busting, and they survive the sandbox → backend →
-// browser hop as plain text. A skill that declares none still needs to be
-// distinguishable at a glance, so it falls back to its initial over a tint
-// derived from the name — stable per skill, and never a blank square.
+// Emoji and operator-configured HTTPS images share one safe display helper.
+// Missing icons fall back to a stable tinted initial; broken images to a puzzle.
+import { DisplayIcon } from "@/shared/ui/DisplayIcon"
+
 const TINTS = [
   "bg-a200 text-n800",
   "bg-s100 text-sage",
@@ -20,24 +19,16 @@ function tintFor(seed: string): string {
   return TINTS[hash % TINTS.length]
 }
 
-export function EntryIcon({
-  icon,
-  name,
-  size = "md",
-}: {
-  icon?: string
-  name: string
-  size?: "sm" | "md"
-}) {
+export function EntryIcon({ icon, name, size = "md" }: { icon?: string; name: string; size?: "sm" | "md" }) {
   const box = size === "sm" ? "size-8 text-base" : "size-10 text-xl"
 
   if (icon) {
     return (
       <span
-        className={`flex ${box} flex-none items-center justify-center rounded-xl bg-hairsoft leading-none`}
+        className={`flex ${box} bg-hairsoft flex-none items-center justify-center rounded-xl leading-none`}
         aria-hidden
       >
-        {icon}
+        <DisplayIcon icon={icon} className={box} />
       </span>
     )
   }
@@ -45,7 +36,7 @@ export function EntryIcon({
   const initial = (name.trim()[0] ?? "?").toUpperCase()
   return (
     <span
-      className={`flex ${box} flex-none items-center justify-center rounded-xl font-medium leading-none ${tintFor(name)}`}
+      className={`flex ${box} flex-none items-center justify-center rounded-xl leading-none font-medium ${tintFor(name)}`}
       aria-hidden
     >
       {initial}

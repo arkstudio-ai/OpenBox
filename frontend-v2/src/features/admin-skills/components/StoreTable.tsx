@@ -19,25 +19,75 @@ interface Props {
   onFeature: (entry: StoreEntry) => void
   onOfficial: (entry: StoreEntry) => void
   onView: (entry: StoreEntry) => void
+  onEdit: (entry: StoreEntry) => void
+  onDelete: (entry: StoreEntry) => void
+  onRestore: (entry: StoreEntry) => void
+  selected: Set<string>
+  onSelect: (id: string) => void
+  disabled?: boolean
 }
 
-export function StoreTable({ rows, isLoading, error, busyId, onInstalls, ...actions }: Props) {
+export function StoreTable({
+  rows,
+  isLoading,
+  error,
+  busyId,
+  onInstalls,
+  selected,
+  onSelect,
+  disabled,
+  ...actions
+}: Props) {
   const { t } = useTranslation("admin-skills")
 
   const columns: DataTableColumn<StoreEntry>[] = [
     {
       key: "entry",
       header: t("store.column.entry"),
-      className: "min-w-[16rem]",
-      render: (entry) => <StoreEntryCell entry={entry} />,
+      className: "min-w-0 max-w-96",
+      render: (entry) => (
+        <div className="flex min-w-0 gap-2">
+          {!entry.deleted && (
+            <input
+              type="checkbox"
+              aria-label={t("manage.select", { title: entry.title })}
+              checked={selected.has(entry.catalog_id)}
+              disabled={disabled}
+              onChange={() => onSelect(entry.catalog_id)}
+              className="mt-1 size-4 shrink-0"
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <StoreEntryCell entry={entry} />
+            <div className="mt-2 flex flex-wrap items-center gap-2 sm:hidden">
+              <button
+                type="button"
+                title={t("store.installsOf", { title: entry.title })}
+                onClick={() => onInstalls(entry)}
+                className="text-a700 rounded px-1 hover:underline"
+              >
+                {t("store.column.installs")}: {formatNumber(entry.installs_count ?? 0)}
+              </button>
+              <StatusPill tone={listingTone(entry.listing)} title={entry.listing_note ?? undefined}>
+                {entry.deleted ? t("manage.deleted") : t(`status.${entry.listing}`)}
+              </StatusPill>
+            </div>
+            <div className="mt-3">
+              <StoreActions entry={entry} busy={!!disabled || busyId === entry.catalog_id} {...actions} />
+            </div>
+          </div>
+        </div>
+      ),
     },
     {
       key: "origin",
+      className: "hidden lg:table-cell",
       header: t("store.column.origin"),
       render: (entry) => <StatusPill>{t(`store.origin.${entry.origin}`)}</StatusPill>,
     },
     {
       key: "author",
+      className: "hidden xl:table-cell",
       header: t("store.column.author"),
       // The email is the way to reach a submitter, but a column of addresses
       // is unreadable — it hides behind the username instead.
@@ -51,11 +101,12 @@ export function StoreTable({ rows, isLoading, error, busyId, onInstalls, ...acti
     {
       key: "version",
       header: t("store.column.version"),
-      className: "font-mono",
+      className: "hidden font-mono lg:table-cell",
       render: (entry) => (entry.version == null ? "—" : String(entry.version)),
     },
     {
       key: "published_at",
+      className: "hidden 2xl:table-cell",
       header: t("store.column.publishedAt"),
       render: (entry) =>
         entry.published_at ? (
@@ -66,6 +117,7 @@ export function StoreTable({ rows, isLoading, error, busyId, onInstalls, ...acti
     },
     {
       key: "installs_count",
+      className: "hidden whitespace-nowrap sm:table-cell",
       header: t("store.column.installs"),
       render: (entry) => (
         <button
@@ -80,18 +132,13 @@ export function StoreTable({ rows, isLoading, error, busyId, onInstalls, ...acti
     },
     {
       key: "listing",
+      className: "hidden whitespace-nowrap sm:table-cell",
       header: t("store.column.status"),
       render: (entry) => (
         <StatusPill tone={listingTone(entry.listing)} title={entry.listing_note ?? undefined}>
-          {t(`status.${entry.listing}`)}
+          {entry.deleted ? t("manage.deleted") : t(`status.${entry.listing}`)}
         </StatusPill>
       ),
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">{t("store.column.actions")}</span>,
-      className: "text-end",
-      render: (entry) => <StoreActions entry={entry} busy={busyId === entry.catalog_id} {...actions} />,
     },
   ]
 
@@ -102,7 +149,7 @@ export function StoreTable({ rows, isLoading, error, busyId, onInstalls, ...acti
       rowKey={(entry) => entry.catalog_id}
       isLoading={isLoading}
       error={error}
-      minWidth="min-w-[70rem]"
+      minWidth="w-full table-fixed sm:table-auto"
       emptyText={t("store.empty")}
       errorText={t("list.error")}
       loadingLabel={t("list.loading")}

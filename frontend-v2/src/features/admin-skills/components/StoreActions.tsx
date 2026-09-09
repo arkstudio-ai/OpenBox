@@ -13,16 +13,48 @@ interface Props {
   onFeature: (entry: StoreEntry) => void
   onOfficial: (entry: StoreEntry) => void
   onView: (entry: StoreEntry) => void
+  onEdit: (entry: StoreEntry) => void
+  onDelete: (entry: StoreEntry) => void
+  onRestore: (entry: StoreEntry) => void
 }
 
 /** Row actions. Featuring only means something once an entry is on the shelf. */
-export function StoreActions({ entry, busy, onRelist, onDelist, onFeature, onOfficial, onView }: Props) {
+export function StoreActions({
+  entry,
+  busy,
+  onRelist,
+  onDelist,
+  onFeature,
+  onOfficial,
+  onView,
+  onEdit,
+  onDelete,
+  onRestore,
+}: Props) {
   const { t } = useTranslation("admin-skills")
   const listed = entry.listing === "listed"
   const community = isCommunityEntry(entry.catalog_id)
 
+  if (entry.deleted)
+    return (
+      <button type="button" className={BUTTON} disabled={busy} onClick={() => onRestore(entry)}>
+        {t("manage.restore")}
+      </button>
+    )
+
   return (
-    <div className="flex flex-wrap justify-end gap-1.5">
+    <div className="flex flex-wrap gap-1.5">
+      <button type="button" className={BUTTON} disabled={busy} onClick={() => onEdit(entry)}>
+        {t("manage.edit")}
+      </button>
+      <button
+        type="button"
+        className={`${BUTTON} text-danger`}
+        disabled={busy}
+        onClick={() => onDelete(entry)}
+      >
+        {t("manage.delete")}
+      </button>
       {listed ? (
         <button type="button" className={BUTTON} disabled={busy} onClick={() => onDelist(entry)}>
           {t("action.delist")}

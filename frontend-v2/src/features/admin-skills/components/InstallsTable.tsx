@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { DataTable, type DataTableColumn } from "@/shared/ui/DataTable"
 import { StatusPill } from "@/shared/ui/StatusPill"
+import { DisplayIcon } from "@/shared/ui/DisplayIcon"
 import { formatDateTime } from "@/shared/lib/format"
 import type { InstallRecord } from "@/features/admin-skills/types"
 
@@ -31,9 +32,7 @@ export function InstallsTable({ rows, isLoading, error }: Props) {
       className: "min-w-[16rem]",
       render: (row) => (
         <div className="flex items-start gap-2">
-          <span aria-hidden className="leading-5">
-            {row.icon || "🧩"}
-          </span>
+          <DisplayIcon icon={row.icon} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
               <span>{row.title}</span>

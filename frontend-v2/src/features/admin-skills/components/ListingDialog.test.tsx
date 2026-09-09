@@ -34,7 +34,7 @@ describe("ListingDialog", () => {
   it("keeps the confirm button disabled until a required reason is typed", () => {
     const { confirm, onConfirm } = mount()
     expect(confirm).toHaveProperty("disabled", true)
-    expect(screen.getByText("下架与驳回必须填写原因。")).toBeDefined()
+    expect(screen.getByText("此操作必须填写原因。")).toBeDefined()
 
     // Whitespace is not a reason.
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "   " } })
@@ -49,7 +49,7 @@ describe("ListingDialog", () => {
   it("lets an optional note through empty", () => {
     const { confirm, onConfirm } = mount({ requireReason: false, confirmLabel: "上架" })
     expect(confirm).toHaveProperty("disabled", false)
-    expect(screen.queryByText("下架与驳回必须填写原因。")).toBeNull()
+    expect(screen.queryByText("此操作必须填写原因。")).toBeNull()
     fireEvent.click(confirm)
     expect(onConfirm).toHaveBeenCalledWith("")
   })

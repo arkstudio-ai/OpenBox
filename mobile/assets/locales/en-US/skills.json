@@ -125,6 +125,7 @@
     "credentialsFor": "Credentials for {{name}}"
   },
   "upload": {
+    "batchNameHint": "Custom name applies to a single file only. Batch uploads use each archive's name.",
     "title": "Add a skill or MCP server",
     "subtitle": "Add an archive, SKILL.md, Git repository, or MCP server to Mine.",
     "modeArchive": "Archive",

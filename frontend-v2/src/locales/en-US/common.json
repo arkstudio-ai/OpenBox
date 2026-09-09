@@ -1,4 +1,15 @@
 {
+  "archiveQueue": {
+    "pick": "Choose multiple archives",
+    "limits": "Up to 20 files per batch, 32 MB each and 128 MB total. Select again to add more files.",
+    "remove": "Remove {{name}}",
+    "queued": "Queued",
+    "working": "Uploading — keep this dialog open…",
+    "success": "Uploaded",
+    "failed": "Failed",
+    "submit": "Upload / retry {{count}} files",
+    "unknown": "Upload result is uncertain. Refresh the list before retrying failed files; successful files will not be uploaded again."
+  },
   "action": {
     "cancel": "Cancel",
     "delete": "Delete",

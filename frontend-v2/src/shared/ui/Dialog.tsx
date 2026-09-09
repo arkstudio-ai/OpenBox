@@ -5,10 +5,12 @@ interface DialogProps {
   open: boolean
   onClose: () => void
   children: ReactNode
+  wide?: boolean
+  label?: string
 }
 
 /** Design-language modal shell: dim scrim + 400px rounded card. */
-export function Dialog({ open, onClose, children }: DialogProps) {
+export function Dialog({ open, onClose, children, wide, label }: DialogProps) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -21,14 +23,15 @@ export function Dialog({ open, onClose, children }: DialogProps) {
   if (!open) return null
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-n900/30"
+      className="bg-n900/30 fixed inset-0 z-50 flex items-center justify-center"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="flex w-100 max-w-[calc(100vw-2rem)] flex-col gap-2.5 rounded-2xl border border-hair bg-card p-6.5 shadow-pop"
+        className={`flex ${wide ? "w-180" : "w-100"} border-hair bg-card shadow-pop max-h-[90dvh] max-w-[calc(100vw-2rem)] flex-col gap-2.5 overflow-y-auto rounded-2xl border p-5 sm:p-6.5`}
         role="dialog"
         aria-modal="true"
+        aria-label={label}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
@@ -43,7 +46,7 @@ export function DialogTitle({ children }: { children: ReactNode }) {
 }
 
 export function DialogBody({ children }: { children: ReactNode }) {
-  return <span className="text-base leading-relaxed text-n700">{children}</span>
+  return <span className="text-n700 text-base leading-relaxed">{children}</span>
 }
 
 export function DialogActions({ children }: { children: ReactNode }) {

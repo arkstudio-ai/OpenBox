@@ -69,7 +69,7 @@ export function useInstalls(params: Record<string, QueryValue>) {
  * invalidates that cache too — otherwise an approved skill stays invisible in
  * the store tab until a reload.
  */
-function useAdminSkillMutation<T>(mutationFn: (vars: T) => Promise<unknown>) {
+export function useAdminSkillMutation<T, R>(mutationFn: (vars: T) => Promise<R>) {
   const client = useQueryClient()
   const userId = useUserId()
   return useMutation({

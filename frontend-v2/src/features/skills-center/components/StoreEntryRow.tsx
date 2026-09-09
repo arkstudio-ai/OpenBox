@@ -47,7 +47,7 @@ export function StoreEntryRow({ entry, onInstall }: { entry: StoreEntry; onInsta
           ) : (
             /* Stated on the card, not just in the dialog: whether a skill
                drags a server along changes whether someone wants it at all. */
-            entry.requires_mcp.length > 0 && (
+            (entry.requires_mcp?.length ?? 0) > 0 && (
               <Badge tone="warn">{t("badge.needsMcp", { names: entry.requires_mcp.join(", ") })}</Badge>
             )
           )}

@@ -238,6 +238,74 @@
       "min_minutes": 1,
       "short_side_max": 2160,
       "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "video-gen": {
+      "_comment": "Video generation, credits per second of requested output, by model and resolution tier. Numbers are the upstream official list prices recorded in docs/BILLING_PLAN.md §5.1 (2026-09-02) — cost basis, no margin yet; ops sets the sale price by editing these. Models/tiers not listed stay unpriced (recorded, never charged).",
+      "wan3.0-video": {
+        "vendor": "aliyun-bailian",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.30",
+          "720p": "0.60",
+          "1080p": "1.20"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 百炼刊例价"
+      },
+      "wan3.0-video-prime": {
+        "vendor": "aliyun-bailian",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.45",
+          "720p": "0.90",
+          "1080p": "1.80"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 官方英文文档 USD 折算"
+      },
+      "doubao-seedance-2-0-260128": {
+        "vendor": "volcengine",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.45",
+          "720p": "0.95",
+          "1080p": "2.25"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 火山 token 价折算"
+      },
+      "seedance-2.0-480-fastⅠ": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "video-sd-720p-proⅠ": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "720p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "video-sd-1080p-pro": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "1080p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "MiniMax-H3": {
+        "vendor": "minimax",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.33",
+          "512p": "0.33",
+          "768p": "0.50",
+          "2k": "0.80"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 MiniMax 官方"
+      }
     }
   }
 }

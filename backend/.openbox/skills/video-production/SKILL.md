@@ -81,7 +81,7 @@ Read the zero-exit advice. `镜头跟随` is valid for a deliberate walking shot
 
 ### 5. Estimate and show complete shots + price — card 2
 
-Run `action="estimate"` for every exact request and sum any money amounts it actually returns. Before invoking the card, show without abbreviation:
+Run `action="estimate"` for every exact request; each returns `estimated_credits` (requested seconds × the model/tier rate) — sum them and show the total as the planned cost. Before invoking the card, show without abbreviation:
 
 - every complete line and every complete model prompt, character for character;
 - each shot's seconds and the honest total; call out mismatch with requested duration;

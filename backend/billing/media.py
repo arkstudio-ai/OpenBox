@@ -26,6 +26,7 @@ from billing.pricing import PRECISION, catalogue
 from billing.service import BillingError, billing_mode, lock_balance, post_ledger
 
 USAGE_KIND = "video_compose"
+GENERATION_KIND = "video_generate"
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,38 @@ def quote_compose(width: int, height: int, duration_sec: float | None, *, rates:
     })
 
 
+def quote_generation(model_id: str, resolution: str | None, duration_sec: float | None,
+                     *, rates: dict | None = None) -> MediaQuote:
+    """Credits for one generated shot: requested seconds × the model/tier per-second price.
+
+    Billing uses the *requested* duration because that is what the person
+    approved on the card and what the gateway charges for; the tool refuses
+    smart duration (-1), so it is always explicit.
+    """
+    data = rates if rates is not None else catalogue()
+    base = {"version": data["version"], "verified_at": data["verified_at"], "kind": GENERATION_KIND}
+    model = (model_id or "").rsplit("/", 1)[-1]
+    key = f"video-gen:{model}:{resolution or '?'}"
+    table = (data.get("media", {}).get("video-gen") or {}).get(model)
+    per = None
+    if isinstance(table, dict) and resolution:
+        per = (table.get("per_second") or {}).get(resolution)
+    if per is None:
+        return MediaQuote(key, resolution or "unpriced", 0, None,
+                          {**base, "model": key, "reason": f"No verified price for {model} at {resolution or 'unknown resolution'}"})
+    if duration_sec is None or duration_sec <= 0:
+        return MediaQuote(key, resolution, 0, None, {**base, "model": key, "reason": "Duration not explicit (smart duration is not priced)"})
+    per_second = Decimal(str(per))
+    if not per_second.is_finite() or per_second < 0:
+        raise ValueError("Invalid media rate")
+    seconds = math.ceil(float(duration_sec) - 1e-9)
+    credits = (per_second * seconds).quantize(PRECISION)
+    return MediaQuote(key, resolution, seconds, credits, {
+        **base, "model": key, "currency": table["currency"], "per_second": str(per_second),
+        "seconds_billed": seconds, "duration_sec": float(duration_sec), "source": table.get("source"),
+    })
+
+
 async def precheck_compose(session_id: str | None) -> None:
     """Enforce-mode gate before a paid submit. Shadow/off never refuse."""
     if billing_mode() != "enforce":
@@ -97,6 +130,25 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
     unpriced, or the duration never arrived (recorded as ``unreported`` so the
     gap is visible rather than silently free).
     """
+    price = quote_compose(width, height, duration_sec)
+    return await _settle(job, asset, price, kind=USAGE_KIND, key=f"compose:{job.id}", duration_known=duration_sec is not None,
+                         tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "tier": price.tier},
+                         default_title="视频合成")
+
+
+async def settle_generation(job, asset, *, model_id: str, resolution: str | None, duration_sec: float | None) -> Decimal | None:
+    """Record (and in enforce, charge) one completed generated shot. Idempotent on job id."""
+    price = quote_generation(model_id, resolution, duration_sec)
+    return await _settle(job, asset, price, kind=GENERATION_KIND, key=f"generate:{job.id}",
+                         duration_known=bool(duration_sec and duration_sec > 0),
+                         tokens={"duration_sec": duration_sec, "seconds_billed": price.minutes_billed, "resolution": resolution, "model": model_id},
+                         default_title="视频生成")
+
+
+async def _settle(job, asset, price: MediaQuote, *, kind: str, key: str, duration_known: bool,
+                  tokens: dict[str, Any], default_title: str) -> Decimal | None:
+    from sqlalchemy import select
+
     from core.identifier import ascending as generate_id
     from db.base import get_db_session
     from db.models.billing import UsageEvent
@@ -105,17 +157,13 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
     mode = billing_mode()
     if mode == "off" or asset is None:
         return None
-    price = quote_compose(width, height, duration_sec)
-    key = f"compose:{job.id}"
     async with get_db_session() as db:
         account = await lock_balance(db, asset.workspace_id)
-        existing = (await db.execute(
-            __import__("sqlalchemy").select(UsageEvent).where(UsageEvent.idempotency_key == key)
-        )).scalar_one_or_none()
+        existing = (await db.execute(select(UsageEvent).where(UsageEvent.idempotency_key == key))).scalar_one_or_none()
         if existing is not None:
             return existing.credits
         session = await db.get(Session, job.session_id) if job.session_id else None
-        if duration_sec is None:
+        if not duration_known:
             status = "unreported"
         elif price.credits is None:
             status = "unpriced"
@@ -124,10 +172,9 @@ async def settle_compose(job, asset, *, width: int, height: int, duration_sec: f
         event = UsageEvent(
             id=generate_id("usage"), idempotency_key=key, workspace_id=asset.workspace_id,
             user_id=job.user_id, session_id=job.session_id or "", message_id=None,
-            session_title=(session.title if session and session.title else "视频合成"),
-            model_id=price.model_id, kind=USAGE_KIND,
-            tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "tier": price.tier},
-            total_tokens=0, credits=price.credits, status=status, pricing=price.snapshot,
+            session_title=(session.title if session and session.title else default_title),
+            model_id=price.model_id, kind=kind, tokens=tokens, total_tokens=0,
+            credits=price.credits, status=status, pricing=price.snapshot,
             created_at=datetime.now(timezone.utc),
         )
         db.add(event)

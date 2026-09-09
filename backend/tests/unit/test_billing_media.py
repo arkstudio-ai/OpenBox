@@ -106,3 +106,47 @@ async def test_precheck_only_bites_in_enforce(monkeypatch):
     with pytest.raises(BillingError) as info:
         await media.precheck_compose("no-such-session")
     assert info.value.code == "BILLING_SESSION_REQUIRED"
+
+
+# ── video generation ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("model,res,seconds,credits", [
+    ("wan3.0-video", "720p", 5, "3.00"), ("wan3.0-video", "480p", 5, "1.50"), ("wan3.0-video", "1080p", 4.5, "6.00"),
+    ("doubao-seedance-2-0-260128", "720p", 15, "14.25"), ("MiniMax-H3", "768p", 10, "5.00"), ("video-sd-720p-proⅠ", "720p", 12, "6.00"),
+])
+def test_generation_quote_is_requested_seconds_times_tier_rate(model, res, seconds, credits):
+    q = media.quote_generation(model, res, seconds)
+    assert q.credits == Decimal(credits) and q.model_id == f"video-gen:{model}:{res}"
+    assert q.minutes_billed == __import__("math").ceil(seconds)
+
+
+def test_generation_quote_is_unpriced_for_unknown_model_tier_or_smart_duration():
+    assert media.quote_generation("doubao-seedance-2-0-fast-260128", "720p", 5).credits is None
+    assert media.quote_generation("wan3.0-video", "2k", 5).credits is None
+    assert media.quote_generation("wan3.0-video", "720p", None).credits is None
+    assert media.quote_generation("wan3.0-video", "720p", -1).credits is None
+    assert media.quote_generation("bossip/wan3.0-video", "720p", 5).credits == Decimal("3.00")  # provider prefix stripped
+
+
+async def test_generation_settles_once_in_shadow_and_records_seconds(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    job, asset, wid = await _fixtures()
+    first = await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
+    again = await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
+    assert first == again == Decimal("3.00")
+    events, ledger, balance = await _events(wid)
+    assert len(events) == 1 and events[0].kind == "video_generate" and events[0].status == "shadow"
+    assert events[0].tokens["seconds_billed"] == 5 and events[0].tokens["resolution"] == "720p"
+    assert ledger == [] and balance == Decimal("5")
+
+
+async def test_generation_enforce_charges_and_unpriced_tier_is_recorded_not_charged(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    job, asset, wid = await _fixtures(balance=Decimal("10"))
+    await media.settle_generation(job, asset, model_id="wan3.0-video", resolution="720p", duration_sec=5)
+    events, ledger, balance = await _events(wid)
+    assert events[0].status == "charged" and ledger[0].amount == Decimal("-3.00") and balance == Decimal("7.00")
+    job2, asset2, wid2 = await _fixtures(balance=Decimal("10"))
+    assert await media.settle_generation(job2, asset2, model_id="doubao-seedance-2-0-fast-260128", resolution="720p", duration_sec=5) is None
+    events, ledger, balance = await _events(wid2)
+    assert events[0].status == "unpriced" and ledger == [] and balance == Decimal("10")

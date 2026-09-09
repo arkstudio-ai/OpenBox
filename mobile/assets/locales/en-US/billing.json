@@ -123,7 +123,9 @@
       "compaction": "Context compaction",
       "compaction_chunk": "Chunk compaction",
       "bash_judge": "Command check",
-      "cron_summary": "Scheduled summary"
+      "cron_summary": "Scheduled summary",
+      "video_compose": "Video composition",
+      "video_generate": "Video generation"
     },
     "paymentUnavailable": "Currently unavailable",
     "dateRange": "Filter by date",
@@ -137,7 +139,14 @@
     "noMatches": "No usage in this date range",
     "cancelPayment": "Cancel payment",
     "cancellingPayment": "Cancelling…",
-    "cancelPaymentError": "Cancellation is not confirmed. Please retry or check payment status."
+    "cancelPaymentError": "Cancellation is not confirmed. Please retry or check payment status.",
+    "media": {
+      "duration": "{{value}} s",
+      "minutesBilled": "billed {{value}} min",
+      "secondsBilled": "billed {{value}} s",
+      "tier": "tier {{value}}",
+      "resolution": "{{value}}"
+    }
   },
   "orders": {
     "filters": "Filter orders",

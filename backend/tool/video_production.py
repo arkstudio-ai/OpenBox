@@ -1224,10 +1224,23 @@ async def _finalize_segment(
         await persist_guard()
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     await _mark_asset(job.output_asset_id, status="ready", size=size)
+    credits = None
+    try:
+        from billing.media import settle_generation
+
+        request = job.request_data if isinstance(job.request_data, dict) else {}
+        requested = request.get("duration")
+        credits = await settle_generation(
+            job, asset, model_id=job.model or "", resolution=request.get("resolution"),
+            duration_sec=float(requested) if isinstance(requested, (int, float)) and requested > 0 else None,
+        )
+    except Exception as exc:  # billing must never strand a finished, paid video
+        log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     await _update_job(
         job.id,
         status="completed",
-        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size},
+        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size,
+                     "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
         completed_at=datetime.now(timezone.utc),
     )
@@ -1280,6 +1293,9 @@ def _job_lines(
                 "handoff_instruction=use the attached final-video card or the exact "
                 "download_url; never construct a markdown URL from path or asset_id"
             )
+    credits = (job.result_data or {}).get("credits") if isinstance(getattr(job, "result_data", None), dict) else None
+    if credits is not None and job.status == "completed":
+        lines.append(f"credits={credits}")
     if job.error:
         lines.append(f"error={job.error}")
     if getattr(job, "kind", None) == "segment" and job.status == "completed" and production_id and segment_id:
@@ -1840,6 +1856,15 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
 
     duration = approved["duration"]
     billed = "model-chosen length" if duration == -1 else f"{duration}s"
+    from billing.media import quote_generation
+
+    price = quote_generation(target.model, approved["resolution"], None if duration == -1 else duration)
+    price_lines = (
+        [f"estimated_credits={format(price.credits.normalize(), 'f')}",
+         f"per_second_credits={price.snapshot['per_second']}  seconds_billed={price.minutes_billed}"]
+        if price.credits is not None
+        else [f"estimated_credits=unavailable ({price.snapshot.get('reason')})"]
+    )
     used = await _daily_submit_count(ctx)
     limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
     lines = [
@@ -1854,8 +1879,9 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             if approved.get("dropped")
             else []
         ),
-        # Billing is per second of output on this route, so an explicit
-        # duration is the whole cost story; there is no per-call price to read.
+        # Price = requested seconds × the model/tier rate in billing/rates.json
+        # (media.video-gen). Settled on completion with the same numbers.
+        *price_lines,
         # "used=50/50" was read as "50 remaining" by a caller reporting it to
         # the person. Say what is left, and only mention the ceiling beside it.
         (
@@ -1869,7 +1895,9 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
     return ToolResult(
         title="Video request looks valid",
         output="\n".join(lines),
-        metadata={"valid": True, "model": target.model},
+        metadata={"valid": True, "model": target.model,
+                  "estimated_credits": format(price.credits.normalize(), "f") if price.credits is not None else None,
+                  "seconds_billed": price.minutes_billed},
     )
 
 
@@ -2000,6 +2028,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         try:
             approved = await _resolve_open_submission(args, ctx)
             await _check_submit_budget(ctx)
+            from billing.media import precheck_compose as _precheck_media
+
+            await _precheck_media(ctx.session_id)
             prompt = approved["prompt"]
             resolution = approved["resolution"]
             ratio = approved["ratio"]

@@ -338,3 +338,33 @@ describe("credit usage", () => {
     expect(screen.queryByRole("link", { name: "会话 2" })).toBeNull()
   })
 })
+
+
+describe("media usage rows", () => {
+  it("shows duration and billed minutes instead of tokens for a video composition", async () => {
+    vi.mocked(http.get).mockImplementation(async (path) => {
+      if (path.endsWith("/balance")) return { balance: "8.25", mode: "shadow" }
+      if (path.endsWith("/summary"))
+        return { total_tokens: 0, total_credits: "0.03", historical_count: 0, unpriced_count: 0 }
+      if (path.endsWith("/providers")) return { items: [] }
+      if (path.startsWith("/api/billing/orders?")) return { items: [], page: 1, total: 0, total_pages: 1 }
+      return {
+        total: 1, total_pages: 1, page: 1, page_size: 20,
+        items: [{
+          id: "e1", session_id: "s1", session_title: "口播成片", session_available: true,
+          model_id: "ims-compose-720p", kind: "video_compose",
+          tokens: { duration_sec: 14.4, minutes_billed: 1, tier: "720p" },
+          total_tokens: 0, credits: "0.030000000000", status: "shadow",
+          created_at: "2026-09-09T10:58:17Z", pricing_version: "2026-09-05.2",
+        }],
+      }
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText("口播成片")).toBeDefined())
+    expect(screen.getByText("时长 14.4 秒")).toBeDefined()
+    expect(screen.getByText("计费 1 分钟")).toBeDefined()
+    expect(screen.getByText("档位 720p")).toBeDefined()
+    expect(screen.getByText(/视频合成 · 已统计/)).toBeDefined()
+    expect(screen.queryByText(/输入/)).toBeNull()
+  })
+})

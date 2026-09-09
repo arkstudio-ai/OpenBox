@@ -275,11 +275,14 @@ cd work/ims-spike
   点「可以」后才 `submit` → 32 秒完成 → 成片卡出现、输出 `credits=0.03` → 账单新增
   `video_compose / ims-compose-720p / 0.03 / shadow`（前端显示「已统计」）。成片 14.4s = 8s + 7s − 0.6s 转场重叠，
   `planned == actual`，属预期；卡上应明说「含转场重叠后总长 14.4s」，已加进 references/compose-timeline.md。
-- [ ] 视频**生成**的估价与落账（`video_generate estimate` 目前不返回金额 → 技能按「预计费用暂不可得」处理）：
-  照 `billing/media.py` 的模式给 `rates.json` 加视频模型按秒×分辨率价目，这是 BILLING_REVIEW 的 B2'，下一项
+- [x] 视频**生成**的估价与落账（2026-09-09）：`rates.json` `media.video-gen` 按模型×分辨率的每秒价（BILLING_PLAN §5.1
+  官方刊例成本价占位，运营改数即改售价）；`estimate` 返回 `estimated_credits`/`per_second_credits`/`seconds_billed`；
+  submit 前 enforce 余额门；`_finalize_segment` 完成时按**申请时长**结算 `usage_events(kind=video_generate)`，
+  幂等键 `generate:<job_id>`，未定价的模型/档位记 `unpriced` 不扣；复用（dedupe）的片段不落账。
+  前端账单页对 `video_*` 事件改显示时长/计费分钟或秒/档位，不再显示 token。
 - [ ] 观察：首稿确认卡在一次会话里出现两次（10:48 与 10:49，第二次是精简稿）。若用户第一次已点「可以」仍重问，
   属技能纪律偏差；若第一次选了缩短，重问是规则内行为。待复现确认
-- [ ] 前端账单页渲染 `kind=video_compose` 的用量事件（按分钟而非 token）
+- [x] 前端账单页渲染 `kind=video_*` 的用量事件（2026-09-09；mobile 只补了词条，dart 行仍按 token 渲染）
 - [ ] 真实 sd2 片段跑一遍 IMS（本次用的是合成测试素材）
 - [ ] 财务：能否付美元 Stripe（决定 Remotion 备选是否成立）
 - [ ] 观察：Diffusion Studio、OpenCut 重写版成熟度（半年后复评）

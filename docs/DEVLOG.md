@@ -412,3 +412,9 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` + `rates.json` `media` 段：IMS 官方价按输出分钟报价、enforce 余额门、成功后按实际时长落账
 （`usage_events.kind=video_compose`，shadow/enforce 均测）。技能第 8 步改双路径（免费 ffmpeg 拼接 / 花钱的
 `video_compose`），新增第四张「合成确认」卡与 `references/compose-timeline.md`，没点「可以」不许 submit。
+
+## 视频生成落账 + 账单页媒体事件渲染（2026-09-09，同日追加）
+
+`billing/media.py` 加 `quote_generation/settle_generation`（申请秒数 × 模型档位每秒价），`video_generate estimate`
+输出 `estimated_credits`，完成时落账 `usage_events(kind=video_generate)`。前端 UsagePage 对 `video_*` 事件显示
+时长/计费单位/档位；web 与 mobile 词条同步（mobile UI 未改）。

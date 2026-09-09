@@ -63,6 +63,60 @@ class VideoRequestError(RuntimeError):
 
     public_message = True
 
+
+def submission_rejection(exc: Exception) -> dict[str, Any] | None:
+    """Classify definite submit refusals without publishing arbitrary bodies.
+
+    Only reviewed messages are translated into our own diagnostic. Unknown
+    bodies may echo secrets, prompts or instructions and remain private.
+    Timeouts, rate limits and 5xx retain the existing ambiguous-submit path.
+    """
+    import httpx
+
+    if not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code not in (400, 422):
+        return None
+    status = exc.response.status_code
+    detail: dict[str, Any] = {
+        "code": "video_provider_request_rejected",
+        "http_status": status,
+        "submission_outcome": "rejected",
+        "retryable": False,
+        "message": f"HTTP {status}: video provider rejected the request parameters. Check the model's gateway configuration before retrying.",
+    }
+    try:
+        # Bound parsing even when a gateway accidentally replies with a page.
+        raw = exc.response.json() if len(exc.response.content) <= 16_384 else None
+    except (ValueError, UnicodeError):
+        raw = None
+    if isinstance(raw, dict):
+        error = raw.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(message, str) and "文生视频 ratio 不能为空或 adaptive" in message:
+            detail.update(
+                code="video_provider_invalid_ratio",
+                message=f"HTTP {status}: 文生视频 ratio 不能为空或 adaptive。请检查视频模型的 wire_shape / size 参数适配配置。",
+            )
+        request_id = raw.get("request_id")
+        if isinstance(request_id, str) and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", request_id):
+            detail["provider_request_id"] = request_id
+    return detail
+
+
+def _wire_shape(route: Any, declared: Any | None) -> str | None:
+    shape = getattr(declared, "wire_shape", None) if declared else None
+    if shape is None and str(route.model).lower() == "minimax-h3":
+        return "size"
+    return shape
+
+
+def _validate_size_shape(resolution: str, ratio: str) -> None:
+    # This adapter encodes portrait/landscape only. Refuse unsupported shapes
+    # rather than silently turning a square/adaptive request into landscape.
+    if ratio not in ("9:16", "16:9"):
+        raise VideoRequestError("the size adapter supports ratio 9:16 or 16:9; choose an explicit supported ratio" + CAPABILITY_HINT)
+    if resolution not in _SIZE_BY_RESOLUTION:
+        raise VideoRequestError(f"the size adapter cannot encode resolution {resolution}" + CAPABILITY_HINT)
+
 # ── sd2 (Sora adaptor) ──────────────────────────────────────────────────────
 # The trailing Ⅰ on the first two models is ROMAN NUMERAL ONE (U+2160), not
 # the letter I; the wrong character makes the gateway report model-not-found.
@@ -597,6 +651,10 @@ def validate_request(
                 "that accepts frame roles"
             )
     if channel == "sd2":
+        if _wire_shape(route, declared) == "size":
+            _validate_size_shape(resolution, ratio)
+            if has_video_ref:
+                raise VideoRequestError("the size adapter cannot send video/audio references; use image references" + CAPABILITY_HINT)
         native = sd2_native_resolution(route.model)
         if native and resolution and resolution != native:
             raise VideoRequestError(
@@ -689,6 +747,7 @@ def _size_shaped_body(
     duration: int,
 ) -> dict[str, Any]:
     """A `WxH` top-level `size`, which the adaptor parses into its own tiers."""
+    _validate_size_shape(resolution, ratio)
     short, long = _SIZE_BY_RESOLUTION.get(resolution, _SIZE_BY_RESOLUTION["720p"])
     portrait = ratio in ("9:16", "3:4") or not ratio
     width, height = (short, long) if portrait else (long, short)
@@ -786,7 +845,7 @@ def build_payload(
     channel = getattr(route, "channel", "ark")
     if channel == "sd2":
         native = sd2_native_resolution(route.model)
-        shape = getattr(declared, "wire_shape", None) if declared else None
+        shape = _wire_shape(route, declared)
         if shape == "size":
             # The adaptor parses its own resolution tiers out of a WxH string
             # and rejects the request outright without one — measured: sending

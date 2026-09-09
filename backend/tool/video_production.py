@@ -1937,6 +1937,50 @@ async def _materialize_asset(asset, ctx: ToolContext) -> str:
     return paths[0]
 
 
+async def _run_rejected_submission(ctx: ToolContext, target: Any):
+    """Stop an Agent changing keys/parameters after a definite provider 4xx.
+
+    This is scoped to the server-owned run, user, session, model and route.
+    A later user turn can try again after configuration has been repaired;
+    historical failures do not permanently lock a conversation.
+    """
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool.video_providers import provider_route_fingerprint
+    from sqlalchemy import JSON, type_coerce
+
+    run_id = getattr(ctx, "run_id", "")
+    if not run_id or not ctx.session_id:
+        return None
+    async with get_db_session() as db:
+        return (await db.execute(select(VideoJob).where(
+            VideoJob.user_id == ctx.user_id,
+            VideoJob.session_id == ctx.session_id,
+            VideoJob.kind == "segment",
+            VideoJob.model == target.model,
+            VideoJob.status == "failed",
+            VideoJob.provider_task_id.is_(None),
+            type_coerce(VideoJob.request_data, JSON)["submit_run_id"].as_string() == run_id,
+            type_coerce(VideoJob.request_data, JSON)["provider_route_fingerprint"].as_string() == provider_route_fingerprint(target),
+            type_coerce(VideoJob.result_data, JSON)["submit_error"]["submission_outcome"].as_string() == "rejected",
+        ).order_by(VideoJob.created_at.desc()).limit(1))).scalar_one_or_none()
+
+
+def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = False) -> ToolResult:
+    return ToolResult(
+        title="Video submission blocked after rejection" if blocked else "Video generation request rejected",
+        output=(
+            f"job_id={job_id}\nstatus=failed\nsubmission_outcome=rejected\n"
+            f"{detail['message']}\n"
+            "do_not_resubmit=true; stop this assistant run and report the error. "
+            "Do not change the prompt, model or idempotency key to retry. "
+            "A new user turn may retry after the configuration or request is corrected."
+        ),
+        metadata={**detail, "job_id": job_id, "status": "failed", "error": True,
+                  "do_not_resubmit": True, "submission_blocked": blocked},
+    )
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
@@ -1964,6 +2008,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if approved.get("model"):
                 # Per-segment model override routes to its own channel.
                 target, settings = _configured_target(approved["model"])
+            rejected = await _run_rejected_submission(ctx, target)
+            if rejected is not None:
+                return _rejected_submission_result(
+                    rejected.id, rejected.result_data["submit_error"], blocked=True
+                )
             seed = approved.get("seed")
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
@@ -1991,6 +2040,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             )
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
+                "submit_run_id": getattr(ctx, "run_id", ""),
                 "roles": list(roles),
                 # Which shot this is, so the chat can order concurrent results
                 # by script position rather than by whichever finished first.
@@ -2014,7 +2064,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             logical_request_data = {
                 key: value
                 for key, value in request_data.items()
-                if key != "provider_route_fingerprint"
+                if key not in {"provider_route_fingerprint", "submit_run_id"}
             }
             request_hash = content_hash(
                 {
@@ -2277,6 +2327,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                                 "retry_after_seconds": 5,
                             },
                         )
+                rejection = video_providers.submission_rejection(exc)
+                if rejection is not None and "critical_submit" in locals():
+                    log.warning(
+                        "video submit rejected job_id=%s model=%s status=%s code=%s provider_request_id=%s",
+                        job.id, target.model, rejection["http_status"], rejection["code"],
+                        rejection.get("provider_request_id", "unavailable"),
+                    )
+                    await _update_job(
+                        job.id, status="failed", error=rejection["message"],
+                        result_data={"submit_error": rejection}, completed_at=datetime.now(timezone.utc),
+                    )
+                    await _mark_asset(job.output_asset_id, status="failed")
+                    return _rejected_submission_result(job.id, rejection)
                 await _update_job(
                     job.id,
                     status="failed",

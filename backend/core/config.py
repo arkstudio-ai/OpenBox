@@ -229,6 +229,21 @@ class VideoModelConfig(BaseModel):
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_minimax_wire_shape(cls, value):
+        # Older external production registries predate wire_shape. Keep an
+        # explicit adapter override, but never silently send MiniMax's legacy
+        # entry through the Sora DTO (which discards its aspect ratio).
+        if (
+            isinstance(value, dict)
+            and "wire_shape" not in value
+            and value.get("channel") == "sd2"
+            and str(value.get("id", "")).lower() == "minimax-h3"
+        ):
+            return {**value, "wire_shape": "size"}
+        return value
+
     @model_validator(mode="after")
     def _check_duration_range(self):
         if self.duration_range is not None:

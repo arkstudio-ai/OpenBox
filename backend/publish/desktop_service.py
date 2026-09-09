@@ -241,7 +241,8 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
 async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: PlatformAccount | None, result: dict) -> dict:
     upd = {"steps": result.get("steps"), "upload": result.get("upload"), "summary": result.get("summary"),
            "evidence_path": result.get("evidence"), "final_url": result.get("final_url"),
-           "declaration_row": result.get("declaration_row"), "visibility": result.get("visibility"),
+           "declaration_row": result.get("declaration_row"), "visibility_check": result.get("visibility"),
+           "hot_word_attached": result.get("hot_word_attached"),
            "hot_row": result.get("hot_row"), "schedule_row": result.get("schedule_row"), "publish_ms": result.get("publish_ms")}
     if result.get("login_expired"):
         await _finish_job(job.id, status="failed", error=str(result.get("error"))[:400], details_update=upd)
@@ -266,12 +267,14 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
     if spec.dry_run:
         await _finish_job(job.id, status="draft", details_update=upd)
         return {"job_id": job.id, "status": "draft", "dry_run": True, "summary": result.get("summary"),
-                "declaration_row": result.get("declaration_row"), "visibility": result.get("visibility"),
+                "declaration_row": result.get("declaration_row"), "visibility_check": result.get("visibility"),
+                "hot_word_attached": result.get("hot_word_attached"),
                 "hot_row": result.get("hot_row"), "upload": result.get("upload"), "evidence_path": result.get("evidence")}
     await _finish_job(job.id, status="published", item_id=result.get("item_id"), details_update={**upd, "item_url": result.get("item_url")}, published=True)
     await _notify(caller.workspace_id, NOTIFY_DONE, "视频已通过创作者中心发布",
                   f"《{spec.title}》已发布（{script.VISIBILITY[spec.visibility]}）。" + (f" 作品 {result['item_id']}" if result.get("item_id") else ""))
     return {"job_id": job.id, "status": "published", "item_id": result.get("item_id"), "item_url": result.get("item_url"),
+            "hot_word_attached": result.get("hot_word_attached"),
             "publish_ms": result.get("publish_ms"), "upload": result.get("upload"), "summary": result.get("summary"),
             "evidence_path": result.get("evidence"), "final_url": result.get("final_url")}
 

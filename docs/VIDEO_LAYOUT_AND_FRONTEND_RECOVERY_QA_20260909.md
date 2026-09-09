@@ -9,8 +9,9 @@
 开发在隔离 worktree 完成，再将修复应用到已同步 origin/main 的主工作区。
 发布前再次同步至 `491d545`，已包含 `998219e` 的最新图片/转写计费发布，
 并在合入后复跑 Web 433 项、Flutter 149 项测试，保留最新功能，不用较旧版本覆盖线上。
-用户已授权提交、推送并发布；阿里云仅替换 frontend，Flutter 源码同步入库，App 使用独立发版流程。
-实际发布结果见本文后续发布记录与 `docs/DEPLOY.md`。
+用户后续授权发布后，修复已提交并推送至 `main@4d2a578`；阿里云已于 20:35 完成 frontend 发布。
+Flutter 源码同步入库，App 使用独立发版流程，本次没有发布 Android/iOS 新安装包。
+实际发布结果见本文发布记录与 `docs/DEPLOY.md`。
 
 ## 视频显示规则
 
@@ -85,3 +86,47 @@ flutter analyze --no-pub lib/features/chat/widgets/result_artifacts.dart lib/fea
 nginx 测试使用专属临时 Docker 网络及无业务逻辑的 Python upstream，结束后按创建 ID 清理。
 可通过 NGINX_TEST_IMAGE/PYTHON_TEST_IMAGE 指定已有本地镜像；不读取生产配置。
 浏览器测试可通过 UI_QA_VIDEO 指定本地验收 MP4，默认不依赖真实媒体或后端。
+
+## 阿里云发布记录
+
+- 2026-09-09 20:35:34–20:35:59（北京时间），gw2 仅替换 frontend，最终标签
+  `openbox-frontend-v2:20260909-ui2-4d2a578`，来源 `4d2a578178954d008f5d5cf0ca383a070ea19a9d`。
+  backend 保持 `20260909-media-998219e`；backend/postgres/redis 容器 ID 和重启次数未变，
+  四服务均 healthy，数据库 revision 仍为 `e1f3a5b7c9d2`。
+- 源码经 `git archive` 干净导出，本机 Docker 构建 `linux/amd64`，不包含本地 env/无影云配置。
+  最终 nginx 基础镜像固定为生产同版 `1.31.3-alpine`（NJS 1.0.0）；切换前后完整前端环境变量相同。
+  `.env`、基础 compose、`config/backend.env`、`config/openbox.json` SHA-256 均未变；
+  compose override 仅 frontend image 一处差异。
+- 镜像 SHA-256 `4b31bd54c1b40efe8ff32473027bf56a419ece9141ef7da062afaca1589b1970`，
+  私有 OSS 中转包 SHA-256 `895fd69949d70f632ef82145589ed4bb4fc534999d023c4892a04f27be39d5d6`，
+  本机与服务器装载后一致。最终镜像再次通过完整 Docker nginx 回归；切换前还在 gw2
+  的独立 loopback 端口验证生产后端路由、HTML no-store、缺失资源 404，再清理临时容器。
+  两次构建的 OSS 临时中转对象已删除，服务器/本地镜像包及回滚备份保留。
+- 公网首页与静态文件共 **104 个文件逐个 SHA-256 与最终镜像一致**。
+  `/`、`/index.html`、`/app/auth-center` 及会话页面入口均 no-store；缺失 JS/CSS
+  为 404、text/plain、no-store；真实 JS/CSS MIME 正确且 immutable。
+  `/api/environment` 为 200/prod，Logto 仍使用生产身份服务，匿名 `/api/auth/me` 为 401。
+  没有登录其他用户的会话，未以匿名检查冒充真实用户任务端到端验证。
+- 备份 `/opt/openbox/backups/20260909-ui2-4d2a578/activation-20260909T123532Z/`（0700），
+  含旧配置、镜像信息、activation.json 与经 `pg_restore --list` 校验的 `preflight.dump`；
+  dump SHA-256 `111e378047537c81cdfb1cd462796517875d9d7f888a2b5f8f4d0895db6d31e0`。
+  本次无数据库迁移，不需要恢复数据库。回滚仅把 frontend image 改回
+  `openbox-frontend-v2:20260909-media-998219e`，执行 `up -d --no-deps frontend`，随后重新验收。
+
+### 首次回滚与发布边界
+
+首次 `20260909-ui-4d2a578` 镜像使用浮动 `nginx:alpine`，拉取到 nginx 1.31.5/NJS 1.0.1，
+与生产 1.31.3/1.0.0 不同；容器已 healthy，但完整环境变量保护检查拒绝继续，自动恢复旧前端。
+未放宽检查：重新使用生产同版运行时打包，并把预计环境变量一致性检查前移到替换容器之前，
+同时增加生产 loopback 临时实例验证，最终发布成功。首次备份与失败记录保留在
+`/opt/openbox/backups/20260909-ui-4d2a578/activation-20260909T123115Z/`。
+
+首次切换及回滚的 2 分钟公网采样：首页与 API 各 108 次，其中各 20 次 502、88 次 200；
+两段失败窗口对应两次单实例 frontend 替换，不能宣称零停机。
+最终切换的 2 分钟采样：首页与 API 各 109 次，其中各 10 次 502、99 次 200；
+20:35:35.071 首个失败，20:35:45.842 恢复成功（约 10.8 秒），之后的采样持续为 200。
+已打开旧版页面的用户需刷新一次才能使用新版本的恢复逻辑。
+
+构建阶段全依赖审计有一条已有 `js-yaml` 高危告警，其依赖链属于 ESLint 开发工具；
+`npm audit --omit=dev` 为 0 条，最终 nginx 镜像不包含 Node/ESLint 工具链。
+本次没有顺带更新依赖锁文件，也没有宣称整套镜像经过漏洞扫描。

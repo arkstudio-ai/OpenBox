@@ -5,7 +5,28 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 图片/转写落账 + 账单页四类媒体事件（前后端）
+## 当前阿里云发布：2026-09-09 视频结果排版与前端资源恢复（仅前端）
+
+- 20:35:34–20:35:59（北京时间）gw2 frontend 切换至 `20260909-ui2-4d2a578`，源码 `main@4d2a578`。
+  backend 保持 `20260909-media-998219e`，backend/postgres/redis 容器和重启次数未变，四服务 healthy；无迁移。
+  AWS、无影云桌面、Logto 配置均未改；Flutter 源码已推送，但本次没有发布手机安装包。
+- Web 分段位于成片上方，仅实际最终视频到达后默认折叠，可手动展开；缺失 JS/CSS 返回 404 而非 SPA HTML，
+  HTML no-store、hash 资源 immutable，动态模块错误限次自动刷新并提供手动恢复；nginx 定期重新解析 backend。
+- `git archive 4d2a578` 干净导出，本机 `linux/amd64` 构建。最终 nginx 基础镜像固定为 `1.31.3-alpine`，
+  与生产运行时环境一致。首次浮动 alpine 拉取到较新版，环境变量保护检查触发自动回滚；记录与旧镜像保留。
+  第二次在替换前核对预计环境变量，并用 loopback 临时实例验证，再执行仅 frontend 的切换。
+- 镜像 ID `sha256:4b31bd54c1b40efe8ff32473027bf56a419ece9141ef7da062afaca1589b1970`；中转包 SHA-256
+  `895fd69949d70f632ef82145589ed4bb4fc534999d023c4892a04f27be39d5d6`。公网首页/静态文件 104 个与镜像逐个一致，
+  缺失资源 404/no-store、生产环境/Logto、匿名 me 401 均通过；本次不以匿名检查代替用户登录后的端到端验收。
+- 备份 `/opt/openbox/backups/20260909-ui2-4d2a578/activation-20260909T123532Z/`（0700），含已验证的数据库 dump、
+  旧配置和 activation.json；镜像包保留在 `releases/20260909-ui2-4d2a578/`。仅 override 的 frontend image 改变。
+  两次构建的 OSS 临时中转对象均已删除，镜像与备份保留。
+  回滚只改回 `openbox-frontend-v2:20260909-media-998219e`，执行 `docker compose up -d --no-deps frontend`；无需恢复数据库。
+- 最终切换 2 分钟采样：首页/API 各 109 次，其中 10 次 502、99 次 200；失败至恢复约 10.8 秒，之后持续正常。
+  首次尝试及回滚还各有一次约 11 秒中断，不宣称零停机。完整测试、首次回滚与采样记录见
+  [视频排版与前端恢复 QA](VIDEO_LAYOUT_AND_FRONTEND_RECOVERY_QA_20260909.md)。
+
+## 历史阿里云发布：2026-09-09 图片/转写落账 + 账单页四类媒体事件（前后端）
 
 - 20:18:29–20:19:11（北京时间）gw2 backend → frontend 串行切换至 `20260909-media-998219e`，源码 `main@998219e`
   （PR [#5](https://github.com/arkstudio-ai/OpenBox/pull/5) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。
@@ -662,6 +683,9 @@ docker compose up -d --no-deps <实际变更的服务>
    不得同时重建。该做法只能缩短并隔离断档，不能实现真正零停机。
 5. 每次切换前创建配置与数据库的版本化备份，并记录旧 tag；切换期间持续探测首页和一个
    API，任一服务未在预期时间内 healthy 就立即恢复旧 tag。
+6. 前端镜像应在替换容器**之前**核对预计运行时环境，并通过 loopback 临时实例验证。
+   浮动 `nginx:alpine` 可能拉到与线上不同版本；本次不升级运行时时用 `NGINX_IMAGE`
+   固定线上版本，不应等容器替换后才发现基础镜像环境变化。
 
 彻底解决方案是把 gw2 入口改为**宿主机稳定 Nginx + 蓝绿应用端口**（或迁移到支持至少
 2 个副本滚动更新的编排平台）：新版本先在备用端口启动并通过 health check，再原子切换

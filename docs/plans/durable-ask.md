@@ -98,7 +98,13 @@ PostgreSQL; 384 web unit tests plus check/build; 11 isolated Chromium tests;
 suite is 1,793 passed / the same seven pre-existing unrelated failures, not all
 green. No production rollout was performed.
 
-## Release handoff (not executed)
+## Release handoff
+
+Alibaba Cloud backend and web rollout was completed on 2026-09-09 with
+`20260909-ask-2183504`. See [DEPLOY.md](../DEPLOY.md) for production config
+isolation, the database-copy rehearsal, backups and rollout verification.
+The earlier local-only test records remain historical. No mobile app-store
+binary was published as part of the Docker rollout.
 
 1. Back up the database and drain/stop **all old-version workers**. Old
    in-memory question waiters cannot coexist safely with the new protocol;

@@ -5,7 +5,54 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前发布：2026-09-08 20:30 A5 验收回归修复（AWS + 阿里云 + 15 台桌面）
+## 当前阿里云发布：2026-09-09 Ask 持久化与 Web 分页
+
+- 10:34:38–10:35:20（北京时间）完成 gw2 后端 → 前端串行切换。统一镜像标签
+  `20260909-ask-2183504`，源码 `main@2183504`。**本次未部署 AWS，未更新或重启云桌面，
+  未发布 iOS / Android 安装包。**
+- 发布前发现生产首页 `8b80e28` 尚未合入 main；以合并提交 `2183504` 保留已发布的
+  落地页、SEO 和经营场景文案，同时包含 Ask 修复与已合入 main 的管理后台 / 技能商店。
+  首页源码及静态 SEO 资源与原线上提交逐文件一致，没有随本次发布回退。
+- 在本机 Docker 以 `linux/amd64` 构建，源码来自 `git archive` 干净导出，不从正在运行的
+  本地工作目录复制配置。`334b8c1` 补齐后端 `.dockerignore` 的 `.env.*` 排除规则；
+  镜像内确认无 `.env.wuying-dev`、`.env.local-ask`、本地 `openbox.json` 或运行时数据库。
+  后端运行时只挂载服务器原有 `config/openbox.json` 和 secrets。
+- 私有 OSS 中转包 SHA-256：
+  `c1dc914e503bb10df2cda67f2b2ae39a83be312fa34b8438d1c602b5f2914c1f`；
+  服务器校验后装载，本机与 gw2 image ID 完全相同：
+  backend `sha256:2bcfb25a25973301d8b055203eea65324e1f8f31f03f5cf3d0838dd45c17b2d9`，
+  frontend `sha256:1a3e7815afd79c5cda114abaaca51e1d9da38d086fb4b1ef096815cec594dbea`。
+- 数据库从 `b8e3f5a7c9d1` 经技能商店迁移 `c8e0a2b4d6f1` 升至 Ask 迁移
+  `d9e1f3a5b7c2`。先在同机隔离副本执行“升级 → 回退 → 再升级”，44 张原表行数
+  以及所检查的用户、工作空间、项目、会话、消息、账单等关键数据指纹保持一致。
+  正式切换先为 API / WebSocket 设置临时 503 维护门禁，停止唯一旧后端，再做停写备份、
+  执行迁移、启动新后端，健康后才替换前端；新旧问答 worker 未混跑。
+- 只更新 `docker-compose.override.yml` 的两条 image。`.env`、`config/backend.env`、
+  `config/openbox.json`、基础 compose 的 SHA-256 前后完全一致。继续保持
+  `APP_ENV=prod`、`WUYING_MODE=per_user`、`WUYING_ROUTING=per_desktop`、
+  生产 relay `106.15.105.236` / `18001`、生产 Logto、`POOL_AUTO_PURCHASE=false`；
+  没有带入本地开发桌面 / `18003`、本地密码登录配置或本地数据库。
+- 四服务 healthy、重启计数 0；postgres `98258cffb1f7`、redis `4c1a6fb5613a` 容器 ID
+  未变。验证时 53 个会话均 idle，无遗留 pending / running 的旧 question，没有伪造批准。
+  公网首页与本地镜像字节一致，**99 个静态资源全部 SHA-256 一致**；生产环境标识、
+  Logto 配置、OG / robots 通过，匿名问答 / Agent 配置入口均 401。
+- 发布期间及之后共 90 次匿名采样：首页 90 次为 200；API 12 次为维护 503、78 次为
+  200，首个维护样本至恢复样本约 26.6 秒，之后持续恢复。采样未捕获首页失败，
+  但单实例前端替换不能因此宣称绝对零瞬断。
+- 此次复跑 Web check 397 tests、Chromium 14 tests、Flutter 120 tests 及 locale
+  逐字节对齐均通过；Web Docker build 通过，生产 npm 依赖审计无已报漏洞。
+  没有登录其他用户的生产会话，也未把匿名健康检查当作真实用户 Ask 端到端测试。
+- 备份与报告：`/opt/openbox/backups/20260909-ask-2183504/`（权限 0700），含旧配置、
+  `preflight.dump`、停写后的 `stopped.dump`、`rehearsal.json`、`activation.json`、
+  `verification.json`；两个 dump 均经 `pg_restore --list` 验证。镜像包保留在
+  `/opt/openbox/releases/20260909-ask-2183504/`。临时迁移副本和 OSS 中转对象已清理，
+  正式数据库、历史镜像与备份保留；本地开发服务继续运行。
+- **回滚注意**：旧镜像不认识新迁移，不可直接改旧 tag 后运行旧启动迁移。
+  发布时的自动回退仅允许在维护门禁内、无新持久化问答或新类型技能安装时执行；
+  上线产生新数据后，须先停写、备份并审查兼容性，不能直接降级删除 checkpoint 表。
+  原 backend `20260908-a5fix-7c891ee` / frontend `20260908-landing-8b80e28` 仍保留。
+
+## 历史发布：2026-09-08 20:30 A5 验收回归修复（AWS + 阿里云 + 15 台桌面）
 
 - AWS：backend + frontend `20260908-a5fix-7c891ee`（`main@7c891ee`）；gw2：backend 同 tag（override 的 backend 行已改，`.bak-<戳>` 留档），frontend 仍是队友钉的 `20260908-landing-8b80e28`。无迁移。
 - 修什么：`GET /api/platforms` 默认只返回 OAuth 平台（云电脑站点需 `?kinds=oauth,desktop`），旧前端打开授权中心不再因 `capabilities.includes` 崩溃。

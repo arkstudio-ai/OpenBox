@@ -5,7 +5,27 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-10 video_analyze 私有桶预签名 + 重试清错（仅后端，两次）
+## 当前阿里云发布：2026-09-10 热点采集工具 hot_trends（前后端，含迁移）
+
+- 00:43:42–00:44:29（北京时间）gw2 backend → frontend 串行切换至 `20260910-trends-7959132`，源码 `main@7959132`
+  （PR [#11](https://github.com/arkstudio-ai/OpenBox/pull/11) 合并提交）。**含迁移** `f2a4c6e8b0d3`（新表 `hot_trend_snapshots`、`hot_media_links`），
+  容器启动时 `alembic upgrade head` 自动执行，切换后 `alembic current` = `f2a4c6e8b0d3 (head)`。backend 22 秒 healthy，frontend 23 秒 healthy。
+- 内容：平台工具 `hot_trends`（热点宝 / 公开热榜双源、全体客户共享的按日快照、每源限流、按真实采集次数落账 `kind=hot_trends`）、
+  `platforms/desktop/service.run_command_on_desktop` 抽出共用、`HotTrendsConfig`；前端账单页补 `hot_trends`/`video_analyze` 词条与「条数」。
+- 本地 `git archive 7959132` 干净导出；backend `docker build --platform linux/amd64 -f backend/Dockerfile .`，
+  frontend `docker build --platform linux/amd64 --build-arg NGINX_IMAGE=nginx:1.31.3-alpine frontend-v2/`。
+  包 SHA-256 backend `6295fbb228e950e2b2f5462434c3c350357d058879dbb3d351527d8e67d9f53f`、frontend `970b68b0639ce19b388f7affd5b2d3b8eeca137ebe48c24734755c002575605a`；
+  image ID backend `sha256:06cd321c7453c0502513636d01d7190951ca5f46113008816d010506594b2a62`、frontend `sha256:580dc567996fc23a4dcdff7f5779b7dd55f2b178645ce42ab8ed1f9bcbf480dc`，服务器装载后一致。OSS 中转对象已删。
+- 切换前 0 个活动会话。备份 `/opt/openbox/backups/20260910-trends-7959132/activation-20260909T164327Z/`（0700；迁移前 `preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；
+  镜像包在 `releases/20260910-trends-7959132/`。只改 override 两条 image。公网首页/API 5 组采样全 200，切换后无 traceback。
+- 容器内真机验收（管理员工作空间云桌面）：`sources` 列出两源九榜；`list source=auto` 走热点宝视频总榜 24h，8.4 秒 40 条、`credits=0.2`；
+  `list douhot 美食 72h` 8.3 秒 49 条；之后 `sources` 带出 38 个垂类；`resolve` 公开视频页 7.5 秒拿到 douyinvod 直链；`usage_events` 两条 `kind=hot_trends` shadow 0.20。
+  已知：无云电脑/未绑热点宝的工作空间 `source=auto` 会落到公开热榜并需要自己的云电脑，尚不能直接读别人采好的热点宝快照（见计划 §7 A3 备注）。
+- 回滚：**先降迁移再换镜像**——`docker compose run --rm --no-deps --entrypoint alembic backend downgrade e1f3a5b7c9d2`，
+  再把 override 改回 backend `20260909-analyze3-076bf36` / frontend `20260909-direct-video-0a92fd8`，`up -d --no-deps` backend → frontend。
+  两张新表只被 hot_trends 写入，降级丢弃的只是缓存。
+
+## 历史阿里云发布：2026-09-10 video_analyze 私有桶预签名 + 重试清错（仅后端，两次）
 
 - 00:00:03–00:00:21（北京时间）gw2 backend 切换至 `20260909-analyze3-076bf36`，源码 `main@076bf36`
   （PR [#10](https://github.com/arkstudio-ai/OpenBox/pull/10) 合并提交）；此前 23:54:56–23:55:12 已切过一版

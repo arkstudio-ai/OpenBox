@@ -5,7 +5,34 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 热点宝授权站点 + video_analyze 多模态拆解（仅后端）
+## 当前阿里云发布：2026-09-10 video_analyze 私有桶预签名 + 重试清错（仅后端，两次）
+
+- 00:00:03–00:00:21（北京时间）gw2 backend 切换至 `20260909-analyze3-076bf36`，源码 `main@076bf36`
+  （PR [#10](https://github.com/arkstudio-ai/OpenBox/pull/10) 合并提交）；此前 23:54:56–23:55:12 已切过一版
+  `20260909-analyze2-0509757`（`main@0509757`，PR [#9](https://github.com/arkstudio-ai/OpenBox/pull/9)）。
+  两次都无迁移，`alembic current` 仍为 `e1f3a5b7c9d2`；frontend 保持 `20260909-direct-video-0a92fd8`，postgres/redis 未动。
+- 起因：`20260909-analyze-d054271` 上线后在容器内用管理员真实云桌面跑 `video_analyze`，源为上次 IMS 成片的
+  `https://bossip.oss-cn-shanghai.aliyuncs.com/assets/<user>/…mp4`，桌面 ffprobe 拿裸 URL 访问私有桶 → 403。
+  PR #9：配置桶的 https / 内网 host / `oss://` 三种写法先鉴权（必须是本人 `assets/<user>/`）再 `presign_get`
+  交给 ffmpeg，缓存键仍是未签名对象；桶内他人对象直接拒绝。PR #10：同源先失败后成功复用同一 `video_jobs` 行，
+  完成时清掉旧 `error`，输出不再同时出现 `status=completed` 与 `error=`。
+- 本地 `git archive` 干净导出，`docker build --platform linux/amd64 -f backend/Dockerfile .`。
+  analyze2：包 SHA-256 `d59b7d064b05b6ec11a1a12c6d1e866fc28aba040a399ec7b3f2de8eb3e146b0`，image ID
+  `sha256:4908f5821da20eec8f4bb724d8713a158d19a47cb974c0be1bd9c576e09e8d86`；
+  analyze3：包 SHA-256 `1317af916029fa125ed29d4405e0cb07611ce9f4e504ed8b9700ba85aa3ce1a5`，image ID
+  `sha256:43e6a682d769fa43874db656d8cd953a30feef60ad5710cdabe2e93bf14f2f75`；服务器装载后均与本机一致。
+  OSS `_deploy-tmp/` 中转对象已全部删除。
+- 两次切换前均 0 个活动会话。备份 `/opt/openbox/backups/20260909-analyze2-0509757/activation-20260909T155449Z/`、
+  `/opt/openbox/backups/20260909-analyze3-076bf36/activation-20260909T155956Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验；
+  配置、compose、`old_images.txt`）；镜像包在 `releases/<tag>/`。仅 override 的 backend image 改变。
+- 真机验收（容器内构造 ToolContext，走管理员云桌面 sandbox）：14.4 秒成片抽 8 帧、转写 59 字、`gemini-3.7-flash` 拆解
+  形式=口播、钩子/文案与原稿一致，耗时约 30 秒；`oss://` 与 https 写法命中同一缓存；`force=True` 新建任务且无 `error=` 行。
+  注：临时 ToolContext 的 session 不存在，`UsageMeter.start` 返回 None，故 `credits=0.05` 只含转写；正式会话中视觉调用按
+  `kind=video_analyze` 落账。公网首页/API 采样全 200，切换后无 traceback。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-analyze-d054271`（或再往前 `20260909-media-998219e`），
+  `docker compose up -d --no-deps backend`；无需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 热点宝授权站点 + video_analyze 多模态拆解（仅后端）
 
 - 23:37:16–23:37:35（北京时间）gw2 backend 切换至 `20260909-analyze-d054271`，源码 `main@d054271`
   （PR [#8](https://github.com/arkstudio-ai/OpenBox/pull/8) A1+B3 与 PR [#6](https://github.com/arkstudio-ai/OpenBox/pull/6) 首稿确认卡修复

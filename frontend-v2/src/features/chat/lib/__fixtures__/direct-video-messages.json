@@ -1,0 +1,74 @@
+[
+  {
+    "id": "generate-message",
+    "session_id": "fixture-session",
+    "role": "assistant",
+    "created_at": "2026-09-09T11:46:30Z",
+    "finish": "tool_calls",
+    "parts": [
+      {
+        "type": "tool",
+        "id": "generate-tool",
+        "tool": "video_generate",
+        "status": "completed",
+        "input": { "action": "wait", "job_id": "video_fixture" },
+        "output": "job_id=video_fixture\nstatus=completed\nasset_id=asset-generated\nworkspace_path=/workspace/uploads/segment-video_fixture.mp4"
+      },
+      {
+        "type": "file",
+        "id": "generated-part",
+        "path": "/workspace/generated_videos/segment-video_fixture.mp4",
+        "asset_id": "asset-generated",
+        "mime_type": "video/mp4",
+        "size": 3009497,
+        "relation": {
+          "kind": "video_segment",
+          "role": "intermediate",
+          "group_id": "video:video_fixture:final",
+          "source_part_id": "generate-tool",
+          "metadata": { "production_id": null, "segment_id": null, "job_id": "video_fixture" }
+        }
+      }
+    ]
+  },
+  {
+    "id": "share-message",
+    "session_id": "fixture-session",
+    "role": "assistant",
+    "created_at": "2026-09-09T11:46:39Z",
+    "finish": "tool_calls",
+    "parts": [
+      {
+        "type": "tool",
+        "id": "share-tool",
+        "tool": "share_file",
+        "status": "completed",
+        "input": { "file_path": "/workspace/uploads/segment-video_fixture.mp4" },
+        "metadata": { "asset_id": "asset-shared", "attached": true }
+      },
+      {
+        "type": "file",
+        "id": "shared-part",
+        "path": "/workspace/uploads/segment-video_fixture.mp4",
+        "asset_id": "asset-shared",
+        "mime_type": "video/mp4",
+        "size": 3009497,
+        "relation": {
+          "kind": "shared_file",
+          "role": "result",
+          "group_id": "tool:share-tool",
+          "source_part_id": "share-tool",
+          "label": "segment-video_fixture.mp4"
+        }
+      }
+    ]
+  },
+  {
+    "id": "final-message",
+    "session_id": "fixture-session",
+    "role": "assistant",
+    "created_at": "2026-09-09T11:46:40Z",
+    "finish": "stop",
+    "parts": [{ "type": "text", "id": "final-text", "channel": "final", "text": "视频已生成并交付。" }]
+  }
+]

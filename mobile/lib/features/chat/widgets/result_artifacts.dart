@@ -40,7 +40,7 @@ class ResultArtifacts extends ConsumerWidget {
         .toList();
     final finalVideoAssets =
         groups
-            .where((g) => g.artifactKind == 'video_final')
+            .where(isFinalVideoArtifact)
             .expand((g) => g.parts)
             .where(
               (p) =>

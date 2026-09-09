@@ -10,6 +10,8 @@ library;
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 
+part 'video_delivery.dart';
+
 typedef ArtifactRole =
     String; // input | evidence | intermediate | result | final
 
@@ -462,8 +464,22 @@ AssistantContentView buildAssistantContentView(
     }
   }
 
-  final ordered = groups.values.toList()
-    ..sort((a, b) => a.order.compareTo(b.order));
+  final suspended =
+      awaitingInput ||
+      (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
+      tools.any((tool) => tool.status == ToolStatus.waitingInput);
+  final completedDelivery =
+      hasFinal &&
+      !streaming &&
+      !suspended &&
+      finalIndex == messages.length - 1 &&
+      messages.every((m) => m.error == null) &&
+      (messages.last.finish == 'stop' ||
+          messages.every((m) => m.finish == null));
+  final ordered = _resolveDirectVideoDelivery(
+    groups.values.toList(),
+    completedDelivery,
+  )..sort((a, b) => a.order.compareTo(b.order));
   final evidence = ordered.where((g) => g.role == 'evidence').toList();
   final results =
       ordered.where((g) => g.role != 'evidence' && g.role != 'input').toList()
@@ -496,11 +512,6 @@ AssistantContentView buildAssistantContentView(
   final workEvents = <WorkEvent>[...progress, ...workEvidence]
     ..sort((a, b) => a.order.compareTo(b.order));
   final hasWork = progress.isNotEmpty || tools.isNotEmpty || ordered.isNotEmpty;
-  final suspended =
-      awaitingInput ||
-      (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
-      tools.any((tool) => tool.status == ToolStatus.waitingInput);
-
   return AssistantContentView(
     finalText: finalText,
     finalMessageId: finalIndex >= 0 ? messages[finalIndex].id : null,

@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { ArtifactGroup } from "../lib/content-view"
+import { isFinalVideoArtifact } from "../lib/video-delivery"
 import { isAudioPart, isGalleryMedia, isVideoPart } from "../lib/media"
 import { AudioPreview } from "./AudioPreview"
 import { AttachmentGallery } from "./AttachmentGallery"
@@ -197,7 +198,7 @@ export function ResultArtifacts({
   // Only an attached, displayable final video folds its materials. Final prose,
   // another kind of deliverable, and a pending/failed render are not a final video.
   const finalVideoAssets = groups
-    .filter((group) => group.artifactKind === "video_final")
+    .filter(isFinalVideoArtifact)
     .flatMap((group) =>
       group.parts.filter((part) => isGalleryMedia(part) && isVideoPart(part)).map((part) => part.asset_id!),
     )

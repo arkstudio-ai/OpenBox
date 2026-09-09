@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../fixtures/direct_video_transcript.dart';
 
 ArtifactGroup group(
   String id, {
@@ -143,6 +144,42 @@ void main() {
   );
 
   for (final width in [320.0, 390.0, 768.0]) {
+    testWidgets(
+      'direct share_file delivery folds at $width pixels and supports manual expansion',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final messages = directVideoMessages();
+        await render(
+          tester,
+          buildAssistantContentView(messages, true).resultGroups,
+        );
+        expect(find.text('Segment 1'), findsOneWidget);
+        expect(find.byType(TextButton), findsNothing);
+        await render(
+          tester,
+          buildAssistantContentView(messages, false).resultGroups,
+        );
+        expect(find.text('Segment 1'), findsNothing);
+        expect(find.byKey(const ValueKey('tool:share-tool')), findsOneWidget);
+        final toggle = find.byType(TextButton);
+        expect(tester.getSize(toggle).height, greaterThanOrEqualTo(44));
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+        await render(
+          tester,
+          buildAssistantContentView(messages, false).resultGroups,
+        );
+        expect(find.text('Segment 1'), findsOneWidget);
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+        expect(find.text('Segment 1'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets(
       'folded materials precede the final and toggle at $width pixels',
       (tester) async {

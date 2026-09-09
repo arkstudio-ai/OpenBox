@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { FilePart } from "@/shared/types/api"
 import type { ArtifactGroup } from "../lib/content-view"
+import { buildAssistantContentView } from "../lib/content-view"
+import type { MessageWithParts } from "@/shared/types/api"
+import directTranscript from "../lib/__fixtures__/direct-video-messages.json"
 import { ResultArtifacts } from "./ResultArtifacts"
 
 vi.mock("react-i18next", () => ({
@@ -140,5 +143,31 @@ describe("video result layout", () => {
     render(<ResultArtifacts groups={[final]} verification={null} />)
     expect(screen.queryByText(/Segments/)).toBeNull()
     expect(screen.getByText("final.mp4")).toBeTruthy()
+  })
+
+  it("folds the real generate/share_file/final-answer shape only after delivery", () => {
+    const messages = structuredClone(directTranscript) as MessageWithParts[]
+    const project = (streaming: boolean) => buildAssistantContentView(messages, streaming).resultGroups
+    const { rerender } = render(<ResultArtifacts groups={project(true)} verification={null} />)
+    expect(toggle()).toBeNull()
+    expect(screen.getByText("/workspace/generated_videos/segment-video_fixture.mp4")).toBeTruthy()
+    rerender(<ResultArtifacts groups={project(false)} verification={null} />)
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false")
+    expect(screen.queryByText("/workspace/generated_videos/segment-video_fixture.mp4")).toBeNull()
+    expect(screen.getByText("/workspace/uploads/segment-video_fixture.mp4")).toBeTruthy()
+    fireEvent.click(toggle()!)
+    rerender(<ResultArtifacts groups={project(false)} verification={null} />)
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true")
+  })
+
+  it("honors explicitly final video attachments without requiring a particular tool kind", () => {
+    render(
+      <ResultArtifacts
+        groups={[...segments, group("shared-final", "shared_file", { role: "final" })]}
+        verification={null}
+      />,
+    )
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false")
+    expect(screen.queryByText("one.mp4")).toBeNull()
   })
 })

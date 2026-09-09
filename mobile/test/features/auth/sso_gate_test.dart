@@ -127,8 +127,8 @@ void main() {
   ) async {
     final session = _Session();
     final container = await _mount(tester, session, preferencesFail: true);
-      await tester.tap(find.byType(FilledButton));
-      await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byType(FilledButton));
+    await tester.tap(find.byType(FilledButton));
     expect(session.calls, 1);
     session.result.complete('verified-id-token');
     await tester.pumpAndSettle();

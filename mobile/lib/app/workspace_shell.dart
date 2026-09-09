@@ -36,19 +36,22 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(wsClientProvider).connect();
       // Cross-feature: chat "审阅 →" emits workbench.open (web D.6).
-      _workbenchSub =
-          ref.read(appEventBusProvider).on('workbench.open').listen((event) {
-        final sessionId = event.payload['sessionId'];
-        final kind = event.payload['kind'];
-        if (sessionId is String && mounted) {
-          context.push(Paths.workbench(
-            sessionId,
-            tab: kind is String && kind.isNotEmpty ? kind : 'review',
-          ));
-        } else if (kind == 'desktop' && mounted) {
-          context.push(Paths.desktop);
-        }
-      });
+      _workbenchSub = ref.read(appEventBusProvider).on('workbench.open').listen(
+        (event) {
+          final sessionId = event.payload['sessionId'];
+          final kind = event.payload['kind'];
+          if (sessionId is String && mounted) {
+            context.push(
+              Paths.workbench(
+                sessionId,
+                tab: kind is String && kind.isNotEmpty ? kind : 'review',
+              ),
+            );
+          } else if (kind == 'desktop' && mounted) {
+            context.push(Paths.desktop);
+          }
+        },
+      );
     });
   }
 
@@ -71,8 +74,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final title = widget.sessionId == null
         ? 'bossip'
         : (session?.title.isNotEmpty ?? false)
-            ? session!.title
-            : i18n.t('workspace:untitledChat');
+        ? session!.title
+        : i18n.t('workspace:untitledChat');
     final subtitle = widget.sessionId == null
         ? null
         : project?.name ?? i18n.t('workspace:unsorted');
@@ -108,21 +111,28 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           if (widget.sessionId != null)
             CronStatusPill(
               projectId: session?.projectId,
-              onOpen: () => context
-                  .push(Paths.workbench(widget.sessionId!, tab: 'cron')),
+              onOpen: () =>
+                  context.push(Paths.workbench(widget.sessionId!, tab: 'cron')),
             ),
           if (widget.sessionId != null)
             IconButton(
-              icon: Icon(Icons.space_dashboard_outlined,
-                  size: 20, color: t.n700),
+              icon: Icon(
+                Icons.space_dashboard_outlined,
+                size: 20,
+                color: t.n700,
+              ),
               tooltip: i18n.t('workspace:openPanel'),
-              onPressed: () =>
-                  context.push(Paths.workbench(widget.sessionId!)),
+              onPressed: () => context.push(Paths.workbench(widget.sessionId!)),
             ),
           const SizedBox(width: 4),
         ],
       ),
       drawer: SessionDrawer(activeSessionId: widget.sessionId),
+      onDrawerChanged: (isOpen) {
+        // The drawer overlays the entire screen. A chat composer keyboard
+        // must not cover its account/settings actions (including swipe-open).
+        if (isOpen) FocusManager.instance.primaryFocus?.unfocus();
+      },
       body: widget.child,
     );
   }

@@ -298,7 +298,7 @@ Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理
 8. **移动端 Composer 控件**：移动端有意隐藏“执行/方案”入口，并把思考强度并入模型二级菜单；Web 保持原交互。
 9. **移动端新对话与执行环境入口**：项目行常驻且右侧对齐 `+`（手机没有 hover），点击进入该项目的空会话；空会话不再根据旧 `/api/containers` 列表显示“创建沙箱”，首条消息由后端按 workspace 自动连接无影，真正未就绪时继续走 `DESKTOP_NOT_READY` 云桌面引导。
 10. **订阅驱动无影云**：全局进度、Free 权益边界、到期断开查看连接、作用域隔离、侧栏直达与阿里云 prod 联调已完成，替代旧的手动开通流程，见 §8。
-11. **Android Logto 单一回调**：邀请链接只保留生产 HTTPS App Link；删除 MainActivity 上缺少 host 的自定义 scheme 过滤器。Android 在过滤器未声明 host 时会忽略 `pathPrefix`，旧配置因此同时匹配 `com.bossip.bipmobile://callback`，与 `flutter_web_auth_2.CallbackActivity` 形成两个授权跳转入口。现在该回调仅由 SDK Activity 接收。
+11. **Android Logto 单一回调**：邀请链接只保留生产 HTTPS App Link；删除 MainActivity 上缺少 host 的自定义 scheme 过滤器。Android 在过滤器未声明 host 时会忽略 `pathPrefix`，旧配置因此同时匹配 `com.bossip.bipmobile://callback`，形成两个授权跳转入口。2026-09-09 起仅由 `.AuthCallbackActivity` 接收：仍交给 SDK 验证 OAuth，并显式恢复原 App task，修复授权成功后 Chrome 仍覆盖 App 的问题（详见 [Logto 配置与回跳契约](LOGTO_PROD.md#android-callback-task-restoration-1016--2026-09-09)）。
 12. **超管系统 + 技能商店**：超管系统与舰队管理一样按 Web-only 处理，移动端只复制 locale；用户侧商店的来源分区、上架状态、撤回与审核文案登记为待对齐，接口对旧客户端保持兼容，见 §10。
 
 ## 完成记录

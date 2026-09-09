@@ -100,7 +100,8 @@ sides:**
   `com.bossip.bipmobile://callback` (overridable at build with
   `--dart-define=SSO_REDIRECT_URI=...`).
 - `mobile/android/app/src/main/AndroidManifest.xml` → the
-  `flutter_web_auth_2.CallbackActivity` intent-filter `android:scheme="com.bossip.bipmobile"`.
+  `.AuthCallbackActivity` intent-filter `android:scheme="com.bossip.bipmobile"`
+  and `android:host="callback"`.
 - The Logto **bossip-mobile** application's registered Redirect URIs.
 
 `com.bossip.bipmobile://callback` is registered on bossip-mobile (added
@@ -115,6 +116,33 @@ both app build values aligned if the scheme changes.
 
 Leave `LOGTO_NATIVE_APP_ID` unset to turn mobile SSO off (the app falls back to
 its account/password form).
+
+### Android callback task restoration (1.0.16 / 2026-09-09)
+
+Chrome Custom Tabs can deliver the custom-scheme redirect with `NEW_TASK`.
+With isolated/empty task affinities, the stock plugin callback can receive the
+URI in a different task, complete authentication in Dart, then finish an empty
+authentication-manager activity while the original Chrome tab still covers
+Flutter. This reproduces “already authorized, but must manually return”.
+
+`AuthCallbackActivity` now validates the callback action, scheme, host, port and
+path; removes/delivers the pending plugin callback once; and explicitly starts
+`MainActivity` in its original `ActivityManager.AppTask` with
+`CLEAR_TOP | SINGLE_TOP`. If the OS removed that task it opens a fresh app task.
+The OAuth URI is never forwarded to Flutter routing or written to logs. Logto
+still performs state/redirect/PKCE/token verification. A callback after process
+death does not recreate authentication: the user returns to retry safely.
+
+Keep both task affinities empty. Do not fix this by making
+`AuthenticationManagementActivity` `singleTask`: that creates a separate auth
+task and regresses Home/recents return. Newer browser Auth Tabs continue to use
+the plugin's ActivityResult path; the bridge handles custom-scheme fallback.
+
+The official [Flutter SDK](https://docs.logto.io/quick-starts/flutter) uses a
+system authentication browser on Android. A native SDK does not mean a native
+username/password form: Logto [does not expose a headless sign-in/sign-up API](https://docs.logto.io/end-user-flows/sign-up-and-sign-in).
+Preserve the hosted OIDC flow and automatic app return instead of capturing
+Logto passwords in an embedded custom login implementation.
 
 ## Sign-out contract
 

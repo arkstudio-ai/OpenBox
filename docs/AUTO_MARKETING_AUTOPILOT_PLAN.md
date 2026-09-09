@@ -161,3 +161,91 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 2. 自动发布的节奏参数（每日条数、最小间隔、发布时段）——M0 spike 3 之后定。
 3. openbox App 的包名与极光应用是否沿用 `com.bossip.bipmobile / BossIP-bip`，还是新建；决定推送迁移的工作量。
 4. 非口播形态的配音：等 TTS 工具，还是先只用带音频的视频模型。
+
+---
+
+## 7. 实施计划（任务级）
+
+> 估时按一人全职工作日（d）。依赖用 → 标注。每条任务都有可验证的完成定义，没有「基本可用」。
+> 工作流可并行：A（采集）、B（分析）、C（自动发布）三条 spike 同时开；D（技能+模版）依赖 A/B/C 的结论；E（推送）独立，只被 F（联调）依赖。
+
+### A · 热点采集（hot_trends）
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| A1 | 热点宝入站点目录：`platforms/desktop/sites.py` 加 `douyin_hot`（douhot.douyin.com），复用 `.douyin.com` 登录态；写探活 URL 与失效判据 | — | 1d | `desktop_login(status)` 对一台已登录创作者中心的桌面报热点宝 ok |
+| A2 | 采集脚本 spike：dev-browser 在云桌面 Chrome 里取榜单（类目、时间窗），抽字段：标题、链接、作者、播放/点赞/评论、话题、时长、封面；连续 24h 每小时一次，记频控与页面变动 | A1 | 3d | 一天 24 次采集成功率、字段完整率、有无验证码；输出 spike 记录 |
+| A3 | 平台工具 `hot_trends(source="douhot", category, window, limit)`：走 A2 脚本，**按类目缓存榜单**（同类目一天一抓、全体客户共享），只存元数据与链接不落原片；返回结构化 JSON；限流与失败可见 | A2 | 3d | 单测 + 真机一次；两个任务同类目同一天只触发一次抓取 |
+| A4 | 热点源抽象：`source` 可插拔接口与注册表，热点宝是第一个实现 | A3 | 1d | 加第二个源只需新增一个模块 |
+
+### B · 热点分析（video_analyze）
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| B1 | 原型：桌面 ffmpeg 场景抽帧（6–12 帧）+ `video_transcribe` + Gemini 3.7 Flash（菜单内、带 vision）一次调用出 JSON：形态判定、主题、人群、钩子、结构（分段秒数）、镜头描述、文案全文、话题、创作要素 | — | 3d | 10 条不同形态热点的输出经人工评分 ≥ 7/10；记单条成本（STT + 多模态 token） |
+| B2 | 字幕型（无配音）热点：帧 OCR 走同一多模态调用，验证准确率 | B1 | 1d | 5 条字幕型样本文案还原 ≥ 90% |
+| B3 | 平台工具 `video_analyze(source_url \| asset_id, budget)`：临时下载到桌面只为抽帧与转写，分析完即删；输出 JSON 校验 schema；成本上限；分析结果按链接哈希缓存 | B1,B2 | 4d | 单测 + 真机；同一热点多个客户只分析一次；报告里的「分析费」= 实际 LLM+STT 落账之和 |
+| B4 | 形态 → 配方映射表（口播 / 画面+旁白 / 展示 / 剧情 / 混剪），每种配方给出生成段数、时长、是否需要配音、剪辑模板 | B1 | 1d | 表进技能 references，B3 的输出字段与之对齐 |
+
+### C · 桌面自动发布（douyin-desktop-publish）
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| C1 | spike：测试抖音号，dev-browser 走 creator.douyin.com 上传→标题/介绍/话题→AI 生成声明→发布→回读作品 id；记 DOM 稳定性、耗时、失败形态 | — | 3d | 连续 10 次发布成功率、每次耗时、出现过的拦截/验证码；输出 spike 记录 |
+| C2 | 技能 `douyin-desktop-publish`：输入成片 asset_id + 标题/介绍/话题；前置 `desktop_login(status)`；上传成功写 `publish_jobs`（A5 已有表，`auth_kind=desktop_cookie`）；输出作品 id | C1 | 4d | 真机 5 次；每次都有 publish_jobs 记录 |
+| C3 | 风控与降级：每账号每日上限、最小间隔、发布时段窗口；DOM 变化/验证码/风控文案 → 停用该账号自动发布、改产扫码投稿包（`douyin_publish`）、推送；登录态失效 → 推送重登 | C2 | 3d | 用假验证码页演练降级路径一次；配置项进模版 |
+| C4 | 切换开关：`publish_mode = auto \| package`，运行期与模版级都可改；默认值集中一处 | C2 | 0.5d | 改一个配置即全局切默认 |
+
+### D · 技能与 cron 模版（marketing-autopilot）
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| D1 | 预算授权字段落表：cron 模版 payload 增加 `credits_cap_per_run / videos_per_run / model_tier / tolerances / publish_mode / content_forms / topics_blocklist`（§2.3），后端校验 | — | 2d | schema + 迁移 + 单测 |
+| D2 | 技能 `marketing-autopilot`：cron 上下文判定（会话 kind=cron）→ 不出卡、读模版字段；流程 hot_trends → video_analyze → 按配方 video_generate（三档模型映射）→ video_compose → 发布 → 报告；预算累加超限即停 | A3,B3,B4,C2,D1 | 5d | 干跑（mock 工具）通过；技能测试覆盖「预算超限停止」「STT 超阈值重生一次后弃用」 |
+| D3 | 三档模型：`model_tier` → 模型 id 映射与每档参考价（读 `rates.json`）；对话创建任务时的选档卡（含每 15s 参考价） | D1 | 1d | 卡文案含三档与参考价；模版存的是 tier 不是模型 id |
+| D4 | 报告消息：每次运行一条，含来源、每条分析摘要、花费明细、成片卡、标题/介绍/话题、发布结果或降级原因 | D2 | 2d | 报告字段与账单页当次运行的落账总额一致 |
+| D5 | 模版 UI（web + App）：创建/编辑表单含 §2.3 字段；运行历史与报告入口 | D1 | 4d | 前端 `npm run check` 与 App `flutter test` 通过；真机创建一条模版 |
+| D6 | 账单页「按运行聚合」视图（一次 cron 运行的 LLM+媒体花费合并） | D4 | 2d | 与 D4 报告数字一致 |
+
+### E · App 极光推送集成（迁移 bossip）
+
+事实：openbox 的 Flutter 应用就是 bossip 的同一个应用（`name: bossip_mobile`，Android/iOS 均为 `com.bossip.bipmobile`），所以**极光应用 `BossIP-bip`（AppKey 见 bossip `PUSH_NOTIFICATION_ENABLEMENT.md`）与 APNs Key 直接沿用，不用新建**；openbox 侧目前**零推送代码**（后端只有 `notification` 表，App 无原生桥）。bossip 已实现的可迁移物：Dart `SystemNotifications`（MethodChannel `bossip/system_notifications`）、`codex_notification_coordinator`、Android 原生（`BossIpPushBridge.kt` / `BossIpJPushReceiver.kt` / `BossIpJCommonService.kt`、Manifest、图标）、iOS `AppDelegate.swift` APNs 接入、服务端设备端点表与发送（v1 API TS：迁移 `0009–0013_*push*`）。
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| E1 | App 侧迁移：把 `SystemNotifications`、协调器、Android 原生桥与 Manifest/图标、iOS AppDelegate APNs 接入搬进 openbox `mobile/`；权限申请与设置页开关 | — | 3d | Android 真机拿到 JPush Registration ID；iOS 真机拿到 APNs token；`flutter test` + `dart analyze` 通过 |
+| E2 | 后端设备端点：表 `push_endpoints`（user、platform、token/registration_id、environment、绑定的 mobile session、created/last_seen），登录时注册、退出时解绑；每设备单端点（对齐 bossip 0011 的教训） | — | 2d | 迁移 + API + 单测；重复注册不产生多端点 |
+| E3 | 后端发送：`notifications/push.py`——iOS 用 APNs HTTP/2（token-based，Key 沿用），Android 用极光 REST；统一 payload（title/body/deeplink/kind）；失败重试与失效端点清理；密钥走 `secrets/`，不进镜像 | E2 | 3d | 对真机各推一条；无效 token 自动清理 |
+| E4 | 接入 cron delivery：`delivery_mode=push`，模版默认开；三类文案（已发 N 条 / N 条待扫码 / 请重登） | E3,D4 | 1d | 一次真实运行结束后手机收到推送，点开进报告 |
+| E5 | 复用到既有场景：视频生成完成、`polling_paused` 恢复、桌面登录态失效提醒（A5 已有通知条）也走推送 | E3 | 1d | 三个场景各真机一次 |
+| E6 | 厂商离线通道（华为/小米/OPPO/vivo）开通与配置 | E1 | 2d + 审核等待 | 至少两个厂商通道在锁屏离线状态收到 |
+
+### F · 联调、灰度、上线
+
+| # | 任务 | 依赖 | 估时 | 完成定义 |
+|---|---|---|---|---|
+| F1 | shadow 模式下真实客户账号连续 5 天运行，采集单次成本分布、发布成功率、降级次数 | D2–D5,C3,E4 | 5d（观察） | 报告与数据齐全；预算无超限 |
+| F2 | 运营定价：按 F1 成本分布给 `rates.json` media 段定售价与三档默认 | F1 | 0.5d | 价目提交并发布 |
+| F3 | 内测放量：模版对内测用户开放；风控告警面板（哪些账号被降级） | F1 | 2d | 后台能看到每账号的自动发布状态 |
+| F4 | 合规文案：模版确认页的风险说明、AI 生成声明、广告法用语过滤进技能 | D5 | 1d | 文案评审通过 |
+
+### 顺序与并行
+
+```
+周 1      A1→A2 ‖ B1→B2 ‖ C1 ‖ E1‖E2          （三个 spike + 推送两端同时开）
+周 2      A3 ‖ B3,B4 ‖ C2 ‖ D1,D3 ‖ E3
+周 3      A4 ‖ C3,C4 ‖ D2 ‖ E4,E5 ‖ D5(起)
+周 4      D2(收尾),D4 ‖ D5 ‖ D6 ‖ E6(提交厂商)
+周 5–6    F1 观察 ‖ F3,F4 ‖ F2
+```
+
+人力：两人并行约 6 周；一人串行约 10 周。E（推送）单独一人可在 2 周内做完 E1–E5。
+
+### 决策检查点
+- 周 1 末：三份 spike 记录 → 定热点宝采集频率、分析成本模型、自动发布节奏参数（§6 第 1、2 项）。
+- 周 3 末：干跑通过 → 决定 F1 用哪个客户账号、预算默认值。
+- F1 结束：决定是否放量，以及切回扫码路径的触发条件（用户量或风控次数）。
+
+### 已排除或推后
+- 第三方热点 API、多平台（小红书）、播放数据回流、TTS 原子工具 → M2。
+- 账单按运行聚合（D6）若挤不进 M1，可先在报告里给总额。

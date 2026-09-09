@@ -502,7 +502,7 @@ def test_the_budget_line_says_what_is_left_not_what_is_spent():
     assert not re.search(r"daily_submits_used=\{used\}\"?\s*\+", source)
 
 
-def test_every_model_declares_a_duration_range_it_was_measured_at():
+def test_every_model_declares_a_duration_range_it_was_measured_at(video_gateway_config):
     """Vendor docs and this deployment disagree, so both were checked.
 
     通义万相 2.7's public docs say 2-15s, but the endpoint behind this relay
@@ -511,13 +511,8 @@ def test_every_model_declares_a_duration_range_it_was_measured_at():
     accept it — an earlier guess had that flag off. MiniMax H3's 4-15s matches
     its docs and the gateway constants.
     """
-    from dotenv import load_dotenv
-
-    import core.config
-
-    load_dotenv(".env")
-    core.config._config = None
-    models = core.config.get_config().video_generation.models
+    models = video_gateway_config.video_generation.models
+    assert models
 
     for model in models:
         low, high = model.duration_range or (0, 0)
@@ -525,19 +520,13 @@ def test_every_model_declares_a_duration_range_it_was_measured_at():
         assert high <= 30, f"{model.id} claims more than any vendor here allows"
 
 
-def test_minimax_keeps_its_own_resolution_vocabulary():
+def test_minimax_keeps_its_own_resolution_vocabulary(video_gateway_config):
     """Its adaptor parses tiers back out of the WxH string it is sent.
 
     Declaring 720p/1080p put another vendor's names on it; asking for 720p
     returned 768x1344, the tier it actually rounded to.
     """
-    from dotenv import load_dotenv
-
-    import core.config
-
-    load_dotenv(".env")
-    core.config._config = None
-    config = core.config.get_config()
+    config = video_gateway_config
     entry = next(m for m in config.video_generation.models if m.id == "MiniMax-H3")
 
     assert entry.resolutions == ["480p", "512p", "768p", "2k"]
@@ -552,20 +541,14 @@ def test_minimax_keeps_its_own_resolution_vocabulary():
         assert body["size"] != "720x1280" or tier == "720p", (tier, body["size"])
 
 
-def test_duration_is_checked_for_every_declared_model_at_both_bounds():
+def test_duration_is_checked_for_every_declared_model_at_both_bounds(video_gateway_config):
     """The check has to run before the channel branches return early.
 
     validate_request's sd2 branch returns as soon as its own rules pass, so a
     duration check placed after it would silently cover none of the six models
     on that channel.
     """
-    from dotenv import load_dotenv
-
-    import core.config
-
-    load_dotenv(".env")
-    core.config._config = None
-    config = core.config.get_config()
+    config = video_gateway_config
 
     for model in config.video_generation.models:
         low, high = model.duration_range
@@ -594,15 +577,9 @@ def test_duration_is_checked_for_every_declared_model_at_both_bounds():
                 check(-1)
 
 
-def test_an_undeclared_model_still_gets_a_channel_wide_duration_guard():
+def test_an_undeclared_model_still_gets_a_channel_wide_duration_guard(video_gateway_config):
     """Otherwise duration=3600 goes straight to the provider and burns a submit."""
-    from dotenv import load_dotenv
-
-    import core.config
-
-    load_dotenv(".env")
-    core.config._config = None
-    route = video_providers.resolve_route("wan3.0-video", core.config.get_config())
+    route = video_providers.resolve_route("wan3.0-video", video_gateway_config)
 
     def check(duration):
         video_providers.validate_request(

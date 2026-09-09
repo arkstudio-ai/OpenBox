@@ -1126,7 +1126,7 @@ def _bossip_target() -> VideoProviderTarget:
     )
 
 
-def test_a_declared_relay_model_keeps_its_id_and_takes_the_metadata_shape():
+def test_a_declared_relay_model_keeps_its_id_and_takes_the_metadata_shape(video_gateway_config):
     """Rewriting it to a name-encoded tier cost the caller its resolution.
 
     Measured 2026-09-01: 480p/9:16 flattened to the top level came back
@@ -1211,7 +1211,7 @@ def test_provider_inputs_are_scoped_urls_for_normal_image_to_video(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch):
+async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch, video_gateway_config):
     import httpx
 
     calls = []

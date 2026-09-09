@@ -124,6 +124,11 @@
     // supports_smart_duration (duration -1), supports_seed,
     // supports_first_last_frame, supports_reference_audio,
     // supports_reference_image, supports_reference_video.
+    // Explicitly declare wire_shape when deploying external registries:
+    // MiniMax-H3 over /v1/videos needs "size" (not top-level ratio/resolution).
+    // It uses its native resolution tiers 480p/512p/768p/2k; do not label its
+    // rounded output as an exact 720p/1080p tier. This adapter currently encodes
+    // 9:16 and 16:9 and forwards image references only.
     //
     // `channel` must match the endpoint your gateway actually exposes, not the
     // model's family. A relay that serves /v1/videos but 404s

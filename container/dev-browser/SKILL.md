@@ -41,7 +41,9 @@ curl -s http://localhost:9222/ | head -c 300
 
 The person may already be logged into some sites in this Chrome — the 授权中心 keeps
 track of which. **Before automating any site that needs their account** (抖音创作者中心,
-抖音来客, 美团经营宝/点评商户平台, 小红书创作平台 …):
+抖音热点宝, 抖音来客, 美团经营宝/点评商户平台, 小红书创作平台 …). 抖音热点宝
+(`douyin_hot`) has its **own** OAuth session — being logged into 创作者中心 does not
+log you into 热点宝; check its status separately:
 
 1. `desktop_login(action="status", site="<site key>")`. `bound` → go ahead, the cookies
    are in this profile. `DESKTOP_LOGIN_REQUIRED` → step 2.

@@ -173,7 +173,7 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
-| A1 | 热点宝入站点目录：`platforms/desktop/sites.py` 加 `douyin_hot`（douhot.douyin.com），复用 `.douyin.com` 登录态；写探活 URL 与失效判据 | — | 1d | `desktop_login(status)` 对一台已登录创作者中心的桌面报热点宝 ok |
+| A1 ✅ | 热点宝入站点目录：`platforms/desktop/sites.py` 加 `douyin_hot`。spike 证明它**不复用** `.douyin.com` 登录态，是独立 OAuth 会话（cookie 域 `.douhot.douyin.com`，~60 天）；探活 `GET /douhot/v1/user/user_info` `code==0`，昵称/uid/粉丝数字段现成 | — | 1d | 2026-09-09 落地；授权中心与 `desktop_login(status)` 列出 `抖音热点宝`，用户在云桌面扫一次码 |
 | A2 | 采集脚本 spike：dev-browser 在云桌面 Chrome 里取榜单（类目、时间窗），抽字段：标题、链接、作者、播放/点赞/评论、话题、时长、封面；连续 24h 每小时一次，记频控与页面变动 | A1 | 3d | 一天 24 次采集成功率、字段完整率、有无验证码；输出 spike 记录 |
 | A3 | 平台工具 `hot_trends(source="douhot", category, window, limit)`：走 A2 脚本，**按类目缓存榜单**（同类目一天一抓、全体客户共享），只存元数据与链接不落原片；返回结构化 JSON；限流与失败可见 | A2 | 3d | 单测 + 真机一次；两个任务同类目同一天只触发一次抓取 |
 | A4 | 热点源抽象：`source` 可插拔接口与注册表，热点宝是第一个实现 | A3 | 1d | 加第二个源只需新增一个模块 |
@@ -184,7 +184,7 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 |---|---|---|---|---|
 | B1 | 原型：桌面 ffmpeg 场景抽帧（6–12 帧）+ `video_transcribe` + Gemini 3.7 Flash（菜单内、带 vision）一次调用出 JSON：形态判定、主题、人群、钩子、结构（分段秒数）、镜头描述、文案全文、话题、创作要素 | — | 3d | 10 条不同形态热点的输出经人工评分 ≥ 7/10；记单条成本（STT + 多模态 token） |
 | B2 | 字幕型（无配音）热点：帧 OCR 走同一多模态调用，验证准确率 | B1 | 1d | 5 条字幕型样本文案还原 ≥ 90% |
-| B3 | 平台工具 `video_analyze(source_url \| asset_id, budget)`：临时下载到桌面只为抽帧与转写，分析完即删；输出 JSON 校验 schema；成本上限；分析结果按链接哈希缓存 | B1,B2 | 4d | 单测 + 真机；同一热点多个客户只分析一次；报告里的「分析费」= 实际 LLM+STT 落账之和 |
+| B3 ✅ | 平台工具 `video_analyze(source)`（`tool/video_analyze.py`）：source 为 owned asset_id / 工作区路径 / 直链媒体 URL；沙箱 ffmpeg 抽 N 帧+音轨 → OSS `analysis/<user>/<job>/` 中转 → fun-asr 转写 → 视觉模型出 JSON（`video/analysis.py` schema 校验）；**帧数 < min_frames 直接失败不退化**；结果按 (source, 帧数, 转写, 模型) 缓存于 `video_jobs kind=analyze`；转写按分钟落账、视觉调用按 token 计量（kind `video_analyze`），输出 `credits=` | B1,B2 | 4d | 2026-09-09 落地，7 项单测；跨客户共享缓存与网页 URL 解析留给 A3（hot_trends 负责把页面解析成直链） |
 | B4 | 形态 → 配方映射表（口播 / 画面+旁白 / 展示 / 剧情 / 混剪），每种配方给出生成段数、时长、是否需要配音、剪辑模板 | B1 | 1d | 表进技能 references，B3 的输出字段与之对齐 |
 
 ### C · 桌面自动发布（douyin-desktop-publish）

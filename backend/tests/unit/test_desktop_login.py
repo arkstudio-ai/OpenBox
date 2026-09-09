@@ -19,7 +19,10 @@ TS = int(NOW.timestamp())
 # ── Catalogue & script ─────────────────────────────────────────────────────
 def test_catalogue_matches_reconnaissance():
     keys = {s.key for s in sites.list_sites()}
-    assert keys == {"douyin_creator", "douyin_laike", "meituan_merchant", "xiaohongshu_creator"}
+    assert keys == {"douyin_creator", "douyin_hot", "douyin_laike", "meituan_merchant", "xiaohongshu_creator"}
+    hot = sites.get_site("douyin_hot")
+    # 热点宝 is its own OAuth session: never judged from creator-centre cookies.
+    assert ".douyin.com" not in hot.cookie_domains and hot.session_probe.code_path == "code"
     creator = sites.get_site("douyin_creator")
     assert "sessionid" in creator.session_cookies and creator.session_probe.expired_values == (8,)
     laike = sites.get_site("douyin_laike")
@@ -146,7 +149,7 @@ async def test_probe_registers_logged_in_sites_and_notifies_on_expiry(fake_deskt
     await service.probe_workspace(ws, user_id="user-1", level=2)
     payload = fake_desktop["desktop"].calls[-1]
     probed = {s["key"] for s in payload["sites"] if s["session_probe"] is not None}
-    assert probed == {"meituan_merchant"}
+    assert probed == {"meituan_merchant", "douyin_hot"}
 
     # Creator session dies on the server: level-2 forced by the 检测 button.
     fake_desktop["desktop"] = FakeDesktop({"douyin_creator": _rec(probe={"status": 200, "code": 8})})
@@ -230,5 +233,5 @@ async def test_platform_catalogue_is_backward_compatible():
     assert all(entry["kind"] == "oauth" and isinstance(entry["capabilities"], list) for entry in legacy)
     both = await list_platforms(kinds="oauth,desktop")
     desktop = [e for e in both if e["kind"] == "desktop"]
-    assert {e["key"] for e in desktop} == {"douyin_creator", "douyin_laike", "meituan_merchant", "xiaohongshu_creator"}
+    assert {e["key"] for e in desktop} == {"douyin_creator", "douyin_hot", "douyin_laike", "meituan_merchant", "xiaohongshu_creator"}
     assert all(isinstance(e["capabilities"], list) and "configured" in e for e in desktop)

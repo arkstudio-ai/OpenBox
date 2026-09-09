@@ -2671,6 +2671,8 @@ def _transcription_lines(job) -> list[str]:
         lines.append(f"transcript={transcript.get('text') or ''}")
         if transcript.get("duration_ms"):
             lines.append(f"duration_ms={transcript['duration_ms']}")
+    if result.get("credits") is not None:
+        lines.append(f"credits={result['credits']}")
     source = (job.request_data or {}).get("source_asset_id")
     if source:
         lines.append(f"source_asset_id={source}")
@@ -2737,10 +2739,23 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
             transcript = await _provider_transcribe(target, audio_url)
+            credits = None
+            try:
+                from billing.media import settle_transcription
+
+                duration_ms = transcript.get("duration_ms") if isinstance(transcript, dict) else None
+                credits = await settle_transcription(
+                    job, workspace_id=getattr(source, "workspace_id", None) or ctx.workspace_id,
+                    model_id=target.model,
+                    duration_sec=(float(duration_ms) / 1000.0) if isinstance(duration_ms, (int, float)) and duration_ms > 0 else None,
+                )
+            except Exception as exc:  # billing must never lose a finished transcript
+                log.warning(f"transcription {job.id}: settlement failed: {type(exc).__name__}: {exc}")
             await _update_job(
                 job.id,
                 status="completed",
-                result_data={"transcript": transcript},
+                result_data={"transcript": transcript,
+                             "credits": format(credits.normalize(), "f") if credits is not None else None},
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )

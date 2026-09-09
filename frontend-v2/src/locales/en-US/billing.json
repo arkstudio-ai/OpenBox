@@ -125,7 +125,9 @@
       "bash_judge": "Command check",
       "cron_summary": "Scheduled summary",
       "video_compose": "Video composition",
-      "video_generate": "Video generation"
+      "video_generate": "Video generation",
+      "image_gen": "Image generation",
+      "video_transcribe": "Transcription"
     },
     "paymentUnavailable": "Currently unavailable",
     "dateRange": "Filter by date",
@@ -145,7 +147,8 @@
       "minutesBilled": "billed {{value}} min",
       "secondsBilled": "billed {{value}} s",
       "tier": "tier {{value}}",
-      "resolution": "{{value}}"
+      "resolution": "{{value}}",
+      "images": "{{value}} image(s)"
     }
   },
   "orders": {

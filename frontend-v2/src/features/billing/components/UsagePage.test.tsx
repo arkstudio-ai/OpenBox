@@ -356,6 +356,12 @@ describe("media usage rows", () => {
           tokens: { duration_sec: 14.4, minutes_billed: 1, tier: "720p" },
           total_tokens: 0, credits: "0.030000000000", status: "shadow",
           created_at: "2026-09-09T10:58:17Z", pricing_version: "2026-09-05.2",
+        }, {
+          id: "e2", session_id: "s1", session_title: "封面图", session_available: true,
+          model_id: "image-gen:gpt-image-2", kind: "image_gen",
+          tokens: { images: 2 },
+          total_tokens: 0, credits: "0.6", status: "shadow",
+          created_at: "2026-09-09T10:59:17Z", pricing_version: "2026-09-05.2",
         }],
       }
     })
@@ -365,6 +371,8 @@ describe("media usage rows", () => {
     expect(screen.getByText("计费 1 分钟")).toBeDefined()
     expect(screen.getByText("档位 720p")).toBeDefined()
     expect(screen.getByText(/视频合成 · 已统计/)).toBeDefined()
+    expect(screen.getByText("2 张")).toBeDefined()
+    expect(screen.getByText(/图片生成 · 已统计/)).toBeDefined()
     expect(screen.queryByText(/输入/)).toBeNull()
   })
 })

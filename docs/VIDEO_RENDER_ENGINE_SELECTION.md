@@ -282,7 +282,12 @@ cd work/ims-spike
   前端账单页对 `video_*` 事件改显示时长/计费分钟或秒/档位，不再显示 token。
 - [ ] 观察：首稿确认卡在一次会话里出现两次（10:48 与 10:49，第二次是精简稿）。若用户第一次已点「可以」仍重问，
   属技能纪律偏差；若第一次选了缩短，重问是规则内行为。待复现确认
-- [x] 前端账单页渲染 `kind=video_*` 的用量事件（2026-09-09；mobile 只补了词条，dart 行仍按 token 渲染）
+- [x] 前端账单页渲染 `kind=video_*` 的用量事件（2026-09-09）；同日 mobile 账单行也改为按媒体量渲染，
+  并补齐 `image_gen` / `video_transcribe` 两类事件
+- [x] 图片生成与转写落账（2026-09-09）：`rates.json` `media.image-gen`（按张，模型价或 default）与 `media.stt`（按分钟，
+  不足 1 分钟按 1 分钟）；`image_gen` 每次调用一条 `usage_events(kind=image_gen)`，幂等键 `image:<part_id>`，复用不落账；
+  `video_transcribe` 完成时按 `duration_ms` 落账 `kind=video_transcribe`，幂等键 `transcribe:<job_id>`。
+  两处价目仍是 BILLING_PLAN §2 的占位数，运营需定价
 - [ ] 真实 sd2 片段跑一遍 IMS（本次用的是合成测试素材）
 - [ ] 财务：能否付美元 Stripe（决定 Remotion 备选是否成立）
 - [ ] 观察：Diffusion Studio、OpenCut 重写版成熟度（半年后复评）

@@ -418,3 +418,9 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` 加 `quote_generation/settle_generation`（申请秒数 × 模型档位每秒价），`video_generate estimate`
 输出 `estimated_credits`，完成时落账 `usage_events(kind=video_generate)`。前端 UsagePage 对 `video_*` 事件显示
 时长/计费单位/档位；web 与 mobile 词条同步（mobile UI 未改）。
+
+## 图片/转写落账 + mobile 账单媒体行（2026-09-09，同日追加）
+
+`billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
+`image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
+时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。

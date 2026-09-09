@@ -27,6 +27,8 @@ from billing.service import BillingError, billing_mode, lock_balance, post_ledge
 
 USAGE_KIND = "video_compose"
 GENERATION_KIND = "video_generate"
+IMAGE_KIND = "image_gen"
+STT_KIND = "video_transcribe"
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,48 @@ def quote_generation(model_id: str, resolution: str | None, duration_sec: float 
     })
 
 
+def quote_image(model_id: str, count: int, *, rates: dict | None = None) -> MediaQuote:
+    """Credits for generated images: count × the model's per-image price (or the default)."""
+    data = rates if rates is not None else catalogue()
+    base = {"version": data["version"], "verified_at": data["verified_at"], "kind": IMAGE_KIND}
+    model = (model_id or "").rsplit("/", 1)[-1]
+    table = data.get("media", {}).get("image-gen") or {}
+    rate = table.get(model) or table.get("default")
+    key = f"image-gen:{model or 'unknown'}"
+    if not isinstance(rate, dict) or count <= 0:
+        return MediaQuote(key, "image", 0, None, {**base, "model": key, "reason": "No verified price for this image model"})
+    per_image = Decimal(str(rate["per_image"]))
+    if not per_image.is_finite() or per_image < 0:
+        raise ValueError("Invalid media rate")
+    credits = (per_image * int(count)).quantize(PRECISION)
+    return MediaQuote(key, "image", int(count), credits, {
+        **base, "model": key, "currency": rate["currency"], "per_image": str(per_image), "images": int(count),
+        "source": rate.get("source"), "priced_as": model if model in table else "default",
+    })
+
+
+def quote_transcription(model_id: str, duration_sec: float | None, *, rates: dict | None = None) -> MediaQuote:
+    """Credits for speech-to-text: whole minutes of audio × the engine's per-minute price."""
+    data = rates if rates is not None else catalogue()
+    base = {"version": data["version"], "verified_at": data["verified_at"], "kind": STT_KIND}
+    model = (model_id or "").rsplit("/", 1)[-1]
+    rate = (data.get("media", {}).get("stt") or {}).get(model)
+    key = f"stt:{model or 'unknown'}"
+    if not isinstance(rate, dict):
+        return MediaQuote(key, "stt", 0, None, {**base, "model": key, "reason": f"No verified price for {model}"})
+    if duration_sec is None or duration_sec <= 0:
+        return MediaQuote(key, "stt", 0, None, {**base, "model": key, "reason": "Audio duration not reported"})
+    minutes = max(int(rate.get("min_minutes", 1)), math.ceil(float(duration_sec) / 60 - 1e-9))
+    per_minute = Decimal(str(rate["per_minute"]))
+    if not per_minute.is_finite() or per_minute < 0:
+        raise ValueError("Invalid media rate")
+    credits = (per_minute * minutes).quantize(PRECISION)
+    return MediaQuote(key, "stt", minutes, credits, {
+        **base, "model": key, "currency": rate["currency"], "per_minute": str(per_minute),
+        "minutes_billed": minutes, "duration_sec": float(duration_sec), "source": rate.get("source"),
+    })
+
+
 async def precheck_compose(session_id: str | None) -> None:
     """Enforce-mode gate before a paid submit. Shadow/off never refuse."""
     if billing_mode() != "enforce":
@@ -124,29 +168,60 @@ async def precheck_compose(session_id: str | None) -> None:
 
 
 async def settle_compose(job, asset, *, width: int, height: int, duration_sec: float | None) -> Decimal | None:
-    """Record (and in enforce, charge) one finished composition. Idempotent on job id.
-
-    Returns the credits recorded, or None when billing is off, the size is
-    unpriced, or the duration never arrived (recorded as ``unreported`` so the
-    gap is visible rather than silently free).
-    """
+    """Record (and in enforce, charge) one finished composition. Idempotent on job id."""
+    if asset is None:
+        return None
     price = quote_compose(width, height, duration_sec)
-    return await _settle(job, asset, price, kind=USAGE_KIND, key=f"compose:{job.id}", duration_known=duration_sec is not None,
-                         tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "tier": price.tier},
-                         default_title="视频合成")
+    return await settle(key=f"compose:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
+                        session_id=job.session_id, price=price, kind=USAGE_KIND, quantity_known=duration_sec is not None,
+                        tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "tier": price.tier},
+                        default_title="视频合成")
 
 
 async def settle_generation(job, asset, *, model_id: str, resolution: str | None, duration_sec: float | None) -> Decimal | None:
     """Record (and in enforce, charge) one completed generated shot. Idempotent on job id."""
+    if asset is None:
+        return None
     price = quote_generation(model_id, resolution, duration_sec)
-    return await _settle(job, asset, price, kind=GENERATION_KIND, key=f"generate:{job.id}",
-                         duration_known=bool(duration_sec and duration_sec > 0),
-                         tokens={"duration_sec": duration_sec, "seconds_billed": price.minutes_billed, "resolution": resolution, "model": model_id},
-                         default_title="视频生成")
+    return await settle(key=f"generate:{job.id}", workspace_id=asset.workspace_id, user_id=job.user_id,
+                        session_id=job.session_id, price=price, kind=GENERATION_KIND,
+                        quantity_known=bool(duration_sec and duration_sec > 0),
+                        tokens={"duration_sec": duration_sec, "seconds_billed": price.minutes_billed, "resolution": resolution, "model": model_id},
+                        default_title="视频生成")
 
 
-async def _settle(job, asset, price: MediaQuote, *, kind: str, key: str, duration_known: bool,
-                  tokens: dict[str, Any], default_title: str) -> Decimal | None:
+async def settle_image(*, key: str, workspace_id: str, user_id: str, session_id: str | None,
+                       model_id: str, count: int) -> Decimal | None:
+    """Record (and in enforce, charge) one image_gen call that stored ``count`` images.
+
+    ``key`` must be stable per call (the tool-call part id): a retried call
+    that stores the same images is one charge.
+    """
+    price = quote_image(model_id, count)
+    return await settle(key=key, workspace_id=workspace_id, user_id=user_id, session_id=session_id, price=price,
+                        kind=IMAGE_KIND, quantity_known=count > 0,
+                        tokens={"images": count, "model": model_id}, default_title="图片生成")
+
+
+async def settle_transcription(job, *, workspace_id: str, model_id: str, duration_sec: float | None) -> Decimal | None:
+    """Record (and in enforce, charge) one completed transcription. Idempotent on job id."""
+    price = quote_transcription(model_id, duration_sec)
+    return await settle(key=f"transcribe:{job.id}", workspace_id=workspace_id, user_id=job.user_id,
+                        session_id=job.session_id, price=price, kind=STT_KIND,
+                        quantity_known=bool(duration_sec and duration_sec > 0),
+                        tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "model": model_id},
+                        default_title="语音转写")
+
+
+async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str | None, price: MediaQuote,
+                 kind: str, quantity_known: bool, tokens: dict[str, Any], default_title: str) -> Decimal | None:
+    """One ``usage_events`` row per key; ledger post only in enforce.
+
+    Status: ``unreported`` when the billable quantity never arrived (visible,
+    never free), ``unpriced`` when the size/model has no verified price,
+    else ``charged`` (enforce) or ``shadow``. Returns credits for
+    charged/shadow, None otherwise.
+    """
     from sqlalchemy import select
 
     from core.identifier import ascending as generate_id
@@ -155,23 +230,23 @@ async def _settle(job, asset, price: MediaQuote, *, kind: str, key: str, duratio
     from db.models.session import Session
 
     mode = billing_mode()
-    if mode == "off" or asset is None:
+    if mode == "off" or not workspace_id:
         return None
     async with get_db_session() as db:
-        account = await lock_balance(db, asset.workspace_id)
+        account = await lock_balance(db, workspace_id)
         existing = (await db.execute(select(UsageEvent).where(UsageEvent.idempotency_key == key))).scalar_one_or_none()
         if existing is not None:
             return existing.credits
-        session = await db.get(Session, job.session_id) if job.session_id else None
-        if not duration_known:
+        session = await db.get(Session, session_id) if session_id else None
+        if not quantity_known:
             status = "unreported"
         elif price.credits is None:
             status = "unpriced"
         else:
             status = "charged" if mode == "enforce" else "shadow"
         event = UsageEvent(
-            id=generate_id("usage"), idempotency_key=key, workspace_id=asset.workspace_id,
-            user_id=job.user_id, session_id=job.session_id or "", message_id=None,
+            id=generate_id("usage"), idempotency_key=key, workspace_id=workspace_id,
+            user_id=user_id, session_id=session_id or "", message_id=None,
             session_title=(session.title if session and session.title else default_title),
             model_id=price.model_id, kind=kind, tokens=tokens, total_tokens=0,
             credits=price.credits, status=status, pricing=price.snapshot,

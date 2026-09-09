@@ -258,3 +258,11 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 未列出的模型/档位记 `unpriced` 不扣）。`estimate` 返回 `estimated_credits`；enforce 下 submit 前校验余额；片段在
 `_finalize_segment` 完成时按申请时长结算一条 `usage_events(kind=video_generate)`，幂等键 `generate:<job_id>`。
 跨用户复用（dedupe）的片段不产生供应商费用，也不落账。BILLING_REVIEW_2026-09-07 的 B2' 至此覆盖视频合成与生成；图片与转写仍未落账。
+
+## 2026-09-09 媒体计费第三条：图片生成与语音转写
+
+`rates.json` `media.image-gen`（按张：模型价，缺省走 `default`）与 `media.stt`（按分钟，不足 1 分钟按 1 分钟）。
+`image_gen` 成功存图后一条 `usage_events(kind=image_gen)`，幂等键 `image:<tool part_id>`，dedupe 复用不落账；
+`video_transcribe` 完成时按转写返回的 `duration_ms` 落账 `kind=video_transcribe`，幂等键 `transcribe:<job_id>`。
+两者 enforce 下提交前同样校验余额。至此 BILLING_REVIEW_2026-09-07 的 B2'（视频/图片/STT 落账）全部覆盖；
+**价目全部是占位成本价**，`rates.json` 的 `media` 段是运营定价的唯一入口。前端与 mobile 账单页对四类媒体事件按数量渲染。

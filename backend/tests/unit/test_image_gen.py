@@ -264,3 +264,41 @@ def test_fingerprint_is_content_addressed():
     assert _fingerprint(**{**base, "source_digests": ["digest-b"]}) != a
     # n participates, so n>1 entries can never collide with n==1 lookups.
     assert _fingerprint(**{**base, "n": 2}) != a
+
+
+async def test_execute_settles_one_image_charge_per_call(monkeypatch):
+    import core.oss
+    import tool.image_gen as image_mod
+    from billing import media
+
+    target = ProviderTarget("openai", "gpt-image-2", "secret", "https://gateway.test/v1", 600)
+    settings = SimpleNamespace(default_size="auto", default_quality="medium", output_format="png")
+    monkeypatch.setattr(image_mod, "_configured_target", lambda: (target, settings))
+    monkeypatch.setattr(core.oss, "get_oss", lambda: object())
+
+    async def fake_inputs(refs, mask, ctx, selected_oss):
+        return [], None
+
+    async def fake_provider(*_args, **_kwargs):
+        return [b"one", b"two"]
+
+    async def fake_store(ctx, oss, payload, *_args, **_kwargs):
+        return StoredImage(f"asset_{payload.decode()}", f"{payload.decode()}.png", "image/png", 3, "/workspace/generated_images/x.png")
+
+    seen = {}
+
+    async def fake_settle(**kwargs):
+        seen.update(kwargs)
+        from decimal import Decimal
+        return Decimal("0.60")
+
+    monkeypatch.setattr(image_mod, "_load_inputs", fake_inputs)
+    monkeypatch.setattr(image_mod, "_call_provider", fake_provider)
+    monkeypatch.setattr(image_mod, "_store_output", fake_store)
+    monkeypatch.setattr(media, "settle_image", fake_settle)
+
+    ctx = ToolContext(user_id="u", session_id="s", workspace_id="w", part_id="part_9")
+    result = await execute(ImageGenArgs(prompt="two cubes", n=2), ctx)
+
+    assert seen == {"key": "image:part_9", "workspace_id": "w", "user_id": "u", "session_id": "s", "model_id": "gpt-image-2", "count": 2}
+    assert result.metadata["credits"] == "0.6" and "credits=0.6" in result.output

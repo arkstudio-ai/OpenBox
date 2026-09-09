@@ -752,6 +752,12 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
 
     mode = "edit" if args.input_images else "generate"
     try:
+        from billing.media import precheck_compose as _precheck_media
+
+        await _precheck_media(ctx.session_id)
+    except Exception as exc:
+        return ToolResult(title="Image generation refused", output=f"{getattr(exc, 'code', 'BILLING')}: {exc}")
+    try:
         if args.input_images:
             await ctx.update_output("Loading source images from OSS…")
         images, mask = await _load_inputs(args.input_images, args.mask_image, ctx, oss)
@@ -842,6 +848,17 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             ctx,
         )
 
+    credits = None
+    try:
+        from billing.media import settle_image
+
+        credits = await settle_image(
+            key=f"image:{ctx.part_id or stored[0].asset_id}", workspace_id=ctx.workspace_id, user_id=ctx.user_id,
+            session_id=ctx.session_id, model_id=target.model, count=len(stored),
+        )
+    except Exception:  # billing must never fail a stored image
+        log.warning("image_gen settlement failed", exc_info=True)
+
     verb = "Edited" if mode == "edit" else "Generated"
     lines = [
         f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''} with {target.model}.",
@@ -854,6 +871,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             f"- asset_id={item.asset_id}; name={item.name}; path={item.path}; "
             f"{item.mime}; {item.size} bytes; {card}; {workspace}"
         )
+    if credits is not None:
+        lines.append(f"credits={format(credits.normalize(), 'f')}")
     lines.append("Use the asset_id (preferred) or displayed path as input_images for a follow-up edit.")
     return ToolResult(
         title=f"{verb} {len(stored)} image{'s' if len(stored) != 1 else ''}",
@@ -866,6 +885,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             "names": [item.name for item in stored],
             "size": size,
             "quality": quality,
+            "credits": format(credits.normalize(), "f") if credits is not None else None,
         },
     )
 

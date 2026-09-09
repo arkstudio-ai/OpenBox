@@ -150,3 +150,48 @@ async def test_generation_enforce_charges_and_unpriced_tier_is_recorded_not_char
     assert await media.settle_generation(job2, asset2, model_id="doubao-seedance-2-0-fast-260128", resolution="720p", duration_sec=5) is None
     events, ledger, balance = await _events(wid2)
     assert events[0].status == "unpriced" and ledger == [] and balance == Decimal("10")
+
+
+# ── images and transcription ─────────────────────────────────────────────────
+
+def test_image_quote_uses_model_price_or_default_per_image():
+    assert media.quote_image("gpt-image-2", 1).credits == Decimal("0.30")
+    q = media.quote_image("some-new-image-model", 3)
+    assert q.credits == Decimal("0.90") and q.snapshot["priced_as"] == "default" and q.minutes_billed == 3
+    assert media.quote_image("gpt-image-2", 0).credits is None
+
+
+def test_transcription_quote_rounds_up_minutes_and_is_unpriced_for_unknown_engine():
+    assert media.quote_transcription("fun-asr", 6.123).credits == Decimal("0.05")
+    assert media.quote_transcription("fun-asr", 61).credits == Decimal("0.10")
+    assert media.quote_transcription("whisper-1", 10).credits is None
+    assert media.quote_transcription("fun-asr", None).credits is None
+
+
+async def test_image_settlement_is_idempotent_per_call_key(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    job, asset, wid = await _fixtures()
+    first = await media.settle_image(key="image:part_1", workspace_id=wid, user_id=job.user_id, session_id=None, model_id="gpt-image-2", count=2)
+    again = await media.settle_image(key="image:part_1", workspace_id=wid, user_id=job.user_id, session_id=None, model_id="gpt-image-2", count=2)
+    assert first == again == Decimal("0.60")
+    events, ledger, _ = await _events(wid)
+    assert len(events) == 1 and events[0].kind == "image_gen" and events[0].tokens["images"] == 2
+
+
+async def test_transcription_settles_in_enforce_and_unreported_without_duration(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "enforce")
+    job, asset, wid = await _fixtures(balance=Decimal("1"))
+    assert await media.settle_transcription(job, workspace_id=wid, model_id="fun-asr", duration_sec=6.123) == Decimal("0.05")
+    events, ledger, balance = await _events(wid)
+    assert events[0].kind == "video_transcribe" and events[0].status == "charged" and balance == Decimal("0.95")
+    job2, _, wid2 = await _fixtures()
+    assert await media.settle_transcription(job2, workspace_id=wid2, model_id="fun-asr", duration_sec=None) is None
+    events, _, _ = await _events(wid2)
+    assert events[0].status == "unreported"
+
+
+async def test_settle_without_workspace_records_nothing(monkeypatch):
+    monkeypatch.setenv("BILLING_MODE", "shadow")
+    price = media.quote_image("gpt-image-2", 1)
+    assert await media.settle(key="image:x", workspace_id="", user_id="u", session_id=None, price=price,
+                              kind="image_gen", quantity_known=True, tokens={}, default_title="x") is None

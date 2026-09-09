@@ -369,35 +369,12 @@ class _UsageRow extends StatelessWidget {
             Wrap(
               spacing: 12,
               runSpacing: 4,
-              children:
-                  [
-                    Text(
-                      i18n.t(
-                        'billing:usage.input',
-                        vars: {'value': entry.tokens.input},
-                      ),
-                    ),
-                    Text(
-                      i18n.t(
-                        'billing:usage.output',
-                        vars: {'value': entry.tokens.output},
-                      ),
-                    ),
-                    Text(
-                      i18n.t(
-                        'billing:usage.cache',
-                        vars: {'value': entry.tokens.cache},
-                      ),
-                    ),
-                  ].map((widget) {
-                    return DefaultTextStyle(
-                      style: TextStyle(
-                        fontSize: FontSizes.xs,
-                        color: tokens.n600,
-                      ),
-                      child: widget,
-                    );
-                  }).toList(),
+              children: _usageDetailTexts(i18n, entry).map((widget) {
+                return DefaultTextStyle(
+                  style: TextStyle(fontSize: FontSizes.xs, color: tokens.n600),
+                  child: widget,
+                );
+              }).toList(),
             ),
             const SizedBox(height: 8),
             Row(
@@ -423,4 +400,78 @@ class _UsageRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Usage events billed by media quantity show duration / units instead of
+/// token counts (mirrors web `UsagePage.tsx` MEDIA_KINDS).
+const _mediaKinds = {
+  'video_compose',
+  'video_generate',
+  'video_transcribe',
+  'image_gen',
+};
+
+List<Widget> _usageDetailTexts(I18nState i18n, UsageEntry entry) {
+  final tokens = entry.tokens;
+  if (!_mediaKinds.contains(entry.kind)) {
+    return [
+      Text(i18n.t('billing:usage.input', vars: {'value': tokens.input})),
+      Text(i18n.t('billing:usage.output', vars: {'value': tokens.output})),
+      Text(i18n.t('billing:usage.cache', vars: {'value': tokens.cache})),
+    ];
+  }
+  final items = <Widget>[];
+  final duration = tokens.durationSec;
+  if (duration != null) {
+    final rounded = (duration * 10).round() / 10;
+    final shown = rounded == rounded.roundToDouble()
+        ? rounded.toInt().toString()
+        : rounded.toString();
+    items.add(
+      Text(i18n.t('billing:usage.media.duration', vars: {'value': shown})),
+    );
+  }
+  if (tokens.images != null) {
+    items.add(
+      Text(
+        i18n.t('billing:usage.media.images', vars: {'value': tokens.images}),
+      ),
+    );
+  }
+  if (tokens.minutesBilled != null) {
+    items.add(
+      Text(
+        i18n.t(
+          'billing:usage.media.minutesBilled',
+          vars: {'value': tokens.minutesBilled},
+        ),
+      ),
+    );
+  }
+  if (tokens.secondsBilled != null) {
+    items.add(
+      Text(
+        i18n.t(
+          'billing:usage.media.secondsBilled',
+          vars: {'value': tokens.secondsBilled},
+        ),
+      ),
+    );
+  }
+  if (tokens.tier != null) {
+    items.add(
+      Text(i18n.t('billing:usage.media.tier', vars: {'value': tokens.tier})),
+    );
+  }
+  if (tokens.resolution != null) {
+    items.add(
+      Text(
+        i18n.t(
+          'billing:usage.media.resolution',
+          vars: {'value': tokens.resolution},
+        ),
+      ),
+    );
+  }
+  return items;
 }

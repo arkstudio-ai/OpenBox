@@ -50,6 +50,7 @@ export interface UsageEntry {
     seconds_billed?: number
     tier?: string
     resolution?: string
+    images?: number
   }
   total_tokens: number
   credits: string | null

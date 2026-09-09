@@ -306,6 +306,31 @@
         },
         "source": "docs/BILLING_PLAN.md §5.1 MiniMax 官方"
       }
+    },
+    "image-gen": {
+      "_comment": "Image generation, credits per output image, by model with a default. Placeholder from docs/BILLING_PLAN.md §2 (per_call 0.3); replace with the gateway's real cost / sale price.",
+      "default": {
+        "vendor": "openai",
+        "currency": "CNY",
+        "per_image": "0.30",
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      },
+      "gpt-image-2": {
+        "vendor": "openai",
+        "currency": "CNY",
+        "per_image": "0.30",
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      }
+    },
+    "stt": {
+      "_comment": "Speech-to-text, credits per minute of audio, 不足 1 分钟按 1 分钟计. Placeholder from docs/BILLING_PLAN.md §2 (fun-asr 0.05/min).",
+      "fun-asr": {
+        "vendor": "aliyun-dashscope",
+        "currency": "CNY",
+        "per_minute": "0.05",
+        "min_minutes": 1,
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      }
     }
   }
 }

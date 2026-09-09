@@ -1,0 +1,57 @@
+# M0 spike 记录：自动营销模版（2026-09-09 晚）
+
+> 对应 `docs/AUTO_MARKETING_AUTOPILOT_PLAN.md` §7 的 A2 / B1 / C1。环境：gw2 内测，账号 bbdwxh_admin，
+> 云桌面 `ecd-glxi1nk433hliivri`（该桌面已绑定抖音创作者中心登录态，昵称 用户2087843173024）。
+> 所有操作只读，未发布任何内容；花费：2 次 STT + 3 次多模态调用，约 0.3 积分。
+
+## 执行方式（可复用）
+- 桌面侧：`aliyun ecd run-command`（root）→ 若 `127.0.0.1:9222` 无 relay，则按后端 `_relay_start_script` 同样的命令
+  `DEV_BROWSER_MODE=local DEV_BROWSER_CHROME_PORT=9333 npm run start-relay` 起 relay → `cd /opt/openbox/skills/dev-browser && npx tsx <<TS …`，
+  `connect()` 拿到的就是桌面上带登录态的 Chrome。截图/帧/音频用本地生成的 OSS 预签名 PUT 上传到 `bossip-media-sh/spike/`。
+- 分析侧：脚本 `docker cp` 进 gw2 backend 容器，用后端自己的 provider 配置调 `openai/gemini-3.7-flash`（litellm）和
+  `_provider_transcribe`（fun-asr）；帧以预签名 GET URL 传给模型。脚本：`work/`（本次留在 scratchpad，M1 落成工具）。
+- **坑**：GET 签名的 URL 不能用 HEAD 探活（方法不匹配 → 403），用 `Range: bytes=0-0` 的 GET。第一轮因此 0 帧进模型，见 B 的结论 3。
+
+## A · 热点采集（A2）
+
+1. **热点宝（douhot.douyin.com）不共享创作者中心登录态。** 打开即跳 `open.douyin.com/platform/oauth/pc/auth?client_key=awuu67pp4wjdf1hg&scope=user_info`，
+   页面标题「使用抖音账号登录 生活服务热点中心」，要用抖音 App 扫码单独授权一次。→ A1 的站点条目要把它当**独立站点**：
+   `login_url=https://douhot.douyin.com/`，探活 URL 待授权后抓（首页会请求的 XHR），cookie 域 `douhot.douyin.com`。用户在云桌面扫一次即可，之后走 TTL 探活。
+   本次因无人扫码未进入榜单页；授权页已留在该桌面的 Chrome 里（页名 `douhot`）。
+2. **公开热榜可用**：`https://www.douyin.com/hot` 在同一浏览器里直接可读，一屏拿到 10 条「热点视频」
+   （id、时长、点赞数、标题+话题、作者、发布时间）和 20+ 条「抖音热榜」词条（标题+热度）。可作为热点宝授权前的默认源。
+3. **媒体地址可取**：视频详情页 SSR 数据里有 `*.douyinvod.com` 直链，桌面 ffmpeg 4.4 带 `Referer: https://www.douyin.com/` 即可
+   ffprobe/抽帧/抽音，不需要 cookie。3 条中 2 条（25s 口播）成功；1 条 1:26 的宠物展示视频在详情页未找到直链（可能走另一渲染结构或需滚动加载），
+   需要 fallback（监听网络请求或从 `RENDER_DATA` 解析）。
+4. 未测：频控。单账号 3 次页面访问无异常。A3 的缓存设计（同类目一天一抓）本身就把频次压到很低。
+
+## B · 热点分析（B1）
+
+样本：`7680914205477924260`（体制内口播，25.3s）、`7681228553366605102`（健康科普口播，24.7s）。各抽 8 帧（720 宽 JPEG）+ 单声道 16k mp3。
+
+| 项 | 结果 |
+|---|---|
+| STT（fun-asr） | 两条全文准确，含语气词；`duration_ms` 正确 |
+| 多模态（gemini-3.7-flash，8 帧 + 转写） | 输出合法 JSON；形态判定「口播」正确；人物/场景描述经与抽帧人工核对**准确**（红卫衣马尾女生+白书架；灰 polo 中年男+落地窗沙发）；`on_screen_text` 把顶部黄底标题、底部字幕、合规免责声明都读出来了；结构分段与转写对齐 |
+| token | prompt ≈ 9.2k（8 帧 ≈ 8.8k）、completion ≈ 1.6–1.7k；耗时 11–14s |
+| 成本（按现价目） | LLM ≈ 0.088 积分 + STT 0.05 = **≈ 0.14 积分/条** |
+| 复刻要素 | `recreate_elements` 给到人物、场景、节奏、字幕样式、音乐，足以喂给口播技能的 prompt 骨架 |
+
+**结论 1**：8 帧 + 转写这条链路足够支撑 `video_analyze`，成本极低，M1 直接产品化。
+**结论 2**：形态判定字段有效（口播/展示区分靠画面）；需要更多非口播样本验证（本次唯一的展示类样本媒体未抽到）。
+**结论 3（重要）**：**没有帧时模型会自信地编造画面**——第一轮因探活 bug 0 帧进模型，它把口播人物编成「中年男性中式书房」，
+把根本没有媒体的宠物视频编成「毛笔书法写『顺』字」。工具层必须硬性要求 ≥ N 帧才允许出分析，帧缺失就报错，绝不静默退化成纯文本分析。
+
+## C · 桌面自动发布（C1，只做侦察）
+
+- `https://creator.douyin.com/creator-micro/content/upload` 用登录态直接可达，页面含：发布视频/图文/全景/文章四个入口，
+  单个 `input[type=file]`（`accept=video/*,.mp4,.mov,…`，非 multiple），文案「点击上传 或直接将视频文件拖入此区域」，
+  规则提示：≤1 小时、≤16G、支持 4K、建议画幅 16:9 / 9:16 / 3:4 / 4:3。截图已存 OSS `spike/creator-upload-1.png`。
+- 未做：真实上传→填标题/话题→AI 声明→发布。原因：会在该账号产生草稿/作品，需要你指定测试号并确认后再做。
+- 下一步（需确认）：用测试号走一遍到「发布」按钮前一步（不点发布），记录上传耗时、表单字段的 DOM、AI 声明开关位置、可见范围与定时发布选项。
+
+## 对计划的修正
+- A1 热点宝站点条目 = 独立 OAuth 授权，需用户扫码一次（模版创建流程里加一步「授权热点宝」）。
+- A3 的 `hot_trends` 第一版数据源改为**公开热榜 + 热点宝（已授权时）**双源，热榜零门槛。
+- B3 加硬约束：帧数不足即失败；分析结果缓存按视频 id。
+- 媒体直链 fallback 列入 A3。

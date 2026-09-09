@@ -174,9 +174,9 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
 | A1 ✅ | 热点宝入站点目录：`platforms/desktop/sites.py` 加 `douyin_hot`。spike 证明它**不复用** `.douyin.com` 登录态，是独立 OAuth 会话（cookie 域 `.douhot.douyin.com`，~60 天）；探活 `GET /douhot/v1/user/user_info` `code==0`，昵称/uid/粉丝数字段现成 | — | 1d | 2026-09-09 落地；授权中心与 `desktop_login(status)` 列出 `抖音热点宝`，用户在云桌面扫一次码 |
-| A2 | 采集脚本 spike：dev-browser 在云桌面 Chrome 里取榜单（类目、时间窗），抽字段：标题、链接、作者、播放/点赞/评论、话题、时长、封面；连续 24h 每小时一次，记频控与页面变动 | A1 | 3d | 一天 24 次采集成功率、字段完整率、有无验证码；输出 spike 记录 |
-| A3 | 平台工具 `hot_trends(source="douhot", category, window, limit)`：走 A2 脚本，**按类目缓存榜单**（同类目一天一抓、全体客户共享），只存元数据与链接不落原片；返回结构化 JSON；限流与失败可见 | A2 | 3d | 单测 + 真机一次；两个任务同类目同一天只触发一次抓取 |
-| A4 | 热点源抽象：`source` 可插拔接口与注册表，热点宝是第一个实现 | A3 | 1d | 加第二个源只需新增一个模块 |
+| A2 ✅ | 采集脚本 spike：dev-browser 在云桌面 Chrome 里取榜单（类目、时间窗），抽字段：标题、链接、作者、播放/点赞/评论、话题、时长、封面 | A1 | 3d | 2026-09-10 落地于 M0 记录「A3 采集接口」：热点宝 `video_billboard/challenge_billboard/hot_search` 均为 POST JSON，签名只在 URL 上，页面内复用已签名 URL 换 body 即可查任意时间窗/榜单/垂类；垂类过滤形如 `tags:[{value:一级,children:[{value:二级}…]}]`；视频条目自带 `item_url` 直链。**24h 连续频控观测未做**（缓存把频次压到每键每天 1 次，先上线观察） |
+| A3 ✅ | 平台工具 `hot_trends`（`tool/hot_trends.py`，服务 `trends/service.py`）：actions `list / sources / resolve`；`source=auto` 已绑定热点宝走热点宝否则走公开热榜；按 (source, board, window, category, 上海日期) 缓存于 `hot_trend_snapshots`，**全体客户共享**，cache 命中不计费、真采集按 `rates.json media.hot-trends` 落账 `kind=hot_trends`；`min_interval_seconds` 内不重采、每源每日 `max_fetches_per_day` 上限、失败快照可见且同样限流；只存元数据+链接，直链镜像到 `hot_media_links`（TTL 6h）；`resolve` 把公开榜视频页解析成 douyinvod 直链给 `video_analyze` | A2 | 3d | 2026-09-10 落地，12 项单测（同键两工作空间只驱动一次桌面、失败可见不重试、日配额、直链缓存）；真机四条采集脚本（美食视频榜/话题榜/公开热榜/直链解析）通过 |
+| A4 ✅ | 热点源抽象：`trends/sources.py` 的 `HotSource(plan, parse, boards, windows, requires_site)` + `SOURCES` 注册表，`douhot` 与 `douyin_public` 两个实现；工具与服务不按源名分支 | A3 | 1d | 2026-09-10 随 A3 落地；新源 = 一个 `HotSource` 实例（页面 URL、等待的资源、页面内 JS、归一化函数） |
 
 ### B · 热点分析（video_analyze）
 

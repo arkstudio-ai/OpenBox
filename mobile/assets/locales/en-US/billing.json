@@ -127,7 +127,9 @@
       "video_compose": "Video composition",
       "video_generate": "Video generation",
       "image_gen": "Image generation",
-      "video_transcribe": "Transcription"
+      "video_transcribe": "Transcription",
+      "video_analyze": "Video analysis",
+      "hot_trends": "Hot trends"
     },
     "paymentUnavailable": "Currently unavailable",
     "dateRange": "Filter by date",
@@ -148,7 +150,8 @@
       "secondsBilled": "billed {{value}} s",
       "tier": "tier {{value}}",
       "resolution": "{{value}}",
-      "images": "{{value}} image(s)"
+      "images": "{{value}} image(s)",
+      "items": "{{value}} item(s)"
     }
   },
   "orders": {

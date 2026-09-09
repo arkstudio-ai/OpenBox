@@ -12,7 +12,7 @@ import { CreditBalanceCard } from "./CreditBalanceCard"
 import { UsageFilters } from "./UsageFilters"
 
 // Usage events billed by media quantity (duration, minutes, images) rather than tokens.
-const MEDIA_KINDS = new Set(["video_compose", "video_generate", "video_transcribe", "image_gen"])
+const MEDIA_KINDS = new Set(["video_compose", "video_generate", "video_transcribe", "image_gen", "hot_trends"])
 
 function UsageRow({ entry }: { entry: UsageEntry }) {
   const { t } = useTranslation("billing")
@@ -43,6 +43,9 @@ function UsageRow({ entry }: { entry: UsageEntry }) {
           <>
             {entry.tokens.images != null && (
               <span>{t("usage.media.images", { value: formatNumber(entry.tokens.images) })}</span>
+            )}
+            {entry.tokens.items != null && (
+              <span>{t("usage.media.items", { value: formatNumber(entry.tokens.items) })}</span>
             )}
             {entry.tokens.duration_sec != null && (
               <span>{t("usage.media.duration", { value: formatNumber(Math.round(entry.tokens.duration_sec * 10) / 10) })}</span>

@@ -140,7 +140,9 @@
       "video_compose": "视频合成",
       "video_generate": "视频生成",
       "image_gen": "图片生成",
-      "video_transcribe": "语音转写"
+      "video_transcribe": "语音转写",
+      "video_analyze": "视频拆解",
+      "hot_trends": "热点采集"
     },
     "paymentUnavailable": "暂未开放",
     "dateRange": "日期筛选",
@@ -161,7 +163,8 @@
       "secondsBilled": "计费 {{value}} 秒",
       "tier": "档位 {{value}}",
       "resolution": "分辨率 {{value}}",
-      "images": "{{value}} 张"
+      "images": "{{value}} 张",
+      "items": "{{value}} 条"
     }
   }
 }

@@ -83,3 +83,23 @@
 - 媒体直链 fallback 列入 A3。
 - 热点宝站点条目参数已齐（cookie 域、探活接口、判据）；采集必须走页面上下文（签名参数）。
 - 自动发布：标题按 ≤30 字生成；`自主声明=内容由AI生成`；`关联热点` 直接回填当次跟的热点词；`定时发布` 承担节奏控制。
+
+## A3 采集接口（2026-09-10 凌晨，`hot_trends` 落地前的最后一轮探测）
+
+- 热点宝榜单页 `square/hotspot` 自己发起的数据请求（Playwright `page.on('response')` 抓到）：
+  `POST /douhot/v1/material/video_billboard` body `{"sub_type":1001,"date_window":24,"page":1,"page_size":10,"tag_version":"v2"}`
+  （sub_type 1001 总榜 / 1002 低粉爆款 / 1003 高完播 / 1004 高涨粉 / 1005 高点赞；date_window 1/24/72/168）；
+  `POST /material/challenge_billboard`（2001 话题榜 / 2002 飙升）；`POST /dashboard/hot_search/query_list`
+  body `{"date_window":24,"page_num":1,"page_size":20,"sub_type":3001|3002}`；`GET /material/content_tag?sort_key=category_priority` 是 v2 垂类树。
+- **签名只覆盖 URL**：在页面上下文里对 `performance.getEntriesByType('resource')` 里已签名的同一 URL 再发 POST、换任意 body 都返回 code 0
+  （72h/50 条、1005/1h、第 2 页均成功）；改 URL 参数则 `url doesn't match`。→ 采集不用点 UI，页面加载完复用签名 URL 即可。
+- 垂类过滤字段是 `tags`，取值形如 `[{"value":628,"children":[{"value":62804},…]}]`（`content_tag` 的 value）；
+  `tags:[628]`/字符串/单 int → code 5 参数不合法；只给一级 `{"value":628}` 过滤很弱，带二级 children 才是明确的美食内容；
+  只给二级 `{"value":62804}` total 0。UI 里的级联选择器是 Semi Cascader，脚本点不开，字段靠枚举猜出来的。
+- 视频条目字段：`item_id, item_title, item_cover_url, item_duration(ms), nick_name, fans_cnt, play_cnt, publish_time, score, item_url(直链), like_cnt, follow_cnt, follow_rate, like_rate, media_type`（4=视频；图文帖 duration 0、item_url 指向 douyinstatic 图包，`video_analyze` 不能吃）。
+  话题：`challenge_id, challenge_name, play_cnt, publish_cnt, score, trends[]`；搜索：`key_word, search_score, trends[]`。
+- 公开 `www.douyin.com/hot` 只有「热点视频」区（`ul[data-e2e=scroll-list] li`：时长、点赞、标题(img alt)、@作者、相对日期），本次页面上没有 `SSR_RENDER_DATA` 里的结构化榜单，也没有词条榜。
+- 后端驱动方式定为：沿用 `platforms/desktop/cdp.py` 的「桌面上跑一段自带脚本连 9333」模式，新增 `trends/desktop_page.py`（后台 target 打开页面 → 等 host+readyState → 等指定资源出现 → `Runtime.evaluate` 页面内 JS → 关 target）；
+  `platforms/desktop/service.run_command_on_desktop` 抽出来给两者共用（lease、timeline span、错误映射一致）。真机四条脚本（美食视频榜 6 条 code 0、话题榜、公开热榜 20+ 条、直链解析拿到 douyinvod）均通过；
+  直链解析要跳过页面里的 `uuu_265.mp4`（H.265 探测用静态片）。
+- 未做：24 小时连续频控观测；热点宝登录失效时脚本会因 `location.host` 变成 open.douyin.com 而报 `redirected`，工具层先看授权中心状态再采。

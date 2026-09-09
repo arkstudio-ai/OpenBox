@@ -53,6 +53,7 @@ class UsageCredits {
     this.minutesBilled,
     this.secondsBilled,
     this.images,
+    this.items,
     this.tier,
     this.resolution,
   });
@@ -69,6 +70,7 @@ class UsageCredits {
     minutesBilled: asInt(json['minutes_billed']),
     secondsBilled: asInt(json['seconds_billed']),
     images: asInt(json['images']),
+    items: asInt(json['items']),
     tier: asString(json['tier']),
     resolution: asString(json['resolution']),
   );
@@ -80,6 +82,7 @@ class UsageCredits {
   final int? minutesBilled;
   final int? secondsBilled;
   final int? images;
+  final int? items;
   final String? tier;
   final String? resolution;
 }

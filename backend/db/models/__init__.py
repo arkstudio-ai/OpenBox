@@ -32,6 +32,7 @@ from db.models.platform_account import PlatformAccount
 from db.models.publish_job import PublishJob
 from db.models.notification import Notification
 from db.models.question import QuestionCheckpoint, SessionExecution
+from db.models.hot_trend import HotMediaLink, HotTrendSnapshot
 import db.models.workspace_scope  # noqa: F401,E402
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "CreditBalance", "CreditLedger", "UsageEvent", "PaymentOrder", "PaymentOrderRequest", "BillingSubscription",
     "FleetAlert", "FleetSnapshot", "PoolPurchase",
     "PlatformAccount", "PublishJob", "Notification", "QuestionCheckpoint", "SessionExecution",
+    "HotTrendSnapshot", "HotMediaLink",
 ]

@@ -51,6 +51,7 @@ export interface UsageEntry {
     tier?: string
     resolution?: string
     images?: number
+  items?: number
   }
   total_tokens: number
   credits: string | null

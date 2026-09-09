@@ -266,3 +266,11 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 `video_transcribe` 完成时按转写返回的 `duration_ms` 落账 `kind=video_transcribe`，幂等键 `transcribe:<job_id>`。
 两者 enforce 下提交前同样校验余额。至此 BILLING_REVIEW_2026-09-07 的 B2'（视频/图片/STT 落账）全部覆盖；
 **价目全部是占位成本价**，`rates.json` 的 `media` 段是运营定价的唯一入口。前端与 mobile 账单页对四类媒体事件按数量渲染。
+
+## 2026-09-10 媒体计费第四条：热点采集（hot_trends）
+
+`rates.json` `media.hot-trends`（按次：每次**真实采集**一条 `usage_events(kind=hot_trends)`，幂等键 `hot_trends:<snapshot_id>`，
+`tokens={source, items, fetches:1}`）。命中共享缓存的读取不落账；同一 (source, board, window, category) 全体客户一天只会产生一次采集。
+占位价 0.20/次，同样以 `media` 段为运营定价唯一入口。`video_analyze` 的视觉调用沿用 `UsageMeter`（kind `video_analyze`，按 token），
+账单页两种 kind 的词条随本次补齐（web + mobile）。
+

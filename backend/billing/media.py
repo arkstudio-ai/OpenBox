@@ -29,6 +29,7 @@ USAGE_KIND = "video_compose"
 GENERATION_KIND = "video_generate"
 IMAGE_KIND = "image_gen"
 STT_KIND = "video_transcribe"
+TRENDS_KIND = "hot_trends"
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,23 @@ def quote_transcription(model_id: str, duration_sec: float | None, *, rates: dic
     })
 
 
+def quote_hot_trends(source: str, *, rates: dict | None = None) -> MediaQuote:
+    """Credits for one live hot-list collection (cache hits are never billed)."""
+    data = rates if rates is not None else catalogue()
+    base = {"version": data["version"], "verified_at": data["verified_at"], "kind": TRENDS_KIND}
+    table = data.get("media", {}).get("hot-trends") or {}
+    rate = table.get(source) if isinstance(table.get(source), dict) else table.get("default")
+    key = f"hot-trends:{source}"
+    if not isinstance(rate, dict):
+        return MediaQuote(key, "fetch", 0, None, {**base, "model": key, "reason": f"No verified price for {source}"})
+    per_fetch = Decimal(str(rate["per_fetch"]))
+    if not per_fetch.is_finite() or per_fetch < 0:
+        raise ValueError("Invalid media rate")
+    return MediaQuote(key, "fetch", 1, per_fetch.quantize(PRECISION), {
+        **base, "model": key, "currency": rate["currency"], "per_fetch": str(per_fetch), "source": rate.get("source"),
+    })
+
+
 async def precheck_compose(session_id: str | None) -> None:
     """Enforce-mode gate before a paid submit. Shadow/off never refuse."""
     if billing_mode() != "enforce":
@@ -211,6 +229,17 @@ async def settle_transcription(job, *, workspace_id: str, model_id: str, duratio
                         quantity_known=bool(duration_sec and duration_sec > 0),
                         tokens={"duration_sec": duration_sec, "minutes_billed": price.minutes_billed, "model": model_id},
                         default_title="语音转写")
+
+
+async def settle_hot_trends(*, snapshot_id: str, source: str, workspace_id: str, user_id: str,
+                            session_id: str | None, item_count: int) -> Decimal | None:
+    """One row per live collection, keyed on the snapshot; the cached readers pay nothing."""
+    price = quote_hot_trends(source)
+    return await settle(
+        key=f"hot_trends:{snapshot_id}", workspace_id=workspace_id, user_id=user_id, session_id=session_id,
+        price=price, kind=TRENDS_KIND, quantity_known=True,
+        tokens={"source": source, "items": item_count, "fetches": 1}, default_title="热点采集",
+    )
 
 
 async def settle(*, key: str, workspace_id: str, user_id: str, session_id: str | None, price: MediaQuote,

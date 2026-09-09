@@ -270,7 +270,15 @@ cd work/ims-spike
 - [ ] 内测环境（阿里云 gw2，`ai.bossipai.com.cn`）接入：本次 IMS 开通与授权就是在 gw2 所在的阿里云账号上做的，该账号即内测账号；gw2 的 `openbox.json` 加 `video_compose` 段即可。**目前没有独立的生产账号**（DEPLOY.md 的「生产环境标识」只是 2026-09-07 切的角标，价格仍是 0.10 元测试价、计费 shadow）；将来若另起生产账号，IMS 开通 + OSS 授权要在新账号重做一次
 - [x] 技能层：第 8 步双路径 + 第四张确认卡 + `references/compose-timeline.md`（2026-09-09）
 - [x] 计费：报价 / enforce 余额门 / 成功后按实际时长落账（2026-09-09，shadow 与 enforce 均有测试）
-- [ ] 真实口播走一遍 `video_compose`（真实 sd2 片段），对照 ffmpeg 路径成片
+- [x] 内测验收（2026-09-09 18:47–18:58，gw2，账号 bbdwxh_admin，会话 `session_7YBXX3HEDBEP975WEM0D09KHAN`）：
+  720p 两段生成 → STT 卡 → `validate` 报 `estimated_credits=0.03` → 正文展示方案 → 第四张卡四个选项齐全 →
+  点「可以」后才 `submit` → 32 秒完成 → 成片卡出现、输出 `credits=0.03` → 账单新增
+  `video_compose / ims-compose-720p / 0.03 / shadow`（前端显示「已统计」）。成片 14.4s = 8s + 7s − 0.6s 转场重叠，
+  `planned == actual`，属预期；卡上应明说「含转场重叠后总长 14.4s」，已加进 references/compose-timeline.md。
+- [ ] 视频**生成**的估价与落账（`video_generate estimate` 目前不返回金额 → 技能按「预计费用暂不可得」处理）：
+  照 `billing/media.py` 的模式给 `rates.json` 加视频模型按秒×分辨率价目，这是 BILLING_REVIEW 的 B2'，下一项
+- [ ] 观察：首稿确认卡在一次会话里出现两次（10:48 与 10:49，第二次是精简稿）。若用户第一次已点「可以」仍重问，
+  属技能纪律偏差；若第一次选了缩短，重问是规则内行为。待复现确认
 - [ ] 前端账单页渲染 `kind=video_compose` 的用量事件（按分钟而非 token）
 - [ ] 真实 sd2 片段跑一遍 IMS（本次用的是合成测试素材）
 - [ ] 财务：能否付美元 Stripe（决定 Remotion 备选是否成立）

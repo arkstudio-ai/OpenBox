@@ -23,6 +23,9 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
   `releases/20260909-compose-93a6e62/`。
 - 容器内验收：34 个内置工具含 `video_compose`；`get_config().video_compose` 读到新段；OSS `bossip/cn-shanghai`；
   用只读 `GetMediaProducingJob` 查历史任务，IMS 自 gw2 可达。`/api/environment` 仍为 `prod`（角标）。
+- 用户验收（18:47–18:58，账号 bbdwxh_admin）：两段 720p 生成与 STT 卡正常；合成前 `validate` 报 0.03 积分并出第四张
+  「合成确认」卡；点「可以」后才提交，32 秒完成，成片卡与 `credits=0.03` 输出正确；账单新增 `video_compose` 0.03（shadow）。
+  已知偏差：视频生成估价无金额（生成侧计费未做，另立任务）；首稿确认卡出现两次（待复现定性）。
 - 回滚：override 的 backend image 改回 `openbox-backend:20260909-qwh-56ef0f8`（`old_image.txt`），恢复备份的
   `openbox.json`，`docker compose up -d --no-deps backend`。无迁移，不需恢复数据库。
 

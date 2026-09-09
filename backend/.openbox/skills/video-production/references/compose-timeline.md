@@ -46,7 +46,7 @@ costs money the moment you `submit`, so the order is fixed:
 
 - Seconds and canvas fractions only. Never pixels, never IMS field names.
 - `shots[].duration_sec` = the take's **measured** length (`ffprobe`), not the planned one.
-- `transition_out` sits on the shot it leads out of; it shortens the total by its length.
+- `transition_out` sits on the shot it leads out of; it shortens the total by its length — two 7.5 s shots with a 0.6 s fade make a 14.4 s film, not 15 s. Card 4 must state the `duration_sec` from `validate` as the real length, with the words 含转场重叠.
 - `fit: cover` crops to fill (default for vertical talking heads); `contain` letterboxes on purpose.
 - Captions: one per spoken phrase, non-overlapping, text = accepted STT words. The tool places them bottom-centre.
 - `texts[]`: banners. `align=center` ignores `x`; `y` is the top edge as a fraction of height.

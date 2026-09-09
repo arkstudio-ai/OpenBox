@@ -5,7 +5,29 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 视频结果排版与前端资源恢复（仅前端）
+## 当前阿里云发布：2026-09-09 独立视频附件交付的分段折叠（仅前端）
+
+- 21:04:10–21:04:36（北京时间）gw2 frontend 发布 `20260909-direct-video-0a92fd8`，源码
+  `main@0a92fd8` 已推送。修复 `video_generate → share_file → 最终答复` 没有 `video_final`
+  标记时不折叠的问题；只对来源匹配且已完成的独立单段交付兜底，不把预览/失败/等待当成成片。
+- 保留此前分段在成片上方、手动展开、缺失 chunk 恢复与 nginx DNS 修复。Web 457 项、Flutter
+  173 项、Chromium 12 个流程通过。用户授权的真实 Chrome 历史会话刷新后默认折叠，
+  桌面/390 px 窄屏手动操作与最终视频预览均通过，验收后恢复浏览器原尺寸。
+  Flutter 源码已推送，本次未发布 Android/iOS 安装包。
+- 本地干净导出 `git archive 0a92fd8` 构建 `linux/amd64`；镜像级回归、生产 loopback canary、
+  前端运行时完整 env 一致性检查通过后仅切换 frontend。backend 保持 `20260909-media-998219e`，
+  backend/postgres/redis 的容器与重启计数均未变，四服务 healthy；无迁移。仅 override 的
+  frontend image 改变，其余生产配置哈希不变；AWS、Logto、无影云未修改。
+- 镜像 ID `sha256:cfa579b5661d2a2fd53969976238b62b5b588dc4f884167b75537cf131ebc267`；
+  包 SHA-256 `72a40990c25ef452eb1b500f603e43a5028773a913e17c5fbbcd6930c4208a13`。
+  公网 104 个文件逐一匹配镜像，缓存/MIME/缺失资源/生产登录配置检查通过；OSS 临时包已删除。
+- 备份 `/opt/openbox/backups/20260909-direct-video-0a92fd8/activation-20260909T130408Z/`，
+  含已验证的数据库 dump、配置和激活报告；本地及 `releases/20260909-direct-video-0a92fd8/`
+  的镜像包保留。回滚仅恢复前端 `20260909-ui2-4d2a578`，执行 `up -d --no-deps frontend`。
+- 切换期间首页/API 各 107 次采样、10 次 502，约 10.8 秒后恢复且后续持续 200；
+  详情及仓库已有移动端门禁问题见 [追加 QA 记录](VIDEO_LAYOUT_AND_FRONTEND_RECOVERY_QA_20260909.md)。
+
+## 历史阿里云发布：2026-09-09 视频结果排版与前端资源恢复（仅前端）
 
 - 20:35:34–20:35:59（北京时间）gw2 frontend 切换至 `20260909-ui2-4d2a578`，源码 `main@4d2a578`。
   backend 保持 `20260909-media-998219e`，backend/postgres/redis 容器和重启次数未变，四服务 healthy；无迁移。

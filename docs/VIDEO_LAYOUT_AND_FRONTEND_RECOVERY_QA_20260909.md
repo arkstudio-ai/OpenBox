@@ -161,5 +161,34 @@ TypeScript、i18n、ESLint 通过（0 errors，29 条已有 warnings）。Flutte
 本次未改这些文件，不把这些门禁描述为通过。浏览器首轮测试拦截范围误匹配 Vite 源码路径，
 已限定为根 `/api/` 后完整重跑；最终 12 项为无重试通过。
 
-发布及真实浏览器验收结果将记录在后续追加记录中。Flutter 源码随代码推送，
-手机安装包不随本次 Alibaba Web 镜像自动发布。
+### 追加发布与真实会话验收
+
+- 修复代码 `0a92fd8b1b84d724413580098033770b3cabe49c` 已推送 `origin/main`。
+  2026-09-09 21:04:10–21:04:36（北京时间）gw2 前端发布为
+  `openbox-frontend-v2:20260909-direct-video-0a92fd8`，22 秒达到 healthy；无回滚。
+  后端仍为 `20260909-media-998219e`，backend/postgres/redis 的容器 ID 和重启计数均未变。
+  四服务 healthy，数据库 revision `e1f3a5b7c9d2` 未变，无迁移。
+- 以该提交 `git archive` 干净导出，本地构建 `linux/amd64`；固定生产同版 nginx 1.31.3，
+  实际镜像通过 Docker nginx 全回归，以及上线前的 loopback canary。
+  完整前端运行时环境变量前后一致；`.env`、基础 compose、backend.env、openbox.json
+  哈希均未变，override 只替换 frontend image。未部署 AWS、未修改无影云/Logto 配置。
+- 镜像 ID `sha256:cfa579b5661d2a2fd53969976238b62b5b588dc4f884167b75537cf131ebc267`；
+  中转包 SHA-256 `72a40990c25ef452eb1b500f603e43a5028773a913e17c5fbbcd6930c4208a13`，
+  本地与服务器装载后一致。公网 104 个页面/静态文件逐个与镜像哈希一致；HTML no-store、
+  JS/CSS MIME/immutable、缺失资源 404/no-store、prod 环境、生产 Logto、匿名 me 401 均通过。
+- 用户授权的真实 Chrome 会话 `session_7YBXX47JK061XV1D1ASW5MKCMK`：
+  发布前 `index-DIoMI-Id.js`、一个分段标题、无折叠按钮；确认无未发草稿后刷新，
+  加载 `index-JpZAHKK0.js`，分段按钮 `aria-expanded=false`、分段卡不挂载，最终视频保留。
+  手动展开后分段在最终视频上方，再次收起正常。390×844 真实页面无横向溢出，
+  折叠按钮高 44 px，展开/收起均通过；视频弹层 readyState=4、768×1344、无媒体错误。
+  验收后关闭弹层、恢复 1512×714 原始视口、保持分段折叠；未发送消息或重新生成视频。
+- 2 分钟可用性采样：首页/API 各 107 次（97 次 200、10 次 502）；21:04:11.035
+  首个失败、21:04:21.804 恢复，约 10.8 秒，之后至 21:06:02 持续 200。
+  这是单实例前端切换窗口，不宣称零停机。
+- 备份 `/opt/openbox/backups/20260909-direct-video-0a92fd8/activation-20260909T130408Z/`
+  （0700），含配置、旧镜像信息、activation.json 和经 `pg_restore --list` 验证的数据库 dump；
+  dump SHA-256 `f96237a90a0e361edeae50760f6d4c09ce067226236c2e05c25048743e4dd975`。
+  回滚仅恢复旧前端 `20260909-ui2-4d2a578` 并 `up -d --no-deps frontend`，无需恢复数据库。
+  临时 OSS 对象已删除、目录对象数为 0；本地/服务器镜像包和备份仍保留。
+
+Flutter 源码随代码推送，本次未打包或发布 Android/iOS 新安装包；手机浏览器使用上述已发布 Web 版本。

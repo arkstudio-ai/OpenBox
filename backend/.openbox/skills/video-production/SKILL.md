@@ -44,12 +44,12 @@ Use `creator_context(action="get_user_context")`; empty is normal. Propose at mo
 
 ### 2. Write and confirm the whole script — card 1
 
-Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied, draft 45–60s first; do not ask duration before showing a usable script. Print the complete script, then invoke the `question` tool once with:
+Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied, draft 45–60s first; do not ask duration before showing a usable script. **Fit the length before the card, not after it**: run `$S/split_script.py` and `$S/plan_shots.py` on the draft (step 3's commands) and, if the honest total misses the target by more than max(2s, 15%), rewrite until it fits. Print the complete fitted script with its computed length (e.g. 约 15 秒), then invoke the `question` tool once with:
 
 - 时长：`可以` / `短到约 30 秒` / `长到 60–75 秒` / `需要修改`
 - 字幕：`配字幕（默认）` / `不配字幕`
 
-If duration was supplied, honour it and still ask the subtitle choice. On edits, print the full revision and repeat card 1. After confirmation:
+If duration was supplied, honour it and still ask the subtitle choice. Card 1 repeats only when the **person** asks for a change: after 「可以」 you never rewrite, shorten or lengthen the script on your own — a length problem found later is reported on the next card as a choice, not fixed silently (2026-09-09: a confirmed 15 s script was re-timed to 17 s in step 3, trimmed by the agent, and card 1 was shown twice). On the person's edits, print the full revision and repeat card 1. After confirmation:
 
 ```bash
 python3 "$S/state.py" set --slug <slug> --key script --value "<完整讲稿>"
@@ -65,7 +65,7 @@ python3 "$S/split_script.py" --text "<完整讲稿>" --max-chars 40
 python3 "$S/plan_shots.py" --target <asked> --rate <pace> --min-shot-seconds <floor> --max-shot-seconds <ceiling> --line "…" --line "…"
 ```
 
-The splitter emits `plan_shots_args`. Forty characters is advice, not a universal cap. Always send an explicit duration; do not use `-1`. Never divide the requested total by the shot count. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Both bounds come from the selected model: Seedance takes 4–15s, Wan 3.0 takes 2–30s; re-read others. If honest total differs from the request, state the exact duration and offer script edits instead of squeezing delivery.
+The splitter emits `plan_shots_args`. Forty characters is advice, not a universal cap. Always send an explicit duration; do not use `-1`. Never divide the requested total by the shot count. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Both bounds come from the selected model: Seedance takes 4–15s, Wan 3.0 takes 2–30s; re-read others. The honest total should already match, because step 2 fitted it. If it still differs, do not touch the script: carry the exact duration onto card 2 as a choice (accept the honest length / edit the script) instead of squeezing delivery or re-running card 1.
 
 ### 4. Assign materials and write prompts
 

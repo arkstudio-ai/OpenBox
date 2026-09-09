@@ -5,7 +5,27 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 video_compose（IMS 云端合成 + 合成计费）
+## 当前阿里云发布：2026-09-09 视频生成落账 + 账单页媒体事件（前后端）
+
+- 19:52:25–19:53:07（北京时间）gw2 **backend → frontend 串行**切换至 `20260909-billing-6a193bd`，源码 `main@6a193bd`
+  （PR [#4](https://github.com/arkstudio-ai/OpenBox/pull/4) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。
+  backend 19 秒 healthy，frontend 23 秒 healthy；切换后公网首页与 `/api/environment` 连续 6 组采样全部 200
+  （切换瞬间的单实例断档窗口未被采样覆盖，不宣称零停机）。
+- **接替的是同事的 `20260909-minimax-1bc6743`**（分支 `codex/minimax-video-submit-fix`，未直接合 main）。发布前逐文件核对：
+  该分支的全部修复文件与 `main@6a193bd` 逐字节一致（main 上对应 `e4670f6`/`abc0c4d`），main 只多出本次计费与前端改动及文档，
+  因此本次发布是线上代码的严格超集，MiniMax 修复未丢。`config/openbox.json` 未改（含同事写入的 MiniMax `size` 配置与 `video_compose` 段）。
+- 内容：`video_generate estimate` 返回 `estimated_credits`；片段完成按申请时长落账 `usage_events(kind=video_generate)`；
+  `rates.json` `media.video-gen` 价目（上游刊例成本价占位，运营改数即改售价）；账单页 `video_*` 事件显示时长/计费单位/档位。
+- 本地 `git archive 6a193bd` 干净导出构建 `linux/amd64`；中转包 SHA-256 backend `89c11d47…f81f925e`、frontend `517ebd39…cfc781f5`；
+  服务器装载后 image ID backend `sha256:d07db9d3…6328ec8`、frontend `sha256:a503afae…d5d75d` 与本机一致。OSS 中转对象已删。
+- 切换前确认无运行中会话、无在途视频任务。备份 `/opt/openbox/backups/20260909-billing-6a193bd/activation-20260909T115217Z/`
+  （0700；`preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-billing-6a193bd/`。
+- 容器内验收：34 个工具含 `video_compose`；`quote_generation('wan3.0-video','720p',5)=3.00`、`quote_compose(720,1280,14.4)=0.03`；
+  MiniMax `wire_shape=size`；前端 bundle `assets/billing-*.js` 含「视频合成」词条。
+- 回滚：override 两条 image 改回 `openbox-backend:20260909-minimax-1bc6743` / `openbox-frontend-v2:20260909-admin-skills-d445b9f`
+  （见 `old_images.txt`），backend → frontend 串行 `up -d --no-deps`。无迁移，不需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 video_compose（IMS 云端合成 + 合成计费）
 
 - 18:31:16–18:31:34（北京时间）gw2 后端切换至 `20260909-compose-93a6e62`，源码 `feat/video-compose-ims@93a6e62`
   （基于 `main@ac0861c`，PR [#3](https://github.com/arkstudio-ai/OpenBox/pull/3)）；前端继续 `20260909-admin-skills-d445b9f`。

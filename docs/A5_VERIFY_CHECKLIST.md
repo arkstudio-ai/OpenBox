@@ -3,6 +3,8 @@
 > 2026-09-08。测试环境，不要求覆盖边界；每条按"怎么做 → 应该看到什么"走一遍，结果直接记在本文末尾的表里。
 > 背景与实现细节见 `docs/A5_AUTHORIZATION_CENTER.md`（开放平台 OAuth + 投稿）与 `docs/A5_DESKTOP_LOGIN_STATE.md`（云电脑登录态）。
 
+> **2026-09-09 更新**：gw2 已由 andrew 切到 `20260909-ask-2183504`（backend+frontend），落地页已合入 main，0.1 不用再做，§1/§2 前端项可以直接测。
+>
 > **2026-09-08 20:30 更新**：Codex 报的两处阻塞已修（详见 `A5_DESKTOP_LOGIN_STATE.md` §7.6）：① `/api/platforms` 默认只回 OAuth，旧前端不再崩，gw2 backend 已切 `20260908-a5fix-7c891ee`；② 桌面 dev-browser 技能改走运行时正规下发，`--check` ready 且 SKILL.md 含登录态前置段。1.1 与 3.1 可以重跑；0.1 的候选前端镜像改为 `openbox-frontend-v2:20260908-a5fix-7c891ee`（已在 gw2 机器上）。
 
 ## 0. 环境事实
@@ -13,12 +15,12 @@
 | 登录账号 | `bbdwxh_admin`（该工作空间 owner；密码找用户） |
 | 工作空间 id | `01M1VTTN99V33P1ASKFT5TSM2P` |
 | 该工作空间的云电脑 | `ecd-glxi1nk433hliivri`（隧道 ssh / up；已登录：抖音创作者中心、抖音来客、美团经营宝；小红书未登录） |
-| gw2 当前镜像 | backend `20260908-a5fix-7c891ee`；**frontend 仍是队友钉的 `20260908-landing-8b80e28`，没有"云电脑登录态"卡** |
+| gw2 当前镜像 | backend + frontend `20260909-ask-2183504`（`main@2183504`，andrew 09-09 10:34 切换；同时含落地页、`/api/platforms` 兼容修复与"云电脑登录态"卡，线上 `AuthCenterRoute-BKEUV8Cu.js` 已核实带 `kinds=oauth,desktop`） |
 | 远程执行 | `aliyun ecs RunCommand --RegionId cn-shanghai --InstanceId.1 i-uf66pcsepxpc23v5qsts --Type RunShellScript --ContentEncoding Base64 --CommandContent <base64脚本>`，结果 `aliyun ecs DescribeInvocationResults --RegionId cn-shanghai --InvokeId <t-…>`（Output 是 base64） |
 | gw2 上的库 | `docker exec openbox-postgres-1 psql -U openbox -d openbox -Atc "<sql>"` |
 | 抖音开放平台控制台 | 授权回调 `https://ai.bossipai.com.cn/api/platform-accounts/douyin/callback`、Webhook `https://ai.bossipai.com.cn/api/webhooks/douyin`（用户已配） |
 
-### 0.1 先把 gw2 前端切到含卡片的版本（否则 §2 前端项没法测）
+### 0.1 ~~先把 gw2 前端切到含卡片的版本~~（2026-09-09 已无需：gw2 前端已是 `20260909-ask-2183504`，含卡片与落地页；以下留档）
 
 镜像 `openbox-frontend-v2:20260908-a5fix-7c891ee` 已在 gw2 机器上。gw2 的 `/opt/openbox/docker-compose.override.yml` 把 frontend 钉在队友的 `landing-8b80e28`（该提交不在 main）。**切换会把落地页改动换掉，做之前跟 andrew 说一声**；要恢复就把 override 里的行改回去再 `docker compose up -d --no-deps frontend`。
 

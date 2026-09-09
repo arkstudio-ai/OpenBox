@@ -5,7 +5,23 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 视频生成落账 + 账单页媒体事件（前后端）
+## 当前阿里云发布：2026-09-09 图片/转写落账 + 账单页四类媒体事件（前后端）
+
+- 20:18:29–20:19:11（北京时间）gw2 backend → frontend 串行切换至 `20260909-media-998219e`，源码 `main@998219e`
+  （PR [#5](https://github.com/arkstudio-ai/OpenBox/pull/5) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。
+  backend 19 秒 healthy，frontend 23 秒 healthy；切换后公网首页与 `/api/environment` 连续 6 组采样全 200。
+- 接替 `20260909-billing-6a193bd`；main 在两次发布之间无他人提交。`config/*`、`.env`、基础 compose 未改，只改 override 两条 image。
+- 内容：`image_gen` 每次调用落账 `usage_events(kind=image_gen)`（按张，幂等键 `image:<part_id>`）；`video_transcribe` 完成时按
+  `duration_ms` 落账 `kind=video_transcribe`；`rates.json` `media.image-gen` / `media.stt` 占位价；web 账单行媒体类型扩到四种。
+  mobile 账单行同批改为按媒体量渲染，但 App 走独立发版，本次未发布。
+- 本地 `git archive 998219e` 干净导出构建；中转包 SHA-256 backend `b323571a…de4a464c`、frontend `054b051f…edf385e2`；
+  服务器装载后 image ID backend `sha256:29949b2c…369cc5a1`、frontend `sha256:a3dfef87…4676f19e` 与本机一致。OSS 中转对象已删。
+- 切换前无运行中会话、无在途视频/转写任务。备份 `/opt/openbox/backups/20260909-media-998219e/activation-20260909T121821Z/`
+  （0700；`preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-media-998219e/`。
+- 容器内验收：34 个工具；四类报价函数 image 0.30 / stt 0.05 / wan3 720p 5s 3.00 / compose 14.4s 0.03；前端 bundle 含「图片生成」词条。
+- 回滚：override 两条 image 改回 `20260909-billing-6a193bd`，backend → frontend 串行 `up -d --no-deps`。无迁移。
+
+## 历史阿里云发布：2026-09-09 视频生成落账 + 账单页媒体事件（前后端）
 
 - 19:52:25–19:53:07（北京时间）gw2 **backend → frontend 串行**切换至 `20260909-billing-6a193bd`，源码 `main@6a193bd`
   （PR [#4](https://github.com/arkstudio-ai/OpenBox/pull/4) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。

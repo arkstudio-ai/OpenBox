@@ -345,9 +345,10 @@ String? _captionFor(
 }
 
 int _resultOrder(ArtifactGroup group) {
-  if (group.role == 'final') return 0;
-  if (group.role == 'result') return 1;
-  return 2;
+  if (group.artifactKind == 'video_segment') return 0;
+  if (group.role == 'final') return 1;
+  if (group.role == 'result') return 2;
+  return 3;
 }
 
 /// Build the assistant view over a turn's messages.
@@ -471,7 +472,10 @@ AssistantContentView buildAssistantContentView(
           if (byRole != 0) return byRole;
           if (a.artifactKind == 'video_segment' &&
               b.artifactKind == 'video_segment') {
-            return (a.ordinal ?? 1 << 30).compareTo(b.ordinal ?? 1 << 30);
+            final ordinal = (a.ordinal ?? 1 << 30).compareTo(
+              b.ordinal ?? 1 << 30,
+            );
+            if (ordinal != 0) return ordinal;
           }
           return a.order.compareTo(b.order);
         });

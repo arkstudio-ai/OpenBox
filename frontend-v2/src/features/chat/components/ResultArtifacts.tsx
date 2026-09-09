@@ -1,8 +1,17 @@
-import { CheckCircle2, CircleAlert, FileArchive, Film, ImageIcon, MonitorCheck } from "lucide-react"
+import { useId, useState } from "react"
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleAlert,
+  FileArchive,
+  Film,
+  ImageIcon,
+  MonitorCheck,
+} from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import type { ArtifactGroup } from "../lib/content-view"
-import { isAudioPart, isGalleryMedia } from "../lib/media"
+import { isAudioPart, isGalleryMedia, isVideoPart } from "../lib/media"
 import { AudioPreview } from "./AudioPreview"
 import { AttachmentGallery } from "./AttachmentGallery"
 import { FileChip } from "./PatchChip"
@@ -136,6 +145,45 @@ function VerificationCard({ group }: { group: ArtifactGroup }) {
   )
 }
 
+function SegmentCollection({ groups, collapsible }: { groups: ArtifactGroup[]; collapsible: boolean }) {
+  const { t } = useTranslation("chat")
+  const [expanded, setExpanded] = useState(false)
+  const panelId = useId()
+  const open = !collapsible || expanded
+  const title = t("artifacts.segmentCollection", { count: groups.length })
+  return (
+    <section className="min-w-0">
+      {collapsible ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setExpanded((value) => !value)}
+          className="text-n600 hover:text-ink focus-visible:ring-n400 flex min-h-11 w-full items-center gap-2 rounded-lg text-start text-xs font-medium focus-visible:ring-2"
+        >
+          <ChevronDown
+            aria-hidden
+            className={cn("size-4 shrink-0 transition-transform", !open && "-rotate-90")}
+          />
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{title}</span>
+          <span className="shrink-0">{t(open ? "toolDetail.collapse" : "toolDetail.expand")}</span>
+        </button>
+      ) : (
+        <div className="text-n600 mb-2 text-xs font-medium">{title}</div>
+      )}
+      <div id={panelId} hidden={!open}>
+        {open ? (
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {groups.map((group, index) => (
+              <ArtifactCard key={group.id} group={group} segmentNumber={index + 1} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 export function ResultArtifacts({
   groups,
   verification,
@@ -143,32 +191,34 @@ export function ResultArtifacts({
   groups: ArtifactGroup[]
   verification: ArtifactGroup | null
 }) {
-  const { t } = useTranslation("chat")
-  const finals = groups.filter((group) => group.role === "final")
+  const finals = groups.filter((group) => group.role === "final" && group.artifactKind !== "video_segment")
   const segments = groups.filter((group) => group.artifactKind === "video_segment")
   const ordinary = groups.filter((group) => group.role !== "final" && group.artifactKind !== "video_segment")
+  // Only an attached, displayable final video folds its materials. Final prose,
+  // another kind of deliverable, and a pending/failed render are not a final video.
+  const finalVideoAssets = groups
+    .filter((group) => group.artifactKind === "video_final")
+    .flatMap((group) =>
+      group.parts.filter((part) => isGalleryMedia(part) && isVideoPart(part)).map((part) => part.asset_id!),
+    )
+    .sort()
   if (groups.length === 0 && !verification) return null
 
   return (
     <div className="mt-3 flex flex-col gap-3">
+      {segments.length > 0 ? (
+        <SegmentCollection
+          key={JSON.stringify(finalVideoAssets)}
+          groups={segments}
+          collapsible={finalVideoAssets.length > 0}
+        />
+      ) : null}
       {finals.map((group) => (
         <ArtifactCard key={group.id} group={group} hero />
       ))}
       {ordinary.map((group) => (
         <ArtifactCard key={group.id} group={group} />
       ))}
-      {segments.length > 0 ? (
-        <section>
-          <div className="text-n600 mb-2 text-xs font-medium">
-            {t("artifacts.segmentCollection", { count: segments.length })}
-          </div>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {segments.map((group, index) => (
-              <ArtifactCard key={group.id} group={group} segmentNumber={index + 1} />
-            ))}
-          </div>
-        </section>
-      ) : null}
       {verification ? <VerificationCard group={verification} /> : null}
     </div>
   )

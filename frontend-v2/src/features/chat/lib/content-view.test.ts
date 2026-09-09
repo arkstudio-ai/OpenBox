@@ -39,3 +39,19 @@ describe("durable ask is not a failed final answer", () => {
     expect(view.incomplete).toBe(false)
   })
 })
+
+describe("video artifact reading order", () => {
+  it("orders materials by segment number before the final, preserving ties and unknown ordinals", () => {
+    const result = message("stop")
+    result.parts = [
+      { type: "file", id: "final", path: "final.mp4", relation: { kind: "video_final", role: "final" } },
+      { type: "file", id: "second", path: "second.mp4", relation: { kind: "video_segment", ordinal: 2 } },
+      { type: "file", id: "first", path: "first.mp4", relation: { kind: "video_segment", ordinal: 1 } },
+      { type: "file", id: "revision", path: "revision.mp4", relation: { kind: "video_segment", ordinal: 1 } },
+      { type: "file", id: "unknown", path: "unknown.mp4", relation: { kind: "video_segment" } },
+    ]
+    expect(buildAssistantContentView([result], false).resultGroups.map((group) => group.parts[0].id)).toEqual(
+      ["first", "revision", "second", "unknown", "final"],
+    )
+  })
+})

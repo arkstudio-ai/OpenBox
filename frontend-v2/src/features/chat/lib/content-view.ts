@@ -275,9 +275,10 @@ function groupArtifacts(
 }
 
 function resultOrder(group: ArtifactGroup): number {
-  if (group.role === "final") return 0
-  if (group.role === "result") return 1
-  return 2
+  if (group.artifactKind === "video_segment") return 0
+  if (group.role === "final") return 1
+  if (group.role === "result") return 2
+  return 3
 }
 
 /** The segment's QA fields land on the artifact only when the file itself did
@@ -403,7 +404,8 @@ export function buildAssistantContentView(
       const role = resultOrder(a) - resultOrder(b)
       if (role !== 0) return role
       if (a.artifactKind === "video_segment" && b.artifactKind === "video_segment") {
-        return (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
+        const ordinal = (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
+        if (ordinal !== 0) return ordinal
       }
       return a.order - b.order
     })

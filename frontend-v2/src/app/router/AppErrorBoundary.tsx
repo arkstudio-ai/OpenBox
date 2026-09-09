@@ -1,17 +1,41 @@
+import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useRouteError } from "react-router"
 import { paths } from "@/app/router/paths"
+import { isChunkLoadError, recoverChunkLoadError, reloadPage } from "@/shared/lib/chunk-recovery"
 
 export function AppErrorBoundary() {
   const { t } = useTranslation("common")
   const error = useRouteError()
-  console.error("[route error]", error)
+  const chunkFailure = isChunkLoadError(error)
+  useEffect(() => {
+    console.error("[route error]", error)
+    recoverChunkLoadError(error)
+  }, [error])
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-bg">
-      <span className="text-2xl font-medium text-ink">{t("state.error")}</span>
-      <Link to={paths.app} className="rounded-full bg-ink px-5 py-2 text-md text-bg">
-        {t("action.back")}
-      </Link>
+    <div
+      className="bg-bg flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center"
+      role="alert"
+    >
+      <h1 className="text-ink text-2xl font-medium">{t(chunkFailure ? "pageLoad.title" : "state.error")}</h1>
+      <p className="text-n600 max-w-md text-sm leading-6">
+        {t(chunkFailure ? "pageLoad.body" : "pageLoad.genericBody")}
+      </p>
+      <div className="flex flex-wrap justify-center gap-3">
+        <button
+          type="button"
+          onClick={reloadPage}
+          className="bg-ink text-bg text-md min-h-11 rounded-full px-5 py-2"
+        >
+          {t("action.reload")}
+        </button>
+        <Link
+          to={paths.app}
+          className="border-hair text-ink text-md inline-flex min-h-11 items-center rounded-full border px-5 py-2"
+        >
+          {t("action.back")}
+        </Link>
+      </div>
     </div>
   )
 }

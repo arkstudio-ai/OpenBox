@@ -19,7 +19,7 @@ import json
 import shlex
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -66,7 +66,17 @@ async def _resolve_source(source: str, ctx: ToolContext) -> tuple[str, str, str]
     """Return (kind, ffmpeg_input, digest_seed). kind: url | asset | path."""
     from tool.video_production import _find_owned_asset, _materialize_asset
 
-    if source.startswith("https://") or source.startswith("http://"):
+    if source.startswith("oss://") or source.startswith("https://") or source.startswith("http://"):
+        owned = _owned_bucket_key(source, ctx)
+        if owned is not None:
+            # The asset bucket is private: ffmpeg on the desktop needs a signed
+            # URL, and the cache key must stay the stable unsigned object.
+            from core.oss import get_oss
+            from sandbox.assets import _use_internal_oss
+
+            oss = get_oss()
+            signed = oss.presign_get(owned, expires_sec=3600, internal=_use_internal_oss(oss))
+            return "url", signed, f"https://{oss.host}/{owned}"
         host = urlsplit(source).netloc.lower()
         if not host or not any(host.endswith(h) or h in host for h in _MEDIA_HOSTS):
             raise AnalyzeRefusal(
@@ -83,6 +93,34 @@ async def _resolve_source(source: str, ctx: ToolContext) -> tuple[str, str, str]
         raise AnalyzeRefusal(f"asset {source!r} is {row.mime}; only videos can be analysed")
     path = await _materialize_asset(row, ctx)
     return "asset", path, f"asset:{row.id}"
+
+
+def _owned_bucket_key(ref: str, ctx: ToolContext) -> str | None:
+    """Object key when `ref` points into the configured asset bucket.
+
+    Returns None for any other URL (public CDN, another bucket, OSS not
+    configured). Refuses an object in our bucket that belongs to someone else:
+    a signed URL would otherwise let one person read another's private video.
+    """
+    from core.oss import OssNotConfigured, get_oss
+
+    try:
+        oss = get_oss()
+    except OssNotConfigured:
+        return None
+    if ref.startswith("oss://"):
+        bucket, _, key = ref[6:].partition("/")
+        if bucket != oss.bucket:
+            return None
+    else:
+        parts = urlsplit(ref)
+        if parts.netloc.lower() not in (oss.host.lower(), oss.internal_host.lower()):
+            return None
+        key = parts.path.lstrip("/")
+    key = unquote(key)
+    if not key.startswith(f"assets/{ctx.user_id}/"):
+        raise AnalyzeRefusal(f"{ref!r} is in the asset bucket but is not your asset")
+    return key
 
 
 def _digest(seed: str, frames: int, transcribe: bool, model: str) -> str:

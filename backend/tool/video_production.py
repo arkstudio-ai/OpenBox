@@ -2040,6 +2040,15 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if approved.get("model"):
                 # Per-segment model override routes to its own channel.
                 target, settings = _configured_target(approved["model"])
+            # A marketing-autopilot run fixes model/resolution and owns the budget:
+            # enforce both here so a paid submit can never drift from the template.
+            from autopilot import ledger as _autopilot
+            from billing.media import quote_generation as _quote_generation
+
+            _autopilot.check_lock(ctx.session_id, model_id=target.model, resolution=resolution)
+            _quote = _quote_generation(target.model, resolution, None if duration == -1 else duration)
+            _autopilot.guard_paid_step(ctx.session_id, kind="generation", credits=_quote.credits if _quote.credits is not None else 0,
+                                       note=f"{target.model} {resolution} {duration}s")
             rejected = await _run_rejected_submission(ctx, target)
             if rejected is not None:
                 return _rejected_submission_result(

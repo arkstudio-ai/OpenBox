@@ -92,11 +92,14 @@ def plan(run: RunLedger) -> dict:
     """Tier → model, and how many videos the cap can afford (plan §2.3: 与预算取小)."""
     from autopilot.tiers import minimum_credits_per_video
 
+    from autopilot.tiers import resolve_resolution
+
     t = tier(run.template.model_tier)
+    resolution, res_note = resolve_resolution(t.model_id, t.resolution)
     per_video = minimum_credits_per_video(run.template.model_tier)
     affordable = int(run.cap // per_video) if per_video > 0 else run.template.videos_per_run
     return {
-        "model_id": t.model_id, "resolution": t.resolution, "ratio": "9:16", "tier": t.key, "tier_label": t.label,
+        "model_id": t.model_id, "resolution": resolution, "resolution_note": res_note, "ratio": "9:16", "tier": t.key, "tier_label": t.label,
         "videos_planned": max(0, min(run.template.videos_per_run, affordable)),
         "videos_requested": run.template.videos_per_run, "min_credits_per_video": str(per_video),
         "publish_mode": run.template.publish_mode, "visibility": run.template.visibility,
@@ -206,6 +209,7 @@ async def report(run: RunLedger, *, items: list[dict]) -> dict:
              f"模型档位 {tier(run.template.model_tier).label}（{tier(run.template.model_tier).model_id}）· 预算上限 {_fmt(run.cap)} 积分 · "
              f"本次实际落账 {_fmt(total)} 积分（{n} 笔）" + (f" · 预留估价 {_fmt(run.reserved)}" if run.reservations else ""),
              f"成片 {len([i for i in items if i.get('final_asset_id')])} 条 · 已发布 {len(published)} · 待扫码/降级 {len(degraded)} · 弃用 {len(dropped)}"]
+    lines.append("费用口径：统计到报告生成这一刻本次运行会话的账单行；报告之后的回复不计。")
     if run.stopped_reason:
         lines.append(f"⚠️ {run.stopped_reason}")
     for idx, it in enumerate(items, 1):
@@ -239,3 +243,42 @@ async def report(run: RunLedger, *, items: list[dict]) -> dict:
     return {"run_id": run.run_id, "markdown": "\n".join(lines), "total_credits": _fmt(total), "per_kind": {k: _fmt(v) for k, v in per_kind.items()},
             "usage_events": n, "reserved": _fmt(run.reserved), "cap": _fmt(run.cap), "stopped_reason": run.stopped_reason,
             "published": len(published), "degraded": len(degraded), "dropped": len(dropped), "items": items}
+
+
+# ── enforcement hooks used by the paid tools ────────────────────────────────
+class BudgetStop(Exception):
+    """Raised by a paid tool when the run's cap would be exceeded."""
+
+    public_message = True  # the text is ours, safe to show the model verbatim
+
+
+class LockViolation(Exception):
+    """Raised by video_generate when a run is active and the request leaves the template's model/resolution."""
+
+    public_message = True
+
+
+def guard_paid_step(session_id: str, *, kind: str, credits, note: str = "") -> str | None:
+    """Reserve `credits` on this session's run, if one exists. Returns the reservation
+    message, None when no run is active, raises BudgetStop when the cap is reached."""
+    run = get(session_id or "")
+    if run is None:
+        return None
+    ok, msg = reserve(run, kind=kind, credits=credits, note=note)
+    if not ok:
+        raise BudgetStop(msg)
+    return msg
+
+
+def check_lock(session_id: str, *, model_id: str | None, resolution: str | None) -> None:
+    """A run fixes model and resolution; any paid generation outside them is refused."""
+    run = get(session_id or "")
+    if run is None:
+        return
+    p = plan(run)
+    if model_id and model_id != p["model_id"]:
+        raise LockViolation(f"自动营销运行锁定了模型 {p['model_id']}（模版档位 {p['tier_label']}），不能用 {model_id}")
+    if resolution and resolution != p["resolution"]:
+        raise LockViolation(f"自动营销运行锁定了分辨率 {p['resolution']}，不能用 {resolution}"
+                            + (f"（{p['resolution_note']}）" if p.get("resolution_note") else ""))
+

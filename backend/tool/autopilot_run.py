@@ -78,12 +78,14 @@ async def execute(args: AutopilotRunArgs, ctx: ToolContext) -> ToolResult:
             return ToolResult(title="Template invalid", output=str(exc)[:1200], metadata={"valid": False})
         p = ledger.plan(run)
         lines = [f"run_id={run.run_id}", f"cap={run.cap} remaining={run.remaining}",
-                 f"model={p['model_id']} resolution={p['resolution']} ratio=9:16 (tier {p['tier']}, fixed by the template — never switch)",
+                 f"model={p['model_id']} resolution={p['resolution']} ratio=9:16 (tier {p['tier']}, fixed by the template — never switch; video_generate refuses anything else)"
+                 + (f"\nresolution_note={p['resolution_note']}" if p.get("resolution_note") else ""),
                  f"videos_planned={p['videos_planned']} (requested {p['videos_requested']}, ≥{p['min_credits_per_video']} credits each)",
                  f"publish_mode={p['publish_mode']} visibility={p['visibility']} hot_source={p['hot_source']} categories={p['categories'] or '*'}",
                  f"content_forms={p['content_forms']} topics_blocklist={p['topics_blocklist']}",
                  f"tolerances={p['tolerances']}",
-                 "Reserve every paid step's estimate with action=reserve before submitting it; a denial means stop new paid work."]
+                 "Paid tools (video_generate, video_compose, video_analyze, hot_trends live fetch) reserve their own estimate against this cap automatically; "
+                 "a refusal that says 预算上限 means stop new paid work. Use action=reserve only for costs no tool reserves (e.g. publish)."]
         return ToolResult(title="Autopilot run started", output="\n".join(lines), metadata={"run": run.public(), "plan": p})
     run = _need_run(ctx)
     if run is None:

@@ -5,6 +5,22 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前两边发布：2026-09-10 风控/验证码接管（PR #25）+ 桌面运行时 20260910.2
+
+- 22:33–22:35（北京时间）gw2 与 AWS 切到 `20260910-takeover-3db71bc`（backend + frontend），源码 `main@3db71bc`
+  = `4a7a740`（andrew 的 admin-notifications，含 `b83ce59`/`1e3a0bf`，切换前线上正是这两个镜像）+ PR #25 合并 `a618840` + `RUNTIME_VERSION` 20260910.1→20260910.2。
+  合并前：后端相关 531 项、前端 533 项、`flutter analyze` 无问题、`desktop_takeover_detail_test`/`question_dock_test` 35 项全过；失败项与既有基线一致。
+- 无迁移（仍 `e4f6a8b0c2d4`）。gw2 backend 16s / frontend 12s healthy，切换时无活动会话；AWS 12s/12s。
+  备份 gw2 `backups/20260910-takeover-3db71bc/activation-20260910T133330Z/`，AWS `…/activation-20260910T133252Z/`。
+- **桌面运行时下发**：PR #25 改了 `container/dev-browser/{SKILL.md,src/client.ts}`，桌面 `--check` 只对本机 bundle 比对，必须 bump 版本才会重装。
+  用合并后 checkout 的 `runtime_cloud_commands()` 生成 10 段脚本，云助手对生产库 14 台桌面（9 台已分配 + 5 台 prewarm，含 v4 镜像的 002）
+  逐段逐台执行（`aliyun ecd run-command` 一次只能带一台，多台会报 InvalidDesktopId），22:38 起约 9 分钟，
+  下发前全部 `20260910.1 ready`，下发后全部 `20260910.2 ready`；运营桌面上 SKILL.md 含 captcha 一节、client.ts 含 `detectChallenge`。
+  驱动脚本见本次会话 scratchpad `fleet_push.py`。**金镜像 v4（`m-13pauczcu9swanxwn`）仍是 20260910.1**：新建桌面首次用浏览器时后端会自动修复到 .2，做 v5 时带上。
+- 公网 `/`、`/api/auth/logto/config` 200，`index.html` 的 app-build 为 `20260910-takeover-3db71bc`。
+- 回滚：override 两行 image 改回 `20260910-admin-notifications-b83ce59` / `20260910-admin-notifications-1e3a0bf`（gw2）；
+  桌面运行时无需回退（老后端会自行修回其版本）。
+
 ## 当前两边发布：2026-09-10 运营问题三合一（发布链路 / 前端自动换新 / 禁画中画）
 
 - 21:53–21:55（北京时间）**gw2 与 AWS 同时**切到 `20260910-ops-57e330b`（backend + frontend），源码 `main@57e330b`

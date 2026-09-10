@@ -11,17 +11,8 @@ from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
 from notifications.store import can_receive, enqueue_notification
 
-TEMPLATES = {
-    "task_completed": ("任务已完成", "《{name}》已完成，点击查看结果。", "Task completed", '“{name}” is complete. Tap to view the result.'),
-    "task_failed": ("任务未能完成", "《{name}》已停止执行，点击查看并处理。", "Task could not finish", '“{name}” has stopped. Tap to review and continue.'),
-    "input_required": ("任务需要你的回答", "《{name}》正在等待你的回答，点击继续。", "Your answer is needed", '“{name}” is waiting for your answer. Tap to continue.'),
-    "approval_required": ("任务需要你的确认", "《{name}》正在等待你的确认，点击处理。", "Your approval is needed", '“{name}” is waiting for your approval. Tap to review.'),
-    "cron_completed": ("定时任务有新结果", "《{name}》有新结果，点击查看。", "Scheduled task has a result", '“{name}” has a new result. Tap to view it.'),
-    "cron_failed": ("定时任务执行失败", "《{name}》已停止重试，需要你检查。", "Scheduled task failed", '“{name}” has stopped retrying and needs your attention.'),
-    "platform_auth_expired": ("任务需要重新授权", "{name} 的授权已失效，相关任务需要你重新授权。", "Authorization needed", 'Authorization for {name} expired. An affected task needs you to sign in again.'),
-    "publish_done": ("作品已发布", "《{name}》已由平台确认发布，点击查看。", "Publication confirmed", 'The platform confirmed “{name}” was published. Tap to view it.'),
-    "publish_failed": ("作品发布失败", "《{name}》发布失败，点击查看并处理。", "Publication failed", 'The platform reported that “{name}” failed to publish. Tap to review.'),
-}
+from notifications.templates import TEMPLATES, render_template
+
 
 
 async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_id=None,
@@ -31,12 +22,10 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
     if not await can_receive(db, user_id, workspace_id, session_id):
         return None
     device = await db.get(PushDevice, user_id)
-    zh = not device or device.locale.startswith("zh")
-    title_zh, body_zh, title_en, body_en = TEMPLATES[kind]
-    name = " ".join((name or ("任务" if zh else "Task")).split())[:80]
+    title, body = render_template(kind, name, device.locale if device else "zh-CN")
     return await enqueue_notification(db, user_id=user_id, workspace_id=workspace_id,
         session_id=session_id, action_id=action_id, event_key=event_key, kind=kind,
-        title=title_zh if zh else title_en, body=(body_zh if zh else body_en).format(name=name),
+        title=title, body=body,
         guard=guard, ttl_seconds=ttl_seconds)
 
 
@@ -155,6 +144,10 @@ async def guard_valid(db, message):
     kind = guard.get("kind")
     if not kind:
         return True
+    if kind == "admin_test":
+        from db.models.user import User
+        user = await db.get(User, message.user_id)
+        return bool(user and user.role == "admin" and user.is_active and not user.is_deleted)
     session_id = message.payload.get("sessionId")
     if kind == "question":
         row = await db.get(QuestionCheckpoint, guard["id"])

@@ -14,6 +14,7 @@ from db.models.part import Part
 from db.models.project import Project
 from db.models.push import PushDelivery, PushMessage
 from db.models.session import Session
+from db.models.user import User
 from db.models.workspace import WorkspaceMember
 from notifications import events
 from notifications.runtime import PushWorker
@@ -27,6 +28,8 @@ async def task(setup):
     await login(client, credentials)
     await bind(client, "ios")
     async with get_db_session() as db:
+        # Business notifications remain available to ordinary users.
+        (await db.get(User, user)).role = 'user'
         member = await db.scalar(select(WorkspaceMember).where(WorkspaceMember.user_id == user))
         project = Project(id=uuid4().hex, user_id=user, workspace_id=member.workspace_id,
                           name="Test", created_at=now(), updated_at=now())

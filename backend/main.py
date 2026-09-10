@@ -315,6 +315,8 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     from api.push import router as push_router
     application.include_router(push_router)
+    from api.admin_push import router as admin_push_router
+    application.include_router(admin_push_router)
     application.include_router(douyin_webhook_router)  # No auth — signed by the platform
 
     # ── Agent routes ──

@@ -59,6 +59,12 @@ async def setup(tmp_path, monkeypatch):
         assert response.status_code == 200, response.text
         web.headers["Authorization"] = "Bearer " + response.json()["access_token"]
         user = response.json()["user"]["id"]
+        # Transport diagnostics exercise the now-admin-only test route.
+        from db.models.user import User
+        async with get_db_session() as db:
+            row = await db.get(User, user)
+            row.role = "admin"
+        await login(web, credentials)
         async with httpx.AsyncClient(transport=transport, base_url="http://test", headers={
             "X-Client-Type": "mobile", "X-Installation-Id": "installation-iphone-0001",
         }) as ios, httpx.AsyncClient(transport=transport, base_url="http://test", headers={

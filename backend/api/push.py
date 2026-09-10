@@ -1,17 +1,17 @@
 """Authenticated push setup. Test sends target only the current mobile login."""
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 
 from auth.middleware import get_current_user
-from auth.mobile import mobile_transaction, now, require_mobile, session_error, utc
+from auth.mobile import require_mobile, session_error
 from db.base import get_db_session
 from db.models.push import MobilePresence, PushDelivery, PushDevice, PushMessage
 from notifications.providers import PushProviders
 from notifications.schema import DeviceRegistration, PresenceReport
 from notifications import presence
-from notifications.store import device_status, disable_device, enqueue_notification, register_device
+from notifications.store import device_status, disable_device, register_device
+
+from notifications.testing import live_admin, send_test
 
 router = APIRouter(prefix="/api/push", tags=["Mobile push"])
 
@@ -63,25 +63,9 @@ async def disable(binding_id: str, user=Depends(mobile_user)):
 
 
 @router.post("/test", status_code=202)
-async def test_push(request: Request, user=Depends(mobile_user)):
-    async with mobile_transaction() as db:
-        await require_mobile(db, user["user_id"], user["mobile_session_id"])
-        device = await db.get(PushDevice, user["user_id"])
-        if not device or not device.enabled or device.mobile_session_id != user["mobile_session_id"]:
-            raise HTTPException(409, detail={"code": "PUSH_DEVICE_NOT_READY"})
-        if device.provider not in providers(request).enabled:
-            raise HTTPException(409, detail={"code": "PUSH_NOT_CONFIGURED"})
-        latest = await db.scalar(select(PushMessage).where(
-            PushMessage.user_id == user["user_id"], PushMessage.event_key.like("system_test:%"),
-        ).order_by(PushMessage.created_at.desc()).limit(1))
-        if latest and (now() - utc(latest.created_at)).total_seconds() < 30:
-            raise HTTPException(429, detail={"code": "PUSH_TEST_RATE_LIMITED"})
-        zh = device.locale.startswith("zh")
-        message = await enqueue_notification(db, user_id=user["user_id"], event_key="system_test:" + uuid4().hex,
-            kind="system_test", title="BossIP 通知测试" if zh else "BossIP notification test",
-            body="这条通知由服务器发送到你当前登录的手机。" if zh else "This notification was sent by the server to your signed-in phone.",
-            ttl_seconds=300, delay_seconds=10)
-        return {"id": message.id, "status": "pending"}
+async def test_push(request: Request, user=Depends(mobile_user), admin=Depends(live_admin)):
+    # Compatibility for older admin clients; regular users cannot invoke it.
+    return await send_test(user, providers(request).enabled)
 
 
 @router.get("/messages/{message_id}")

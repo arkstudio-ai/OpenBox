@@ -185,7 +185,7 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 | B1 | 原型：桌面 ffmpeg 场景抽帧（6–12 帧）+ `video_transcribe` + Gemini 3.7 Flash（菜单内、带 vision）一次调用出 JSON：形态判定、主题、人群、钩子、结构（分段秒数）、镜头描述、文案全文、话题、创作要素 | — | 3d | 10 条不同形态热点的输出经人工评分 ≥ 7/10；记单条成本（STT + 多模态 token） |
 | B2 | 字幕型（无配音）热点：帧 OCR 走同一多模态调用，验证准确率 | B1 | 1d | 5 条字幕型样本文案还原 ≥ 90% |
 | B3 ✅ | 平台工具 `video_analyze(source)`（`tool/video_analyze.py`）：source 为 owned asset_id / 工作区路径 / 直链媒体 URL；沙箱 ffmpeg 抽 N 帧+音轨 → OSS `analysis/<user>/<job>/` 中转 → fun-asr 转写 → 视觉模型出 JSON（`video/analysis.py` schema 校验）；**帧数 < min_frames 直接失败不退化**；结果按 (source, 帧数, 转写, 模型) 缓存于 `video_jobs kind=analyze`；转写按分钟落账、视觉调用按 token 计量（kind `video_analyze`），输出 `credits=` | B1,B2 | 4d | 2026-09-09 落地，7 项单测；跨客户共享缓存与网页 URL 解析留给 A3（hot_trends 负责把页面解析成直链） |
-| B4 | 形态 → 配方映射表（口播 / 画面+旁白 / 展示 / 剧情 / 混剪），每种配方给出生成段数、时长、是否需要配音、剪辑模板 | B1 | 1d | 表进技能 references，B3 的输出字段与之对齐 |
+| B4 ✅ | 形态 → 配方映射表：`backend/.openbox/skills/marketing-autopilot/references/recipes.md`，七种 `form` 各给段数×时长、生成方式、声音/字幕、合成转场、质检口径（口播 STT ≥ tolerances.stt_similarity，其余只查时长与成功数），加选题过滤/预算/重生/发布/报告通用规则；字段与 `video_analyze` 输出、`autopilot/tiers.py` 三档对齐 | B1 | 1d | 2026-09-10 落地；配方随 D2 技能实跑再修 |
 
 ### C · 桌面自动发布（douyin-desktop-publish）
 
@@ -200,12 +200,31 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
-| D1 | 预算授权字段落表：cron 模版 payload 增加 `credits_cap_per_run / videos_per_run / model_tier / tolerances / publish_mode / content_forms / topics_blocklist`（§2.3），后端校验 | — | 2d | schema + 迁移 + 单测 |
-| D2 | 技能 `marketing-autopilot`：cron 上下文判定（会话 kind=cron）→ 不出卡、读模版字段；流程 hot_trends → video_analyze → 按配方 video_generate（三档模型映射）→ video_compose → 发布 → 报告；预算累加超限即停 | A3,B3,B4,C2,D1 | 5d | 干跑（mock 工具）通过；技能测试覆盖「预算超限停止」「STT 超阈值重生一次后弃用」 |
-| D3 | 三档模型：`model_tier` → 模型 id 映射与每档参考价（读 `rates.json`）；对话创建任务时的选档卡（含每 15s 参考价） | D1 | 1d | 卡文案含三档与参考价；模版存的是 tier 不是模型 id |
-| D4 | 报告消息：每次运行一条，含来源、每条分析摘要、花费明细、成片卡、标题/介绍/话题、发布结果或降级原因 | D2 | 2d | 报告字段与账单页当次运行的落账总额一致 |
+| D1 ✅ | `autopilot/template.py` `AutopilotTemplate`（extra=forbid）：`account_profile / categories / hot_source / credits_cap_per_run / videos_per_run / model_tier / tolerances{duration_deviation_sec, stt_similarity, max_regenerations} / publish_mode / visibility / content_forms / topics_blocklist`；`cron_jobs.template` JSON 列（迁移 `d2f4a6c8e0b2`）；`CronJobCreate/Update.template` 经 `validate_template` 严格校验（含「预算至少够一条该档视频」）；执行器把模版以「模版参数（预算授权）」块注入 cron 提示词；`cron` 工具可透传 `template` | — | 2d | 2026-09-10 落地，7 项单测；前端/App 表单是 D5 |
+| D2 ✅ | 技能 `marketing-autopilot`（`backend/.openbox/skills/marketing-autopilot/SKILL.md`）+ 工具 `autopilot_run`（`tool/autopilot_run.py`、`autopilot/ledger.py`）：cron 判定靠提示词里的「模版参数（预算授权）」块；钱与容差不靠 prose——`start` 由模版定模型/分辨率/可负担条数，**每个付费步骤前 `reserve`，超上限拒绝并终止后续付费**，`judge_shot` 按 tolerances 判 accept/regenerate/drop 并计数，`record kind=candidate` 做黑名单与形态过滤，`report` 从本会话 `usage_events` 汇总花费 | A3,B3,B4,C2,D1 | 5d | 2026-09-10 落地，6 项单测覆盖「预算超限停止」「STT 超阈值重生一次后弃用」「黑名单/形态过滤」「报告与账单一致」。**真实端到端一次运行（F）未做** |
+| D3 ✅ | `autopilot/tiers.py` 三档映射与 `autopilot_run(action="tiers")` 每 15 s 参考价（读 `rates.json`）；技能「创建模版」流程用 `question` 出选档卡（三档 + 发布方式），预算建议按 `videos_per_run × (参考价 + 0.2) × 1.3`，`validate_template` 后 `cron(add, template=…)`；模版存 tier 不存模型 id | D1 | 1d | 2026-09-10 落地；真机对话创建一次待 F |
+| D4 ✅ | `autopilot_run(action="report", items=[…])` 生成 markdown 报告：档位/预算/实际落账（读本会话 `usage_events` charged+shadow）、成片/已发布/待扫码/弃用计数、每条的热点来源、形态、拆解摘要、分段、文案、花费、发布结果或降级/弃用原因、花费按 kind 明细；技能把它作为最终回复，cron 注入到用户会话 | D2 | 2d | 2026-09-10 落地；单测断言总额 = 该会话账单行之和（unpriced 不计） |
 | D5 | 模版 UI（web + App）：创建/编辑表单含 §2.3 字段；运行历史与报告入口 | D1 | 4d | 前端 `npm run check` 与 App `flutter test` 通过；真机创建一条模版 |
 | D6 | 账单页「按运行聚合」视图（一次 cron 运行的 LLM+媒体花费合并） | D4 | 2d | 与 D4 报告数字一致 |
+
+### F 首轮真机验收（2026-09-10 15:07–15:26，gw2 bbdwxh_admin）与修复
+
+首轮跑通了「建模版 → 立即运行 → 热点宝选题 → 拆解 → 两段 Wan 生成 → 合成 → 创作者中心私密发布（作品 7683804546912636169）」，落账 15.15 积分（shadow）。
+完整记录在 `work/f-acceptance-20260910/RESULTS.md`。暴露的问题与处置：
+
+| 问题 | 处置（PR #20） |
+|---|---|
+| 中档固定 Wan 720p，但 gw2 的 `wan3.0-video` 只声明 1080p，`estimate` 报错后模型自行改 1080p 提交 | `autopilot/tiers.resolve_resolution` 按本部署模型声明把档位换算成可用分辨率（720p 不可用 → 就近取 1080p，`start` 输出 `resolution_note`）；**`video_generate` 提交时强制校验运行锁定的模型/分辨率**，不一致直接拒绝 |
+| 付费步骤的 reserve 靠模型自觉，冷缓存热点采集没预留 | 改为**工具自动预留**：`video_generate` 提交、`video_compose` 提交、`video_analyze`、`hot_trends` 真采集都在花钱前把估价记到本会话运行的预算上，超限即拒（`BudgetStop`）；技能只对工具不覆盖的花费用 `reserve` |
+| 人工停止运行被记为 ok，工具片段被当结果注入 | 执行器检查临时会话里 `finish=aborted`，视为运行失败并写明「被人工停止」，不再注入片段 |
+| 建任务时区：用户说 9 点，存成 UTC 09:00 | `cron` 工具默认时区改 Asia/Shanghai；技能要求显式传 `timezone` |
+| 未主动问人设/类目；形态「画面+旁白」不在模版却被改编成口播 | 技能：第一条回复必须问齐四件事；`form_allowed=false` 或「其他」必须跳过并在报告写明 |
+| 简介话题重复、`declaration` 显示 None | `desktop_publish` 去掉简介里与 `topics` 重复的 `#词`；返回值带声明字段 |
+| 报告费用与最终账单差一笔回复费 | 报告写明「统计到报告生成一刻」，技能要求报告是最后一条回复 |
+| 建完任务未说明会收到报告 | 技能：最后一条回复必须包含下次运行时间、报告、预算到顶、风控降级、实际模型分辨率 |
+
+仍未覆盖（下轮 F 补测）：对话「现在跑一次」三卡路径；黑名单实际命中；预算改 10 的首段拒绝；`simulate_risk` 降级与恢复；90 分钟间隔与每日 3 条拦截；`关联热点` 挂载仍失败；
+Luna 过载属网关问题。**运营待办**：确认 gw2 把 `wan3.0-video` 收紧为仅 1080p 的依据（9 月 6 日前的备份即如此），否则中档实际按 1080p 计价（每 15 秒 18 积分而非 9）。
 
 ### E · App 极光推送集成（迁移 bossip）
 

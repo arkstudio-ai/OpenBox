@@ -135,9 +135,9 @@ Android 沿用极光 AppKey `20c609b5064f10d52d8351d8`，使用 JPush 6.2.1 / JC
 
 ## 配置与上线
 
-先运行 `uv sync`、`uv run alembic upgrade head`，再启动新后端。现有 backend Dockerfile 启动时也会先跑迁移。新 head 为 `c3d5e7f9a1b2`；先建通知与移动会话表，再迁移生命周期表。
+先运行 `uv sync`、`uv run alembic upgrade head`，再启动新后端。现有 backend Dockerfile 启动时也会先跑迁移。合并后的 head 为 `e4f6a8b0c2d4`，汇合通知生命周期 `c3d5e7f9a1b2` 与定时模板 `d2f4a6c8e0b2`；从任一已有分支升级都会补齐另一分支，保留已执行迁移。
 
-已于 2026-09-10 从旧 BossIP 的 `bossip-webfront-api` 部署配置和只读挂载取得原 APNs 私钥及极光 Master Secret，写入当前 worktree 的私有配置。实际部署使用的 APNs Key ID 是 `8BUB654RH8`，修正旧文档中的 `9W29AV52YC`。本地私钥格式、P-256 签名和双通道配置加载已验证；未发送真实推送。
+已于 2026-09-10 从旧 BossIP 的 `bossip-webfront-api` 部署配置和只读挂载取得原 APNs 私钥及极光 Master Secret，写入私有配置，合并时迁移到主工作目录 `/Users/wang/workspace/OpenBox`。实际部署使用的 APNs Key ID 是 `8BUB654RH8`，修正旧文档中的 `9W29AV52YC`。本地私钥格式、P-256 签名和双通道配置加载已验证；未发送真实推送。
 
 本地 `.p8` 放在 `credentials/mobile-push/`，服务端变量写入 `backend/.env`；文件权限均为 `0600`，私钥目录为 `0700`，均排除 Git 和镜像构建。已有的其他环境变量保持不变。容器部署时仍需把私钥只读挂载到容器内，并相应调整 `BOSSIP_APNS_KEY_PATH`。
 
@@ -160,6 +160,8 @@ iOS 正式包仍需用旧团队有效的推送签名配置打包并验证 TestFl
 
 ## 验证
 
+合并 `main`（上游 `97eab46`）后再次验证：后端 335 项、Flutter 218 项通过，analyze、locale、Dart 800 行门禁与 diff 检查通过。PostgreSQL 从空库、定时模板 head、通知生命周期 head 三种起点均升级至 `e4f6a8b0c2d4`，多进程互踢、绑定、投递及状态乱序测试通过；Android debug 与 iOS simulator 重新构建成功。私钥和六个推送变量已迁移到主工作目录，均保持私有且排除 Git。
+
 2026-09-10 本地验证：后端相关回归 259 项通过；加入厂商参数后 provider 专项 32 项通过（含原先 17 项，不重复累加）。Flutter 全量 190 项通过，`flutter analyze` 无问题，locale 逐字节校验通过。独立 PostgreSQL 全量迁移至 `c3d5e7f9a1b2`，多进程竞争测试通过，覆盖 5 个并发登录、3 个投递 worker 和乱序生命周期上报。Android 普通 debug APK、七厂商全启用 debug / release（含混淆）、iOS simulator 构建成功；Android 点击解析 3 项 JVM 测试通过。厂商构建验证只使用临时假参数，已清理测试 APK 并重新生成普通开发包；未发送真实通知。相关测试文件：
 
 - `backend/tests/integration/test_mobile_push_api.py`
@@ -174,6 +176,6 @@ iOS 正式包仍需用旧团队有效的推送签名配置打包并验证 TestFl
 - `mobile/android/app/src/test/kotlin/com/bossip/bipmobile/PushIntentPayloadTest.kt`
 - `mobile/scripts/check_push_vendors.py`（临时假配置验证七个厂商组件；`--release` 验证正式构建）
 
-全仓文件行数门禁仍报告已有的 `mobile/test/features/chat/question_dock_test.dart` 为 1083 行，超过项目 800 行上限（基线即为 1083 行，本次未改）；本轮新增和修改的 Dart 文件均在限制内。locale 检查发现并同步了原先缺失的中英文 `common.pageLoad` 文案，与 Web 源文件保持一致。
+通知分支初次验证时，基线 `question_dock_test.dart` 的 1083 行超过 800 行门禁；随后主分支已拆分该测试，合并保留其完整用例。本轮新增和修改的 Dart 文件均在限制内。locale 检查发现并同步了原先缺失的中英文 `common.pageLoad` 文案，与 Web 源文件保持一致。
 
 上线前仍需用两部真机验证真实推送到达与点击：iOS 开发包/TestFlight、Android 前台/后台/锁屏/冷启动、双向换机登录、关闭通知和退出登录。本地测试及供应商接受状态不替代这项验收。

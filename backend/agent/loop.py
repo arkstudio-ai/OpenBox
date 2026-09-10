@@ -334,6 +334,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     completed = False
     interrupted = False
     run_message_ids: set[str] = set()
+    suggestion_target: tuple[str, str] | None = None
 
     try:
         # F2: Load persisted permission rules (once per user)
@@ -1288,6 +1289,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             log.info(f"Step {step} finished: reason={finish_reason}, tool_calls={len(result.completed_tool_parts)}, text={len(collected_text)} chars")
             if finish_reason == "stop":
                 completed = bool(collected_text.strip()) and not abort.is_set()
+                suggestion_target = (assistant_info.id, model_id)
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(
                     id=assistant_info.id,
@@ -1395,6 +1397,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         await set_session_status(session_id, SessionStatus.ERROR, user_id=user_id)
         return None
     finally:
+        suggest = suggestion_target is not None and not failed and not interrupted and not abort.is_set()
         try:
             lease_task.cancel()
             await asyncio.gather(lease_task, return_exceptions=True)
@@ -1404,6 +1407,11 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         finally:
             question_runtime.current_run.reset(run_context)
             clear_abort(session_id, abort)
+        if suggest and suggestion_target is not None:
+            from agent.suggestions import generate_suggestions
+            task = asyncio.create_task(generate_suggestions(ticket, *suggestion_target))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
 
 async def _build_system_prompt(

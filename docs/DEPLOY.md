@@ -5,7 +5,35 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
+## 当前阿里云状态：2026-09-10 16:08 F 修复发布后回滚到同事镜像（main 尚未包含同事的发布）
+
+- 16:08:03–16:08:23（北京时间）gw2 backend 切换至 `20260910-fixes-0351b90`（`main@0351b90`，PR [#21](https://github.com/arkstudio-ai/OpenBox/pull/21) F 首轮验收修复，无迁移），
+  healthy、容器内烟测通过（锁定校验拒绝 480p/换模型、预算自动预留、档位分辨率按能力表换算为 1080p 并给出 note、cron 默认时区 Asia/Shanghai）。
+- **随即发现切换前线上跑的是同事的 `20260910-login-guidance-324366c2`（15:46 构建）与 frontend `20260910-nav-3791e77`，两者的源提交都不在 `origin/main`**
+  （backend 提交本地/远端都找不到，是未推送分支；frontend 在 `origin/fe-nav-profile` 未合并）。main 不是线上超集，我的发布覆盖了同事的后端改动。
+- 16:10:41–16:11:02 **回滚**：backend 改回 `openbox-backend:20260910-login-guidance-324366c2`（服务器上仍有该镜像），healthy，`alembic current` 仍 `d2f4a6c8e0b2`，公网采样 200；frontend 未动。
+  镜像指纹对比：同事镜像相对 main 只差 `agent/loop.py`、`core/config.py`、`tool/desktop_login.py` 三个文件（他们的改动），且缺 main 上另一位同事已合的 `agent/suggestions*.py`——两边互不是超集。
+- **后果**：PR #21 的 F 修复（工具层锁定/预算强制、中断处理、时区）已在 main 但**不在 gw2**。待同事把 `login-guidance` 分支推送并合入 main 后，从 main 重新构建发布即可（无迁移）。
+- 备份 `/opt/openbox/backups/20260910-fixes-0351b90/activation-20260910T080755Z/`；镜像包 `releases/20260910-fixes-0351b90/`；OSS 中转对象已删。
+- 教训（重申）：**发布前必须当场核对 `docker-compose.override.yml` 里的 image 源提交是否在 origin/main**，不能依赖几小时前的检查；不在就先停，找到分支合并后再发。
+
+## 历史阿里云发布：2026-09-10 自动营销 D 阶段——模版预算授权 + marketing-autopilot 技能（仅后端，含迁移）
+
+- 14:46:46–14:47:05（北京时间）gw2 backend 切换至 `20260910-autopilot-824b295`，源码 `main@824b295`
+  （PR [#17](https://github.com/arkstudio-ai/OpenBox/pull/17) D1/B4 + PR [#18](https://github.com/arkstudio-ai/OpenBox/pull/18) D2/D3/D4）。
+  **含迁移** `d2f4a6c8e0b2`（`cron_jobs.template`），镜像内 `ScriptDirectory.get_heads()` 单 head 后才发；`alembic current` = `d2f4a6c8e0b2 (head)`。
+  backend 19 秒 healthy；frontend 保持 `20260910-trends-7959132`；公网 5 组采样全 200。
+- 内容：`AutopilotTemplate` 模版（预算上限/条数/三档模型/容差/发布方式/形态/黑名单）落 `cron_jobs.template` 并严格校验，执行器注入「模版参数（预算授权）」块；
+  `autopilot_run` 工具（预算 reserve 超限即终止、judge_shot 按容差判定、report 读账单）；技能 `marketing-autopilot`（定时无卡 / 对话选档卡）；`references/recipes.md` 七种形态配方。
+- 包 SHA-256 `0f7274903af1d5efd1083271e95ce3297cada6b9446c4e3d2ff336ad7d2e2624`，image ID `sha256:3e43b6629d418311b89357c92e767bdeddab627956a16d723bda2ab0f9f8bb74`，服务器装载后一致；OSS 中转对象已删。
+  备份 `/opt/openbox/backups/20260910-autopilot-824b295/activation-20260910T064637Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验）。
+- 容器内验收：38 个工具含 `autopilot_run`；7 个技能含 `marketing-autopilot`；`tiers` 三档参考价；`start` 由模版定 `wan3.0-video@720p`、可负担 1 条；
+  `reserve 27` 允许、`reserve 9` 拒绝并给出终止说明；`report` 生成含预算到顶提示；`validate_template` 拒绝非法档位。
+  **真实端到端一次自动营销运行（F）未做。**
+- 回滚：`docker compose run --rm --no-deps --entrypoint alembic backend downgrade b8d0f2a4c6e8`，再把 override 的 backend image 改回
+  `openbox-backend:20260910-publish2-2e44c01`，`up -d --no-deps backend`。降级只丢 `cron_jobs.template` 一列。
+
+## 历史阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
 
 - 01:23:12–01:23:32（北京时间）gw2 backend 切换至 `20260910-publish2-2e44c01`，源码 `main@2e44c01`
   （PR [#13](https://github.com/arkstudio-ai/OpenBox/pull/13) desktop_publish + PR [#14](https://github.com/arkstudio-ai/OpenBox/pull/14) 迁移 id 修正）。

@@ -12,6 +12,7 @@ import '../../shared/router/paths.dart';
 import 'state/chat_session_controller.dart';
 import 'state/pending_store.dart';
 import 'state/stream_store.dart';
+import 'utils/suggestions.dart';
 import 'utils/turn_view.dart';
 import 'widgets/assistant_turn.dart';
 import 'widgets/cards/permission_card.dart';
@@ -27,7 +28,7 @@ import 'widgets/user_bubble.dart';
 
 /// Live chat pane for one session (web `ChatRoute`): flow + pending prompts
 /// + composer. The screen chrome (app bar/drawer) lives in the app shell.
-class ChatScreen extends ConsumerWidget {
+class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.sessionId, this.resources});
 
   final String sessionId;
@@ -37,7 +38,23 @@ class ChatScreen extends ConsumerWidget {
   final ComposerResourceSlot? resources;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  bool _atBottom = true;
+  String get sessionId => widget.sessionId;
+  ComposerResourceSlot? get resources => widget.resources;
+
+  @override
+  void didUpdateWidget(ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionId != sessionId) _atBottom = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentSessionId = sessionId;
     final sessionState = ref.watch(chatSessionProvider(sessionId));
     final stream = ref.watch(chatStreamProvider);
     final pending = ref.watch(pendingProvider);
@@ -164,7 +181,18 @@ class ChatScreen extends ConsumerWidget {
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
               : sessionState.failed && messages.isEmpty
               ? _ErrorState(sessionId: sessionId)
-              : ChatFlow(rows: widgets, forceScrollToken: lastUserId),
+              : ChatFlow(
+                  key: ValueKey(sessionId),
+                  rows: widgets,
+                  forceScrollToken: lastUserId,
+                  onAtBottomChanged: (value) {
+                    if (mounted &&
+                        currentSessionId == sessionId &&
+                        _atBottom != value) {
+                      setState(() => _atBottom = value);
+                    }
+                  },
+                ),
         ),
         // One line, and it must survive until the next send, so it stays
         // above the composer rather than scrolling away with the transcript.
@@ -197,10 +225,19 @@ class ChatScreen extends ConsumerWidget {
           SafeArea(
             top: false,
             child: Composer(
+              key: ValueKey(sessionId),
               sessionKey: sessionId,
               session: sessionState.session,
               busy: busy,
               resources: resources,
+              suggestions: latestSuggestions(
+                rows,
+                status,
+                atBottom: _atBottom,
+                readOnly: readOnly,
+                hasRunError: runError != null,
+                hasPendingInput: permissions.isNotEmpty || questions.isNotEmpty,
+              ),
               onSend: (text, attachments) => ref
                   .read(chatSessionProvider(sessionId).notifier)
                   .send(text, attachments: attachments),

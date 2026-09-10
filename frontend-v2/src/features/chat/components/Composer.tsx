@@ -9,6 +9,7 @@ import { useAttachments } from "../hooks/useAttachments"
 import { useMentionMenu } from "../hooks/useMentionMenu"
 import { useSendShortcut } from "../hooks/useSendShortcut"
 import { useComposerModels } from "../hooks/useComposerModels"
+import { useComposerSuggestions } from "../hooks/useComposerSuggestions"
 import { useComposerDrop } from "../hooks/useComposerDrop"
 import { useMentionTrigger } from "../hooks/useMentionTrigger"
 import { modelContextLimit } from "../lib/model"
@@ -22,6 +23,8 @@ import { VideoModelPicker } from "./composer/VideoModelPicker"
 import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
+import { SuggestionChips } from "./composer/SuggestionChips"
+import type { SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
 
@@ -40,6 +43,7 @@ export interface ComposerSubmit {
 
 interface Props {
   busy: boolean
+  suggestions?: SuggestionsPart
   /** May return a promise; the draft is only discarded once it resolves. */
   onSubmit: (text: string, opts: ComposerSubmit) => void | Promise<void>
   onStop?: () => void
@@ -111,6 +115,7 @@ function SendButton({
  *  round button morphs between send and stop. */
 export function Composer({
   busy,
+  suggestions,
   onSubmit,
   onStop,
   autoFocus,
@@ -193,6 +198,28 @@ export function Composer({
   const canSend = (text.trim().length > 0 || attachments.items.length > 0) && !attachments.uploading
   const showStop = busy && !!onStop
 
+  const submitRequest = (request: string, assetIds?: string[]) => onSubmit(request, {
+    model: activeId,
+    variant: reasoning.value,
+    videoModel: video.pending,
+    videoResolution: video.pendingResolution,
+    attachments: assetIds,
+  })
+
+  const suggestionChips = useComposerSuggestions({
+    busy, draft: text, hasAttachments: attachments.items.length > 0 || attachments.uploading,
+    suggestions, sessionKey, onSend: submitRequest,
+    onFill: (prompt) => {
+      setText(prompt)
+      setCaret(prompt.length)
+      taRef.current?.focus()
+    },
+    onFailure: (prompt) => {
+      setText((current) => current || prompt)
+      taRef.current?.focus()
+    },
+  })
+
   const submit = () => {
     if (!canSend) return
     const decorated = attachments.decorate(text.trim())
@@ -207,13 +234,7 @@ export function Composer({
 
     // `video.pending`, not `video.activeId`: sending the resolved default
     // would pin every conversation to it, including ones that never chose.
-    const result = onSubmit(decorated, {
-      model: activeId,
-      variant: reasoning.value,
-      videoModel: video.pending,
-      videoResolution: video.pendingResolution,
-      attachments: assetIds,
-    })
+    const result = submitRequest(decorated, assetIds)
     if (result && typeof result.then === "function") {
       void result.catch(() => {
         setText((current) => (current ? current : draft))
@@ -249,6 +270,7 @@ export function Composer({
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
+        {suggestionChips.visible && <SuggestionChips items={suggestionChips.visible.items} onSelect={suggestionChips.select} />}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
 

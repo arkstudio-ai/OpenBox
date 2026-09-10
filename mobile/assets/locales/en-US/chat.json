@@ -1,4 +1,11 @@
 {
+  "suggestions": {
+    "title": "Suggested next steps",
+    "send": "Send suggestion: {{label}}",
+    "edit": "Edit suggestion: {{label}}",
+    "sendHint": "Click to send: {{prompt}}",
+    "editHint": "Review and edit before sending: {{prompt}}"
+  },
   "thinking": "Thinking…",
   "thoughtFor": "Thought for {{duration}}",
   "thought": "Reasoning",

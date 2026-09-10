@@ -58,13 +58,15 @@ interface Props {
   onStop?: () => void
   /** Set while a stalled run is retrying, so the wait can say which try. */
   retry?: { attempt: number; maxAttempts: number }
+  onAtBottomChange?: (atBottom: boolean) => void
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
+  useEffect(() => onAtBottomChange?.(atBottom), [atBottom, onAtBottomChange])
 
   // Only the newest card may be edited. The list is one live thing per
   // session, so an edit made from a scrolled-up card would land on the
@@ -128,6 +130,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
       if (atBottomRef.current) el.scrollTop = el.scrollHeight
     })
     ro.observe(content)
+    ro.observe(el) // Composer suggestions may change the viewport height.
     return () => ro.disconnect()
   }, [])
   useEffect(() => {

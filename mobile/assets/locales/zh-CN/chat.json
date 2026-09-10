@@ -1,4 +1,11 @@
 {
+  "suggestions": {
+    "title": "下一步建议",
+    "send": "发送建议：{{label}}",
+    "edit": "编辑建议：{{label}}",
+    "sendHint": "点击发送：{{prompt}}",
+    "editHint": "先检查并补充，再发送：{{prompt}}"
+  },
   "thinking": "正在想…",
   "thoughtFor": "想了 {{duration}}",
   "thought": "思考过程",

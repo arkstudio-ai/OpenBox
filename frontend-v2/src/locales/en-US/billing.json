@@ -120,6 +120,7 @@
     "kind": {
       "chat": "Chat",
       "title": "Title generation",
+      "suggestions": "Next-step suggestions",
       "compaction": "Context compaction",
       "compaction_chunk": "Chunk compaction",
       "bash_judge": "Command check",

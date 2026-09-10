@@ -2,7 +2,7 @@
 
 分析日期：2026-09-10。本文保留迁移前的源码分析，表格中的“新版现状”指迁移前基线。后续已按用户确认实现通知 API、双端接入和单手机登录；最终接口、配置和验证见 [MOBILE_NOTIFICATIONS.md](MOBILE_NOTIFICATIONS.md)。尚未部署。
 
-新版本基线为 OpenBox `a69b141`；分析分支为 `codex/mobile-notifications`，目录为 `/Users/wang/workspace/OpenBox-mobile-notifications`。旧版本参考 `/Users/wang/workspace/bossip` 的 `f1ff9119`，完整推送实现位于 `apps/codex/v2`。
+新版本基线为 OpenBox `a69b141`；分析分支为 `codex/mobile-notifications`，合并后的主工作目录为 `/Users/wang/workspace/OpenBox`。旧版本参考 `/Users/wang/workspace/bossip` 的 `f1ff9119`，完整推送实现位于 `apps/codex/v2`。
 
 用户所说的“报名一样”按“包名一样”理解；“沿用旧授权”按沿用旧推送应用和服务端凭据处理。手机上的通知权限仍读取系统真实状态。
 
@@ -134,9 +134,9 @@ Android 13+ 要处理 `POST_NOTIFICATIONS` 的允许、拒绝和未决定状态�
 | 旧通知展示与点击策略 | [codex_notification_coordinator.dart](/Users/wang/workspace/bossip/apps/codex/v2/mobile/lib/src/core/codex_notification_coordinator.dart) |
 | 旧发送状态机 | [push-runtime.ts](/Users/wang/workspace/bossip/apps/codex/v2/apps/api/src/services/push-runtime.ts) |
 | 旧绑定、去重及投递存储 | [push-store.ts](/Users/wang/workspace/bossip/apps/codex/v2/apps/api/src/services/push-store.ts) |
-| 新执行结算 | [loop.py](/Users/wang/workspace/OpenBox-mobile-notifications/backend/agent/loop.py:1311)、[runtime.py](/Users/wang/workspace/OpenBox-mobile-notifications/backend/question/runtime.py:159) |
-| 新执行和问题持久化 | [question.py](/Users/wang/workspace/OpenBox-mobile-notifications/backend/db/models/question.py:10) |
-| 新事件总线 | [bus.py](/Users/wang/workspace/OpenBox-mobile-notifications/backend/bus/bus.py:65) |
-| 新认证退出 | [routes.py](/Users/wang/workspace/OpenBox-mobile-notifications/backend/auth/routes.py:402)、[auth_store.dart](/Users/wang/workspace/OpenBox-mobile-notifications/mobile/lib/shared/api/auth_store.dart) |
-| 新工作空间恢复与路由 | [workspace_bootstrap.dart](/Users/wang/workspace/OpenBox-mobile-notifications/mobile/lib/app/workspace_bootstrap.dart)、[router.dart](/Users/wang/workspace/OpenBox-mobile-notifications/mobile/lib/app/router.dart) |
-| 新原生入口 | [AppDelegate.swift](/Users/wang/workspace/OpenBox-mobile-notifications/mobile/ios/Runner/AppDelegate.swift)、[AndroidManifest.xml](/Users/wang/workspace/OpenBox-mobile-notifications/mobile/android/app/src/main/AndroidManifest.xml) |
+| 新执行结算 | [loop.py](/Users/wang/workspace/OpenBox/backend/agent/loop.py:1311)、[runtime.py](/Users/wang/workspace/OpenBox/backend/question/runtime.py:159) |
+| 新执行和问题持久化 | [question.py](/Users/wang/workspace/OpenBox/backend/db/models/question.py:10) |
+| 新事件总线 | [bus.py](/Users/wang/workspace/OpenBox/backend/bus/bus.py:65) |
+| 新认证退出 | [routes.py](/Users/wang/workspace/OpenBox/backend/auth/routes.py:402)、[auth_store.dart](/Users/wang/workspace/OpenBox/mobile/lib/shared/api/auth_store.dart) |
+| 新工作空间恢复与路由 | [workspace_bootstrap.dart](/Users/wang/workspace/OpenBox/mobile/lib/app/workspace_bootstrap.dart)、[router.dart](/Users/wang/workspace/OpenBox/mobile/lib/app/router.dart) |
+| 新原生入口 | [AppDelegate.swift](/Users/wang/workspace/OpenBox/mobile/ios/Runner/AppDelegate.swift)、[AndroidManifest.xml](/Users/wang/workspace/OpenBox/mobile/android/app/src/main/AndroidManifest.xml) |

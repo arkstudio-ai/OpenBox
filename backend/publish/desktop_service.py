@@ -204,6 +204,15 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     from tool.video_production import _find_owned_asset
 
     cfg = get_config().desktop_publish
+    # The script types topics as #chips after the intro; strip any the caller already
+    # wrote into the intro so the published caption does not repeat them.
+    if spec.topics and spec.intro:
+        import re as _re
+
+        intro = spec.intro
+        for t in spec.topics:
+            intro = _re.sub(r"\s*#" + _re.escape(t) + r"(?=\s|#|$)", "", intro)
+        spec.intro = _re.sub(r"\s{2,}", " ", intro).strip()
     if len(spec.title) > cfg.max_title_chars:
         raise PublishRefusal(f"标题 {len(spec.title)} 字，创作者中心上限 {cfg.max_title_chars} 字，请缩短。")
     if len(spec.intro or "") > 1000:
@@ -290,7 +299,8 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
     await _notify(caller.workspace_id, NOTIFY_DONE, "视频已通过创作者中心发布",
                   f"《{spec.title}》已发布（{script.VISIBILITY[spec.visibility]}）。" + (f" 作品 {result['item_id']}" if result.get("item_id") else ""))
     return {"job_id": job.id, "status": "published", "item_id": result.get("item_id"), "item_url": result.get("item_url"),
-            "hot_word_attached": result.get("hot_word_attached"),
+            "hot_word_attached": result.get("hot_word_attached"), "declaration_row": result.get("declaration_row"),
+            "declaration": spec.declaration, "visibility": spec.visibility,
             "publish_ms": result.get("publish_ms"), "upload": result.get("upload"), "summary": result.get("summary"),
             "evidence_path": result.get("evidence"), "final_url": result.get("final_url")}
 

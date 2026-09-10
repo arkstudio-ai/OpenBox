@@ -11,6 +11,7 @@ import {
   PermissionCard,
   QuestionDock,
   isBusyStatus,
+  latestSuggestions,
   mergeTurns,
   useAbortSession,
   useChatEvents,
@@ -92,6 +93,7 @@ export default function ChatRoute() {
 
   const messages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
   const turns = useMemo(() => mergeTurns(messages), [messages])
+  const [atBottom, setAtBottom] = useState(true)
   // A tool part left as "running" is the fallback signal for busy, but only
   // while the session's real status is still unknown — a session opened
   // mid-run reads as busy from this before its first session.status event.
@@ -141,6 +143,9 @@ export default function ChatRoute() {
 
   const loading = messagesQ.isLoading && messages.length === 0
   const readOnly = isReadOnlySession(session.data?.user_id, currentUserId)
+  const suggestions = latestSuggestions(turns, recoveredStatus, {
+    atBottom, readOnly, hasError: Boolean(runError), permissionCount: permissions.length, questionCount: questions.length,
+  })
 
   // The task list used to live here, as a card pinned under the last turn,
   // fed by a REST query and thrown away when the run ended. It renders inside
@@ -171,7 +176,8 @@ export default function ChatRoute() {
           <Spinner className="size-6" />
         </div>
       ) : (
-        <ChatFlow turns={turns} sessionId={sessionId} busy={busy}
+        <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
+          onAtBottomChange={setAtBottom}
           awaitingInput={isAwaitingInput(recoveredStatus)}
           footer={footer} onStop={stop} retry={retry} />
       )}
@@ -187,6 +193,7 @@ export default function ChatRoute() {
       <ComposerAccess readOnly={readOnly}>
         <Composer
           busy={busy}
+          suggestions={suggestions}
           onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
           onStop={stop}
           sessionModel={session.data?.model}

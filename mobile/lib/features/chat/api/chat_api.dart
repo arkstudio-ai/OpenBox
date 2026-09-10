@@ -15,6 +15,24 @@ class ChatApi {
 
   final Dio _dio;
 
+  /// Publish only a complete snapshot: the first 200 messages may not contain
+  /// the current turn or its persisted suggestions in a long conversation.
+  Future<List<ChatMessage>> messageSnapshot(String sessionId) async {
+    const limit = 200;
+    final messages = <String, ChatMessage>{};
+    for (var offset = 0; ; offset += limit) {
+      final page = await listMessages(sessionId, offset: offset, limit: limit);
+      final before = messages.length;
+      for (final message in page) {
+        messages[message.id] = message;
+      }
+      if (page.length < limit) return messages.values.toList();
+      if (messages.length == before) {
+        throw StateError('Message pagination made no progress');
+      }
+    }
+  }
+
   Future<List<ChatMessage>> listMessages(
     String sessionId, {
     int offset = 0,

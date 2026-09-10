@@ -1,0 +1,188 @@
+{
+  "release": {
+    "tag": "20260910-suggestion-loading",
+    "source": "eda8b7502326e614ddf18d656fc4c9d2415a2a04",
+    "backendImage": "openbox-backend:20260910-suggestion-loading-eda8b75",
+    "frontendImage": "openbox-frontend-v2:20260910-suggestion-loading-eda8b75",
+    "backend": {
+      "imageId": "sha256:0b40f0480d25c122338f1b95bccc42db706851f7217a2e1bab5df69f5511f9be",
+      "imageConfigId": "sha256:957fbdae31ddefcf357a7b9f32cb9616e7253e9eae2586271114d54882f16c21",
+      "archiveSha256": "bfc0e0b1710f86d9fffa91479166b32acb18bae8bc57811540d18e3d7ddf5b6f",
+      "archiveBytes": 184703846
+    },
+    "frontend": {
+      "imageId": "sha256:22380b800b998cf3f7d8dbf75334f20da0b0d5932881a8fe033411f0a4fdcae0",
+      "imageConfigId": "sha256:6963db9696f600d59217ef8f0282c25a4d426a2f12d7cbbcccaa0c75ee368d33",
+      "archiveSha256": "d97a776c8c0c7797ea62bb00e64b7b74cc6825a4feb3153b0822ed8b3e0b4a7c",
+      "archiveBytes": 26645672
+    }
+  },
+  "production": {
+    "status": "deployed",
+    "source": "eda8b7502326e614ddf18d656fc4c9d2415a2a04",
+    "architecture": "linux/amd64",
+    "images": {
+      "backend": "openbox-backend:20260910-suggestion-loading-eda8b75",
+      "frontend": "openbox-frontend-v2:20260910-suggestion-loading-eda8b75"
+    },
+    "imageIds": {
+      "backend": "sha256:0b40f0480d25c122338f1b95bccc42db706851f7217a2e1bab5df69f5511f9be",
+      "frontend": "sha256:22380b800b998cf3f7d8dbf75334f20da0b0d5932881a8fe033411f0a4fdcae0"
+    },
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "configurationUnchangedExceptImages": true,
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "backup": "/opt/openbox/backups/20260910-suggestion-loading/activation-20260910T120943Z",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ],
+    "utc": "2026-09-10T12:38:18.380886+00:00"
+  },
+  "canary": {
+    "passed": true,
+    "source": "eda8b7502326e614ddf18d656fc4c9d2415a2a04",
+    "architecture": "linux/amd64",
+    "staticFilesVerified": 106,
+    "postgresCanary": {
+      "postgresReadOnlyContextChecks": 8,
+      "legacyPartsRead": 10
+    },
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "72e4438e4377656d48f8eab6a09cd5de0f7d55051025042e819188e641ea395e"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ]
+  },
+  "public": {
+    "origin": "https://ai.bossipai.com.cn",
+    "utc": "2026-09-10T12:38:53.982332+00:00",
+    "staticFilesVerified": 106,
+    "missingAssetStatus": 404,
+    "suggestionShimmerStylesPresent": true,
+    "environmentUnchanged": true
+  },
+  "availability": {
+    "samplePairs": 48,
+    "startUtc": "2026-09-10T12:37:25.861891+00:00",
+    "endUtc": "2026-09-10T12:39:10.057611+00:00",
+    "endpoints": {
+      "/": {
+        "statuses": {
+          "200": 43,
+          "502": 5
+        },
+        "firstFailureUtc": "2026-09-10T12:37:53.205309+00:00",
+        "lastFailureUtc": "2026-09-10T12:38:01.833433+00:00",
+        "recoveredUtc": "2026-09-10T12:38:03.991123+00:00",
+        "firstFailureToFinalRecoverySeconds": 10.786,
+        "allSubsequentSamples200": true
+      },
+      "/api/environment": {
+        "statuses": {
+          "200": 37,
+          "502": 11
+        },
+        "firstFailureUtc": "2026-09-10T12:37:30.269946+00:00",
+        "lastFailureUtc": "2026-09-10T12:38:01.833433+00:00",
+        "recoveredUtc": "2026-09-10T12:38:03.991123+00:00",
+        "firstFailureToFinalRecoverySeconds": 33.721,
+        "allSubsequentSamples200": true
+      }
+    }
+  },
+  "browser": {
+    "browser": "Chrome",
+    "existingConversationReloaded": true,
+    "emptyDraftBeforeReload": true,
+    "visibleSuggestions": 3,
+    "consoleErrors": 0,
+    "productionTestMessagesSent": 0,
+    "loadingLifecycleVerifiedWithIsolatedFixtures": true
+  },
+  "tests": {
+    "backendSuggestions": 45,
+    "backendExecutionRegression": 30,
+    "webUnitTests": 511,
+    "webBrowserTests": 14,
+    "webCheck": "passed (29 existing lint warnings)",
+    "releaseImageNginxRegression": "passed",
+    "flutterTests": 308,
+    "flutterAnalyze": "passed",
+    "flutterReleaseBundle": "passed",
+    "mobileLocaleParity": "passed; synchronized 3 existing workspace keys per language",
+    "mobileFileSizeGate": "passed"
+  },
+  "nativeRelease": {
+    "iosAndroidSourceUpdated": true,
+    "storeReleaseOrInstalledBinaryUpdated": false
+  },
+  "backup": {
+    "path": "/opt/openbox/backups/20260910-suggestion-loading/activation-20260910T120943Z",
+    "pgDumpBytes": 4539904,
+    "pgDumpSha256": "0937ab0fe35ca99213c3fbcf80ff9a107e98e8ccb61e64f4fa325ec447480ed2",
+    "pgRestoreListPassed": true
+  },
+  "temporaryOssObjectsRemoved": true
+}

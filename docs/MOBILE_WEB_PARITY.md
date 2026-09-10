@@ -297,6 +297,8 @@ Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理
 - Android debug APK 与 iOS debug simulator 构建通过，iOS 产物包含 arm64；iPhone 17 Pro 模拟器原生集成测试通过，截图位于 `mobile/build/suggestion-screenshots/`。测试使用完全隔离的 REST/WS，不访问生产或真实模型；真机系统输入法/触摸仍待验收。
 - 底部定位的回归修正了旧问答测试的滚动容器选择；分页问答用例机械拆入 `question_dock_pager_cases.dart`，保留全部原有断言并满足单文件 800 行门禁，不修改问答业务逻辑。
 
+2026-09-10 流光占位增量（`eda8b75`）：Web 与 iOS/Android 共用 pending/completed/unavailable 状态和截止时间；原生占位与按钮同高，支持小屏横滑、键盘、明暗主题和减少动态效果。全量 308 项测试、analyze、release bundle、locale 和行数门禁通过；补齐已有导航的 3 个中英文 locale key。本次前后端已部署阿里云，原生安装包未发布。
+
 完整配置、交互与测试命令见 [下一步建议说明](next-step-suggestions.md)。
 
 ## 12. 云电脑登录态与技能上传补齐（2026-09-10）

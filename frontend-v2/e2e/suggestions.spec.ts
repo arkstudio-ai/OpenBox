@@ -178,7 +178,7 @@ test("a recovered pending suggestion row shimmers in place, then becomes actiona
   const before = await page.getByRole("textbox").boundingBox()
   const row = await loading(page).boundingBox()
   expect(row!.y + row!.height).toBeLessThan(before!.y)
-  await expect(loading(page).locator(".suggestion-placeholder").first()).toHaveCSS("height", "52px")
+  await expect(loading(page).locator(".suggestion-placeholder").first()).toHaveCSS("height", "28px")
   await page.screenshot({ path: testInfo.outputPath("suggestion-loading-light.png") })
   await page.getByRole("button", { name: "Dark", exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath("suggestion-loading-dark.png") })

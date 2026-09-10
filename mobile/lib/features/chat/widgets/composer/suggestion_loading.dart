@@ -101,12 +101,7 @@ class _SuggestionLoadingState extends State<SuggestionLoading>
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(Radii.lg),
                       child: Container(
-                        height:
-                            MediaQuery.textScalerOf(
-                                  context,
-                                ).scale(FontSizes.sm) *
-                                2.8 +
-                            16,
+                        height: 28,
                         decoration: BoxDecoration(
                           color: t.hairSoft,
                           border: Border.all(color: t.hair),

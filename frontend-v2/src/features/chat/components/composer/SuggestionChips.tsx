@@ -17,7 +17,7 @@ export function SuggestionChips({ items, loading = false, onSelect }: Props) {
         <span className="sr-only">{t("suggestions.loading")}</span>
         {[0, 1, 2].map((index) => (
           <span key={index} aria-hidden="true"
-            className="suggestion-placeholder border-hair bg-hairsoft relative h-13 min-w-0 overflow-hidden rounded-lg border" />
+            className="suggestion-placeholder border-hair bg-hairsoft relative h-7 min-w-0 overflow-hidden rounded-lg border" />
         ))}
       </> : items.slice(0, 3).map((item) => (
         <button

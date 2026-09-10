@@ -191,7 +191,8 @@
   "aliases": {
     "gpt-5.6": "gpt-5.6-sol",
     "qwen3.8-max-0902": "qwen3.8-max",
-    "claude-haiku-4-5": "claude-haiku-4-5-20251001"
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+    "gemini-3.8-flash": "gemini-3.7-flash"
   },
   "unpriced": {
     "deepseek-chat": "Official alias retired on 2026-07-24; configure the gateway's exact model mapping before charging.",

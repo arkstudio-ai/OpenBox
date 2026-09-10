@@ -1,0 +1,76 @@
+{
+  "source": "b3fa6571ad33683b3b795358f494945d7e9c7b7c",
+  "change": "Generated suggestion placeholders reduced to 28px on Web and Flutter; completed suggestion layout retained.",
+  "frontendImage": "openbox-frontend-v2:20260910-compact-loading-b3fa657",
+  "frontendImageMetadata": {
+    "imageId": "sha256:3365fca4a82ec3a1eb913a7ff4962f6a24e317e4a5413f1878d118524e50da57",
+    "imageConfigId": "sha256:e1662ec9fb4e3e6483fed584158a680d50dad2cc14794cde48cbe8a1bf966280",
+    "archiveSha256": "a6af3bb9e600b5be057bfaf19ba1e2386b4b5c999a2d1834daa6459df2cde010",
+    "archiveBytes": 29352187
+  },
+  "architecture": "linux/amd64",
+  "deployment": {
+    "verifiedUtc": "2026-09-10T13:54:24.150495+00:00",
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "backendImageUnchanged": "openbox-backend:20260910-takeover-3db71bc",
+    "configurationUnchangedExceptFrontendImage": true,
+    "migrationUnchanged": "e4f6a8b0c2d4"
+  },
+  "publicFiles": [
+    {
+      "path": "index.html",
+      "status": 200,
+      "sha256": "8e57309dd75db1c22b106a36aa64c4d63196ccdf32c200c017e47440501192c1"
+    },
+    {
+      "path": "assets/index-D6WcPAfM.css",
+      "status": 200,
+      "sha256": "de4cc55f48b4c7e6206ebc7f8bbb61b7976bf35a761a06b1751b80da023bd7b3"
+    },
+    {
+      "path": "assets/ChatRoute-Cup9ELT5.js",
+      "status": 200,
+      "sha256": "e6d6b803c86b2b823d3416aa5965d2fb8d1fe99ec03d904b65ac564f2f3fbb39"
+    }
+  ],
+  "staticFilesVerifiedInCanary": 109,
+  "availability": {
+    "/": {
+      "statuses": {
+        "200": 10,
+        "502": 14
+      },
+      "interruptionSeconds": 31.102,
+      "recoveredUtc": "2026-09-10T13:54:08.333051+00:00"
+    },
+    "/api/environment": {
+      "statuses": {
+        "200": 10,
+        "502": 14
+      },
+      "interruptionSeconds": 31.102,
+      "recoveredUtc": "2026-09-10T13:54:08.333149+00:00"
+    }
+  },
+  "backup": {
+    "path": "/opt/openbox/backups/20260910-compact-loading/activation-20260910T135049Z",
+    "pgDumpBytes": 4553647,
+    "pgDumpSha256": "638609253c101b0030deabe7db2ec80da08d6c027e178342a925e1b0d3ab3117",
+    "pgRestoreListPassed": true
+  },
+  "tests": {
+    "flutterLoadingAndComposer": 32,
+    "webLoadingE2e": 5,
+    "flutterAnalyze": "passed",
+    "iosSimulatorBuildAndInstall": "passed",
+    "androidArm64DebugBuildAndInstall": "passed"
+  },
+  "nativeStoreRelease": false,
+  "androidApkSha256": "f109b1873c2716b6647a32d2aa75734ba6706187f130df7b988f013fc49c4452",
+  "temporaryOssObjectsRemoved": true
+}

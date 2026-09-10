@@ -193,6 +193,21 @@ export interface SkillJobPart {
   artifacts?: { assetId?: string; name?: string; mime?: string }[]
 }
 
+export interface NextStepSuggestion {
+  label: string
+  prompt: string
+  mode: "send" | "draft"
+}
+
+/** Cached per completed answer, separate from its visible text/tool trace. */
+export interface SuggestionsPart {
+  type: "suggestions"
+  id: string
+  items: NextStepSuggestion[]
+  context_summary?: string
+  model?: string
+}
+
 export type MessagePart =
   | TextPart
   | ReasoningPart
@@ -208,6 +223,7 @@ export type MessagePart =
   | PlanPart
   | TodoPart
   | SkillJobPart
+  | SuggestionsPart
 
 export type MessageRole = "user" | "assistant" | "system"
 

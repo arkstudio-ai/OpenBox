@@ -10,12 +10,14 @@ class ChatFlow extends StatefulWidget {
     super.key,
     required this.rows,
     this.forceScrollToken,
+    this.onAtBottomChanged,
   });
 
   final List<Widget> rows;
 
   /// Changes when the user sends → force pin + jump (web :128-141).
   final Object? forceScrollToken;
+  final ValueChanged<bool>? onAtBottomChanged;
 
   @override
   State<ChatFlow> createState() => _ChatFlowState();
@@ -24,12 +26,30 @@ class ChatFlow extends StatefulWidget {
 class _ChatFlowState extends State<ChatFlow> {
   final _controller = ScrollController();
   bool _atBottom = true;
+  bool? _reportedAtBottom;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleStick();
+  }
+
+  void _reportAtBottom() {
+    // Scroll notifications arrive during layout. Notify the parent after the
+    // frame, coalescing rapid changes so chips cannot cause a rebuild loop.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _reportedAtBottom == _atBottom) return;
+      _reportedAtBottom = _atBottom;
+      widget.onAtBottomChanged?.call(_atBottom);
+    });
+  }
 
   @override
   void didUpdateWidget(ChatFlow oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.forceScrollToken != oldWidget.forceScrollToken) {
       _atBottom = true;
+      _reportAtBottom();
     }
     if (_atBottom) _scheduleStick();
   }
@@ -46,6 +66,7 @@ class _ChatFlowState extends State<ChatFlow> {
 
   void _jumpToBottom() {
     _atBottom = true;
+    _reportAtBottom();
     if (_controller.hasClients) {
       _controller.animateTo(
         _controller.position.maxScrollExtent,
@@ -67,22 +88,30 @@ class _ChatFlowState extends State<ChatFlow> {
     final t = context.tokens;
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
+        NotificationListener<ScrollMetricsNotification>(
           onNotification: (notification) {
-            final metrics = notification.metrics;
-            final atBottom = metrics.extentAfter < 60;
-            if (atBottom != _atBottom) {
-              setState(() => _atBottom = atBottom);
-            }
+            if (notification.depth == 0 && _atBottom) _scheduleStick();
             return false;
           },
-          child: ListView.separated(
-            controller: _controller,
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            itemCount: widget.rows.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 20),
-            itemBuilder: (context, index) => widget.rows[index],
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification.depth != 0) return false;
+              final metrics = notification.metrics;
+              final atBottom = metrics.extentAfter < 60;
+              if (atBottom != _atBottom) {
+                setState(() => _atBottom = atBottom);
+                _reportAtBottom();
+              }
+              return false;
+            },
+            child: ListView.separated(
+              controller: _controller,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              itemCount: widget.rows.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 20),
+              itemBuilder: (context, index) => widget.rows[index],
+            ),
           ),
         ),
         // Top fade mask.

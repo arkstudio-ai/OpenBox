@@ -4,6 +4,8 @@
 >
 > 最近核对与实现：2026-09-07；最近核对的 main 基线 `205226d`。移动端已对齐订阅驱动开通，并在本轮补齐 A5 授权中心与抖音投稿；本轮新增代码尚未发布。阿里云配置为 `APP_ENV=prod`。
 > 最初核对范围为 `2c64409..49ba4ff`，并补计更早未移植的 `9dd7d79`（桌面按用户开通）。
+>
+> 2026-09-10 增量：`codex/next-step-suggestions`（开发基线 `a69b141`）同步实现 Web 与 Flutter 原生下一步建议；合并状态见 Git 记录，生产部署另行进行，见 §11。
 
 ## 维护规则
 
@@ -29,6 +31,7 @@
 | P3 | 舰队管理 | `ae330c0` | 有意省略 | 管理员运维台，按移动端“能力不具备则省略控件”处理 |
 | P3 | 超管系统（舰队 / 技能管理 / 订阅管理） | 分支 `codex/admin-console` | 有意省略 | 与舰队管理同一处理：Web-only 运营台，移动端不加入口和控件；`admin.json` / `admin-skills.json` / `admin-billing.json` 仍按 locale 规则逐字节复制。见 §10 |
 | P2 | 用户侧技能商店改版（来源分区、上架状态、撤回、审核提示） | 分支 `codex/admin-console` | 已完成（代码与单测）；真机验收待完成 | 三个 widget 已接新字段，`listing.dart` / `store_sections.dart` 从 web 逐条移植并有 14 项单测。见 §10 |
+| P1 | 聊天输入框上方 AI 下一步建议 | 分支 `codex/next-step-suggestions` | 已完成（代码、组件测试与 iPhone 模拟器）；真机待验收 | 同一后端生成/持久化，原生横滑按钮、发送/草稿、可见性保护、长对话分页，见 §11 |
 
 ## 1. Locale 同步与工作日志内联常开
 
@@ -279,6 +282,20 @@ Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理
 - **旧 App 的行为差异**：`SKILL_STORE_REVIEW=true`（默认）时，用户在移动端点「上传到商店」后技能进入待审核，商店里当时看不到，而移动端文案仍写「所有用户都能看到」。这不会报错，但会误导——这是本项待对齐里优先级最高的一条。
 - 移动端目前没有撤回入口，作者只能在 Web 上撤回；已安装的副本在任何情况下都不受下架或撤回影响（§3-Q4），所以移动端沙箱里的技能不会凭空消失。
 
+## 11. 下一步建议（2026-09-10）
+
+- Flutter `SuggestionsPart` 解析同一份后端数据，忽略无效模式/空值/过长内容，最多保留三个不重复建议。生成模型统一读取服务端 `suggestion_model`，未配置时使用该轮聊天实际模型；客户端不增加模型调用。
+- 原生 `SuggestionChips` 位于 Composer 卡片上方，44 logical pixels 最小触摸高度，横向滑动，支持中英文、明暗主题、大字号与读屏动作。
+- `send` 走现有发送控制器和 REST，沿用当前模型/variant/video/agent；`draft` 只填入并聚焦。草稿、附件、上传、运行、等待、错误、只读、历史翻阅时不展示。点击有防重复和会话作用域保护，失败恢复不覆盖新草稿。
+- WS 延迟结果和快照一致合并；逐页读取完整消息，超过 200 条时仍使用最新回复。新建议出现和键盘改变视口时维持底部定位。
+- locales 与 Web 逐字节一致，顺带补齐基线已缺失的 `common.pageLoad` 文案。
+- 新增 28 项单元/组件回归，覆盖 320/390/430 宽度、两语言/主题、150% 字号、键盘视口、点击和草稿、失败与跨会话、隐藏条件、真实发送参数、WS 和 402 条分页。
+- 全量 `flutter test --no-pub` 201 项通过；`flutter analyze`、locale 逐字节一致及 800 行门禁全部通过。
+- Android debug APK 与 iOS debug simulator 构建通过，iOS 产物包含 arm64；iPhone 17 Pro 模拟器原生集成测试通过，截图位于 `mobile/build/suggestion-screenshots/`。测试使用完全隔离的 REST/WS，不访问生产或真实模型；真机系统输入法/触摸仍待验收。
+- 底部定位的回归修正了旧问答测试的滚动容器选择；分页问答用例机械拆入 `question_dock_pager_cases.dart`，保留全部原有断言并满足单文件 800 行门禁，不修改问答业务逻辑。
+
+完整配置、交互与测试命令见 [下一步建议说明](next-step-suggestions.md)。
+
 ## 明确不需要重复移植
 
 - `4a87777` / `66bb9de` 的 1920×1080 固定分辨率：移动端 `desktop_bridge.dart` 已用 `fixedResolution`/`maxResolution` 做到等价效果。
@@ -305,6 +322,7 @@ Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理
 
 | 日期 | 功能块 | 提交 | 验收证据 |
 |---|---|---|---|
+| 2026-09-10 | 原生下一步建议 | `codex/next-step-suggestions`，生产部署另行进行 | 201 项 Flutter 测试（新增 28 项）、analyze、locale/行数门禁、Android APK 与 iOS arm64 simulator 构建通过；iPhone 原生集成回归和截图通过，使用隔离 fixtures，真机待验收 |
 | 2026-09-08 | Android Logto prompt 修复 | 本轮改动 | API 36 模拟器完整复现密码验证成功后卡在 `Submitting Callback`；保持 PKCE/state 不变、仅从 `login consent` 改为 `consent` 后 custom-scheme 回调、Token 交换与工作台加载成功；同一账号退出后再次登录仍显示凭证页 |
 | 2026-09-08 | Android Logto 回调去重 | 本轮改动 | Manifest 回归测试、`flutter analyze` 与 Gradle merged-manifest 构建通过；合并清单确认 MainActivity 只处理 HTTPS 邀请，`com.bossip.bipmobile://callback` 只剩 `flutter_web_auth_2.CallbackActivity` |
 | 2026-09-07 | 订阅驱动无影云与 prod 移动端对齐 | 本轮改动，Web/服务端基线 `129e758` | 44 项 Flutter 测试、analyze、locale/文件大小门禁与 iOS 模拟器构建通过；iPhone 17 Pro 实连阿里云验证就绪提示、0.10 元月付/年付、桌面画面及前后台/全屏恢复 |

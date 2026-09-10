@@ -133,6 +133,7 @@
     "kind": {
       "chat": "对话",
       "title": "标题生成",
+      "suggestions": "下一步建议",
       "compaction": "上下文压缩",
       "compaction_chunk": "分段压缩",
       "bash_judge": "命令判断",

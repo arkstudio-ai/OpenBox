@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../shared/api/providers.dart';
+import '../../../shared/api/workspace_scope.dart';
 import '../../../shared/models/json.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/models/skill.dart';
@@ -70,12 +71,10 @@ class SkillsApi {
     List<String> withMcp = const [],
     Map<String, Map<String, String>> env = const {},
   }) async {
-    await _dio.post<dynamic>('/api/agent/catalog/install', data: {
-      'id': id,
-      'kind': kind,
-      'with_mcp': withMcp,
-      'env': env,
-    });
+    await _dio.post<dynamic>(
+      '/api/agent/catalog/install',
+      data: {'id': id, 'kind': kind, 'with_mcp': withMcp, 'env': env},
+    );
   }
 
   /// Configure and connect are separate calls; a server that is configured
@@ -125,12 +124,15 @@ class SkillsApi {
   }
 
   /// Install a skill from a pasted SKILL.md or a git URL.
-  Future<void> installSkill({String? url, String? name, String? content}) async {
-    await _dio.post<dynamic>('/api/agent/skill/install', data: {
-      'url': ?url,
-      'name': ?name,
-      'content': ?content,
-    });
+  Future<void> installSkill({
+    String? url,
+    String? name,
+    String? content,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/agent/skill/install',
+      data: {'url': ?url, 'name': ?name, 'content': ?content},
+    );
   }
 
   /// Install a skill from an archive picked off the device (zip/tar/tgz).
@@ -152,6 +154,34 @@ class SkillsApi {
     );
   }
 
+  /// Stream one queued archive, pinned to the identity that opened the sheet.
+  Future<void> uploadArchiveStream({
+    required String filename,
+    required int length,
+    required Stream<List<int>> Function() openRead,
+    required String userId,
+    required String workspaceId,
+    required CancelToken cancel,
+    String? name,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/agent/skill/upload',
+      data: FormData.fromMap({
+        'file': MultipartFile.fromStream(openRead, length, filename: filename),
+        'name': name ?? '',
+      }),
+      cancelToken: cancel,
+      options: Options(
+        contentType: Headers.multipartFormDataContentType,
+        headers: {'X-Workspace-Id': workspaceId},
+        extra: {
+          requestScopeUserKey: userId,
+          requestScopeWorkspaceKey: workspaceId,
+        },
+      ),
+    );
+  }
+
   /// Save a personal skill's whole install directory next to the app's other
   /// documents, and return where it landed. A phone has no download tray, so
   /// the path is the only useful receipt.
@@ -160,7 +190,8 @@ class SkillsApi {
       '/api/agent/skill/${Uri.encodeComponent(installDir)}/download',
       options: Options(responseType: ResponseType.bytes),
     );
-    final name = _dispositionFilename(resp.headers.value('content-disposition')) ??
+    final name =
+        _dispositionFilename(resp.headers.value('content-disposition')) ??
         '$installDir.zip';
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/$name');
@@ -195,8 +226,10 @@ class SkillsApi {
 
 String? _dispositionFilename(String? value) {
   if (value == null) return null;
-  final encoded =
-      RegExp(r"filename\*=UTF-8''([^;]+)", caseSensitive: false).firstMatch(value);
+  final encoded = RegExp(
+    r"filename\*=UTF-8''([^;]+)",
+    caseSensitive: false,
+  ).firstMatch(value);
   if (encoded != null) {
     final raw = encoded.group(1)!;
     try {
@@ -205,15 +238,21 @@ String? _dispositionFilename(String? value) {
       return raw;
     }
   }
-  final quoted =
-      RegExp(r'filename="([^"]+)"', caseSensitive: false).firstMatch(value);
+  final quoted = RegExp(
+    r'filename="([^"]+)"',
+    caseSensitive: false,
+  ).firstMatch(value);
   if (quoted != null) return quoted.group(1);
-  final bare = RegExp(r'filename=([^;]+)', caseSensitive: false).firstMatch(value);
+  final bare = RegExp(
+    r'filename=([^;]+)',
+    caseSensitive: false,
+  ).firstMatch(value);
   return bare?.group(1)?.trim();
 }
 
-final skillsApiProvider =
-    Provider<SkillsApi>((ref) => SkillsApi(ref.watch(apiDioProvider)));
+final skillsApiProvider = Provider<SkillsApi>(
+  (ref) => SkillsApi(ref.watch(apiDioProvider)),
+);
 
 /// Bumped after every write — an install moves more than one list, so all
 /// three refetch together (web `useRefreshAll`).

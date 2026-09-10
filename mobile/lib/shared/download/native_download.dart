@@ -26,6 +26,58 @@ class NativeDownloadService {
   final Dio _downloadClient;
   bool _saving = false;
 
+  /// Export an authenticated stream without buffering an archive in memory.
+  /// Re-check identity before each chunk and before opening the system picker.
+  Future<bool> saveStream({
+    required Stream<List<int>> stream,
+    required String suggestedName,
+    required void Function() checkAccess,
+    String mimeType = 'application/zip',
+  }) async {
+    if (_saving) throw StateError('A native download is already in progress');
+    _saving = true;
+    Directory? staging;
+    IOSink? sink;
+    try {
+      checkAccess();
+      staging = await (await getTemporaryDirectory()).createTemp(
+        'admin-archive-',
+      );
+      final name = nativeDownloadFileName(suggestedName);
+      final file = File('${staging.path}/$name');
+      sink = file.openWrite();
+      await sink.addStream(
+        stream.map((chunk) {
+          checkAccess();
+          return chunk;
+        }),
+      );
+      await sink.close();
+      sink = null;
+      checkAccess();
+      return await _channel.invokeMethod<bool>('saveFile', {
+            'path': file.path,
+            'name': name,
+            'mimeType': mimeType,
+          }) ??
+          false;
+    } finally {
+      try {
+        await sink?.close();
+      } on FileSystemException {
+        // addStream may already close the sink on a read failure. Preserve
+        // the original stream/scope error while still cleaning our staging.
+      } finally {
+        _saving = false;
+        try {
+          await staging?.delete(recursive: true);
+        } on FileSystemException {
+          // The native picker may briefly retain the export source.
+        }
+      }
+    }
+  }
+
   /// Export an in-memory QR image through the same native destination picker.
   Future<bool> saveBytes({
     required Uint8List bytes,

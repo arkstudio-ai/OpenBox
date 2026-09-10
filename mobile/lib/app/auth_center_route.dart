@@ -25,6 +25,7 @@ class AuthCenterRoute extends ConsumerWidget {
       canManage: current.role.canManage,
       initialJobId: jobId,
       onExit: () => context.canPop() ? context.pop() : context.go(Paths.app),
+      onOpenDesktop: () => context.push(Paths.desktop),
     );
   }
 }

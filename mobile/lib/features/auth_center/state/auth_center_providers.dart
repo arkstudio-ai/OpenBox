@@ -5,6 +5,10 @@ import '../../../shared/api/platform_accounts_api.dart';
 import '../../../shared/models/platform_account.dart';
 import '../../../shared/models/resource.dart';
 
+final desktopLoginClockProvider = Provider<DateTime Function()>(
+  (ref) => DateTime.now,
+);
+
 CancelToken _cancelOnDispose(Ref ref) {
   final cancel = CancelToken();
   ref.onDispose(cancel.cancel);
@@ -28,6 +32,12 @@ final publishJobsProvider = FutureProvider.autoDispose
       (ref, scope) => ref
           .watch(platformAccountsApiProvider)
           .jobs(scope, cancel: _cancelOnDispose(ref)),
+    );
+final platformNotificationsProvider = FutureProvider.autoDispose
+    .family<PlatformNotificationPage, PlatformScope>(
+      (ref, scope) => ref
+          .watch(platformAccountsApiProvider)
+          .notifications(scope, cancel: _cancelOnDispose(ref)),
     );
 final publishVideosProvider = FutureProvider.autoDispose
     .family<ResourcePage, PlatformScope>(

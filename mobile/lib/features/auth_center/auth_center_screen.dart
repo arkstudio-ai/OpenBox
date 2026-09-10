@@ -6,12 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../shared/api/platform_accounts_api.dart';
 import '../../shared/appearance/tokens.dart';
+import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import '../../shared/models/platform_account.dart';
 import '../../shared/platforms/platform_links.dart';
 import '../../shared/widgets/toast.dart';
 import 'state/auth_center_providers.dart';
 import 'widgets/auth_widgets.dart';
+import 'widgets/desktop_login_panel.dart';
+import 'widgets/notification_panel.dart';
 import 'widgets/platform_account_card.dart';
 import 'widgets/platform_qr.dart';
 import 'widgets/publish_job_view.dart';
@@ -26,11 +29,13 @@ class AuthCenterScreen extends ConsumerStatefulWidget {
     required this.canManage,
     this.initialJobId,
     this.onExit,
+    this.onOpenDesktop,
   });
   final PlatformScope scope;
   final bool canManage;
   final String? initialJobId;
   final VoidCallback? onExit;
+  final VoidCallback? onOpenDesktop;
   @override
   ConsumerState<AuthCenterScreen> createState() => _AuthCenterScreenState();
 }
@@ -68,6 +73,7 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
     if (!mounted || !_active) return;
     ref.invalidate(platformAccountsProvider(widget.scope));
     ref.invalidate(publishJobsProvider(widget.scope));
+    ref.invalidate(platformNotificationsProvider(widget.scope));
   }
 
   @override
@@ -219,7 +225,14 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
             : RefreshIndicator(
                 onRefresh: () async => _refresh(),
                 child: ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    20 + MediaQuery.paddingOf(context).bottom,
+                  ),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
                     if (_jobId != null)
@@ -257,6 +270,10 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                         ),
                       ),
                     ] else ...[
+                      NotificationPanel(
+                        key: ValueKey(('notifications', widget.scope)),
+                        scope: widget.scope,
+                      ),
                       Text(
                         i18n.t('auth-center:page.subtitle'),
                         style: TextStyle(color: t.n600),
@@ -310,7 +327,8 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                       if ((platforms.isLoading && !platforms.hasValue) ||
                           (accounts.isLoading && !accounts.hasValue))
                         const Center(child: CircularProgressIndicator())
-                      else if (platforms.hasError || accounts.hasError)
+                      else if ((platforms.hasError && !platforms.hasValue) ||
+                          (accounts.hasError && !accounts.hasValue))
                         AuthError(
                           error: platforms.error ?? accounts.error!,
                           retry: () {
@@ -322,15 +340,38 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                         AuthCard(
                           child: Text(i18n.t('auth-center:state.noPlatforms')),
                         )
-                      else
-                        for (final platform in platforms.value!)
+                      else ...[
+                        if (platforms.hasError || accounts.hasError)
+                          AuthError(
+                            error: platforms.error ?? accounts.error!,
+                            retry: () {
+                              ref.invalidate(platformsProvider(widget.scope));
+                              _refresh();
+                            },
+                          ),
+                        for (final platform in platforms.value!.where(
+                          (p) => p.kind == 'oauth',
+                        ))
                           _platformCard(platform, accounts.value ?? [], i18n),
+                        if (platforms.value!.any((p) => p.kind == 'desktop'))
+                          DesktopLoginPanel(
+                            key: ValueKey(('desktop', widget.scope)),
+                            scope: widget.scope,
+                            sites: platforms.value!
+                                .where((p) => p.kind == 'desktop')
+                                .toList(),
+                            accounts: accounts.value ?? [],
+                            canManage: widget.canManage,
+                            onChanged: _refresh,
+                            onOpenDesktop: widget.onOpenDesktop,
+                          ),
+                      ],
                       const SizedBox(height: 12),
                       Text(
                         i18n.t('auth-center:mobile.recentJobs'),
                         style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                          fontSize: FontSizes.lg,
                           color: t.ink,
                         ),
                       ),
@@ -384,7 +425,9 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
     List<PlatformAccount> accounts,
     I18nState i18n,
   ) {
-    final rows = accounts.where((a) => a.platform == platform.key).toList();
+    final rows = accounts
+        .where((a) => a.authKind == 'oauth' && a.platform == platform.key)
+        .toList();
     final supported = platform.key == 'douyin';
     final hasBound = rows.any(
       (a) => const {'bound', 'expiring'}.contains(a.statusAt(DateTime.now())),
@@ -399,8 +442,8 @@ class _AuthCenterScreenState extends ConsumerState<AuthCenterScreen>
                 child: Text(
                   platform.display,
                   style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
+                    fontSize: FontSizes.lg,
+                    fontWeight: FontWeight.w500,
                     color: context.tokens.ink,
                   ),
                 ),

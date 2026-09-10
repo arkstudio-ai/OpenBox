@@ -31,6 +31,8 @@ abstract final class Paths {
 
   static const String skills = '/app/skills';
 
+  static const String admin = '/app/admin';
+
   static const String desktop = '/app/desktop';
 
   static String authCenter({String? jobId}) => jobId == null

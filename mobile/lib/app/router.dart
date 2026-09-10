@@ -21,6 +21,7 @@ import '../features/workspace/invite_screen.dart';
 import '../features/workspace/state/workspace_store.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/router/paths.dart';
+import 'admin_route.dart';
 import 'auth_center_route.dart';
 import 'workspace_shell.dart';
 
@@ -46,6 +47,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       final invitation = location.startsWith('/invite/');
       if ((inApp || invitation) && !auth.isAuthenticated) {
         return Paths.loginFor(state.uri.toString());
+      }
+      if ((location == Paths.admin || location.startsWith('${Paths.admin}/')) &&
+          auth.user?.role != 'admin') {
+        return Paths.app;
       }
       final onAuthPage = location == Paths.login || location == Paths.register;
       if (onAuthPage && auth.isAuthenticated) {
@@ -103,6 +108,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Paths.skills,
         builder: (context, state) => const SkillsScreen(),
+      ),
+      GoRoute(
+        path: Paths.admin,
+        builder: (context, state) => const AdminRoute(),
+      ),
+      GoRoute(
+        path: '/app/admin/:section',
+        builder: (context, state) =>
+            AdminRoute(section: state.pathParameters['section'] ?? 'fleet'),
       ),
       GoRoute(
         path: Paths.desktop,

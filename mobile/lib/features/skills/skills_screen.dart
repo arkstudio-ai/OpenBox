@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/api/providers.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -78,10 +79,10 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   SkillsApi get _api => ref.read(skillsApiProvider);
 
   List<SkillDependency> _unmetFor(InstalledSkill skill) => unmetDependencies(
-        skill.requiresMcp,
-        ref.read(mcpServersProvider).valueOrNull ?? const [],
-        ref.read(skillCatalogProvider).valueOrNull?.mcp ?? const [],
-      );
+    skill.requiresMcp,
+    ref.read(mcpServersProvider).valueOrNull ?? const [],
+    ref.read(skillCatalogProvider).valueOrNull?.mcp ?? const [],
+  );
 
   // ---------------------------------------------------------------- flows
 
@@ -113,23 +114,22 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   Future<bool> _resolveDependencies(
     List<SkillDependency> deps,
     Map<String, Map<String, String>> env,
-  ) =>
-      _run(() async {
-        for (final dep in deps) {
-          if (dep.configured) {
-            await _api.connectServer(dep.name);
-          } else if (dep.catalog != null) {
-            final catalog = dep.catalog!;
-            await _api.installFromCatalog(
-              id: catalog.id,
-              kind: 'mcp',
-              env: catalog.requiredEnv.isEmpty
-                  ? const {}
-                  : {catalog.id: env[catalog.id] ?? const {}},
-            );
-          }
-        }
-      });
+  ) => _run(() async {
+    for (final dep in deps) {
+      if (dep.configured) {
+        await _api.connectServer(dep.name);
+      } else if (dep.catalog != null) {
+        final catalog = dep.catalog!;
+        await _api.installFromCatalog(
+          id: catalog.id,
+          kind: 'mcp',
+          env: catalog.requiredEnv.isEmpty
+              ? const {}
+              : {catalog.id: env[catalog.id] ?? const {}},
+        );
+      }
+    }
+  });
 
   /// Finish a skill install by asking about what it still needs.
   ///
@@ -141,9 +141,9 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
     final fresh = await ref.refresh(installedSkillsProvider.future);
     // Both lists have to be current before the gaps are computed: a server
     // installed moments ago must not still read as missing.
-    await ref.refresh(mcpServersProvider.future).catchError(
-          (Object _) => const <McpServer>[],
-        );
+    await ref
+        .refresh(mcpServersProvider.future)
+        .catchError((Object _) => const <McpServer>[]);
     if (!mounted) return;
     for (final skill in fresh.where((s) => s.requiresMcp.isNotEmpty)) {
       if (await _promptForDependencies(skill)) break;
@@ -159,12 +159,14 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
         busy: busy,
         error: error,
         onConfirm: (choice) async {
-          final ok = await _run(() => _api.installFromCatalog(
-                id: entry.id,
-                kind: entry.kind,
-                withMcp: choice.withMcp,
-                env: choice.env,
-              ));
+          final ok = await _run(
+            () => _api.installFromCatalog(
+              id: entry.id,
+              kind: entry.kind,
+              withMcp: choice.withMcp,
+              env: choice.env,
+            ),
+          );
           if (ok && sheetContext.mounted) Navigator.of(sheetContext).pop();
         },
       ),
@@ -172,26 +174,50 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
   }
 
   Future<void> _openUpload() async {
+    final auth = ref.read(authSessionProvider);
+    final workspace = ref.read(workspaceScopeProvider);
+    final userId = auth.userId;
+    final workspaceId = workspace.currentId;
+    if (userId == null || workspaceId == null) return;
+    bool currentScope() =>
+        mounted && auth.userId == userId && workspace.currentId == workspaceId;
+    var archivesUploaded = false;
     await _showSheet(
       (sheetContext, busy, error) => UploadSheet(
         busy: busy,
         error: error,
+        onUploadArchive: (archive, name, cancel) async {
+          if (!currentScope()) {
+            cancel.cancel('Workspace changed');
+            throw StateError('Workspace changed');
+          }
+          await _api.uploadArchiveStream(
+            filename: archive.name,
+            length: archive.size,
+            openRead: archive.openRead,
+            name: name,
+            userId: userId,
+            workspaceId: workspaceId,
+            cancel: cancel,
+          );
+          if (!currentScope()) {
+            cancel.cancel('Workspace changed');
+            return;
+          }
+          archivesUploaded = true;
+          bumpSkills(ref);
+        },
         onSubmit: (request) async {
-          final archive = request.archive;
           final skill = request.skill;
           final mcp = request.mcp;
-          if (archive != null) {
-            await _finishSkillInstall(() => _api.uploadArchive(
-                  filename: archive.name,
-                  bytes: archive.bytes,
-                  name: request.name?.isEmpty ?? true ? null : request.name,
-                ));
-          } else if (skill != null) {
-            await _finishSkillInstall(() => _api.installSkill(
-                  url: skill['url'],
-                  name: skill['name'],
-                  content: skill['content'],
-                ));
+          if (skill != null) {
+            await _finishSkillInstall(
+              () => _api.installSkill(
+                url: skill['url'],
+                name: skill['name'],
+                content: skill['content'],
+              ),
+            );
           } else if (mcp != null) {
             // Sequential: one pasted config can carry several servers, and
             // each stdio server spawns a process on connect. Firing them
@@ -208,6 +234,13 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
         },
       ),
     );
+    if (archivesUploaded && currentScope()) {
+      try {
+        await _finishSkillInstall(() async {});
+      } catch (error) {
+        if (currentScope()) _report(error);
+      }
+    }
   }
 
   Future<void> _openCreate() async {
@@ -283,10 +316,9 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
     try {
       final path = await _api.downloadArchive(installDir);
       if (mounted) {
-        ref.read(toastProvider.notifier).success(
-              path,
-              title: i18n.t('skills:action.download'),
-            );
+        ref
+            .read(toastProvider.notifier)
+            .success(path, title: i18n.t('skills:action.download'));
       }
     } catch (error) {
       _report(error);
@@ -305,8 +337,10 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
         context: context,
         builder: (dialogContext) => AlertDialog(
           content: Text(
-            i18n.t('skills:mine.confirmPack',
-                vars: {'name': dir, 'count': count}),
+            i18n.t(
+              'skills:mine.confirmPack',
+              vars: {'name': dir, 'count': count},
+            ),
             style: const TextStyle(fontSize: FontSizes.sm),
           ),
           actions: [
@@ -328,27 +362,25 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
 
   Future<void> _showSheet(
     Widget Function(BuildContext context, bool busy, String? error) builder,
-  ) =>
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: context.tokens.card,
-        shape: const RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(Radii.xl2)),
-        ),
-        // A modal route builds once, so busy/error come through a provider —
-        // otherwise the confirm button would never say "安装中…" and a
-        // failure would never reach the sheet that caused it.
-        builder: (sheetContext) => Consumer(
-          builder: (context, ref, _) => builder(
-            sheetContext,
-            ref.watch(skillsBusyProvider),
-            ref.watch(skillsErrorProvider),
-          ),
-        ),
-      );
+  ) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: context.tokens.card,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl2)),
+    ),
+    // A modal route builds once, so busy/error come through a provider —
+    // otherwise the confirm button would never say "安装中…" and a
+    // failure would never reach the sheet that caused it.
+    builder: (sheetContext) => Consumer(
+      builder: (context, ref, _) => builder(
+        sheetContext,
+        ref.watch(skillsBusyProvider),
+        ref.watch(skillsErrorProvider),
+      ),
+    ),
+  );
 
   // ----------------------------------------------------------------- view
 
@@ -405,8 +437,10 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
             if (actionError != null)
               Container(
                 margin: const EdgeInsets.only(top: 10),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: t.dangerSoft,
                   borderRadius: BorderRadius.circular(Radii.md),

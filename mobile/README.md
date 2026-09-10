@@ -18,6 +18,19 @@ cd mobile && flutter run --dart-define=API_BASE=http://localhost:8080
 
 本地联调账号:`devtest / devtest1234`。API 地址通过 `--dart-define=API_BASE=…` 覆盖；默认值为生产 `https://ai.bossipai.com.cn`，避免安装包误连设备自己的 localhost。
 
+### 2026-09-10：移动端超管控制台
+
+- 平台 admin 可从侧边栏底部账号“更多 → 超管系统”进入舰队、技能与订阅管理，普通用户和 workspace owner 不显示入口。
+- 底部导航配合轻量页签，审核/安装的次级选择器取代重复标签栏；舰队概览分区、紧凑列表行、技能详情抽屉、显式回收站/批量选择、分组表单及固定底部操作适配手机。授权中心云桌面站点和上传队列也统一了密度与字号；支持完整技能运营、审核、安装管理及舰队操作，订阅/订单/账本/用量与 Web 一样只读。
+- 230 项 Flutter 测试、静态分析、locale/800 行门禁及双端 debug 构建通过。iOS 26.5 实连生产验证菜单、舰队查询、技能页面及订阅/订单/用量；危险写操作使用隔离数据测试，不在生产真实执行。完整范围见 [对齐清单 §12](../docs/MOBILE_WEB_PARITY.md#12-移动端超管控制台2026-09-10)。
+- 同日经 Codex CLI 完成 UI 重构，最终全量 **246 项测试通过**（UI 重构新增 16 项，admin 共 46 项），analyze、locale 字节一致、800 行门禁、Web i18n 和 diff 检查均通过；Android debug 与最终 iOS simulator debug 构建通过。iPhone 17 Pro / iOS 26.5 已实测超管入口、舰队/桌面、技能搜索与详情、分组编辑表单、批量选择及取消确认、审核/安装视图、只读订阅查询和授权中心。真实软件键盘曾暴露搜索框重建丢失焦点，补根级回归并修复后，屏幕键盘输入、删除、搜索提交及导航恢复均通过；编辑与危险确认的底部按钮也保持可见。未向生产提交修改、删除、发布、购买或卸载；未知编辑结果仍须退出并回读，不能在原页重复提交。
+
+### 2026-09-10：云电脑登录态与技能上传对齐
+
+- 授权中心补齐云电脑站点登录、检测、等待扫码、预计到期、确认退出与失效通知；账号/workspace 切换取消旧请求，后台暂停检测，回前台按原截止时间恢复。
+- 技能图标支持 HTTPS 图片与失败回退；压缩包支持多文件队列、串行流式上传、部分失败重试和容量限制，保留粘贴/Git/MCP 模式。
+- 194 项 Flutter 测试、静态分析、locale/800 行门禁及 Android/iOS debug 构建通过；iOS 26.5 模拟器实连生产检查云桌面登录页跳转、通知已读与文件选择器。测试范围、生产写入边界见 [`对齐清单 §11`](../docs/MOBILE_WEB_PARITY.md#11-云电脑登录态与技能上传补齐2026-09-10)。
+
 ### 2026-09-07：订阅开通与阿里云联调
 
 本轮 iOS 模拟器构建显式连接阿里云（HTTPS/WSS 同源），不连接 AWS 或本机后端：
@@ -148,6 +161,7 @@ cd mobile
 ./scripts/check_locales.sh
 flutter analyze
 flutter test
+./scripts/check_file_size.sh
 flutter build apk --debug
 flutter build ios --simulator --debug
 ```

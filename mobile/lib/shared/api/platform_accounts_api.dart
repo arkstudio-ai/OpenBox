@@ -53,8 +53,9 @@ class PlatformAccountsApi {
     String path,
     T Function(Map<String, dynamic>) parse, {
     CancelToken? cancel,
+    Map<String, dynamic>? query,
   }) async {
-    final data = await _request(scope, path, cancel: cancel);
+    final data = await _request(scope, path, cancel: cancel, query: query);
     if (data is! List) throw const FormatException('Expected a list');
     return data.whereType<Map<String, dynamic>>().map(parse).toList();
   }
@@ -62,7 +63,13 @@ class PlatformAccountsApi {
   Future<List<PlatformInfo>> platforms(
     PlatformScope scope, {
     CancelToken? cancel,
-  }) => _list(scope, '/api/platforms', PlatformInfo.fromJson, cancel: cancel);
+  }) => _list(
+    scope,
+    '/api/platforms',
+    PlatformInfo.fromJson,
+    cancel: cancel,
+    query: {'kinds': 'oauth,desktop'},
+  );
   Future<List<PlatformAccount>> accounts(
     PlatformScope scope, {
     CancelToken? cancel,
@@ -74,6 +81,76 @@ class PlatformAccountsApi {
   );
   Future<List<PublishJob>> jobs(PlatformScope scope, {CancelToken? cancel}) =>
       _list(scope, '/api/publish-jobs', PublishJob.fromJson, cancel: cancel);
+
+  Future<PlatformAccount> openDesktopLogin(
+    PlatformScope scope,
+    String site, {
+    CancelToken? cancel,
+  }) async => PlatformAccount.fromJson(
+    await _request(
+          scope,
+          '/api/platform-accounts/desktop/${Uri.encodeComponent(site)}/open',
+          method: 'POST',
+          cancel: cancel,
+        )
+        as Map<String, dynamic>,
+  );
+
+  Future<List<PlatformAccount>> probeDesktopLogins(
+    PlatformScope scope, {
+    CancelToken? cancel,
+  }) async {
+    final data = await _request(
+      scope,
+      '/api/platform-accounts/desktop/probe',
+      method: 'POST',
+      cancel: cancel,
+    );
+    if (data is! List) throw const FormatException('Expected a list');
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(PlatformAccount.fromJson)
+        .toList();
+  }
+
+  Future<void> logoutDesktopLogin(
+    PlatformScope scope,
+    String id, {
+    CancelToken? cancel,
+  }) async {
+    await _request(
+      scope,
+      '/api/platform-accounts/${Uri.encodeComponent(id)}/logout',
+      method: 'POST',
+      cancel: cancel,
+    );
+  }
+
+  Future<PlatformNotificationPage> notifications(
+    PlatformScope scope, {
+    CancelToken? cancel,
+  }) async => PlatformNotificationPage.fromJson(
+    await _request(
+          scope,
+          '/api/notifications',
+          query: {'unread': true, 'limit': 20},
+          cancel: cancel,
+        )
+        as Map<String, dynamic>,
+  );
+
+  Future<void> markNotificationRead(
+    PlatformScope scope,
+    String id, {
+    CancelToken? cancel,
+  }) async {
+    await _request(
+      scope,
+      '/api/notifications/${Uri.encodeComponent(id)}/read',
+      method: 'POST',
+      cancel: cancel,
+    );
+  }
 
   Future<String> authorize(
     PlatformScope scope,

@@ -22,6 +22,7 @@ class SkillSheet extends ConsumerWidget {
     this.busy = false,
     this.canConfirm = true,
     this.cancelLabel,
+    this.showCancel = true,
   });
 
   final String title;
@@ -38,6 +39,7 @@ class SkillSheet extends ConsumerWidget {
   final bool busy;
   final bool canConfirm;
   final String? cancelLabel;
+  final bool showCancel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -97,7 +99,9 @@ class SkillSheet extends ConsumerWidget {
                         Container(
                           margin: const EdgeInsets.only(top: 12),
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 11, vertical: 8),
+                            horizontal: 11,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: t.dangerSoft,
                             borderRadius: BorderRadius.circular(Radii.md),
@@ -117,19 +121,24 @@ class SkillSheet extends ConsumerWidget {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                child: OverflowBar(
+                  alignment: MainAxisAlignment.end,
+                  spacing: 8,
+                  overflowSpacing: 8,
                   children: [
-                    TextButton(
-                      onPressed:
-                          busy ? null : () => Navigator.of(context).pop(),
-                      child: Text(
-                        cancelLabel ?? i18n.t('skills:common.cancel'),
-                        style:
-                            TextStyle(fontSize: FontSizes.sm, color: t.n700),
+                    if (showCancel)
+                      TextButton(
+                        onPressed: busy
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        child: Text(
+                          cancelLabel ?? i18n.t('skills:common.cancel'),
+                          style: TextStyle(
+                            fontSize: FontSizes.sm,
+                            color: t.n700,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
                     FilledButton(
                       onPressed: busy || !canConfirm ? null : onConfirm,
                       style: FilledButton.styleFrom(
@@ -193,7 +202,10 @@ class SheetField extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: FontSizes.xs, color: t.n600)),
+          Text(
+            label,
+            style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
           const SizedBox(height: 4),
           TextField(
             controller: controller,
@@ -202,10 +214,12 @@ class SheetField extends StatelessWidget {
             obscureText: obscure,
             autocorrect: prose,
             enableSuggestions: prose,
-            smartQuotesType:
-                prose ? SmartQuotesType.enabled : SmartQuotesType.disabled,
-            smartDashesType:
-                prose ? SmartDashesType.enabled : SmartDashesType.disabled,
+            smartQuotesType: prose
+                ? SmartQuotesType.enabled
+                : SmartQuotesType.disabled,
+            smartDashesType: prose
+                ? SmartDashesType.enabled
+                : SmartDashesType.disabled,
             keyboardType: lines > 1 ? TextInputType.multiline : null,
             onChanged: onChanged,
             style: TextStyle(
@@ -224,8 +238,10 @@ class SheetField extends StatelessWidget {
                 fontSize: mono ? FontSizes.xs : FontSizes.sm,
                 color: t.n600,
               ),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 9,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(Radii.md),
                 borderSide: BorderSide(color: t.hair),
@@ -265,11 +281,12 @@ class EnvFields extends ConsumerWidget {
   static bool missingRequired(
     List<CatalogEntry> servers,
     Map<String, Map<String, TextEditingController>> controllers,
-  ) =>
-      servers.any((server) => server.requiredEnv.any(
-            (field) =>
-                (controllers[server.id]?[field.key]?.text ?? '').trim().isEmpty,
-          ));
+  ) => servers.any(
+    (server) => server.requiredEnv.any(
+      (field) =>
+          (controllers[server.id]?[field.key]?.text ?? '').trim().isEmpty,
+    ),
+  );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -282,8 +299,10 @@ class EnvFields extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(top: 14),
             child: Text(
-              i18n.t('skills:install.credentialsFor',
-                  vars: {'name': server.title}),
+              i18n.t(
+                'skills:install.credentialsFor',
+                vars: {'name': server.title},
+              ),
               style: TextStyle(
                 fontSize: FontSizes.xs,
                 fontWeight: FontWeight.w500,

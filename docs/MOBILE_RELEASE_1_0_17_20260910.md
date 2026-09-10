@@ -16,13 +16,23 @@
 
 归档构建通过，保存到 `mobile/build/releases/BossIP-1.0.17-28/BossIP-1.0.17-28.xcarchive`，Bundle ID 为 `com.bossip.bipmobile`，Team ID 为 `5AN3L8LZL9`，版本 `1.0.17 (28)`。归档开发签名通过 `codesign --verify --deep --strict` 验证。
 
-**尚未生成 App Store 分发 IPA，尚未上传 TestFlight。**
+已使用现有的 App Store Connect 管理员团队 API 密钥完成 App Store 分发签名，并于 2026-09-10 22:37（北京时间）上传成功。
 
-用户完成 Xcode 登录后，BBD ABC 团队可见，但账户的 `Certificates, Identifiers & Profiles` 显示无访问权限。刷新团队后，命令行导出、上传模式和 Xcode Organizer 的 App Store Connect 分发均失败，错误为 `No Account for Team`、`No signing certificate "iOS Distribution" found`。
+- IPA：`mobile/build/releases/BossIP-1.0.17-28/ipa/BossIP.ipa`，27,409,219 字节。
+- IPA SHA-256：`133eb9c9946a9ab6051af12cd5cdf5ad91dcfed2c7d464cfad772bc2d01e2ef0`。
+- 分发证书：`Apple Distribution: BBD ABC (5AN3L8LZL9)`，`codesign --verify --deep --strict` 通过。
+- 最终 IPA 的版本为 `1.0.17 (28)`；签名和描述文件均为 `aps-environment=production`，`get-task-allow=false`，描述文件没有设备名单。
+- App Store Connect App ID：`6794282961`（控制台名称 `bip-mobile`）；Delivery UUID：`907ccccb-6ecf-46e1-8408-39f7dc007b92`。
+- 上传返回 0 个错误、1 个警告，Apple 已完成处理，`processingState=VALID`。警告 `90068` 提醒自 2027 年春季起最低 iOS 版本需为 15.0，目前的 14.0 不影响本次上传。
+- 已核对版本 25 的 `usesNonExemptEncryption=false`；本次生产依赖中的加密库、原生 Pods 没有变化，未新增自定义加密功能。通过发布 API 为版本 28 设置相同的加密豁免信息，回读验证通过。
+- TestFlight 状态为 `IN_BETA_TESTING`。网页重新加载后确认，新构建已自动关联现有内部群组“运营测试组”，6 名测试员可访问；未修改测试员或群组配置。
+- 已保存简体中文测试说明，覆盖通知前后台行为、切换手机后的绑定、超管通知测试及聊天建议/流光占位。
 
-旧 `workspace/bossip` 的 `ios/ExportOptions.plist` 使用自动签名上传；本地旧版 `1.0.14 (25)` 的 `DistributionSummary.plist` 记录使用 `Cloud Managed Apple Distribution`。旧仓库、忽略文件、相关配置和 Git 历史中均未找到本地 App Store Connect API 私钥或 Apple Distribution `.p12`。现有 APNs 推送私钥不是 TestFlight 发布凭据。
+### Apple 发布权限
 
-后续需要有该团队签名权限的 Apple 账户或有效发布凭据。原归档与 `ExportOptions-export.plist`、`ExportOptions-upload.plist` 已保存在上述 releases 目录，可继续签名导出和上传；成功后仍须核对最终分发包的 `aps-environment=production`、实际版本及 TestFlight 处理状态。
+BBD ABC 的会员注册身份是个人。受邀账号已经具备 App Store Connect 的管理、所有 App、新建 App、个人 API 密钥等可分配权限，但个人会员不能向受邀用户授予 `Certificates, Identifiers & Profiles` 访问权限。这是此前 Xcode 账户方式分发失败的原因，不能通过额外勾选权限解决；参考 [Apple 角色权限说明](https://developer.apple.com/help/app-store-connect/reference/account-management/role-permissions/)。在开发者网站手动管理证书、Bundle ID 和推送能力时，使用账户持有人账号。
+
+已在当前机器核实并保存现有管理员团队发布密钥及其配置，位于 Git 忽略的 `credentials/apple-publishing/`，目录权限为 `0700`、文件为 `0600`。后续自动签名和上传可复用该配置及本次的 `ExportOptions-export.plist` / `ExportOptions-upload.plist`。发布 API 私钥与 APNs 推送私钥用途不同；私钥不提交到远程仓库。本次没有新建或撤销密钥、证书，也没有更改账号权限。
 
 ## 校验
 

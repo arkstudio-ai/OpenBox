@@ -60,6 +60,7 @@ def describe_tiers() -> list[dict]:
     for t in TIERS.values():
         price = reference_price(t.key)
         out.append({"tier": t.key, "label": t.label, "model_id": t.model_id, "resolution": t.resolution,
-                    "reference_seconds": REFERENCE_SECONDS, "reference_credits": str(price) if price is not None else None,
+                    "reference_seconds": REFERENCE_SECONDS,
+                    "reference_credits": format(price.normalize(), "f") if price is not None else None,
                     "pitch": t.pitch})
     return out

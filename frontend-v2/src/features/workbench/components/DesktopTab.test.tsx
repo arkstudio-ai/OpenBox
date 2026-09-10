@@ -124,6 +124,9 @@ describe("DesktopTab", () => {
     expect(frame?.parentElement).toBe(stage)
     expect(frame?.style.transform).toBe("")
     expect(frame?.style.position).toBe("absolute")
+    // No floating "desktop inside the desktop": the stream's video may not enter picture-in-picture.
+    expect(frame?.getAttribute("allow")).toContain("picture-in-picture 'none'")
+    expect(frame?.getAttribute("allow")).toContain("fullscreen")
 
     const options = createSession.mock.calls[0][1] as {
       uiConfig: Record<string, unknown>

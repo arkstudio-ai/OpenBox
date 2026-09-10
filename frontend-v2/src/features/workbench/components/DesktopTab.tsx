@@ -356,7 +356,13 @@ function WorkspaceDesktopTab({ workspaceId }: { workspaceId: string | null }) {
         const frame = document.createElement("iframe")
         frame.id = FRAME_ID
         frame.title = t("desktop.frameTitle")
-        frame.allow = "clipboard-read; clipboard-write; fullscreen"
+        // The SDK renders the stream in a <video> inside this cross-origin
+        // frame. Browsers offer a picture-in-picture control on any video;
+        // a floating copy of the desktop hovering over the desktop itself (and
+        // freezing once the session reconnects) was reported by ops as a
+        // "desktop inside the desktop" that hides the page underneath. The
+        // permissions policy removes the control and refuses the API here.
+        frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen; picture-in-picture 'none'")
         frame.allowFullscreen = true
         frame.tabIndex = 0
         frame.style.cssText = "position:absolute;display:block;border:0;"

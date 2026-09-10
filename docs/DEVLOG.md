@@ -424,3 +424,12 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
 `image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
 时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。
+
+## 云电脑"画中画"：禁止桌面视频流进入 picture-in-picture（2026-09-10）
+
+运营反馈打开来客消息管理等界面时，云电脑画面里再嵌一个云电脑画面（内层时间比外层早 5 分钟，静止），遮住页面。
+在该桌面（ecd-b9oizzx4rfhbsm1uh）用云助手列 X 窗口只有 Chrome/Firefox/GNOME 壳，没有任何悬浮窗，仓库里也没有会在桌面
+弹截图窗口的代码；符合的解释是运营自己的浏览器把我们 `DesktopTab` 里无影 SDK iframe 中的 `<video>` 放进了浏览器画中画
+（Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
+修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
+API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。

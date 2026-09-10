@@ -4,14 +4,13 @@ Three actions, identity only from ToolContext:
 
 * ``status`` — what the 授权中心 already knows (no desktop round trip): per
               site, bound / expired / unknown, nickname, when it was last checked.
-* ``open``   — push the site's login page to the front of the cloud desktop so
-              the person can scan there; the agent never logs in for them.
-* ``probe``  — after the person says they scanned: one real check (cookies +
-              the site's own JSON endpoint) and the updated verdict.
+* ``open``   — push the site's login page to the front of the cloud desktop.
+* ``probe``  — one real check (cookies + the site's own JSON endpoint) and the
+              updated verdict.
 
 A site that is not ``bound`` comes back as the structured error
-``DESKTOP_LOGIN_REQUIRED`` so the agent stops and guides instead of guessing
-from screenshots.
+``DESKTOP_LOGIN_REQUIRED``. These actions are independent helpers for the
+browser workflow.
 """
 from __future__ import annotations
 
@@ -42,8 +41,8 @@ class DesktopLoginArgs(BaseModel):
     action: Literal["status", "open", "probe"] = Field(
         description=(
             "status: what is known about the cloud desktop's logins (cheap, no desktop access); "
-            "open: push a site's login page to the cloud desktop for the person to scan; "
-            "probe: re-check one site right now after the person says they logged in."
+            "open: push a site's login page to the cloud desktop; "
+            "probe: re-check one site's login status right now."
         )
     )
     site: str | None = Field(
@@ -113,7 +112,7 @@ async def _status(ctx: ToolContext, site: DesktopSite | None) -> ToolResult:
             title="桌面登录态不适用",
             output=(
                 "当前浏览器模式是用户本机的 Chrome（extension），登录态在用户自己的电脑上，"
-                "云电脑的登录记录不适用。直接在用户浏览器里操作即可；如果站点未登录，让用户自己登录。"
+                "云电脑的登录记录不适用。直接在用户浏览器里处理站点登录和操作即可。"
             ),
             metadata={"applicable": False, "mode": mode},
         )
@@ -142,8 +141,8 @@ async def _status(ctx: ToolContext, site: DesktopSite | None) -> ToolResult:
             title=f"{site.display} 需要登录",
             output=(
                 header + "\n" + "\n".join(lines)
-                + f"\n\n{site.display} 当前{reason}。不要自己去打开登录页或截屏猜：先用 action=open 把登录页推到云电脑，"
-                "请用户在云电脑里扫码登录，用户说完成后再用 action=probe 确认。"
+                + f"\n\n授权中心记录显示 {site.display} 当前{reason}。可用 action=open 把登录页推到云电脑，"
+                "或直接在浏览器中处理登录；登录后可用 action=probe 更新授权中心记录。"
             ),
             metadata={"error": True, "code": "DESKTOP_LOGIN_REQUIRED", "site": site.key, "status": summary[site.key], "sites": summary},
         )
@@ -166,7 +165,7 @@ def _platform_error(exc: PlatformError, site: DesktopSite | None) -> ToolResult:
 
 async def _open(ctx: ToolContext, site: DesktopSite) -> ToolResult:
     if site.recon_pending:
-        return _error("SITE_NOT_SUPPORTED", f"{site.display} 还没有接入登录态检测，只能请用户自行在云电脑上登录。", site=site.key)
+        return _error("SITE_NOT_SUPPORTED", f"{site.display} 还没有接入登录态检测，可直接在云电脑浏览器中处理登录。", site=site.key)
     try:
         row = await desktop_service.open_login(ctx.workspace_id, ctx.user_id, site.key)
     except PlatformError as exc:
@@ -174,8 +173,8 @@ async def _open(ctx: ToolContext, site: DesktopSite) -> ToolResult:
     return ToolResult(
         title=f"已在云电脑打开 {site.display} 登录页",
         output=(
-            f"{site.display} 的登录页已推到云电脑前台。请告诉用户：在工作台右侧的云电脑面板里用手机 App 扫码登录，"
-            "登录完成后回复一声。不要替用户输入验证码或密码。用户说完成后，用 action=probe 确认登录态。"
+            f"{site.display} 的登录页已推到云电脑前台。可按页面提供的方式继续登录；"
+            "扫码入口位于工作台右侧的云电脑面板。登录后可用 action=probe 更新授权中心记录。"
         ),
         metadata={"site": site.key, "account_id": row.id, "desktop_id": row.desktop_id, "status": row.status},
     )
@@ -197,7 +196,7 @@ async def _probe(ctx: ToolContext, site: DesktopSite) -> ToolResult:
         reason = f"（{row.last_error}）" if row and row.last_error else ""
         return ToolResult(
             title=f"{site.display} 仍未登录",
-            output=f"检测结果：{site.display} {label}{reason}。请用户确认是否在云电脑里完成了扫码；需要时再 action=open 重新推登录页。",
+            output=f"检测结果：{site.display} {label}{reason}。可查看云电脑中的当前页面继续处理登录；需要时用 action=open 打开登录页。",
             metadata={"error": True, "code": "DESKTOP_LOGIN_REQUIRED", "site": site.key, "status": row.status if row else "none"},
         )
     from platforms import service as platform_service
@@ -230,12 +229,12 @@ async def execute_desktop_login(args: DesktopLoginArgs, ctx: ToolContext) -> Too
 
 DESKTOP_LOGIN_DESCRIPTION = """\
 Login state of sites on the workspace's cloud desktop browser (抖音创作者中心, \
-抖音来客, 美团经营宝/点评商户平台, 小红书创作平台). Before automating any site \
-that needs the person's account in the cloud browser, call action=status with \
-the site: if it is not bound you get DESKTOP_LOGIN_REQUIRED — then action=open \
-pushes the login page to the cloud desktop for the person to scan, and \
-action=probe confirms after they say they are done. Never open login pages or \
-enter codes yourself; never guess login state from screenshots."""
+抖音来客, 美团经营宝/点评商户平台, 小红书创作平台). Optional helpers that can be \
+used independently: action=status reads the authorization center's stored status; \
+action=open brings a site's login page to the cloud desktop; action=probe refreshes \
+its login status. DESKTOP_LOGIN_REQUIRED means the tool has no confirmed login \
+for that site. Choose the browser workflow that fits the person's request and \
+the site's current page."""
 
 desktop_login_tool = define_tool(
     "desktop_login",

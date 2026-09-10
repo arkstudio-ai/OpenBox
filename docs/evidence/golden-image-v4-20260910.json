@@ -1,0 +1,344 @@
+{
+  "creation": {
+    "image_name": "openbox-image-v4-40g-shanghai-20260910",
+    "desktop_id": "ecd-5pvbuskezql1d4h5m",
+    "region": "cn-shanghai",
+    "disk_type": "SYSTEM",
+    "auto_clean_userdata": true,
+    "requested_at": "2026-09-10T08:32:44.670640+00:00",
+    "ImageId": "m-13pauczcu9swanxwn",
+    "RequestId": "01A08A72-A791-5AA5-8181-C1D95E343826"
+  },
+  "base_image_id": "m-ihn7zmzukytina8qj",
+  "runtime_version": "20260910.1",
+  "source_desktop_name": "bossip-sh-002",
+  "source_configuration": {
+    "hostname": "vbuskezql1d4h5m",
+    "os": {
+      "PRETTY_NAME": "Ubuntu 22.04.5 LTS",
+      "NAME": "Ubuntu",
+      "VERSION_ID": "22.04"
+    },
+    "versions": {
+      "python": "Python 3.10.12",
+      "node": "v22.23.1",
+      "ffmpeg": "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers",
+      "chrome": "Google Chrome 151.0.7922.71"
+    },
+    "disk_used_gib": 24.06,
+    "installed_package_count": 2182,
+    "installed_packages_sha256": "1cbd373c5465b19ff35276930086813765a16987d25b3229cba1fe5f89284715",
+    "key_packages": {
+      "chrome-gnome-shell": "10.1-5",
+      "ffmpeg": "7:4.4.2-0ubuntu0.22.04.1",
+      "fonts-noto-cjk": "1:20220127+repack1-1",
+      "fonts-noto-cjk-extra": "1:20220127+repack1-1",
+      "fonts-noto-color-emoji": "2.047-0ubuntu0.22.04.1",
+      "fonts-noto-mono": "20201225-1build1",
+      "google-chrome-stable": "151.0.7922.71-1",
+      "libchromaprint1:amd64": "1.5.1-2",
+      "libpython3.10-dev:amd64": "3.10.12-1~22.04.16",
+      "libpython3.10-minimal:amd64": "3.10.12-1~22.04.16",
+      "libpython3.10-stdlib:amd64": "3.10.12-1~22.04.16",
+      "libpython3.10:amd64": "3.10.12-1~22.04.16",
+      "python3.10": "3.10.12-1~22.04.16",
+      "python3.10-dev": "3.10.12-1~22.04.16",
+      "python3.10-minimal": "3.10.12-1~22.04.16",
+      "python3.10-venv": "3.10.12-1~22.04.16"
+    },
+    "core_files": {
+      "/opt/action_server/action_server.py": "fcd5e539678941be01db2bad743118e81004ca04a9943e4896cd74010c05fc0d",
+      "/opt/openbox/tools/repair_browser_runtime.py": "c1e6a6f0224727740401eb8fb492af7b492da7e535da054213ad6f700433f1b1",
+      "/opt/openbox/tools/obx_diag.py": "39a1eec691f96f26b87ef821cd00eac8deb45db58c872e8c3dceeb2ae71fd9f3",
+      "/opt/openbox/tools/dev-browser-sources.json": "bcc4ce25cd46241a0c7665d4f52a2190d1a27f64b84831b61d4c1afebc09d8d3",
+      "/opt/openbox/tools/dev-browser-package-lock.json": "e9f0abae29fba6fa4b941852cb200845ae7e9cf049f6b3ed97ce45106a4bd658",
+      "/usr/local/bin/obx-display": "16ee728d753c42fff1a1f76872301fc84827780eac02ce35c49c9a6da53d529e",
+      "/usr/local/bin/obx-display-guard": "41c77c3f18786aaed6d58310d0b519f4322603009a8429060e69bab879ccb24b"
+    },
+    "builtin_skills": {
+      "dev-browser": {
+        "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+        "code_tree_sha256": "06adafa6e056d713578cf12422ae979e58e2c45946ac19f3ee7aab4d433a413e",
+        "code_file_count": 24
+      },
+      "douyin-publish": {
+        "skill_sha256": "fbff9b3050fc97df3b303493d620cc0fdc3535be603425d8ad82aaab0ad54105",
+        "code_tree_sha256": "081096672e86b1f653fe5bec74e472d3394b9fa24b04bf9a1da964888a966a81",
+        "code_file_count": 1
+      },
+      "video-production": {
+        "skill_sha256": "d93f75e5391bd5a8d71a7923e0a822fc69cb1371dd6776f5adc60068b4b377bf",
+        "code_tree_sha256": "d3a25efc04493306bd0d4aa22c143860cfdb777a16d30ee69f0a7787a3912d95",
+        "code_file_count": 12
+      }
+    },
+    "user_skills": {},
+    "workspace": {
+      "files": 0,
+      "dirs": 0,
+      "mib": 0.0
+    },
+    "data": {
+      "files": 0,
+      "dirs": 3,
+      "mib": 0.0
+    },
+    "instance_config_entries": 0,
+    "root_ssh_entries": 0,
+    "browser_profiles": [
+      {
+        "kind": "google-chrome",
+        "usage": {
+          "files": 1,
+          "dirs": 5,
+          "mib": 0.0
+        },
+        "cookie_database_count": 0
+      }
+    ],
+    "services": {
+      "openbox-action-server": {
+        "TasksCurrent": "[not set]",
+        "ActiveState": "inactive",
+        "UnitFileState": "disabled"
+      },
+      "openbox-tunnel": {
+        "TasksCurrent": "[not set]",
+        "ActiveState": "inactive",
+        "UnitFileState": "disabled"
+      },
+      "openbox-browser-runtime": {
+        "TasksCurrent": "[not set]",
+        "ActiveState": "inactive",
+        "UnitFileState": "enabled"
+      },
+      "obx-display-guard": {
+        "TasksCurrent": "2",
+        "ActiveState": "active",
+        "UnitFileState": "enabled"
+      }
+    },
+    "runtime_check_exit": 0,
+    "runtime": {
+      "version": "20260910.1",
+      "ready": true,
+      "problems": []
+    }
+  },
+  "source_preparation": {
+    "target": "ecd-5pvbuskezql1d4h5m",
+    "invoke": "t-sh06wmn689c5reo",
+    "status": "Success",
+    "exit": 0,
+    "output": "Source guards passed: expected desktop, empty user state, current skill\n{\"cleaned_paths\": [\"/home/neo/.config/google-chrome\", \"/opt/openbox/backups\"], \"workspace_empty\": true, \"instance_config_empty\": true}\n{\"version\": \"20260910.1\", \"ready\": true, \"problems\": []}\n"
+  },
+  "source_verification": {
+    "target": "ecd-5pvbuskezql1d4h5m",
+    "invoke": "t-sh06wmnd22ifjeo",
+    "status": "Success",
+    "exit": 0,
+    "output": "PASS root_ssh_absent_or_empty\nPASS tunnel_disabled\nPASS action_disabled\nPASS action_uses_envfile\nPASS action_has_no_inline_key\nPASS tunnel_uses_envfile\nPASS tunnel_has_no_legacy_port\nPASS tunnel_has_no_legacy_relay\nPASS openbox_config_empty\nPASS workspace_empty\nPASS data_has_no_user_files\nPASS display_helper\nPASS display_guard_script\nPASS display_guard_enabled\nPASS display_guard_unit\n{\"version\": \"20260910.1\", \"ready\": true, \"problems\": []}\nPASS browser_runtime\nPASS browser_boot_gate\nPASS action_requires_browser\nPASS action_browser_tasks_max\nPASS no_baked_secrets\nPASS package_inventory_contains_baseline (1456 baseline packages)\nINFO package_inventory_extra_count=726\nPASS current_skill_hash\nPASS current_verifier_hash\nPASS node_independent_of_home\nOPENBOX_IMAGE_VERIFY_COMPLETE\n"
+  },
+  "repository_head": "f8a631197d0a549b9741626f59ff3da901d71fd3",
+  "local_source_sha256": {
+    "backend/sandbox/browser_runtime_repair.py": "c1e6a6f0224727740401eb8fb492af7b492da7e535da054213ad6f700433f1b1",
+    "backend/tool/desktop_login.py": "0821273ea874d114d54f0e13cad0f5b3e5aa30a3aa8e5163cfd78a5cfd10d0c6",
+    "container/dev-browser/SKILL.md": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+    "backend/scripts/wuying_image_verify.py": "1c7abfb31eb3a1eb570cd57c19e5f29189fe658d41d3e2aac3bb856066616975",
+    "docs/image-baseline-dpkg.txt": "8a6851313f26e72d69b4d504a1288971b4da0127f22a0ede55fd8a63781fcb98"
+  },
+  "backend_release_path": "/opt/openbox/releases/20260910-login-guidance-324366c2",
+  "new_desktops_purchased": 0,
+  "default_image_switched": false,
+  "stage": "image_available_and_restore_validated",
+  "completed_at": "2026-09-10T08:54:14.438781+00:00",
+  "available_image": {
+    "verified_at": "2026-09-10T08:40:14.159413+00:00",
+    "Images": [
+      {
+        "AppVersion": "3.0.11-R-20260624.195825",
+        "CreationTime": "2026-09-10T08:32Z",
+        "DataDiskSize": 0,
+        "Description": "OpenBox v4, 40 GiB, source bossip-sh-002, runtime 20260910.1, updated dev-browser login guidance, cleaned user state, per-desktop credentials created on activation.",
+        "GpuCategory": false,
+        "ImageId": "m-13pauczcu9swanxwn",
+        "ImageType": "CUSTOM",
+        "Name": "openbox-image-v4-40g-shanghai-20260910",
+        "OsType": "LINUX",
+        "Platform": "Ubuntu",
+        "Progress": "100%",
+        "ProtocolType": "ASP",
+        "SessionType": "SINGLE_SESSION",
+        "Size": 40,
+        "Status": "Available",
+        "UpdateTime": "2026-09-10T08:39Z",
+        "VolumeEncryptionEnabled": false
+      }
+    ],
+    "RequestId": "01A08A79-8268-5C9D-824C-C97EBC539251"
+  },
+  "restore_validation": {
+    "target": "i-uf66pcsepxpc23v5qsts",
+    "invoke": "t-sh06wmo7agspkw0",
+    "status": "Success",
+    "exit": 0,
+    "events": [
+      {
+        "stage": "rebuild_new_image_on_reserved_source",
+        "desktop_id": "ecd-5pvbuskezql1d4h5m",
+        "image_id": "m-13pauczcu9swanxwn",
+        "started_at": "2026-09-10T08:40:19.046038+00:00"
+      },
+      {
+        "rebuild_request": {
+          "request_id": "01A08A79-9598-5B3B-B30D-0327CFB9E001",
+          "results": [
+            {
+              "Code": "success",
+              "DesktopId": "ecd-5pvbuskezql1d4h5m"
+            }
+          ]
+        }
+      },
+      {
+        "stage": "clone_running",
+        "desktop_id": "ecd-5pvbuskezql1d4h5m",
+        "image_id": "m-13pauczcu9swanxwn",
+        "status": "Running",
+        "pool_state": "reserve",
+        "finished_at": "2026-09-10T08:41:21.452202+00:00"
+      }
+    ]
+  },
+  "live_channel_browser_validation": {
+    "target": "i-uf66pcsepxpc23v5qsts",
+    "invoke": "t-sh06wmovlpxvpj4",
+    "status": "Success",
+    "exit": 0,
+    "events": [
+      {
+        "stage": "temporary_channel_install",
+        "desktop_id": "ecd-5pvbuskezql1d4h5m",
+        "image_id": "m-13pauczcu9swanxwn"
+      },
+      {
+        "stage": "real_channel_and_browser_verified",
+        "result": {
+          "hostname": "vbuskezql1d4h5m",
+          "last_seen_at": "2026-09-10 08:48:24.126051+00:00",
+          "display_ready": false,
+          "browser_presentation": "headless"
+        },
+        "verified_at": "2026-09-10T08:48:24.137904+00:00"
+      },
+      {
+        "stage": "temporary_channel_revoked",
+        "desktop_id": "ecd-5pvbuskezql1d4h5m",
+        "pool_state": "reserve"
+      }
+    ]
+  },
+  "validation_cleanup": {
+    "target": "i-uf66pcsepxpc23v5qsts",
+    "invoke": "t-sh06wmpa6oe5y4g",
+    "status": "Success",
+    "exit": 0,
+    "events": [
+      {
+        "cleaned_paths": [],
+        "workspace_empty": true,
+        "instance_config_empty": true
+      },
+      {
+        "version": "20260910.1",
+        "ready": true,
+        "problems": []
+      }
+    ]
+  },
+  "clean_clone_verification": {
+    "target": "ecd-5pvbuskezql1d4h5m",
+    "invoke": "t-sh06wmpbx2oct1c",
+    "status": "Success",
+    "exit": 0,
+    "output": "PASS root_ssh_absent_or_empty\nPASS tunnel_disabled\nPASS action_disabled\nPASS action_uses_envfile\nPASS action_has_no_inline_key\nPASS tunnel_uses_envfile\nPASS tunnel_has_no_legacy_port\nPASS tunnel_has_no_legacy_relay\nPASS openbox_config_empty\nPASS workspace_empty\nPASS data_has_no_user_files\nPASS display_helper\nPASS display_guard_script\nPASS display_guard_enabled\nPASS display_guard_unit\n{\"version\": \"20260910.1\", \"ready\": true, \"problems\": []}\nPASS browser_runtime\nPASS browser_boot_gate\nPASS action_requires_browser\nPASS action_browser_tasks_max\nPASS no_baked_secrets\nPASS package_inventory_contains_baseline (1456 baseline packages)\nINFO package_inventory_extra_count=731\nPASS current_skill_hash\nPASS current_verifier_hash\nPASS node_independent_of_home\nOPENBOX_IMAGE_VERIFY_COMPLETE\n"
+  },
+  "clone_functional_verification": {
+    "target": "ecd-5pvbuskezql1d4h5m",
+    "invoke": "t-sh06wmpbwphvvgg",
+    "status": "Success",
+    "exit": 0,
+    "events": [
+      {
+        "core_files_match_source": true,
+        "python_dependencies_import": true,
+        "display": null,
+        "display_mode": "not_connected",
+        "critical_versions": {
+          "python": "Python 3.10.12",
+          "node": "v22.23.1",
+          "chrome": "Google Chrome 151.0.7922.71"
+        },
+        "package_inventory_sha256": "8e25874df0b82608ab59ae925177a645ad7eec00c2a2fae48d19774d481c3cf0",
+        "package_count": 2187,
+        "cookie_databases": 0,
+        "instance_config_empty": true,
+        "workspace_empty": true
+      }
+    ]
+  },
+  "return_to_pool": {
+    "target": "i-uf66pcsepxpc23v5qsts",
+    "invoke": "t-sh06wmpfrl25nuo",
+    "status": "Success",
+    "exit": 0,
+    "events": [
+      {
+        "completed_at": "2026-09-10T08:54:14.438781+00:00",
+        "desktop_id": "ecd-5pvbuskezql1d4h5m",
+        "source_desktop_name": "bossip-sh-002",
+        "image_id": "m-13pauczcu9swanxwn",
+        "image_status": "Available",
+        "image_size_gib": 40,
+        "pool_state": "prewarm",
+        "desktop_status": "Running",
+        "owner_assigned": false,
+        "instance_credentials_present": false,
+        "tunnel_state": "revoked",
+        "runtime": {
+          "version": "20260910.1",
+          "ready": true,
+          "problems": []
+        },
+        "pool_counts": {
+          "assigned": 9,
+          "prewarm": 5
+        },
+        "pool_auto_purchase": false,
+        "configured_default_image": "m-ihn7zmzukytina8qj",
+        "default_image_switched": false,
+        "e_desktop": {
+          "desktop_id": "ecd-b9oizzx4rfhbsm1uh",
+          "pool_state": "assigned",
+          "tunnel_state": "up"
+        },
+        "cloud_tags": {
+          "openbox-pool": "prewarm",
+          "openbox-image": "m-13pauczcu9swanxwn"
+        }
+      }
+    ]
+  },
+  "production_backend_observed": "openbox-backend:20260910-login-guidance-324366c2 healthy 2026-09-10T08:10:43.492781598Z",
+  "configured_default_image": "m-ihn7zmzukytina8qj",
+  "release_metadata_path": "/opt/openbox/releases/image-v4-20260910",
+  "validation_notes": [
+    "Validated by rebuilding the reserved, ownerless existing source desktop from the new image; no new desktop purchase.",
+    "The restored desktop had no interactive X session before a cloud-desktop client connection, matching an existing unassigned spare. Production channel.verify passed authenticated execution and live Chrome CDP plus relay in supported headless mode. Interactive 1920x1080 display was not exercised; display-guard configuration checks passed.",
+    "Initial strict source-sanitization check after restore found newly generated root SSH state and machine host keys. The source snapshot had passed the no-baked-secrets check before capture; generated instance state was removed after validation and the full check passed again.",
+    "All 1456 baseline packages remain present. Cloud restore/provisioning increased the package inventory from 2182 to 2187; critical runtime versions and core file hashes match the source.",
+    "Temporary activation credentials and test state were removed before returning the desktop to the prewarm pool.",
+    "Production default WUYING_IMAGE_ID remains the v3 image. The v4 image has not been selected as the global provisioning default, and the backend was not restarted for this image task.",
+    "The three login-guidance source changes remain local and must be included in future full backend releases."
+  ]
+}

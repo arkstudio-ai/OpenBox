@@ -16,6 +16,79 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 单实例切换采样约 30.3 秒 502 后恢复，后续样本均 200；OSS 临时对象已清理。
   备份、镜像指纹、验收与回滚见 [完整发布记录](FRONTEND_SUGGESTIONS_DEPLOY_20260910.md)。
 
+## 当前阿里云后端发布：2026-09-10 移动端通知
+
+- 17:56（北京时间）后端已发布 `openbox-backend:20260910-mobile-push-0513dcb`，
+  本地 Docker 构建 `linux/amd64`，基于 `main@0513dcb` 并保留下文登录指引的三处现网修复。
+- 用户授权中断当时 3 条运行任务后完成切换。数据库备份、独立副本迁移预演通过，
+  正式库从 `d2f4a6c8e0b2` 升至 `e4f6a8b0c2d4`，新增五张移动通知表。
+- 极光与 APNs 使用本地凭据，新增六项推送环境变量及苹果私钥只读挂载；其余配置按键值
+  校验一致。前端继续运行 `20260910-nav-3791e77`，frontend、postgres、redis 容器 ID 未变。
+- 四服务 healthy，公网首页和环境 API 正常，匿名通知 API 返回 401；未做真机送达测试。
+  切换期间 API 曾短暂返回 502，17:55:58 的采样已恢复 200。
+- [完整发布与回滚记录](MOBILE_PUSH_DEPLOY_20260910.md)；
+  [验收证据](evidence/mobile-push-deploy-20260910.json)。后续全量发布仍须保留三处登录指引修复。
+
+## 当前阿里云基础镜像：2026-09-10 v4 制作与还原验证（默认新建配置尚未切换）
+
+- 新镜像 `m-13pauczcu9swanxwn`，名称 `openbox-image-v4-40g-shanghai-20260910`，
+  上海地域，40 GiB 系统盘，Linux Ubuntu 22.04.5；16:39（北京时间）状态为 `Available`。
+  源机为未分配的 `bossip-sh-002`（`ecd-5pvbuskezql1d4h5m`），制作前置为 reserve，
+  清理浏览器资料、工作区、实例凭据及主机密钥；使用 `DiskType=SYSTEM` 和
+  `AutoCleanUserdata=true`。制作前完整镜像检查通过。
+- 镜像内运行环境 `20260910.1`，dev-browser 已包含本页下节的登录指引修改。
+  Python 3.10.12、Node v22.23.1、Chrome 151.0.7922.71；核心执行服务与技能文件
+  和制作前源机一致。源机公共软件此前已与用户 e 正在使用的 012 核对一致。
+- 用新镜像实际还原 002 并验证生产执行通道、Chrome CDP 和浏览器 relay，均通过。
+  未连接云桌面客户端时没有 X 会话，与现有未分配备用机一致；本次验证的是生产支持的
+  headless 模式，未实际连接客户端验证交互式 1920×1080 桌面，显示守护配置检查通过。
+  还原后平台新生成的 SSH 身份在测试结束后清理；再次运行完整检查全部通过，
+  1456 个基线包齐全，无用户文件、浏览器 Cookie 数据库或实例凭据残留。
+- 16:54 将 002 恢复为 prewarm，云标签和数据库的镜像 ID 均为新镜像；备用池恢复
+  5 台，已分配 9 台，用户 e 的执行通道仍为 up。本次没有新购桌面或重启后端。
+- **全局 `WUYING_IMAGE_ID` 仍为 `m-ihn7zmzukytina8qj`（v3），尚未切换。**
+  新镜像现已可供后续新建或重建使用；标准新建流程仍会先同步后端随包技能。
+  下节三处源码修改已随本次代码提交纳入 main，后续全量后端构建可直接使用 main。
+- [制作和验收证据](evidence/golden-image-v4-20260910.json)；服务器元数据与对应源码
+  保存在 `/opt/openbox/releases/image-v4-20260910/`，原 v3 镜像保留。
+
+## 当前阿里云发布：2026-09-10 登录限制移除（后端与 14 台云电脑）
+
+- 用户确认对生产环境所有用户统一移除 dev-browser 和共用 `desktop_login` 中的三项
+  指令限制：禁止自行打开登录页、代填密码或验证码、通过截图判断登录态；强制
+  `status → open → probe` 顺序改为可独立使用的辅助操作。登录检测与身份归属代码未变。
+- 15:59:33–16:00:00（北京时间）backend 切换至
+  `openbox-backend:20260910-login-guidance-324366c2`，健康检查通过。基于现场运行的
+  `20260910-autopilot-824b295` 追加 `tool/desktop_login.py`、dev-browser `SKILL.md` 和
+  `sandbox/browser_runtime_repair.py` 三个文件，原文件哈希均与本地修改前版本一致。
+  此为增量镜像，下次全量发布须包含这三处源码变更。
+  镜像 ID `sha256:7ae71962406dc008d736db55b6e52aeba84402bc6acec22cea6e61192e922342`。
+- 生产库内 14 台桌面全部同步技能源包并通过 `--check`，运行环境版本升至 `20260910.1`，
+  确保旧镜像新建的桌面也会加载新技能。技能 SHA-256 全部为
+  `44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2`。
+  16:02 从生产后端经真实通道读取 9 台已分配桌面的 `/skills/dev-browser`，均返回新版；
+  包含用户 e 的 `ecd-b9oizzx4rfhbsm1uh`，来源均为 builtin。
+- 验证：技能格式校验通过；desktop_login_tool、browser_runtime、browser_runtime_repair
+  共 **57 passed**；公网首页与 `/api/environment` 为 200。数据库仍为 `d2f4a6c8e0b2`，
+  frontend `20260910-nav-3791e77`、postgres、redis 的容器 ID 未变，环境变量键值一致。
+- 首次切换因按列表顺序比较环境变量而触发自动回滚；改为按键和值比较后重试通过，
+  确认仅排列顺序变化。最终备份目录
+  `/opt/openbox/backups/20260910-login-guidance-324366c2/activation-20260910T075933Z/`
+  含经 `pg_restore -l` 验证的数据库备份、配置和实际运行环境快照；发布文件与源码补丁在
+  `/opt/openbox/releases/20260910-login-guidance-324366c2/`。
+  桌面备份与验证明细见 [发布证据](evidence/login-guidance-20260910.json)。
+- 已有对话里加载过的旧技能文本仍属于历史上下文；重新加载技能或开启新对话即可使用新指引。
+- 新增备用机默认使用 `m-ihn7zmzukytina8qj`（`openbox-image-v3-40g-shanghai`，
+  阿里云状态 `Available`）；本次后端发布时未重建基础镜像，稍后的 v4 制作见上节。
+  生产 `ensure_prewarm` 会先执行
+  `verify_prewarm` → `ensure_desktop_browser_runtime`，更新至当前后端随包版本并校验，
+  成功后才建立可分配的 prewarm 记录。手动绕过此流程克隆的桌面不能视为已更新。
+- 16:10:08 复核时发现后续发布短暂切换到 `20260910-fixes-0351b90`，其运行环境仍为
+  `20260909.2` 且技能源包为旧版；随后线上恢复到本节的登录指引镜像，容器启动时间
+  16:10:43。16:13 再次通过线上代码检查全部 14 台（含 5 台备用），均为 `20260910.1`
+  且 ready，检查期间后端版本稳定。后续发布必须纳入本节三处源码修改，防止再次覆盖。
+  本次后端发布未新购桌面；稍后的 v4 制作使用已有备用机完成实际还原与通道验收，见上节。
+
 ## 当前默认模型：2026-09-10 Gemini 3.8 Flash
 
 - AWS 开发环境与阿里云生产环境的默认模型均已改为 `Gemini 3.8 Flash`，菜单顺序统一为：

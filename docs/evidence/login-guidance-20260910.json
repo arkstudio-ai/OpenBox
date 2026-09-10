@@ -1,0 +1,341 @@
+{
+  "activation": {
+    "activation": "complete",
+    "backend_env_order_changed": true,
+    "image": "openbox-backend:20260910-login-guidance-324366c2",
+    "image_id": "sha256:7ae71962406dc008d736db55b6e52aeba84402bc6acec22cea6e61192e922342",
+    "backup": "/opt/openbox/backups/20260910-login-guidance-324366c2/activation-20260910T075933Z",
+    "db_revision": "d2f4a6c8e0b2",
+    "backend_health": "healthy",
+    "other_service_ids_unchanged": true,
+    "environment_unchanged": true,
+    "public_status": 200,
+    "finished_at": "2026-09-10T08:00:00.175399+00:00"
+  },
+  "tests": "57 passed; skill format valid",
+  "desktop_updates": [
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-0b7gj174mc6f23ctq",
+      "invoke_id": "t-sh06wmj4144mfwg",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-5b9bykbz",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-4y9s9igraz7hc58ea",
+      "invoke_id": "t-sh06wmj5ndtuwow",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-oqrffsbm",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-4y9s9igraz7hc58eb",
+      "invoke_id": "t-sh06wmj62qedzb4",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-2psmx_n3",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-5pvbuskezql1d4h5m",
+      "invoke_id": "t-sh06wmj6i90718g",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-6memqzpm",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-8zp47qagrsc95h67t",
+      "invoke_id": "t-sh06wmj6xpgkb9c",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-93pdy2w6",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-c4qndqrko3db7kjfz",
+      "invoke_id": "t-sh06wmj7d98tlhc",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-exdcx_w0",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-c51eyfc786uzimn3o",
+      "invoke_id": "t-sh06wmj7t6hibk0",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-e45kv71j",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-gj5j513on7j0u97as",
+      "invoke_id": "t-sh06wmj8892gjcw",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-qyd09vxu",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-glxi1nk433hliivri",
+      "invoke_id": "t-sh06wmj8ns0qgw0",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-s05q00l5",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmi",
+      "invoke_id": "t-sh06wmj939g2wao",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-uexmyhdk",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmj",
+      "invoke_id": "t-sh06wmj9itftla8",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-11y43jnj",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "skill-text",
+      "desktop_id": "ecd-ijea2hjljf9c4wd1b",
+      "invoke_id": "t-sh06wmj9y6fbsw0",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-a_lzbkz3",
+      "runtime_version": "RUNTIME_VERSION = \"20260909.2\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-0b7gj174mc6f23ctq",
+      "invoke_id": "t-sh06wmkmpyfgt1c",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-g7x2v2wx",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-4y9s9igraz7hc58ea",
+      "invoke_id": "t-sh06wmkmyv8x7uo",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-c37rrsu9",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-4y9s9igraz7hc58eb",
+      "invoke_id": "t-sh06wmkn7ve988w",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-dkp600pf",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-5pvbuskezql1d4h5m",
+      "invoke_id": "t-sh06wmknglrh79c",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-hfd7w8xv",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-8zp47qagrsc95h67t",
+      "invoke_id": "t-sh06wmknpef3k74",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-1dx6z4ng",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-b9oizzx4rfhbsm1uh",
+      "invoke_id": "t-sh06wmkmah04lxc",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-re6_tqu9",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-c4qndqrko3db7kjfz",
+      "invoke_id": "t-sh06wmkny9i4s8w",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-tmivkx37",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-c51eyfc786uzimn3o",
+      "invoke_id": "t-sh06wmkodq6016o",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-qv3i23r_",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-ctazuyee5p8enedta",
+      "invoke_id": "t-sh06wmkotbjoav4",
+      "skill_updated": true,
+      "before_sha256": "e38f88623df6df905e6431cc604df531fc75354c1046bb953ac6f3daf827dfbf",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-x6meascf",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-gj5j513on7j0u97as",
+      "invoke_id": "t-sh06wmkp8ylaqkg",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-amg49yph",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-glxi1nk433hliivri",
+      "invoke_id": "t-sh06wmkpoora03k",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-rhq74b8i",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmi",
+      "invoke_id": "t-sh06wmkq40wu7ls",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-b67ykceo",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-i4c4x8wpqg1lxktmj",
+      "invoke_id": "t-sh06wmkqcycrnk0",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-cxe4um4v",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    },
+    {
+      "stage": "runtime-version",
+      "desktop_id": "ecd-ijea2hjljf9c4wd1b",
+      "invoke_id": "t-sh06wmkqlr5durk",
+      "skill_updated": false,
+      "before_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "skill_sha256": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2",
+      "source_matches": true,
+      "backup": "/opt/openbox/backups/login-guidance-20260910-mux36_02",
+      "runtime_version": "RUNTIME_VERSION = \"20260910.1\""
+    }
+  ],
+  "effective_skill_verification": "2026-09-10 08:01:59,613 [openbox.db] INFO Database engine initialized: postgres:5432/openbox\n2026-09-10 08:01:59,830 [openbox.config] INFO Loaded config from /app/openbox.json\n2026-09-10 08:02:00,587 [openbox.db] INFO Database engine closed\n{\"runtime_version\": \"20260910.1\", \"backend_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"tool_guidance_updated\": true, \"bundled_source_matches\": true}\n{\"assigned_desktop_skill_checks\": [{\"desktop_id\": \"ecd-c51eyfc786uzimn3o\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-b9oizzx4rfhbsm1uh\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-i4c4x8wpqg1lxktmi\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-4y9s9igraz7hc58ea\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-4y9s9igraz7hc58eb\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-c4qndqrko3db7kjfz\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-8zp47qagrsc95h67t\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-ctazuyee5p8enedta\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}, {\"desktop_id\": \"ecd-glxi1nk433hliivri\", \"effective_skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"source\": \"builtin\", \"base_dir\": \"/opt/openbox/skills/dev-browser\"}]}\n{\"name\":\"prod\"}",
+  "spare_image_verification": {
+    "golden_image": {
+      "id": "m-ihn7zmzukytina8qj",
+      "name": "openbox-image-v3-40g-shanghai",
+      "status": "Available",
+      "creation_time": "2026-09-05T19:07Z",
+      "rebuilt_for_this_change": false
+    },
+    "new_spare_path": "create_desktop_for_pool → wait_desktop_ready(expected_image_id) → verify_prewarm → ensure_desktop_browser_runtime → cloud_desktop_repo.create(pool_state=prewarm)",
+    "requires_current_runtime_version": true,
+    "new_machine_purchased_or_created_for_test": false,
+    "observed_release_drift_and_recovery": [
+      {
+        "target": "i-uf66pcsepxpc23v5qsts",
+        "invoke": "t-sh06wmligq5o2yo",
+        "status": "Success",
+        "exit": 0,
+        "output": "2026-09-10 08:10:08,394 [openbox.config] INFO Loaded config from /app/openbox.json\n{\"image_id\": \"m-ihn7zmzukytina8qj\", \"region\": \"cn-shanghai\", \"policy_group_id\": \"pg-0bbay5jmvosn8b2hc\", \"desktop_type\": \"eds.enterprise_office.6c12g\", \"pool_enabled\": true, \"pool_auto_purchase\": false, \"pool_target_prewarm\": 5, \"runtime_version\": \"20260909.2\", \"skill_sha256\": \"26195010d14fd99c5df93a21e99f4e9626d4e9c62ea31cf824a6c2eb8832eee9\", \"skill_matches_login_guidance_release\": false, \"new_spare_uses_configured_image\": true, \"runtime_prepared_before_pool_admission\": true}\n\"openbox-backend:20260910-fixes-0351b90\"\n"
+      },
+      {
+        "target": "i-uf66pcsepxpc23v5qsts",
+        "invoke": "t-sh06wmlne1d6j9c",
+        "status": "Success",
+        "exit": 0,
+        "output": "\"openbox-backend:20260910-login-guidance-324366c2\" \"sha256:7ae71962406dc008d736db55b6e52aeba84402bc6acec22cea6e61192e922342\" \"2026-09-10T08:10:43.492781598Z\" \"healthy\"\n{\"path\": \"/app/sandbox/browser_runtime_repair.py\", \"sha256\": \"c1e6a6f0224727740401eb8fb492af7b492da7e535da054213ad6f700433f1b1\", \"login_bans\": []}\n{\"path\": \"/app/tool/desktop_login.py\", \"sha256\": \"0821273ea874d114d54f0e13cad0f5b3e5aa30a3aa8e5163cfd78a5cfd10d0c6\", \"login_bans\": []}\n{\"path\": \"/container/dev-browser/SKILL.md\", \"sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"login_bans\": []}\n"
+      },
+      {
+        "target": "i-uf66pcsepxpc23v5qsts",
+        "invoke": "t-sh06wmlryv0hdds",
+        "status": "Success",
+        "exit": 0,
+        "output": "{\"backend_before\": {\"image\": \"openbox-backend:20260910-login-guidance-324366c2\", \"image_id\": \"sha256:7ae71962406dc008d736db55b6e52aeba84402bc6acec22cea6e61192e922342\", \"started_at\": \"2026-09-10T08:10:43.492781598Z\", \"health\": \"healthy\"}}\n2026-09-10 08:13:06,340 [openbox.config] INFO Loaded config from /app/openbox.json\n{\"runtime_version\": \"20260910.1\", \"image_id\": \"m-ihn7zmzukytina8qj\", \"pool_auto_purchase\": false, \"skill_sha256\": \"44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2\", \"runtime_prepared_before_pool_admission\": true}\n{\"desktop_id\": \"ecd-gj5j513on7j0u97as\", \"pool_state\": \"prewarm\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-c51eyfc786uzimn3o\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-b9oizzx4rfhbsm1uh\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-c4qndqrko3db7kjfz\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-i4c4x8wpqg1lxktmi\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-4y9s9igraz7hc58eb\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-5pvbuskezql1d4h5m\", \"pool_state\": \"prewarm\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-4y9s9igraz7hc58ea\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-8zp47qagrsc95h67t\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-i4c4x8wpqg1lxktmj\", \"pool_state\": \"prewarm\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-ijea2hjljf9c4wd1b\", \"pool_state\": \"prewarm\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-ctazuyee5p8enedta\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-glxi1nk433hliivri\", \"pool_state\": \"assigned\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"desktop_id\": \"ecd-0b7gj174mc6f23ctq\", \"pool_state\": \"prewarm\", \"ready\": true, \"version\": \"20260910.1\", \"changed\": null}\n{\"fleet_ready\": 14, \"prewarm_ready\": 5}\n{\"backend_after\": {\"image\": \"openbox-backend:20260910-login-guidance-324366c2\", \"image_id\": \"sha256:7ae71962406dc008d736db55b6e52aeba84402bc6acec22cea6e61192e922342\", \"started_at\": \"2026-09-10T08:10:43.492781598Z\", \"health\": \"healthy\"}, \"stable_during_verification\": true}\n"
+      }
+    ],
+    "future_release_requirement": "Include the three source changes; local changes have not been merged into the shared main branch."
+  }
+}

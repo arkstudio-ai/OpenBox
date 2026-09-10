@@ -1,0 +1,126 @@
+{
+  "deployment": {
+    "status": "deployed",
+    "tag": "20260910-mobile-push-0513dcb",
+    "source": "0513dcbe73c6e0b4e23bc4011fe48084149a2cce",
+    "imageId": "sha256:d4aa2858c5a8df9c44a56fda07007e95d947ba518487df7f0a784630b6495822",
+    "architecture": "linux/amd64",
+    "migration": "e4f6a8b0c2d4",
+    "providers": {
+      "enabledProviders": [
+        "apns",
+        "jpush"
+      ],
+      "apnsKeySha256": "66d49f58a3df35e1d5118e3830d97229d4dc20d35a7edc6e19217e074f942462",
+      "apnsSigningValid": true
+    },
+    "unrelatedSettingsUnchanged": true,
+    "unchangedServiceIds": {
+      "frontend": "203227a63df7ccfe8fa44104eccc9459ac1299dd94f460042e0e7334ed27467f",
+      "redis": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f",
+      "postgres": "98258cffb1f7511fe5f2810e5586a8541b01d6a157bf68ba79b71f7d0507fc20"
+    },
+    "http": {
+      "/": 200,
+      "/api/environment": 200,
+      "/api/push/status": 401,
+      "/health": 200
+    },
+    "backup": "/opt/openbox/backups/20260910-mobile-push-0513dcb/preflight-20260910T093222Z",
+    "preservedLivePatches": {
+      "backend/tool/desktop_login.py": "0821273ea874d114d54f0e13cad0f5b3e5aa30a3aa8e5163cfd78a5cfd10d0c6",
+      "backend/sandbox/browser_runtime_repair.py": "c1e6a6f0224727740401eb8fb492af7b492da7e535da054213ad6f700433f1b1",
+      "container/dev-browser/SKILL.md": "44d2cbe460fdaedda326f41f21f9ed3b0950ef7a57bbef04155ba43ce8217cb2"
+    },
+    "utc": "2026-09-10T09:56:09.533634+00:00"
+  },
+  "finalCheck": {
+    "backendContainer": "4780e8397da433bbbb3daa73c7a980472a4d83500412d04f359b19ea962d808f",
+    "startedAt": "2026-09-10T09:55:46.904659014Z",
+    "restartCount": 0,
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "runtimeDiagnostics": {
+      "pushWorkerWarnings": 0,
+      "tracebacks": 0
+    },
+    "keyFileMode": "0600",
+    "keyDirectoryMode": "0700",
+    "backendEnvMode": "0600",
+    "newTables": [
+      "mobile_presence",
+      "mobile_sessions",
+      "push_deliveries",
+      "push_devices",
+      "push_messages"
+    ],
+    "rehearsal": {
+      "passed": true,
+      "from": "d2f4a6c8e0b2",
+      "to": "e4f6a8b0c2d4",
+      "existingTablesUnchanged": 49,
+      "addedTables": [
+        "mobile_presence",
+        "mobile_sessions",
+        "push_deliveries",
+        "push_devices",
+        "push_messages"
+      ]
+    },
+    "authorizedInterruption": {
+      "userAuthorized": true,
+      "activeTasks": {
+        "sessions": 3,
+        "executions": 3,
+        "cron": 0
+      },
+      "utc": "2026-09-10T09:55:36.443705+00:00"
+    }
+  },
+  "publicVerification": {
+    "utc": "2026-09-10T09:57:50.694239+00:00",
+    "checks": [
+      {
+        "path": "/",
+        "status": 200,
+        "bodySha256": "689d912696072772f03d6827bf57e18dfae3ed46a5740bbc3d9fead74ed69286"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "bodySha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "bodySha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ],
+    "environmentResponseUnchanged": true,
+    "healthcheckNote": "Backend health is verified by the container healthcheck on port 8080; the frontend falls back to its HTML app for public /health."
+  },
+  "imageArchiveSha256": "2acb194f52a9ee082cc93488848a8393a491bc4c3fd00fabaa588ef046ee9bf9",
+  "imageConfigId": "sha256:ae533c0933d06c778e7676d5916e3c797ab7609f8a6c6257cc8988c708b6285e",
+  "credentialValuesIncluded": false,
+  "localBuild": true,
+  "privateOssTransferObjectRemoved": true,
+  "deviceDeliveryTested": false,
+  "offlineProviderCheck": {
+    "networkDisabled": true,
+    "realConfiguredKeysLoaded": true,
+    "apnsSigningValidated": true,
+    "jpushRequestValidated": true
+  },
+  "availability": {
+    "observedApi502First": "2026-09-10T09:55:41.899805+00:00",
+    "observedApi502Last": "2026-09-10T09:55:56.430179+00:00",
+    "firstSubsequentApi200": "2026-09-10T09:55:58.623820+00:00",
+    "api502SampleCount": 7,
+    "localProbeTransportErrors": 6,
+    "note": "Transport errors were observed by the local probe before and during deployment; they are not independently confirmed server outages. Public /health is frontend HTML fallback, so backend health was verified through the Docker healthcheck on port 8080."
+  }
+}

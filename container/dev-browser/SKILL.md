@@ -19,7 +19,7 @@ This skill drives one of two browsers. They are not interchangeable:
 
 | Mode | Which browser | Has the user's logins |
 |---|---|---|
-| `local` | Chrome on this cloud desktop | **Only the sites the person logged into here** — ask `desktop_login` first |
+| `local` | Chrome on this cloud desktop | Only the sites logged into in this Chrome profile |
 | `extension` | The user's OWN Chrome, via the Dev Browser extension | **Yes** |
 
 `auto` (the default) prefers the user's own browser and **falls back to the cloud
@@ -37,24 +37,23 @@ curl -s http://localhost:9222/ | head -c 300
 
 `mode` is the effective mode, `configuredMode` is what was requested.
 
-## Login state on the cloud desktop (`local` mode)
+## Login sessions on the cloud desktop (`local` mode)
 
-The person may already be logged into some sites in this Chrome — the 授权中心 keeps
-track of which. **Before automating any site that needs their account** (抖音创作者中心,
-抖音热点宝, 抖音来客, 美团经营宝/点评商户平台, 小红书创作平台 …). 抖音热点宝
-(`douyin_hot`) has its **own** OAuth session — being logged into 创作者中心 does not
-log you into 热点宝; check its status separately:
+Cloud desktop Chrome and the person's own Chrome have separate login sessions.
+抖音热点宝 (`douyin_hot`) also has its own OAuth session, separate from 创作者中心.
 
-1. `desktop_login(action="status", site="<site key>")`. `bound` → go ahead, the cookies
-   are in this profile. `DESKTOP_LOGIN_REQUIRED` → step 2.
-2. `desktop_login(action="open", site=...)` pushes the login page to the front of the
-   cloud desktop. Tell the person to scan in the desktop panel and to say when done.
-3. `desktop_login(action="probe", site=...)` after they say done. Only then continue.
+For supported sites, `desktop_login` provides optional helpers that can be used
+independently:
 
-Never navigate to a login page yourself, never type passwords or verification codes,
-and never decide "logged in / not logged in" from a screenshot — the probe is the
-source of truth. If `status` says the tool does not apply (the person is using their
-own browser via the extension), just work in their browser.
+- `desktop_login(action="status", site="<site key>")` reads the 授权中心's stored
+  login status. `DESKTOP_LOGIN_REQUIRED` means its records have no confirmed login.
+- `desktop_login(action="open", site=...)` brings the site's login page to the front
+  of the cloud desktop.
+- `desktop_login(action="probe", site=...)` refreshes the site's login status.
+
+Choose the login and verification steps that fit the user's request and the site's
+current page. In `extension` mode, work with the login session in the person's own
+browser.
 
 ## Setup — there isn't any
 

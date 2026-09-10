@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { AppErrorBoundary } from "./AppErrorBoundary"
 import { recoverChunkLoadError, reloadPage } from "@/shared/lib/chunk-recovery"
+import { reloadIfStale } from "@/shared/lib/build-version"
 
 const routeError = vi.hoisted(() => ({
   value: new Error("Failed to fetch dynamically imported module: /assets/old.js"),
@@ -14,9 +15,10 @@ vi.mock("react-router", async (original) => ({
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock("@/shared/lib/chunk-recovery", async (original) => ({
   ...(await original<object>()),
-  recoverChunkLoadError: vi.fn(),
+  recoverChunkLoadError: vi.fn(() => false),
   reloadPage: vi.fn(),
 }))
+vi.mock("@/shared/lib/build-version", () => ({ reloadIfStale: vi.fn(async () => false) }))
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -48,5 +50,7 @@ describe("route error recovery UI", () => {
     )
     expect(screen.getByRole("heading").textContent).toBe("state.error")
     expect(screen.getByText("pageLoad.genericBody")).toBeTruthy()
+    // an ordinary error still asks whether the server has moved on to a newer build
+    expect(reloadIfStale).toHaveBeenCalledTimes(1)
   })
 })

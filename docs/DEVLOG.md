@@ -424,3 +424,42 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
 `image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
 时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。
+
+## 发布到抖音：默认走云电脑创作者中心，上传改 CDP 本地路径（2026-09-10）
+
+运营反馈"视频做完让它发布，弹出绑定二维码说无法绕过"。回放 gw2 会话（用户 e，15:45）：`desktop_publish` precheck 通过，
+publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`Cannot transfer files larger than 50Mb` /
+`Timeout 30000ms`；模型随即转 `douyin_publish authorize` 出了开放平台（应用名 bossip）的授权码并列为推荐。
+修复：① `publish/desktop_script.py` 上传改为 `DOM.setFileInputFiles` 传桌面本地路径（成片本就在
+`/workspace/uploads/`），本机真实 Chrome 对照：60MB 文件旧法复现同一错误，新法 5ms 挂上并触发 change/input；
+`setInputFiles` 仅作 <50MB 兜底。② `PublishRefusal` 分三类且互斥：`retryable`（上传/页面执行失败，重试一次后如实报告）、
+`login_expired`（云电脑重登，视频留着）、`degrade`（开关关闭或风控熔断，才改投稿码）；任何登录/执行失败都不再指向
+`douyin_publish`。③ 路由：`video-production` 成片后的发布入口改指 `douyin-desktop-publish`，两技能 description 互换
+触发词（「发布/发抖音/投稿」归桌面路径，开放平台技能只在 mode=package / degrade / 用户要求扫码时加载），去掉
+"抖音不允许应用替用户发布"之类绝对话术；`marketing-autopilot` 按同样三类处理。单测 +5（失败集与 origin/main 一致）。
+未部署；授权页显示 bossip 需在抖音开放平台控制台改应用名；AWS 仍无 desktop_publish。
+
+
+## 前端发布后旧页面自动换新，不再"出错了"（2026-09-10）
+
+运营反馈：每次发布前端，已打开的页面都会变成"出错了"，必须手动刷新。已有的 chunk 恢复（`4d2a578`）只认
+"动态 import 失败"这一种错误并自动刷新一次；本地用 nginx 同语义的静态服务复现：路由 chunk 缺失确实走了自动刷新，
+所以运营看到的"出错了"是别的错误落进了同一个错误页（旧页面对着新后端/新资源）。不再逐个猜错误，改为让页面知道自己过期：
+- `vite.config.ts` 每次构建生成一个 build id，同时写进 bundle（`__APP_BUILD__`）和 `index.html`（`<meta name="app-build">`，
+  index.html 本就 no-store）；Dockerfile 可用 `--build-arg VITE_BUILD_ID=<tag>` 钉死，不传则用构建时间戳。
+- `shared/lib/build-version.ts`：页签在可见/聚焦/联网/每 10 分钟时拉一次 index.html 比对 id（最少间隔 60s，已过期后不再请求）。
+  发现新构建：页签隐藏时立即换新；可见时等下一次站内导航（`router.subscribe`）再换；正在流式输出的回合（`shared/lib/activity.ts`
+  由 stream store 的 `setStatus` 登记）绝不打断。
+- 错误页：非 chunk 错误也先问服务器是否已有新构建，是就自动刷新一次；chunk 错误按原逻辑。所有自动刷新共用 5 分钟冷却，防循环。
+- `installChunkRecovery()`：接住 `vite:preloadError` 和事件处理器/store 里 `import()` 的未处理 rejection，这些原本到不了错误边界。
+本地验证：两份不同 id 的构建，旧页面打开后换成新构建目录，触发 focus 后页签自行刷新到新 id，无错误页。单测 +8。未部署。
+
+
+## 云电脑"画中画"：禁止桌面视频流进入 picture-in-picture（2026-09-10）
+
+运营反馈打开来客消息管理等界面时，云电脑画面里再嵌一个云电脑画面（内层时间比外层早 5 分钟，静止），遮住页面。
+在该桌面（ecd-b9oizzx4rfhbsm1uh）用云助手列 X 窗口只有 Chrome/Firefox/GNOME 壳，没有任何悬浮窗，仓库里也没有会在桌面
+弹截图窗口的代码；符合的解释是运营自己的浏览器把我们 `DesktopTab` 里无影 SDK iframe 中的 `<video>` 放进了浏览器画中画
+（Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
+修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
+API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。

@@ -223,3 +223,79 @@ async def test_registration_and_skill():
     assert "douyin-desktop-publish" in names
     body = names["douyin-desktop-publish"].content
     assert "desktop_publish" in body and "douyin_publish" in body and "≤ 30" in body
+
+
+# ── failure classes: retry / login / degrade never blur into each other ──────
+def test_script_reads_the_video_from_the_desktop_over_cdp():
+    from publish import desktop_script as script
+
+    src = script.build_script(script.build_params(
+        file_path="/workspace/uploads/big.mp4", title="t", intro="", topics=[], declaration="ai", hot_word=None,
+        visibility="public", schedule_at=None, dry_run=False, simulate_risk=False, risk_patterns=["验证码"],
+        upload_timeout_seconds=420, evidence_path="tmp/e.png"))
+    # local path handed to Chrome — no relay transfer, no 50 MB ceiling
+    assert "DOM.setFileInputFiles" in src and "files: [P.file_path]" in src
+    # the relay transfer stays only as a fallback, with a real timeout
+    assert "setInputFiles(P.file_path, { timeout:" in src
+
+
+async def test_transport_failure_is_retryable_and_never_degrades(world):
+    ctx = _ctx(world)
+    world["prepare_fail"] = RuntimeError("BrowserNotRunning: locator.setInputFiles: Cannot transfer files larger than 50Mb")
+    r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    assert r.metadata["refused"] and r.metadata["retryable"] is True
+    assert r.metadata["degrade"] is False and r.metadata["login_expired"] is False
+    assert "再试一次" in r.output and "retryable=true" in r.output
+    assert "douyin_publish(action=publish" not in r.output and "授权" not in r.output.replace("不要出授权二维码", "").replace("no authorization QR", "")
+    st = await execute(DesktopPublishArgs(action="status"), ctx)
+    assert st.metadata["jobs"][0]["status"] == "failed" and "50Mb" in st.metadata["jobs"][0]["error"]
+    # a failed attempt does not spend the day's budget
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["budget"]["today"] == 0 and pre.metadata["can_auto_publish"] is True
+
+
+async def test_page_failure_before_publish_click_retries_after_click_does_not(world):
+    ctx = _ctx(world)
+    world["result"] = {"ok": False, "step": "wait_upload", "steps": ["goto", "upload", "wait_upload"],
+                       "error": "upload did not finish within 420000ms (last 87%)"}
+    r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    assert r.metadata["retryable"] is True and r.metadata["degrade"] is False and "wait_upload" in r.output
+    world["result"] = {"ok": False, "step": "readback", "steps": ["goto", "upload", "publish", "readback"],
+                       "error": "publish outcome unclear: url=https://creator.douyin.com/creator-micro/content/upload"}
+    r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    assert r.metadata["retryable"] is False and r.metadata["degrade"] is False
+    assert "结果不明" in r.output and "status" in r.output
+
+
+async def test_login_expired_never_points_at_the_qr_route(world):
+    from db.base import get_db_session
+    from db.models.platform_account import PlatformAccount
+
+    ctx = _ctx(world)
+    async with get_db_session() as db:
+        acct = await db.get(PlatformAccount, world["acct"]); acct.status = "expired"
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["login_ok"] is False and "desktop_login" in pre.output and "or use douyin_publish" not in pre.output
+    r = await execute(DesktopPublishArgs(action="publish", asset_id=world["aid"], title="标题"), ctx)
+    assert r.metadata["login_expired"] is True and r.metadata["retryable"] is False and r.metadata["degrade"] is False
+    assert "douyin_publish(action=publish" not in r.output and "视频留着" in r.output
+
+
+async def test_publishing_hints_route_a_plain_request_to_the_desktop_skill():
+    from skill import skill as sk
+    from tool.douyin_publish import DOUYIN_PUBLISH_DESCRIPTION
+    from tool.desktop_publish import DESKTOP_PUBLISH_DESCRIPTION
+
+    names = {s.name: s for s in await sk.list_skills()}
+    # the video skill hands a delivered film to the desktop route, not the QR route
+    assert "`douyin-desktop-publish`" in names["video-production"].content
+    assert "`douyin-publish` skill (load it" not in names["video-production"].content
+    desk, qr = names["douyin-desktop-publish"], names["douyin-publish"]
+    for word in ("发布", "发抖音", "投稿"):
+        assert word in desk.description
+    assert "fallback" in qr.description.lower() and "douyin-desktop-publish" in qr.description
+    # the absolute claims that produced "无法绕过" are gone; the skills now forbid that wording
+    assert "抖音不允许应用替用户发布" not in qr.content and "无法绕过" not in DOUYIN_PUBLISH_DESCRIPTION
+    assert "不对用户说「平台不允许 / 无法绕过" in desk.content and "不对用户说「平台不允许 / 无法绕过" in qr.content
+    assert "retryable" in desk.content and "login_expired" in desk.content and "degrade" in desk.content
+    assert "DEFAULT" in DESKTOP_PUBLISH_DESCRIPTION and "FALLBACK" in DOUYIN_PUBLISH_DESCRIPTION

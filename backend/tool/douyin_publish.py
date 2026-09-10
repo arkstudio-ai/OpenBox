@@ -359,13 +359,16 @@ async def execute_douyin_publish(args: DouyinPublishArgs, ctx: ToolContext) -> T
 
 
 DOUYIN_PUBLISH_DESCRIPTION = """\
-Post a finished video to the person's Douyin (抖音) account through the \
-workspace's 授权中心, or get them a QR code to (re)authorize. Douyin never \
-lets an app post by itself: `publish` returns a QR code the person scans \
-with the Douyin app, where the caption and hashtags are pre-filled and they \
-press 发布. Always call action=status first; if nothing is bound or the \
-grant expired, action=authorize gives a link + QR code. Prepare the title \
-and hashtags yourself and confirm them with the person before publishing. \
+FALLBACK route to Douyin: the 开放平台 QR posting package. The default route is \
+desktop_publish (the cloud desktop's logged-in 创作者中心, no authorization needed); \
+use this tool only when desktop_publish reports mode=package or degrade=true, or when \
+the person explicitly asks to publish by scanning / manage the 开放平台 authorization. \
+Never reach for it because a desktop upload failed or the desktop login expired. \
+`publish` returns a QR code the person scans with the Douyin app, where the caption \
+and hashtags are pre-filled and they press 发布. Always call action=status first; if \
+nothing is bound or the grant expired, action=authorize gives a link + QR code (the \
+authorization page shows the 开放平台 app name — explain why this step exists). Prepare \
+the title and hashtags yourself and confirm them with the person before publishing. \
 publish needs the video's asset_id (share_file with attach=false returns one)."""
 
 douyin_publish_tool = define_tool(

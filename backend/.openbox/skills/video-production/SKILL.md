@@ -149,4 +149,4 @@ Captions use the accepted actual transcript, never the written line. Two paths:
 - `references/quality.md` — pathology, STT, duration acceptance and composition checks
 - `references/compose-timeline.md` — the `video_compose` timeline format, card 4, verified effects and billing
 
-Publishing/posting is handled by the `douyin-publish` skill (load it with the `skill` tool when the person wants the video on Douyin); this skill produces and delivers the file.
+Publishing/posting is handled by the `douyin-desktop-publish` skill (load it with the `skill` tool when the person wants the video on Douyin — it publishes through the cloud desktop's logged-in 创作者中心 and only falls back to the QR package when that route is switched off); this skill produces and delivers the file.

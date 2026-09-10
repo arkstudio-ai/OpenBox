@@ -5,6 +5,25 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前两边发布：2026-09-10 运营问题三合一（发布链路 / 前端自动换新 / 禁画中画）
+
+- 21:53–21:55（北京时间）**gw2 与 AWS 同时**切到 `20260910-ops-57e330b`（backend + frontend），源码 `main@57e330b`
+  = `eda8b75`（andrew 20:38 发的 suggestion-loading）+ PR #23 发布链路修复 + PR #24 前端 build id 自动换新 + PR #26 禁画中画。
+  EC2 `/opt/openbox/build-main` 构建，`scp`（`/root/.ssh/gw2ship`，21s）到 gw2 `releases/20260910-ops-57e330b/`，SHA-256
+  两边核对一致（backend `e9a29f9b…`、frontend `0bbaffe7…`）。前端镜像以 `--build-arg VITE_BUILD_ID=20260910-ops-57e330b` 钉 id，
+  公网 `index.html` 已带 `<meta name="app-build" content="20260910-ops-57e330b">`。
+- gw2：无迁移（仍 `e4f6a8b0c2d4`），backend 16s healthy → frontend 12s healthy，串行切换；切换时无活动会话。
+  备份 `/opt/openbox/backups/20260910-ops-57e330b/activation-20260910T125343Z/`（.env、backend.env、两份 compose、`preflight.dump` 55 张有数据表）。
+  override 两行 image 与 `.env` 的 `OPENBOX_IMAGE_TAG` 均已改到本 tag（此前 .env 仍停在 `20260908-a5fix-7c891ee`）。
+- AWS：从 `20260908-a5fix-7c891ee` 直接升到本 tag，启动时迁移 `b8e3f5a7c9d1 → e4f6a8b0c2d4` 自动跑完，backend 12s healthy；
+  备份 `backups/20260910-ops-57e330b/activation-20260910T125313Z/`。AWS 未配移动推送与抖音键，属既有状态。
+- 公网验证：`/`、`/index.html`、`/api/auth/logto/config` 均 200；镜像内 `desktop_script.py` 含 `DOM.setFileInputFiles`，技能目录含
+  `douyin-desktop-publish`，前端 assets 含 `picture-in-picture 'none'`。
+- **注意**：本次是前端首次带 build id，已打开的旧页签这一次仍要手动刷新一次；从下一次前端发布起才会自动换新。
+- 回滚：override 两行 image 改回 `20260910-suggestion-loading-eda8b75`（gw2）/ `20260908-a5fix-7c891ee`（AWS，需先 `alembic downgrade b8e3f5a7c9d1`），
+  `docker compose up -d --no-deps backend` 再 `frontend`。发布用的通用脚本见本次会话 scratchpad `deploy_common.sh`（备份→装载→改 override→
+  backend 等 healthy→frontend 等 healthy→本地探测），未入库。
+
 ## 当前阿里云前端：2026-09-10 聊天下一步建议（仅前端，无迁移）
 
 - 19:28:33–19:29:18（北京时间）frontend 发布 `20260910-suggestions-1c46bce`，源码 `1c46bce`。

@@ -3,6 +3,7 @@
 // increment arrives over the WebSocket. Server state is never re-poured in
 // beyond that first merge. Ported from v1's reducer, retyped for this project.
 import { create } from "zustand"
+import { setActivity } from "@/shared/lib/activity"
 import type {
   MessagePart,
   MessageReaction,
@@ -11,6 +12,8 @@ import type {
   ToolPart,
   ToolStatus,
 } from "@/shared/types/api"
+
+const QUIET_STATUS: ReadonlySet<SessionStatus> = new Set(["idle", "error", "waiting_input"])
 
 type MsgMap = Map<string, MessageWithParts[]>
 
@@ -268,6 +271,8 @@ export const useStreamStore = create<StreamState>((set) => ({
     set((s) => {
       const map = new Map(s.status)
       map.set(sessionId, status)
+      // A run in progress must not be cut short by app housekeeping (build swap).
+      setActivity(`session:${sessionId}`, !QUIET_STATUS.has(status))
       // Leaving a stale attempt behind would have the next wait open on
       // "retry 5 of 5" before anything had gone wrong.
       const retry = new Map(s.retry)

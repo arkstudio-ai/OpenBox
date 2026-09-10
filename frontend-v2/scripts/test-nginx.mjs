@@ -3,14 +3,17 @@
 // tracked by its returned ID and removed in finally, including failed runs.
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import http from "node:http"
 import { fileURLToPath } from "node:url"
 import { randomUUID } from "node:crypto"
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const dist = `${root}dist`
-assert(existsSync(`${dist}/index.html`), "Run npm run build before the nginx test")
+// Set FRONTEND_TEST_IMAGE to exercise the actual release filesystem instead
+// of bind-mounting a local build, including the image's public file modes.
+const frontendImage = process.env.FRONTEND_TEST_IMAGE
+if (!frontendImage) assert(existsSync(`${dist}/index.html`), "Run npm run build before the nginx test")
 const nginxImage = process.env.NGINX_TEST_IMAGE || "nginx:alpine"
 const pythonImage = process.env.PYTHON_TEST_IMAGE || "python:3.12-alpine"
 const prefix = `openbox-ui-qa-${randomUUID().slice(0, 8)}`
@@ -69,11 +72,11 @@ try {
     "127.0.0.1::80",
     "-e",
     "BACKEND_HOST=backend:8080",
-    "-v",
-    `${root}nginx.conf:/etc/nginx/templates/default.conf.template:ro`,
-    "-v",
-    `${dist}:/usr/share/nginx/html:ro`,
-    nginxImage,
+    ...(frontendImage ? [] : [
+      "-v", `${root}nginx.conf:/etc/nginx/templates/default.conf.template:ro`,
+      "-v", `${dist}:/usr/share/nginx/html:ro`,
+    ]),
+    frontendImage || nginxImage,
   )
   const port = JSON.parse(docker("inspect", proxy))[0].NetworkSettings.Ports["80/tcp"][0].HostPort
   const origin = `http://127.0.0.1:${port}`
@@ -88,8 +91,11 @@ try {
     assert.match(response.headers.get("cache-control"), /no-store/)
     await response.text()
   }
+  const assets = frontendImage
+    ? docker("exec", proxy, "ls", "/usr/share/nginx/html/assets").split("\n")
+    : readdirSync(`${dist}/assets`)
   for (const extension of ["js", "css"]) {
-    const file = readdirSync(`${dist}/assets`).find((name) => name.endsWith(`.${extension}`))
+    const file = assets.find((name) => name.endsWith(`.${extension}`))
     assert(file)
     const response = await get(`/assets/${file}`)
     assert.equal(response.status, 200)
@@ -102,6 +108,13 @@ try {
     assert.match(missing.headers.get("content-type"), /text\/plain/)
     assert.match(missing.headers.get("cache-control"), /no-store/)
     assert.equal(await missing.text(), "Asset not found\n")
+  }
+  const publicFiles = readdirSync(`${root}public`, { recursive: true })
+    .filter((file) => statSync(`${root}public/${file}`).isFile())
+  for (const file of publicFiles) {
+    const response = await get(encodeURI(`/${file}`))
+    assert.equal(response.status, 200, `Public asset must be readable: ${file}`)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), readFileSync(`${root}public/${file}`))
   }
   const requestPath = "/api/echo/a%20b?one=1&two=%2F"
   const posted = await (await get(requestPath, { method: "POST", body: "fixture-only" })).json()
@@ -144,7 +157,7 @@ try {
   await until(async () => assert.equal((await (await get("/api/ready")).json()).instance, "next"))
   assert.equal(JSON.parse(docker("inspect", proxy))[0].Id, proxy, "Frontend must not be restarted")
   console.log(
-    "PASS: SPA no-store, immutable JS/CSS, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, backend IP rotation without frontend restart",
+    "PASS: SPA no-store, immutable JS/CSS, public asset contents and permissions, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, backend IP rotation without frontend restart",
   )
 } finally {
   for (const id of containers.reverse()) {

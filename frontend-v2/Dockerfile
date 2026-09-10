@@ -10,6 +10,10 @@ RUN npm run build
 
 FROM ${NGINX_IMAGE}
 COPY --from=builder /app/dist /usr/share/nginx/html
+# Public files retain their source permissions when Vite copies them. Make
+# restrictive build contexts readable by nginx's unprivileged workers.
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 644 {} +
 ENV BACKEND_HOST=backend:8080
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80

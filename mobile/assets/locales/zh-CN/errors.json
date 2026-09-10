@@ -28,5 +28,7 @@
   "PUSH_DEVICE_NOT_READY": "请先开启并连接这台手机的通知。",
   "PUSH_NOT_CONFIGURED": "服务器通知服务尚未启用。",
   "PUSH_TEST_RATE_LIMITED": "请等待 30 秒后再发送测试通知。",
-  "PUSH_SETUP_FAILED": "通知暂未连接，请重试。"
+  "PUSH_SETUP_FAILED": "通知暂未连接，请重试。",
+  "PUSH_BINDING_CHANGED": "手机绑定已变化，请刷新后重试。",
+  "PUSH_TEST_REQUEST_CONFLICT": "测试请求已变化，请刷新后重新发送。"
 }

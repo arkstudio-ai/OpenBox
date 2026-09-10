@@ -1,6 +1,6 @@
 # 移动通知接口与单手机登录
 
-实现分支：`codex/mobile-notifications`，基线 `a69b141`。已接通通知基础设施、业务触发、生命周期上报和设置入口，支持 iOS APNs、Android 极光，以及最后一部手机登录生效。尚未部署或使用生产凭据发送真实通知。
+已接通通知基础设施、业务触发、生命周期上报和设置入口，支持 iOS APNs、Android 极光，以及最后一部手机登录生效。服务端配置与初次迁移见 [发布记录](MOBILE_PUSH_DEPLOY_20260910.md)。
 
 系统通知只在 App 不可见或超时推断离线时允许投递；所有前台页面都保持安静。Android 七个厂商适配器及配置入口已接入，参数配置见 [Android 厂商推送配置](ANDROID_PUSH_VENDORS.md)。
 
@@ -50,7 +50,7 @@
 | `PUT /api/push/presence` | 上报 `state` 和递增 `sequence`，响应是否应用及当前通知策略 |
 | `POST /api/push/devices` | 幂等登记当前手机 token 和权限状态 |
 | `DELETE /api/push/devices/{bindingId}` | 关闭匹配的当前绑定，重复/旧绑定请求无副作用 |
-| `POST /api/push/test` | 给当前登录手机排队一条固定内容的测试通知；延迟 10 秒，202，30 秒限一次 |
+| `POST /api/push/test` | 仅超管兼容入口；给当前登录手机排队测试，延迟 10 秒，202，30 秒限一次 |
 | `GET /api/push/messages/{id}` | 查询自己通知的投递状态，不返回 token 或通知正文 |
 
 登记请求示例（Android；iOS 使用 `platform=ios`、`provider=apns`、真实十六进制 token 和签名环境）：
@@ -70,13 +70,25 @@
 
 `registered` 表示当前登录有登记记录；`notificationsEnabled` 表示该绑定允许投递；`providerConfigured` 表示服务端配置该通道；`deliveryEnabled` 要求后两者同时为真。`deliveryEnabled` 表示配置就绪，当前是否允许投递还要看 `presence.pushAllowed`。注册成功不能证明设备已收到通知。
 
-测试返回 `{ "id": "…", "status": "pending" }`。状态包括 `pending`、`sending`、`accepted`、`failed`、`cancelled`、`unbound`。`accepted` 只代表供应商接受请求，不代表真机到达；设置页按这个含义显示。
+测试返回 `{ "id": "…", "status": "pending" }`。状态包括 `pending`、`sending`、`accepted`、`failed`、`cancelled`、`unbound`。`accepted` 只代表供应商接受请求，不代表真机到达；超管测试页按这个含义显示。
 
 主要错误码：`AUTH_MOBILE_SESSION_REPLACED` / `AUTH_MOBILE_LOGIN_REQUIRED`（401，必须重新登录）；`PUSH_DEVICE_NOT_READY` / `PUSH_NOT_CONFIGURED`（409）；`PUSH_TEST_RATE_LIMITED`（429）。设备字段由 Pydantic 校验，不接受平台/provider 错配、非法 token 或额外用户字段。
 
+## 超管通知测试
+
+Web 与 iOS/Android 入口均为「超管系统 → 通知测试」。普通用户保留通知开关与正常业务通知，不显示测试按钮；旧版 App 的测试接口也会拒绝普通用户。服务端每次操作读取数据库中的账号状态和平台 `admin` 角色，工作空间 owner 不具备此权限。权限撤销会取消未发送的测试。
+
+- `GET /api/admin/push?locale=zh-CN`：当前超管绑定手机、通知开关、App 状态、通道配置、10 种模板预览和最近 20 次测试。Web 与手机均可读取；有绑定时，预览使用手机语言。
+- `POST /api/admin/push/test`：只接受 `template`、当前 `bindingId`、UUID `requestId`；只发给请求者自己的当前手机。无自定义收件人或文案，额外字段拒绝。重复 requestId 幂等；换机后旧绑定拒绝。延迟 10 秒，30 秒限一次，5 分钟过期。
+- `POST /api/admin/push/messages/{id}/receipt`：仅有效超管移动会话，可回传 `received` / `opened`。必须是本人实际已投递测试且绑定仍有效；Web、旧手机和未发送的通知不能回执。打开回执不会被晚到的接收回执降级。
+
+测试遵守与业务通知相同的前台抑制规则。发送后 10 秒内切后台或锁屏；仍在前台则取消并显示原因。`accepted` 只证明供应商受理，`received` 表示 App 回调确认收到，`opened` 表示点击通知；iOS 后台通知可能仅在点击后回传。点击测试通知进入超管测试页。原生端另有本机通知预览，它不经过服务端或供应商，不生成远程送达回执。
+
+复用现有 `push_messages.payload` 保存测试回执，无新增数据库迁移（head 仍为 `e4f6a8b0c2d4`）。接口只返回通道配置布尔状态，不返回 token、私钥或供应商凭据。
+
 ## 业务触发与模板
 
-中英文模板集中在 `backend/notifications/events.py`，锁屏只显示任务名及固定文案，不复制 LLM 原文、问题内容、工具输出、底层错误或凭据。收件人是本轮任务发起者、定时任务创建者或投稿发起者；不向工作空间全员广播。
+中英文模板集中在 `backend/notifications/templates.py`，锁屏只显示任务名及固定文案，不复制 LLM 原文、问题内容、工具输出、底层错误或凭据。收件人是本轮任务发起者、定时任务创建者或投稿发起者；不向工作空间全员广播。
 
 | 事件 | 自动触发点与边界 |
 | --- | --- |
@@ -89,6 +101,8 @@
 | `platform_auth_expired` | 授权失效正在影响发起者的有效任务或关联的待发布任务；后台维护发现一般过期不发 |
 | `publish_done` | 抖音 `create_video` 回调确认发布；重复回调不重复生成站内或系统通知 |
 | `publish_failed` | 固定模板和事务入口已提供，仅允许可信平台终态接入；现有抖音 H5 回调没有失败事件，暂未虚构自动触发 |
+
+任务名中文最多 16 字符、英文最多 32 字符（含省略号），控制字符与换行清理；正文为一句固定文案。授权通知显示抖音、小红书等平台名称，不直接展示内部标识。测试业务模板加「测试」前缀，避免被误认作真实业务结果。
 
 创作者中心目前的 `ok` / `published` 记录还包含“进入作品列表、审核中”的回读结果，`failed` 也包含传输结果不明，均不作为平台最终结果发通知；登录失效影响发布时会触发重新授权提醒。扫码链接创建、提交、审核中、定时发布排队、链接过期、dry-run 都不会推送“发布成功/失败”。
 

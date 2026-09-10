@@ -6,9 +6,10 @@ import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
 import 'billing/billing_page.dart';
 import 'fleet/fleet_page.dart';
+import 'notifications/notifications_page.dart';
 import 'skills/skills_page.dart';
 
-/// Three bottom destinations; only a visited section is instantiated.
+/// Four bottom destinations; only a visited section is instantiated.
 class AdminConsole extends ConsumerStatefulWidget {
   const AdminConsole({
     super.key,
@@ -22,7 +23,7 @@ class AdminConsole extends ConsumerStatefulWidget {
 }
 
 class _AdminConsoleState extends ConsumerState<AdminConsole> {
-  static const _sections = ['fleet', 'skills', 'billing'];
+  static const _sections = ['fleet', 'skills', 'billing', 'notifications'];
   late int _index = _sections.contains(widget.initialSection)
       ? _sections.indexOf(widget.initialSection)
       : 0;
@@ -71,6 +72,9 @@ class _AdminConsoleState extends ConsumerState<AdminConsole> {
             _visited.contains(2)
                 ? const AdminBillingPage()
                 : const SizedBox.shrink(),
+            _visited.contains(3)
+                ? AdminNotificationsPage(active: _index == 3)
+                : const SizedBox.shrink(),
           ],
         ),
         bottomNavigationBar:
@@ -102,6 +106,11 @@ class _AdminConsoleState extends ConsumerState<AdminConsole> {
                     icon: const Icon(Icons.receipt_long_outlined),
                     selectedIcon: const Icon(Icons.receipt_long),
                     label: i.t('admin:nav.billing'),
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.notifications_outlined),
+                    selectedIcon: const Icon(Icons.notifications),
+                    label: i.t('admin:nav.notifications'),
                   ),
                 ],
               ),

@@ -52,12 +52,13 @@
   "subtitle": "查看预热池、桌面状态与对账告警。",
   "console": {
     "title": "超管系统",
-    "subtitle": "舰队、技能商店与订阅的运营视图。"
+    "subtitle": "舰队、技能、订阅与通知测试。"
   },
   "nav": {
     "fleet": "舰队管理",
     "skills": "技能管理",
-    "billing": "订阅管理"
+    "billing": "订阅管理",
+    "notifications": "通知测试"
   },
   "section": {
     "fleet": {
@@ -71,6 +72,10 @@
     "billing": {
       "title": "订阅管理",
       "subtitle": "每个空间的订阅、订单与用量，只读。"
+    },
+    "notifications": {
+      "title": "通知测试",
+      "subtitle": "检查手机通知、投递状态和业务文案。"
     }
   },
   "confirm": {
@@ -181,6 +186,82 @@
       "toolCall": "工具调用",
       "request": "请求",
       "event": "事件"
+    }
+  },
+  "push": {
+    "scope": "仅超管可用，仅发送到你当前登录的手机。",
+    "refresh": "刷新状态",
+    "device": "手机与通道",
+    "phone": "当前手机",
+    "permission": "通知开关",
+    "appState": "App 状态",
+    "channel": "服务端通道",
+    "noDevice": "尚未绑定手机",
+    "enabled": "已开启",
+    "disabled": "未开启",
+    "configured": "已配置",
+    "unconfigured": "未配置",
+    "setupHint": "请在手机 App 登录此超管账号，并在设置中开启通知。",
+    "template": "测试场景",
+    "preview": "通知预览",
+    "instructions": "发送后请在 10 秒内将 App 切到后台或锁屏。每 30 秒可测试一次。",
+    "send": "发送远程测试",
+    "sending": "发送中…",
+    "queued": "已排队。请将手机 App 切到后台或锁屏，等待通知。",
+    "local": "测试本机显示",
+    "localQueued": "本机测试已安排，请在 10 秒内切到后台或锁屏。此测试不经过服务器。",
+    "localFailed": "未能安排本机通知，请检查系统通知权限。",
+    "history": "最近测试",
+    "receiptHint": "通道受理不代表手机已收到。点击手机通知可回传确认；前台不弹出系统通知。",
+    "empty": "暂无测试记录",
+    "requestFailed": "请求失败，请刷新状态后重试。",
+    "waitingBackground": "等待手机切到后台。",
+    "deliveryFailed": "投递失败，请检查手机网络和推送通道。",
+    "platform": {
+      "ios": "iPhone / iPad",
+      "android": "Android"
+    },
+    "provider": {
+      "apns": "苹果 APNs",
+      "jpush": "极光"
+    },
+    "presence": {
+      "foreground": "前台 · 不推送",
+      "foreground_inactive": "暂时失焦 · 不推送",
+      "background": "后台 · 允许推送",
+      "offline_inferred": "已离线 · 允许推送",
+      "reconnecting": "连接待确认 · 暂缓推送",
+      "unknown": "状态未知 · 暂缓推送"
+    },
+    "status": {
+      "pending": "等待发送",
+      "sending": "正在投递",
+      "accepted": "通道已受理",
+      "received": "App 已收到",
+      "opened": "已点击通知",
+      "failed": "投递失败",
+      "cancelled": "已取消",
+      "unbound": "未绑定手机"
+    },
+    "reason": {
+      "app_foreground": "App 在前台，本次未发送。",
+      "state_changed_before_send": "发送前 App 状态或绑定已变化。",
+      "expired_or_revoked": "通知已过期或登录已变化。",
+      "binding_revoked": "手机绑定已变化。",
+      "action_resolved": "事项已处理。",
+      "retry_exhausted": "重试失败，请检查推送通道。"
+    },
+    "templateName": {
+      "system_test": "基础通知",
+      "task_completed": "任务完成",
+      "task_failed": "任务失败",
+      "input_required": "等待回答",
+      "approval_required": "等待确认",
+      "cron_completed": "定时任务完成",
+      "cron_failed": "定时任务失败",
+      "platform_auth_expired": "授权失效",
+      "publish_done": "发布成功",
+      "publish_failed": "发布失败"
     }
   }
 }

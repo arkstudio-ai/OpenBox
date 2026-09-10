@@ -125,6 +125,10 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
       unawaited(_openPending());
       return;
     }
+    if (p['type'] == 'system_test') {
+      unawaited(_testReceipt(p, 'received'));
+      return;
+    }
     final push = ref.read(pushControllerProvider);
     if (p['recipientId'] != ref.read(authProvider).user?.id ||
         (push.bindingId != null && p['bindingId'] != push.bindingId) ||
@@ -142,6 +146,41 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
             title: p['title']?.toString(),
           );
     }
+  }
+
+  Future<bool> _testReceipt(Map<String, dynamic> payload, String kind) async {
+    final auth = ref.read(authProvider);
+    final identity = (auth.user?.id, auth.mobileSessionId);
+    bool current() {
+      if (!mounted) return false;
+      final latest = ref.read(authProvider);
+      return latest.user?.role == 'admin' &&
+          latest.isAuthenticated &&
+          latest.user?.id == payload['recipientId'] &&
+          identity == (latest.user?.id, latest.mobileSessionId);
+    }
+
+    if (!current()) return false;
+    final id = payload['eventId'] as String;
+    if (id.startsWith('local-')) return true;
+    final push = ref.read(pushControllerProvider);
+    if (push.bindingId == null) await push.checkSession();
+    if (!current() ||
+        push.bindingId == null ||
+        payload['bindingId'] != push.bindingId) {
+      return false;
+    }
+    try {
+      await ref
+          .read(apiDioProvider)
+          .post<dynamic>(
+            '/api/admin/push/messages/${Uri.encodeComponent(id)}/receipt',
+            data: {'kind': kind},
+          );
+    } catch (_) {
+      // Opening the diagnostics remains useful when receipt reporting is offline.
+    }
+    return current();
   }
 
   Future<void> _openPending() async {
@@ -164,7 +203,9 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
     _opening = true;
     try {
       if (payload['type'] == 'system_test') {
-        ref.read(routerProvider).go(Paths.settings('account'));
+        if (await _testReceipt(payload, 'opened') && current()) {
+          ref.read(routerProvider).go(Paths.adminNotifications);
+        }
         return;
       }
       final workspaceId = payload['workspaceId'];

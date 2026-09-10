@@ -28,5 +28,7 @@
   "PUSH_DEVICE_NOT_READY": "Enable and connect notifications on this phone first.",
   "PUSH_NOT_CONFIGURED": "The server notification service is not enabled yet.",
   "PUSH_TEST_RATE_LIMITED": "Wait 30 seconds before sending another test notification.",
-  "PUSH_SETUP_FAILED": "Notifications are not connected. Please retry."
+  "PUSH_SETUP_FAILED": "Notifications are not connected. Please retry.",
+  "PUSH_BINDING_CHANGED": "Phone binding changed. Refresh and try again.",
+  "PUSH_TEST_REQUEST_CONFLICT": "Test request changed. Refresh and send again."
 }

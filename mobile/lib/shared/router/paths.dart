@@ -32,6 +32,7 @@ abstract final class Paths {
   static const String skills = '/app/skills';
 
   static const String admin = '/app/admin';
+  static const String adminNotifications = '/app/admin/notifications';
 
   static const String desktop = '/app/desktop';
 

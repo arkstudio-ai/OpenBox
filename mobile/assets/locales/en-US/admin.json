@@ -52,12 +52,13 @@
   "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
   "console": {
     "title": "Admin console",
-    "subtitle": "Operations view of the fleet, the skill store, and subscriptions."
+    "subtitle": "Fleet, skills, subscriptions and notification tests."
   },
   "nav": {
     "fleet": "Fleet",
     "skills": "Skills",
-    "billing": "Subscriptions"
+    "billing": "Subscriptions",
+    "notifications": "Notifications"
   },
   "section": {
     "fleet": {
@@ -71,6 +72,10 @@
     "billing": {
       "title": "Subscriptions",
       "subtitle": "Per-workspace subscriptions, orders, and usage — read only."
+    },
+    "notifications": {
+      "title": "Notification tests",
+      "subtitle": "Check phone notifications, delivery status and business copy."
     }
   },
   "confirm": {
@@ -181,6 +186,82 @@
       "toolCall": "tool call",
       "request": "request",
       "event": "event"
+    }
+  },
+  "push": {
+    "scope": "Admins only. Sends only to your currently signed-in phone.",
+    "refresh": "Refresh status",
+    "device": "Phone and channels",
+    "phone": "Current phone",
+    "permission": "Notifications",
+    "appState": "App state",
+    "channel": "Server channels",
+    "noDevice": "No phone bound",
+    "enabled": "On",
+    "disabled": "Off",
+    "configured": "Configured",
+    "unconfigured": "Not configured",
+    "setupHint": "Sign in with this admin account on your phone and enable notifications in Settings.",
+    "template": "Test scenario",
+    "preview": "Notification preview",
+    "instructions": "After sending, background or lock your phone within 10 seconds. One test every 30 seconds.",
+    "send": "Send remote test",
+    "sending": "Sending…",
+    "queued": "Queued. Background or lock the phone and wait for the notification.",
+    "local": "Test local display",
+    "localQueued": "Local test scheduled. Background or lock within 10 seconds. This does not use the server.",
+    "localFailed": "Could not schedule the local notification. Check system permissions.",
+    "history": "Recent tests",
+    "receiptHint": "Channel acceptance does not confirm arrival. Tap the phone notification to confirm. No system banner appears in the foreground.",
+    "empty": "No tests yet",
+    "requestFailed": "Request failed. Refresh status and try again.",
+    "waitingBackground": "Waiting for the phone to enter the background.",
+    "deliveryFailed": "Delivery failed. Check the phone network and push channel.",
+    "platform": {
+      "ios": "iPhone / iPad",
+      "android": "Android"
+    },
+    "provider": {
+      "apns": "Apple APNs",
+      "jpush": "JPush"
+    },
+    "presence": {
+      "foreground": "Foreground · suppressed",
+      "foreground_inactive": "Temporarily inactive · suppressed",
+      "background": "Background · allowed",
+      "offline_inferred": "Offline · allowed",
+      "reconnecting": "Reconnecting · deferred",
+      "unknown": "Unknown · deferred"
+    },
+    "status": {
+      "pending": "Queued",
+      "sending": "Sending",
+      "accepted": "Accepted by channel",
+      "received": "Received by app",
+      "opened": "Notification opened",
+      "failed": "Delivery failed",
+      "cancelled": "Cancelled",
+      "unbound": "No phone bound"
+    },
+    "reason": {
+      "app_foreground": "The app is in the foreground. No push was sent.",
+      "state_changed_before_send": "App state or phone binding changed before sending.",
+      "expired_or_revoked": "Expired or mobile login changed.",
+      "binding_revoked": "Phone binding changed.",
+      "action_resolved": "Already resolved.",
+      "retry_exhausted": "Retries exhausted. Check the push channel."
+    },
+    "templateName": {
+      "system_test": "Basic notification",
+      "task_completed": "Task complete",
+      "task_failed": "Task failed",
+      "input_required": "Answer needed",
+      "approval_required": "Approval needed",
+      "cron_completed": "Scheduled result",
+      "cron_failed": "Scheduled failure",
+      "platform_auth_expired": "Authorization expired",
+      "publish_done": "Published",
+      "publish_failed": "Publish failed"
     }
   }
 }

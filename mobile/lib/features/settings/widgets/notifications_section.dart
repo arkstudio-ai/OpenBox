@@ -15,36 +15,7 @@ class NotificationsSection extends ConsumerStatefulWidget {
 }
 
 class _NotificationsSectionState extends ConsumerState<NotificationsSection> {
-  bool _testing = false;
   String? _feedback;
-
-  Future<void> _test(bool remote) async {
-    setState(() {
-      _testing = true;
-      _feedback = null;
-    });
-    final i18n = ref.read(i18nProvider);
-    final push = ref.read(pushControllerProvider);
-    try {
-      final status = remote
-          ? await push.testRemote()
-          : (await push.testLocal(
-                  i18n.t('settings:notifications.localTitle'),
-                  i18n.t('settings:notifications.localBody'),
-                )
-                ? 'local'
-                : 'failed');
-      if (mounted) {
-        setState(
-          () => _feedback = i18n.t('settings:notifications.result.$status'),
-        );
-      }
-    } catch (error) {
-      if (mounted) setState(() => _feedback = errorText(i18n, error));
-    } finally {
-      if (mounted) setState(() => _testing = false);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -114,21 +85,8 @@ class _NotificationsSectionState extends ConsumerState<NotificationsSection> {
                 onPressed: push.busy ? null : push.checkSession,
                 child: Text(i18n.t('common:action.retry')),
               ),
-              TextButton(
-                onPressed: _testing || !native.authorized
-                    ? null
-                    : () => _test(false),
-                child: Text(i18n.t('settings:notifications.testLocal')),
-              ),
-              TextButton(
-                onPressed: _testing || !push.deliveryReady
-                    ? null
-                    : () => _test(true),
-                child: Text(i18n.t('settings:notifications.testRemote')),
-              ),
             ],
           ),
-          if (_testing) const LinearProgressIndicator(),
           if (_feedback != null)
             Text(_feedback!, style: TextStyle(color: tokens.n600)),
         ],

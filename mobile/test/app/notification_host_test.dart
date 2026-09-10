@@ -111,6 +111,123 @@ class _Workspace extends ActiveWorkspaceController {
 }
 
 void main() {
+  for (final role in ['admin', 'user']) {
+    testWidgets(
+      'test receipt and navigation are fenced by identity and binding ($role)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        final native = _Native()..cold = false;
+        final dio = Dio(BaseOptions(baseUrl: 'https://test.invalid'));
+        final requests = <RequestOptions>[];
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, h) {
+              requests.add(o);
+              h.resolve(
+                Response<dynamic>(
+                  requestOptions: o,
+                  statusCode: 200,
+                  data: {'ok': true},
+                ),
+              );
+            },
+          ),
+        );
+        final push = _Push(dio, native, prefs);
+        final router = GoRouter(
+          routes: [
+            GoRoute(path: '/', builder: (_, _) => const SizedBox()),
+            GoRoute(
+              path: '/app/admin/notifications',
+              builder: (_, _) => const SizedBox(),
+            ),
+          ],
+        );
+        final container = ProviderContainer(
+          overrides: [
+            prefsProvider.overrideWithValue(prefs),
+            apiDioProvider.overrideWithValue(dio),
+            systemNotificationsProvider.overrideWith((_) => native),
+            pushControllerProvider.overrideWith((_) => push),
+            authProvider.overrideWith(_Auth.new),
+            activeWorkspaceProvider.overrideWith(_Workspace.new),
+            routerProvider.overrideWithValue(router),
+            i18nProvider.overrideWith(
+              () => I18nController(I18nBundle({}), prefs),
+            ),
+          ],
+        );
+        container
+            .read(authProvider.notifier)
+            .setAuth(
+              'token',
+              AuthUser(id: 'user', username: 'User', role: role),
+              mobileSessionId: 'mobile-session',
+            );
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp.router(
+              routerConfig: router,
+              builder: (_, child) => NotificationHost(child: child!),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final payload = {..._payload, 'type': 'system_test'};
+        for (final invalid in [
+          {...payload, 'eventId': 'wrong-user', 'recipientId': 'someone-else'},
+          {
+            ...payload,
+            'eventId': 'wrong-phone',
+            'bindingId': 'retired-binding',
+          },
+        ]) {
+          native.receive(invalid);
+          native.open(invalid);
+        }
+        await tester.pumpAndSettle();
+        expect(requests, isEmpty);
+        expect(router.routeInformationProvider.value.uri.path, '/');
+        native.receive(payload);
+        native.receive(payload);
+        for (var frame = 0; frame < 5; frame++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        native.open(payload);
+        for (var frame = 0; frame < 5; frame++) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(
+          requests.map((r) => r.data),
+          role == 'admin'
+              ? [
+                  {'kind': 'received'},
+                  {'kind': 'opened'},
+                ]
+              : <Map<String, String>>[],
+        );
+        expect(
+          requests.every(
+            (r) => r.path == '/api/admin/push/messages/event-1/receipt',
+          ),
+          isTrue,
+        );
+        expect(
+          router.routeInformationProvider.value.uri.path,
+          role == 'admin' ? '/app/admin/notifications' : '/',
+        );
+        native.open({...payload, 'eventId': 'local-preview'});
+        await tester.pumpAndSettle();
+        expect(requests.length, role == 'admin' ? 2 : 0);
+        await tester.pumpWidget(const SizedBox());
+        container.dispose();
+        router.dispose();
+        dio.close();
+      },
+    );
+  }
   for (final allowed in [true, false]) {
     testWidgets(
       'cold click waits for auth and validates before switching workspace (allowed=$allowed)',

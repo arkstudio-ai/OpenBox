@@ -478,6 +478,12 @@ async def _apply_job_result(state: TimerState, job_id: str, result: dict) -> Non
         await db.execute(
             update(CronJob).where(CronJob.id == job_id).values(**values)
         )
+        from notifications.events import cron_result
+        # Recurring backoff remains a retry until the scheduler disables it.
+        # One-shot errors become final only when no retry is scheduled.
+        await cron_result(db, job, result, terminal_failure=(
+            status == "error" and (auto_disabled or values.get("enabled") is False
+                                   or values.get("next_run_at", job.next_run_at) is None)))
 
     if auto_disabled:
         from bus import bus

@@ -2,6 +2,7 @@ import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/logto_session.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
+import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,11 +58,13 @@ ProviderContainer _container({
       apiDioProvider.overrideWithValue(_logoutDio(onLogout)),
       logtoSsoProvider.overrideWith((ref) async => config),
       logtoSessionProvider.overrideWithValue(logto),
+      cookieJarProvider.overrideWithValue(CookieJar()),
     ],
   );
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('signOut ends both the OpenBox and Logto sessions', () async {
     var serverLogoutCalls = 0;
     final logto = _FakeLogtoSession();

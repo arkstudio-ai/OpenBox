@@ -64,3 +64,37 @@ def describe_tiers() -> list[dict]:
                     "reference_credits": format(price.normalize(), "f") if price is not None else None,
                     "pitch": t.pitch})
     return out
+
+
+_RES_ORDER = ["480p", "512p", "720p", "768p", "1080p", "2k", "4k"]
+
+
+def declared_resolutions(model_id: str) -> list[str] | None:
+    """Resolutions the deployment's registry declares for `model_id`, or None when unknown."""
+    try:
+        from core.config import get_config
+
+        for m in getattr(get_config().video_generation, "models", []) or []:
+            mid = getattr(m, "id", None) if not isinstance(m, dict) else m.get("id")
+            if mid == model_id:
+                res = getattr(m, "resolutions", None) if not isinstance(m, dict) else m.get("resolutions")
+                return list(res or [])
+    except Exception:
+        return None
+    return None
+
+
+def resolve_resolution(model_id: str, preferred: str) -> tuple[str, str | None]:
+    """The tier's preferred resolution when the registry allows it, else the nearest one
+    the registry does allow (upward first). Returns (resolution, note)."""
+    declared = declared_resolutions(model_id)
+    if not declared or preferred in declared:
+        return preferred, None
+    order = {r: i for i, r in enumerate(_RES_ORDER)}
+    known = sorted((r for r in declared if r in order), key=lambda r: order[r])
+    if not known:
+        return declared[0], f"{model_id} 未声明 {preferred}，改用 {declared[0]}"
+    higher = [r for r in known if order[r] > order.get(preferred, -1)]
+    pick = higher[0] if higher else known[-1]
+    return pick, f"{model_id} 在本部署只声明 {', '.join(declared)}，{preferred} 不可用，改用 {pick}"
+

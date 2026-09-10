@@ -393,6 +393,20 @@ async def _create_temp_session(job: dict, locale: str = "zh-CN") -> str:
     return session.id
 
 
+def was_aborted(messages) -> bool:
+    """True when the agent loop marked an assistant message as aborted (a person pressed stop)."""
+    for msg in messages or []:
+        role = msg.role if isinstance(msg.role, str) else getattr(msg.role, "value", msg.role)
+        if role != "assistant":
+            continue
+        finish = getattr(msg, "finish", None)
+        if finish is None and isinstance(getattr(msg, "info", None), dict):
+            finish = msg.info.get("finish")
+        if finish == "aborted":
+            return True
+    return False
+
+
 def _build_cron_prompt(job: dict, context_summary: str, locale: str = "zh-CN") -> str:
     """Build the prompt for cron execution."""
     from cron.i18n import text
@@ -458,6 +472,12 @@ async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict, locale:
     from agent.loop import run_loop
     result_msg = await run_loop(temp_session_id, user_id)
 
+    # A stopped/paused/exhausted loop can leave progress text behind. That is
+    # not a successful scheduled result and must never generate a completion
+    # notification or be injected into the owning conversation as success.
+    if result_msg is None:
+        raise RuntimeError("Agent stopped without a completed result")
+
     log.info(f"run_loop completed for temp session {temp_session_id}")
 
     # Check if the last assistant message has an error
@@ -474,6 +494,11 @@ async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict, locale:
     # Agent may produce text across multiple assistant messages (between tool calls)
     from session.session import get_messages
     messages = await get_messages(temp_session_id, user_id=user_id)
+    if was_aborted(messages):
+        # A person stopped the run (or it lost its turn). Whatever text or tool
+        # output exists is a fragment, not the task's result: fail the run so the
+        # chat shows an interruption instead of a half-report.
+        raise RuntimeError("运行被人工停止（会话已中断），没有产出结果；如需继续，请在该临时会话里续跑或重新运行任务")
 
     text_parts = []
     for msg in messages:

@@ -115,6 +115,7 @@ async def dev_browser_ws_auto(
     """
     user_id = "default"
     ticket_workspace = None
+    user_data = {"user_id": user_id, "client": "web"}
 
     if is_auth_enabled():
         if not ticket:
@@ -178,6 +179,8 @@ async def dev_browser_ws_auto(
                         if msg["type"] == "websocket.disconnect":
                             logger.info(f"dev-browser ws: extension disconnected (user {user_id[:8]})")
                             break
+                        from auth.mobile import validate_ticket
+                        await validate_ticket(user_data)
                         if provider.routes_per_user:
                             from sandbox.entitlement import require_sandbox_subscription
                             await require_sandbox_subscription(owner)
@@ -202,6 +205,8 @@ async def dev_browser_ws_auto(
                     logger.warning(f"dev-browser ws: relay->extension pump ended (user {user_id[:8]}): {type(e).__name__}: {e}")
 
             pumps = [asyncio.create_task(ext_to_ctr()), asyncio.create_task(ctr_to_ext())]
+            from auth.mobile import watch_session
+            pumps.append(asyncio.create_task(watch_session(user_data)))
             if provider.routes_per_user:
                 from sandbox.entitlement import watch_sandbox_subscription
                 pumps.append(asyncio.create_task(watch_sandbox_subscription(owner)))

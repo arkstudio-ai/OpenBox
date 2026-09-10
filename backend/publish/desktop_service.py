@@ -121,6 +121,20 @@ async def _notify(workspace_id: str, kind: str, title: str, body: str) -> None:
         await platform_service.add_notification(db, workspace_id=workspace_id, user_id=None, kind=kind, title=title, body=body)
 
 
+async def _auth_blocked(caller: Caller, account: PlatformAccount | None, *, confirmed=False):
+    if account is None:
+        return
+    from notifications.events import auth_blocked
+    async with get_db_session() as db:
+        row = await db.get(PlatformAccount, account.id)
+        if not row or row.deleted_at:
+            return
+        if confirmed:
+            row.status, row.last_error, row.updated_at = "expired", "desktop_publish_login_expired", _now()
+        if row.status == "expired":
+            await auth_blocked(db, row, session_id=caller.session_id, user_id=caller.user_id)
+
+
 async def _create_job(caller: Caller, spec: PublishSpec, account: PlatformAccount | None, details: dict) -> PublishJob:
     now = _now()
     async with get_db_session() as db:
@@ -190,6 +204,15 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     from tool.video_production import _find_owned_asset
 
     cfg = get_config().desktop_publish
+    # The script types topics as #chips after the intro; strip any the caller already
+    # wrote into the intro so the published caption does not repeat them.
+    if spec.topics and spec.intro:
+        import re as _re
+
+        intro = spec.intro
+        for t in spec.topics:
+            intro = _re.sub(r"\s*#" + _re.escape(t) + r"(?=\s|#|$)", "", intro)
+        spec.intro = _re.sub(r"\s{2,}", " ", intro).strip()
     if len(spec.title) > cfg.max_title_chars:
         raise PublishRefusal(f"标题 {len(spec.title)} 字，创作者中心上限 {cfg.max_title_chars} 字，请缩短。")
     if len(spec.intro or "") > 1000:
@@ -200,6 +223,7 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
     if pre.mode == "package":
         raise PublishRefusal(f"本次走扫码投稿包：{pre.mode_reason}。用 douyin_publish 出投稿码。", degrade=True)
     if not pre.login_ok:
+        await _auth_blocked(caller, pre.account)
         status = pre.account.status if pre.account else "none"
         raise PublishRefusal(
             f"云电脑上的抖音创作者中心登录态不可用（{status}）。让用户用 desktop_login(action=open, site=douyin_creator) 在云电脑重新登录；"
@@ -245,6 +269,7 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
            "hot_word_attached": result.get("hot_word_attached"),
            "hot_row": result.get("hot_row"), "schedule_row": result.get("schedule_row"), "publish_ms": result.get("publish_ms")}
     if result.get("login_expired"):
+        await _auth_blocked(caller, account, confirmed=True)
         await _finish_job(job.id, status="failed", error=str(result.get("error"))[:400], details_update=upd)
         await _notify(caller.workspace_id, NOTIFY_LOGIN, "抖音创作者中心需要重新登录",
                       "云电脑上的创作者中心登录态已失效，自动发布已暂停；请在云电脑重新登录抖音。")
@@ -274,7 +299,8 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
     await _notify(caller.workspace_id, NOTIFY_DONE, "视频已通过创作者中心发布",
                   f"《{spec.title}》已发布（{script.VISIBILITY[spec.visibility]}）。" + (f" 作品 {result['item_id']}" if result.get("item_id") else ""))
     return {"job_id": job.id, "status": "published", "item_id": result.get("item_id"), "item_url": result.get("item_url"),
-            "hot_word_attached": result.get("hot_word_attached"),
+            "hot_word_attached": result.get("hot_word_attached"), "declaration_row": result.get("declaration_row"),
+            "declaration": spec.declaration, "visibility": spec.visibility,
             "publish_ms": result.get("publish_ms"), "upload": result.get("upload"), "summary": result.get("summary"),
             "evidence_path": result.get("evidence"), "final_url": result.get("final_url")}
 

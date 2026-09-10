@@ -5,6 +5,7 @@ import '../../../shared/api/auth_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import 'notifications_section.dart';
 
 /// Account settings (web `AccountPage`): read-only identity rows.
 class AccountSection extends ConsumerWidget {
@@ -21,23 +22,28 @@ class AccountSection extends ConsumerWidget {
       children: [
         _rowCard(t, [
           _row(t, i18n.t('settings:account.username'), user.username),
-          _row(t, i18n.t('settings:account.email'),
-              user.email ?? i18n.t('settings:account.emailNone')),
+          _row(
+            t,
+            i18n.t('settings:account.email'),
+            user.email ?? i18n.t('settings:account.emailNone'),
+          ),
           _row(t, i18n.t('settings:account.role'), user.role),
           _row(t, i18n.t('settings:account.userId'), user.id, mono: true),
         ]),
+        const SizedBox(height: 16),
+        const NotificationsSection(),
       ],
     );
   }
 
   Widget _rowCard(BossipTokens t, List<Widget> rows) => Container(
-        decoration: BoxDecoration(
-          color: t.card,
-          borderRadius: BorderRadius.circular(Radii.xl),
-          border: Border.all(color: t.hair),
-        ),
-        child: Column(children: rows),
-      );
+    decoration: BoxDecoration(
+      color: t.card,
+      borderRadius: BorderRadius.circular(Radii.xl),
+      border: Border.all(color: t.hair),
+    ),
+    child: Column(children: rows),
+  );
 
   Widget _row(BossipTokens t, String label, String value, {bool mono = false}) {
     return Container(

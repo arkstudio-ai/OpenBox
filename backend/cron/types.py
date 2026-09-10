@@ -51,6 +51,7 @@ class CronJobStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 class CronDeliveryConfig(BaseModel):
+    notifications_enabled: bool = True
     mode: Literal["none", "webhook", "channel"] = "none"
     webhook_url: str | None = None
     webhook_token: str | None = None

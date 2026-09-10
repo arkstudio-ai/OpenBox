@@ -1,5 +1,6 @@
 """JWT token creation and verification — dual token (access + refresh)."""
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from jose import JWTError, jwt
 
@@ -25,23 +26,31 @@ def init_auth(secret: str, access_expire_minutes: int = 15, refresh_expire_days:
     log.info("Auth system initialized")
 
 
-def create_access_token(user_id: str, role: str = "user") -> str:
+def refresh_lifetime_days() -> int:
+    return _refresh_expire_days
+
+
+def create_access_token(user_id: str, role: str = "user", *, session_claims: dict | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=_access_expire_minutes)
     payload = {
         "sub": user_id,
         "role": role,
         "type": "access",
         "exp": expire,
+        "jti": uuid4().hex,
+        **(session_claims or {"client": "web"}),
     }
     return jwt.encode(payload, _secret, algorithm=ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, *, session_claims: dict | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=_refresh_expire_days)
     payload = {
         "sub": user_id,
         "type": "refresh",
         "exp": expire,
+        "jti": uuid4().hex,
+        **(session_claims or {"client": "web"}),
     }
     return jwt.encode(payload, _secret, algorithm=ALGORITHM)
 

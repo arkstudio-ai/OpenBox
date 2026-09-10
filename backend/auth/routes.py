@@ -57,6 +57,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict
+    mobile_session_id: str | None = None
 
 class PreferencesUpdate(BaseModel):
     theme: str | None = None
@@ -96,13 +97,17 @@ def _blacklist_key(token: str) -> str:
 async def _revoke_refresh_cookie(request: Request, response: Response) -> None:
     """Revoke the current refresh token and expire its browser cookie."""
     refresh_token = request.cookies.get("refresh_token")
-    if refresh_token and _cache:
+    if refresh_token:
         payload = decode_refresh_token(refresh_token)
         if payload:
+            if payload.get("client") == "mobile":
+                from auth.mobile import revoke_session
+                await revoke_session(payload["sub"], payload.get("sid"))
             import time
             exp = payload.get("exp", 0)
             ttl = max(int(exp - time.time()), 1)
-            await _cache.set(_blacklist_key(refresh_token), "1", ttl=ttl)
+            if _cache:
+                await _cache.set(_blacklist_key(refresh_token), "1", ttl=ttl)
 
     response.delete_cookie("refresh_token", path="/api/auth")
 
@@ -142,9 +147,11 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     hashed = hash_password(body.password)
     await _user_repo.create(id=user_id, username=body.username, password_hash=hashed, email=body.email)
 
-    # Issue tokens
-    access = create_access_token(user_id)
-    refresh = create_refresh_token(user_id)
+    # Issue tokens only after creating the exclusive mobile lease.
+    from auth.mobile import login_claims
+    claims = await login_claims(request, user_id)
+    access = create_access_token(user_id, session_claims=claims)
+    refresh = create_refresh_token(user_id, session_claims=claims)
     response.set_cookie(
         key="refresh_token", value=refresh, httponly=True, secure=False,
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
@@ -161,7 +168,7 @@ async def register(body: RegisterRequest, request: Request, response: Response):
         None,
         request,
     )
-    return TokenResponse(access_token=access, user=_safe_user(user))
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -206,14 +213,16 @@ async def login(body: LoginRequest, request: Request, response: Response):
     if user.get("failed_login_count", 0) > 0:
         await _user_repo.reset_failed_login(user["id"])
 
-    access = create_access_token(user["id"], user.get("role", "user"))
-    refresh = create_refresh_token(user["id"])
+    from auth.mobile import login_claims
+    claims = await login_claims(request, user["id"])
+    access = create_access_token(user["id"], user.get("role", "user"), session_claims=claims)
+    refresh = create_refresh_token(user["id"], session_claims=claims)
     response.set_cookie(
         key="refresh_token", value=refresh, httponly=True, secure=False,
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
     )
 
-    return TokenResponse(access_token=access, user=_safe_user(user))
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
 
 
 @router.get("/logto/config")
@@ -311,11 +320,11 @@ async def logto_id_token(body: LogtoIdTokenRequest, request: Request, response: 
         log.warning(f"Logto sign-in rejected from {ip}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
-    return await _sign_in_logto_identity(claims, request, response)
+    return await _sign_in_logto_identity(claims, request, response, native=True)
 
 
 async def _sign_in_logto_identity(
-    claims: dict, request: Request, response: Response
+    claims: dict, request: Request, response: Response, *, native: bool = False
 ) -> TokenResponse:
     """Verified Logto claims in, an OpenBox session out.
 
@@ -360,13 +369,15 @@ async def _sign_in_logto_identity(
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account is disabled")
 
-    access = create_access_token(user["id"], user.get("role", "user"))
-    refresh_token = create_refresh_token(user["id"])
+    from auth.mobile import login_claims
+    claims = await login_claims(request, user["id"], native=native)
+    access = create_access_token(user["id"], user.get("role", "user"), session_claims=claims)
+    refresh_token = create_refresh_token(user["id"], session_claims=claims)
     response.set_cookie(
         key="refresh_token", value=refresh_token, httponly=True, secure=False,
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
     )
-    return TokenResponse(access_token=access, user=_safe_user(user))
+    return TokenResponse(access_token=access, user=_safe_user(user), mobile_session_id=claims.get("sid"))
 
 
 @router.post("/refresh")
@@ -388,18 +399,25 @@ async def refresh(request: Request, response: Response):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    access = create_access_token(user_id, user.get("role", "user"))
-    new_refresh = create_refresh_token(user_id)
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account is disabled")
+    from auth.mobile import refresh_claims
+    claims = await refresh_claims(payload, request)
+    access = create_access_token(user_id, user.get("role", "user"), session_claims=claims)
+    new_refresh = create_refresh_token(user_id, session_claims=claims)
     response.set_cookie(
         key="refresh_token", value=new_refresh, httponly=True, secure=False,
         samesite="lax", max_age=7 * 24 * 3600, path="/api/auth",
     )
 
-    return {"access_token": access, "token_type": "bearer"}
+    return {"access_token": access, "token_type": "bearer", "mobile_session_id": claims.get("sid")}
 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response, current_user: dict = Depends(get_current_user)):
+    if current_user.get("mobile_session_id"):
+        from auth.mobile import revoke_session
+        await revoke_session(current_user["user_id"], current_user["mobile_session_id"])
     await _revoke_refresh_cookie(request, response)
     return {"ok": True}
 
@@ -407,7 +425,8 @@ async def logout(request: Request, response: Response, current_user: dict = Depe
 @router.post("/ticket")
 async def get_ticket(current_user: dict = Depends(get_current_user), _workspace=Depends(get_workspace)):
     ticket = await create_ticket(current_user["user_id"], current_user.get("role", "user"),
-        workspace_id=current_user.get("workspace_id"))
+        workspace_id=current_user.get("workspace_id"), client=current_user.get("client", "web"),
+        mobile_session_id=current_user.get("mobile_session_id"))
     return {"ticket": ticket}
 
 
@@ -429,7 +448,10 @@ async def extension_auth(body: ExtensionAuthRequest):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    ticket = await create_ticket(user_id, user.get("role", "user"))
+    from auth.mobile import validate_claims
+    await validate_claims(payload)
+    ticket = await create_ticket(user_id, user.get("role", "user"), client=payload.get("client"),
+                                 mobile_session_id=payload.get("sid"))
     return {"ticket": ticket, "user": _safe_user(user)}
 
 

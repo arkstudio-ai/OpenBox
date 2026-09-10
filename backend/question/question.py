@@ -178,6 +178,8 @@ async def ask(
             if not runtime.is_live(execution):
                 session.status = "waiting_input"
             request = _request(row)
+            from notifications.events import question_waiting
+            await question_waiting(db, session, row)
     bus.publish("question.asked", {**request.model_dump(), "userId": user_id})
     if request.tool:
         async with get_db_session() as db:
@@ -234,6 +236,8 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
             return {"ok": True, "status": row.status, "session_id": row.session_id}
         _check_pending(row, execution)
         row.status, row.answers, row.updated_at = status, clean, runtime.now()
+        from notifications.events import cancel_event
+        await cancel_event(db, user_id, f"question:{row.id}")
         execution.resume_pending = True
         execution.resume_error = None
         execution.next_attempt_at = None

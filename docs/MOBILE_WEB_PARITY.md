@@ -322,6 +322,7 @@ Web `/app/admin` 下的三个栏目（舰队管理 / 技能管理 / 订阅管理
 
 | 日期 | 功能块 | 提交 | 验收证据 |
 |---|---|---|---|
+| 2026-09-10 | 双端通知 API 与单手机登录 | `codex/mobile-notifications`，未部署 | APNs/极光桥接与设置入口、最新手机登录生效、通知换绑与投递队列；PostgreSQL 迁移及多进程并发测试、Flutter 回归、Android debug/iOS simulator 构建。已接主任务终态、待处理、定时结果及可信发布回调；明确 resumed/inactive/后台/超时离线边界、前台抑制与取消队列。真机远程送达及 Android 厂商通道仍待验收，见 [移动通知说明](MOBILE_NOTIFICATIONS.md) |
 | 2026-09-10 | 原生下一步建议 | `codex/next-step-suggestions`，生产部署另行进行 | 201 项 Flutter 测试（新增 28 项）、analyze、locale/行数门禁、Android APK 与 iOS arm64 simulator 构建通过；iPhone 原生集成回归和截图通过，使用隔离 fixtures，真机待验收 |
 | 2026-09-08 | Android Logto prompt 修复 | 本轮改动 | API 36 模拟器完整复现密码验证成功后卡在 `Submitting Callback`；保持 PKCE/state 不变、仅从 `login consent` 改为 `consent` 后 custom-scheme 回调、Token 交换与工作台加载成功；同一账号退出后再次登录仍显示凭证页 |
 | 2026-09-08 | Android Logto 回调去重 | 本轮改动 | Manifest 回归测试、`flutter analyze` 与 Gradle merged-manifest 构建通过；合并清单确认 MainActivity 只处理 HTTPS 邀请，`com.bossip.bipmobile://callback` 只剩 `flutter_web_auth_2.CallbackActivity` |

@@ -1,11 +1,13 @@
 import Flutter
 import UIKit
+import UserNotifications
 #if canImport(AlipaySDK)
 import AlipaySDK
 #endif
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+  let notifications = SystemNotificationBridge()
   private var alipayResult: FlutterResult?
   private var downloadResult: FlutterResult?
 
@@ -13,11 +15,14 @@ import AlipaySDK
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    notifications.start(launchOptions)
+    return result
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    notifications.attach(engineBridge.applicationRegistrar.messenger())
     let channel = FlutterMethodChannel(
       name: "com.bossip.bipmobile/alipay",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
@@ -169,4 +174,14 @@ import AlipaySDK
     if handleAlipay(url: url) { return true }
     return super.application(app, open: url, options: options)
   }
+  override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+    notifications.registered(deviceToken)
+  }
+
+  override func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
+    notifications.registrationFailed()
+  }
+
 }

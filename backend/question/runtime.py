@@ -156,7 +156,8 @@ async def waiting_status(db, execution: SessionExecution, fallback: str = "idle"
     return "queued" if execution.resume_pending else fallback
 
 
-async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bool = False) -> None:
+async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bool = False,
+                     completed: bool = False) -> None:
     async with transaction(ticket.session_id, ticket.user_id) as (db, session, execution):
         if not owns(execution, ticket):
             return
@@ -172,6 +173,9 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
         status = await waiting_status(db, execution, "error" if failed else "idle")
         session.status = status
         execution.updated_at = now()
+        if status == "error" or (status == "idle" and completed and not interrupted):
+            from notifications.events import task_finished
+            await task_finished(db, session, ticket, failed=status == "error")
     publish_status(ticket.session_id, ticket.user_id, status)
 
 
@@ -186,6 +190,8 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
         QuestionCheckpoint.status.in_(("pending", "answered", "rejected")),
     ))).all()
     for row in rows:
+        from notifications.events import cancel_event
+        await cancel_event(db, row.user_id, f"question:{row.id}")
         row.status = status
         row.updated_at = now()
         part = await db.get(Part, row.part_id) if row.part_id else None
@@ -232,11 +238,15 @@ async def recover_expired_runs() -> None:
                         and execution.run_origin == "question" and not execution.run_progress):
                     execution.resume_pending = True
                 status = await waiting_status(db, execution, "error")
+                expired_ticket = RunTicket(session_id, user_id, execution.run_generation, execution.run_id)
                 execution.run_id = None
                 execution.lease_until = None
                 session.status = status
                 if status == "error":
                     execution.resume_error = "Execution interrupted. Your answers are saved; send a message to continue."
+                    if expired_ticket.generation == execution.generation:
+                        from notifications.events import task_finished
+                        await task_finished(db, session, expired_ticket, failed=True)
             publish_status(session_id, user_id, status)
             if status == "error":
                 bus.publish("session.error", {"userId": user_id, "sessionId": session_id,

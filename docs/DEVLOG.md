@@ -453,3 +453,13 @@ publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`
 - 错误页：非 chunk 错误也先问服务器是否已有新构建，是就自动刷新一次；chunk 错误按原逻辑。所有自动刷新共用 5 分钟冷却，防循环。
 - `installChunkRecovery()`：接住 `vite:preloadError` 和事件处理器/store 里 `import()` 的未处理 rejection，这些原本到不了错误边界。
 本地验证：两份不同 id 的构建，旧页面打开后换成新构建目录，触发 focus 后页签自行刷新到新 id，无错误页。单测 +8。未部署。
+
+
+## 云电脑"画中画"：禁止桌面视频流进入 picture-in-picture（2026-09-10）
+
+运营反馈打开来客消息管理等界面时，云电脑画面里再嵌一个云电脑画面（内层时间比外层早 5 分钟，静止），遮住页面。
+在该桌面（ecd-b9oizzx4rfhbsm1uh）用云助手列 X 窗口只有 Chrome/Firefox/GNOME 壳，没有任何悬浮窗，仓库里也没有会在桌面
+弹截图窗口的代码；符合的解释是运营自己的浏览器把我们 `DesktopTab` 里无影 SDK iframe 中的 `<video>` 放进了浏览器画中画
+（Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
+修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
+API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。

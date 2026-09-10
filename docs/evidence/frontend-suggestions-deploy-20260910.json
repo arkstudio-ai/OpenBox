@@ -1,0 +1,168 @@
+{
+  "release": {
+    "tag": "20260910-suggestions-1c46bce",
+    "source": "1c46bce7b7b47f42482be3e694d790389f43059d",
+    "image": "openbox-frontend-v2:20260910-suggestions-1c46bce",
+    "imageId": "sha256:1e418316d102bae651594c79e6b82e8fdce189b34f44507aacb85bf85c67694e",
+    "imageConfigId": "sha256:fd7af87f68a1379a7833ec4bd8493f3fe04f0cf3e73a802c67da28250cbcf3d1",
+    "archiveSha256": "0caea30a21a19f326d3ef737105bf29191f9b0611a106e3f5985b8dc3c446566"
+  },
+  "production": {
+    "status": "deployed",
+    "image": "openbox-frontend-v2:20260910-suggestions-1c46bce",
+    "imageId": "sha256:1e418316d102bae651594c79e6b82e8fdce189b34f44507aacb85bf85c67694e",
+    "source": "1c46bce7b7b47f42482be3e694d790389f43059d",
+    "architecture": "linux/amd64",
+    "backendImage": "openbox-backend:20260910-mobile-push-0513dcb",
+    "unchangedContainers": {
+      "backend": "4780e8397da433bbbb3daa73c7a980472a4d83500412d04f359b19ea962d808f",
+      "postgres": "98258cffb1f7511fe5f2810e5586a8541b01d6a157bf68ba79b71f7d0507fc20",
+      "redis": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f"
+    },
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "configurationUnchangedExceptFrontendImage": true,
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "backup": "/opt/openbox/backups/20260910-suggestions-1c46bce/activation-20260910T112448Z",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app/skills",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/assets/codex-nonexistent-1c46bce.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ],
+    "utc": "2026-09-10T11:29:18.153561+00:00"
+  },
+  "canary": {
+    "passed": true,
+    "image": "openbox-frontend-v2:20260910-suggestions-1c46bce",
+    "architecture": "linux/amd64",
+    "staticFilesVerified": 106,
+    "runtimeEnvironmentUnchanged": true,
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/app/skills",
+        "status": 200,
+        "sha256": "46e7cda8c4f2f3831bc0e89275b6952cdc8153f53a7cbe4201b8b4ccfef374c0"
+      },
+      {
+        "path": "/assets/codex-nonexistent-1c46bce.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ]
+  },
+  "public": {
+    "origin": "https://ai.bossipai.com.cn",
+    "utc": "2026-09-10T11:30:15.643682+00:00",
+    "staticFilesVerified": 106,
+    "missingAssetStatus": 404
+  },
+  "availability": {
+    "samplePairs": 82,
+    "startUtc": "2026-09-10T11:28:29.281553+00:00",
+    "endUtc": "2026-09-10T11:39:16.680876+00:00",
+    "statuses": {
+      "/": {
+        "200": 68,
+        "502": 14
+      },
+      "/api/environment": {
+        "200": 68,
+        "502": 14
+      }
+    },
+    "firstFailureUtc": "2026-09-10T11:28:34.529132+00:00",
+    "lastFailureUtc": "2026-09-10T11:29:02.662309+00:00",
+    "recoveredUtc": "2026-09-10T11:29:04.824459+00:00",
+    "sampledInterruptionSeconds": 30.295,
+    "allSubsequentSamples200": true
+  },
+  "browser": {
+    "browser": "Chrome",
+    "existingUserConversation": true,
+    "composerDraftWasEmptyBeforeReload": true,
+    "suggestionGroup": "下一步建议",
+    "visibleSuggestions": 3,
+    "position": "above composer",
+    "consoleErrors": 0,
+    "sentProductionTestMessages": 0,
+    "verifiedBy": "accessibility tree and screenshot"
+  },
+  "tests": {
+    "frontendCheck": "passed",
+    "vitestTestsPassed": 496,
+    "vitestFilesPassed": 75,
+    "eslintErrors": 0,
+    "existingEslintWarnings": 29,
+    "suggestionPlaywrightTestsPassed": 9,
+    "dockerArtifactNginxRegression": "passed",
+    "privatePublicSourcePermissions": "files 0600, directories 0700; all built assets readable over HTTP"
+  },
+  "backup": {
+    "path": "/opt/openbox/backups/20260910-suggestions-1c46bce/activation-20260910T112448Z",
+    "pgDumpBytes": 4467552,
+    "pgDumpSha256": "30bb17653b6cc5e30fdf1274b648c431c662c94236150edc42802b244d25c11b",
+    "pgRestoreListPassed": true
+  },
+  "temporaryOssObjectsRemoved": true
+}

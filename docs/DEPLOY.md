@@ -5,6 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云前端：2026-09-10 聊天下一步建议（仅前端，无迁移）
+
+- 19:28:33–19:29:18（北京时间）frontend 发布 `20260910-suggestions-1c46bce`，源码 `1c46bce`。
+  已合入 `fe-nav-profile`，保留线上导航并补齐建议展示；用户原对话刷新后输入框上方显示 3 条建议。
+- 修正严格权限构建目录造成的静态资源 403；496 项前端测试、9 项 Chromium 建议回归、实际镜像
+  nginx 回归通过；公网 106 个文件 SHA-256 匹配，浏览器无控制台错误。
+- 后端维持 `20260910-mobile-push-0513dcb`，backend/postgres/redis 容器与运行配置未变，
+  四服务 healthy；无迁移，数据库仍为 `e4f6a8b0c2d4`，推送密钥及其他配置保持原值。
+- 单实例切换采样约 30.3 秒 502 后恢复，后续样本均 200；OSS 临时对象已清理。
+  备份、镜像指纹、验收与回滚见 [完整发布记录](FRONTEND_SUGGESTIONS_DEPLOY_20260910.md)。
+
 ## 当前默认模型：2026-09-10 Gemini 3.8 Flash
 
 - AWS 开发环境与阿里云生产环境的默认模型均已改为 `Gemini 3.8 Flash`，菜单顺序统一为：
@@ -21,7 +32,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
   `/opt/openbox/backups/20260910-gemini38-default/20260910161023/`；gw-1 的 channel 116 与
   options 备份：`/opt/bossip/backups/newapi-gemini38-20260910160430/`。
 
-## 当前阿里云状态：2026-09-10 16:08 F 修复发布后回滚到同事镜像（main 尚未包含同事的发布）
+## 历史阿里云状态：2026-09-10 16:08 F 修复发布后回滚到同事镜像（main 尚未包含同事的发布）
 
 - 16:08:03–16:08:23（北京时间）gw2 backend 切换至 `20260910-fixes-0351b90`（`main@0351b90`，PR [#21](https://github.com/arkstudio-ai/OpenBox/pull/21) F 首轮验收修复，无迁移），
   healthy、容器内烟测通过（锁定校验拒绝 480p/换模型、预算自动预留、档位分辨率按能力表换算为 1080p 并给出 note、cron 默认时区 Asia/Shanghai）。
@@ -33,7 +44,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 备份 `/opt/openbox/backups/20260910-fixes-0351b90/activation-20260910T080755Z/`；镜像包 `releases/20260910-fixes-0351b90/`；OSS 中转对象已删。
 - 教训（重申）：**发布前必须当场核对 `docker-compose.override.yml` 里的 image 源提交是否在 origin/main**，不能依赖几小时前的检查；不在就先停，找到分支合并后再发。
 
-## 当前阿里云发布：2026-09-10 前端导航——新对话即主页、各中心可返回（仅前端，无迁移）
+## 历史阿里云发布：2026-09-10 前端导航——新对话即主页、各中心可返回（仅前端，无迁移）
 
 - 14:57:05–14:57:26（北京时间）gw2 frontend 切换至 `20260910-nav-3791e77`，源码为分支 `fe-nav-profile@3791e77`
   （PR [#20](https://github.com/arkstudio-ai/OpenBox/pull/20)，= `main@7b884b1` 合并进该分支后的提交；**PR 尚未合并**，

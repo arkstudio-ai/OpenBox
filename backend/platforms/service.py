@@ -201,7 +201,6 @@ def _apply_grant(row: PlatformAccount, grant: TokenGrant, now: datetime) -> None
     row.last_ok_at = now
     row.updated_at = now
 
-
 async def complete_callback(*, platform: str, code: str, state: str, granted_scopes: str = "") -> PlatformAccount:
     """Turn the redirect back from the platform into a bound account row."""
     pending = await _consume_state(state)
@@ -312,6 +311,8 @@ async def _mark_expired(db, row: PlatformAccount, reason: str, now: datetime) ->
     row.status = "expired"
     row.last_error = reason
     row.updated_at = now
+    from notifications.events import auth_blocked
+    await auth_blocked(db, row)
 
 
 async def keep_alive(db, row: PlatformAccount, now: datetime | None = None, *, force_access: bool = False) -> bool:
@@ -644,10 +645,13 @@ async def handle_douyin_event(payload: dict) -> bool:
                 .where(PublishJob.share_id == share_id)
                 .order_by((PublishJob.status == "pending").desc(), PublishJob.created_at.desc())
                 .limit(1)
+                .with_for_update()
             )
         ).scalar_one_or_none()
         if job is None:
             log.info("douyin create_video for unknown share_id=%s", share_id)
+            return False
+        if job.status == "published":
             return False
         job.status = "published"
         job.item_id = str(content.get("item_id") or "") or job.item_id
@@ -677,6 +681,8 @@ async def handle_douyin_event(payload: dict) -> bool:
             title="抖音投稿已发布",
             body=f"《{job.title or job.file_asset_id}》已在抖音发布。",
         )
+        from notifications.events import publish_result
+        await publish_result(db, job)
         await db.commit()
         return True
 

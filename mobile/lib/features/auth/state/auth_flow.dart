@@ -70,7 +70,13 @@ class AuthFlow {
     if (token.trim().isEmpty || user.id.trim().isEmpty) {
       throw const FormatException('Incomplete authentication response');
     }
-    _ref.read(authProvider.notifier).setAuth(token, user);
+    _ref
+        .read(authProvider.notifier)
+        .setAuth(
+          token,
+          user,
+          mobileSessionId: asString(tokenResponse['mobile_session_id']),
+        );
     try {
       final prefs = await _ref
           .read(apiDioProvider)

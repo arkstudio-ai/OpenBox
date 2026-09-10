@@ -1,0 +1,18 @@
+# Copy to push-vendors.properties (ignored by Git). Complete a vendor's fields
+# to include its SDK in the APK; blank vendors stay disabled. Environment
+# BOSSIP_PUSH_<FIELD> overrides each field. No placeholders are sent as keys.
+XIAOMI_APPID=
+XIAOMI_APPKEY=
+HONOR_APPID=
+# Enter raw values: the build adds the SDK's OP- / MZ- prefix when necessary.
+OPPO_APPID=
+OPPO_APPKEY=
+OPPO_APPSECRET=
+VIVO_APPID=
+VIVO_APPKEY=
+MEIZU_APPID=
+MEIZU_APPKEY=
+# Huawei: put the official agconnect-services.json in android/app/.
+# FCM: put the official google-services.json in android/app/.
+# Enable the same vendor channels in JPush Console for the existing AppKey.
+# Vendor server secrets belong in that console, not in this client file.

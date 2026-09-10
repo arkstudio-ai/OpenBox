@@ -46,3 +46,5 @@ __all__ = [
     "PlatformAccount", "PublishJob", "Notification", "QuestionCheckpoint", "SessionExecution",
     "HotTrendSnapshot", "HotMediaLink",
 ]
+
+from db.models.push import MobilePresence, MobileSession, PushDevice, PushMessage, PushDelivery

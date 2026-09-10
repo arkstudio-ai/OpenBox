@@ -16,6 +16,9 @@ android {
 
     defaultConfig {
         applicationId = "com.bossip.bipmobile"
+        manifestPlaceholders["JPUSH_PKGNAME"] = "com.bossip.bipmobile"
+        manifestPlaceholders["JPUSH_APPKEY"] = "20c609b5064f10d52d8351d8"
+        manifestPlaceholders["JPUSH_CHANNEL"] = "developer-default"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -26,8 +29,8 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Development fallback. push-vendors.gradle replaces this when
+            // android/key.properties supplies the registered release key.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -44,7 +47,15 @@ flutter {
 }
 
 dependencies {
+    implementation("cn.jiguang.sdk:jpush:6.2.1") {
+        exclude(group = "cn.jiguang.sdk", module = "jcore")
+    }
+    implementation("cn.jiguang.sdk:jcore:5.5.1")
     // Official Alipay App Pay SDK. The order string is generated and signed
     // by our backend; no merchant private key is ever bundled in the APK.
     implementation("com.alipay.sdk:alipaysdk-android:15.8.42")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
+
+apply(from = rootProject.file("push-vendors.gradle"))

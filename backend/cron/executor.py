@@ -449,6 +449,12 @@ async def _run_agent_loop(temp_session_id: str, user_id: str, job: dict, locale:
     from agent.loop import run_loop
     result_msg = await run_loop(temp_session_id, user_id)
 
+    # A stopped/paused/exhausted loop can leave progress text behind. That is
+    # not a successful scheduled result and must never generate a completion
+    # notification or be injected into the owning conversation as success.
+    if result_msg is None:
+        raise RuntimeError("Agent stopped without a completed result")
+
     log.info(f"run_loop completed for temp session {temp_session_id}")
 
     # Check if the last assistant message has an error

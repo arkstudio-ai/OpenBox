@@ -20,14 +20,16 @@ def init_ticket_store(cache):
     _cache = cache
 
 
-async def create_ticket(user_id: str, role: str = "user", *, workspace_id: str | None = None) -> str:
+async def create_ticket(user_id: str, role: str = "user", *, workspace_id: str | None = None,
+                        client: str | None = "web", mobile_session_id: str | None = None) -> str:
     """Create a one-time ticket. Returns the ticket string."""
     if _cache is None:
         raise RuntimeError("Ticket store not initialized")
     ticket = secrets.token_urlsafe(32)
     await _cache.set(
         f"ticket:{ticket}",
-        json.dumps({"user_id": user_id, "role": role, **({"workspace_id": workspace_id} if workspace_id else {})}),
+        json.dumps({"user_id": user_id, "role": role, "client": client,
+                    "mobile_session_id": mobile_session_id, **({"workspace_id": workspace_id} if workspace_id else {})}),
         ttl=30,  # 30 seconds
     )
     return ticket
@@ -46,6 +48,11 @@ async def consume_ticket(ticket: str) -> dict | None:
         return None
     # Immediately delete (one-time use)
     await _cache.delete(key)
-    if isinstance(data, str):
-        return json.loads(data)
-    return data
+    identity = json.loads(data) if isinstance(data, str) else data
+    from auth.mobile import validate_ticket
+    from fastapi import HTTPException
+    try:
+        await validate_ticket(identity)
+    except HTTPException:
+        return None
+    return identity

@@ -356,6 +356,8 @@ async def probe_workspace(
             transition = _apply_verdict(row, verdict, now, probed_level2=site.key in level2_sites)
             if row.status == "expired" and (transition or verdict.reason):
                 await _notify_expired(db, row, site, now)
+                from notifications.events import auth_blocked
+                await auth_blocked(db, row, session_id=session_id, user_id=user_id)
             out.append(row)
         await db.commit()
         for row in out:

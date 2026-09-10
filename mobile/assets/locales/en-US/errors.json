@@ -22,5 +22,11 @@
   "DESKTOP_NOT_READY": "Your cloud desktop is not ready. Check setup progress; ordinary conversations can continue.",
   "SANDBOX_SUBSCRIPTION_REQUIRED": "Ordinary LLM conversations can continue. Sandbox and cloud desktop access require an active paid plan.",
   "runFailed": "The reply failed. Please try again.",
-  "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model."
+  "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model.",
+  "AUTH_MOBILE_SESSION_REPLACED": "Your account was signed in on another phone. Please sign in again.",
+  "AUTH_MOBILE_LOGIN_REQUIRED": "Your session needs to be updated. Please sign in again on this phone.",
+  "PUSH_DEVICE_NOT_READY": "Enable and connect notifications on this phone first.",
+  "PUSH_NOT_CONFIGURED": "The server notification service is not enabled yet.",
+  "PUSH_TEST_RATE_LIMITED": "Wait 30 seconds before sending another test notification.",
+  "PUSH_SETUP_FAILED": "Notifications are not connected. Please retry."
 }

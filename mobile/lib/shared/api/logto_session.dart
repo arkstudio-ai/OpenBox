@@ -95,3 +95,13 @@ class SdkLogtoSession implements LogtoSession {
 }
 
 final logtoSessionProvider = Provider<LogtoSession>((ref) => SdkLogtoSession());
+
+/// Local cleanup for a displaced phone. Do not end the new phone's SSO session.
+Future<void> clearLocalLogtoTokens() async {
+  final storage = SecureStorageStrategy();
+  await Future.wait<void>([
+    storage.delete(key: 'logto_access_token'),
+    storage.delete(key: 'logto_refresh_token'),
+    storage.delete(key: 'logto_id_token'),
+  ]);
+}

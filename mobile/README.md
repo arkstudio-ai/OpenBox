@@ -7,6 +7,9 @@ Web 已上线但移动端尚未跟进的能力、依赖与验收标准，统一�
 
 ## 运行
 
+系统通知、APNs/极光配置、单手机登录和测试入口见
+[`docs/MOBILE_NOTIFICATIONS.md`](../docs/MOBILE_NOTIFICATIONS.md)。新后端必须先执行数据库迁移，再联调新客户端。
+
 ```bash
 # 后端(仓库根目录;依赖 docker 里的 postgres/redis)
 cd backend && uv run uvicorn main:app --host 0.0.0.0 --port 8080
@@ -142,6 +145,8 @@ lib/
 - 终端 WS:二进制帧 1 字节 tag + 载荷,`0x00` 数据、`0x01` resize(cols/rows 各为大端 uint16);文本帧只有 `{type:"error"}`。
 
 ## 提交前校验
+
+通知接口、状态边界及换机规则见 [移动通知说明](../docs/MOBILE_NOTIFICATIONS.md)；Android 七个厂商通道的参数和签名入口见 [厂商推送配置](../docs/ANDROID_PUSH_VENDORS.md)。
 
 ```bash
 cd mobile

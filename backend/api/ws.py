@@ -342,6 +342,7 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     # Authenticate
     user_id = "default"
     user_role = "admin"
+    user_data = {"user_id": user_id, "client": "web"}
 
     if is_auth_enabled():
         if not ticket:
@@ -366,28 +367,47 @@ async def agent_websocket(websocket: WebSocket, ticket: str = Query(default=""))
     await _enqueue_recovery_snapshot(user_id, send_queue)
     asyncio.create_task(_ensure_user_container(user_id))
 
+    from auth.mobile import watch_session
+    pumps = [asyncio.create_task(_receive_loop(user_id, user_role, websocket, user_data)),
+             asyncio.create_task(_send_loop(websocket, send_queue)),
+             asyncio.create_task(_heartbeat_loop(send_queue)),
+             asyncio.create_task(watch_session(user_data))]
     try:
-        await asyncio.gather(
-            _receive_loop(user_id, user_role, websocket),
-            _send_loop(websocket, send_queue),
-            _heartbeat_loop(send_queue),
-        )
+        done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
     except WebSocketDisconnect:
+        pass
+    except asyncio.CancelledError:
         pass
     except Exception as e:
         log.error(f"WS error for user={user_id}: {e}")
     finally:
+        for task in pumps:
+            task.cancel()
         ws_manager.unregister(user_id, websocket)
         # If user has no more connections, schedule cleanup
         if not ws_manager.has_connections(user_id):
             ws_manager.schedule_cleanup(user_id)
+        # TestClient/ASGI can cancel the connection while a pump finishes.
+        # Release registry state synchronously and drain our tasks even then.
+        import anyio
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*pumps, return_exceptions=True)
+            try:
+                await websocket.close(code=4001, reason="Session closed")
+            except (Exception, asyncio.CancelledError):
+                pass
 
 
-async def _receive_loop(user_id: str, user_role: str, ws: WebSocket):
+async def _receive_loop(user_id: str, user_role: str, ws: WebSocket, identity=None):
     """Receive and process client messages."""
     try:
         while True:
             raw = await ws.receive_text()
+            if identity:
+                from auth.mobile import validate_ticket
+                await validate_ticket(identity)
             try:
                 msg = json.loads(raw)
                 await _handle_client_message(user_id, user_role, msg)

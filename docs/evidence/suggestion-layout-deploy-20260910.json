@@ -1,0 +1,199 @@
+{
+  "release": {
+    "source": "114797e196414990df99e1a55ca2fa1411e886cd",
+    "frontendImage": "openbox-frontend-v2:20260910-suggestion-layout-114797e",
+    "frontend": {
+      "imageId": "sha256:2458d4a111aec94baecff65e8f07d98b2cc97eb9848fcc6649b44bbd456c005d",
+      "imageConfigId": "sha256:d24fb9b332cb8a93e062c0a707b1c8853c94c59d0fe94021ba446245be9c522d",
+      "archiveSha256": "5b58352a964e55ad20ac7e67bd25e656f506e24c259c5f9365791ea7766806b3",
+      "archiveBytes": 29353027
+    },
+    "architecture": "linux/amd64"
+  },
+  "production": {
+    "status": "deployed",
+    "stage": [
+      "frontend"
+    ],
+    "sources": {
+      "backend": "3db71bc49eac4c2515607a9c9e4d0730166b3c85",
+      "frontend": "114797e196414990df99e1a55ca2fa1411e886cd"
+    },
+    "architecture": "linux/amd64",
+    "images": {
+      "backend": "openbox-backend:20260910-takeover-3db71bc",
+      "frontend": "openbox-frontend-v2:20260910-suggestion-layout-114797e"
+    },
+    "imageIds": {
+      "backend": "sha256:47caebd6e0716b5a1b7a4da44e0c1c67a1694484461f8ad0c1d24f5461631d85",
+      "frontend": "sha256:2458d4a111aec94baecff65e8f07d98b2cc97eb9848fcc6649b44bbd456c005d"
+    },
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "configurationUnchangedExceptImages": true,
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "backup": "/opt/openbox/backups/20260910-suggestion-layout/activation-20260910T133634Z",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      },
+      {
+        "path": "/api/admin/push",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ],
+    "utc": "2026-09-10T13:40:33.543746+00:00"
+  },
+  "canary": {
+    "passed": true,
+    "sources": {
+      "backend": "3db71bc49eac4c2515607a9c9e4d0730166b3c85",
+      "frontend": "114797e196414990df99e1a55ca2fa1411e886cd"
+    },
+    "architecture": "linux/amd64",
+    "staticFilesVerified": 109,
+    "postgresCanary": {
+      "postgresReadOnly": true,
+      "adminExists": true,
+      "existingMessagesReadable": 16,
+      "templates": 10
+    },
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ]
+  },
+  "public": {
+    "origin": "https://ai.bossipai.com.cn",
+    "utc": "2026-09-10T13:41:37.861060+00:00",
+    "files": [
+      {
+        "path": "index.html",
+        "status": 200,
+        "sha256": "6c0ae6c33b76ec243ecb9859c1a85deb84331a5c49885da23cf87c5d68e26d71"
+      },
+      {
+        "path": "assets/index-D6WcPAfM.css",
+        "status": 200,
+        "sha256": "de4cc55f48b4c7e6206ebc7f8bbb61b7976bf35a761a06b1751b80da023bd7b3"
+      },
+      {
+        "path": "assets/ChatRoute-CN2CysvF.js",
+        "status": 200,
+        "sha256": "3268d0209c881f7c8750cd094e57499449489aaabe22a1c702bad07d78cd8bd6"
+      }
+    ],
+    "passed": true
+  },
+  "availability": {
+    "/": {
+      "statusCounts": {
+        "200": 11,
+        "502": 14
+      },
+      "firstFailureUtc": "2026-09-10T13:39:46.541242+00:00",
+      "lastFailureUtc": "2026-09-10T13:40:14.934951+00:00",
+      "recoveredUtc": "2026-09-10T13:40:17.085942+00:00",
+      "interruptionSeconds": 30.545
+    },
+    "/api/environment": {
+      "statusCounts": {
+        "200": 11,
+        "502": 14
+      },
+      "firstFailureUtc": "2026-09-10T13:39:46.541371+00:00",
+      "lastFailureUtc": "2026-09-10T13:40:14.935159+00:00",
+      "recoveredUtc": "2026-09-10T13:40:17.086040+00:00",
+      "interruptionSeconds": 30.545
+    }
+  },
+  "backup": {
+    "path": "/opt/openbox/backups/20260910-suggestion-layout/activation-20260910T133634Z",
+    "pgDumpBytes": 4547545,
+    "pgDumpSha256": "0cfa4de0f58f52b3d9eadd7824be84fe206cbae190ef4bcca93a405e17f23153",
+    "pgRestoreListPassed": true
+  },
+  "tests": {
+    "webUnit": 533,
+    "webE2e": 15,
+    "viewportResizeRegressionRepeated": 3,
+    "webCheck": "passed; 32 lint warnings, zero errors",
+    "nginxReleaseImage": "passed",
+    "mobileUnitAndWidget": 323,
+    "mobileAnalyze": "passed",
+    "localeParity": "passed",
+    "dartFileSizeGate": "passed",
+    "nativeIosIntegration": "passed; screenshots in light/dark at 1x/1.3x text, full labels visible, draft focuses input without sending"
+  },
+  "nativeRelease": {
+    "source": "114797e196414990df99e1a55ca2fa1411e886cd",
+    "iosSimulatorBuildAndInstall": true,
+    "androidArm64DebugBuildAndInstall": true,
+    "androidApkSha256": "3117d228761b528182a758c96bae6e85afbd911113b7649b859decba3221b03d",
+    "storeRelease": false,
+    "physicalDevicesUpdated": false
+  },
+  "ordinaryNotificationsDefaultPreserved": true,
+  "temporaryOssObjectsRemoved": true
+}

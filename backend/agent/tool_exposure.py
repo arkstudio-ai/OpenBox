@@ -66,6 +66,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
         "video_analyze",
         "hot_trends",
         "desktop_publish",
+        "autopilot_run",
         "share_file",
     ),
     "skill_admin": ("skill_manage", "share_file"),

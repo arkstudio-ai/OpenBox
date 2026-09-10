@@ -5,7 +5,23 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
+## 当前阿里云发布：2026-09-10 自动营销 D 阶段——模版预算授权 + marketing-autopilot 技能（仅后端，含迁移）
+
+- 14:46:46–14:47:05（北京时间）gw2 backend 切换至 `20260910-autopilot-824b295`，源码 `main@824b295`
+  （PR [#17](https://github.com/arkstudio-ai/OpenBox/pull/17) D1/B4 + PR [#18](https://github.com/arkstudio-ai/OpenBox/pull/18) D2/D3/D4）。
+  **含迁移** `d2f4a6c8e0b2`（`cron_jobs.template`），镜像内 `ScriptDirectory.get_heads()` 单 head 后才发；`alembic current` = `d2f4a6c8e0b2 (head)`。
+  backend 19 秒 healthy；frontend 保持 `20260910-trends-7959132`；公网 5 组采样全 200。
+- 内容：`AutopilotTemplate` 模版（预算上限/条数/三档模型/容差/发布方式/形态/黑名单）落 `cron_jobs.template` 并严格校验，执行器注入「模版参数（预算授权）」块；
+  `autopilot_run` 工具（预算 reserve 超限即终止、judge_shot 按容差判定、report 读账单）；技能 `marketing-autopilot`（定时无卡 / 对话选档卡）；`references/recipes.md` 七种形态配方。
+- 包 SHA-256 `0f7274903af1d5efd1083271e95ce3297cada6b9446c4e3d2ff336ad7d2e2624`，image ID `sha256:3e43b6629d418311b89357c92e767bdeddab627956a16d723bda2ab0f9f8bb74`，服务器装载后一致；OSS 中转对象已删。
+  备份 `/opt/openbox/backups/20260910-autopilot-824b295/activation-20260910T064637Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验）。
+- 容器内验收：38 个工具含 `autopilot_run`；7 个技能含 `marketing-autopilot`；`tiers` 三档参考价；`start` 由模版定 `wan3.0-video@720p`、可负担 1 条；
+  `reserve 27` 允许、`reserve 9` 拒绝并给出终止说明；`report` 生成含预算到顶提示；`validate_template` 拒绝非法档位。
+  **真实端到端一次自动营销运行（F）未做。**
+- 回滚：`docker compose run --rm --no-deps --entrypoint alembic backend downgrade b8d0f2a4c6e8`，再把 override 的 backend image 改回
+  `openbox-backend:20260910-publish2-2e44c01`，`up -d --no-deps backend`。降级只丢 `cron_jobs.template` 一列。
+
+## 历史阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
 
 - 01:23:12–01:23:32（北京时间）gw2 backend 切换至 `20260910-publish2-2e44c01`，源码 `main@2e44c01`
   （PR [#13](https://github.com/arkstudio-ai/OpenBox/pull/13) desktop_publish + PR [#14](https://github.com/arkstudio-ai/OpenBox/pull/14) 迁移 id 修正）。

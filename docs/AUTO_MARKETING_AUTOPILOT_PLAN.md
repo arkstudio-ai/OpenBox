@@ -185,7 +185,7 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 | B1 | 原型：桌面 ffmpeg 场景抽帧（6–12 帧）+ `video_transcribe` + Gemini 3.7 Flash（菜单内、带 vision）一次调用出 JSON：形态判定、主题、人群、钩子、结构（分段秒数）、镜头描述、文案全文、话题、创作要素 | — | 3d | 10 条不同形态热点的输出经人工评分 ≥ 7/10；记单条成本（STT + 多模态 token） |
 | B2 | 字幕型（无配音）热点：帧 OCR 走同一多模态调用，验证准确率 | B1 | 1d | 5 条字幕型样本文案还原 ≥ 90% |
 | B3 ✅ | 平台工具 `video_analyze(source)`（`tool/video_analyze.py`）：source 为 owned asset_id / 工作区路径 / 直链媒体 URL；沙箱 ffmpeg 抽 N 帧+音轨 → OSS `analysis/<user>/<job>/` 中转 → fun-asr 转写 → 视觉模型出 JSON（`video/analysis.py` schema 校验）；**帧数 < min_frames 直接失败不退化**；结果按 (source, 帧数, 转写, 模型) 缓存于 `video_jobs kind=analyze`；转写按分钟落账、视觉调用按 token 计量（kind `video_analyze`），输出 `credits=` | B1,B2 | 4d | 2026-09-09 落地，7 项单测；跨客户共享缓存与网页 URL 解析留给 A3（hot_trends 负责把页面解析成直链） |
-| B4 | 形态 → 配方映射表（口播 / 画面+旁白 / 展示 / 剧情 / 混剪），每种配方给出生成段数、时长、是否需要配音、剪辑模板 | B1 | 1d | 表进技能 references，B3 的输出字段与之对齐 |
+| B4 ✅ | 形态 → 配方映射表：`backend/.openbox/skills/marketing-autopilot/references/recipes.md`，七种 `form` 各给段数×时长、生成方式、声音/字幕、合成转场、质检口径（口播 STT ≥ tolerances.stt_similarity，其余只查时长与成功数），加选题过滤/预算/重生/发布/报告通用规则；字段与 `video_analyze` 输出、`autopilot/tiers.py` 三档对齐 | B1 | 1d | 2026-09-10 落地；配方随 D2 技能实跑再修 |
 
 ### C · 桌面自动发布（douyin-desktop-publish）
 
@@ -200,9 +200,9 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
-| D1 | 预算授权字段落表：cron 模版 payload 增加 `credits_cap_per_run / videos_per_run / model_tier / tolerances / publish_mode / content_forms / topics_blocklist`（§2.3），后端校验 | — | 2d | schema + 迁移 + 单测 |
+| D1 ✅ | `autopilot/template.py` `AutopilotTemplate`（extra=forbid）：`account_profile / categories / hot_source / credits_cap_per_run / videos_per_run / model_tier / tolerances{duration_deviation_sec, stt_similarity, max_regenerations} / publish_mode / visibility / content_forms / topics_blocklist`；`cron_jobs.template` JSON 列（迁移 `d2f4a6c8e0b2`）；`CronJobCreate/Update.template` 经 `validate_template` 严格校验（含「预算至少够一条该档视频」）；执行器把模版以「模版参数（预算授权）」块注入 cron 提示词；`cron` 工具可透传 `template` | — | 2d | 2026-09-10 落地，7 项单测；前端/App 表单是 D5 |
 | D2 | 技能 `marketing-autopilot`：cron 上下文判定（会话 kind=cron）→ 不出卡、读模版字段；流程 hot_trends → video_analyze → 按配方 video_generate（三档模型映射）→ video_compose → 发布 → 报告；预算累加超限即停 | A3,B3,B4,C2,D1 | 5d | 干跑（mock 工具）通过；技能测试覆盖「预算超限停止」「STT 超阈值重生一次后弃用」 |
-| D3 | 三档模型：`model_tier` → 模型 id 映射与每档参考价（读 `rates.json`）；对话创建任务时的选档卡（含每 15s 参考价） | D1 | 1d | 卡文案含三档与参考价；模版存的是 tier 不是模型 id |
+| D3 ◐ | 三档模型：`autopilot/tiers.py` 已给映射（高 `video-sd-720p-proⅠ`@720p / 中 `wan3.0-video`@720p / 低 `MiniMax-H3`@768p）与 `describe_tiers()` 每 15 s 参考价（读 `rates.json`，当前占位价高 7.5 / 中 9.0 / 低 7.5）；**选档卡与对话创建流程未做**（随 D2 技能） | D1 | 1d | 卡文案含三档与参考价；模版存的是 tier 不是模型 id |
 | D4 | 报告消息：每次运行一条，含来源、每条分析摘要、花费明细、成片卡、标题/介绍/话题、发布结果或降级原因 | D2 | 2d | 报告字段与账单页当次运行的落账总额一致 |
 | D5 | 模版 UI（web + App）：创建/编辑表单含 §2.3 字段；运行历史与报告入口 | D1 | 4d | 前端 `npm run check` 与 App `flutter test` 通过；真机创建一条模版 |
 | D6 | 账单页「按运行聚合」视图（一次 cron 运行的 LLM+媒体花费合并） | D4 | 2d | 与 D4 报告数字一致 |

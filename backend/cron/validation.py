@@ -36,6 +36,7 @@ async def validate_create(user_id: str, create: CronJobCreate) -> None:
     _check_timeout(create.timeout_seconds, config)
     _check_schedule(create.schedule, config)
     validate_delivery(create.delivery.model_dump() if create.delivery else {})
+    validate_template(create.template)
 
     await _check_project(user_id, create.project_id)
     if create.session_id:
@@ -61,6 +62,8 @@ async def validate_update(user_id: str, job_id: str, patch: CronJobUpdate) -> No
         _check_schedule(patch.schedule, config)
     if patch.delivery is not None:
         validate_delivery(patch.delivery.model_dump())
+    if patch.template is not None:
+        validate_template(patch.template)
 
 
 async def ensure_not_cron_session(session_id: str) -> None:
@@ -84,6 +87,22 @@ async def ensure_not_cron_session(session_id: str) -> None:
                 "Scheduled tasks cannot create other scheduled tasks. "
                 "Create jobs from a regular conversation instead."
             )
+
+
+def validate_template(template: dict | None) -> None:
+    """A marketing-autopilot template must parse strictly; {} / None means no template."""
+    if not template:
+        return
+    from pydantic import ValidationError
+
+    from autopilot.template import parse_template
+
+    try:
+        parse_template(template)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        loc = ".".join(str(x) for x in first.get("loc", ())) or "template"
+        raise ValueError(f"Invalid template: {loc}: {first.get('msg')}") from exc
 
 
 def validate_delivery(delivery: dict | None) -> None:

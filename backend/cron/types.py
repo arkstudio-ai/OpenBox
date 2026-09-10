@@ -81,6 +81,9 @@ class CronJobCreate(BaseModel):
     enabled: bool = True
     delete_after_run: bool | None = None  # None = auto (True for "at" jobs)
     max_retries: int = 3
+    #: Budget authorisation for a marketing-autopilot job (autopilot/template.py);
+    #: None for ordinary tasks. Validated strictly, stored verbatim.
+    template: dict | None = None
 
 
 class CronJobUpdate(BaseModel):
@@ -94,6 +97,8 @@ class CronJobUpdate(BaseModel):
     timeout_seconds: int | None = None
     delivery: CronDeliveryConfig | None = None
     enabled: bool | None = None
+    #: Replace the template wholesale (None = leave as is). Send {} to clear.
+    template: dict | None = None
 
 
 # ---------------------------------------------------------------------------

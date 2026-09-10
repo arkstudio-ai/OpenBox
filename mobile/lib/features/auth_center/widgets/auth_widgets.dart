@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../../shared/api/api_error.dart';
 import '../../../shared/appearance/tokens.dart';
+import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
 
 String platformErrorText(I18nState i18n, Object error) {
@@ -17,6 +18,12 @@ String platformDate(DateTime? date, I18nState i18n) => date == null
     ? '—'
     : DateFormat.yMd(i18n.language.replaceAll('-', '_')).format(date.toLocal());
 
+String platformDateTime(DateTime? date, I18nState i18n) => date == null
+    ? '—'
+    : DateFormat.yMd(
+        i18n.language.replaceAll('-', '_'),
+      ).add_Hm().format(date.toLocal());
+
 class AuthCard extends StatelessWidget {
   const AuthCard({super.key, required this.child});
   final Widget child;
@@ -28,7 +35,7 @@ class AuthCard extends StatelessWidget {
     decoration: BoxDecoration(
       color: context.tokens.card,
       border: Border.all(color: context.tokens.hair),
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(Radii.lg),
     ),
     child: Material(type: MaterialType.transparency, child: child),
   );

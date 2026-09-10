@@ -10,12 +10,16 @@ class PlatformInfo {
     required this.configured,
     this.capabilities = const [],
     this.maxGrantDays,
+    this.kind = 'oauth',
+    this.reconPending = false,
   });
   final String key;
   final String display;
   final bool configured;
   final List<String> capabilities;
   final int? maxGrantDays;
+  final String kind;
+  final bool reconPending;
 
   factory PlatformInfo.fromJson(Map<String, dynamic> j) => PlatformInfo(
     key: asString(j['key']) ?? '',
@@ -23,6 +27,8 @@ class PlatformInfo {
     configured: asBool(j['configured']) ?? false,
     capabilities: asList(j['capabilities']).whereType<String>().toList(),
     maxGrantDays: asInt(j['maxGrantDays']),
+    kind: asString(j['kind']) ?? 'oauth',
+    reconPending: asBool(j['reconPending']) ?? false,
   );
 }
 
@@ -40,6 +46,11 @@ class PlatformAccount {
     this.lastProbeAt,
     this.lastError,
     this.renewalsLeft = 0,
+    this.authKind = 'oauth',
+    this.desktopId,
+    this.siteDisplay,
+    this.predictedExpiresAt,
+    this.probeDisplay = const {},
   });
   final String id;
   final String platform;
@@ -53,6 +64,11 @@ class PlatformAccount {
   final DateTime? lastProbeAt;
   final String? lastError;
   final int renewalsLeft;
+  final String authKind;
+  final String? desktopId;
+  final String? siteDisplay;
+  final DateTime? predictedExpiresAt;
+  final Map<String, dynamic> probeDisplay;
   DateTime? get expectedExpiry => estimatedExpiresAt ?? refreshExpiresAt;
   String statusAt(DateTime now) {
     if (status != 'bound') return status;
@@ -77,7 +93,51 @@ class PlatformAccount {
     lastProbeAt: asDate(j['lastProbeAt']),
     lastError: asString(j['lastError']),
     renewalsLeft: asInt(j['renewalsLeft']) ?? 0,
+    authKind: asString(j['authKind']) ?? 'oauth',
+    desktopId: asString(j['desktopId']),
+    siteDisplay: asString(j['siteDisplay']),
+    predictedExpiresAt: asDate(j['predictedExpiresAt']),
+    probeDisplay: asMap(asMap(j['probeDetail'])['display']),
   );
+}
+
+class PlatformNotification {
+  const PlatformNotification({
+    required this.id,
+    required this.title,
+    this.body = '',
+    this.kind = '',
+    this.readAt,
+  });
+  final String id;
+  final String title;
+  final String body;
+  final String kind;
+  final DateTime? readAt;
+
+  factory PlatformNotification.fromJson(Map<String, dynamic> j) =>
+      PlatformNotification(
+        id: asString(j['id']) ?? '',
+        title: asString(j['title']) ?? '',
+        body: asString(j['body']) ?? '',
+        kind: asString(j['kind']) ?? '',
+        readAt: asDate(j['readAt']),
+      );
+}
+
+class PlatformNotificationPage {
+  const PlatformNotificationPage({this.items = const [], this.unread = 0});
+  final List<PlatformNotification> items;
+  final int unread;
+
+  factory PlatformNotificationPage.fromJson(Map<String, dynamic> j) =>
+      PlatformNotificationPage(
+        items: asList(j['items'])
+            .whereType<Map<String, dynamic>>()
+            .map(PlatformNotification.fromJson)
+            .toList(),
+        unread: asInt(j['unread']) ?? 0,
+      );
 }
 
 class PublishJob {

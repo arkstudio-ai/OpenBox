@@ -115,33 +115,67 @@ class UserRow extends ConsumerWidget {
   void _showMenu(BuildContext context, I18nState i18n, BossipTokens t) {
     showModalBottomSheet<void>(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.settings_outlined, color: t.n700, size: 20),
-              title: Text(
-                i18n.t('workspace:settings'),
-                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
-              ),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                context.push(Paths.settings());
-              },
+      builder: (sheetContext) => Consumer(
+        builder: (_, ref, _) => SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: Icon(
+                    Icons.settings_outlined,
+                    color: t.n700,
+                    size: 20,
+                  ),
+                  title: Text(
+                    i18n.t('workspace:settings'),
+                    style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    context.push(Paths.settings());
+                  },
+                ),
+                if (ref.watch(authProvider).user?.role == 'admin')
+                  ListTile(
+                    key: const ValueKey('admin-console-menu'),
+                    leading: Icon(
+                      Icons.admin_panel_settings_outlined,
+                      color: t.n700,
+                      size: 20,
+                    ),
+                    title: Text(
+                      i18n.t('workspace:adminConsole'),
+                      style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+                    ),
+                    subtitle: Text(
+                      i18n.t('admin:console.subtitle'),
+                      style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: t.n600,
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      context.push(Paths.admin);
+                    },
+                  ),
+                ListTile(
+                  leading: Icon(Icons.logout, color: t.danger, size: 20),
+                  title: Text(
+                    i18n.t('common:action.signOut'),
+                    style: TextStyle(fontSize: FontSizes.base, color: t.danger),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    onSignOut();
+                  },
+                ),
+              ],
             ),
-            ListTile(
-              leading: Icon(Icons.logout, color: t.danger, size: 20),
-              title: Text(
-                i18n.t('common:action.signOut'),
-                style: TextStyle(fontSize: FontSizes.base, color: t.danger),
-              ),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                onSignOut();
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );

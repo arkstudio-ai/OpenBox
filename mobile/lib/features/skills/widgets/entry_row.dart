@@ -9,13 +9,15 @@ import '../../../shared/appearance/type_scale.dart';
 
 /// The icon column shared by every row.
 ///
-/// Icons are emoji rather than image assets: they need no upload path, no
-/// serving route and no cache busting, and they survive the sandbox →
-/// backend → app hop as plain text. A skill that declares none still needs to
-/// be distinguishable at a glance, so it falls back to its initial over a
-/// tint derived from the name — stable per skill, and never a blank square.
+/// Catalog icons may be emoji or HTTPS images. Missing icons use a stable
+/// tinted initial; failed images use a puzzle, matching the Web fallback.
 class EntryIcon extends StatelessWidget {
-  const EntryIcon({super.key, required this.name, this.icon, this.small = false});
+  const EntryIcon({
+    super.key,
+    required this.name,
+    this.icon,
+    this.small = false,
+  });
 
   final String name;
   final String? icon;
@@ -42,6 +44,11 @@ class EntryIcon extends StatelessWidget {
     final t = context.tokens;
     final box = small ? 32.0 : 40.0;
     final emoji = icon?.trim() ?? '';
+    final uri = Uri.tryParse(emoji);
+    final image =
+        uri?.scheme.toLowerCase() == 'https' &&
+        (uri?.host.isNotEmpty ?? false) &&
+        !RegExp(r'\s').hasMatch(emoji);
     if (emoji.isNotEmpty) {
       return Container(
         width: box,
@@ -51,15 +58,33 @@ class EntryIcon extends StatelessWidget {
           color: t.hairSoft,
           borderRadius: BorderRadius.circular(Radii.lg),
         ),
-        child: Text(
-          emoji,
-          style: TextStyle(fontSize: small ? FontSizes.base : FontSizes.xl),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          child: image
+              ? Image.network(
+                  emoji,
+                  width: box,
+                  height: box,
+                  fit: BoxFit.contain,
+                  excludeFromSemantics: true,
+                  errorBuilder: (_, _, _) => Text(
+                    '🧩',
+                    style: TextStyle(
+                      fontSize: small ? FontSizes.base : FontSizes.xl,
+                    ),
+                  ),
+                )
+              : Text(
+                  emoji,
+                  style: TextStyle(
+                    fontSize: small ? FontSizes.base : FontSizes.xl,
+                  ),
+                ),
         ),
       );
     }
     final (background, foreground) = _tint(t, name);
-    final initial =
-        (name.trim().isEmpty ? '?' : name.trim()[0]).toUpperCase();
+    final initial = (name.trim().isEmpty ? '?' : name.trim()[0]).toUpperCase();
     return Container(
       width: box,
       height: box,
@@ -83,7 +108,11 @@ class EntryIcon extends StatelessWidget {
 enum BadgeTone { muted, ok, warn, danger }
 
 class SkillBadge extends StatelessWidget {
-  const SkillBadge({super.key, required this.text, this.tone = BadgeTone.muted});
+  const SkillBadge({
+    super.key,
+    required this.text,
+    this.tone = BadgeTone.muted,
+  });
 
   final String text;
   final BadgeTone tone;
@@ -233,8 +262,11 @@ class EntryRow extends StatelessWidget {
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Icon(Icons.warning_amber_outlined,
-                            size: 12, color: t.sage),
+                        Icon(
+                          Icons.warning_amber_outlined,
+                          size: 12,
+                          color: t.sage,
+                        ),
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 230),
                           child: Text(
@@ -253,16 +285,21 @@ class EntryRow extends StatelessWidget {
                               opacity: fixDisabled ? 0.4 : 1,
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
                                 decoration: BoxDecoration(
                                   color: t.ink,
-                                  borderRadius:
-                                      BorderRadius.circular(Radii.full),
+                                  borderRadius: BorderRadius.circular(
+                                    Radii.full,
+                                  ),
                                 ),
                                 child: Text(
                                   fixLabel!,
                                   style: TextStyle(
-                                      fontSize: FontSizes.xs2, color: t.bg),
+                                    fontSize: FontSizes.xs2,
+                                    color: t.bg,
+                                  ),
                                 ),
                               ),
                             ),

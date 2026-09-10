@@ -70,6 +70,11 @@ class FakePlatformApi extends PlatformAccountsApi {
   @override
   void checkScope(PlatformScope scope) {}
   @override
+  Future<PlatformNotificationPage> notifications(
+    PlatformScope scope, {
+    CancelToken? cancel,
+  }) async => const PlatformNotificationPage();
+  @override
   Future<List<PlatformInfo>> platforms(
     PlatformScope scope, {
     CancelToken? cancel,

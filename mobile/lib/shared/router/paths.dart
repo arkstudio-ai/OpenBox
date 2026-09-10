@@ -53,6 +53,13 @@ abstract final class Paths {
 
   /// `tab` defaults to the panel's menu page; pass a surface to deep-link
   /// straight into it (the cron pill and chat's "审阅 →" both do).
-  static String workbench(String sessionId, {String tab = 'menu'}) =>
-      '/app/w/$sessionId?tab=$tab';
+  ///
+  /// `control` (desktop only) switches input control on as soon as the stream
+  /// is up — a takeover card's link, mirroring web `paths.desktopTakeover`.
+  static String workbench(
+    String sessionId, {
+    String tab = 'menu',
+    bool control = false,
+  }) =>
+      '/app/w/$sessionId?tab=$tab${control ? '&control=1' : ''}';
 }

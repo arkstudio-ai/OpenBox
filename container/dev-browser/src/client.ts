@@ -36,6 +36,89 @@ export interface WaitForPageLoadResult {
   waitTimeMs: number;
   /** Whether timeout was reached */
   timedOut: boolean;
+  /**
+   * A captcha / risk-control challenge spotted on the loaded page, if any.
+   * Heuristic and vendor-based — treat it as a strong hint, confirm with a
+   * snapshot, then hand the page to the user (`desktop_takeover`).
+   */
+  challenge: ChallengeInfo | null;
+}
+
+/** What blocked the page, as far as the DOM can tell. */
+export interface ChallengeInfo {
+  /** Which anti-bot system drew it, or "text" when only the wording matched. */
+  vendor: "geetest" | "aliyun" | "tencent" | "cloudflare" | "hcaptcha" | "recaptcha" | "text";
+  /** The selector or phrase that matched, for the model's report. */
+  hint: string;
+}
+
+/**
+ * Look for a human-verification challenge on the page: known vendor widgets
+ * first, then the phrases sites put on their risk-control pages. Only visible
+ * matches count, so a dormant reCAPTCHA badge in the footer does not trigger.
+ * Returns null when nothing matched. This never blocks and never tries to
+ * solve anything — it exists so the agent notices the wall on the first look
+ * instead of after a few failed clicks.
+ */
+export async function detectChallenge(page: Page): Promise<ChallengeInfo | null> {
+  try {
+    return await page.evaluate(() => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const g = globalThis as { document?: any; getComputedStyle?: any };
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const doc = g.document;
+      if (!doc) return null;
+
+      // Plain JS only: this function is serialised and runs inside the page.
+      const visible = (el: any) => {
+        if (!el) return false;
+        const style = g.getComputedStyle ? g.getComputedStyle(el) : null;
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+        const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+        return !rect || (rect.width > 0 && rect.height > 0);
+      };
+      const firstVisible = (selector: string) => {
+        const nodes = doc.querySelectorAll(selector);
+        for (let i = 0; i < nodes.length; i += 1) if (visible(nodes[i])) return nodes[i];
+        return null;
+      };
+
+      const vendors: Array<[string, string]> = [
+        ["geetest", ".geetest_panel, .geetest_holder, .geetest_captcha, [class*='geetest_']"],
+        ["aliyun", "#nc_1_wrapper, .nc-container, .nc_wrapper, #baxia-dialog-content, .baxia-dialog"],
+        ["tencent", "#tcaptcha_iframe, #tcaptcha_transform, iframe[src*='captcha.qq.com'], iframe[src*='turing.captcha']"],
+        ["cloudflare", "#challenge-form, #challenge-stage, .cf-challenge, iframe[src*='challenges.cloudflare.com'], .cf-turnstile"],
+        ["hcaptcha", "iframe[src*='hcaptcha.com']"],
+        ["recaptcha", "iframe[src*='recaptcha/api2/bframe'], iframe[src*='recaptcha/enterprise/bframe']"],
+      ];
+      for (let i = 0; i < vendors.length; i += 1) {
+        const vendor = vendors[i][0];
+        const selector = vendors[i][1];
+        const hit = firstVisible(selector);
+        if (hit) {
+          const id = hit.id ? "#" + hit.id : "";
+          const cls = typeof hit.className === "string" && hit.className ? "." + hit.className.split(/\s+/)[0] : "";
+          return { vendor: vendor, hint: (hit.tagName || "").toLowerCase() + id + cls };
+        }
+      }
+
+      const text = (doc.body && doc.body.innerText ? doc.body.innerText : "").slice(0, 20000);
+      const phrases = [
+        /安全验证/, /滑动验证/, /拖动滑块/, /向右滑动/, /请完成验证/, /请完成安全验证/, /人机验证/,
+        /按顺序点击/, /点击图中/, /访问过于频繁/, /环境异常/, /操作频繁/, /请输入验证码/,
+        /verify (?:that )?you are (?:a )?human/i, /checking your browser/i, /unusual traffic/i,
+        /complete the security check/i, /slide to verify/i, /i'm not a robot/i,
+      ];
+      for (let i = 0; i < phrases.length; i += 1) {
+        const m = text.match(phrases[i]);
+        if (m) return { vendor: "text", hint: m[0] };
+      }
+      return null;
+    });
+  } catch {
+    // Navigating or detached — nothing to report.
+    return null;
+  }
 }
 
 interface PageLoadState {
@@ -96,6 +179,7 @@ export async function waitForPageLoad(
           pendingRequests: lastState.pendingRequests.length,
           waitTimeMs: Date.now() - startTime,
           timedOut: false,
+          challenge: await detectChallenge(page),
         };
       }
     } catch {
@@ -112,6 +196,7 @@ export async function waitForPageLoad(
     pendingRequests: lastState?.pendingRequests.length ?? 0,
     waitTimeMs: Date.now() - startTime,
     timedOut: true,
+    challenge: await detectChallenge(page),
   };
 }
 

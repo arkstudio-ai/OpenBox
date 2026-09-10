@@ -349,5 +349,22 @@
   "status": {
     "thinking": "正在思考中…",
     "retrying": "模型无响应，正在重试（第 {{attempt}}/{{total}} 次）"
+  },
+  "takeover": {
+    "reasonLabel": "阻塞原因",
+    "site": "站点",
+    "open": "打开云桌面接管",
+    "openHint": "会切到云桌面面板并开启操控。完成验证后回到这里，点「我已完成，继续」。",
+    "ownBrowser": "验证页在你自己的浏览器里，请在那里完成，然后回来点「我已完成，继续」。",
+    "record": "用户接管：{{reason}} · {{host}}",
+    "reason": {
+      "captcha_slider": "滑块验证",
+      "captcha_click": "点选验证",
+      "captcha_math": "输入验证码",
+      "sms_code": "短信/邮箱验证码",
+      "login_required": "需要本人登录",
+      "risk_control": "风控安全验证",
+      "other": "人工验证"
+    }
   }
 }

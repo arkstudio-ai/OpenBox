@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { useParams } from "react-router"
+import { useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
 import { useApiErrorMessage } from "@/shared/hooks/useApiErrorMessage"
@@ -25,6 +25,8 @@ import {
 import { useSessionQuery } from "@/features/chat/api/message-actions"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
+import { usePanelStore } from "@/features/workbench"
+import { CONTROL_PARAM, PANEL_PARAM, readPanelRequest } from "@/shared/router/paths"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useTranslation } from "react-i18next"
 
@@ -66,6 +68,22 @@ export default function ChatRoute() {
   const currentUserId = useAuthStore((state) => state.user?.id)
   const { sessionId = "" } = useParams()
   useChatEvents(sessionId)
+
+  // `?panel=desktop&control=1` is the URL form of a takeover card's link
+  // (paths.desktopTakeover): open the panel on arrival, then drop the params
+  // so a refresh or a copied link does not re-open it. The store is called
+  // directly rather than through the bus: the layout's listener mounts after
+  // this child effect on a cold load.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const request = readPanelRequest(searchParams)
+    if (!request) return
+    usePanelStore.getState().openKind(request.kind, { desktopControl: request.control })
+    const next = new URLSearchParams(searchParams)
+    next.delete(PANEL_PARAM)
+    next.delete(CONTROL_PARAM)
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const session = useSessionQuery(sessionId)
   const liveStatus = useStreamStore((s) => s.status.get(sessionId))

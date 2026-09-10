@@ -349,5 +349,22 @@
   "status": {
     "thinking": "Thinking…",
     "retrying": "No response — retrying ({{attempt}}/{{total}})"
+  },
+  "takeover": {
+    "reasonLabel": "Blocked by",
+    "site": "Site",
+    "open": "Open the cloud desktop and take over",
+    "openHint": "Switches to the desktop panel with input control on. When the check is done, come back and pick \"我已完成，继续\".",
+    "ownBrowser": "The verification page is in your own browser — finish it there, then come back and pick \"我已完成，继续\".",
+    "record": "User took over: {{reason}} · {{host}}",
+    "reason": {
+      "captcha_slider": "slider captcha",
+      "captcha_click": "click-to-verify captcha",
+      "captcha_math": "code to type",
+      "sms_code": "SMS / email code",
+      "login_required": "sign-in in person",
+      "risk_control": "risk-control check",
+      "other": "human verification"
+    }
   }
 }

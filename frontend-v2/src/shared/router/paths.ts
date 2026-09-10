@@ -10,6 +10,10 @@ export const paths = {
   // With a project it files the first message under that project.
   newChat: (projectId?: string) => (projectId ? `/app?project=${projectId}` : "/app"),
   chat: (sessionId: string) => `/app/s/${sessionId}`,
+  /** The chat, with the cloud desktop panel opened and input control on —
+   *  what a takeover card links to. A real URL so it survives a reload and
+   *  can be handed to a phone or a notification later. */
+  desktopTakeover: (sessionId: string) => `/app/s/${sessionId}?${PANEL_PARAM}=desktop&${CONTROL_PARAM}=1`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),
   cron: "/app/cron",
@@ -27,6 +31,21 @@ export const paths = {
   adminWorkspace: (workspaceId: string) =>
     `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
 } as const
+
+/** Query params a chat URL may carry to open a workbench panel on arrival. */
+export const PANEL_PARAM = "panel"
+export const CONTROL_PARAM = "control"
+
+export interface PanelRequest {
+  kind: "desktop"
+  control: boolean
+}
+
+/** Read `?panel=desktop&control=1` off a chat URL; null when there is none. */
+export function readPanelRequest(params: URLSearchParams): PanelRequest | null {
+  if (params.get(PANEL_PARAM) !== "desktop") return null
+  return { kind: "desktop", control: params.get(CONTROL_PARAM) === "1" }
+}
 
 export const routePatterns = {
   invite: "/invite/:token",

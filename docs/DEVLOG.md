@@ -438,3 +438,18 @@ publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`
 触发词（「发布/发抖音/投稿」归桌面路径，开放平台技能只在 mode=package / degrade / 用户要求扫码时加载），去掉
 "抖音不允许应用替用户发布"之类绝对话术；`marketing-autopilot` 按同样三类处理。单测 +5（失败集与 origin/main 一致）。
 未部署；授权页显示 bossip 需在抖音开放平台控制台改应用名；AWS 仍无 desktop_publish。
+
+
+## 前端发布后旧页面自动换新，不再"出错了"（2026-09-10）
+
+运营反馈：每次发布前端，已打开的页面都会变成"出错了"，必须手动刷新。已有的 chunk 恢复（`4d2a578`）只认
+"动态 import 失败"这一种错误并自动刷新一次；本地用 nginx 同语义的静态服务复现：路由 chunk 缺失确实走了自动刷新，
+所以运营看到的"出错了"是别的错误落进了同一个错误页（旧页面对着新后端/新资源）。不再逐个猜错误，改为让页面知道自己过期：
+- `vite.config.ts` 每次构建生成一个 build id，同时写进 bundle（`__APP_BUILD__`）和 `index.html`（`<meta name="app-build">`，
+  index.html 本就 no-store）；Dockerfile 可用 `--build-arg VITE_BUILD_ID=<tag>` 钉死，不传则用构建时间戳。
+- `shared/lib/build-version.ts`：页签在可见/聚焦/联网/每 10 分钟时拉一次 index.html 比对 id（最少间隔 60s，已过期后不再请求）。
+  发现新构建：页签隐藏时立即换新；可见时等下一次站内导航（`router.subscribe`）再换；正在流式输出的回合（`shared/lib/activity.ts`
+  由 stream store 的 `setStatus` 登记）绝不打断。
+- 错误页：非 chunk 错误也先问服务器是否已有新构建，是就自动刷新一次；chunk 错误按原逻辑。所有自动刷新共用 5 分钟冷却，防循环。
+- `installChunkRecovery()`：接住 `vite:preloadError` 和事件处理器/store 里 `import()` 的未处理 rejection，这些原本到不了错误边界。
+本地验证：两份不同 id 的构建，旧页面打开后换成新构建目录，触发 focus 后页签自行刷新到新 id，无错误页。单测 +8。未部署。

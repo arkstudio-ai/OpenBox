@@ -6,6 +6,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Optional: pin the build id to the image tag; otherwise the build timestamp is used.
+ARG VITE_BUILD_ID
+ENV VITE_BUILD_ID=${VITE_BUILD_ID}
 RUN npm run build
 
 FROM ${NGINX_IMAGE}

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Link, useRouteError } from "react-router"
 import { paths } from "@/app/router/paths"
 import { isChunkLoadError, recoverChunkLoadError, reloadPage } from "@/shared/lib/chunk-recovery"
+import { reloadIfStale } from "@/shared/lib/build-version"
 
 export function AppErrorBoundary() {
   const { t } = useTranslation("common")
@@ -10,7 +11,10 @@ export function AppErrorBoundary() {
   const chunkFailure = isChunkLoadError(error)
   useEffect(() => {
     console.error("[route error]", error)
-    recoverChunkLoadError(error)
+    // A missing chunk reloads once. Any other error on a tab the server has
+    // already out-built is treated the same way: the fix is the new build,
+    // not the person pressing refresh.
+    if (!recoverChunkLoadError(error)) void reloadIfStale()
   }, [error])
   return (
     <div

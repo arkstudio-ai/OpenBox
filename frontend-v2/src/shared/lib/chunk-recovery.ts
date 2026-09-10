@@ -17,12 +17,15 @@ export function reloadPage(): void {
   window.location.reload()
 }
 
-export function recoverChunkLoadError(error: unknown): boolean {
-  if (!isChunkLoadError(error) || !navigator.onLine) return false
+/**
+ * Reload the document at most once per cooldown window for this tab.
+ * Shared by every automatic recovery path so two triggers (a missing chunk
+ * and a stale build, say) cannot chase each other into a loop.
+ */
+export function reloadOnce(): boolean {
   try {
     const previous = Number(window.sessionStorage.getItem(RELOAD_KEY))
     const now = Date.now()
-    // Shared across chunk URLs so a second missing dependency cannot loop.
     // Do not clear this on startup: a broken new build must remain recoverable
     // via the manual button rather than refreshing forever.
     if (previous > 0 && now - previous < RELOAD_COOLDOWN_MS) return false
@@ -32,5 +35,31 @@ export function recoverChunkLoadError(error: unknown): boolean {
   } catch {
     // Without durable per-tab storage we cannot safely bound automatic reloads.
     return false
+  }
+}
+
+export function recoverChunkLoadError(error: unknown): boolean {
+  if (!isChunkLoadError(error) || !navigator.onLine) return false
+  return reloadOnce()
+}
+
+/**
+ * Catch resource failures that never reach a React error boundary: Vite's
+ * preload helper (`vite:preloadError`) and `import()` calls made from event
+ * handlers or stores, which surface as unhandled rejections.
+ */
+export function installChunkRecovery(target: Window = window): () => void {
+  const onPreloadError = (event: Event) => {
+    const payload = (event as Event & { payload?: unknown }).payload
+    if (recoverChunkLoadError(payload)) event.preventDefault()
+  }
+  const onRejection = (event: PromiseRejectionEvent) => {
+    if (recoverChunkLoadError(event.reason)) event.preventDefault()
+  }
+  target.addEventListener("vite:preloadError", onPreloadError)
+  target.addEventListener("unhandledrejection", onRejection)
+  return () => {
+    target.removeEventListener("vite:preloadError", onPreloadError)
+    target.removeEventListener("unhandledrejection", onRejection)
   }
 }

@@ -136,7 +136,13 @@
       "compaction": "上下文压缩",
       "compaction_chunk": "分段压缩",
       "bash_judge": "命令判断",
-      "cron_summary": "定时任务摘要"
+      "cron_summary": "定时任务摘要",
+      "video_compose": "视频合成",
+      "video_generate": "视频生成",
+      "image_gen": "图片生成",
+      "video_transcribe": "语音转写",
+      "video_analyze": "视频拆解",
+      "hot_trends": "热点采集"
     },
     "paymentUnavailable": "暂未开放",
     "dateRange": "日期筛选",
@@ -150,6 +156,15 @@
     "noMatches": "所选日期内没有消耗记录",
     "cancelPayment": "取消支付",
     "cancellingPayment": "取消中…",
-    "cancelPaymentError": "暂未确认取消，订单仍可查询。请稍后重试或查询支付状态。"
+    "cancelPaymentError": "暂未确认取消，订单仍可查询。请稍后重试或查询支付状态。",
+    "media": {
+      "duration": "时长 {{value}} 秒",
+      "minutesBilled": "计费 {{value}} 分钟",
+      "secondsBilled": "计费 {{value}} 秒",
+      "tier": "档位 {{value}}",
+      "resolution": "分辨率 {{value}}",
+      "images": "{{value}} 张",
+      "items": "{{value}} 条"
+    }
   }
 }

@@ -225,9 +225,7 @@ export function SkillCenter() {
 
       {actionError &&
         !anyDialogOpen(installTarget, uploadOpen, createOpen, publishTarget, withdrawTarget) && (
-          <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">
-            {actionError}
-          </p>
+          <p className="bg-dangersoft text-danger rounded-lg px-3 py-2 text-xs leading-5">{actionError}</p>
         )}
 
       {loadError ? (
@@ -342,9 +340,8 @@ export function SkillCenter() {
             setUploadOpen(false)
             setActionError(null)
           }}
-          onUploadArchive={(file, name) =>
-            void finishSkillInstall(uploadArchive.mutateAsync({ file, name: name || undefined }))
-          }
+          onUploadArchive={(file, name) => uploadArchive.mutateAsync({ file, name: name || undefined })}
+          onArchivesFinished={() => void finishSkillInstall(Promise.resolve())}
           onInstallSkill={(vars) => void finishSkillInstall(installSkill.mutateAsync(vars))}
           onAddMcp={(entries) => void handleAddMcp(entries)}
         />
@@ -373,9 +370,7 @@ export function SkillCenter() {
             setWithdrawTarget(null)
             setActionError(null)
           }}
-          onConfirm={() =>
-            run(withdrawSkill.mutateAsync(withdrawTarget.id), () => setWithdrawTarget(null))
-          }
+          onConfirm={() => run(withdrawSkill.mutateAsync(withdrawTarget.id), () => setWithdrawTarget(null))}
         />
       ) : null}
 

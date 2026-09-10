@@ -237,8 +237,8 @@ def _catalog_row(entry: dict, counts: dict[str, int]) -> dict:
         "workspace_id": None,
         "library_id": None,
         "install_dir": None,
-        "version": None,
-        "published_at": None,
+        "version": entry.get("version"),
+        "published_at": entry.get("published_at"),
         "created_at": None,
         "updated_at": None,
         "installs_count": counts.get(catalog_id, 0),
@@ -250,8 +250,9 @@ def _catalog_row(entry: dict, counts: dict[str, int]) -> dict:
         "featured": bool(entry.get("featured")),
         "is_official": bool(entry.get("official")),
         "requires_mcp": list(entry.get("requires_mcp") or []),
-        "size": None,
-        "sha256": None,
+        "size": entry.get("archive_size"),
+        "sha256": entry.get("sha256"),
+        "deleted": bool(entry.get("deleted")),
     }
 
 
@@ -305,9 +306,20 @@ async def list_store(
     offset: int = Query(0, ge=0, le=MAX_STORE_OFFSET),
     limit: int = Query(50, ge=1, le=200),
     admin: dict = Depends(require_admin),
+    deleted: bool = False,
 ):
     """Both halves of the store in one filterable, paginated list."""
     needle = q.strip()
+    if deleted:
+        from skill.catalog_admin import overlays
+        items = [dict(value, catalog_id=key) for key, value in (await overlays()).items()
+                 if value["deleted"] and (not needle or _matches(value, needle))
+                 and (kind is None or value.get("kind", "skill") == kind)
+                 and (origin is None or value.get("origin") == origin)]
+        items = [{**_catalog_row(value, {}), "author": value.get("author")} for value in items]
+        await record(admin["user_id"], None, "admin.view_deleted_skills", "catalog_entry",
+                     None, {"offset": offset, "limit": limit}, request)
+        return {"items": items[offset:offset + limit], "total": len(items), "offset": offset, "limit": limit}
     entries: list[dict] = []
     catalog_total = 0
     # A submission always has an author, so "third_party" excludes them; the
@@ -739,7 +751,11 @@ async def list_installs(
             UserSkill.published_name.ilike(pattern),
         ))
 
+    from skill.catalog_admin import overlays
+    # History includes deleted entries, but display edits still apply.
     index = catalog_index()
+    for key, value in (await overlays()).items():
+        index[key] = {**index.get(key, {}), **value}
     async with get_db_session() as session:
         total = await session.scalar(select(func.count()).select_from(stmt.subquery()))
         rows = (await session.execute(
@@ -761,8 +777,8 @@ async def list_installs(
             "kind": install.kind,
             "origin": origin,
             "name": install.name,
-            "title": published_name or entry.get("title") or install.name,
-            "icon": published_icon or entry.get("icon") or "",
+            "title": entry.get("title") or published_name or install.name,
+            "icon": entry.get("icon") if "icon" in entry else (published_icon or ""),
             "install_dir": install.install_dir,
             "installed_at": _at(install.installed_at),
         })
@@ -774,3 +790,10 @@ async def list_installs(
         request,
     )
     return {"items": items, "total": int(total or 0), "offset": offset, "limit": limit}
+
+
+# Same admin-only boundary; split by responsibility to keep routes readable.
+from api.admin_skill_catalog import router as catalog_crud_router
+from api.admin_skill_desktops import router as desktop_skills_router
+router.include_router(catalog_crud_router)
+router.include_router(desktop_skills_router)

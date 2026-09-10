@@ -229,6 +229,21 @@ class VideoModelConfig(BaseModel):
     #: Shown next to the name in the picker so an expensive switch is visible.
     tier: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_minimax_wire_shape(cls, value):
+        # Older external production registries predate wire_shape. Keep an
+        # explicit adapter override, but never silently send MiniMax's legacy
+        # entry through the Sora DTO (which discards its aspect ratio).
+        if (
+            isinstance(value, dict)
+            and "wire_shape" not in value
+            and value.get("channel") == "sd2"
+            and str(value.get("id", "")).lower() == "minimax-h3"
+        ):
+            return {**value, "wire_shape": "size"}
+        return value
+
     @model_validator(mode="after")
     def _check_duration_range(self):
         if self.duration_range is not None:
@@ -307,6 +322,98 @@ class VideoTranscriptionConfig(BaseModel):
     timeout_seconds: int = Field(default=180, ge=30, le=600)
     poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=10.0)
     similarity_threshold: float = Field(default=0.90, ge=0.5, le=1.0)
+
+
+class DesktopPublishConfig(BaseModel):
+    """`desktop_publish`: post to 抖音创作者中心 through the workspace's cloud desktop.
+
+    A known transitional route (plan §1.5): the person's own login state, in
+    the person's own desktop, with human-paced limits. Every limit here is a
+    deployment default; a marketing template may tighten (never loosen) it.
+    `default_mode` is the one switch that flips the deployment between the
+    desktop route and the QR package route (plan §7 C4).
+    """
+
+    #: auto = desktop route by default; package = QR package by default.
+    default_mode: Literal["auto", "package"] = "auto"
+    #: Posts per account per Asia/Shanghai day through the desktop route.
+    daily_limit: int = Field(default=3, ge=1, le=20)
+    #: Minimum minutes between two desktop posts of one account.
+    min_interval_minutes: int = Field(default=90, ge=1, le=1440)
+    #: Posting hours (Asia/Shanghai), inclusive start, exclusive end.
+    window_start_hour: int = Field(default=8, ge=0, le=23)
+    window_end_hour: int = Field(default=23, ge=1, le=24)
+    #: Seconds to wait for the creator-center upload to finish.
+    upload_timeout_seconds: int = Field(default=420, ge=60, le=1800)
+    #: Title cap enforced by the creator-center form.
+    max_title_chars: int = Field(default=30, ge=10, le=55)
+    #: Page text that means "stop automating this account now".
+    risk_patterns: list[str] = Field(default_factory=lambda: [
+        "验证码", "滑动验证", "安全验证", "操作频繁", "操作过于频繁", "账号异常", "账号存在风险",
+        "风险提示", "违规", "封禁", "限制发布", "请稍后再试", "captcha", "verify",
+    ])
+
+
+class HotTrendsConfig(BaseModel):
+    """`hot_trends`: hot-list collection through the workspace's cloud desktop.
+
+    One live collection per (source, board, window, category) per day is
+    shared by every customer; `min_interval_seconds` and `max_fetches_per_day`
+    bound how often any desktop browser is driven for the whole deployment.
+    """
+
+    #: A snapshot younger than this is served from the shared cache.
+    cache_hours: int = Field(default=24, ge=1, le=168)
+    #: Never collect the same key twice within this many seconds, even on refresh.
+    min_interval_seconds: int = Field(default=300, ge=10, le=86400)
+    #: Live collections per source per day across all customers.
+    max_fetches_per_day: int = Field(default=48, ge=1, le=1000)
+    #: Items requested from the source per collection (callers slice `limit`).
+    fetch_size: int = Field(default=50, ge=10, le=100)
+    #: Seconds to wait for the board page and its own API calls.
+    page_timeout_seconds: int = Field(default=40, ge=10, le=120)
+    #: How long a resolved direct media link is trusted before re-resolving.
+    media_link_ttl_hours: int = Field(default=6, ge=1, le=72)
+
+
+class VideoAnalysisConfig(BaseModel):
+    """`video_analyze`: sampled frames + transcript → structured analysis.
+
+    Frames are extracted with ffmpeg in the person's sandbox, staged in the
+    OSS asset bucket, and shown to a vision-capable chat model. Without frames
+    the model confidently invents the picture (measured 2026-09-09), so
+    `min_frames` is a hard floor, not a preference.
+    """
+
+    model: str = "openai/gemini-3.7-flash"
+    frames: int = Field(default=8, ge=4, le=16)
+    min_frames: int = Field(default=4, ge=1, le=16)
+    frame_width: int = Field(default=720, ge=240, le=1920)
+    max_video_seconds: int = Field(default=600, ge=10, le=3600)
+    timeout_seconds: int = Field(default=180, ge=30, le=600)
+    transcribe: bool = True
+
+
+class VideoComposeConfig(BaseModel):
+    """Cloud composition of an OpenBox timeline (docs/VIDEO_RENDER_ENGINE_SELECTION.md).
+
+    The renderer is Aliyun IMS; assets are read from and the MP4 is written to
+    the configured OSS asset bucket, so nothing leaves the account. IMS must be
+    activated and authorised for OSS in the console once per account.
+    """
+
+    provider: str = "ims"
+    #: IMS region. Empty = the OSS bucket's region, which is the only choice
+    #: that keeps reads and writes inside one region.
+    region: str = ""
+    #: Override the API endpoint; default ``ice.{region}.aliyuncs.com``.
+    endpoint: str = ""
+    bitrate_kbps: int = Field(default=2500, ge=500, le=20_000)
+    poll_interval_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    #: Per-user daily ceiling on composition submits. Back-pressure, not an
+    #: approval: composition is billed per output minute, cheaply, but a loop
+    #: that resubmits forever still needs a stop.
+    daily_job_limit: int = Field(default=100, ge=0, le=10_000)
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +644,10 @@ class OpenBoxConfig(BaseModel):
     image_generation: ImageGenerationConfig = ImageGenerationConfig()
     video_generation: VideoGenerationConfig = VideoGenerationConfig()
     video_transcription: VideoTranscriptionConfig = VideoTranscriptionConfig()
+    video_compose: VideoComposeConfig = VideoComposeConfig()
+    video_analysis: VideoAnalysisConfig = VideoAnalysisConfig()
+    hot_trends: HotTrendsConfig = HotTrendsConfig()
+    desktop_publish: DesktopPublishConfig = DesktopPublishConfig()
     compaction: CompactionConfig = CompactionConfig()
     instructions: list[str] = []
 

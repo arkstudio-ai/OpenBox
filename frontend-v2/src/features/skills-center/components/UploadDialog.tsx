@@ -4,6 +4,7 @@
 // an archive someone exported, a SKILL.md pasted from an editor, a git repo,
 // and — for MCP — the JSON snippet every server's README hands out.
 import { useRef, useState } from "react"
+import { ArchiveUploadQueue } from "@/shared/ui/ArchiveUploadQueue"
 import { useTranslation } from "react-i18next"
 import { parseMcpConfig, type ParsedMcpEntry } from "@/features/skills-center/lib/parse-mcp-config"
 import type { McpConfig } from "@/features/skills-center/types"
@@ -54,21 +55,25 @@ export function UploadDialog({
   error,
   onCancel,
   onUploadArchive,
+  onArchivesFinished,
   onInstallSkill,
   onAddMcp,
 }: {
   busy: boolean
   error?: string | null
   onCancel: () => void
-  onUploadArchive: (file: File, name: string) => void
+  onUploadArchive: (file: File, name: string) => Promise<unknown>
+  onArchivesFinished?: () => void
   onInstallSkill: (vars: { url?: string; name?: string; content?: string }) => void
   onAddMcp: (entries: ParsedMcpEntry[]) => void
 }) {
   const { t } = useTranslation("skills")
   const [mode, setMode] = useState<Mode>("archive")
 
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const archiveNames = useRef(new Map<File, string>())
+  const [archiveStarted, setArchiveStarted] = useState(false)
+  const hasUploaded = useRef(false)
   const [name, setName] = useState("")
   const [content, setContent] = useState("")
   const [url, setUrl] = useState("")
@@ -80,7 +85,6 @@ export function UploadDialog({
 
   function submit() {
     if (mode === "archive") {
-      if (file) onUploadArchive(file, name.trim())
       return
     }
     if (mode === "paste") {
@@ -110,7 +114,7 @@ export function UploadDialog({
 
   const canSubmit =
     mode === "archive"
-      ? Boolean(file)
+      ? false
       : mode === "paste"
         ? Boolean(content.trim())
         : mode === "git"
@@ -127,10 +131,10 @@ export function UploadDialog({
       aria-modal="true"
       aria-label={t("upload.title")}
     >
-      <div className="flex max-h-[86vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-hair bg-card shadow-xl">
-        <div className="px-5 pb-3 pt-5">
-          <h2 className="text-base font-medium text-ink">{t("upload.title")}</h2>
-          <p className="mt-0.5 text-xs leading-5 text-n600">{t("upload.subtitle")}</p>
+      <div className="border-hair bg-card flex max-h-[86vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border shadow-xl">
+        <div className="px-5 pt-5 pb-3">
+          <h2 className="text-ink text-base font-medium">{t("upload.title")}</h2>
+          <p className="text-n600 mt-0.5 text-xs leading-5">{t("upload.subtitle")}</p>
         </div>
 
         <div className="flex gap-1 px-5">
@@ -138,6 +142,7 @@ export function UploadDialog({
             <button
               key={m}
               type="button"
+              disabled={busy || uploading}
               onClick={() => setMode(m)}
               className={`rounded-full px-3 py-1 text-xs transition-colors ${
                 mode === m ? "bg-ink text-bg" : "text-n700 hover:bg-hairsoft"
@@ -151,30 +156,35 @@ export function UploadDialog({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
           {mode === "archive" && (
             <>
-              <input
-                ref={fileRef}
-                type="file"
+              <ArchiveUploadQueue
                 accept=".zip,.tar,.tar.gz,.tgz"
-                className="hidden"
-                onChange={(e) => {
-                  const picked = e.target.files?.[0] ?? null
-                  setFile(picked)
-                  if (picked && !name) setName(picked.name.replace(/\.(zip|tgz|tar|tar\.gz)$/i, ""))
+                onBusyChange={setUploading}
+                upload={async (files) => {
+                  const customName = !archiveStarted && files.length === 1 ? name.trim() : ""
+                  setArchiveStarted(true)
+                  const results = []
+                  for (const file of files) {
+                    if (!archiveNames.current.has(file)) archiveNames.current.set(file, customName)
+                    try {
+                      await onUploadArchive(file, archiveNames.current.get(file)!)
+                      hasUploaded.current = true
+                      results.push({ ok: true })
+                    } catch (e) {
+                      results.push({ ok: false, error: e instanceof Error ? e.message : t("common.error") })
+                    }
+                  }
+                  return results
                 }}
               />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="flex w-full flex-col items-center gap-1 rounded-xl border border-dashed border-hair bg-hairsoft/40 px-4 py-7 text-center hover:bg-hairsoft"
-              >
-                <span className="text-sm text-ink">
-                  {file ? file.name : t("upload.pickArchive")}
-                </span>
-                <span className="text-xs text-n600">{t("upload.archiveHint")}</span>
-              </button>
               <label className="mt-3 block">
-                <span className="text-xs text-n600">{t("upload.nameLabel")}</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
+                <span className="text-n600 text-xs">{t("upload.nameLabel")}</span>
+                <input
+                  value={name}
+                  disabled={busy || uploading || archiveStarted}
+                  onChange={(e) => setName(e.target.value)}
+                  className={FIELD}
+                />
+                <span className="text-n600 text-xs">{t("upload.batchNameHint")}</span>
               </label>
             </>
           )}
@@ -182,7 +192,7 @@ export function UploadDialog({
           {mode === "paste" && (
             <>
               <label className="block">
-                <span className="text-xs text-n600">{t("upload.contentLabel")}</span>
+                <span className="text-n600 text-xs">{t("upload.contentLabel")}</span>
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
@@ -192,14 +202,14 @@ export function UploadDialog({
                   className={`${FIELD} resize-none font-mono text-xs leading-5`}
                 />
               </label>
-              <p className="mt-1.5 text-xs leading-5 text-n600">{t("upload.frontmatterHint")}</p>
+              <p className="text-n600 mt-1.5 text-xs leading-5">{t("upload.frontmatterHint")}</p>
             </>
           )}
 
           {mode === "git" && (
             <>
               <label className="block">
-                <span className="text-xs text-n600">{t("upload.gitLabel")}</span>
+                <span className="text-n600 text-xs">{t("upload.gitLabel")}</span>
                 <input
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
@@ -208,39 +218,42 @@ export function UploadDialog({
                 />
               </label>
               <label className="mt-3 block">
-                <span className="text-xs text-n600">{t("upload.nameLabel")}</span>
+                <span className="text-n600 text-xs">{t("upload.nameLabel")}</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
               </label>
-              <p className="mt-1.5 text-xs leading-5 text-n600">{t("upload.gitHint")}</p>
+              <p className="text-n600 mt-1.5 text-xs leading-5">{t("upload.gitHint")}</p>
             </>
           )}
 
           {mode === "mcp" && <McpConfigForm state={mcp} onChange={patchMcp} />}
 
           {error && (
-            <p className="mt-3 rounded-lg bg-dangersoft px-3 py-2 text-xs leading-5 text-danger">
-              {error}
-            </p>
+            <p className="bg-dangersoft text-danger mt-3 rounded-lg px-3 py-2 text-xs leading-5">{error}</p>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 px-5 pb-5 pt-2">
+        <div className="flex justify-end gap-2 px-5 pt-2 pb-5">
           <button
             type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="rounded-full px-3.5 py-1.5 text-sm text-n700 hover:bg-hairsoft disabled:opacity-50"
+            onClick={() => {
+              onCancel()
+              if (hasUploaded.current) onArchivesFinished?.()
+            }}
+            disabled={busy || uploading}
+            className="text-n700 hover:bg-hairsoft rounded-full px-3.5 py-1.5 text-sm disabled:opacity-50"
           >
             {t("common.cancel")}
           </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy || !canSubmit}
-            className="rounded-full bg-ink px-3.5 py-1.5 text-sm text-bg hover:opacity-90 disabled:opacity-50"
-          >
-            {busy ? t("upload.installing") : t("upload.confirm")}
-          </button>
+          {mode !== "archive" && (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={busy || !canSubmit}
+              className="bg-ink text-bg rounded-full px-3.5 py-1.5 text-sm hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? t("upload.installing") : t("upload.confirm")}
+            </button>
+          )}
         </div>
       </div>
     </div>

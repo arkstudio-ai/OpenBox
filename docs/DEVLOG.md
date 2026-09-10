@@ -388,3 +388,39 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
   task id 恢复查询，浏览器再按版本继续等待。最终 mock 为 `POST=1 / GET=3`，数据库仅 1 个
   job、`attempt=1`、预算 `1/1`；测试作业随后由 mock 预期失败终态收敛，控制台无
   warning/error，真实供应商请求为 0。付费供应商版场景 C 仍需另行预算授权。
+
+## 视频合成引擎选型：IMS 先行，Remotion 备选（2026-09-09）
+
+调研了 CapCut/capcut-cli、HyperFrames、Remotion、MLT、Diffusion Studio、OpenCut、Resolve、火山与阿里云
+两家云剪辑。同一条口播样片在 IMS 与 Remotion 各渲一次并逐帧对照，复现并定位了 IMS 的「黑边」
+（VideoTrackClip 无显式几何时 AdaptMode 被忽略）与「文字位置」（锚点随 Alignment 变、需显式 TextWidth）
+两个历史 bug，均有确定性规避。拍板：先用 IMS，中间加编译层固化规则；Remotion 作为已验证的自托管备选
+（OffthreadVideo 解决视频重合成并行，54s 成片 11s；license 走 Automators 档）。完整记录与切换手册见
+`docs/VIDEO_RENDER_ENGINE_SELECTION.md`，spike 在 `work/remotion-spike/`、`work/ims-spike/`。
+
+## video_compose：IMS 云端合成接入平台原子工具（2026-09-09）
+
+`video/timeline.py`（自有时间线 schema）→ `video/ims_compiler.py`（六条规则 + VERIFIED/KNOWN 枚举表）→
+`tool/video_compose.py`（schema/validate/submit/status/wait/cancel，复用 video_jobs kind=compose，幂等键 +
+有界等待 + polling_paused）→ `video/ims_client.py`（tea-openapi 泛型 RPC）→ `video/compose_recovery.py`
+（补扫）。素材只接受调用者自己的 asset_id 或本账号桶内 `assets/<user>/` 前缀对象。编译产物与工具本体各在
+真实 IMS 跑通一次（阿里云内测账号，即 gw2 所在账号；尚无独立生产账号）。技能 allowed-tools 加 `video_compose`，ffmpeg 路径保留给纯拼接。全量单测回到基线
+（24 个既有失败：readiness 夹具、本机 openbox.json 依赖等，与本次无关）。
+
+## video_compose 计费与用户确认（2026-09-09，同日追加）
+
+`billing/media.py` + `rates.json` `media` 段：IMS 官方价按输出分钟报价、enforce 余额门、成功后按实际时长落账
+（`usage_events.kind=video_compose`，shadow/enforce 均测）。技能第 8 步改双路径（免费 ffmpeg 拼接 / 花钱的
+`video_compose`），新增第四张「合成确认」卡与 `references/compose-timeline.md`，没点「可以」不许 submit。
+
+## 视频生成落账 + 账单页媒体事件渲染（2026-09-09，同日追加）
+
+`billing/media.py` 加 `quote_generation/settle_generation`（申请秒数 × 模型档位每秒价），`video_generate estimate`
+输出 `estimated_credits`，完成时落账 `usage_events(kind=video_generate)`。前端 UsagePage 对 `video_*` 事件显示
+时长/计费单位/档位；web 与 mobile 词条同步（mobile UI 未改）。
+
+## 图片/转写落账 + mobile 账单媒体行（2026-09-09，同日追加）
+
+`billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
+`image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
+时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。

@@ -928,7 +928,10 @@ async def _ensure_browser_locked(client, container_key: str, mode: str) -> dict:
     # that cannot even start (fall through to local rather than surfacing it).
     fallback_reason = None
     try:
-        relay = await ensure_relay(client, container_key, mode)
+        # Auto already selects local when the extension is absent. Keep that
+        # single relay alive: switching extension -> local on every skill load
+        # discards page identities and leaves the old Chrome tabs orphaned.
+        relay = await ensure_relay(client, container_key, "auto")
     except RelayUnavailable as exc:
         relay = None
         fallback_reason = str(exc).splitlines()[0][:200]
@@ -940,7 +943,7 @@ async def _ensure_browser_locked(client, container_key: str, mode: str) -> dict:
     # No user browser attached — fall back to the desktop's own Chrome so the
     # agent still has something to drive. Any failure here is a real one.
     chrome = await ensure_chrome(client, container_key)
-    relay = await ensure_relay(client, container_key, "local")
+    relay = await ensure_relay(client, container_key, "auto")
     return {
         "mode": _effective_mode(relay, "local"),
         "relay": relay,

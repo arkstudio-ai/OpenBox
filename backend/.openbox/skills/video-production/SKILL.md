@@ -5,6 +5,7 @@ allowed-tools:
   - question
   - video_generate
   - video_transcribe
+  - video_compose
   - image_gen
   - creator_context
   - share_file
@@ -17,13 +18,13 @@ Bundled scripts run at `/opt/openbox/skills/video-production/scripts/`. Set `S=/
 
 ## Hard rules
 
-1. There are exactly three required `question` tool calls: finished script, complete shots + price, and STT results. A Markdown heading, table, or request for confirmation is not a card. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
+1. There are exactly three required `question` tool calls: finished script, complete shots + price, and STT results — plus a fourth, 合成确认, whenever the cut goes through `video_compose` (it spends credits). A Markdown heading, table, or request for confirmation is not a card. Put every reviewable detail in prose before invoking the tool. If `question` is unavailable, stop and explain; submit nothing.
 2. A plan, state hash, or successful estimate is not approval. Before the person chooses “可以” on the current complete shot card, make zero paid submits. Script, segment, prompt, material, model, or resolution changes invalidate affected planning and cost confirmation.
 3. The person's selected model and resolution are creative premises. Read `person_selected_model` and plan within its limits. Never silently change the model or tier. If none is selected, use and disclose the registry default.
 4. Use supplied material first. With none, use one textual `全片一致的画面基底`, byte for byte in every prompt. Call `image_gen` only when the person explicitly asks for a generated reference; never auto-create an anchor or reuse a generated frame as one.
 5. **素材外传红线：禁图床 / 网盘；禁 ngrok / serveo / `ssh -R` 隧道；禁对外监听。** If an upload or asset channel returns 401/403, stop and explain; do not route around it.
 6. Delivery means `share_file`. Until it returns a playable/downloadable result, never say “已交付”. In user-facing text, 不暴露内部 id/路径/工具名; translate errors into plain language.
-7. Subtitles remain ffmpeg + libass burned ASS (`$S/build_ass.py` + `$S/compose.sh`). HyperFrames is retired; never reintroduce it.
+7. Two ways to compose, never a third. A plain cut — concat plus burnt ASS captions — is ffmpeg + libass in the sandbox (`$S/build_ass.py` + `$S/compose.sh`). A cut that needs transitions, styled captions with motion, a hook title or a lower third goes through `video_compose` (cloud, Aliyun IMS): `action="schema"` for the timeline format, `action="validate"` (free) before `action="submit"`, then `wait` on the job_id. Shots are the accepted takes' asset_ids; the output attaches to the chat like a generated shot. HyperFrames is retired; never reintroduce it, and never render in the sandbox with Chrome.
 
 ## Never probe for parameters
 
@@ -43,12 +44,12 @@ Use `creator_context(action="get_user_context")`; empty is normal. Propose at mo
 
 ### 2. Write and confirm the whole script — card 1
 
-Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied, draft 45–60s first; do not ask duration before showing a usable script. Print the complete script, then invoke the `question` tool once with:
+Write pure spoken lines in the person's voice: hook → development → turn → close. If duration was not supplied, draft 45–60s first; do not ask duration before showing a usable script. **Fit the length before the card, not after it**: run `$S/split_script.py` and `$S/plan_shots.py` on the draft (step 3's commands) and, if the honest total misses the target by more than max(2s, 15%), rewrite until it fits. Print the complete fitted script with its computed length (e.g. 约 15 秒), then invoke the `question` tool once with:
 
 - 时长：`可以` / `短到约 30 秒` / `长到 60–75 秒` / `需要修改`
 - 字幕：`配字幕（默认）` / `不配字幕`
 
-If duration was supplied, honour it and still ask the subtitle choice. On edits, print the full revision and repeat card 1. After confirmation:
+If duration was supplied, honour it and still ask the subtitle choice. Card 1 repeats only when the **person** asks for a change: after 「可以」 you never rewrite, shorten or lengthen the script on your own — a length problem found later is reported on the next card as a choice, not fixed silently (2026-09-09: a confirmed 15 s script was re-timed to 17 s in step 3, trimmed by the agent, and card 1 was shown twice). On the person's edits, print the full revision and repeat card 1. After confirmation:
 
 ```bash
 python3 "$S/state.py" set --slug <slug> --key script --value "<完整讲稿>"
@@ -64,7 +65,7 @@ python3 "$S/split_script.py" --text "<完整讲稿>" --max-chars 40
 python3 "$S/plan_shots.py" --target <asked> --rate <pace> --min-shot-seconds <floor> --max-shot-seconds <ceiling> --line "…" --line "…"
 ```
 
-The splitter emits `plan_shots_args`. Forty characters is advice, not a universal cap. Always send an explicit duration; do not use `-1`. Never divide the requested total by the shot count. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Both bounds come from the selected model: Seedance takes 4–15s, Wan 3.0 takes 2–30s; re-read others. If honest total differs from the request, state the exact duration and offer script edits instead of squeezing delivery.
+The splitter emits `plan_shots_args`. Forty characters is advice, not a universal cap. Always send an explicit duration; do not use `-1`. Never divide the requested total by the shot count. Choose `--rate` from the piece you just wrote: calm 3.4, conversational 4.0, energetic 4.6. Both bounds come from the selected model: Seedance takes 4–15s, Wan 3.0 takes 2–30s; re-read others. The honest total should already match, because step 2 fitted it. If it still differs, do not touch the script: carry the exact duration onto card 2 as a choice (accept the honest length / edit the script) instead of squeezing delivery or re-running card 1.
 
 ### 4. Assign materials and write prompts
 
@@ -80,7 +81,7 @@ Read the zero-exit advice. `镜头跟随` is valid for a deliberate walking shot
 
 ### 5. Estimate and show complete shots + price — card 2
 
-Run `action="estimate"` for every exact request and sum any money amounts it actually returns. Before invoking the card, show without abbreviation:
+Run `action="estimate"` for every exact request; each returns `estimated_credits` (requested seconds × the model/tier rate) — sum them and show the total as the planned cost. Before invoking the card, show without abbreviation:
 
 - every complete line and every complete model prompt, character for character;
 - each shot's seconds and the honest total; call out mismatch with requested duration;
@@ -114,7 +115,10 @@ The person chooses affected shots to regenerate or accept. Before a paid regener
 
 ### 8. Compose, check, deliver
 
-Captions use the accepted actual transcript, never the written line. Run `$S/build_ass.py`, `$S/compose.sh`, then `python3 "$S/state.py" check --slug <slug> --final final.mp4`. Resolve or explain advisory findings: drift, missing jobs/audio, shot duration deviation, final audio, and final duration versus measured shot sum. Deliver only through `share_file`.
+Captions use the accepted actual transcript, never the written line. Two paths:
+
+- **Plain cut (free):** `$S/build_ass.py`, `$S/compose.sh`, then `python3 "$S/state.py" check --slug <slug> --final final.mp4`. Resolve or explain advisory findings: drift, missing jobs/audio, shot duration deviation, final audio, and final duration versus measured shot sum. Deliver only through `share_file`.
+- **Cut with effects (costs credits):** write the timeline JSON from the accepted takes' asset_ids and the accepted transcript (`references/compose-timeline.md`), `video_compose(action="validate")`, then show shots, captions, banners, transitions, `duration_sec` and the exact `estimated_credits` in prose and invoke **card 4**: `可以` / `改字幕或时间` / `换转场或动效` / `改用无特效拼接（ffmpeg）`. Only after `可以`: `submit` with `<slug>:compose:v1`, `wait` on the job_id, report the returned `credits=`. The result is attached by the tool; `share_file` is not needed.
 
 ## Invalidation and samples
 
@@ -143,5 +147,6 @@ Captions use the accepted actual transcript, never the written line. Run `$S/bui
 - `references/prompt-recipes.md` — rules, roles, examples, compliance and script structure
 - `references/model-guide.md` — selected-model discipline, references, duration and cost
 - `references/quality.md` — pathology, STT, duration acceptance and composition checks
+- `references/compose-timeline.md` — the `video_compose` timeline format, card 4, verified effects and billing
 
 Publishing/posting is handled by the `douyin-publish` skill (load it with the `skill` tool when the person wants the video on Douyin); this skill produces and delivers the file.

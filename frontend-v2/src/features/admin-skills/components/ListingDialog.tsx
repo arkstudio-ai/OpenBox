@@ -56,7 +56,13 @@ export function ListingDialog({
   const showFailure = failed && attempted
 
   return (
-    <Dialog open={open} onClose={onClose}>
+    <Dialog
+      open={open}
+      onClose={() => {
+        if (!pending) onClose()
+      }}
+      label={title}
+    >
       <DialogTitle>{title}</DialogTitle>
       <DialogBody>{body}</DialogBody>
       <label htmlFor={fieldId} className="text-n700 mt-2 text-xs">
@@ -65,6 +71,8 @@ export function ListingDialog({
       <textarea
         id={fieldId}
         rows={3}
+        maxLength={1000}
+        disabled={pending}
         value={reason}
         onChange={(event) => setReason(event.target.value)}
         placeholder={t("dialog.reasonPlaceholder")}
@@ -77,7 +85,12 @@ export function ListingDialog({
         </p>
       )}
       <DialogActions>
-        <button type="button" onClick={onClose} className="text-n700 text-sm hover:opacity-80">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onClose}
+          className="text-n700 text-sm hover:opacity-80 disabled:opacity-40"
+        >
           {t("action.cancel")}
         </button>
         <button

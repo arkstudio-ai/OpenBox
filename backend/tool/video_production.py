@@ -122,10 +122,11 @@ class VideoGenerateArgs(BaseModel):
             "same id. Never silently substitute another model."
         ),
     )
-    resolution: Literal["480p", "720p", "1080p"] | None = Field(
+    resolution: Literal["480p", "512p", "720p", "768p", "1080p", "2k"] | None = Field(
         default=None,
         description=(
-            "Output resolution. If the person selected a resolution in the composer, "
+            "A resolution tier supported by action=models (including MiniMax 512p/768p/2k). "
+            "If the person selected a resolution in the composer, "
             "omit this field or pass that exact value; changing it requires the person "
             "to update the composer selection first."
         ),
@@ -1223,10 +1224,23 @@ async def _finalize_segment(
         await persist_guard()
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     await _mark_asset(job.output_asset_id, status="ready", size=size)
+    credits = None
+    try:
+        from billing.media import settle_generation
+
+        request = job.request_data if isinstance(job.request_data, dict) else {}
+        requested = request.get("duration")
+        credits = await settle_generation(
+            job, asset, model_id=job.model or "", resolution=request.get("resolution"),
+            duration_sec=float(requested) if isinstance(requested, (int, float)) and requested > 0 else None,
+        )
+    except Exception as exc:  # billing must never strand a finished, paid video
+        log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     await _update_job(
         job.id,
         status="completed",
-        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size},
+        result_data={"usage": usage, "provider_status": data.get("status"), "bytes": size,
+                     "credits": format(credits.normalize(), "f") if credits is not None else None},
         error=None,
         completed_at=datetime.now(timezone.utc),
     )
@@ -1279,6 +1293,9 @@ def _job_lines(
                 "handoff_instruction=use the attached final-video card or the exact "
                 "download_url; never construct a markdown URL from path or asset_id"
             )
+    credits = (job.result_data or {}).get("credits") if isinstance(getattr(job, "result_data", None), dict) else None
+    if credits is not None and job.status == "completed":
+        lines.append(f"credits={credits}")
     if job.error:
         lines.append(f"error={job.error}")
     if getattr(job, "kind", None) == "segment" and job.status == "completed" and production_id and segment_id:
@@ -1839,6 +1856,15 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
 
     duration = approved["duration"]
     billed = "model-chosen length" if duration == -1 else f"{duration}s"
+    from billing.media import quote_generation
+
+    price = quote_generation(target.model, approved["resolution"], None if duration == -1 else duration)
+    price_lines = (
+        [f"estimated_credits={format(price.credits.normalize(), 'f')}",
+         f"per_second_credits={price.snapshot['per_second']}  seconds_billed={price.minutes_billed}"]
+        if price.credits is not None
+        else [f"estimated_credits=unavailable ({price.snapshot.get('reason')})"]
+    )
     used = await _daily_submit_count(ctx)
     limit = int(getattr(get_config().video_generation, "daily_job_limit", 0) or 0)
     lines = [
@@ -1853,8 +1879,9 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             if approved.get("dropped")
             else []
         ),
-        # Billing is per second of output on this route, so an explicit
-        # duration is the whole cost story; there is no per-call price to read.
+        # Price = requested seconds × the model/tier rate in billing/rates.json
+        # (media.video-gen). Settled on completion with the same numbers.
+        *price_lines,
         # "used=50/50" was read as "50 remaining" by a caller reporting it to
         # the person. Say what is left, and only mention the ceiling beside it.
         (
@@ -1868,7 +1895,9 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
     return ToolResult(
         title="Video request looks valid",
         output="\n".join(lines),
-        metadata={"valid": True, "model": target.model},
+        metadata={"valid": True, "model": target.model,
+                  "estimated_credits": format(price.credits.normalize(), "f") if price.credits is not None else None,
+                  "seconds_billed": price.minutes_billed},
     )
 
 
@@ -1937,6 +1966,50 @@ async def _materialize_asset(asset, ctx: ToolContext) -> str:
     return paths[0]
 
 
+async def _run_rejected_submission(ctx: ToolContext, target: Any):
+    """Stop an Agent changing keys/parameters after a definite provider 4xx.
+
+    This is scoped to the server-owned run, user, session, model and route.
+    A later user turn can try again after configuration has been repaired;
+    historical failures do not permanently lock a conversation.
+    """
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+    from tool.video_providers import provider_route_fingerprint
+    from sqlalchemy import JSON, type_coerce
+
+    run_id = getattr(ctx, "run_id", "")
+    if not run_id or not ctx.session_id:
+        return None
+    async with get_db_session() as db:
+        return (await db.execute(select(VideoJob).where(
+            VideoJob.user_id == ctx.user_id,
+            VideoJob.session_id == ctx.session_id,
+            VideoJob.kind == "segment",
+            VideoJob.model == target.model,
+            VideoJob.status == "failed",
+            VideoJob.provider_task_id.is_(None),
+            type_coerce(VideoJob.request_data, JSON)["submit_run_id"].as_string() == run_id,
+            type_coerce(VideoJob.request_data, JSON)["provider_route_fingerprint"].as_string() == provider_route_fingerprint(target),
+            type_coerce(VideoJob.result_data, JSON)["submit_error"]["submission_outcome"].as_string() == "rejected",
+        ).order_by(VideoJob.created_at.desc()).limit(1))).scalar_one_or_none()
+
+
+def _rejected_submission_result(job_id: str, detail: dict, *, blocked: bool = False) -> ToolResult:
+    return ToolResult(
+        title="Video submission blocked after rejection" if blocked else "Video generation request rejected",
+        output=(
+            f"job_id={job_id}\nstatus=failed\nsubmission_outcome=rejected\n"
+            f"{detail['message']}\n"
+            "do_not_resubmit=true; stop this assistant run and report the error. "
+            "Do not change the prompt, model or idempotency key to retry. "
+            "A new user turn may retry after the configuration or request is corrected."
+        ),
+        metadata={**detail, "job_id": job_id, "status": "failed", "error": True,
+                  "do_not_resubmit": True, "submission_blocked": blocked},
+    )
+
+
 async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResult:
     if args.action == "models":
         return await _execute_models(ctx)
@@ -1955,6 +2028,9 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         try:
             approved = await _resolve_open_submission(args, ctx)
             await _check_submit_budget(ctx)
+            from billing.media import precheck_compose as _precheck_media
+
+            await _precheck_media(ctx.session_id)
             prompt = approved["prompt"]
             resolution = approved["resolution"]
             ratio = approved["ratio"]
@@ -1964,6 +2040,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             if approved.get("model"):
                 # Per-segment model override routes to its own channel.
                 target, settings = _configured_target(approved["model"])
+            rejected = await _run_rejected_submission(ctx, target)
+            if rejected is not None:
+                return _rejected_submission_result(
+                    rejected.id, rejected.result_data["submit_error"], blocked=True
+                )
             seed = approved.get("seed")
             if ratio not in _RATIOS:
                 raise RuntimeError(f"unsupported ratio: {ratio}")
@@ -1991,6 +2072,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             )
             provider_content = _ark_reference_content(refs) if channel == "ark" else []
             request_data = {
+                "submit_run_id": getattr(ctx, "run_id", ""),
                 "roles": list(roles),
                 # Which shot this is, so the chat can order concurrent results
                 # by script position rather than by whichever finished first.
@@ -2014,7 +2096,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
             logical_request_data = {
                 key: value
                 for key, value in request_data.items()
-                if key != "provider_route_fingerprint"
+                if key not in {"provider_route_fingerprint", "submit_run_id"}
             }
             request_hash = content_hash(
                 {
@@ -2277,6 +2359,19 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                                 "retry_after_seconds": 5,
                             },
                         )
+                rejection = video_providers.submission_rejection(exc)
+                if rejection is not None and "critical_submit" in locals():
+                    log.warning(
+                        "video submit rejected job_id=%s model=%s status=%s code=%s provider_request_id=%s",
+                        job.id, target.model, rejection["http_status"], rejection["code"],
+                        rejection.get("provider_request_id", "unavailable"),
+                    )
+                    await _update_job(
+                        job.id, status="failed", error=rejection["message"],
+                        result_data={"submit_error": rejection}, completed_at=datetime.now(timezone.utc),
+                    )
+                    await _mark_asset(job.output_asset_id, status="failed")
+                    return _rejected_submission_result(job.id, rejection)
                 await _update_job(
                     job.id,
                     status="failed",
@@ -2576,6 +2671,8 @@ def _transcription_lines(job) -> list[str]:
         lines.append(f"transcript={transcript.get('text') or ''}")
         if transcript.get("duration_ms"):
             lines.append(f"duration_ms={transcript['duration_ms']}")
+    if result.get("credits") is not None:
+        lines.append(f"credits={result['credits']}")
     source = (job.request_data or {}).get("source_asset_id")
     if source:
         lines.append(f"source_asset_id={source}")
@@ -2642,10 +2739,23 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
             transcript = await _provider_transcribe(target, audio_url)
+            credits = None
+            try:
+                from billing.media import settle_transcription
+
+                duration_ms = transcript.get("duration_ms") if isinstance(transcript, dict) else None
+                credits = await settle_transcription(
+                    job, workspace_id=getattr(source, "workspace_id", None) or ctx.workspace_id,
+                    model_id=target.model,
+                    duration_sec=(float(duration_ms) / 1000.0) if isinstance(duration_ms, (int, float)) and duration_ms > 0 else None,
+                )
+            except Exception as exc:  # billing must never lose a finished transcript
+                log.warning(f"transcription {job.id}: settlement failed: {type(exc).__name__}: {exc}")
             await _update_job(
                 job.id,
                 status="completed",
-                result_data={"transcript": transcript},
+                result_data={"transcript": transcript,
+                             "credits": format(credits.normalize(), "f") if credits is not None else None},
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )

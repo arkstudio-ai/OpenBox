@@ -1,4 +1,5 @@
 import type { FilePart, FileRelation, MessageWithParts, TextPart, ToolPart } from "@/shared/types/api"
+import { resolveDirectVideoDelivery } from "./video-delivery"
 
 export type ArtifactRole = NonNullable<FileRelation["role"]>
 
@@ -96,6 +97,11 @@ function finalMessageIndex(messages: MessageWithParts[], streaming: boolean): nu
     }
   }
   return -1
+}
+
+function isCompletedReply(messages: MessageWithParts[], finalIndex: number): boolean {
+  return finalIndex === messages.length - 1 && messages.every((message) => !message.error) &&
+    (messages.at(-1)?.finish === "stop" || messages.every((message) => message.finish == null))
 }
 
 function metadataAssetIds(tool: ToolPart): string[] {
@@ -275,9 +281,10 @@ function groupArtifacts(
 }
 
 function resultOrder(group: ArtifactGroup): number {
-  if (group.role === "final") return 0
-  if (group.role === "result") return 1
-  return 2
+  if (group.artifactKind === "video_segment") return 0
+  if (group.role === "final") return 1
+  if (group.role === "result") return 2
+  return 3
 }
 
 /** The segment's QA fields land on the artifact only when the file itself did
@@ -380,7 +387,6 @@ export function buildAssistantContentView(
   const artifacts: ArtifactEntry[] = []
   let order = 0
   // Rendering is a single ordered fold over heterogeneous persisted parts.
-  // eslint-disable-next-line complexity
   messages.forEach((message, messageIndex) => {
     const precedingTools: ToolPart[] = []
     const finalStep = messageIndex === finalIndex && !isToolStepFinish(message.finish)
@@ -395,7 +401,10 @@ export function buildAssistantContentView(
     }
   })
 
-  const groups = groupArtifacts(artifacts)
+  const suspended = awaitingInput || messages.at(-1)?.finish === "waiting_input" ||
+    tools.some((tool) => tool.status === "waiting_input")
+  const completedDelivery = hasFinal && !streaming && !suspended && isCompletedReply(messages, finalIndex)
+  const groups = resolveDirectVideoDelivery(groupArtifacts(artifacts), completedDelivery)
   const evidence = groups.filter((group) => group.role === "evidence")
   const results = groups
     .filter((group) => group.role !== "evidence" && group.role !== "input")
@@ -403,7 +412,8 @@ export function buildAssistantContentView(
       const role = resultOrder(a) - resultOrder(b)
       if (role !== 0) return role
       if (a.artifactKind === "video_segment" && b.artifactKind === "video_segment") {
-        return (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
+        const ordinal = (a.ordinal ?? Number.MAX_SAFE_INTEGER) - (b.ordinal ?? Number.MAX_SAFE_INTEGER)
+        if (ordinal !== 0) return ordinal
       }
       return a.order - b.order
     })
@@ -418,9 +428,6 @@ export function buildAssistantContentView(
   const hasWork = progress.length > 0 || tools.length > 0 || groups.length > 0
   // A durable pause deliberately has no final prose. Preserve this meaning
   // for replaced/cancelled ask history whose last step remains waiting_input.
-  const suspended = awaitingInput || messages.at(-1)?.finish === "waiting_input" ||
-    tools.some((tool) => tool.status === "waiting_input")
-
   return {
     finalText,
     finalMessageId: finalIndex >= 0 ? (messages[finalIndex]?.id ?? null) : null,

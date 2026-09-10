@@ -159,7 +159,9 @@ def store_visible() -> ColumnElement[bool]:
     archive check is an integrity guard, not a third policy: a row claiming to
     be published with no bytes behind it can only fail at install time.
     """
+    from skill.catalog_admin import not_deleted
     return and_(
+        not_deleted(_community_key()),
         UserSkill.status == PUBLISHED,
         UserSkill.listing == LISTING_LISTED,
         UserSkill.published_archive_data.is_not(None),
@@ -264,7 +266,7 @@ def _snapshot_dict(row: UserSkill, *, include_archive: bool = False) -> dict[str
         "archive_size": row.archive_size,
         "published_archive_size": row.published_archive_size if released else None,
         "has_unpublished_changes": _has_unpublished_changes(row),
-        "restore_available": bool(row.archive_data),
+        "restore_available": bool(row.archive_data) and not metadata.get("admin_restore_disabled", False),
         "homepage": metadata.get("homepage", ""),
         "requires_mcp": list(metadata.get("requires_mcp") or []),
         "files": list(metadata.get("files") or []),
@@ -710,11 +712,16 @@ async def get_published_skill(
                 .where(UserSkill.id == row_id, *visibility)
             )
         ).scalar_one_or_none()
-        return (
+        result = (
             _published_snapshot_dict(row, include_archive=include_archive)
             if row
             else None
         )
+    if result:
+        from skill.catalog_admin import apply_metadata
+        items = await apply_metadata([result], include_archive=include_archive)
+        return items[0] if items else None
+    return None
 
 
 #: Everything the store renders about a community entry.  Naming the columns
@@ -797,7 +804,8 @@ async def list_published_catalog_entries() -> list[dict[str, Any]]:
                 "published_at": _iso(row.published_at),
             }
         )
-    return entries
+    from skill.catalog_admin import apply_metadata
+    return await apply_metadata(entries)
 
 
 #: The operator's view adds identity, moderation and integrity columns.  Both
@@ -856,7 +864,9 @@ async def list_all_store_entries(
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
 
+    from skill.catalog_admin import apply_metadata, not_deleted, overlays
     filters = [
+        not_deleted(_community_key()),
         # "Has been submitted at least once", asked without naming the blob.
         UserSkill.published_version.is_not(None),
     ]
@@ -871,8 +881,12 @@ async def list_all_store_entries(
         # has either a username, an email or a skill name and rarely knows
         # which field it belongs to.
         pattern = f"%{query.strip()}%"
+        managed_matches = [key.split(":", 1)[1] for key, entry in (await overlays()).items()
+                           if key.startswith(COMMUNITY_PREFIX) and query.strip().lower() in
+                           " ".join(str(entry.get(k) or "") for k in ("title", "description")).lower()]
         filters.append(
             or_(
+                UserSkill.id.in_(managed_matches),
                 UserSkill.published_name.ilike(pattern),
                 UserSkill.name.ilike(pattern),
                 User.username.ilike(pattern),
@@ -958,7 +972,7 @@ async def list_all_store_entries(
         )
     return {
         "total": int(total) if total is not None else None,
-        "entries": entries,
+        "entries": await apply_metadata(entries),
     }
 
 

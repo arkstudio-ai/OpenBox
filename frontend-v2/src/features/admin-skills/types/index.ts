@@ -39,6 +39,43 @@ export interface StoreEntry {
   requires_mcp?: string[] | null
   size?: number | null
   sha256?: string | null
+  deleted?: boolean
+}
+
+export interface StoreDetail extends StoreEntry {
+  revision: number
+  content: string
+  config?: Record<string, unknown>
+  has_archive?: boolean
+}
+
+export interface Desktop {
+  desktop_id: string
+  workspace_id: string | null
+  workspace_name: string | null
+  username: string | null
+  status: string
+  channel_state: string | null
+  members: { id: string; username: string; email: string }[]
+}
+
+export interface DesktopSkill {
+  name: string
+  names?: string[]
+  kind: SkillKind
+  install_dir: string
+  description: string
+  source: string
+  icon: string
+  removable: boolean
+}
+
+export interface DesktopScan {
+  items: DesktopSkill[]
+  unavailable: SkillKind[]
+  desktop_id: string
+  user_id: string
+  scanned_at: string
 }
 
 export interface Page<T> {

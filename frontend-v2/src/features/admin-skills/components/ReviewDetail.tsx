@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { Spinner } from "@/shared/ui/Spinner"
 import { StatusPill } from "@/shared/ui/StatusPill"
+import { DisplayIcon } from "@/shared/ui/DisplayIcon"
 import { listingTone } from "@/features/admin-skills/lib/entry"
 import { useReviewDetail } from "@/features/admin-skills/api/admin-skills"
 import { ReviewActions } from "./ReviewActions"
@@ -36,7 +37,7 @@ export function ReviewDetail({ catalogId }: { catalogId: string }) {
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-base font-medium">
-            <span aria-hidden>{detail.icon || "🧩"}</span>
+            <DisplayIcon icon={detail.icon} />
             {detail.title}
           </h2>
           <p className="text-n600 text-2xs mt-0.5 truncate font-mono">{detail.catalog_id}</p>

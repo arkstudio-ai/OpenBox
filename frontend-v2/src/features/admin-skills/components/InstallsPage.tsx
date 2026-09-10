@@ -1,17 +1,45 @@
 // 技能管理 › 用户安装 — the install ledger, by skill or by person.
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useSearchParams } from "react-router"
 import { X } from "lucide-react"
 import { Pagination } from "@/shared/ui/Pagination"
 import { useUrlState } from "@/shared/hooks/useUrlState"
 import { useInstalls } from "@/features/admin-skills/api/admin-skills"
 import { InstallsTable } from "./InstallsTable"
 import { SearchBox } from "./SearchBox"
+import { DesktopInstalls } from "./DesktopInstalls"
 
 const LIMIT = 20
 // `catalog` is prefilled when an operator clicks an install count in the store.
 const DEFAULTS = { q: "", catalog: "", offset: "0" }
+const MODES = ["live", "history"] as const
 
 export function InstallsPage() {
+  const { t } = useTranslation("admin-skills")
+  const [params] = useSearchParams()
+  const [mode, setMode] = useState(params.has("catalog") ? "history" : "live")
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        {MODES.map((tab) => (
+          <button
+            type="button"
+            key={tab}
+            aria-pressed={mode === tab}
+            className={`rounded-full px-4 py-2 text-sm ${mode === tab ? "bg-hairsoft font-medium" : "text-n600"}`}
+            onClick={() => setMode(tab)}
+          >
+            {t(`desktop.${tab}`)}
+          </button>
+        ))}
+      </div>
+      {mode === "live" ? <DesktopInstalls /> : <InstallHistory />}
+    </div>
+  )
+}
+
+function InstallHistory() {
   const { t } = useTranslation("admin-skills")
   const [values, setValues] = useUrlState(DEFAULTS)
   const offset = Number(values.offset) || 0

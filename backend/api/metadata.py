@@ -782,7 +782,8 @@ async def install_from_catalog(
 
     user_id = current_user["user_id"]
     workspace_id = current_user.get("workspace_id")
-    index = catalog_index()
+    from skill.catalog_admin import dependency_index
+    index = await dependency_index(catalog_index())
 
     community_row: dict | None = None
     entry: dict | None = None
@@ -813,6 +814,10 @@ async def install_from_catalog(
                     "longer available in the store."
                 ),
             )
+
+    for dep_id in body.with_mcp:
+        if f"mcp:{dep_id}" not in index:
+            raise HTTPException(409, detail=f"MCP dependency '{dep_id}' was deleted or is unavailable")
 
     client = await sandbox_manager.get_client_any(user_id=user_id, **_sandbox_scope(current_user))
     if not client:
@@ -955,9 +960,19 @@ async def install_from_catalog(
         installed.append(await install_mcp(entry))
     else:
         spec = entry.get("install", {})
-        result = await client.install_skill(
-            url=spec.get("url"), name=spec.get("name"), content=spec.get("content"),
-        )
+        if entry.get("has_archive"):
+            from skill.catalog_admin import archive_bytes
+            data = await archive_bytes(entry["catalog_id"])
+            if data is None:
+                raise HTTPException(409, detail="Store package is unavailable; refresh the store")
+            existing = await client.list_skills() or []
+            if any((item.get("install_dir") or item.get("name")) == entry["name"] for item in existing):
+                raise HTTPException(409, detail="Skill already exists; uninstall it before installing this release")
+            result = await client.upload_skill_archive(data, f"{entry['name']}.zip", entry["name"])
+        else:
+            result = await client.install_skill(
+                url=spec.get("url"), name=spec.get("name"), content=spec.get("content"),
+            )
         reported = result if isinstance(result, dict) else {}
         installed_name = reported.get("name") or entry["name"]
         installed_dir = (

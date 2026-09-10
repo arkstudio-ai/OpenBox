@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,10 +12,8 @@ import 'attachment_gallery.dart';
 import 'audio_preview.dart';
 import 'traces/douyin_tool_actions.dart';
 
-/// What a turn produced, grouped (web `ResultArtifacts`): the final
-/// deliverable first, then ordinary results, then the segment collection,
-/// and — only when a turn has nothing richer — the last screen state as
-/// verification.
+/// Materials precede the final deliverable. Only an attached final video
+/// folds the materials; pending/failed renders leave them visible.
 class ResultArtifacts extends ConsumerWidget {
   const ResultArtifacts({
     super.key,
@@ -29,41 +29,43 @@ class ResultArtifacts extends ConsumerWidget {
     if (groups.isEmpty && verification == null) {
       return const SizedBox.shrink();
     }
-    final t = context.tokens;
-    final i18n = ref.watch(i18nProvider);
-    final finals = groups.where((g) => g.role == 'final').toList();
+    final finals = groups
+        .where((g) => g.role == 'final' && g.artifactKind != 'video_segment')
+        .toList();
     final segments = groups
         .where((g) => g.artifactKind == 'video_segment')
         .toList();
     final ordinary = groups
         .where((g) => g.role != 'final' && g.artifactKind != 'video_segment')
         .toList();
+    final finalVideoAssets =
+        groups
+            .where(isFinalVideoArtifact)
+            .expand((g) => g.parts)
+            .where(
+              (p) =>
+                  (p.assetId?.isNotEmpty ?? false) &&
+                  (p.mimeType?.startsWith('video/') ?? false),
+            )
+            .map((p) => p.assetId!)
+            .toList()
+          ..sort();
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final group in finals) _ArtifactCard(group: group, hero: true),
-          for (final group in ordinary) _ArtifactCard(group: group),
-          if (segments.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 6),
-              child: Text(
-                i18n.t(
-                  'chat:artifacts.segmentCollection',
-                  count: segments.length,
-                ),
-                style: TextStyle(
-                  fontSize: FontSizes.xs,
-                  fontWeight: FontWeight.w500,
-                  color: t.n600,
-                ),
-              ),
+          if (segments.isNotEmpty)
+            _SegmentCollection(
+              key: ValueKey(jsonEncode(finalVideoAssets)),
+              groups: segments,
+              collapsible: finalVideoAssets.isNotEmpty,
             ),
-            for (final (index, group) in segments.indexed)
-              _ArtifactCard(group: group, segmentNumber: index + 1),
-          ],
+          for (final group in finals)
+            _ArtifactCard(key: ValueKey(group.id), group: group, hero: true),
+          for (final group in ordinary)
+            _ArtifactCard(key: ValueKey(group.id), group: group),
           if (verification != null) _VerificationCard(group: verification!),
         ],
       ),
@@ -71,8 +73,100 @@ class ResultArtifacts extends ConsumerWidget {
   }
 }
 
+class _SegmentCollection extends ConsumerStatefulWidget {
+  const _SegmentCollection({
+    super.key,
+    required this.groups,
+    required this.collapsible,
+  });
+
+  final List<ArtifactGroup> groups;
+  final bool collapsible;
+
+  @override
+  ConsumerState<_SegmentCollection> createState() => _SegmentCollectionState();
+}
+
+class _SegmentCollectionState extends ConsumerState<_SegmentCollection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final i18n = ref.watch(i18nProvider);
+    final open = !widget.collapsible || _expanded;
+    final title = i18n.t(
+      'chat:artifacts.segmentCollection',
+      count: widget.groups.length,
+    );
+    final titleStyle = TextStyle(
+      fontSize: FontSizes.xs,
+      fontWeight: FontWeight.w500,
+      color: t.n600,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.collapsible)
+          Semantics(
+            expanded: open,
+            child: TextButton(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              style: TextButton.styleFrom(
+                foregroundColor: t.n600,
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              child: Row(
+                children: [
+                  AnimatedRotation(
+                    turns: open ? 0 : -0.25,
+                    duration: const Duration(milliseconds: 150),
+                    child: const Icon(Icons.expand_more, size: 18),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(title, style: titleStyle)),
+                  const SizedBox(width: 8),
+                  Text(
+                    i18n.t(
+                      open
+                          ? 'chat:toolDetail.collapse'
+                          : 'chat:toolDetail.expand',
+                    ),
+                    style: titleStyle,
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 6),
+            child: Text(title, style: titleStyle),
+          ),
+        Fold(
+          open: open,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (index, group) in widget.groups.indexed)
+                _ArtifactCard(
+                  key: ValueKey(group.id),
+                  group: group,
+                  segmentNumber: index + 1,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ArtifactCard extends ConsumerStatefulWidget {
   const _ArtifactCard({
+    super.key,
     required this.group,
     this.hero = false,
     this.segmentNumber,

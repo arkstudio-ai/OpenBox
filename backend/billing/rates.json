@@ -13,29 +13,333 @@
     "google": "https://ai.google.dev/gemini-api/docs/pricing"
   },
   "models": {
-    "gpt-5.6-sol": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "4", "output": "20", "cache_read": "0.4", "cache_write": "5", "long_context_above": 272000},
-    "gpt-5.6-terra": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "2", "output": "12", "cache_read": "0.2", "cache_write": "2.5", "long_context_above": 272000},
-    "gpt-5.6-luna": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "0.2", "output": "1.2", "cache_read": "0.02", "cache_write": "0.25", "long_context_above": 272000},
-    "gpt-5.5": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "5", "output": "30", "cache_read": "0.5", "long_context_above": 272000},
-    "gpt-5.4": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "2.5", "output": "15", "cache_read": "0.25", "long_context_above": 272000},
-    "gpt-5.4-mini": {"vendor": "openai", "currency": "USD", "conversion": "gpt_numeric_1_to_1", "input": "0.75", "output": "4.5", "cache_read": "0.075"},
-    "claude-opus-5": {"vendor": "anthropic", "currency": "USD", "input": "5", "output": "25", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10"},
-    "claude-opus-4-8": {"vendor": "anthropic", "currency": "USD", "input": "5", "output": "25", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10"},
-    "claude-opus-4-7": {"vendor": "anthropic", "currency": "USD", "input": "5", "output": "25", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10"},
-    "claude-opus-4-6": {"vendor": "anthropic", "currency": "USD", "input": "5", "output": "25", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10"},
-    "claude-sonnet-5": {"vendor": "anthropic", "currency": "USD", "input": "2", "output": "10", "cache_read": "0.2", "cache_write": "2.5", "cache_write_1h": "4"},
-    "claude-sonnet-4-6": {"vendor": "anthropic", "currency": "USD", "input": "3", "output": "15", "cache_read": "0.3", "cache_write": "3.75", "cache_write_1h": "6"},
-    "claude-fable-5": {"vendor": "anthropic", "currency": "USD", "input": "10", "output": "50", "cache_read": "1", "cache_write": "12.5", "cache_write_1h": "20"},
-    "claude-haiku-4-5-20251001": {"vendor": "anthropic", "currency": "USD", "input": "1", "output": "5", "cache_read": "0.1", "cache_write": "1.25", "cache_write_1h": "2"},
-    "deepseek-v4-flash": {"vendor": "deepseek", "currency": "CNY", "input": "1.5", "output": "4.5", "cache_read": "0.05", "peak_multiplier": "2"},
-    "deepseek-v4-pro": {"vendor": "deepseek", "currency": "CNY", "input": "4.5", "output": "13.5", "cache_read": "0.15", "peak_multiplier": "2"},
-    "qwen3.8-max": {"vendor": "qwen", "currency": "CNY", "region": "cn-beijing", "input": "12", "output": "36", "cache_read": "1.5", "cache_read_explicit": "1", "cache_write": "15", "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-max"},
-    "qwen3.8-flash": {"vendor": "qwen", "currency": "CNY", "region": "cn-beijing", "input": "0.8", "output": "2.7", "cache_read": "0.1", "cache_read_explicit": "0.1", "cache_write": "1.25", "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-flash"},
-    "gemini-3.7-flash": {"vendor": "google", "currency": "USD", "input": "0.75", "output": "3.75", "cache_read": "0.075", "valid_until": "2026-12-31"}
+    "gpt-5.6-sol": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "4",
+      "output": "20",
+      "cache_read": "0.4",
+      "cache_write": "5",
+      "long_context_above": 272000
+    },
+    "gpt-5.6-terra": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "2",
+      "output": "12",
+      "cache_read": "0.2",
+      "cache_write": "2.5",
+      "long_context_above": 272000
+    },
+    "gpt-5.6-luna": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "0.2",
+      "output": "1.2",
+      "cache_read": "0.02",
+      "cache_write": "0.25",
+      "long_context_above": 272000
+    },
+    "gpt-5.5": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "5",
+      "output": "30",
+      "cache_read": "0.5",
+      "long_context_above": 272000
+    },
+    "gpt-5.4": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "2.5",
+      "output": "15",
+      "cache_read": "0.25",
+      "long_context_above": 272000
+    },
+    "gpt-5.4-mini": {
+      "vendor": "openai",
+      "currency": "USD",
+      "conversion": "gpt_numeric_1_to_1",
+      "input": "0.75",
+      "output": "4.5",
+      "cache_read": "0.075"
+    },
+    "claude-opus-5": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "5",
+      "output": "25",
+      "cache_read": "0.5",
+      "cache_write": "6.25",
+      "cache_write_1h": "10"
+    },
+    "claude-opus-4-8": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "5",
+      "output": "25",
+      "cache_read": "0.5",
+      "cache_write": "6.25",
+      "cache_write_1h": "10"
+    },
+    "claude-opus-4-7": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "5",
+      "output": "25",
+      "cache_read": "0.5",
+      "cache_write": "6.25",
+      "cache_write_1h": "10"
+    },
+    "claude-opus-4-6": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "5",
+      "output": "25",
+      "cache_read": "0.5",
+      "cache_write": "6.25",
+      "cache_write_1h": "10"
+    },
+    "claude-sonnet-5": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "2",
+      "output": "10",
+      "cache_read": "0.2",
+      "cache_write": "2.5",
+      "cache_write_1h": "4"
+    },
+    "claude-sonnet-4-6": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "3",
+      "output": "15",
+      "cache_read": "0.3",
+      "cache_write": "3.75",
+      "cache_write_1h": "6"
+    },
+    "claude-fable-5": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "10",
+      "output": "50",
+      "cache_read": "1",
+      "cache_write": "12.5",
+      "cache_write_1h": "20"
+    },
+    "claude-haiku-4-5-20251001": {
+      "vendor": "anthropic",
+      "currency": "USD",
+      "input": "1",
+      "output": "5",
+      "cache_read": "0.1",
+      "cache_write": "1.25",
+      "cache_write_1h": "2"
+    },
+    "deepseek-v4-flash": {
+      "vendor": "deepseek",
+      "currency": "CNY",
+      "input": "1.5",
+      "output": "4.5",
+      "cache_read": "0.05",
+      "peak_multiplier": "2"
+    },
+    "deepseek-v4-pro": {
+      "vendor": "deepseek",
+      "currency": "CNY",
+      "input": "4.5",
+      "output": "13.5",
+      "cache_read": "0.15",
+      "peak_multiplier": "2"
+    },
+    "qwen3.8-max": {
+      "vendor": "qwen",
+      "currency": "CNY",
+      "region": "cn-beijing",
+      "input": "12",
+      "output": "36",
+      "cache_read": "1.5",
+      "cache_read_explicit": "1",
+      "cache_write": "15",
+      "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-max"
+    },
+    "qwen3.8-flash": {
+      "vendor": "qwen",
+      "currency": "CNY",
+      "region": "cn-beijing",
+      "input": "0.8",
+      "output": "2.7",
+      "cache_read": "0.1",
+      "cache_read_explicit": "0.1",
+      "cache_write": "1.25",
+      "source": "https://help.aliyun.com/zh/model-studio/qwen3-8-flash"
+    },
+    "gemini-3.7-flash": {
+      "vendor": "google",
+      "currency": "USD",
+      "input": "0.75",
+      "output": "3.75",
+      "cache_read": "0.075",
+      "valid_until": "2026-12-31"
+    }
   },
-  "aliases": {"gpt-5.6": "gpt-5.6-sol", "qwen3.8-max-0902": "qwen3.8-max", "claude-haiku-4-5": "claude-haiku-4-5-20251001"},
+  "aliases": {
+    "gpt-5.6": "gpt-5.6-sol",
+    "qwen3.8-max-0902": "qwen3.8-max",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001"
+  },
   "unpriced": {
     "deepseek-chat": "Official alias retired on 2026-07-24; configure the gateway's exact model mapping before charging.",
     "deepseek-reasoner": "Official alias retired on 2026-07-24; configure the gateway's exact model mapping before charging."
+  },
+  "media": {
+    "_comment": "Per-output-minute media prices. IMS cloud editing (普通模板, 中国内地), verified 2026-09-09 at https://help.aliyun.com/zh/ims/video-clip: 不足1分钟按1分钟计, 合成失败不扣费. Tier = the output's short side. 1 credit = 1 CNY; raise per_minute to add margin.",
+    "ims-compose-480p": {
+      "vendor": "aliyun",
+      "currency": "CNY",
+      "per_minute": "0.015",
+      "min_minutes": 1,
+      "short_side_max": 480,
+      "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "ims-compose-720p": {
+      "vendor": "aliyun",
+      "currency": "CNY",
+      "per_minute": "0.03",
+      "min_minutes": 1,
+      "short_side_max": 720,
+      "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "ims-compose-1080p": {
+      "vendor": "aliyun",
+      "currency": "CNY",
+      "per_minute": "0.06",
+      "min_minutes": 1,
+      "short_side_max": 1080,
+      "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "ims-compose-2k": {
+      "vendor": "aliyun",
+      "currency": "CNY",
+      "per_minute": "0.12",
+      "min_minutes": 1,
+      "short_side_max": 1440,
+      "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "ims-compose-4k": {
+      "vendor": "aliyun",
+      "currency": "CNY",
+      "per_minute": "0.24",
+      "min_minutes": 1,
+      "short_side_max": 2160,
+      "source": "https://help.aliyun.com/zh/ims/video-clip"
+    },
+    "video-gen": {
+      "_comment": "Video generation, credits per second of requested output, by model and resolution tier. Numbers are the upstream official list prices recorded in docs/BILLING_PLAN.md §5.1 (2026-09-02) — cost basis, no margin yet; ops sets the sale price by editing these. Models/tiers not listed stay unpriced (recorded, never charged).",
+      "wan3.0-video": {
+        "vendor": "aliyun-bailian",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.30",
+          "720p": "0.60",
+          "1080p": "1.20"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 百炼刊例价"
+      },
+      "wan3.0-video-prime": {
+        "vendor": "aliyun-bailian",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.45",
+          "720p": "0.90",
+          "1080p": "1.80"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 官方英文文档 USD 折算"
+      },
+      "doubao-seedance-2-0-260128": {
+        "vendor": "volcengine",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.45",
+          "720p": "0.95",
+          "1080p": "2.25"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 火山 token 价折算"
+      },
+      "seedance-2.0-480-fastⅠ": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "video-sd-720p-proⅠ": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "720p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "video-sd-1080p-pro": {
+        "vendor": "tokenspace",
+        "currency": "CNY",
+        "per_second": {
+          "1080p": "0.50"
+        },
+        "source": "bossip 中转站按 ¥0.5/秒 记账"
+      },
+      "MiniMax-H3": {
+        "vendor": "minimax",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.33",
+          "512p": "0.33",
+          "768p": "0.50",
+          "2k": "0.80"
+        },
+        "source": "docs/BILLING_PLAN.md §5.1 MiniMax 官方"
+      }
+    },
+    "image-gen": {
+      "_comment": "Image generation, credits per output image, by model with a default. Placeholder from docs/BILLING_PLAN.md §2 (per_call 0.3); replace with the gateway's real cost / sale price.",
+      "default": {
+        "vendor": "openai",
+        "currency": "CNY",
+        "per_image": "0.30",
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      },
+      "gpt-image-2": {
+        "vendor": "openai",
+        "currency": "CNY",
+        "per_image": "0.30",
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      }
+    },
+    "stt": {
+      "_comment": "Speech-to-text, credits per minute of audio, 不足 1 分钟按 1 分钟计. Placeholder from docs/BILLING_PLAN.md §2 (fun-asr 0.05/min).",
+      "fun-asr": {
+        "vendor": "aliyun-dashscope",
+        "currency": "CNY",
+        "per_minute": "0.05",
+        "min_minutes": 1,
+        "source": "docs/BILLING_PLAN.md §2 占位"
+      }
+    },
+    "hot-trends": {
+      "_comment": "Hot-list collection, credits per live collection (cache hits are free). Covers our desktop-browser time; placeholder until ops sets a sale price (docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §5).",
+      "default": {
+        "vendor": "openbox-desktop",
+        "currency": "CNY",
+        "per_fetch": "0.20",
+        "source": "docs/AUTO_MARKETING_AUTOPILOT_PLAN.md §5 占位"
+      }
+    }
   }
 }

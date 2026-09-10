@@ -20,6 +20,7 @@ from db.models.video_production import VideoApproval, VideoProduction, VideoSegm
 from db.models.user_skill import UserSkill
 from db.models.skill_install import SkillInstall
 from db.models.catalog_override import CatalogOverride
+from db.models.skill_catalog_package import SkillCatalogPackage
 from db.models.memory import UserMemory
 from db.models.image_gen_cache import ImageGenCache
 from db.models.workspace import Workspace, WorkspaceMember, WorkspaceInvitation
@@ -31,15 +32,17 @@ from db.models.platform_account import PlatformAccount
 from db.models.publish_job import PublishJob
 from db.models.notification import Notification
 from db.models.question import QuestionCheckpoint, SessionExecution
+from db.models.hot_trend import HotMediaLink, HotTrendSnapshot
 import db.models.workspace_scope  # noqa: F401,E402
 
 __all__ = [
     "User", "UserPreference", "Project", "Session", "Message", "Part", "InternalPart",
     "PermissionRule", "Container", "CloudDesktop", "DesktopActivation", "Todo", "PromptHistory", "FileAsset", "AuditLog",
     "CronJob", "CronRun", "VideoJob", "VideoProduction", "VideoSegment", "VideoApproval",
-    "UserSkill", "SkillInstall", "CatalogOverride", "UserMemory", "ImageGenCache",
+    "UserSkill", "SkillInstall", "CatalogOverride", "SkillCatalogPackage", "UserMemory", "ImageGenCache",
     "Workspace", "WorkspaceMember", "WorkspaceInvitation", "InternalTaskState",
     "CreditBalance", "CreditLedger", "UsageEvent", "PaymentOrder", "PaymentOrderRequest", "BillingSubscription",
     "FleetAlert", "FleetSnapshot", "PoolPurchase",
     "PlatformAccount", "PublishJob", "Notification", "QuestionCheckpoint", "SessionExecution",
+    "HotTrendSnapshot", "HotMediaLink",
 ]

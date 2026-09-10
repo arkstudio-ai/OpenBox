@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { Pin } from "lucide-react"
 import { StatusPill } from "@/shared/ui/StatusPill"
+import { DisplayIcon } from "@/shared/ui/DisplayIcon"
 import type { StoreEntry } from "@/features/admin-skills/types"
 
 /** Name column: icon, title, and the two ids an operator greps the logs with. */
@@ -8,12 +9,10 @@ export function StoreEntryCell({ entry }: { entry: StoreEntry }) {
   const { t } = useTranslation("admin-skills")
   return (
     <div className="flex items-start gap-2">
-      <span aria-hidden className="text-base leading-5">
-        {entry.icon || "🧩"}
-      </span>
+      <DisplayIcon icon={entry.icon} />
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-ink font-medium">{entry.title}</span>
+          <span className="text-ink min-w-0 break-words font-medium">{entry.title}</span>
           {entry.featured && (
             <StatusPill tone="accent" className="gap-1">
               <Pin className="size-2.5" aria-hidden />

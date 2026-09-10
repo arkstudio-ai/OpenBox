@@ -244,3 +244,33 @@ uv run --extra test pytest tests/unit/test_alipay.py tests/unit/test_billing.py 
 真实浏览器验证：本轮开始时为 4 条订单（3 条已取消、1 条待支付）。复用用户原有标签，两次点击专业版月付订购、进入真实支付宝 0.10 元收银台、展开订单详情并返回。两次商户订单号均为 `pay_01M1TBZDGBNF3TQJX6WR2GS56F`；结束后页面与数据库仍为 4 条订单，同一待付款订单累计对应 4 个请求键。余额保持 10 积分，没有实际付款。真实弹窗截图保存在 `/tmp/openbox-billing-verification/checkout-progress-live.png`，收银台订单详情保存在 `/tmp/openbox-billing-verification/reused-order-cashier-live.png`。
 
 验证通过：205 项前端单元测试、语言/类型/代码检查、生产构建；5 项隔离 PostgreSQL 集成测试（包含 12 个不同请求键并发只产生一笔订单）；15 项账单浏览器模拟测试分批通过。新增浏览器用例覆盖慢响应期间连续点击、页面离开前仍显示弹窗、退出收银台后再次订购、错误恢复和重试请求键、继续支付及充值入口。浏览器夹具与真实商户验证分别记录，模拟测试不执行真实付款。
+
+## 2026-09-09 媒体计费第一条：视频云端合成（video_compose）
+
+`rates.json` 新增 `media` 段（IMS 云剪辑官方价，按输出分钟、按短边定档、不足 1 分钟按 1 分钟、失败不计费）。
+`billing/media.py`：`quote_compose` 提交前报价；`precheck_compose` 在 enforce 下校验会话 workspace 余额；
+`settle_compose` 在 IMS 成功后按实际时长写一条 `usage_events`（kind=`video_compose`，幂等键 `compose:<job_id>`），
+enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写仍未落账。详见 `docs/VIDEO_RENDER_ENGINE_SELECTION.md` §5.5。
+
+## 2026-09-09 媒体计费第二条：视频生成（video_generate）
+
+`rates.json` `media.video-gen`：按模型 × 分辨率的每秒积分（当前为 BILLING_PLAN §5.1 的上游刊例成本价，无毛利，运营改数即改售价；
+未列出的模型/档位记 `unpriced` 不扣）。`estimate` 返回 `estimated_credits`；enforce 下 submit 前校验余额；片段在
+`_finalize_segment` 完成时按申请时长结算一条 `usage_events(kind=video_generate)`，幂等键 `generate:<job_id>`。
+跨用户复用（dedupe）的片段不产生供应商费用，也不落账。BILLING_REVIEW_2026-09-07 的 B2' 至此覆盖视频合成与生成；图片与转写仍未落账。
+
+## 2026-09-09 媒体计费第三条：图片生成与语音转写
+
+`rates.json` `media.image-gen`（按张：模型价，缺省走 `default`）与 `media.stt`（按分钟，不足 1 分钟按 1 分钟）。
+`image_gen` 成功存图后一条 `usage_events(kind=image_gen)`，幂等键 `image:<tool part_id>`，dedupe 复用不落账；
+`video_transcribe` 完成时按转写返回的 `duration_ms` 落账 `kind=video_transcribe`，幂等键 `transcribe:<job_id>`。
+两者 enforce 下提交前同样校验余额。至此 BILLING_REVIEW_2026-09-07 的 B2'（视频/图片/STT 落账）全部覆盖；
+**价目全部是占位成本价**，`rates.json` 的 `media` 段是运营定价的唯一入口。前端与 mobile 账单页对四类媒体事件按数量渲染。
+
+## 2026-09-10 媒体计费第四条：热点采集（hot_trends）
+
+`rates.json` `media.hot-trends`（按次：每次**真实采集**一条 `usage_events(kind=hot_trends)`，幂等键 `hot_trends:<snapshot_id>`，
+`tokens={source, items, fetches:1}`）。命中共享缓存的读取不落账；同一 (source, board, window, category) 全体客户一天只会产生一次采集。
+占位价 0.20/次，同样以 `media` 段为运营定价唯一入口。`video_analyze` 的视觉调用沿用 `UsageMeter`（kind `video_analyze`，按 token），
+账单页两种 kind 的词条随本次补齐（web + mobile）。
+

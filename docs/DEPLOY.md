@@ -5,7 +5,266 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-09 Ask 持久化与 Web 分页
+## 当前阿里云发布：2026-09-10 自动营销 D 阶段——模版预算授权 + marketing-autopilot 技能（仅后端，含迁移）
+
+- 14:46:46–14:47:05（北京时间）gw2 backend 切换至 `20260910-autopilot-824b295`，源码 `main@824b295`
+  （PR [#17](https://github.com/arkstudio-ai/OpenBox/pull/17) D1/B4 + PR [#18](https://github.com/arkstudio-ai/OpenBox/pull/18) D2/D3/D4）。
+  **含迁移** `d2f4a6c8e0b2`（`cron_jobs.template`），镜像内 `ScriptDirectory.get_heads()` 单 head 后才发；`alembic current` = `d2f4a6c8e0b2 (head)`。
+  backend 19 秒 healthy；frontend 保持 `20260910-trends-7959132`；公网 5 组采样全 200。
+- 内容：`AutopilotTemplate` 模版（预算上限/条数/三档模型/容差/发布方式/形态/黑名单）落 `cron_jobs.template` 并严格校验，执行器注入「模版参数（预算授权）」块；
+  `autopilot_run` 工具（预算 reserve 超限即终止、judge_shot 按容差判定、report 读账单）；技能 `marketing-autopilot`（定时无卡 / 对话选档卡）；`references/recipes.md` 七种形态配方。
+- 包 SHA-256 `0f7274903af1d5efd1083271e95ce3297cada6b9446c4e3d2ff336ad7d2e2624`，image ID `sha256:3e43b6629d418311b89357c92e767bdeddab627956a16d723bda2ab0f9f8bb74`，服务器装载后一致；OSS 中转对象已删。
+  备份 `/opt/openbox/backups/20260910-autopilot-824b295/activation-20260910T064637Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验）。
+- 容器内验收：38 个工具含 `autopilot_run`；7 个技能含 `marketing-autopilot`；`tiers` 三档参考价；`start` 由模版定 `wan3.0-video@720p`、可负担 1 条；
+  `reserve 27` 允许、`reserve 9` 拒绝并给出终止说明；`report` 生成含预算到顶提示；`validate_template` 拒绝非法档位。
+  **真实端到端一次自动营销运行（F）未做。**
+- 回滚：`docker compose run --rm --no-deps --entrypoint alembic backend downgrade b8d0f2a4c6e8`，再把 override 的 backend image 改回
+  `openbox-backend:20260910-publish2-2e44c01`，`up -d --no-deps backend`。降级只丢 `cron_jobs.template` 一列。
+
+## 历史阿里云发布：2026-09-10 云电脑自动发布 desktop_publish（仅后端，含迁移；第一次尝试自动回滚）
+
+- 01:23:12–01:23:32（北京时间）gw2 backend 切换至 `20260910-publish2-2e44c01`，源码 `main@2e44c01`
+  （PR [#13](https://github.com/arkstudio-ai/OpenBox/pull/13) desktop_publish + PR [#14](https://github.com/arkstudio-ai/OpenBox/pull/14) 迁移 id 修正）。
+  **含迁移** `b8d0f2a4c6e8`（`publish_jobs.details`、`platform_accounts.auto_publish_disabled_at/_reason`），`alembic current` = `b8d0f2a4c6e8 (head)`。
+  frontend 保持 `20260910-trends-7959132`，postgres/redis 未动。backend 20 秒 healthy，公网 5 组采样全 200。
+- **第一次尝试失败并自动回滚**（01:16:23–01:19:28，镜像 `20260910-publish-2334751`，`main@2334751`）：容器启动 `alembic upgrade head` 报
+  `Revision a6c8e0f2b4d6 is present more than once` / 多 head——新迁移随手取的 id 与既有 `a6c8e0f2b4d6_media_gen_routing_dedupe.py` 重复。
+  健康检查 3 分钟未过 → 脚本按预案回滚：镜像回 `20260910-trends-7959132`，库始终停在 `f2a4c6e8b0d3`（升级未执行，无 schema 变更），
+  回滚期间约 3 分钟后端不可用。补救：改 id 为 `b8d0f2a4c6e8`，镜像内 `ScriptDirectory.get_heads()` 单 head 后再发；
+  新增单测 `tests/unit/test_migration_heads.py`（PR [#15](https://github.com/arkstudio-ai/OpenBox/pull/15)）拦截重复 id / 多 head。
+  **教训：新迁移发布前必须先看 `alembic heads`。**
+- 内容：`desktop_publish` 工具 + `douyin-desktop-publish` 技能——用云电脑上已登录的创作者中心自动发布；mode 三层优先级（账号熔断 > 请求 > `desktop_publish.default_mode`）、
+  每账号每日上限/最小间隔/发布时段、风控词熔断 + 站内通知 + 降级到投稿包；每次尝试记 `publish_jobs(platform=douyin_creator)`。
+- 包 SHA-256 `f38fcd91e2d26f63115ba2929c2421f9f663e8603e0180891bcf05ecc393bb4a`，image ID 与本机一致（见 `releases/20260910-publish2-2e44c01/`）。
+  两次尝试的 OSS 中转对象均已删除。备份 `/opt/openbox/backups/20260910-publish-2334751/activation-20260909T171616Z/` 与
+  `/opt/openbox/backups/20260910-publish2-2e44c01/activation-20260909T172304Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验）。
+- 容器内真机验收（管理员工作空间，走 action-server 路由）：`precheck` 正确判定登录 ok、`mode=auto`、01:24 不在发布时段 → `can_auto_publish=false`；
+  `publish dry_run=true` 26.7 秒完成——把 14.4 秒 IMS 成片投递到云电脑、桌面 Chrome 填表（AI 声明、仅自己可见）、截图、暂存离开，记 `status=draft`；
+  `status` 列出该记录。脚本级真机：两次「仅自己可见」真实发布成功（回读作品 id）、假验证码降级演练命中。
+- 回滚：**先降迁移再换镜像**——`docker compose run --rm --no-deps --entrypoint alembic backend downgrade f2a4c6e8b0d3`，
+  再把 override 的 backend image 改回 `openbox-backend:20260910-trends-7959132`，`up -d --no-deps backend`。降级只丢两列/一列附加字段。
+
+## 历史阿里云发布：2026-09-10 热点采集工具 hot_trends（前后端，含迁移）
+
+- 00:43:42–00:44:29（北京时间）gw2 backend → frontend 串行切换至 `20260910-trends-7959132`，源码 `main@7959132`
+  （PR [#11](https://github.com/arkstudio-ai/OpenBox/pull/11) 合并提交）。**含迁移** `f2a4c6e8b0d3`（新表 `hot_trend_snapshots`、`hot_media_links`），
+  容器启动时 `alembic upgrade head` 自动执行，切换后 `alembic current` = `f2a4c6e8b0d3 (head)`。backend 22 秒 healthy，frontend 23 秒 healthy。
+- 内容：平台工具 `hot_trends`（热点宝 / 公开热榜双源、全体客户共享的按日快照、每源限流、按真实采集次数落账 `kind=hot_trends`）、
+  `platforms/desktop/service.run_command_on_desktop` 抽出共用、`HotTrendsConfig`；前端账单页补 `hot_trends`/`video_analyze` 词条与「条数」。
+- 本地 `git archive 7959132` 干净导出；backend `docker build --platform linux/amd64 -f backend/Dockerfile .`，
+  frontend `docker build --platform linux/amd64 --build-arg NGINX_IMAGE=nginx:1.31.3-alpine frontend-v2/`。
+  包 SHA-256 backend `6295fbb228e950e2b2f5462434c3c350357d058879dbb3d351527d8e67d9f53f`、frontend `970b68b0639ce19b388f7affd5b2d3b8eeca137ebe48c24734755c002575605a`；
+  image ID backend `sha256:06cd321c7453c0502513636d01d7190951ca5f46113008816d010506594b2a62`、frontend `sha256:580dc567996fc23a4dcdff7f5779b7dd55f2b178645ce42ab8ed1f9bcbf480dc`，服务器装载后一致。OSS 中转对象已删。
+- 切换前 0 个活动会话。备份 `/opt/openbox/backups/20260910-trends-7959132/activation-20260909T164327Z/`（0700；迁移前 `preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；
+  镜像包在 `releases/20260910-trends-7959132/`。只改 override 两条 image。公网首页/API 5 组采样全 200，切换后无 traceback。
+- 容器内真机验收（管理员工作空间云桌面）：`sources` 列出两源九榜；`list source=auto` 走热点宝视频总榜 24h，8.4 秒 40 条、`credits=0.2`；
+  `list douhot 美食 72h` 8.3 秒 49 条；之后 `sources` 带出 38 个垂类；`resolve` 公开视频页 7.5 秒拿到 douyinvod 直链；`usage_events` 两条 `kind=hot_trends` shadow 0.20。
+  已知：无云电脑/未绑热点宝的工作空间 `source=auto` 会落到公开热榜并需要自己的云电脑，尚不能直接读别人采好的热点宝快照（见计划 §7 A3 备注）。
+- 回滚：**先降迁移再换镜像**——`docker compose run --rm --no-deps --entrypoint alembic backend downgrade e1f3a5b7c9d2`，
+  再把 override 改回 backend `20260909-analyze3-076bf36` / frontend `20260909-direct-video-0a92fd8`，`up -d --no-deps` backend → frontend。
+  两张新表只被 hot_trends 写入，降级丢弃的只是缓存。
+
+## 历史阿里云发布：2026-09-10 video_analyze 私有桶预签名 + 重试清错（仅后端，两次）
+
+- 00:00:03–00:00:21（北京时间）gw2 backend 切换至 `20260909-analyze3-076bf36`，源码 `main@076bf36`
+  （PR [#10](https://github.com/arkstudio-ai/OpenBox/pull/10) 合并提交）；此前 23:54:56–23:55:12 已切过一版
+  `20260909-analyze2-0509757`（`main@0509757`，PR [#9](https://github.com/arkstudio-ai/OpenBox/pull/9)）。
+  两次都无迁移，`alembic current` 仍为 `e1f3a5b7c9d2`；frontend 保持 `20260909-direct-video-0a92fd8`，postgres/redis 未动。
+- 起因：`20260909-analyze-d054271` 上线后在容器内用管理员真实云桌面跑 `video_analyze`，源为上次 IMS 成片的
+  `https://bossip.oss-cn-shanghai.aliyuncs.com/assets/<user>/…mp4`，桌面 ffprobe 拿裸 URL 访问私有桶 → 403。
+  PR #9：配置桶的 https / 内网 host / `oss://` 三种写法先鉴权（必须是本人 `assets/<user>/`）再 `presign_get`
+  交给 ffmpeg，缓存键仍是未签名对象；桶内他人对象直接拒绝。PR #10：同源先失败后成功复用同一 `video_jobs` 行，
+  完成时清掉旧 `error`，输出不再同时出现 `status=completed` 与 `error=`。
+- 本地 `git archive` 干净导出，`docker build --platform linux/amd64 -f backend/Dockerfile .`。
+  analyze2：包 SHA-256 `d59b7d064b05b6ec11a1a12c6d1e866fc28aba040a399ec7b3f2de8eb3e146b0`，image ID
+  `sha256:4908f5821da20eec8f4bb724d8713a158d19a47cb974c0be1bd9c576e09e8d86`；
+  analyze3：包 SHA-256 `1317af916029fa125ed29d4405e0cb07611ce9f4e504ed8b9700ba85aa3ce1a5`，image ID
+  `sha256:43e6a682d769fa43874db656d8cd953a30feef60ad5710cdabe2e93bf14f2f75`；服务器装载后均与本机一致。
+  OSS `_deploy-tmp/` 中转对象已全部删除。
+- 两次切换前均 0 个活动会话。备份 `/opt/openbox/backups/20260909-analyze2-0509757/activation-20260909T155449Z/`、
+  `/opt/openbox/backups/20260909-analyze3-076bf36/activation-20260909T155956Z/`（0700；`preflight.dump` 经 `pg_restore -l` 校验；
+  配置、compose、`old_images.txt`）；镜像包在 `releases/<tag>/`。仅 override 的 backend image 改变。
+- 真机验收（容器内构造 ToolContext，走管理员云桌面 sandbox）：14.4 秒成片抽 8 帧、转写 59 字、`gemini-3.7-flash` 拆解
+  形式=口播、钩子/文案与原稿一致，耗时约 30 秒；`oss://` 与 https 写法命中同一缓存；`force=True` 新建任务且无 `error=` 行。
+  注：临时 ToolContext 的 session 不存在，`UsageMeter.start` 返回 None，故 `credits=0.05` 只含转写；正式会话中视觉调用按
+  `kind=video_analyze` 落账。公网首页/API 采样全 200，切换后无 traceback。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-analyze-d054271`（或再往前 `20260909-media-998219e`），
+  `docker compose up -d --no-deps backend`；无需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 热点宝授权站点 + video_analyze 多模态拆解（仅后端）
+
+- 23:37:16–23:37:35（北京时间）gw2 backend 切换至 `20260909-analyze-d054271`，源码 `main@d054271`
+  （PR [#8](https://github.com/arkstudio-ai/OpenBox/pull/8) A1+B3 与 PR [#6](https://github.com/arkstudio-ai/OpenBox/pull/6) 首稿确认卡修复
+  的合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。backend 19 秒 healthy。frontend 保持同事发布的
+  `20260909-direct-video-0a92fd8`（已核对在 main 上，本次 main 是线上超集），postgres/redis 未动。
+- 内容：授权中心新增 `douyin_hot`（抖音热点宝，独立 OAuth 会话，cookie 域 `.douhot.douyin.com`，探针 `user_info` code==0，
+  60 天不活跃 TTL）；新工具 `video_analyze`（抽帧 + 转写 → `openai/gemini-3.7-flash` 结构化拆解，缓存到 `video_jobs kind=analyze`，
+  按 `video_analyze` 计量；帧数不足 `min_frames` 直接失败而不让模型臆测）；`video-production` skill 把口播长度校对提前到卡 1 之前。
+- 本地 `git archive d054271` 干净导出，`docker build --platform linux/amd64 -f backend/Dockerfile .`；中转包 SHA-256
+  `5ec10a254fb9ff6f95c254a7fcc661a964686ca8f90140ecaae9cab376b41cf8`，装载后 image ID
+  `sha256:e658bd7a8d26d5457d9d6c32e1c98789f50f9296c4b7d5d4695e0b14a66a80ab` 与本机一致。OSS 中转对象已删，`_deploy-tmp/` 为空。
+- 切换前 0 个活动会话。备份 `/opt/openbox/backups/20260909-analyze-d054271/activation-20260909T153708Z/`（0700；`preflight.dump`
+  经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-analyze-d054271/`。仅 override 的 backend image 改变。
+- 容器内验收：35 个工具，含 `video_analyze`、`video_compose`；`video_analysis` 配置 8 帧/720 宽/转写开；站点列表含 `douyin_hot`。
+  用管理员云桌面对 bbdwxh_admin 工作区做 level-2 探针，热点宝状态 `bound`（19 个 cookie，会话 cookie 到期 2026-11-08，测试号
+  `用户2087843173024`）。公网首页/API 4 组采样全 200，切换后无 traceback。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-media-998219e`，`docker compose up -d --no-deps backend`；无需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 独立视频附件交付的分段折叠（仅前端）
+
+- 21:04:10–21:04:36（北京时间）gw2 frontend 发布 `20260909-direct-video-0a92fd8`，源码
+  `main@0a92fd8` 已推送。修复 `video_generate → share_file → 最终答复` 没有 `video_final`
+  标记时不折叠的问题；只对来源匹配且已完成的独立单段交付兜底，不把预览/失败/等待当成成片。
+- 保留此前分段在成片上方、手动展开、缺失 chunk 恢复与 nginx DNS 修复。Web 457 项、Flutter
+  173 项、Chromium 12 个流程通过。用户授权的真实 Chrome 历史会话刷新后默认折叠，
+  桌面/390 px 窄屏手动操作与最终视频预览均通过，验收后恢复浏览器原尺寸。
+  Flutter 源码已推送，本次未发布 Android/iOS 安装包。
+- 本地干净导出 `git archive 0a92fd8` 构建 `linux/amd64`；镜像级回归、生产 loopback canary、
+  前端运行时完整 env 一致性检查通过后仅切换 frontend。backend 保持 `20260909-media-998219e`，
+  backend/postgres/redis 的容器与重启计数均未变，四服务 healthy；无迁移。仅 override 的
+  frontend image 改变，其余生产配置哈希不变；AWS、Logto、无影云未修改。
+- 镜像 ID `sha256:cfa579b5661d2a2fd53969976238b62b5b588dc4f884167b75537cf131ebc267`；
+  包 SHA-256 `72a40990c25ef452eb1b500f603e43a5028773a913e17c5fbbcd6930c4208a13`。
+  公网 104 个文件逐一匹配镜像，缓存/MIME/缺失资源/生产登录配置检查通过；OSS 临时包已删除。
+- 备份 `/opt/openbox/backups/20260909-direct-video-0a92fd8/activation-20260909T130408Z/`，
+  含已验证的数据库 dump、配置和激活报告；本地及 `releases/20260909-direct-video-0a92fd8/`
+  的镜像包保留。回滚仅恢复前端 `20260909-ui2-4d2a578`，执行 `up -d --no-deps frontend`。
+- 切换期间首页/API 各 107 次采样、10 次 502，约 10.8 秒后恢复且后续持续 200；
+  详情及仓库已有移动端门禁问题见 [追加 QA 记录](VIDEO_LAYOUT_AND_FRONTEND_RECOVERY_QA_20260909.md)。
+
+## 历史阿里云发布：2026-09-09 视频结果排版与前端资源恢复（仅前端）
+
+- 20:35:34–20:35:59（北京时间）gw2 frontend 切换至 `20260909-ui2-4d2a578`，源码 `main@4d2a578`。
+  backend 保持 `20260909-media-998219e`，backend/postgres/redis 容器和重启次数未变，四服务 healthy；无迁移。
+  AWS、无影云桌面、Logto 配置均未改；Flutter 源码已推送，但本次没有发布手机安装包。
+- Web 分段位于成片上方，仅实际最终视频到达后默认折叠，可手动展开；缺失 JS/CSS 返回 404 而非 SPA HTML，
+  HTML no-store、hash 资源 immutable，动态模块错误限次自动刷新并提供手动恢复；nginx 定期重新解析 backend。
+- `git archive 4d2a578` 干净导出，本机 `linux/amd64` 构建。最终 nginx 基础镜像固定为 `1.31.3-alpine`，
+  与生产运行时环境一致。首次浮动 alpine 拉取到较新版，环境变量保护检查触发自动回滚；记录与旧镜像保留。
+  第二次在替换前核对预计环境变量，并用 loopback 临时实例验证，再执行仅 frontend 的切换。
+- 镜像 ID `sha256:4b31bd54c1b40efe8ff32473027bf56a419ece9141ef7da062afaca1589b1970`；中转包 SHA-256
+  `895fd69949d70f632ef82145589ed4bb4fc534999d023c4892a04f27be39d5d6`。公网首页/静态文件 104 个与镜像逐个一致，
+  缺失资源 404/no-store、生产环境/Logto、匿名 me 401 均通过；本次不以匿名检查代替用户登录后的端到端验收。
+- 备份 `/opt/openbox/backups/20260909-ui2-4d2a578/activation-20260909T123532Z/`（0700），含已验证的数据库 dump、
+  旧配置和 activation.json；镜像包保留在 `releases/20260909-ui2-4d2a578/`。仅 override 的 frontend image 改变。
+  两次构建的 OSS 临时中转对象均已删除，镜像与备份保留。
+  回滚只改回 `openbox-frontend-v2:20260909-media-998219e`，执行 `docker compose up -d --no-deps frontend`；无需恢复数据库。
+- 最终切换 2 分钟采样：首页/API 各 109 次，其中 10 次 502、99 次 200；失败至恢复约 10.8 秒，之后持续正常。
+  首次尝试及回滚还各有一次约 11 秒中断，不宣称零停机。完整测试、首次回滚与采样记录见
+  [视频排版与前端恢复 QA](VIDEO_LAYOUT_AND_FRONTEND_RECOVERY_QA_20260909.md)。
+
+## 历史阿里云发布：2026-09-09 图片/转写落账 + 账单页四类媒体事件（前后端）
+
+- 20:18:29–20:19:11（北京时间）gw2 backend → frontend 串行切换至 `20260909-media-998219e`，源码 `main@998219e`
+  （PR [#5](https://github.com/arkstudio-ai/OpenBox/pull/5) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。
+  backend 19 秒 healthy，frontend 23 秒 healthy；切换后公网首页与 `/api/environment` 连续 6 组采样全 200。
+- 接替 `20260909-billing-6a193bd`；main 在两次发布之间无他人提交。`config/*`、`.env`、基础 compose 未改，只改 override 两条 image。
+- 内容：`image_gen` 每次调用落账 `usage_events(kind=image_gen)`（按张，幂等键 `image:<part_id>`）；`video_transcribe` 完成时按
+  `duration_ms` 落账 `kind=video_transcribe`；`rates.json` `media.image-gen` / `media.stt` 占位价；web 账单行媒体类型扩到四种。
+  mobile 账单行同批改为按媒体量渲染，但 App 走独立发版，本次未发布。
+- 本地 `git archive 998219e` 干净导出构建；中转包 SHA-256 backend `b323571a…de4a464c`、frontend `054b051f…edf385e2`；
+  服务器装载后 image ID backend `sha256:29949b2c…369cc5a1`、frontend `sha256:a3dfef87…4676f19e` 与本机一致。OSS 中转对象已删。
+- 切换前无运行中会话、无在途视频/转写任务。备份 `/opt/openbox/backups/20260909-media-998219e/activation-20260909T121821Z/`
+  （0700；`preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-media-998219e/`。
+- 容器内验收：34 个工具；四类报价函数 image 0.30 / stt 0.05 / wan3 720p 5s 3.00 / compose 14.4s 0.03；前端 bundle 含「图片生成」词条。
+- 回滚：override 两条 image 改回 `20260909-billing-6a193bd`，backend → frontend 串行 `up -d --no-deps`。无迁移。
+
+## 历史阿里云发布：2026-09-09 视频生成落账 + 账单页媒体事件（前后端）
+
+- 19:52:25–19:53:07（北京时间）gw2 **backend → frontend 串行**切换至 `20260909-billing-6a193bd`，源码 `main@6a193bd`
+  （PR [#4](https://github.com/arkstudio-ai/OpenBox/pull/4) 合并提交）。无数据库迁移，`alembic current` 仍为 `e1f3a5b7c9d2`。
+  backend 19 秒 healthy，frontend 23 秒 healthy；切换后公网首页与 `/api/environment` 连续 6 组采样全部 200
+  （切换瞬间的单实例断档窗口未被采样覆盖，不宣称零停机）。
+- **接替的是同事的 `20260909-minimax-1bc6743`**（分支 `codex/minimax-video-submit-fix`，未直接合 main）。发布前逐文件核对：
+  该分支的全部修复文件与 `main@6a193bd` 逐字节一致（main 上对应 `e4670f6`/`abc0c4d`），main 只多出本次计费与前端改动及文档，
+  因此本次发布是线上代码的严格超集，MiniMax 修复未丢。`config/openbox.json` 未改（含同事写入的 MiniMax `size` 配置与 `video_compose` 段）。
+- 内容：`video_generate estimate` 返回 `estimated_credits`；片段完成按申请时长落账 `usage_events(kind=video_generate)`；
+  `rates.json` `media.video-gen` 价目（上游刊例成本价占位，运营改数即改售价）；账单页 `video_*` 事件显示时长/计费单位/档位。
+- 本地 `git archive 6a193bd` 干净导出构建 `linux/amd64`；中转包 SHA-256 backend `89c11d47…f81f925e`、frontend `517ebd39…cfc781f5`；
+  服务器装载后 image ID backend `sha256:d07db9d3…6328ec8`、frontend `sha256:a503afae…d5d75d` 与本机一致。OSS 中转对象已删。
+- 切换前确认无运行中会话、无在途视频任务。备份 `/opt/openbox/backups/20260909-billing-6a193bd/activation-20260909T115217Z/`
+  （0700；`preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260909-billing-6a193bd/`。
+- 容器内验收：34 个工具含 `video_compose`；`quote_generation('wan3.0-video','720p',5)=3.00`、`quote_compose(720,1280,14.4)=0.03`；
+  MiniMax `wire_shape=size`；前端 bundle `assets/billing-*.js` 含「视频合成」词条。
+- 回滚：override 两条 image 改回 `openbox-backend:20260909-minimax-1bc6743` / `openbox-frontend-v2:20260909-admin-skills-d445b9f`
+  （见 `old_images.txt`），backend → frontend 串行 `up -d --no-deps`。无迁移，不需恢复数据库。
+
+## 历史阿里云发布：2026-09-09 video_compose（IMS 云端合成 + 合成计费）
+
+- 18:31:16–18:31:34（北京时间）gw2 后端切换至 `20260909-compose-93a6e62`，源码 `feat/video-compose-ims@93a6e62`
+  （基于 `main@ac0861c`，PR [#3](https://github.com/arkstudio-ai/OpenBox/pull/3)）；前端继续 `20260909-admin-skills-d445b9f`。
+  **无数据库迁移**，`alembic current` 前后均为 `e1f3a5b7c9d2`。只重建 backend，18 秒 healthy。
+- 内容：`video_compose` 平台原子工具（自有时间线 → IMS Timeline 编译层，六条规则）、IMS 客户端、补扫、
+  合成计费（`rates.json` media 段，validate 报价 / enforce 余额门 / 成功后按实际时长落账 `usage_events.kind=video_compose`）、
+  技能第 8 步双路径 + 第四张「合成确认」卡。详见 `docs/VIDEO_RENDER_ENGINE_SELECTION.md`。
+- 配置：`config/openbox.json` 新增 `video_compose` 段（region 留空跟 `OSS_REGION=cn-shanghai`），其余
+  `backend.env` / `.env` / 基础 compose 未改；只改 override 的 backend image。
+- 本地以 `git archive 93a6e62` 干净导出、`docker build --platform linux/amd64 -f backend/Dockerfile .` 构建；
+  中转包 SHA-256 `cbf52b043ddfc96904498e4302125b0199b3fa6a934d9b3c8bfc6c31909c3104`，服务器装载后
+  image ID `sha256:930af19cd4ae6f08c60d8f30be43ad308f45c823db665b77b50c8bc6fef6b04d` 与本机一致。OSS 中转对象已删。
+- 切换前确认无运行中会话、无在途视频任务。备份 `/opt/openbox/backups/20260909-compose-93a6e62/activation-20260909T103107Z/`
+  （0700，含 `preflight.dump` 3.3 MB、经 `pg_restore -l` 校验、配置与 compose 文件、`old_image.txt`）；镜像包在
+  `releases/20260909-compose-93a6e62/`。
+- 容器内验收：34 个内置工具含 `video_compose`；`get_config().video_compose` 读到新段；OSS `bossip/cn-shanghai`；
+  用只读 `GetMediaProducingJob` 查历史任务，IMS 自 gw2 可达。`/api/environment` 仍为 `prod`（角标）。
+- 用户验收（18:47–18:58，账号 bbdwxh_admin）：两段 720p 生成与 STT 卡正常；合成前 `validate` 报 0.03 积分并出第四张
+  「合成确认」卡；点「可以」后才提交，32 秒完成，成片卡与 `credits=0.03` 输出正确；账单新增 `video_compose` 0.03（shadow）。
+  已知偏差：视频生成估价无金额（生成侧计费未做，另立任务）；首稿确认卡出现两次（待复现定性）。
+- 回滚：override 的 backend image 改回 `openbox-backend:20260909-qwh-56ef0f8`（`old_image.txt`），恢复备份的
+  `openbox.json`，`docker compose up -d --no-deps backend`。无迁移，不需恢复数据库。
+
+## 当前阿里云发布：2026-09-09 QWH 云电脑恢复与页面持久化
+
+- gw2 后端于 17:51:36–17:51:56 切换至 `20260909-qwh-56ef0f8`，源码 `main@56ef0f8`；前端继续使用 `20260909-admin-skills-d445b9f`。没有数据库迁移，AWS 开发环境未发布。
+- 修复远程浏览器未连接时反复切换中继、页面名称只存内存、旧 5 GiB MemoryHigh 导致控制服务饥饿，以及后端镜像缺少桌面恢复源。
+- 生产 14 台桌面运行时 `20260909.2` 全部通过云助手只读检查；QWH 的真实浏览器输入/点击、重连、重复回退 PID 不变、跨中继切换 target ID 保持一致均通过。手机实机打开仍待用户确认。
+- 发布前保留数据库/配置和被中断会话记录；用户明确允许中断当时的视频会话后立即发布。四服务与应用配置验收见报告；旧镜像和桌面备份保留。
+- 首次升级未保留全部旧内存别名，已按历史记录恢复 QWH 的三个关键页面；不能把它描述成所有旧别名无损迁移。后续迁移必须在运行时安装器停止旧中继前保存映射。
+- 备份 `/opt/openbox/backups/20260909-qwh-recovery/`，镜像包 `/opt/openbox/releases/20260909-qwh-56ef0f8/`。详细因果、逐项验收及回滚限制见 [QWH 修复报告](QWH_BROWSER_RECOVERY_20260909.md)。
+
+## 历史阿里云发布：2026-09-09 超管技能 CRUD 与虚拟机安装管理
+
+- 14:25:30–14:26:33（北京时间）完成 gw2 后端 → 前端串行切换；源码
+  `main@d445b9f`，统一镜像标签 `20260909-admin-skills-d445b9f`。仅部署阿里云应用，
+  未部署 AWS、未发布手机安装包，未更改无影云桌面或本地开发配置。
+- 新增管理端 Skill / MCP CRUD、回收站、ZIP 多选批量上传、批量删除与图标编辑；
+  用户安装页区分历史流水和按桌面/用户手动扫描的实际安装，可安全卸载非内置项。
+  业务边界与测试详情见 [技能管理验证说明](ADMIN_SKILL_MANAGEMENT_QA.md)。
+- 本地以 `git archive d445b9f` 干净导出构建 `linux/amd64` 镜像；镜像内无本地
+  `.env.*`、`openbox.json` 或运行时数据库。私有 OSS 中转包 SHA-256：
+  `ddca06017c4b93706b42204cb6abf273f186d993477290dd8c7323765c70651b`。
+  服务器装载后 image ID 与本机一致：backend
+  `sha256:f2dd3724ea898c4b1345d6382cd0964c4844dbaa749f38b42baf240d4b4d5615`，
+  frontend `sha256:8fd0be7f814d8cd20a6f0cbf15e0f1d24009bd20876f3180222006738e6f8696`。
+- 数据库迁移 `d9e1f3a5b7c2 → e1f3a5b7c9d2`：创建 `skill_catalog_packages`，
+  审计资源标识扩至 128。先在隔离副本验证升级/回退/再升级，46 张原有业务表的数据
+  指纹不变；正式发布又在停写窗口核对同样的 46 张表，原有数据未被迁移改写。
+- 切换前发现有新会话运行，未强行中断；等活动任务与运行租约释放后，设置 API / WS
+  维护门禁、停止旧后端、做停写备份及迁移，再逐个启动新后端和前端。
+- 只修改服务器 compose override 的两条 image。`.env`、基础 compose、
+  `config/backend.env`、`config/openbox.json` SHA-256 不变，后端完整运行时环境变量
+  前后一致：仍为 `prod`、生产 Logto、`per_user / per_desktop`、生产 relay / `18001`、
+  `POOL_AUTO_PURCHASE=false`；未带入本地密码登录或开发桌面配置。
+- 四服务 healthy、重启计数 0；postgres `98258cffb1f7`、redis `4c1a6fb5613a` 容器未变。
+  公网首页及 100 个构建资源（共 101 个文件）均与镜像 SHA-256 相符；生产环境和
+  Logto 配置正确，未登录管理接口为 401。容器内真实 ORM 只读读取目录/投稿/管理覆写
+  通过；没有通过伪造登录或删除真实用户技能做上线验收。
+- 最后一组公网采样 152 次：首页 151 次 200、1 次 502；API 106 次 200、45 次维护
+  503、1 次 502。首个维护样本至恢复样本约 50.9 秒（14:25:31–14:26:22），此后恢复。
+  前端仍是独占端口的单实例，替换时出现了一次短暂 502，不能声称零停机。
+- 本轮发布复跑后端相关 186 项通过；前一轮前端 402 项、浏览器 12 个流程、独立
+  PostgreSQL 管理接口 57 项均通过。Docker 前后端生产构建通过。
+- 备份与报告在 `/opt/openbox/backups/20260909-admin-skills-d445b9f/`（0700），含
+  `preflight.dump`、`stopped.dump`（均验证可列目录）、配置、迁移预演/激活/验收报告及
+  公网采样/静态资源校验。停写 dump SHA-256 为
+  `d9759f677f0bdc0c5af082954bf034f989cb3191bf8dc0e265b86629cddd6bf6`。
+  镜像包保留在同名 `releases/` 目录，旧镜像保留；临时迁移副本和 OSS 中转对象已清理。
+- 回滚注意：旧镜像启动迁移不认识 `e1f3a5b7c9d2`。一旦管理端写入包或删除标记，
+  **不能直接 downgrade 删除新表，也不能无审查地让旧代码重新展示已删除条目**。
+  发布脚本的自动回退仅限前端放流前、确认新表为空的维护窗口；后续回滚需停写备份、
+  审查新数据与兼容性。前后端上一镜像均为 `20260909-ask-2183504`。
+
+## 历史阿里云发布：2026-09-09 Ask 持久化与 Web 分页
 
 - 10:34:38–10:35:20（北京时间）完成 gw2 后端 → 前端串行切换。统一镜像标签
   `20260909-ask-2183504`，源码 `main@2183504`。**本次未部署 AWS，未更新或重启云桌面，
@@ -492,7 +751,7 @@ LOGTO_POST_LOGOUT_REDIRECT_URI: https://ai.ueejavelin.org            # 生产为
 
 ```bash
 cd /opt/openbox/src && git pull
-docker build -t openbox-backend:<TAG>     backend/
+docker build -f backend/Dockerfile -t openbox-backend:<TAG> .
 docker build -t openbox-frontend-v2:<TAG> frontend-v2/
 cd /opt/openbox && sed -i "s/^OPENBOX_IMAGE_TAG=.*/OPENBOX_IMAGE_TAG=<TAG>/" .env
 docker compose up -d
@@ -506,7 +765,7 @@ Tag 规则：`<日期>-<批次>-<git短sha>`，例如 `20260904-a2-d9d7401`。
 本地构建须指定 `linux/amd64`（Mac 是 arm64，服务器是 x86_64）：
 
 ```bash
-docker build --platform linux/amd64 -t openbox-backend:<TAG>     backend/
+docker build --platform linux/amd64 -f backend/Dockerfile -t openbox-backend:<TAG> .
 docker build --platform linux/amd64 -t openbox-frontend-v2:<TAG> frontend-v2/
 docker save openbox-backend:<TAG>     | gzip -1 > backend.tgz
 docker save openbox-frontend-v2:<TAG> | gzip -1 > frontend.tgz
@@ -551,6 +810,9 @@ docker compose up -d --no-deps <实际变更的服务>
    不得同时重建。该做法只能缩短并隔离断档，不能实现真正零停机。
 5. 每次切换前创建配置与数据库的版本化备份，并记录旧 tag；切换期间持续探测首页和一个
    API，任一服务未在预期时间内 healthy 就立即恢复旧 tag。
+6. 前端镜像应在替换容器**之前**核对预计运行时环境，并通过 loopback 临时实例验证。
+   浮动 `nginx:alpine` 可能拉到与线上不同版本；本次不升级运行时时用 `NGINX_IMAGE`
+   固定线上版本，不应等容器替换后才发现基础镜像环境变化。
 
 彻底解决方案是把 gw2 入口改为**宿主机稳定 Nginx + 蓝绿应用端口**（或迁移到支持至少
 2 个副本滚动更新的编排平台）：新版本先在备用端口启动并通过 health check，再原子切换

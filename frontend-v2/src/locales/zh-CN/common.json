@@ -1,4 +1,15 @@
 {
+  "archiveQueue": {
+    "pick": "选择多个压缩包",
+    "limits": "每批最多 20 个文件，单个不超过 32 MB，总计不超过 128 MB。可继续选择文件加入队列。",
+    "remove": "移除 {{name}}",
+    "queued": "待上传",
+    "working": "正在上传，请勿关闭…",
+    "success": "上传成功",
+    "failed": "上传失败",
+    "submit": "上传 / 重试 {{count}} 个文件",
+    "unknown": "未能确认上传结果。请先刷新列表核对，再重试失败项；成功项不会重复上传。"
+  },
   "action": {
     "cancel": "取消",
     "delete": "删除",
@@ -33,6 +44,11 @@
     "unavailable": "暂不可用",
     "connecting": "连接中…",
     "offline": "连接已断开，正在重连…"
+  },
+  "pageLoad": {
+    "title": "页面资源加载失败",
+    "body": "页面可能已更新或网络暂时中断。请检查网络并刷新页面，重新加载最新资源。刷新不会重新提交任务。",
+    "genericBody": "请尝试刷新页面；如果问题仍然存在，可以返回工作区。"
   },
   "unit": {
     "tokens": "tokens",

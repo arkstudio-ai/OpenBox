@@ -10,6 +10,8 @@ library;
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 
+part 'video_delivery.dart';
+
 typedef ArtifactRole =
     String; // input | evidence | intermediate | result | final
 
@@ -345,9 +347,10 @@ String? _captionFor(
 }
 
 int _resultOrder(ArtifactGroup group) {
-  if (group.role == 'final') return 0;
-  if (group.role == 'result') return 1;
-  return 2;
+  if (group.artifactKind == 'video_segment') return 0;
+  if (group.role == 'final') return 1;
+  if (group.role == 'result') return 2;
+  return 3;
 }
 
 /// Build the assistant view over a turn's messages.
@@ -461,8 +464,22 @@ AssistantContentView buildAssistantContentView(
     }
   }
 
-  final ordered = groups.values.toList()
-    ..sort((a, b) => a.order.compareTo(b.order));
+  final suspended =
+      awaitingInput ||
+      (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
+      tools.any((tool) => tool.status == ToolStatus.waitingInput);
+  final completedDelivery =
+      hasFinal &&
+      !streaming &&
+      !suspended &&
+      finalIndex == messages.length - 1 &&
+      messages.every((m) => m.error == null) &&
+      (messages.last.finish == 'stop' ||
+          messages.every((m) => m.finish == null));
+  final ordered = _resolveDirectVideoDelivery(
+    groups.values.toList(),
+    completedDelivery,
+  )..sort((a, b) => a.order.compareTo(b.order));
   final evidence = ordered.where((g) => g.role == 'evidence').toList();
   final results =
       ordered.where((g) => g.role != 'evidence' && g.role != 'input').toList()
@@ -471,7 +488,10 @@ AssistantContentView buildAssistantContentView(
           if (byRole != 0) return byRole;
           if (a.artifactKind == 'video_segment' &&
               b.artifactKind == 'video_segment') {
-            return (a.ordinal ?? 1 << 30).compareTo(b.ordinal ?? 1 << 30);
+            final ordinal = (a.ordinal ?? 1 << 30).compareTo(
+              b.ordinal ?? 1 << 30,
+            );
+            if (ordinal != 0) return ordinal;
           }
           return a.order.compareTo(b.order);
         });
@@ -492,11 +512,6 @@ AssistantContentView buildAssistantContentView(
   final workEvents = <WorkEvent>[...progress, ...workEvidence]
     ..sort((a, b) => a.order.compareTo(b.order));
   final hasWork = progress.isNotEmpty || tools.isNotEmpty || ordered.isNotEmpty;
-  final suspended =
-      awaitingInput ||
-      (messages.isNotEmpty && messages.last.finish == 'waiting_input') ||
-      tools.any((tool) => tool.status == ToolStatus.waitingInput);
-
   return AssistantContentView(
     finalText: finalText,
     finalMessageId: finalIndex >= 0 ? messages[finalIndex].id : null,

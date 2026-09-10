@@ -73,13 +73,15 @@ describe("InstallsPage", () => {
 
   it("states that the list is a record, not a sandbox scan", async () => {
     mount()
+    fireEvent.click(screen.getByRole("button", { name: "平台安装记录" }))
     await screen.findByText("Playwright")
-    expect(screen.getByText("按安装记录显示；用户在沙箱里手动删除的技能不会实时反映。")).toBeDefined()
+    expect(screen.getByText(/这是平台安装历史，不代表仍在安装/)).toBeDefined()
   })
 
   it("explains an empty list rather than showing a bare table", async () => {
     vi.mocked(http.get).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 })
     mount()
+    fireEvent.click(screen.getByRole("button", { name: "平台安装记录" }))
     await screen.findByText("还没有安装记录。")
     expect(screen.queryByRole("table")).toBeNull()
   })

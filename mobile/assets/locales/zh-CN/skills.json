@@ -125,6 +125,7 @@
     "credentialsFor": "{{name}} 需要的凭据"
   },
   "upload": {
+    "batchNameHint": "仅单文件时使用自定义名称；批量上传使用各压缩包的名称。",
     "title": "添加 Skill 或 MCP",
     "subtitle": "把压缩包、SKILL.md、Git 仓库或 MCP 服务添加到“我的”。",
     "modeArchive": "压缩包",

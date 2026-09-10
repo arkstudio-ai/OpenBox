@@ -451,6 +451,9 @@ async def load_catalog() -> dict[str, list[dict]]:
             # still perfectly installable without the overlay.
             log.warning(f"Could not load catalog from {url}: {e}")
 
+    from skill.catalog_admin import merge_catalog
+    skills, mcp = await merge_catalog(skills, mcp)
+
     for kind, entries in (("skill", skills), ("mcp", mcp)):
         for entry in entries:
             entry["catalog_id"] = catalog_entry_id(kind, entry.get("id", ""))

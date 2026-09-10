@@ -40,7 +40,19 @@ export interface UsageEntry {
   session_available: boolean
   model_id: string
   kind: string
-  tokens: { input?: number; output?: number; cache?: number }
+  tokens: {
+    input?: number
+    output?: number
+    cache?: number
+    // Media events (kind video_compose / video_generate) carry duration instead of tokens.
+    duration_sec?: number | null
+    minutes_billed?: number
+    seconds_billed?: number
+    tier?: string
+    resolution?: string
+    images?: number
+  items?: number
+  }
   total_tokens: number
   credits: string | null
   status: "charged" | "shadow" | "historical" | "unpriced" | "pending" | "unreported"

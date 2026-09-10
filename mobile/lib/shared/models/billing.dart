@@ -45,17 +45,46 @@ class BillingSummary {
 }
 
 class UsageCredits {
-  const UsageCredits({this.input = 0, this.output = 0, this.cache = 0});
+  const UsageCredits({
+    this.input = 0,
+    this.output = 0,
+    this.cache = 0,
+    this.durationSec,
+    this.minutesBilled,
+    this.secondsBilled,
+    this.images,
+    this.items,
+    this.tier,
+    this.resolution,
+  });
 
+  /// Media events (video_compose / video_generate / video_transcribe /
+  /// image_gen) carry quantities instead of tokens; web mirrors this shape.
   factory UsageCredits.fromJson(Map<String, dynamic> json) => UsageCredits(
     input: asInt(json['input']) ?? 0,
     output: asInt(json['output']) ?? 0,
     cache: asInt(json['cache']) ?? asInt(json['cache_read']) ?? 0,
+    durationSec: (json['duration_sec'] is num)
+        ? (json['duration_sec'] as num).toDouble()
+        : null,
+    minutesBilled: asInt(json['minutes_billed']),
+    secondsBilled: asInt(json['seconds_billed']),
+    images: asInt(json['images']),
+    items: asInt(json['items']),
+    tier: asString(json['tier']),
+    resolution: asString(json['resolution']),
   );
 
   final int input;
   final int output;
   final int cache;
+  final double? durationSec;
+  final int? minutesBilled;
+  final int? secondsBilled;
+  final int? images;
+  final int? items;
+  final String? tier;
+  final String? resolution;
 }
 
 class UsageEntry {

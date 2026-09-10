@@ -189,3 +189,25 @@ def test_launch_scripts_reclaim_logs_left_by_another_identity():
     assert reclaim in relay and relay.index(browser.RELAY_LOG) < relay.index("start-relay")
     headless = browser._headless_chrome_launch_script()
     assert reclaim in headless and headless.index(browser.CHROME_LOG) < headless.index("useradd")
+
+
+@pytest.mark.parametrize('preference', ['auto', 'extension'])
+async def test_extension_absence_reuses_auto_relay_instead_of_flipping_modes(monkeypatch, preference):
+    relay = {'mode': 'local', 'configuredMode': 'auto', 'extensionConnected': False}
+    ensure = AsyncMock(return_value=relay)
+    monkeypatch.setattr(browser, 'ensure_relay', ensure)
+    monkeypatch.setattr(browser, 'ensure_chrome', AsyncMock(return_value={'Browser':'Chrome/1'}))
+    for _ in range(2):
+        state = await browser._ensure_browser_locked(SimpleNamespace(), 'ecd-x', preference)
+        assert state['mode'] == 'local'
+    assert all(call.args[2] == 'auto' for call in ensure.await_args_list)
+
+
+async def test_connected_extension_does_not_start_local_chrome(monkeypatch):
+    relay = {'mode': 'extension', 'configuredMode': 'auto', 'extensionConnected': True}
+    monkeypatch.setattr(browser, 'ensure_relay', AsyncMock(return_value=relay))
+    chrome = AsyncMock()
+    monkeypatch.setattr(browser, 'ensure_chrome', chrome)
+    state = await browser._ensure_browser_locked(SimpleNamespace(), 'ecd-x', 'extension')
+    assert state['mode'] == 'extension'
+    chrome.assert_not_awaited()

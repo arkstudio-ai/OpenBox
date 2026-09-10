@@ -180,6 +180,26 @@ def _skill_md(name="greeting-helper"):
 
 
 @pytest.mark.asyncio
+async def test_admin_package_roundtrip_through_real_action_server(server):
+    """The admin ZIP format must actually install/scan/uninstall in the VM code."""
+    from fastapi import UploadFile
+    from api.admin_skill_desktops import _project
+    from skill.package_validation import validate_zip, zip_manifest
+
+    blob = zip_manifest("admin-regression", _skill_md("admin-regression"))
+    assert validate_zip(blob)["name"] == "admin-regression"
+    uploaded = await server["upload_skill_archive"](
+        file=UploadFile(io.BytesIO(blob), filename="admin-regression.zip"), name="admin-regression")
+    assert uploaded["name"] == "admin-regression"
+    actual = _project(server["_scan_skills"](), "skill")
+    item = next(row for row in actual if row["install_dir"] == "admin-regression")
+    assert item["removable"] and item["source"] == "container"
+    assert (await server["uninstall_skill"](item["install_dir"]))["ok"]
+    assert not any(row["install_dir"] == "admin-regression" for row in _project(server["_scan_skills"](), "skill"))
+    assert not (server["_test_skills_dir"] / "admin-regression").exists()
+
+
+@pytest.mark.asyncio
 async def test_create_skill_publishes_a_complete_package_atomically(server):
     request = server["CreateSkillRequest"](
         name="greeting-helper",

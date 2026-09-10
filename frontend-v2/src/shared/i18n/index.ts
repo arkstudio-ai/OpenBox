@@ -1,5 +1,6 @@
-// i18n bootstrap. Namespaces load lazily per feature (ENGINEERING_SPEC §10.2)
-// through a tiny vite-backed loader — no extra backend dependency needed.
+// Feature namespaces load lazily. Common recovery/navigation copy is bundled
+// with the app so a chunk failure or offline transition cannot break the error
+// page's own labels while it tries to fetch another missing language chunk.
 import i18n from "i18next"
 import { initReactI18next } from "react-i18next"
 
@@ -8,7 +9,17 @@ export type AppLanguage = (typeof SUPPORTED_LANGS)[number]
 
 const LANG_KEY = "bossip:lang"
 
-const localeModules = import.meta.glob<{ default: Record<string, unknown> }>("../../locales/*/*.json")
+const commonModules = import.meta.glob<Record<string, unknown>>("../../locales/*/common.json", {
+  eager: true,
+  import: "default",
+})
+const bundledResources = Object.fromEntries(
+  SUPPORTED_LANGS.map((lng) => [lng, { common: commonModules[`../../locales/${lng}/common.json`] }]),
+)
+const localeModules = import.meta.glob<{ default: Record<string, unknown> }>([
+  "../../locales/*/*.json",
+  "!../../locales/*/common.json",
+])
 
 const lazyBackend = {
   type: "backend" as const,
@@ -48,6 +59,7 @@ void i18n
     supportedLngs: [...SUPPORTED_LANGS],
     ns: ["common"],
     defaultNS: "common",
+    resources: bundledResources,
     interpolation: { escapeValue: false },
     react: { useSuspense: true },
     partialBundledLanguages: true,

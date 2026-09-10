@@ -11,6 +11,7 @@
     "format:check": "prettier --check src",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:nginx": "node scripts/test-nginx.mjs",
     "preview": "vite preview",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check": "npm run check:i18n && npm run lint && tsc -b && npm run test"

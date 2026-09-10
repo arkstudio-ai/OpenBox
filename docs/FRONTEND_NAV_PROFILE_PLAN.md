@@ -227,3 +227,6 @@ A 先独立成一个 PR 合入（改动小、收益立刻可见），B-P0 第二
   - 单测：`standalonePage`、`newChatProject`、`ui.lastSessionId` 共 10 条；`npm run check` 全绿（lint 0 错误，406 测试）。
   - 本地验证（docker-compose.dev 的 postgres/redis + 后端 + `devtest` 账号）：新对话 → `/app?project=<id>` 且提示写项目名；技能中心顶栏标题/副标题正确、侧栏高亮、返回 → `/app` 顶栏"新对话 · 默认空间"；logo → `/app`；375px 宽返回链接仅图标。
   - 未验：返回到"最近会话"的分支需要真实会话（本机无模型密钥），逻辑由单测覆盖；e2e `sidebar-project.spec.ts` 同样依赖模型，未跑。
+- 2026-09-10 下午：合并 `origin/main`（`7b884b1`，无冲突）→ `3791e77`，`npm run check` 466 项通过；分支已推远端，
+  PR [#20](https://github.com/arkstudio-ai/OpenBox/pull/20)。**gw2 前端已发布** `20260910-nav-3791e77`（仅前端，AWS 未发），
+  发布记录见 `docs/DEPLOY.md` 顶部。

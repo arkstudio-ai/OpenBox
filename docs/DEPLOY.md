@@ -5,7 +5,31 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-10 自动营销 D 阶段——模版预算授权 + marketing-autopilot 技能（仅后端，含迁移）
+## 当前阿里云发布：2026-09-10 前端导航——新对话即主页、各中心可返回（仅前端，无迁移）
+
+- 14:57:05–14:57:26（北京时间）gw2 frontend 切换至 `20260910-nav-3791e77`，源码为分支 `fe-nav-profile@3791e77`
+  （PR [#20](https://github.com/arkstudio-ai/OpenBox/pull/20)，= `main@7b884b1` 合并进该分支后的提交；**PR 尚未合并**，
+  线上前端是 main 的超集）。backend 保持 `20260910-autopilot-824b295`，postgres/redis 未动；无迁移。frontend 21 秒 healthy。
+  **本次未部署 AWS。**
+- 内容：侧栏第一行改回「新对话」（落当前选中项目），「新建项目」降为第二行；logo 可点回 `/app`；六个中心行进入时高亮；
+  顶栏按路由识别页面（补技能中心、超管系统），主页显示「新对话 · 项目名」，所有中心页出「返回对话」
+  （回最近打开且仍存在的会话，否则回 `/app`）；`/app` 的项目归属改为 URL → 侧栏当前项目 → 未归类，问候语显示项目名。
+  规划见 `docs/FRONTEND_NAV_PROFILE_PLAN.md`。
+- 本地 `git archive 3791e77` 干净导出，`docker build --platform linux/amd64 --build-arg NGINX_IMAGE=nginx:1.31.3-alpine frontend-v2/`
+  （线上 nginx 1.31.3，基础镜像同版）。包 SHA-256 `3b78c895d0cb87fa204da7e6d5cabc4341470e5ca9ddc2b297169e351263188e`，
+  image ID `sha256:e79db1de0a3ce7b9703a5cea4491c20fd2e6b360bcefd66e5599a6babf06b0e4`，服务器装载后一致。
+  OSS 中转走 `oss://bossip/_deploy-tmp/<TAG>/`，**`aliyun ossutil` 的 cp / presign 必须带 `--region cn-shanghai`**
+  （CLI 默认区是 cn-hangzhou，V4 签名带错区域会 403）；预签名 URL 只对 GET 有效，HEAD 会 403，探活用 `curl -r 0-0`。中转对象已删。
+- 切换前本机 loopback 金丝雀：首页 200、hash 资源 200、不存在的资源 404、`/app/skills` 200、镜像内含新文案。
+  切换前 0 个 busy 会话。备份 `/opt/openbox/backups/20260910-nav-3791e77/activation-20260910T065703Z/`
+  （0700；`preflight.dump` 经 `pg_restore -l` 校验；配置、compose、`old_images.txt`）；镜像包在 `releases/20260910-nav-3791e77/`。
+  只改 override 的 frontend image（`.bak-20260910T065703Z`）。
+- 切换期间公网每秒采样 102 次，首页与 `/api/environment` 全部 200，本次未捕获断档（单实例替换仍不承诺零瞬断）。
+  切换后公网 **106 个文件逐一 SHA-256 与镜像一致**，首页字节一致，SPA 路由 200、缺失资源 404、环境标识 `prod`；
+  浏览器打开生产工作台顶栏显示「新对话 · 默认空间」，无控制台错误。Web `npm run check` 466 项通过。
+- 回滚：override 的 frontend image 改回 `openbox-frontend-v2:20260910-trends-7959132`，`docker compose up -d --no-deps frontend`；无需恢复数据库。
+
+## 历史阿里云发布：2026-09-10 自动营销 D 阶段——模版预算授权 + marketing-autopilot 技能（仅后端，含迁移）
 
 - 14:46:46–14:47:05（北京时间）gw2 backend 切换至 `20260910-autopilot-824b295`，源码 `main@824b295`
   （PR [#17](https://github.com/arkstudio-ai/OpenBox/pull/17) D1/B4 + PR [#18](https://github.com/arkstudio-ai/OpenBox/pull/18) D2/D3/D4）。

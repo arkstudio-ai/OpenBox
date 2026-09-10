@@ -8,7 +8,7 @@ TEMPLATES = {
     'input_required': ('等待回答', '《{name}》需要你的回答。', 'Answer needed', '“{name}” needs your answer.'),
     'approval_required': ('等待确认', '《{name}》需要你的确认。', 'Approval needed', '“{name}” needs your approval.'),
     'cron_completed': ('定时任务完成', '《{name}》有新结果。', 'Scheduled result', '“{name}” has new results.'),
-    'cron_failed': ('定时任务失败', '《{name}》重试失败，请检查。', 'Scheduled task failed', '“{name}” stopped retrying. Review it.'),
+    'cron_failed': ('定时任务失败', '《{name}》未完成，请检查。', 'Scheduled task failed', '“{name}” failed. Review details.'),
     'platform_auth_expired': ('需要重新授权', '{name} 授权已失效，请重新登录。', 'Sign-in needed', '{name} authorization expired. Sign in again.'),
     'publish_done': ('发布成功', '《{name}》已确认发布。', 'Published', '“{name}” is confirmed published.'),
     'publish_failed': ('发布失败', '《{name}》发布失败，请检查。', 'Publish failed', '“{name}” failed to publish. Review it.'),

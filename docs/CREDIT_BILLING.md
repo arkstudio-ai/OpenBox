@@ -57,13 +57,13 @@
 | Claude Sonnet 4.6 | 20.3361 | 2.03361 | 101.6805 |
 | Claude Fable 5 | 67.787 | 6.7787 | 338.935 |
 | Claude Haiku 4.5 | 6.7787 | 0.67787 | 33.8935 |
-| Gemini 3.7 Flash，年底前优惠价 | 5.084025 | 0.5084025 | 25.420125 |
+| Gemini 3.7 / 3.8 Flash，年底前优惠价 | 5.084025 | 0.5084025 | 25.420125 |
 
 核价来源：[OpenAI 价格](https://developers.openai.com/api/docs/pricing)、[GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)、[Claude 价格](https://platform.claude.com/docs/en/about-claude/pricing)、[DeepSeek 人民币价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)、[Qwen3.8 Max](https://help.aliyun.com/zh/model-studio/qwen3-8-max)、[Qwen3.8 Flash](https://help.aliyun.com/zh/model-studio/qwen3-8-flash)、[Gemini 价格](https://ai.google.dev/gemini-api/docs/pricing)。标准同步推理价作为产品计费基准，网关的折扣、套餐和返利不改变该价目表。
 
 缓存读取和写入分开计费。输入 token 是包含缓存的总数，先减去缓存读写部分，再分别按各自单价求和。原生 Anthropic usage 的 input_tokens 不含缓存，先统一成包含缓存的口径；LiteLLM / OpenAI 的输入已包含缓存。推理 token 已在输出用量中，不再重复加算。Claude 的 5 分钟 / 1 小时写入分别按输入价的 1.25 / 2 倍，GPT-5.6 缓存写入按 1.25 倍；Qwen 写入遵循价目表单列价格。未确认的 token 分类不猜测价格。
 
-GPT-5.6 三款及 GPT-5.5、GPT-5.4 的单次输入超过 272,000 时，该次调用全部输入（含缓存）按 2 倍、输出按 1.5 倍计价。DeepSeek 高峰为北京时间周一至周五 09:00–12:00、14:00–18:00，以调用开始时间选择价格。Gemini 优惠到 2026-12-31，过期后先标待定价，更新价目表后才能继续按新价收费。DeepSeek `deepseek-chat` / `deepseek-reasoner` 的官方别名已于 2026-07-24 停用，见[官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/)；自定义网关若继续提供这些名称，先在 aliases 中确认实际映射，不能按免费调用处理。
+GPT-5.6 三款及 GPT-5.5、GPT-5.4 的单次输入超过 272,000 时，该次调用全部输入（含缓存）按 2 倍、输出按 1.5 倍计价。DeepSeek 高峰为北京时间周一至周五 09:00–12:00、14:00–18:00，以调用开始时间选择价格。Gemini 3.8 Flash 暂沿用已核验的 3.7 Flash 档位；优惠到 2026-12-31，过期后先标待定价，更新价目表后才能继续按新价收费。DeepSeek `deepseek-chat` / `deepseek-reasoner` 的官方别名已于 2026-07-24 停用，见[官方更新日志](https://api-docs.deepseek.com/zh-cn/updates/)；自定义网关若继续提供这些名称，先在 aliases 中确认实际映射，不能按免费调用处理。
 
 `usage_events` 保存每次调用的模型、发起用户、会话、用途、用量、积分和价格快照。对话、工具调用后续、压缩（含分段）、标题生成、Bash 判断及定时摘要均经过统一计量。重试产生新调用记录；重复结算同一调用不会重复扣费。取消时若已收到上游 usage，仍结算；上游未返回 usage 的请求标 `unreported`，进程崩溃留下 `pending`，均不伪装为零消耗，需要核对上游记录。
 
@@ -273,4 +273,3 @@ enforce 走 `post_ledger` 扣积分，shadow 只记录。视频生成与转写�
 `tokens={source, items, fetches:1}`）。命中共享缓存的读取不落账；同一 (source, board, window, category) 全体客户一天只会产生一次采集。
 占位价 0.20/次，同样以 `media` 段为运营定价唯一入口。`video_analyze` 的视觉调用沿用 `UsageMeter`（kind `video_analyze`，按 token），
 账单页两种 kind 的词条随本次补齐（web + mobile）。
-

@@ -5,6 +5,22 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前默认模型：2026-09-10 Gemini 3.8 Flash
+
+- AWS 开发环境与阿里云生产环境的默认模型均已改为 `Gemini 3.8 Flash`，菜单顺序统一为：
+  `Gemini 3.8 Flash`、`GPT-5.6 Luna`、`DeepSeek V4 Pro`、`DeepSeek V4 Flash`、
+  `Qwen3.8 Max`、`Qwen3.8 Flash`。MCP filter 仍使用 Luna，避免改变内部工具筛选行为。
+- 自建 new-api 对外公开友好 ID `gemini-3.8-flash`，channel 116 映射到上游精确 ID
+  `gemini-3.8-flash-high`；暂沿用 Gemini Flash 文本占位价 `ModelRatio=0.4`、
+  `CompletionRatio=3`。OpenBox 价目表也将 3.8 暂映射到已核验的 3.7 Flash 档位。
+- 两边 backend 均为 healthy；分别从 AWS 与 gw2 使用各自实际 provider 配置发起小请求，
+  均返回 HTTP 200、模型 `gemini-3.8-flash`、内容 `OK`。new-api 日志对应记录为 token
+  `openbox-shared`、channel 116，并确认发生了到 `gemini-3.8-flash-high` 的模型映射。
+- AWS 变更前配置备份：
+  `/opt/openbox/backups/20260910-gemini38-default/20260910080804/`；gw2 变更前配置与数据库备份：
+  `/opt/openbox/backups/20260910-gemini38-default/20260910161023/`；gw-1 的 channel 116 与
+  options 备份：`/opt/bossip/backups/newapi-gemini38-20260910160430/`。
+
 ## 当前阿里云状态：2026-09-10 16:08 F 修复发布后回滚到同事镜像（main 尚未包含同事的发布）
 
 - 16:08:03–16:08:23（北京时间）gw2 backend 切换至 `20260910-fixes-0351b90`（`main@0351b90`，PR [#21](https://github.com/arkstudio-ai/OpenBox/pull/21) F 首轮验收修复，无迁移），

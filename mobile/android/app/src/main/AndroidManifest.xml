@@ -1,13 +1,19 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- The whole app is a client of the backend, so without this a
          release build launches and can do nothing. The Flutter template
          only grants it in the debug and profile manifests, which is why
          running from the IDE never showed the gap. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="BossIP"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <meta-data android:name="XIAOMI_APPID" android:value="${XIAOMI_APPID}"
+            tools:replace="android:value"/>
+        <meta-data android:name="XIAOMI_APPKEY" android:value="${XIAOMI_APPKEY}"
+            tools:replace="android:value"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -25,6 +31,10 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <intent-filter>
+                <action android:name="com.bossip.bipmobile.PUSH_OPEN"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -57,6 +67,27 @@
                 <data android:scheme="com.bossip.bipmobile" android:host="callback"/>
             </intent-filter>
         </activity>
+        <receiver
+            android:name=".BossIpJPushReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="cn.jpush.android.intent.RECEIVE_MESSAGE"/>
+                <category android:name="${applicationId}"/>
+            </intent-filter>
+        </receiver>
+        <!-- Required by JCore. Keeping the transport in :pushcore makes
+             registration and message delivery independent from Flutter UI
+             lifecycle while the service itself remains non-exported. -->
+        <service
+            android:name=".BossIpJCommonService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":pushcore">
+            <intent-filter>
+                <action android:name="cn.jiguang.user.service.action"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

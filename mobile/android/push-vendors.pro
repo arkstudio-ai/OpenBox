@@ -1,0 +1,12 @@
+# Vendor SDKs use reflection; keep the entry points recommended by JPush.
+-keep class cn.jpush.** { *; }
+-keep class cn.jiguang.** { *; }
+-keep class com.xiaomi.** { *; }
+-keep class com.huawei.** { *; }
+-keep class com.hihonor.push.** { *; }
+-keep class com.heytap.msp.** { *; }
+-keep class com.coloros.mcs.** { *; }
+-keep class com.vivo.push.** { *; }
+-keep class com.vivo.vms.** { *; }
+-keep class com.meizu.cloud.pushsdk.** { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*

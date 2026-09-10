@@ -183,6 +183,23 @@ async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
             pass
 
 
+async def _push_waiting(request):
+    try:
+        from notifications.events import permission_waiting
+        from question.runtime import current_run
+        await permission_waiting(request, current_run.get())
+    except Exception as error:
+        log.warning("Permission notification deferred: %s", type(error).__name__)
+
+
+async def _push_resolved(request_id, user_id):
+    try:
+        from notifications.events import permission_resolved
+        await permission_resolved(request_id, user_id)
+    except Exception as error:
+        log.warning("Permission notification cancellation deferred: %s", type(error).__name__)
+
+
 async def ask(
     session_id: str,
     permission: str,
@@ -251,22 +268,22 @@ async def ask(
                 except Exception as e:
                     log.warning(f"Failed to store permission request in Redis: {e}")
 
-            # Publish SSE event
-            bus.publish(PERMISSION_ASKED, {**request.model_dump(), "userId": user_id})
-
-            if redis_client is not None:
-                # Wait via Redis Pub/Sub for cross-worker support
-                try:
-                    await _wait_via_redis(request_id, pending)
-                except Exception as e:
-                    log.warning(f"Redis wait failed, falling back to local: {e}")
+            try:
+                await _push_waiting(request)
+                # Publish only after the outbox exists, so an immediate reply
+                # cannot cancel before the waiting notification is enqueued.
+                bus.publish(PERMISSION_ASKED, {**request.model_dump(), "userId": user_id})
+                if redis_client is not None:
+                    try:
+                        await _wait_via_redis(request_id, pending)
+                    except Exception as e:
+                        log.warning(f"Redis wait failed, falling back to local: {e}")
+                        await pending.event.wait()
+                else:
                     await pending.event.wait()
-            else:
-                # Fallback: local asyncio.Event wait
-                await pending.event.wait()
-
-            # Clean up pending
-            _pending.pop(request_id, None)
+            finally:
+                _pending.pop(request_id, None)
+                await _push_resolved(request_id, user_id)
 
             if pending.result == "reject":
                 if pending.error_message:
@@ -304,6 +321,8 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
         raise PermissionError("Permission request does not belong to current user")
     if pending is None and request_data is None:
         raise KeyError("Permission request not found")
+
+    await _push_resolved(request_id, user_id)
 
     if pending is not None:
         # Local worker owns this request

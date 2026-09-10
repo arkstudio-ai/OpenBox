@@ -42,6 +42,13 @@ frontend/browser_test.mjs
 credentials/
 *.pem
 *.key
+*.p8
+mobile/android/push-vendors.properties
+mobile/android/key.properties
+mobile/android/app/agconnect-services.json
+mobile/android/app/google-services.json
+*.jks
+*.keystore
 *token*.json
 gmail_*.json
 secrets.yaml

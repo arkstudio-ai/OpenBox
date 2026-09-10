@@ -22,6 +22,8 @@ sealed class MessagePart {
         );
       case 'reasoning':
         return ReasoningPart(id: id, text: asString(json['text']) ?? '');
+      case 'suggestions':
+        return SuggestionsPart.fromJson(json);
       case 'tool':
         return ToolPart(
           id: id,
@@ -123,6 +125,62 @@ sealed class MessagePart {
         );
     }
   }
+}
+
+enum SuggestionMode { send, draft }
+
+class NextStepSuggestion {
+  const NextStepSuggestion({
+    required this.label,
+    required this.prompt,
+    required this.mode,
+  });
+
+  final String label;
+  final String prompt;
+  final SuggestionMode mode;
+}
+
+/// Auxiliary UI data, never rendered as assistant prose or executed as tools.
+class SuggestionsPart extends MessagePart {
+  const SuggestionsPart({required super.id, required this.items});
+
+  factory SuggestionsPart.fromJson(Map<String, dynamic> json) {
+    final items = <NextStepSuggestion>[];
+    final labels = <String>{};
+    final prompts = <String>{};
+    for (final raw in asList(json['items']).whereType<Map<String, dynamic>>()) {
+      final label = asString(raw['label'])?.trim() ?? '';
+      final prompt = asString(raw['prompt'])?.trim() ?? '';
+      final mode = switch (raw['mode']) {
+        'send' => SuggestionMode.send,
+        'draft' => SuggestionMode.draft,
+        _ => null,
+      };
+      if (mode == null ||
+          label.isEmpty ||
+          prompt.isEmpty ||
+          label.runes.length > 32 ||
+          prompt.runes.length > 800 ||
+          labels.contains(label) ||
+          prompts.contains(prompt)) {
+        continue;
+      }
+      labels.add(label);
+      prompts.add(prompt);
+      items.add(NextStepSuggestion(label: label, prompt: prompt, mode: mode));
+      if (items.length == 3) break;
+    }
+    return SuggestionsPart(
+      id: asString(json['id']) ?? '',
+      items: List.unmodifiable(items),
+    );
+  }
+
+  final List<NextStepSuggestion> items;
+
+  @override
+  String get type => 'suggestions';
 }
 
 enum ToolStatus { pending, running, completed, error, waitingInput }

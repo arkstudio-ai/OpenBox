@@ -151,7 +151,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
     try {
       final results = await Future.wait<dynamic>([
-        api.listMessages(_sessionId),
+        api.messageSnapshot(_sessionId),
         api.getSession(_sessionId),
       ]);
       if (_disposed || sequence != _fetchSequence) return;

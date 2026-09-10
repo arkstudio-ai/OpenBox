@@ -7,6 +7,7 @@ import '../shared/appearance/theme_builder.dart';
 import '../shared/appearance/type_scale.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/widgets/toast.dart';
+import 'notification_host.dart';
 import 'router.dart';
 import 'workspace_bootstrap.dart';
 
@@ -48,14 +49,16 @@ class BossipApp extends ConsumerWidget {
           ),
           // Tap on any empty area dismisses the keyboard — interactive
           // widgets win the gesture arena, so buttons/fields are unaffected.
-          child: WorkspaceBootstrap(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                final focus = FocusManager.instance.primaryFocus;
-                if (focus != null && focus.context != null) focus.unfocus();
-              },
-              child: Stack(children: [?child, const ToastHost()]),
+          child: NotificationHost(
+            child: WorkspaceBootstrap(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  final focus = FocusManager.instance.primaryFocus;
+                  if (focus != null && focus.context != null) focus.unfocus();
+                },
+                child: Stack(children: [?child, const ToastHost()]),
+              ),
             ),
           ),
         );

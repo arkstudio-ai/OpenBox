@@ -269,8 +269,14 @@ async def get_trends(caller: Caller, *, source_key: str = "auto", board: str | N
 
 async def _collect(caller: Caller, source: HotSource, brd, window: int, category: str | None, key: str, *,
                    limit: int, size: int) -> TrendResult:
-    from billing.media import settle_hot_trends
+    from autopilot import ledger as _autopilot
+    from billing.media import quote_hot_trends, settle_hot_trends
 
+    try:
+        _autopilot.guard_paid_step(caller.session_id or "", kind="hot_trends", credits=quote_hot_trends(source.key).credits or 0,
+                                   note=f"{source.key} {brd.key} live")
+    except _autopilot.BudgetStop as exc:
+        raise TrendsRefusal(str(exc)) from exc
     plan = source.plan(source, brd, window, category, size)
     now = _now()
     items: list[HotItem] = []

@@ -1,0 +1,95 @@
+// JPush's official vendor adapters own registration, token refresh and routing
+// through the same JPush registration ID. No second account/device binding.
+// Reference: https://docs.jiguang.cn/jpush/client/Android/android_3rd_guide
+import groovy.json.JsonSlurper
+
+def pushProperties = new Properties()
+def pushFile = rootProject.file('push-vendors.properties')
+if (pushFile.exists()) pushFile.withInputStream { pushProperties.load(it) }
+def setting = { String name ->
+    (System.getenv('BOSSIP_PUSH_' + name) ?: pushProperties.getProperty(name, '')).trim()
+}
+def vendorFields = [
+    xiaomi: ['XIAOMI_APPID', 'XIAOMI_APPKEY'],
+    honor: ['HONOR_APPID'],
+    oppo: ['OPPO_APPID', 'OPPO_APPKEY', 'OPPO_APPSECRET'],
+    vivo: ['VIVO_APPID', 'VIVO_APPKEY'],
+    meizu: ['MEIZU_APPID', 'MEIZU_APPKEY'],
+]
+def enabled = []
+vendorFields.each { vendor, fields ->
+    def configured = fields.findAll { setting(it) }
+    if (configured && configured.size() != fields.size()) {
+        throw new GradleException("Incomplete ${vendor} push config: fill ${fields.join(', ')}")
+    }
+    if (configured) {
+        enabled.add(vendor)
+        dependencies.add('implementation', "cn.jiguang.sdk.plugin:${vendor}:6.2.1")
+        fields.each { name ->
+            def value = setting(name)
+            // These prefixes are required by JPush's OPPO/Meizu adapters.
+            def prefix = vendor == 'oppo' ? 'OP-' : vendor == 'meizu' ? 'MZ-' : ''
+            android.defaultConfig.manifestPlaceholders[name] =
+                prefix && !value.startsWith(prefix) ? prefix + value : value
+        }
+    }
+}
+// JPush 6.2.x's Xiaomi AAR appends a literal backslash in its manifest. The
+// app's explicit metadata override keeps the exact configured credentials.
+['XIAOMI_APPID', 'XIAOMI_APPKEY'].each { name ->
+    android.defaultConfig.manifestPlaceholders[name] = setting(name)
+}
+if (enabled.contains('oppo')) {
+    dependencies.add('implementation', 'com.google.code.gson:gson:2.11.0')
+    dependencies.add('implementation', 'androidx.annotation:annotation:1.9.1')
+}
+
+def huaweiFile = file('agconnect-services.json')
+if (huaweiFile.exists()) {
+    def config = new JsonSlurper().parse(huaweiFile)
+    def packageNames = [config.client?.package_name] + (config.appInfos ?: []).collect { it.package_name }
+    if (!packageNames.contains('com.bossip.bipmobile')) {
+        throw new GradleException('agconnect-services.json must belong to com.bossip.bipmobile')
+    }
+    apply plugin: 'com.huawei.agconnect'
+    dependencies.add('implementation', 'cn.jiguang.sdk.plugin:huawei:6.2.1')
+    enabled.add('huawei')
+}
+
+def googleFile = file('google-services.json')
+if (googleFile.exists()) {
+    def config = new JsonSlurper().parse(googleFile)
+    def matches = (config.client ?: []).any { it.client_info?.android_client_info?.package_name == 'com.bossip.bipmobile' }
+    if (!matches) throw new GradleException('google-services.json must belong to com.bossip.bipmobile')
+    apply plugin: 'com.google.gms.google-services'
+    dependencies.add('implementation', 'cn.jiguang.sdk.plugin:fcm:6.2.1')
+    enabled.add('fcm')
+}
+
+// Public channel names only; never log app keys, tokens or file contents.
+logger.lifecycle('BossIP push vendor adapters: ' + (enabled ? enabled.join(', ') : 'none configured'))
+android.buildFeatures.buildConfig = true
+android.defaultConfig.buildConfigField('String', 'PUSH_VENDORS', '"' + enabled.join(',') + '"')
+android.buildTypes.each { buildType ->
+    buildType.proguardFile(rootProject.file('push-vendors.pro'))
+}
+
+// A supplied release key must match fingerprints registered with vendors.
+// Preserve the existing debug fallback for development without a release key.
+def signingProperties = new Properties()
+def signingFile = rootProject.file('key.properties')
+if (signingFile.exists()) {
+    signingFile.withInputStream { signingProperties.load(it) }
+    def names = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']
+    if (names.any { !signingProperties.getProperty(it)?.trim() }) {
+        throw new GradleException('key.properties requires storeFile, storePassword, keyAlias, keyPassword')
+    }
+    def store = rootProject.file(signingProperties.getProperty('storeFile'))
+    if (!store.exists()) throw new GradleException('Release signing keystore does not exist')
+    def releaseKey = android.signingConfigs.maybeCreate('vendorRelease')
+    releaseKey.storeFile = store
+    releaseKey.storePassword = signingProperties.getProperty('storePassword')
+    releaseKey.keyAlias = signingProperties.getProperty('keyAlias')
+    releaseKey.keyPassword = signingProperties.getProperty('keyPassword')
+    android.buildTypes.release.signingConfig = releaseKey
+}

@@ -1,0 +1,6 @@
+# Copy to key.properties (ignored). storeFile is absolute or relative to android/.
+# Register this key's certificate fingerprints with each enabled vendor.
+storeFile=
+storePassword=
+keyAlias=
+keyPassword=

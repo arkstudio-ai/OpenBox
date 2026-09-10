@@ -60,7 +60,10 @@ async def get_optional_current_user(
         if jti and await _cache.exists(f"jwt_bl:{jti}"):
             raise HTTPException(status_code=401, detail="Token has been revoked")
 
-    return {"user_id": user_id, "role": payload.get("role", "user")}
+    from auth.mobile import is_mobile_request, validate_claims
+    await validate_claims(payload, mobile_request=is_mobile_request(request))
+    return {"user_id": user_id, "role": payload.get("role", "user"),
+            "client": payload.get("client"), "mobile_session_id": payload.get("sid")}
 
 
 async def get_current_user(

@@ -331,8 +331,10 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     abort = register_run(session_id)
     lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
     failed = False
+    completed = False
     interrupted = False
     run_message_ids: set[str] = set()
+    suggestion_target: tuple[str, str] | None = None
 
     try:
         # F2: Load persisted permission rules (once per user)
@@ -437,6 +439,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             ):
                 compact_fail_count += 1
                 if compact_fail_count >= 3:
+                    failed = True
                     log.error(f"Session {session_id}: proactive compaction failed {compact_fail_count} times, aborting")
                     bus.publish(SESSION_ERROR, {
                         "userId": user_id,
@@ -471,6 +474,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             step += 1
 
             if step > 200:
+                failed = True
                 log.warning(f"Session {session_id} exceeded max steps")
                 break
 
@@ -1169,6 +1173,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                     step -= 1  # a retried attempt is not a step
                     continue
                 log.error(f"LLM error in session {session_id} after {llm_retry_count} retries: {result.error}")
+                failed = True
                 bus.publish(SESSION_ERROR, {
                     "userId": user_id, "sessionId": session_id,
                     "error": {
@@ -1193,6 +1198,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 assistant_info.finish = assistant_info.finish or "stop"
                 await update_message_info(assistant_info, user_id=user_id)
                 last_assistant_msg = assistant_info
+                completed = not abort.is_set()
                 break
 
             finish_reason = result.finish_reason
@@ -1282,6 +1288,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             # Check result
             log.info(f"Step {step} finished: reason={finish_reason}, tool_calls={len(result.completed_tool_parts)}, text={len(collected_text)} chars")
             if finish_reason == "stop":
+                completed = bool(collected_text.strip()) and not abort.is_set()
+                suggestion_target = (assistant_info.id, model_id)
                 from models.message import id_to_iso
                 last_assistant_msg = MessageWithParts(
                     id=assistant_info.id,
@@ -1389,15 +1397,21 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         await set_session_status(session_id, SessionStatus.ERROR, user_id=user_id)
         return None
     finally:
+        suggest = suggestion_target is not None and not failed and not interrupted and not abort.is_set()
         try:
             lease_task.cancel()
             await asyncio.gather(lease_task, return_exceptions=True)
-            await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted)
+            await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted, completed=completed)
         except LookupError:
             pass  # The owner deleted this session while its run was stopping.
         finally:
             question_runtime.current_run.reset(run_context)
             clear_abort(session_id, abort)
+        if suggest and suggestion_target is not None:
+            from agent.suggestions import generate_suggestions
+            task = asyncio.create_task(generate_suggestions(ticket, *suggestion_target))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
 
 async def _build_system_prompt(

@@ -159,9 +159,16 @@ async def lifespan(app: FastAPI):
         log.info("Closed %s legacy questions requiring fresh confirmation", legacy_questions)
     question_worker.start()
 
+    from notifications.providers import PushProviders
+    from notifications.runtime import PushWorker
+    app.state.push_providers = PushProviders.from_env()
+    push_worker = PushWorker(app.state.push_providers)
+    push_worker.start()
+
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await push_worker.stop()
     await question_worker.stop()
     await desktop_activation_service.stop()
 
@@ -306,6 +313,8 @@ def create_app() -> FastAPI:
     application.include_router(platforms_router)
     application.include_router(publish_jobs_router)
     application.include_router(notifications_router)
+    from api.push import router as push_router
+    application.include_router(push_router)
     application.include_router(douyin_webhook_router)  # No auth — signed by the platform
 
     # ── Agent routes ──

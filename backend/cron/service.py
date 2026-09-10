@@ -121,6 +121,7 @@ class CronService:
                 model=create.model,
                 timeout_seconds=create.timeout_seconds,
                 delivery=delivery_dict,
+                template=create.template or None,
                 delete_after_run=delete_after_run,
                 max_retries=create.max_retries,
                 next_run_at=next_run,
@@ -190,6 +191,8 @@ class CronService:
                 values["timeout_seconds"] = patch.timeout_seconds
             if patch.delivery is not None:
                 values["delivery"] = patch.delivery.model_dump()
+            if patch.template is not None:
+                values["template"] = patch.template or None
             if patch.enabled is not None:
                 values["enabled"] = patch.enabled
 
@@ -300,6 +303,7 @@ class CronService:
             "model": job.model,
             "timeout_seconds": job.timeout_seconds,
             "delivery": job.delivery,
+            "template": job.template,
             "delete_after_run": job.delete_after_run,
             "max_retries": job.max_retries,
             "consecutive_errors": job.consecutive_errors,
@@ -637,6 +641,7 @@ def _job_to_dict(job) -> dict:
         "model": job.model,
         "timeout_seconds": job.timeout_seconds,
         "delivery": job.delivery,
+        "template": job.template,
         "delete_after_run": job.delete_after_run,
         "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
         "last_run_at": job.last_run_at.isoformat() if job.last_run_at else None,

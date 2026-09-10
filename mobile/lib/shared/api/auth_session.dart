@@ -7,6 +7,9 @@ import 'dart:async';
 class AuthSession {
   String? accessToken;
   String? userId;
+  String? mobileSessionId;
+  int revision = 0;
+  void Function(String code)? invalidateFn;
 
   /// Wired by the auth controller: performs POST /api/auth/refresh (+ /me)
   /// and returns the new access token, or null on failure (→ logged out).

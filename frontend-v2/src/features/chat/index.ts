@@ -20,3 +20,4 @@ export { useStreamStore, isBusyStatus } from "./stores/stream"
 export { usePendingStore } from "./stores/pending"
 
 export { mergeTurns } from "./lib/turn-view"
+export { latestSuggestions } from "./lib/suggestions"

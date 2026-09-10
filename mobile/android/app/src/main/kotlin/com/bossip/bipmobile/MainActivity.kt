@@ -3,12 +3,11 @@ package com.bossip.bipmobile
 import android.app.Activity
 import android.content.Intent
 import com.alipay.sdk.app.PayTask
-import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
-class MainActivity : FlutterActivity() {
+class MainActivity : NotificationActivity() {
     private val saveFileRequestCode = 9021
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSavePath: String? = null

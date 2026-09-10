@@ -11,6 +11,11 @@
   // Leave empty to use the default model.
   "mcp_filter_model": "openai/gpt-5.2",
 
+  // Optional model for next-step suggestions above the composer.
+  // Omit or leave empty to follow the user's selected chat model.
+  // Uses the same provider/<model> routing and credentials as ordinary chat.
+  "suggestion_model": "",
+
   // Models the frontend offers in its picker. When empty, only "model" above
   // is offered. Ids carry the provider prefix ("openai/") because that is what
   // selects the request format — an OpenAI-compatible gateway serves Claude and

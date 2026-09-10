@@ -22,6 +22,11 @@ _TEXTS: dict[str, dict[str, str]] = {
     "en-US": {
         "scheduled_task": "Scheduled Task",
         "execute_now": "Execute the following task now:",
+        "template_block": "Template (budget authorisation)",
+        "template_note": (
+            "This is a marketing-autopilot run. The fields below were authorised by the person when the task was created; "
+            "follow the marketing-autopilot skill, obey these limits, and do not ask for confirmation."
+        ),
         "context_summary": "Session Context Summary",
         "context_note": (
             "The summary below is background only — use it to understand the "
@@ -53,6 +58,11 @@ _TEXTS: dict[str, dict[str, str]] = {
     "zh-CN": {
         "scheduled_task": "定时任务",
         "execute_now": "现在立即执行以下任务:",
+        "template_block": "模版参数（预算授权）",
+        "template_note": (
+            "这是一次自动营销（marketing-autopilot）运行。下面的字段是用户创建任务时一次性授权的："
+            "按 marketing-autopilot 技能执行，预算、条数、模型档位、发布方式以此为准，不要再出确认卡。"
+        ),
         "context_summary": "会话上下文摘要",
         "context_note": (
             "以下摘要仅为背景信息——用于理解需求和对本次执行的发现去重;"

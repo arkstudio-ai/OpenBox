@@ -81,8 +81,7 @@ class TodoDisposition {
 TodoDisposition todoDisposition(TodoView todo, bool live) {
   if (todo.allDone) return const TodoDisposition(TodoDispositionKind.done);
   if (live) return const TodoDisposition(TodoDispositionKind.live);
-  final running =
-      todo.tasks.any((t) => t.item.status == TodoStatus.inProgress);
+  final running = todo.tasks.any((t) => t.item.status == TodoStatus.inProgress);
   return running
       ? TodoDisposition(TodoDispositionKind.interrupted, at: todo.current)
       : const TodoDisposition(TodoDispositionKind.unfinished);
@@ -143,12 +142,11 @@ TodoView? buildTodoView(List<MessagePart> parts) {
     for (final item in items)
       TodoTask(item: item, tools: buckets[item.id] ?? const []),
   ];
-  final counted =
-      items.where((i) => i.status != TodoStatus.cancelled).toList();
-  final done =
-      counted.where((i) => i.status == TodoStatus.completed).length;
-  final activeIndex =
-      counted.indexWhere((i) => i.status == TodoStatus.inProgress);
+  final counted = items.where((i) => i.status != TodoStatus.cancelled).toList();
+  final done = counted.where((i) => i.status == TodoStatus.completed).length;
+  final activeIndex = counted.indexWhere(
+    (i) => i.status == TodoStatus.inProgress,
+  );
   final active = activeIndex >= 0 ? counted[activeIndex] : null;
   final activeForm = active?.activeForm?.trim();
 
@@ -156,7 +154,9 @@ TodoView? buildTodoView(List<MessagePart> parts) {
     tasks: tasks,
     before: before,
     after: after,
-    activeForm: (activeForm != null && activeForm.isNotEmpty) ? activeForm : null,
+    activeForm: (activeForm != null && activeForm.isNotEmpty)
+        ? activeForm
+        : null,
     done: done,
     total: counted.length,
     current: activeIndex >= 0 ? activeIndex + 1 : done,
@@ -288,13 +288,17 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
         case ToolPart():
           tools.add(part);
           final metaDuration = part.metadata['duration'];
-          duration += part.duration ?? (metaDuration is num ? metaDuration.toDouble() : 0);
+          duration +=
+              part.duration ??
+              (metaDuration is num ? metaDuration.toDouble() : 0);
         case SubtaskPart():
           tools.add(part);
         case StepStartPart():
           stepCount += 1;
         case StepFinishPart():
-          if (part.inputTokens > contextTokens) contextTokens = part.inputTokens;
+          if (part.inputTokens > contextTokens) {
+            contextTokens = part.inputTokens;
+          }
           duration += part.duration;
         case CompactionPart() || RetryPart() || AgentPart():
           notices.add(part);
@@ -304,7 +308,7 @@ AssistantTurnData _buildTurn(List<ChatMessage> messages) {
           files.add(part);
         case PlanPart():
           plans.add(part);
-        case TodoPart() || SkillJobPart() || UnknownPart():
+        case TodoPart() || SkillJobPart() || SuggestionsPart() || UnknownPart():
           break;
       }
     }

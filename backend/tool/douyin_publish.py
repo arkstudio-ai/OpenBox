@@ -262,6 +262,14 @@ async def _publish(args: DouyinPublishArgs, ctx: ToolContext) -> ToolResult:
         return _error("PUBLISH_BAD_ARGS", "private_status 只能是 0（所有人）、1（仅自己）、2（好友）。")
     rows = await service.list_accounts(ctx.workspace_id)
     if not any(r.platform == PLATFORM and r.status == "bound" for r in rows):
+        from db.base import get_db_session
+        from db.models.platform_account import PlatformAccount
+        from notifications.events import auth_blocked
+        async with get_db_session() as db:
+            for account in rows:
+                if account.platform == PLATFORM and account.status == "expired":
+                    row = await db.get(PlatformAccount, account.id)
+                    await auth_blocked(db, row, session_id=ctx.session_id, user_id=ctx.user_id)
         return _error(
             "PLATFORM_AUTH_REQUIRED",
             "当前工作空间没有有效的抖音授权，先用 action=authorize 让用户扫码授权。",

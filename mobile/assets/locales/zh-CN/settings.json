@@ -116,5 +116,32 @@
       "cool": "cool",
       "neutral": "neutral"
     }
+  },
+  "notifications": {
+    "title": "系统通知",
+    "description": "仅在锁屏、App 后台或离线时接收任务结果和待处理提醒。前台所有页面、权限弹窗和短暂断网均不弹系统通知。更换登录手机后，通知绑定同步切换。",
+    "status": {
+      "off": "已关闭",
+      "unknown": "正在读取通知状态",
+      "notDetermined": "尚未开启通知",
+      "denied": "系统通知已被关闭，请前往系统设置开启",
+      "ready": "已连接，可接收通知",
+      "connecting": "正在连接通知服务"
+    },
+    "openSettings": "系统设置",
+    "testLocal": "本地测试",
+    "testRemote": "服务器测试",
+    "localTitle": "BossIP 本地通知测试",
+    "localBody": "这条通知用于检查当前手机的通知展示。",
+    "unavailable": "这条通知对应的任务已不可访问。",
+    "setupFailed": "通知暂未连接，请重试。",
+    "result": {
+      "local": "本地测试已安排：请在 10 秒内锁屏或切到后台，并保持 App 进程运行；停留前台不会弹通知。",
+      "accepted": "推送服务已接受测试通知，请检查系统通知。",
+      "failed": "测试通知发送失败，请重试。",
+      "cancelled": "App 已回到前台，或登录、通知绑定已变化，本次通知已取消。",
+      "unbound": "当前手机尚未绑定通知。",
+      "pending": "服务器测试已安排：请在 10 秒内锁屏或切到后台；停留或返回前台时不会弹通知。"
+    }
   }
 }

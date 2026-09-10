@@ -116,5 +116,32 @@
       "cool": "cool",
       "neutral": "neutral"
     }
+  },
+  "notifications": {
+    "title": "System notifications",
+    "description": "Receive task results and requests only while locked, in the background, or offline. All foreground pages, temporary focus loss and brief connection loss stay quiet. Signing in on another phone moves notifications to it.",
+    "status": {
+      "off": "Off",
+      "unknown": "Reading notification settings",
+      "notDetermined": "Notifications are not enabled",
+      "denied": "Notifications are blocked in system settings",
+      "ready": "Connected and ready",
+      "connecting": "Connecting to notification service"
+    },
+    "openSettings": "System settings",
+    "testLocal": "Local test",
+    "testRemote": "Server test",
+    "localTitle": "BossIP local notification test",
+    "localBody": "This notification checks display on this phone.",
+    "unavailable": "The task linked to this notification is no longer available.",
+    "setupFailed": "Notifications are not connected. Please retry.",
+    "result": {
+      "local": "Local test scheduled. Lock or background the app within 10 seconds and keep its process running. Staying in the foreground suppresses it.",
+      "accepted": "The push service accepted the test. Check your system notifications.",
+      "failed": "The test notification failed. Please retry.",
+      "cancelled": "The app returned to the foreground, or your login or notification binding changed. The notification was cancelled.",
+      "unbound": "This phone is not registered for notifications.",
+      "pending": "Server test scheduled. Lock or background the app within 10 seconds. Staying in or returning to the foreground suppresses it."
+    }
   }
 }

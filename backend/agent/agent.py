@@ -165,6 +165,7 @@ BUILD_ONLY_WORKFLOW_TOOLS = frozenset({
     "skill_manage",
     "douyin_publish",
     "desktop_publish",
+    "autopilot_run",
     "desktop_login",
 })
 
@@ -181,7 +182,7 @@ AGENTS: dict[str, AgentDef] = {
             "web_fetch", "web_search", "cron", "view_image",
             "share_file", "computer", "browser_mode",
             "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "hot_trends",
-            "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "desktop_login",
+            "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
         ],
         max_steps=200,
         # prompt is None — dynamically selected based on model_id

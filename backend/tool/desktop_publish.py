@@ -119,7 +119,7 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
     if res.get("item_url"):
         lines.append(f"item_url={res['item_url']}")
     s = res.get("summary") or {}
-    lines.append(f"title_on_form={s.get('title')!r} counters={s.get('counters')} declaration={res.get('declaration_row')} visibility={VISIBILITY[args.visibility]}")
+    lines.append(f"title_on_form={s.get('title')!r} counters={s.get('counters')} declaration={res.get('declaration_row') or DECLARATIONS[args.declaration]} visibility={VISIBILITY[args.visibility]}")
     if res.get("upload"):
         lines.append(f"upload_ms={res['upload'].get('ms')}")
     if res.get("publish_ms") is not None:

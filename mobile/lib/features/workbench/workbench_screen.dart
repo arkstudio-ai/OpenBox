@@ -19,6 +19,7 @@ class WorkbenchScreen extends ConsumerStatefulWidget {
     super.key,
     required this.sessionId,
     this.initialTab = menuTab,
+    this.initialControl = false,
   });
 
   /// `initialTab` value meaning "stay on the menu".
@@ -30,6 +31,10 @@ class WorkbenchScreen extends ConsumerStatefulWidget {
   /// deep-link one. It opens *on top of* the menu, so back still lands here.
   final String initialTab;
 
+  /// With `initialTab == 'desktop'`: take input control as soon as the stream
+  /// is up (a takeover card in the chat asked for it).
+  final bool initialControl;
+
   @override
   ConsumerState<WorkbenchScreen> createState() => _WorkbenchScreenState();
 }
@@ -40,16 +45,19 @@ class _WorkbenchScreenState extends ConsumerState<WorkbenchScreen> {
     super.initState();
     if (widget.initialTab != WorkbenchScreen.menuTab) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _open(widget.initialTab);
+        if (mounted) _open(widget.initialTab, control: widget.initialControl);
       });
     }
   }
 
-  void _open(String kind) {
+  void _open(String kind, {bool control = false}) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            WorkbenchSurfacePage(sessionId: widget.sessionId, kind: kind),
+        builder: (_) => WorkbenchSurfacePage(
+          sessionId: widget.sessionId,
+          kind: kind,
+          control: control,
+        ),
       ),
     );
   }

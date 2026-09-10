@@ -34,8 +34,12 @@ enum _Phase {
 
 /// A scope change unmounts the old SDK, its outstanding tickets and expiry timer.
 class DesktopTab extends ConsumerWidget {
-  const DesktopTab({super.key, this.onImmersive});
+  const DesktopTab({super.key, this.onImmersive, this.autoControl = false});
   final ValueChanged<bool>? onImmersive;
+
+  /// Take input control on the first connect — a takeover card in the chat
+  /// sent the user here to solve something by hand (web `desktopControl`).
+  final bool autoControl;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -50,6 +54,7 @@ class DesktopTab extends ConsumerWidget {
       scope: scope,
       canManage: workspace.role.canManage,
       onImmersive: onImmersive,
+      autoControl: autoControl,
     );
   }
 }
@@ -62,10 +67,12 @@ class ScopedDesktopViewer extends ConsumerStatefulWidget {
     required this.scope,
     required this.canManage,
     this.onImmersive,
+    this.autoControl = false,
   });
   final DesktopScope scope;
   final bool canManage;
   final ValueChanged<bool>? onImmersive;
+  final bool autoControl;
 
   @override
   ConsumerState<ScopedDesktopViewer> createState() => _DesktopViewerState();
@@ -76,6 +83,9 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
   _Phase _phase = _Phase.loading;
   String _detail = '';
   bool _control = false;
+  // Honoured once: a reconnect after the user switched control back off
+  // must not re-enable it.
+  bool _autoControlApplied = false;
   bool _fullscreen = false;
   bool _keyboard = false;
   bool _alive = true;
@@ -264,6 +274,12 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
                     );
             }
           });
+          if (_phase == _Phase.connected &&
+              widget.autoControl &&
+              !_autoControlApplied) {
+            _autoControlApplied = true;
+            _toggleControl(true);
+          }
         },
       );
       if (!_isCurrent(generation)) {

@@ -78,7 +78,24 @@ depends on identity.
 If a task needs the user's own logged-in session (their email, their bank, an account
 only they can reach) and you are running on the cloud browser, stop and ask the user
 whether to connect their own browser or to log in on the cloud one — do not silently
-attempt it and hit a login wall."""
+attempt it and hit a login wall.
+
+## Captcha / risk control: hand off to the user
+Sites stop automation on purpose, and you are not allowed to fight that. Recognise it:
+a slider or jigsaw to drag, "click the characters in order", an arithmetic or image
+code to type, an SMS/email one-time code, a page saying 安全验证 / 环境异常 / 访问过于频繁
+/ "verify you are human", a Cloudflare, GeeTest (极验), Aliyun (nc_) or Tencent
+(tcaptcha) challenge frame, or the same action bouncing you back to a verification
+page twice. `waitForPageLoad()` also reports a `challenge` field when it spots one.
+
+Do NOT drag sliders, guess codes, click the challenge by coordinates with `computer`,
+switch user agents, clear cookies, or reload in a loop. Reload the page at most once
+to confirm the challenge is real, then call `desktop_takeover` (reveal it with
+`capability_search` if it is not in your tool list). It suspends the run and shows the
+user a card with a link that opens the cloud desktop with control switched on; when the
+page is in the user's own browser the card tells them to finish it there. When the tool
+returns, re-open the same dev-browser page and re-check its state before continuing,
+and say in your final answer that the user completed that step."""
 
 _TOOL_FIRST = """\
 # Tool-First Principle

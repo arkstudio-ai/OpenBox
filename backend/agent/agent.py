@@ -180,7 +180,7 @@ AGENTS: dict[str, AgentDef] = {
             "task", "batch", "question", "todo_write", "todo_read",
             "plan_enter", "skill", "skill_search", "capability_search",
             "web_fetch", "web_search", "cron", "view_image",
-            "share_file", "computer", "browser_mode",
+            "share_file", "computer", "browser_mode", "desktop_takeover",
             "image_gen", "video_generate", "video_transcribe", "video_compose", "video_analyze", "hot_trends",
             "creator_context", "skill_manage", "douyin_publish", "desktop_publish", "autopilot_run", "desktop_login",
         ],
@@ -191,6 +191,9 @@ AGENTS: dict[str, AgentDef] = {
             # Override defaults: build agent can ask questions and enter plan mode
             {"permission": "question", "pattern": "*", "action": "allow"},
             {"permission": "plan_enter", "pattern": "*", "action": "allow"},
+            # Same shape as question: it blocks on the user, so a permission
+            # prompt in front of it would be a prompt about a prompt.
+            {"permission": "desktop_takeover", "pattern": "*", "action": "allow"},
         ],
     ),
     "plan": AgentDef(

@@ -20,6 +20,7 @@ import { cn } from "@/shared/lib/cn"
 import { useWorkspaceStore } from "@/shared/api/workspace-store"
 import type { DesktopStatus } from "@/shared/api/desktop"
 import { paths } from "@/shared/router/paths"
+import { usePanelStore } from "../stores/panel"
 
 const SDK_URL =
   "https://g.alicdn.com/aliyun-ecs/WuyingWebSdk-multi/2.13.9-asp3.18.11/WuyingWebSDK/WuyingWebSDK.js"
@@ -221,6 +222,55 @@ function useChannelState(
   return [state, setState] as const
 }
 
+/**
+ * The control / clipboard toggles, seen from outside the render cycle.
+ *
+ * The connect effect outlives renders, so `togglesRef` mirrors the two
+ * checkboxes for it. The same ref is how a takeover card in the chat gets its
+ * way: `openKind("desktop", { desktopControl: true })` bumps the panel store's
+ * `desktopControlRequest`; we tick the box, and if the stream is already up
+ * apply it to the SDK session at once — otherwise onConnected reads the
+ * mirror and applies it then. Each request is honoured once, so a reconnect
+ * after the user switched control back off does not re-enable it.
+ */
+function useControlToggles({
+  phase,
+  control,
+  clipboard,
+  togglesRef,
+  sessionRef,
+  frameRef,
+  setControl,
+}: {
+  phase: Phase
+  control: boolean
+  clipboard: boolean
+  togglesRef: RefObject<{ control: boolean; clipboard: boolean }>
+  sessionRef: RefObject<WuyingSession | null>
+  frameRef: RefObject<HTMLIFrameElement | null>
+  setControl: Dispatch<SetStateAction<boolean>>
+}) {
+  useEffect(() => {
+    togglesRef.current = { control, clipboard }
+  }, [control, clipboard, togglesRef])
+
+  const request = usePanelStore((s) => s.desktopControlRequest)
+  const handled = useRef(0)
+  useEffect(() => {
+    if (request === handled.current) return
+    if (phase !== "connected" && phase !== "loading") return
+    handled.current = request
+    setControl(true)
+    if (phase !== "connected") return
+    try {
+      setSessionControl(sessionRef.current, true)
+      focusFrame(frameRef.current)
+    } catch {
+      // session mid-teardown
+    }
+  }, [request, phase, sessionRef, frameRef, setControl])
+}
+
 function ChannelStatus({ state }: { state: string }) {
   const { t } = useTranslation("workbench")
   if (!state) return null
@@ -313,11 +363,8 @@ function WorkspaceDesktopTab({ workspaceId }: { workspaceId: string | null }) {
     setPhase,
     setAttempt,
   })
-  // The connect effect outlives renders; mirror the toggles for it.
   const togglesRef = useRef({ control: false, clipboard: true })
-  useEffect(() => {
-    togglesRef.current = { control, clipboard }
-  }, [control, clipboard])
+  useControlToggles({ phase, control, clipboard, togglesRef, sessionRef, frameRef, setControl })
 
   // (Re)connect whenever `attempt` bumps; tear the session down on unmount.
   // Phase starts as "loading" and the reconnect button resets it, so the

@@ -52,7 +52,7 @@ INTENT_PACKS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "planning": ("todo_write", "todo_read", "plan_enter"),
     "efficiency": ("batch", "multiedit"),
     "research": ("web_search", "web_fetch"),
-    "browser": ("browser_mode", "computer"),
+    "browser": ("browser_mode", "computer", "desktop_takeover"),
     "vision": ("view_image",),
     "delivery": ("share_file",),
     "automation": ("cron",),

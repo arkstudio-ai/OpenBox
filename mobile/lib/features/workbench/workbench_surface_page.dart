@@ -24,12 +24,16 @@ class WorkbenchSurfacePage extends ConsumerStatefulWidget {
     super.key,
     required this.sessionId,
     required this.kind,
+    this.control = false,
   });
 
   final String sessionId;
 
   /// One of [workbenchKinds].
   final String kind;
+
+  /// Desktop only: switch input control on once connected.
+  final bool control;
 
   @override
   ConsumerState<WorkbenchSurfacePage> createState() =>
@@ -73,6 +77,7 @@ class _WorkbenchSurfacePageState extends ConsumerState<WorkbenchSurfacePage> {
         ),
         'desktop' => DesktopTab(
           onImmersive: (on) => setState(() => _immersive = on),
+          autoControl: widget.control,
         ),
         'cron' => CronPanelTab(
           projectId: ref

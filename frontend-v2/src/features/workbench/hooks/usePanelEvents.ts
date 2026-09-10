@@ -23,13 +23,15 @@ export function usePanelEvents(): void {
   }, [])
 
   useEffect(() => {
-    const offOpen = onAppEvent("workbench.open", ({ kind, file }) => {
+    const offOpen = onAppEvent("workbench.open", ({ kind, file, control }) => {
       const extra: OpenExtra | undefined =
         kind === "review"
           ? { reviewFile: file ?? null }
           : kind === "files"
             ? { openFile: file ?? null }
-            : undefined
+            : kind === "desktop" && control
+              ? { desktopControl: true }
+              : undefined
       openKind(kind, extra)
     })
     const offDiff = wsClient.on("session.diff", () => {

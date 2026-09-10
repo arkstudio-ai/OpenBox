@@ -14,6 +14,8 @@ export interface PanelTab {
 export interface OpenExtra {
   reviewFile?: string | null
   openFile?: string | null
+  /** desktop: hand the user input control as soon as the stream is up. */
+  desktopControl?: boolean
 }
 
 interface PanelState {
@@ -26,6 +28,10 @@ interface PanelState {
   treeOpen: boolean
   treeWidth: number
   seq: number
+  /** Bumped by each openKind("desktop", { desktopControl: true }); the desktop
+   *  tab watches it. A counter rather than a flag so a second request after
+   *  the user switched control off again still takes effect. */
+  desktopControlRequest: number
 
   togglePanel: () => void
   setWidth: (w: number) => void
@@ -82,6 +88,7 @@ export const usePanelStore = create<PanelState>((set, get) => {
     treeOpen: local.treeOpen ?? true,
     treeWidth: Math.max(TREE_MIN, local.treeWidth ?? 250),
     seq: 1,
+    desktopControlRequest: 0,
 
     togglePanel: () =>
       set((x) => {
@@ -114,7 +121,10 @@ export const usePanelStore = create<PanelState>((set, get) => {
 
     openKind: (kind, extra) =>
       set((x) => {
-        const patch = { open: true, ...normalizeExtra(extra) }
+        const patch: Partial<PanelState> = { open: true, ...normalizeExtra(extra) }
+        if (kind === "desktop" && extra?.desktopControl) {
+          patch.desktopControlRequest = x.desktopControlRequest + 1
+        }
         const active = x.tabs.find((tb) => tb.id === x.activeTabId)
         if (active && active.kind === kind) return patch
         const hit = x.tabs.find((tb) => tb.kind === kind)

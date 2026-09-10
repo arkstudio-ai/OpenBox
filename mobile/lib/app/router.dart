@@ -147,6 +147,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           sessionId: state.pathParameters['sessionId']!,
           initialTab:
               state.uri.queryParameters['tab'] ?? WorkbenchScreen.menuTab,
+          initialControl: state.uri.queryParameters['control'] == '1',
         ),
       ),
     ],

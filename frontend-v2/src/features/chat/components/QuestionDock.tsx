@@ -19,6 +19,7 @@ import { cn } from "@/shared/lib/cn"
 import type { QuestionDraftAnswer, QuestionItem, QuestionRequest } from "@/shared/types/api"
 import { useRejectQuestion, useReplyQuestion } from "../api/question"
 import { VideoApprovalDetail } from "./VideoApprovalDetail"
+import { DesktopTakeoverDetail } from "./DesktopTakeoverDetail"
 import { questionAnswers, useQuestionDraft } from "../hooks/useQuestionDraft"
 import { useQuestionPager } from "../hooks/useQuestionPager"
 
@@ -30,9 +31,10 @@ interface OneProps {
   disabled: boolean
   onChange: (draft: QuestionDraftAnswer) => void
   onComplete: () => void
+  sessionId: string
 }
 
-function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete }: OneProps) {
+function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete, sessionId }: OneProps) {
   const { t } = useTranslation("chat")
   const picked = draft.use_custom ? [] : draft.selected
   const options = item.options ?? []
@@ -60,6 +62,7 @@ function OneQuestion({ item, index, total, draft, disabled, onChange, onComplete
       </div>
 
       <VideoApprovalDetail item={item} />
+      <DesktopTakeoverDetail item={item} sessionId={sessionId} />
 
       {options.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -188,6 +191,7 @@ export function QuestionDock({ request }: { request: QuestionRequest }) {
           onComplete={() => {
             if (!busy && page < questions.length - 1) goTo(page + 1)
           }}
+          sessionId={request.session_id}
         />
       </div>
 

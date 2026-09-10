@@ -8,6 +8,7 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/app_config.dart';
+import '../../../../shared/models/message_part.dart';
 import '../../../../shared/models/resource.dart';
 import '../../../../shared/models/session.dart';
 import '../../../../shared/utils/format.dart';
@@ -20,6 +21,7 @@ import 'context_ring.dart';
 import 'mention_menu.dart';
 import 'picker_sheets.dart';
 import 'resource_slot.dart';
+import 'suggestion_chips.dart';
 
 /// The chat input (web `Composer.tsx`), mobile-optimized: rounded-3xl card
 /// shell, chromeless auto-growing field, model pickers, context ring,
@@ -34,6 +36,7 @@ class Composer extends ConsumerStatefulWidget {
     this.onStop,
     this.autofocus = false,
     this.resources,
+    this.suggestions,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -41,6 +44,7 @@ class Composer extends ConsumerStatefulWidget {
 
   final Session? session;
   final bool busy;
+  final SuggestionsPart? suggestions;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -60,6 +64,18 @@ class _ComposerState extends ConsumerState<Composer> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _sending = false;
+  String? _dismissedSuggestionsId;
+  int _suggestionEpoch = 0;
+
+  bool get _showSuggestions =>
+      widget.suggestions != null &&
+      widget.suggestions!.items.isNotEmpty &&
+      widget.suggestions!.id != _dismissedSuggestionsId &&
+      !widget.busy &&
+      !_sending &&
+      !_uploading &&
+      _controller.text.isEmpty &&
+      _attachments.isEmpty;
 
   // Mention menu state (web `useMentionMenu`).
   MentionTrigger? _trigger;
@@ -86,6 +102,16 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   @override
+  void didUpdateWidget(Composer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionKey != widget.sessionKey) {
+      _suggestionEpoch++;
+      _dismissedSuggestionsId = null;
+      _sending = false;
+    }
+  }
+
+  @override
   void dispose() {
     _fileDebounce?.cancel();
     _controller.dispose();
@@ -95,8 +121,7 @@ class _ComposerState extends ConsumerState<Composer> {
 
   void _onComposerChanged() {
     final caret = _controller.selection.baseOffset;
-    final trigger =
-        caret < 0 ? null : resolveTrigger(_controller.text, caret);
+    final trigger = caret < 0 ? null : resolveTrigger(_controller.text, caret);
     if (trigger?.key != _trigger?.key) {
       setState(() => _trigger = trigger);
       _kickFileSearch(trigger);
@@ -166,7 +191,10 @@ class _ComposerState extends ConsumerState<Composer> {
           ],
         ),
         MentionSectionData(
-            kind: 'skills', loading: skills.isLoading, items: skillItems),
+          kind: 'skills',
+          loading: skills.isLoading,
+          items: skillItems,
+        ),
       ];
     }
     final commands = ref.watch(mentionCommandsProvider);
@@ -186,7 +214,10 @@ class _ComposerState extends ConsumerState<Composer> {
         ],
       ),
       MentionSectionData(
-          kind: 'skills', loading: skills.isLoading, items: skillItems),
+        kind: 'skills',
+        loading: skills.isLoading,
+        items: skillItems,
+      ),
     ];
   }
 
@@ -197,7 +228,8 @@ class _ComposerState extends ConsumerState<Composer> {
     final trigger = _trigger;
     final text = _controller.text;
     if (trigger != null) {
-      final next = text.substring(0, trigger.start) + text.substring(trigger.end);
+      final next =
+          text.substring(0, trigger.start) + text.substring(trigger.end);
       _controller.value = TextEditingValue(
         text: next,
         selection: TextSelection.collapsed(offset: trigger.start),
@@ -257,15 +289,19 @@ class _ComposerState extends ConsumerState<Composer> {
             ListTile(
               dense: true,
               leading: Icon(Icons.layers_outlined, size: 18, color: t.n600),
-              title: Text(i18n.t('chat:composer.resourceCenter'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                i18n.t('chat:composer.resourceCenter'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () => Navigator.pop(sheetContext, 'resources'),
             ),
             ListTile(
               dense: true,
               leading: Icon(Icons.upload_outlined, size: 18, color: t.n600),
-              title: Text(i18n.t('chat:composer.uploadFile'),
-                  style: TextStyle(fontSize: FontSizes.base, color: t.ink)),
+              title: Text(
+                i18n.t('chat:composer.uploadFile'),
+                style: TextStyle(fontSize: FontSizes.base, color: t.ink),
+              ),
               onTap: () => Navigator.pop(sheetContext, 'upload'),
             ),
           ],
@@ -300,12 +336,47 @@ class _ComposerState extends ConsumerState<Composer> {
       await widget.onSend(text, [for (final r in _attachments) r.id]);
       // Only now: a rejected send — a quota, a dropped connection — must not
       // eat what the person typed, with an empty box reading as success.
-      _controller.clear();
-      if (mounted) setState(_attachments.clear);
+      if (mounted) {
+        _controller.clear();
+        setState(_attachments.clear);
+      }
     } catch (_) {
       // The send path already reported it; the draft above is the remedy.
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _selectSuggestion(NextStepSuggestion item) async {
+    if (!_showSuggestions) return;
+    setState(() => _dismissedSuggestionsId = widget.suggestions!.id);
+    void fill() {
+      _controller.value = TextEditingValue(
+        text: item.prompt,
+        selection: TextSelection.collapsed(offset: item.prompt.length),
+      );
+      _focusNode.requestFocus();
+    }
+
+    if (item.mode == SuggestionMode.draft) {
+      fill();
+      return;
+    }
+    final epoch = _suggestionEpoch;
+    setState(() => _sending = true);
+    try {
+      // Exactly the normal send path, with the current model/reasoning picks.
+      await widget.onSend(item.prompt, const []);
+    } catch (_) {
+      // The send path reports the error. Never overwrite a new draft or
+      // restore a failed request into a different conversation.
+      if (mounted && epoch == _suggestionEpoch && _controller.text.isEmpty) {
+        fill();
+      }
+    } finally {
+      if (mounted && epoch == _suggestionEpoch) {
+        setState(() => _sending = false);
+      }
     }
   }
 
@@ -326,13 +397,15 @@ class _ComposerState extends ConsumerState<Composer> {
     // The pill shows the pair, because the pair is what gets generated.
     final videoModels = config?.videoModels ?? const <VideoModelInfo>[];
     final videoPick = ref.watch(pickedVideoProvider(widget.sessionKey));
-    final videoModelId = videoPick?.modelId ??
+    final videoModelId =
+        videoPick?.modelId ??
         (widget.session?.videoModel?.isNotEmpty == true
             ? widget.session!.videoModel!
             : config?.defaultVideoModel ?? '');
     final videoModel = config?.videoById(videoModelId);
     final videoTiers = videoModel?.resolutions ?? const <String>[];
-    final chosenTier = videoPick?.resolution ??
+    final chosenTier =
+        videoPick?.resolution ??
         (widget.session?.videoResolution?.isNotEmpty == true
             ? widget.session!.videoResolution!
             : config?.defaultVideoResolution ?? '');
@@ -351,7 +424,8 @@ class _ComposerState extends ConsumerState<Composer> {
       sessionModel: widget.session?.model,
       sessionVariant: widget.session?.variant,
       pick: ref.watch(
-          pickedVariantProvider(reasoningKey(widget.sessionKey, modelId))),
+        pickedVariantProvider(reasoningKey(widget.sessionKey, modelId)),
+      ),
     );
     final modelLabel = [
       activeModel?.name ?? (modelId.isEmpty ? '…' : modelId),
@@ -364,7 +438,7 @@ class _ComposerState extends ConsumerState<Composer> {
     final containerId = ref.watch(runningContainerProvider).valueOrNull?.id;
     final mentionOpen = _trigger != null && _trigger!.key != _dismissedKey;
 
-    return Container(
+    final input = Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -409,17 +483,17 @@ class _ComposerState extends ConsumerState<Composer> {
               textInputAction: TextInputAction.newline,
               onChanged: (_) => setState(() {}),
               style: TextStyle(
-                  fontSize: FontSizes.lg, height: 1.5, color: t.ink),
+                fontSize: FontSizes.lg,
+                height: 1.5,
+                color: t.ink,
+              ),
               decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 hintText: widget.busy
                     ? i18n.t('chat:composer.placeholderRunning')
                     : i18n.t('chat:composer.placeholder'),
-                hintStyle: TextStyle(
-                  fontSize: FontSizes.base,
-                  color: t.n700,
-                ),
+                hintStyle: TextStyle(fontSize: FontSizes.base, color: t.n700),
               ),
             ),
           ),
@@ -442,7 +516,9 @@ class _ComposerState extends ConsumerState<Composer> {
                             tooltip: i18n.t('chat:composer.tools'),
                             visualDensity: VisualDensity.compact,
                             constraints: const BoxConstraints.tightFor(
-                                width: 32, height: 32),
+                              width: 32,
+                              height: 32,
+                            ),
                             padding: EdgeInsets.zero,
                           ),
                           const SizedBox(width: 2),
@@ -474,7 +550,8 @@ class _ComposerState extends ConsumerState<Composer> {
                               ref,
                               sessionKey: widget.sessionKey,
                               currentModel: widget.session?.videoModel,
-                              currentResolution: widget.session?.videoResolution,
+                              currentResolution:
+                                  widget.session?.videoResolution,
                             ),
                           ),
                         ],
@@ -502,6 +579,18 @@ class _ComposerState extends ConsumerState<Composer> {
           ),
         ],
       ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_showSuggestions)
+          SuggestionChips(
+            suggestions: widget.suggestions!,
+            onSelect: _selectSuggestion,
+          ),
+        input,
+      ],
     );
   }
 
@@ -644,13 +733,16 @@ class _AttachmentStrip extends StatelessWidget {
                         width: 26,
                         height: 26,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Icon(
-                            Icons.image_outlined, size: 15, color: t.n600),
+                        errorBuilder: (_, _, _) =>
+                            Icon(Icons.image_outlined, size: 15, color: t.n600),
                       ),
                     )
                   else
-                    Icon(Icons.insert_drive_file_outlined,
-                        size: 15, color: t.n600),
+                    Icon(
+                      Icons.insert_drive_file_outlined,
+                      size: 15,
+                      color: t.n600,
+                    ),
                   const SizedBox(width: 7),
                   Flexible(
                     child: Column(
@@ -670,7 +762,9 @@ class _AttachmentStrip extends StatelessWidget {
                         Text(
                           formatBytes(resource.size),
                           style: TextStyle(
-                              fontSize: FontSizes.xs2, color: t.n600),
+                            fontSize: FontSizes.xs2,
+                            color: t.n600,
+                          ),
                         ),
                       ],
                     ),
@@ -679,8 +773,10 @@ class _AttachmentStrip extends StatelessWidget {
                     onPressed: () => onRemove(resource),
                     icon: Icon(Icons.close, size: 13, color: t.n600),
                     visualDensity: VisualDensity.compact,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 26, height: 26),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 26,
+                      height: 26,
+                    ),
                     padding: EdgeInsets.zero,
                   ),
                 ],

@@ -317,6 +317,23 @@ class TodoPart(BaseModel):
     message_id: str = ""
 
 
+class NextStepSuggestion(BaseModel):
+    label: str = Field(min_length=1, max_length=32)
+    prompt: str = Field(min_length=1, max_length=800)
+    mode: Literal["send", "draft"]
+
+
+class SuggestionsPart(BaseModel):
+    """Auxiliary UI data, never replayed as instructions to the chat model."""
+    type: Literal["suggestions"] = "suggestions"
+    id: str = Field(default_factory=lambda: ascending("part"))
+    items: list[NextStepSuggestion] = Field(default_factory=list, max_length=3)
+    context_summary: str = Field(default="", max_length=800)
+    model: str = ""
+    session_id: str = ""
+    message_id: str = ""
+
+
 class SkillJobPart(BaseModel):
     """Historical receipt for a finished background skill job.
 
@@ -354,6 +371,7 @@ MessagePart = Union[
     PlanPart,
     TodoPart,
     SkillJobPart,
+    SuggestionsPart,
 ]
 
 

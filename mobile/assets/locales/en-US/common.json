@@ -45,6 +45,11 @@
     "connecting": "Connecting…",
     "offline": "Connection lost — reconnecting…"
   },
+  "pageLoad": {
+    "title": "Page resources could not load",
+    "body": "The page may have been updated or the network interrupted. Check your connection and reload to get the latest resources. Reloading does not resubmit tasks.",
+    "genericBody": "Try reloading the page. If the problem continues, return to the workspace."
+  },
   "unit": {
     "tokens": "tokens",
     "files_one": "{{count}} file",

@@ -9,11 +9,32 @@ export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
 }
 
+/** The server returns the first 200 rows by default, not the newest 200.
+ *  Complete the snapshot before exposing it: a partial history can make old
+ *  suggestions look as though they belong to the current answer. */
+export async function fetchMessageSnapshot(sessionId: string, signal?: AbortSignal): Promise<MessageWithParts[]> {
+  const messages = new Map<string, MessageWithParts>()
+  const limit = 200
+  let offset = 0
+  while (true) {
+    const page = await http.get<MessageWithParts[]>(
+      `/api/agent/session/${sessionId}/message?offset=${offset}&limit=${limit}`, { signal },
+    )
+    const previousSize = messages.size
+    for (const message of page) messages.set(message.id, message)
+    if (page.length < limit) return [...messages.values()]
+    // Do not silently expose an incomplete snapshot or loop forever if a
+    // proxy/server ignores the offset. Existing error UI offers recovery.
+    if (messages.size === previousSize) throw new Error("Message pagination did not advance")
+    offset += page.length
+  }
+}
+
 export function useMessagesQuery(sessionId: string, live = false) {
   const userId = useUserId()
   return useQuery({
     queryKey: chatKeys.messages(userId, sessionId),
-    queryFn: () => http.get<MessageWithParts[]>(`/api/agent/session/${sessionId}/message`),
+    queryFn: ({ signal }) => fetchMessageSnapshot(sessionId, signal),
     enabled: sessionId.length > 0,
     // A reconnect can only replay durable state, not the WS frames missed
     // while the page was gone. Poll the durable snapshot during a live run so

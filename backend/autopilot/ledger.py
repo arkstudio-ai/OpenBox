@@ -200,7 +200,9 @@ async def report(run: RunLedger, *, items: list[dict]) -> dict:
     published = [i for i in items if (i.get("publish") or {}).get("status") == "published"]
     degraded = [i for i in items if (i.get("publish") or {}).get("status") in ("package", "degraded")]
     dropped = [i for i in items if i.get("dropped_reason")]
-    lines = [f"# 自动营销运行报告 · {run.started_at.astimezone().strftime('%Y-%m-%d %H:%M')}",
+    from zoneinfo import ZoneInfo
+
+    lines = [f"# 自动营销运行报告 · {run.started_at.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M')}",
              f"模型档位 {tier(run.template.model_tier).label}（{tier(run.template.model_tier).model_id}）· 预算上限 {_fmt(run.cap)} 积分 · "
              f"本次实际落账 {_fmt(total)} 积分（{n} 笔）" + (f" · 预留估价 {_fmt(run.reserved)}" if run.reservations else ""),
              f"成片 {len([i for i in items if i.get('final_asset_id')])} 条 · 已发布 {len(published)} · 待扫码/降级 {len(degraded)} · 弃用 {len(dropped)}"]

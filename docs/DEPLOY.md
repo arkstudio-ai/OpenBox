@@ -5,6 +5,13 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前两边前端：2026-09-10 22:39 `20260910-fe-928a228`（仅前端，为验证自动换新）
+
+- 源码 `main@928a228`（与线上 `compact-loading-b3fa657` 同代码，仅 build id 不同），EC2 构建、scp 到 gw2，SHA-256 `347be307…` 两边一致。
+- gw2 与 AWS 各只替换 frontend，12s healthy；备份 `backups/20260910-fe-928a228/activation-20260910T1439{37,39}Z/`。后端仍 `20260910-takeover-3db71bc`。
+- 目的：让 PR #24 的"发布后旧页面自动换新"可以现在验证——发布前打开的页签（build id `b3fa657…`）在切回/聚焦后应自行换到 `20260910-fe-928a228`。
+  发布后用浏览器实测：隐藏页签触发 focus 后自动刷新到新 id，无错误页。
+
 ## 当前两边发布：2026-09-10 风控/验证码接管（PR #25）+ 桌面运行时 20260910.2
 
 - 22:33–22:35（北京时间）gw2 与 AWS 切到 `20260910-takeover-3db71bc`（backend + frontend），源码 `main@3db71bc`

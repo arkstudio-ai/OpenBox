@@ -8,9 +8,11 @@
 // memoized): `default` inherits the caller's text-lg/leading-8 prose; `thinking`
 // renders smaller, dimmer reasoning with headings demoted to bold paragraphs;
 // `user` renders compact bubble prose.
-import { useMemo, type ReactNode } from "react"
+import { useMemo, type MouseEvent, type ReactNode } from "react"
 import { Streamdown, type StreamdownProps } from "streamdown"
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router"
+import { paths } from "@/shared/router/paths"
 import CollapsibleCode from "./markdown/CollapsibleCode"
 
 type Components = NonNullable<StreamdownProps["components"]>
@@ -68,19 +70,41 @@ function headingComponents(variant: Variant): Pick<Components, "h1" | "h2" | "h3
   }
 }
 
+const LINK = "text-a700 hover:text-accent underline underline-offset-2"
+
+/** An app-internal path the model wrote (e.g. a takeover link back into this
+ *  chat with the desktop panel open): navigate in place instead of opening a
+ *  second copy of the app in a new tab. */
+function isAppLink(href: string | undefined): href is string {
+  return typeof href === "string" && href.startsWith(`${paths.app}/`)
+}
+
+function AppLink({ href, children }: { href: string; children?: ReactNode }) {
+  const navigate = useNavigate()
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    // Let modifier clicks keep their browser meaning (new tab, etc.).
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+    e.preventDefault()
+    void navigate(href)
+  }
+  return (
+    <a href={href} onClick={onClick} className={LINK}>
+      {children}
+    </a>
+  )
+}
+
 function buildComponents(variant: Variant): Components {
   const c = PROSE[variant]
   return {
-    a: ({ href, children }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="text-a700 hover:text-accent underline underline-offset-2"
-      >
-        {children}
-      </a>
-    ),
+    a: ({ href, children }) =>
+      isAppLink(href) ? (
+        <AppLink href={href}>{children}</AppLink>
+      ) : (
+        <a href={href} target="_blank" rel="noreferrer" className={LINK}>
+          {children}
+        </a>
+      ),
     p: ({ children }) => <p className={c.p}>{children}</p>,
     ul: ({ children }) => <ul className={c.ul}>{children}</ul>,
     ol: ({ children }) => <ol className={c.ol}>{children}</ol>,

@@ -273,6 +273,10 @@ async def _browser_readiness(ctx: ToolContext) -> str:
                 "  It runs on this desktop, so if a native dialog blocks a script you can "
                 "dismiss it with the `computer` tool and resume (see the skill's handoff section)."
             )
+        lines.append(
+            "  If a captcha or risk-control page blocks you, do not try to pass it: call "
+            "`desktop_takeover` — the user can solve it on this same desktop."
+        )
         if preference == "remote":
             lines.append(
                 "  The user asked for their own browser, but the extension is not connected, "
@@ -282,7 +286,9 @@ async def _browser_readiness(ctx: ToolContext) -> str:
         lines.append("  This is the user's OWN Chrome, with their real sessions.")
         lines.append(
             "  It runs on the user's machine, so `computer` cannot see or touch it. "
-            "If a native dialog blocks a script, tell the user what to dismiss."
+            "If a native dialog blocks a script, tell the user what to dismiss. "
+            "If a captcha or risk-control page blocks you, call `desktop_takeover`; "
+            "the user solves it in their own browser."
         )
     lines.append("</browser_mode>")
     return "\n".join(lines)

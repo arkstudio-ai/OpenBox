@@ -1,7 +1,12 @@
 // In-app event bus for cross-feature signals (ENGINEERING_SPEC §4.2 事件解耦).
 // Chat emits "open review" — workbench listens. Neither imports the other.
 type AppEventMap = {
-  "workbench.open": { kind: "review" | "terminal" | "browser" | "files" | "cron"; file?: string }
+  "workbench.open": {
+    kind: "review" | "terminal" | "browser" | "files" | "cron" | "desktop"
+    file?: string
+    /** desktop only: also switch input control on, so the user can act at once. */
+    control?: boolean
+  }
 }
 
 type AppEventName = keyof AppEventMap

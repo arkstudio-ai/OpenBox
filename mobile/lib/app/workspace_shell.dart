@@ -45,6 +45,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               Paths.workbench(
                 sessionId,
                 tab: kind is String && kind.isNotEmpty ? kind : 'review',
+                control: kind == 'desktop' && event.payload['control'] == true,
               ),
             );
           } else if (kind == 'desktop' && mounted) {

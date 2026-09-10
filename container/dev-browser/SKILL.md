@@ -311,6 +311,57 @@ dialog, tell the user what to dismiss instead of trying to do it yourself.
 If a scheme blocks you repeatedly, say so in your answer: it is worth adding to
 the blocklist permanently rather than dismissing by hand every run.
 
+## When a site challenges you (captcha / risk control): hand off to the user
+
+Some walls are drawn by the **site**, on purpose, to stop exactly what you are
+doing: a slider or jigsaw to drag, "click the characters in order", an arithmetic
+or image code, an SMS/email one-time code, or a risk-control page — 安全验证,
+环境异常, 访问过于频繁, "verify you are human", "checking your browser". They are
+usually a GeeTest (`.geetest_*`), Aliyun (`#nc_1_wrapper`), Tencent
+(`#tcaptcha_iframe`), Cloudflare (`#challenge-form`, turnstile), hCaptcha or
+reCAPTCHA frame.
+
+**You do not solve these.** Not by dragging, not by guessing, not by clicking the
+widget by coordinate with `computer`, not by switching user agents or clearing
+cookies, and not by reloading until it goes away. The person you work for can
+pass them in seconds; you cannot, and trying gets the account flagged.
+
+1. **Recognise it.** `waitForPageLoad()` reports a `challenge` field when it
+   spots a known widget or phrase; `detectChallenge(page)` runs the same check
+   on demand. A snapshot with a lone slider, a code box, or the phrases above,
+   or the same action bouncing you back to a verification page twice, means the
+   same thing.
+
+   ```ts
+   import { connect, waitForPageLoad, detectChallenge } from "@/client.js";
+
+   const client = await connect();
+   const page = await client.page("checkout");
+   const loaded = await waitForPageLoad(page);
+   console.log({ url: page.url(), challenge: loaded.challenge ?? (await detectChallenge(page)) });
+   await client.disconnect();
+   ```
+
+2. **Confirm once, at most.** If it might be transient, reload the page one time
+   and check again. Then stop.
+
+3. **Call `desktop_takeover`** with the reason, the page URL, the dev-browser
+   page name and a one-line instruction for the user. (If the tool is not in
+   your list, reveal it with `capability_search` first.) The run suspends and
+   the user sees a card: in `local` mode it opens this desktop with input
+   control switched on; in `extension` mode it tells them to finish it in their
+   own browser. Nothing you do while waiting helps — do not poll the page.
+
+4. **Come back to the same page.** When the tool returns "我已完成", the page has
+   been changed by a person, not by you: `client.page("checkout")` is still the
+   same page, so take a fresh `getAISnapshot()` (or screenshot), confirm the
+   challenge is gone, and continue from there. Do not replay the action sequence
+   that triggered it. Mention in your final answer that the user completed this
+   step.
+
+A "Rejected" result means the user dismissed the card without doing it: stop the
+browser task and say what was blocked.
+
 ## Error Recovery
 
 Page state persists after failures. Debug with:

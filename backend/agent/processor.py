@@ -57,6 +57,9 @@ PERSISTED_TOOL_METADATA_KEYS = frozenset({
     "exit_code", "blocked", "truncated", "count", "duration",
     "batch_size", "timings", "lease",
     "child_session_id", "subagent_type", "questions", "answers",
+    # desktop_takeover: what blocked the agent and where, so the answered row
+    # in the transcript can still say "the user solved a slider on host X".
+    "takeover",
     # Validation tools use these to stop an unchanged retry immediately while
     # still replaying the original, structured result in full to the model.
     "validation_failed", "retry_requires_changed_args", "failure_code",

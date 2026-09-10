@@ -33,15 +33,32 @@ NOTIFY_DONE = "publish_done"
 
 
 class PublishRefusal(Exception):
-    """Actionable reason; `degrade=True` means: produce the QR package instead."""
+    """Actionable reason.
+
+    Exactly one of three shapes, so the caller never has to guess the route:
+    * ``degrade=True``     — the desktop route is off for this account (switch or
+                             breaker): produce the QR package instead.
+    * ``login_expired``    — the person must re-login on the desktop; the video waits.
+    * ``retryable=True``   — our own execution failed before anything was posted
+                             (transfer, page, timeout): try once more, then report.
+    None of them: a plain refusal (budget, arguments, ownership).
+    """
 
     def __init__(self, message: str, *, degrade: bool = False, login_expired: bool = False,
-                 next_allowed_at: datetime | None = None, job_id: str | None = None):
+                 retryable: bool = False, next_allowed_at: datetime | None = None, job_id: str | None = None):
         super().__init__(message)
         self.degrade = degrade
         self.login_expired = login_expired
+        self.retryable = retryable
         self.next_allowed_at = next_allowed_at
         self.job_id = job_id
+
+
+#: Script steps after which a retry could post the same video twice.
+_STEPS_AFTER_PUBLISH_CLICK = ("publish", "readback")
+
+RETRY_GUIDANCE = "这是我们这边的执行问题，不是账号问题：可以直接再试一次；仍失败就如实告诉用户这次没发出去、稍后再试。不要改用扫码投稿，不要出授权二维码。"
+UNCLEAR_GUIDANCE = "发布按钮已经点过，结果不明：先用 action=status 或让用户看创作者中心的内容管理，确认没发出去再重试，不要直接重发。"
 
 
 @dataclass
@@ -226,8 +243,8 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
         await _auth_blocked(caller, pre.account)
         status = pre.account.status if pre.account else "none"
         raise PublishRefusal(
-            f"云电脑上的抖音创作者中心登录态不可用（{status}）。让用户用 desktop_login(action=open, site=douyin_creator) 在云电脑重新登录；"
-            "这条先不发，或改用 douyin_publish 投稿码。", login_expired=True,
+            f"云电脑上的抖音创作者中心登录态不可用（{status}）。让用户用 desktop_login(action=open, site=douyin_creator) 在云电脑重新登录，"
+            "登录后再发这条；视频留着，不要改用扫码投稿，不要出授权二维码。", login_expired=True,
         )
     if pre.budget is not None and not pre.budget.allowed and not spec.dry_run:
         raise PublishRefusal(pre.budget.reason, next_allowed_at=pre.budget.next_allowed_at)
@@ -256,9 +273,10 @@ async def publish(caller: Caller, spec: PublishSpec, *, ctx) -> dict:
         await _finish_job(job.id, status="failed", error=str(exc)[:400])
         exc.job_id = job.id
         raise
-    except Exception as exc:  # desktop unavailable / busy / transport
+    except Exception as exc:  # desktop unavailable / busy / transport — nothing was posted
         await _finish_job(job.id, status="failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
-        raise PublishRefusal(f"云电脑执行失败：{type(exc).__name__}: {str(exc)[:200]}", job_id=job.id) from exc
+        raise PublishRefusal(f"云电脑上传或页面操作没完成（{type(exc).__name__}: {str(exc)[:160]}）。{RETRY_GUIDANCE}",
+                             retryable=True, job_id=job.id) from exc
     return await _settle(caller, job, spec, pre.account, result)
 
 
@@ -288,7 +306,11 @@ async def _settle(caller: Caller, job: PublishJob, spec: PublishSpec, account: P
                              degrade=True, job_id=job.id)
     if not result.get("ok"):
         await _finish_job(job.id, status="failed", error=str(result.get("error") or "unknown")[:400], details_update=upd)
-        raise PublishRefusal(f"发布未完成：{result.get('error') or 'unknown'}（步骤 {result.get('step')}）。", job_id=job.id)
+        step = str(result.get("step") or "")
+        if step in _STEPS_AFTER_PUBLISH_CLICK and not spec.dry_run:
+            raise PublishRefusal(f"发布结果不明：{result.get('error') or 'unknown'}（步骤 {step}）。{UNCLEAR_GUIDANCE}", job_id=job.id)
+        raise PublishRefusal(f"云电脑上传或页面操作没完成：{result.get('error') or 'unknown'}（步骤 {step}）。{RETRY_GUIDANCE}",
+                             retryable=True, job_id=job.id)
     if spec.dry_run:
         await _finish_job(job.id, status="draft", details_update=upd)
         return {"job_id": job.id, "status": "draft", "dry_run": True, "summary": result.get("summary"),

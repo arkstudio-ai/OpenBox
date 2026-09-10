@@ -49,7 +49,24 @@ async function main() {
   if (/是否继续编辑/.test(t)) { mark("discard_previous_draft"); await page.getByText('放弃', { exact: true }).first().click({ timeout: 8000 }).catch(() => {}); await page.waitForTimeout(1200); }
   mark("upload");
   const t0 = Date.now();
-  await page.locator('input[type=file]').first().setInputFiles(P.file_path);
+  const fileInput = page.locator('input[type=file]').first();
+  await fileInput.waitFor({ state: 'attached', timeout: 30000 });
+  // The video already sits on this desktop. Hand Chrome the local path over CDP so the
+  // bytes never travel through the relay: Playwright's setInputFiles treats a CDP-connected
+  // browser as remote, streams the file, refuses anything over 50 MB and times out on
+  // slow transfers. DOM.setFileInputFiles is what Playwright uses for local browsers.
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input[type=file]' });
+    if (!nodeId) throw new Error('file input not found for DOM.setFileInputFiles');
+    await cdp.send('DOM.setFileInputFiles', { files: [P.file_path], nodeId });
+    out.upload_method = 'cdp_local_path';
+  } catch (e) {
+    out.upload_cdp_error = String(e).slice(0, 160);
+    await fileInput.setInputFiles(P.file_path, { timeout: 180000 });  // relay transfer; only works under 50 MB
+    out.upload_method = 'set_input_files';
+  } finally { await cdp.detach().catch(() => {}); }
   await page.locator('input[placeholder*="作品标题"]').waitFor({ state: 'visible', timeout: 120000 });
   mark("form", { ms: Date.now() - t0 });
   mark("title");

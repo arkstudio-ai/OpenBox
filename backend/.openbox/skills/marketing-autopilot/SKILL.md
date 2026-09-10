@@ -62,7 +62,7 @@ allowed-tools:
 
 ### 6. 文案与发布
 标题 ≤ 30 字、简介 1–3 句（**简介正文里不要写 `#话题`，话题只放 `topics`**，工具会追加成标签）、话题 3–5 个（来自热点 `topics` 与人设），`declaration="ai"`，`hot_word` 填热点词，`visibility` 按模版。
-- `publish_mode=auto` → `desktop_publish(action="precheck")`，`can_auto_publish=true` 就 `publish`；`degrade=true` / `login_expired` / 预算或时段受限 → 这条改 `douyin_publish(action="publish", …)` 出投稿码，并在报告写明原因。
+- `publish_mode=auto` → `desktop_publish(action="precheck")`，`can_auto_publish=true` 就 `publish`。被拒按类别走，互不混用：`degrade=true`（自动发布关了或风控停用）→ 这条改 `douyin_publish(action="publish", …)` 出投稿码并在报告写明原因；`login_expired=true` → 这条不发，报告写「需在云电脑重登创作者中心」；`retryable=true`（上传或页面操作没完成）→ 同样参数再发一次，仍失败就报告「这条没发出去」；预算或时段受限 → 留到下次运行，报告写明 `next_allowed_at`。登录失效、执行失败、额度受限都不出投稿码、不出授权码。
 - `publish_mode=package` → 直接 `douyin_publish`。
 对话模式在这一步出**成片+文案确认卡**后再发。
 

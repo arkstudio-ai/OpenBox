@@ -424,3 +424,17 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
 `image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
 时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。
+
+## 发布到抖音：默认走云电脑创作者中心，上传改 CDP 本地路径（2026-09-10）
+
+运营反馈"视频做完让它发布，弹出绑定二维码说无法绕过"。回放 gw2 会话（用户 e，15:45）：`desktop_publish` precheck 通过，
+publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`Cannot transfer files larger than 50Mb` /
+`Timeout 30000ms`；模型随即转 `douyin_publish authorize` 出了开放平台（应用名 bossip）的授权码并列为推荐。
+修复：① `publish/desktop_script.py` 上传改为 `DOM.setFileInputFiles` 传桌面本地路径（成片本就在
+`/workspace/uploads/`），本机真实 Chrome 对照：60MB 文件旧法复现同一错误，新法 5ms 挂上并触发 change/input；
+`setInputFiles` 仅作 <50MB 兜底。② `PublishRefusal` 分三类且互斥：`retryable`（上传/页面执行失败，重试一次后如实报告）、
+`login_expired`（云电脑重登，视频留着）、`degrade`（开关关闭或风控熔断，才改投稿码）；任何登录/执行失败都不再指向
+`douyin_publish`。③ 路由：`video-production` 成片后的发布入口改指 `douyin-desktop-publish`，两技能 description 互换
+触发词（「发布/发抖音/投稿」归桌面路径，开放平台技能只在 mode=package / degrade / 用户要求扫码时加载），去掉
+"抖音不允许应用替用户发布"之类绝对话术；`marketing-autopilot` 按同样三类处理。单测 +5（失败集与 origin/main 一致）。
+未部署；授权页显示 bossip 需在抖音开放平台控制台改应用名；AWS 仍无 desktop_publish。

@@ -78,7 +78,8 @@ def _precheck_lines(pre: svc.Precheck) -> list[str]:
     if pre.mode == "package":
         lines.append("→ use douyin_publish (QR package) for this video.")
     elif not pre.login_ok:
-        lines.append("→ ask the person to re-login on the cloud desktop: desktop_login(action=open, site=douyin_creator); or use douyin_publish.")
+        lines.append("→ ask the person to re-login on the cloud desktop: desktop_login(action=open, site=douyin_creator). "
+                     "The video waits; do not switch to douyin_publish and do not show an authorization QR code.")
     return lines
 
 
@@ -104,7 +105,10 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
         if exc.degrade:
             lines.append("degrade=true → call douyin_publish(action=publish, asset_id=…, title=…, hashtags=…) for the QR package and tell the person why.")
         if exc.login_expired:
-            lines.append("login_expired=true")
+            lines.append("login_expired=true → desktop_login(action=open, site=douyin_creator); the video waits. No douyin_publish, no authorization QR.")
+        if exc.retryable:
+            lines.append("retryable=true → our execution failed before anything was posted: call publish again once with the same arguments; "
+                         "if it fails again, tell the person it did not go out this time. No douyin_publish, no authorization QR.")
         if exc.next_allowed_at:
             lines.append(f"next_allowed_at={exc.next_allowed_at.astimezone(policy.SHANGHAI).isoformat()}")
         if exc.job_id:
@@ -112,6 +116,7 @@ async def _publish(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(title="Desktop publish refused" if not exc.degrade else "Desktop publish degraded",
                           output="\n".join(lines),
                           metadata={"refused": True, "degrade": exc.degrade, "login_expired": exc.login_expired,
+                                    "retryable": exc.retryable,
                                     "next_allowed_at": exc.next_allowed_at.isoformat() if exc.next_allowed_at else None, "job_id": exc.job_id})
     lines = [f"job_id={res['job_id']}", f"status={res['status']}"]
     if res.get("item_id"):
@@ -166,8 +171,9 @@ async def execute(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
     return await _enable_auto(args, ctx)
 
 
-DESKTOP_PUBLISH_DESCRIPTION = """Post a finished video to 抖音创作者中心 using the login state on the workspace's cloud desktop \
-(the transitional auto-publish route). Actions:
+DESKTOP_PUBLISH_DESCRIPTION = """Post a finished video to 抖音创作者中心 using the login state on the workspace's cloud desktop. \
+This is the DEFAULT way to publish to Douyin ("发布/发抖音/投稿"): the person never has to authorize or bind anything. \
+The video is read from the desktop itself, so size is not a limit. Actions:
 - precheck: which route applies now (auto vs QR package), login state, today's budget, next allowed time. Call first.
 - publish: asset_id + title (≤30 chars) + intro (≤1000, topics become #chips) + declaration (AI content must be `ai`) \
 + visibility + optional hot_word / schedule_at ("YYYY-MM-DD HH:mm", 2h–14d ahead). `dry_run=true` fills the form, \
@@ -175,8 +181,11 @@ screenshots and saves a draft without publishing. Returns job_id, status, item_i
 - status: recent desktop publish jobs (publish_jobs, platform douyin_creator).
 - enable_auto: re-enable this account's auto publish after a person confirmed the account is fine.
 Rules the tool enforces: per-account daily limit and minimum interval, posting hours, one login state per workspace. \
-Any captcha/risk text stops the desktop route for that account (degrade=true): then use douyin_publish for the QR package. \
-Never loop on a refusal; report it."""
+A refusal names its kind, and only one of them leads to douyin_publish: \
+degrade=true (route switched off or captcha/risk tripped the account's breaker) → douyin_publish QR package, say why; \
+login_expired=true → the person re-logs in on the desktop (desktop_login open), the video waits; \
+retryable=true → our upload/page step failed before anything was posted: retry once, then report honestly. \
+Never answer a login or execution failure with an authorization QR code. Never loop on a refusal."""
 
 desktop_publish_tool = define_tool(
     "desktop_publish",

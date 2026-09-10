@@ -207,6 +207,25 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 | D5 | 模版 UI（web + App）：创建/编辑表单含 §2.3 字段；运行历史与报告入口 | D1 | 4d | 前端 `npm run check` 与 App `flutter test` 通过；真机创建一条模版 |
 | D6 | 账单页「按运行聚合」视图（一次 cron 运行的 LLM+媒体花费合并） | D4 | 2d | 与 D4 报告数字一致 |
 
+### F 首轮真机验收（2026-09-10 15:07–15:26，gw2 bbdwxh_admin）与修复
+
+首轮跑通了「建模版 → 立即运行 → 热点宝选题 → 拆解 → 两段 Wan 生成 → 合成 → 创作者中心私密发布（作品 7683804546912636169）」，落账 15.15 积分（shadow）。
+完整记录在 `work/f-acceptance-20260910/RESULTS.md`。暴露的问题与处置：
+
+| 问题 | 处置（PR #20） |
+|---|---|
+| 中档固定 Wan 720p，但 gw2 的 `wan3.0-video` 只声明 1080p，`estimate` 报错后模型自行改 1080p 提交 | `autopilot/tiers.resolve_resolution` 按本部署模型声明把档位换算成可用分辨率（720p 不可用 → 就近取 1080p，`start` 输出 `resolution_note`）；**`video_generate` 提交时强制校验运行锁定的模型/分辨率**，不一致直接拒绝 |
+| 付费步骤的 reserve 靠模型自觉，冷缓存热点采集没预留 | 改为**工具自动预留**：`video_generate` 提交、`video_compose` 提交、`video_analyze`、`hot_trends` 真采集都在花钱前把估价记到本会话运行的预算上，超限即拒（`BudgetStop`）；技能只对工具不覆盖的花费用 `reserve` |
+| 人工停止运行被记为 ok，工具片段被当结果注入 | 执行器检查临时会话里 `finish=aborted`，视为运行失败并写明「被人工停止」，不再注入片段 |
+| 建任务时区：用户说 9 点，存成 UTC 09:00 | `cron` 工具默认时区改 Asia/Shanghai；技能要求显式传 `timezone` |
+| 未主动问人设/类目；形态「画面+旁白」不在模版却被改编成口播 | 技能：第一条回复必须问齐四件事；`form_allowed=false` 或「其他」必须跳过并在报告写明 |
+| 简介话题重复、`declaration` 显示 None | `desktop_publish` 去掉简介里与 `topics` 重复的 `#词`；返回值带声明字段 |
+| 报告费用与最终账单差一笔回复费 | 报告写明「统计到报告生成一刻」，技能要求报告是最后一条回复 |
+| 建完任务未说明会收到报告 | 技能：最后一条回复必须包含下次运行时间、报告、预算到顶、风控降级、实际模型分辨率 |
+
+仍未覆盖（下轮 F 补测）：对话「现在跑一次」三卡路径；黑名单实际命中；预算改 10 的首段拒绝；`simulate_risk` 降级与恢复；90 分钟间隔与每日 3 条拦截；`关联热点` 挂载仍失败；
+Luna 过载属网关问题。**运营待办**：确认 gw2 把 `wan3.0-video` 收紧为仅 1080p 的依据（9 月 6 日前的备份即如此），否则中档实际按 1080p 计价（每 15 秒 18 积分而非 9）。
+
 ### E · App 极光推送集成（迁移 bossip）
 
 事实：openbox 的 Flutter 应用就是 bossip 的同一个应用（`name: bossip_mobile`，Android/iOS 均为 `com.bossip.bipmobile`），所以**极光应用 `BossIP-bip`（AppKey 见 bossip `PUSH_NOTIFICATION_ENABLEMENT.md`）与 APNs Key 直接沿用，不用新建**；openbox 侧目前**零推送代码**（后端只有 `notification` 表，App 无原生桥）。bossip 已实现的可迁移物：Dart `SystemNotifications`（MethodChannel `bossip/system_notifications`）、`codex_notification_coordinator`、Android 原生（`BossIpPushBridge.kt` / `BossIpJPushReceiver.kt` / `BossIpJCommonService.kt`、Manifest、图标）、iOS `AppDelegate.swift` APNs 接入、服务端设备端点表与发送（v1 API TS：迁移 `0009–0013_*push*`）。

@@ -315,6 +315,15 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
 
     workdir = f"/tmp/obx-analyze/{job.id}"
     try:
+        from autopilot import ledger as _autopilot
+
+        # Analysis ≈ one STT minute (0.05) + a vision call (~0.10): reserve against an
+        # autopilot run's cap before spending anything.
+        _autopilot.guard_paid_step(ctx.session_id, kind="analysis", credits="0.15", note=f"analyze {seed[:60]}")
+    except _autopilot.BudgetStop as exc:
+        await vp._update_job(job.id, status="failed", error=f"budget stop: {exc}", completed_at=datetime.now(timezone.utc))
+        return ToolResult(title="Analysis refused", output=str(exc), metadata={"job_id": job.id, "status": "failed", "budget_stop": True})
+    try:
         await ctx.update_output("Sampling frames in the sandbox…")
         sampled = await _sample(ctx, kind=kind, ffmpeg_input=ffmpeg_input, workdir=workdir, frames=frames_n,
                                 width=cfg.frame_width, max_seconds=cfg.max_video_seconds, want_audio=want_audio)

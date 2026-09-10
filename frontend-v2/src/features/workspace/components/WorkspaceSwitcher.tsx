@@ -18,7 +18,7 @@ export function WorkspaceSwitcher() {
         value={currentId ?? ""}
         onChange={(event) => {
           setCurrent(event.target.value)
-          navigate(paths.app)
+          navigate(paths.newChat())
         }}
         className="min-w-0 flex-1 appearance-none bg-transparent pe-6 outline-none"
         aria-label={t("workspaceSwitcher")}

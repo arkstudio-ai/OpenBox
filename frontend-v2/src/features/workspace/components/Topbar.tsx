@@ -1,12 +1,13 @@
-import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useLocation, useParams } from "react-router"
-import { PanelLeft, PanelRight, Upload } from "lucide-react"
+import { Link } from "react-router"
+import { ArrowLeft, PanelLeft, PanelRight, Upload } from "lucide-react"
 import { useCopy } from "@/shared/hooks/useCopy"
 import { toast } from "@/shared/ui/Toast"
 import { useSidebarLayout } from "../hooks/useSidebarLayout"
-import { useProjectsQuery } from "../api/projects"
+import { useTopbarHeading } from "../hooks/useTopbarHeading"
 import { useSessionsQuery } from "../api/sessions"
+import { useWorkspaceUi } from "../stores/ui"
+import type { StandalonePage } from "../lib/standalonePage"
 import { paths } from "@/shared/router/paths"
 import { EnvBadge } from "@/shared/ui/EnvBadge"
 
@@ -18,45 +19,22 @@ interface TopbarProps {
   statusSlot?: React.ReactNode
 }
 
+// Pages whose status widgets would be noise: nothing on them runs.
+const QUIET_PAGES: ReadonlySet<StandalonePage> = new Set(["settings", "resources", "billing"])
+
 export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
   const { t } = useTranslation("workspace")
-  const { sessionId } = useParams()
-  const location = useLocation()
   const sidebar = useSidebarLayout()
   const sessions = useSessionsQuery()
-  const projects = useProjectsQuery()
+  const lastSessionId = useWorkspaceUi((s) => s.lastSessionId)
+  const { page, session, title, subtitle } = useTopbarHeading()
   const { copy } = useCopy()
 
-  const isSettings = location.pathname.includes("/settings")
-  const isCron = location.pathname.includes("/cron")
-  const isResources = location.pathname.includes("/resources")
-  const isAuthCenter = location.pathname.includes("/auth-center")
-  const isBilling =
-    location.pathname === paths.billing() || location.pathname.startsWith(`${paths.billing()}/`)
-  const session = useMemo(
-    () => (sessions.data ?? []).find((s) => s.id === sessionId) ?? null,
-    [sessions.data, sessionId],
-  )
-  const project = useMemo(
-    () => (projects.data ?? []).find((p) => p.id === session?.project_id) ?? null,
-    [projects.data, session],
-  )
-
-  // Pages that are not a conversation name themselves; everything else is a
-  // chat, and falls back to its title and project.
-  const standalone = isBilling
-    ? { title: t("billing"), subtitle: "" }
-    : isSettings
-      ? { title: t("settings"), subtitle: t("settings:subtitle", { ns: "settings" }) }
-      : isCron
-        ? { title: t("scheduledTasks"), subtitle: t("scheduledTasksHint") }
-        : isResources
-          ? { title: t("resourceCenter"), subtitle: t("resourceCenterHint") }
-          : isAuthCenter
-            ? { title: t("authCenter"), subtitle: t("authCenterHint") }
-            : null
-  const title = standalone?.title ?? session?.title ?? t("untitledChat")
-  const subtitle = standalone?.subtitle ?? project?.name ?? t("unsorted")
+  // "Back to chat" returns to the conversation the person left, as long as it
+  // still exists; otherwise to a fresh one. Not history.back(): after a sign-in
+  // redirect or a pasted link there is nothing sensible behind this page.
+  const lastSessionAlive = (sessions.data ?? []).some((s) => s.id === lastSessionId)
+  const backTo = lastSessionAlive && lastSessionId ? paths.chat(lastSessionId) : paths.newChat()
 
   const share = () => {
     copy(window.location.href)
@@ -80,8 +58,19 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
         <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
         <span className="text-n600 hidden min-w-0 flex-none truncate text-sm sm:block">{subtitle}</span>
       </div>
+      {page && (
+        <Link
+          to={backTo}
+          title={t("backToChat")}
+          aria-label={t("backToChat")}
+          className="text-a700 hover:bg-hairsoft flex h-8 flex-none items-center gap-1.5 rounded-full px-2.5 text-sm"
+        >
+          <ArrowLeft size={15} strokeWidth={2.4} aria-hidden />
+          <span className="hidden sm:inline">{t("backToChat")}</span>
+        </Link>
+      )}
       <EnvBadge />
-      {!isSettings && !isResources && !isBilling && statusSlot}
+      {!(page && QUIET_PAGES.has(page)) && statusSlot}
       {session && (
         <button
           type="button"
@@ -93,7 +82,7 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
           <Upload size={16} strokeWidth={2.4} />
         </button>
       )}
-      {!panelOpen && !standalone && (
+      {!panelOpen && !page && (
         <button
           type="button"
           className="text-n700 hover:bg-n200 flex size-8 flex-none items-center justify-center rounded-full"

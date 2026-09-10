@@ -3,8 +3,24 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
 
+// One id per build, stamped into the bundle (`__APP_BUILD__`) and into
+// index.html (`<meta name="app-build">`). A tab compares the two to learn
+// that a deployment happened behind it — see shared/lib/build-version.ts.
+const buildId =
+  process.env.VITE_BUILD_ID || new Date().toISOString().replace(/[-:TZ]/g, "").slice(0, 14)
+
+function appBuildMeta() {
+  return {
+    name: "app-build-meta",
+    transformIndexHtml(html: string) {
+      return html.replace("<head>", `<head>\n    <meta name="app-build" content="${buildId}" />`)
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), appBuildMeta()],
+  define: { __APP_BUILD__: JSON.stringify(buildId) },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },

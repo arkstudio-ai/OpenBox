@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { isChunkLoadError, recoverChunkLoadError } from "./chunk-recovery"
+import { installChunkRecovery, isChunkLoadError, recoverChunkLoadError } from "./chunk-recovery"
 
 const chunkError = new TypeError(
   "Failed to fetch dynamically imported module: https://app.test/assets/old.js",
@@ -83,4 +83,31 @@ describe("chunk recovery", () => {
       expect(reload).not.toHaveBeenCalled()
     },
   )
+})
+
+describe("resource failures outside React", () => {
+  it("reloads on Vite's preload error and on an unhandled import() rejection, and swallows them", () => {
+    const { reload } = browser()
+    const listeners = new Map<string, (e: unknown) => void>()
+    const target = {
+      addEventListener: (n: string, fn: (e: unknown) => void) => listeners.set(n, fn),
+      removeEventListener: (n: string) => listeners.delete(n),
+    } as unknown as Window
+    const stop = installChunkRecovery(target)
+    const preload = { payload: chunkError, preventDefault: vi.fn() }
+    listeners.get("vite:preloadError")?.(preload)
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(preload.preventDefault).toHaveBeenCalledTimes(1)
+    // the cooldown holds; the rejection is still recognised but no second reload
+    const rejection = { reason: chunkError, preventDefault: vi.fn() }
+    listeners.get("unhandledrejection")?.(rejection)
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(rejection.preventDefault).not.toHaveBeenCalled()
+    // unrelated rejections pass through untouched
+    const other = { reason: new Error("HTTP 502"), preventDefault: vi.fn() }
+    listeners.get("unhandledrejection")?.(other)
+    expect(other.preventDefault).not.toHaveBeenCalled()
+    stop()
+    expect(listeners.size).toBe(0)
+  })
 })

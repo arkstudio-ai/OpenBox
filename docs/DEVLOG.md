@@ -424,3 +424,17 @@ Web/Mobile 清理见 `ae58de7`，恢复契约强化见 `536622a`；原设计稿�
 `billing/media.py` 统一为字段式 `settle()`，新增 `quote_image/settle_image`、`quote_transcription/settle_transcription`，
 `image_gen` 与 `video_transcribe` 成功点落账。web 账单行媒体类型扩到四种；mobile `usage_tab.dart` 对媒体事件按
 时长/张数/计费单位渲染，`UsageCredits` 模型补媒体字段。B2' 至此全覆盖，价目为占位成本价。
+
+## 前端发布后旧页面自动换新，不再"出错了"（2026-09-10）
+
+运营反馈：每次发布前端，已打开的页面都会变成"出错了"，必须手动刷新。已有的 chunk 恢复（`4d2a578`）只认
+"动态 import 失败"这一种错误并自动刷新一次；本地用 nginx 同语义的静态服务复现：路由 chunk 缺失确实走了自动刷新，
+所以运营看到的"出错了"是别的错误落进了同一个错误页（旧页面对着新后端/新资源）。不再逐个猜错误，改为让页面知道自己过期：
+- `vite.config.ts` 每次构建生成一个 build id，同时写进 bundle（`__APP_BUILD__`）和 `index.html`（`<meta name="app-build">`，
+  index.html 本就 no-store）；Dockerfile 可用 `--build-arg VITE_BUILD_ID=<tag>` 钉死，不传则用构建时间戳。
+- `shared/lib/build-version.ts`：页签在可见/聚焦/联网/每 10 分钟时拉一次 index.html 比对 id（最少间隔 60s，已过期后不再请求）。
+  发现新构建：页签隐藏时立即换新；可见时等下一次站内导航（`router.subscribe`）再换；正在流式输出的回合（`shared/lib/activity.ts`
+  由 stream store 的 `setStatus` 登记）绝不打断。
+- 错误页：非 chunk 错误也先问服务器是否已有新构建，是就自动刷新一次；chunk 错误按原逻辑。所有自动刷新共用 5 分钟冷却，防循环。
+- `installChunkRecovery()`：接住 `vite:preloadError` 和事件处理器/store 里 `import()` 的未处理 rejection，这些原本到不了错误边界。
+本地验证：两份不同 id 的构建，旧页面打开后换成新构建目录，触发 focus 后页签自行刷新到新 id，无错误页。单测 +8。未部署。

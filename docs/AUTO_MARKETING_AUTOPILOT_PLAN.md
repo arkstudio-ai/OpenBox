@@ -201,9 +201,9 @@ cron 模版「自动营销」（用户填：类目/账号人设、每次条数�
 | # | 任务 | 依赖 | 估时 | 完成定义 |
 |---|---|---|---|---|
 | D1 ✅ | `autopilot/template.py` `AutopilotTemplate`（extra=forbid）：`account_profile / categories / hot_source / credits_cap_per_run / videos_per_run / model_tier / tolerances{duration_deviation_sec, stt_similarity, max_regenerations} / publish_mode / visibility / content_forms / topics_blocklist`；`cron_jobs.template` JSON 列（迁移 `d2f4a6c8e0b2`）；`CronJobCreate/Update.template` 经 `validate_template` 严格校验（含「预算至少够一条该档视频」）；执行器把模版以「模版参数（预算授权）」块注入 cron 提示词；`cron` 工具可透传 `template` | — | 2d | 2026-09-10 落地，7 项单测；前端/App 表单是 D5 |
-| D2 | 技能 `marketing-autopilot`：cron 上下文判定（会话 kind=cron）→ 不出卡、读模版字段；流程 hot_trends → video_analyze → 按配方 video_generate（三档模型映射）→ video_compose → 发布 → 报告；预算累加超限即停 | A3,B3,B4,C2,D1 | 5d | 干跑（mock 工具）通过；技能测试覆盖「预算超限停止」「STT 超阈值重生一次后弃用」 |
-| D3 ◐ | 三档模型：`autopilot/tiers.py` 已给映射（高 `video-sd-720p-proⅠ`@720p / 中 `wan3.0-video`@720p / 低 `MiniMax-H3`@768p）与 `describe_tiers()` 每 15 s 参考价（读 `rates.json`，当前占位价高 7.5 / 中 9.0 / 低 7.5）；**选档卡与对话创建流程未做**（随 D2 技能） | D1 | 1d | 卡文案含三档与参考价；模版存的是 tier 不是模型 id |
-| D4 | 报告消息：每次运行一条，含来源、每条分析摘要、花费明细、成片卡、标题/介绍/话题、发布结果或降级原因 | D2 | 2d | 报告字段与账单页当次运行的落账总额一致 |
+| D2 ✅ | 技能 `marketing-autopilot`（`backend/.openbox/skills/marketing-autopilot/SKILL.md`）+ 工具 `autopilot_run`（`tool/autopilot_run.py`、`autopilot/ledger.py`）：cron 判定靠提示词里的「模版参数（预算授权）」块；钱与容差不靠 prose——`start` 由模版定模型/分辨率/可负担条数，**每个付费步骤前 `reserve`，超上限拒绝并终止后续付费**，`judge_shot` 按 tolerances 判 accept/regenerate/drop 并计数，`record kind=candidate` 做黑名单与形态过滤，`report` 从本会话 `usage_events` 汇总花费 | A3,B3,B4,C2,D1 | 5d | 2026-09-10 落地，6 项单测覆盖「预算超限停止」「STT 超阈值重生一次后弃用」「黑名单/形态过滤」「报告与账单一致」。**真实端到端一次运行（F）未做** |
+| D3 ✅ | `autopilot/tiers.py` 三档映射与 `autopilot_run(action="tiers")` 每 15 s 参考价（读 `rates.json`）；技能「创建模版」流程用 `question` 出选档卡（三档 + 发布方式），预算建议按 `videos_per_run × (参考价 + 0.2) × 1.3`，`validate_template` 后 `cron(add, template=…)`；模版存 tier 不存模型 id | D1 | 1d | 2026-09-10 落地；真机对话创建一次待 F |
+| D4 ✅ | `autopilot_run(action="report", items=[…])` 生成 markdown 报告：档位/预算/实际落账（读本会话 `usage_events` charged+shadow）、成片/已发布/待扫码/弃用计数、每条的热点来源、形态、拆解摘要、分段、文案、花费、发布结果或降级/弃用原因、花费按 kind 明细；技能把它作为最终回复，cron 注入到用户会话 | D2 | 2d | 2026-09-10 落地；单测断言总额 = 该会话账单行之和（unpriced 不计） |
 | D5 | 模版 UI（web + App）：创建/编辑表单含 §2.3 字段；运行历史与报告入口 | D1 | 4d | 前端 `npm run check` 与 App `flutter test` 通过；真机创建一条模版 |
 | D6 | 账单页「按运行聚合」视图（一次 cron 运行的 LLM+媒体花费合并） | D4 | 2d | 与 D4 报告数字一致 |
 

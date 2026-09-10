@@ -7,8 +7,8 @@ import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
 import 'suggestion_loading.dart';
 
-/// One scrollable native row above the input card. Each target is at least
-/// 44 logical pixels high, including when its label fits on one short line.
+/// Equal-width suggestions share the input card's edges. Labels wrap freely
+/// and the tallest suggestion sets the row height, keeping every choice visible.
 class SuggestionChips extends ConsumerWidget {
   const SuggestionChips({
     super.key,
@@ -37,62 +37,117 @@ class SuggestionChips extends ConsumerWidget {
     return Semantics(
       container: true,
       label: i18n.t('chat:suggestions.title'),
-      child: SingleChildScrollView(
+      child: Padding(
         key: ValueKey(suggestions.id),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 2),
-        child: Row(
-          children: [
-            for (final (index, item) in suggestions.items.take(3).indexed) ...[
-              if (index > 0) const SizedBox(width: 8),
-              Semantics(
-                button: true,
-                onTap: () => onSelect(item),
-                label: i18n.t(
-                  item.mode == SuggestionMode.draft
-                      ? 'chat:suggestions.edit'
-                      : 'chat:suggestions.send',
-                  vars: {'label': item.label},
-                ),
-                child: Tooltip(
-                  excludeFromSemantics: true,
-                  message: i18n.t(
-                    item.mode == SuggestionMode.draft
-                        ? 'chat:suggestions.editHint'
-                        : 'chat:suggestions.sendHint',
-                    vars: {'prompt': item.prompt},
-                  ),
-                  child: ExcludeSemantics(
-                    child: OutlinedButton(
-                      onPressed: () => onSelect(item),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(44, 44),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        foregroundColor: t.n700,
-                        side: BorderSide(color: t.hair),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(Radii.full),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final count = suggestions.items.take(3).length;
+            final labelWidth =
+                (constraints.maxWidth - (count - 1) * 8) / count - 16;
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final (index, item)
+                      in suggestions.items.take(3).indexed) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: Semantics(
+                        button: true,
+                        onTap: () => onSelect(item),
+                        label: i18n.t(
+                          item.mode == SuggestionMode.draft
+                              ? 'chat:suggestions.edit'
+                              : 'chat:suggestions.send',
+                          vars: {'label': item.label},
                         ),
-                        textStyle: const TextStyle(fontSize: FontSizes.sm),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (item.mode == SuggestionMode.draft) ...[
-                            const Icon(Icons.edit_outlined, size: 14),
-                            const SizedBox(width: 5),
-                          ],
-                          Text(item.label, maxLines: 1),
-                        ],
+                        child: Tooltip(
+                          excludeFromSemantics: true,
+                          message: i18n.t(
+                            item.mode == SuggestionMode.draft
+                                ? 'chat:suggestions.editHint'
+                                : 'chat:suggestions.sendHint',
+                            vars: {'prompt': item.prompt},
+                          ),
+                          child: ExcludeSemantics(
+                            child: OutlinedButton(
+                              onPressed: () => onSelect(item),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(44, 48),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                foregroundColor: t.n700,
+                                side: BorderSide(color: t.hair),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(Radii.lg),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: FontSizes.sm,
+                                  height: 1.3,
+                                ),
+                              ),
+                              child: SizedBox(
+                                width: _balancedWidth(
+                                  context,
+                                  item.label,
+                                  labelWidth,
+                                ),
+                                child: Text(
+                                  item.label,
+                                  textAlign: TextAlign.center,
+                                  softWrap: true,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  ],
+                ],
               ),
-            ],
-          ],
+            );
+          },
         ),
       ),
     );
+  }
+
+  // Use the narrowest line box that keeps the natural line count. This avoids
+  // an orphan character on CJK labels while preserving whole English words.
+  double _balancedWidth(BuildContext context, String label, double width) {
+    if (width <= 0) return 0;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: Theme.of(
+          context,
+        ).textTheme.labelLarge?.copyWith(fontSize: FontSizes.sm, height: 1.3),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: width);
+    final lines = painter.computeLineMetrics().length;
+    if (lines <= 1) {
+      painter.dispose();
+      return width;
+    }
+    var low = 0.0;
+    var high = width;
+    for (var i = 0; i < 10; i++) {
+      final middle = (low + high) / 2;
+      painter.layout(maxWidth: middle);
+      if (painter.computeLineMetrics().length > lines) {
+        low = middle;
+      } else {
+        high = middle;
+      }
+    }
+    painter.dispose();
+    return (high + 0.5).clamp(0, width);
   }
 }

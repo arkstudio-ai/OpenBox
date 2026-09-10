@@ -110,9 +110,19 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   }, [turns, sessionId, busy, awaitingInput, onStop, lastTodoKey, retry])
 
   const atBottomRef = useRef(true)
+  const viewportHeightRef = useRef(0)
   const onScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
+    const resized = viewportHeightRef.current !== 0 && viewportHeightRef.current !== el.clientHeight
+    viewportHeightRef.current = el.clientHeight
+    // A multiline suggestion row can resize the viewport by more than the
+    // bottom threshold. Its scroll event may precede ResizeObserver; preserve
+    // the previous bottom position instead of treating this as a user scroll.
+    if (resized && atBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
     const at = el.scrollHeight - el.scrollTop - el.clientHeight < 60
     atBottomRef.current = at
     setAtBottom(at)
@@ -126,8 +136,10 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     const el = scrollRef.current
     const content = contentRef.current
     if (!el || !content) return
+    viewportHeightRef.current = el.clientHeight
     const ro = new ResizeObserver(() => {
       if (atBottomRef.current) el.scrollTop = el.scrollHeight
+      viewportHeightRef.current = el.clientHeight
     })
     ro.observe(content)
     ro.observe(el) // Composer suggestions may change the viewport height.

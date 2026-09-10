@@ -7,6 +7,7 @@ import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/models/resource.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'suggestion_fixtures.dart';
@@ -209,22 +210,22 @@ void main() {
             addTearDown(tester.view.resetViewInsets);
             fixture.container.read(i18nProvider.notifier).setLanguage(language);
             final suggestions = language == 'zh-CN'
-                ? testSuggestions
+                ? layoutSuggestions
                 : SuggestionsPart(
                     id: 'english',
                     items: [
                       NextStepSuggestion(
-                        label: 'Add automated tests',
+                        label: 'Adjust the daily briefing topics',
                         prompt: sendSuggestion.prompt,
                         mode: SuggestionMode.send,
                       ),
                       NextStepSuggestion(
-                        label: 'Adjust the visual style',
+                        label: 'Switch to the concise notification format',
                         prompt: draftSuggestion.prompt,
                         mode: SuggestionMode.draft,
                       ),
                       const NextStepSuggestion(
-                        label: 'Check mobile layout',
+                        label: 'Change the daily delivery time',
                         prompt: 'Check the mobile layout.',
                         mode: SuggestionMode.send,
                       ),
@@ -261,11 +262,40 @@ void main() {
               findsOneWidget,
             );
             semantics.dispose();
-            await tester.drag(row, const Offset(-500, 0));
-            await tester.pumpAndSettle();
-            await tester.drag(row, const Offset(-500, 0));
-            await tester.pumpAndSettle();
-            expect(buttons.last.hitTestable(), findsOneWidget);
+            expect(
+              find.descendant(of: row, matching: find.byType(Icon)),
+              findsNothing,
+            );
+            final input = tester.getRect(
+              find
+                  .ancestor(
+                    of: find.byType(TextField),
+                    matching: find.byType(DecoratedBox),
+                  )
+                  .first,
+            );
+            expect(
+              tester.getRect(buttons.first).left,
+              closeTo(input.left, 0.1),
+            );
+            expect(
+              tester.getRect(buttons.last).right,
+              closeTo(input.right, 0.1),
+            );
+            final first = tester.getSize(buttons.first);
+            for (var i = 0; i < 3; i++) {
+              final button = buttons.at(i);
+              expect(button.hitTestable(), findsOneWidget);
+              expect(tester.getSize(button), first);
+              final label = find.text(suggestions.items[i].label);
+              final paragraph = tester.renderObject<RenderParagraph>(label);
+              expect(paragraph.didExceedMaxLines, isFalse);
+              final bounds = tester.getRect(button);
+              final textBounds = tester.getRect(label);
+              expect(textBounds.left, greaterThanOrEqualTo(bounds.left));
+              expect(textBounds.right, lessThanOrEqualTo(bounds.right));
+              expect(textBounds.bottom, lessThanOrEqualTo(bounds.bottom));
+            }
             // Keyboard changes the viewport while the empty input has focus.
             await tester.showKeyboard(find.byType(TextField));
             tester.view.viewInsets = const FakeViewPadding(bottom: 300);

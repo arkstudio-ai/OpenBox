@@ -65,7 +65,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(SuggestionLoading), findsNothing);
     expect(find.text(sendSuggestion.label), findsOneWidget);
-    expect(tester.getTopLeft(find.byType(TextField)).dy, inputY);
+    expect(tester.getTopLeft(find.byType(TextField)).dy, closeTo(inputY, 0.1));
     expect(tester.takeException(), isNull);
   });
 
@@ -162,7 +162,7 @@ void main() {
             addTearDown(tester.view.resetPhysicalSize);
             addTearDown(tester.view.resetDevicePixelRatio);
             addTearDown(tester.view.resetViewInsets);
-              final semantics = tester.ensureSemantics();
+            final semantics = tester.ensureSemantics();
             await tester.pumpWidget(
               fixture.app(
                 composer(pending()),
@@ -175,11 +175,32 @@ void main() {
             await tester.pump(const Duration(milliseconds: 100));
             expect(find.bySemanticsLabel('正在生成下一步建议'), findsOneWidget);
             expect(beams(), reduced ? findsNothing : findsNWidgets(3));
-            await tester.drag(
-              find.byType(SuggestionLoading),
-              const Offset(-200, 0),
-            );
-            await tester.pump(const Duration(milliseconds: 400));
+            if (!reduced) {
+              final cells = beams();
+              final input = tester.getRect(
+                find
+                    .ancestor(
+                      of: find.byType(TextField),
+                      matching: find.byType(DecoratedBox),
+                    )
+                    .first,
+              );
+              // The shimmer clips move; their parent cells must remain in bounds.
+              final cellsBounds = find.ancestor(
+                of: cells,
+                matching: find.byType(ClipRRect),
+              );
+              expect(cellsBounds, findsNWidgets(3));
+              final rects =
+                  cellsBounds
+                      .evaluate()
+                      .map((e) => tester.getRect(find.byWidget(e.widget)))
+                      .toList()
+                    ..sort((a, b) => a.left.compareTo(b.left));
+              expect(rects.first.left, closeTo(input.left, 0.1));
+              expect(rects.last.right, closeTo(input.right, 0.1));
+              expect(rects.first.width, closeTo(rects.last.width, 0.1));
+            }
             await tester.showKeyboard(find.byType(TextField));
             tester.view.viewInsets = const FakeViewPadding(bottom: 300);
             await tester.pump(const Duration(milliseconds: 400));
@@ -191,8 +212,8 @@ void main() {
               tester.getBottomLeft(find.byType(SuggestionLoading)).dy,
               lessThan(tester.getTopLeft(find.byType(TextField)).dy),
             );
-              expect(tester.takeException(), isNull);
-              semantics.dispose();
+            expect(tester.takeException(), isNull);
+            semantics.dispose();
           },
         );
       }

@@ -43,6 +43,27 @@ const testSuggestions = SuggestionsPart(
   ],
 );
 
+const layoutSuggestions = SuggestionsPart(
+  id: 'layout-suggestions',
+  items: [
+    NextStepSuggestion(
+      label: '调整简报关注领域',
+      prompt: '调整简报关注领域。',
+      mode: SuggestionMode.send,
+    ),
+    NextStepSuggestion(
+      label: '微调推送格式为精简版',
+      prompt: '请将推送格式调整为：[补充要求]。',
+      mode: SuggestionMode.draft,
+    ),
+    NextStepSuggestion(
+      label: '修改每日推送时间',
+      prompt: '修改每日推送时间。',
+      mode: SuggestionMode.send,
+    ),
+  ],
+);
+
 ChatMessage answer({
   String id = 'm001',
   String sessionId = 's1',

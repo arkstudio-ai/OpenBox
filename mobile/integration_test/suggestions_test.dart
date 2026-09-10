@@ -16,7 +16,7 @@ void main() {
   tearDown(() => fixture.dispose());
 
   testWidgets(
-    'native next steps, themes, horizontal scroll and draft keyboard',
+    'native aligned suggestions, complete labels, themes and draft keyboard',
     (tester) async {
       fixture.api.messages = [
         answer(
@@ -25,7 +25,7 @@ void main() {
               id: 'body',
               text: '已完成聊天建议功能。\n\n建议会在回复完成后显示，帮助你继续测试、调整样式或检查移动端布局。',
             ),
-            testSuggestions,
+            layoutSuggestions,
           ],
         ),
       ];
@@ -43,14 +43,13 @@ void main() {
       );
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-suggestions-dark-large');
-      await tester.drag(find.byType(SuggestionChips), const Offset(-220, 0));
-      await tester.pumpAndSettle();
-      expect(find.text('检查移动端布局').hitTestable(), findsOneWidget);
-      await tester.ensureVisible(find.text(draftSuggestion.label));
-      await tester.tap(find.text(draftSuggestion.label));
+      for (final item in layoutSuggestions.items) {
+        expect(find.text(item.label).hitTestable(), findsOneWidget);
+      }
+      await tester.tap(find.text(layoutSuggestions.items[1].label));
       await tester.pumpAndSettle();
       final field = tester.widget<TextField>(find.byType(TextField));
-      expect(field.controller!.text, draftSuggestion.prompt);
+      expect(field.controller!.text, layoutSuggestions.items[1].prompt);
       expect(field.focusNode!.hasFocus, isTrue);
       expect(find.byType(SuggestionChips), findsNothing);
       expect(fixture.api.sends, isEmpty);

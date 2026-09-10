@@ -9,7 +9,7 @@ const group = (page: Page) => page.getByRole("group", { name: /下一步建议|S
 const loading = (page: Page) => page.getByRole("status", { name: /正在生成下一步建议|Generating suggested next steps/ })
 
 async function fixture(page: Page, options: {
-  failSend?: boolean; noChips?: boolean; longHistory?: boolean; pending?: boolean; expiresAt?: string
+  failSend?: boolean; noChips?: boolean; longHistory?: boolean; pending?: boolean; expiresAt?: string; suggestionItems?: typeof items
 } = {}) {
   const sent: { text: string; model: string; client_message_id: string }[] = []
   const offsets: number[] = []
@@ -34,7 +34,7 @@ async function fixture(page: Page, options: {
         parts: [
           { type: "text", id: "a-text", channel: "final", text: Array.from({ length: 14 }, (_, i) =>
             `### ${i + 1}. 让每一个想法，都有下一步\n\n从一句想法开始，把资料、分析和创作串联起来。你负责判断方向，OpenBox 帮你推进具体工作。`).join("\n\n") },
-          ...(options.noChips ? [] : [{ type: "suggestions", id: "p1", items: options.pending ? [] : items,
+          ...(options.noChips ? [] : [{ type: "suggestions", id: "p1", items: options.pending ? [] : options.suggestionItems ?? items,
             ...(options.pending ? { status: "pending", expires_at: options.expiresAt ?? new Date(Date.now() + 60_000).toISOString() } : {}),
           }]),
         ] },
@@ -178,7 +178,7 @@ test("a recovered pending suggestion row shimmers in place, then becomes actiona
   const before = await page.getByRole("textbox").boundingBox()
   const row = await loading(page).boundingBox()
   expect(row!.y + row!.height).toBeLessThan(before!.y)
-  await expect(loading(page).locator(".suggestion-placeholder").first()).toHaveCSS("height", "32px")
+  await expect(loading(page).locator(".suggestion-placeholder").first()).toHaveCSS("height", "52px")
   await page.screenshot({ path: testInfo.outputPath("suggestion-loading-light.png") })
   await page.getByRole("button", { name: "Dark", exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath("suggestion-loading-dark.png") })
@@ -236,4 +236,44 @@ test("a worker restart cannot leave an endless loading animation", async ({ page
   await page.reload()
   await expect(loading(page)).toHaveCount(0)
   await expect(page.getByRole("textbox")).toBeVisible()
+})
+
+
+test("all three complete labels align with the input without horizontal scrolling", async ({ page }, testInfo) => {
+  const labels = [
+    ["调整简报关注领域", "微调推送格式为精简版", "修改每日推送时间"],
+    ["Adjust the daily briefing topics", "Switch to the concise notification format", "Change the daily delivery time"],
+  ]
+  for (const texts of labels) {
+    await fixture(page, { suggestionItems: items.map((item, index) => ({ ...item, label: texts[index] })) })
+    for (const width of [320, 390, 1280]) {
+      await page.setViewportSize({ width, height: 844 })
+      for (const mode of ["Light", "Dark"]) {
+        await page.getByRole("button", { name: mode, exact: true }).click()
+        const choices = group(page).getByRole("button")
+        await expect(choices).toHaveCount(3)
+        await expect(group(page).locator("svg")).toHaveCount(0)
+        const input = await page.getByRole("group").filter({ has: page.getByRole("textbox") }).boundingBox()
+        const boxes = await choices.all().then((all) => Promise.all(all.map((button) => button.boundingBox())))
+        expect(boxes[0]!.x).toBeCloseTo(input!.x, 1)
+        expect(boxes[2]!.x + boxes[2]!.width).toBeCloseTo(input!.x + input!.width, 1)
+        for (let index = 0; index < 3; index++) {
+          const button = choices.nth(index)
+          await expect(button).toBeInViewport({ ratio: 1 })
+          await expect(button).toHaveText(texts[index])
+          expect(boxes[index]!.height).toBe(boxes[0]!.height)
+          expect(boxes[index]!.width).toBeCloseTo(boxes[0]!.width, 1)
+          const unclipped = await button.locator("span").evaluate((el) => {
+            const text = document.createRange()
+            text.selectNodeContents(el)
+            const bounds = el.parentElement!.getBoundingClientRect()
+            return [...text.getClientRects()].every((line) => line.left >= bounds.left && line.right <= bounds.right && line.bottom <= bounds.bottom)
+          })
+          expect(unclipped).toBe(true)
+        }
+        expect(await group(page).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+        await page.screenshot({ path: testInfo.outputPath(`aligned-${width}-${mode}-${texts === labels[0] ? "zh" : "en"}.png`) })
+      }
+    }
+  }
 })

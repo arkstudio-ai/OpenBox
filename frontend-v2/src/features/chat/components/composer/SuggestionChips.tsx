@@ -1,4 +1,3 @@
-import { Pencil } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { NextStepSuggestion } from "@/shared/types/api"
 
@@ -8,19 +7,17 @@ interface Props {
   onSelect: (item: NextStepSuggestion) => void
 }
 
-const PLACEHOLDER_WIDTHS = ["w-28", "w-36", "w-32"]
-
 export function SuggestionChips({ items, loading = false, onSelect }: Props) {
   const { t } = useTranslation("chat")
   if (!loading && items.length === 0) return null
   return (
     <div role={loading ? "status" : "group"} aria-label={t(loading ? "suggestions.loading" : "suggestions.title")}
-      aria-busy={loading || undefined} className="mb-2 flex gap-2 overflow-x-auto px-5 py-1">
+      aria-busy={loading || undefined} className="mb-2 grid grid-flow-col auto-cols-fr gap-2 py-1">
       {loading ? <>
         <span className="sr-only">{t("suggestions.loading")}</span>
-        {PLACEHOLDER_WIDTHS.map((width) => (
-          <span key={width} aria-hidden="true"
-            className={`suggestion-placeholder border-hair bg-hairsoft relative h-8 flex-none overflow-hidden rounded-lg border ${width}`} />
+        {[0, 1, 2].map((index) => (
+          <span key={index} aria-hidden="true"
+            className="suggestion-placeholder border-hair bg-hairsoft relative h-13 min-w-0 overflow-hidden rounded-lg border" />
         ))}
       </> : items.slice(0, 3).map((item) => (
         <button
@@ -29,10 +26,9 @@ export function SuggestionChips({ items, loading = false, onSelect }: Props) {
           title={t(item.mode === "draft" ? "suggestions.editHint" : "suggestions.sendHint", { prompt: item.prompt })}
           aria-label={t(item.mode === "draft" ? "suggestions.edit" : "suggestions.send", { label: item.label })}
           onClick={() => onSelect(item)}
-          className="border-hair text-n600 hover:bg-hairsoft hover:text-ink focus-visible:ring-n400 flex h-8 max-w-64 flex-none items-center gap-1.5 rounded-lg border bg-transparent px-3 text-xs transition-colors outline-none focus-visible:ring-2"
+          className="border-hair text-n600 hover:bg-hairsoft hover:text-ink focus-visible:ring-n400 min-h-13 min-w-0 rounded-lg border bg-transparent px-2 py-2 text-center text-sm text-balance leading-snug transition-colors outline-none focus-visible:ring-2 sm:px-3"
         >
-          {item.mode === "draft" && <Pencil className="size-3 flex-none" aria-hidden="true" />}
-          <span className="truncate">{item.label}</span>
+          <span className="whitespace-normal [overflow-wrap:anywhere]">{item.label}</span>
         </button>
       ))}
     </div>

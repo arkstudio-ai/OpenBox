@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 
-/// Reserves the same 48px touch row as the final suggestion buttons.
+/// Three equal-width placeholders align with the input and completed choices.
 /// The server deadline retires a persisted wait even after an app restart.
 class SuggestionLoading extends StatefulWidget {
   const SuggestionLoading({
@@ -89,55 +89,54 @@ class _SuggestionLoadingState extends State<SuggestionLoading>
       liveRegion: true,
       label: widget.label,
       child: ExcludeSemantics(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 2),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, _) => Row(
               children: [
-                for (final width in [112.0, 144.0, 128.0]) ...[
-                  if (width != 112) const SizedBox(width: 8),
-                  SizedBox(
-                    width: width,
-                    height: 48,
-                    child: Center(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(Radii.full),
-                        child: Container(
-                          width: width,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: t.hairSoft,
-                            border: Border.all(color: t.hair),
-                            borderRadius: BorderRadius.circular(Radii.full),
-                          ),
-                          child: !animate
-                              ? null
-                              : FractionalTranslation(
-                                  translation: Offset(
-                                    Curves.easeInOut.transform(
-                                              _controller.value,
-                                            ) *
-                                            2 -
-                                        1,
-                                    0,
-                                  ),
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [
-                                          Colors.transparent,
-                                          t.n500.withValues(alpha: 0.24),
-                                          Colors.transparent,
-                                        ],
-                                      ),
+                for (var index = 0; index < 3; index++) ...[
+                  if (index > 0) const SizedBox(width: 8),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(Radii.lg),
+                      child: Container(
+                        height:
+                            MediaQuery.textScalerOf(
+                                  context,
+                                ).scale(FontSizes.sm) *
+                                2.8 +
+                            16,
+                        decoration: BoxDecoration(
+                          color: t.hairSoft,
+                          border: Border.all(color: t.hair),
+                          borderRadius: BorderRadius.circular(Radii.lg),
+                        ),
+                        child: !animate
+                            ? null
+                            : FractionalTranslation(
+                                translation: Offset(
+                                  Curves.easeInOut.transform(
+                                            _controller.value,
+                                          ) *
+                                          2 -
+                                      1,
+                                  0,
+                                ),
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        Colors.transparent,
+                                        t.n500.withValues(alpha: 0.24),
+                                        Colors.transparent,
+                                      ],
                                     ),
                                   ),
                                 ),
-                        ),
+                              ),
                       ),
                     ),
                   ),

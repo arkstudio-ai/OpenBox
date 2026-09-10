@@ -51,7 +51,7 @@ agent 用 dev-browser 驱动云桌面（ECD）里的 Chrome 时，遇到滑块/�
 - `container/dev-browser/src/client.ts` 新增 `detectChallenge(page)`：按极验 `.geetest_*`、阿里云
   `#nc_1_wrapper`、腾讯 `#tcaptcha_iframe`、Cloudflare `#challenge-form`/turnstile、hCaptcha、reCAPTCHA
   的可见元素和中英文文案启发式检测；`waitForPageLoad()` 返回值多一个 `challenge` 字段。只报不拦。
-- `backend/sandbox/browser_runtime_repair.py` 的 `RUNTIME_VERSION` 已 bump 到 `20260909.1`，
+- `backend/sandbox/browser_runtime_repair.py` 的 `RUNTIME_VERSION` 随合并 bump 到 `20260910.2`（现网桌面在 andrew 的 `20260910.1`），
   发布后需按 `docs/DEPLOY.md` 的浏览器运行时修复流程下发到现网桌面，否则旧桌面上的 SKILL.md 不会更新。
 
 ### 前端（frontend-v2）

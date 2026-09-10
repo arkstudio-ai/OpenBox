@@ -1,6 +1,6 @@
 import { Suspense, useEffect } from "react"
 import { Outlet, useMatch, useParams } from "react-router"
-import { Sidebar, Topbar, useWorkspaceEvents } from "@/features/workspace"
+import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronPanelTab, CronStatusPill } from "@/features/cron"
 import { Spinner } from "@/shared/ui/Spinner"
@@ -22,6 +22,12 @@ export default function WorkspaceLayout() {
   const workspaces = useWorkspacesQuery()
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
+  const setLastSession = useWorkspaceUi((s) => s.setLastSession)
+
+  // The topbar's "back to chat" on centre pages returns here.
+  useEffect(() => {
+    if (sessionId) setLastSession(sessionId)
+  }, [sessionId, setLastSession])
 
   // Hydrate appearance from server prefs once per signed-in user.
   useEffect(() => {

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { useLocation, useMatch, useNavigate } from "react-router"
-import { Blocks, Clock, CreditCard, KeyRound, Layers, PanelLeft, Plus, Search } from "lucide-react"
+import { Link, useLocation, useNavigate } from "react-router"
+import { Blocks, Clock, CreditCard, FolderPlus, KeyRound, Layers, PanelLeft, Plus, Search } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
 import { useProjectsQuery, useCreateProject } from "../api/projects"
 import { useSessionsQuery } from "../api/sessions"
 import { useWorkspaceUi } from "../stores/ui"
+import { NavRow } from "./NavRow"
 import { ProjectTree } from "./ProjectTree"
 import { UserRow } from "./UserRow"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
@@ -16,7 +17,6 @@ import { useSidebarLayout } from "../hooks/useSidebarLayout"
 export function Sidebar() {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
-  const isBilling = useMatch(`${paths.billing()}/*`) !== null
   const width = useWorkspaceUi((s) => s.sidebarWidth)
   const { compact, open, close } = useSidebarLayout()
   const closeMobile = useWorkspaceUi((s) => s.closeMobileSidebar)
@@ -110,7 +110,9 @@ export function Sidebar() {
     >
       <div className="flex min-h-0 flex-1 flex-col ps-4.5 pe-3 pt-3.5 pb-2.5">
         <div className="flex items-center gap-2.5 pt-0.5 pb-4">
-          <BrandMark className="min-w-0 flex-1" />
+          <Link to={paths.newChat()} aria-label={t("home")} className="min-w-0 flex-1">
+            <BrandMark />
+          </Link>
           <button
             type="button"
             className="text-n700 hover:bg-hairsoft flex size-7.5 flex-none items-center justify-center rounded-full"
@@ -128,90 +130,27 @@ export function Sidebar() {
             wears a round tinted icon chip instead of a filled pill. */}
         <button
           type="button"
-          // The sidebar's primary action opens a project draft; chats are
-          // started inside a project from its own row.
-          onClick={() => setDraftOpen(true)}
+          // Starting a conversation is the high-frequency action, so it is the
+          // first row and lands in the sidebar's current project. Projects are
+          // the container, created one row down.
+          onClick={() => navigate(paths.newChat(activeProject ?? undefined))}
           className="group text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base font-medium"
         >
-          <span className="bg-n200 flex size-7 flex-none items-center justify-center rounded-full transition-transform duration-150 group-hover:scale-105">
+          <span className="bg-a200 text-n800 flex size-7 flex-none items-center justify-center rounded-full transition-transform duration-150 group-hover:scale-105">
             <Plus size={15} strokeWidth={2.5} />
           </span>
+          {t("newChat")}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setDraftOpen(true)}
+          className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
+        >
+          <span className="flex size-7 flex-none items-center justify-center">
+            <FolderPlus size={16} strokeWidth={2.1} />
+          </span>
           {t("newProject")}
-        </button>
-
-        <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5">
-          <span className="flex size-7 flex-none items-center justify-center">
-            <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
-          </span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("search")}
-            className="text-ink placeholder:text-n600 min-w-0 flex-1 bg-transparent pe-2 text-base outline-none"
-          />
-        </div>
-
-        <button
-          type="button"
-          // Opens on the project in view, which is the one whose files the
-          // person was just looking at.
-          onClick={() => navigate(paths.resources(activeProject ?? undefined))}
-          className="text-ink hover:bg-hairsoft mt-2.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
-        >
-          <span className="flex size-7 flex-none items-center justify-center">
-            <Layers size={16} strokeWidth={2.1} />
-          </span>
-          {t("resourceCenter")}
-        </button>
-
-        <button
-          type="button"
-          // Sits right under the resource centre: the files live there, the
-          // accounts they get posted from live here.
-          onClick={() => navigate(paths.authCenter)}
-          className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
-        >
-          <span className="flex size-7 flex-none items-center justify-center">
-            <KeyRound size={16} strokeWidth={2.1} />
-          </span>
-          {t("authCenter")}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => navigate(paths.skills)}
-          className="text-ink hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
-        >
-          <span className="flex size-7 flex-none items-center justify-center">
-            <Blocks size={16} strokeWidth={2.1} />
-          </span>
-          {t("skillCenter")}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => navigate(paths.cron)}
-          className="text-ink hover:bg-hairsoft mb-1.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base"
-        >
-          <span className="flex size-7 flex-none items-center justify-center">
-            <Clock size={16} strokeWidth={2.1} />
-          </span>
-          {t("scheduledTasks")}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => navigate(paths.billing())}
-          aria-current={isBilling ? "page" : undefined}
-          className={cn(
-            "text-ink hover:bg-hairsoft mb-1.5 flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5 text-base",
-            isBilling && "bg-n200 font-medium",
-          )}
-        >
-          <span className="flex size-7 flex-none items-center justify-center">
-            <CreditCard size={16} strokeWidth={2.1} />
-          </span>
-          {t("billing")}
         </button>
 
         {draftOpen && (
@@ -232,6 +171,40 @@ export function Sidebar() {
             />
           </div>
         )}
+
+        <div className="focus-within:bg-hairsoft hover:bg-hairsoft flex h-10 flex-none items-center gap-2.5 rounded-full px-1.5">
+          <span className="flex size-7 flex-none items-center justify-center">
+            <Search size={16} strokeWidth={2.1} className="text-ink" aria-hidden />
+          </span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("search")}
+            className="text-ink placeholder:text-n600 min-w-0 flex-1 bg-transparent pe-2 text-base outline-none"
+          />
+        </div>
+
+        {/* Opens on the project in view, which is the one whose files the
+            person was just looking at. */}
+        <NavRow
+          icon={Layers}
+          label={t("resourceCenter")}
+          to={paths.resources(activeProject ?? undefined)}
+          pattern={paths.resources()}
+          className="mt-2.5"
+        />
+        {/* Sits right under the resource centre: the files live there, the
+            accounts they get posted from live here. */}
+        <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />
+        <NavRow icon={Blocks} label={t("skillCenter")} to={paths.skills} />
+        <NavRow icon={Clock} label={t("scheduledTasks")} to={paths.cron} className="mb-1.5" />
+        <NavRow
+          icon={CreditCard}
+          label={t("billing")}
+          to={paths.billing()}
+          pattern={`${paths.billing()}/*`}
+          className="mb-1.5"
+        />
 
         <div className="scr -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-1">
           <ProjectTree

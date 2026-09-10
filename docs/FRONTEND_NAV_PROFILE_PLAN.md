@@ -218,3 +218,12 @@ A 先独立成一个 PR 合入（改动小、收益立刻可见），B-P0 第二
 ## 7. 执行记录
 
 - 2026-09-09：分支与本文档建立。代码未动。
+- 2026-09-10：§6 第 1–3 项拍板为推荐方案。**A 线落地**（本分支，只动 `frontend-v2/`）：
+  - `paths.newChat(projectId?)`；`ProjectRow` / `WorkspaceSwitcher` 不再手拼路径。
+  - 侧栏：第一行"新对话"（a200 圆片，落当前选中项目），第二行"新建项目"（`FolderPlus`，草稿框紧随其下），logo 包 `Link` 回 `/app`；六个中心行抽成 `NavRow`，`useMatch` 高亮。
+  - 顶栏：`lib/standalonePage.ts` 用 `matchPath` 表识别页面（补技能中心、超管系统）；`hooks/useTopbarHeading.ts` 出标题，主页显示"新对话 · 项目名"；非会话页出"返回对话"，目标 = `ui.lastSessionId`（`WorkspaceLayout` 写、持久化）仍存在则该会话，否则 `/app`；窄屏只留箭头。
+  - `EmptyChatRoute` 用 `lib/newChatProject.ts`：`?project=` → 侧栏当前项目（须仍存在）→ 未归类，并把项目名传给问候语。
+  - 文案新增 `home` / `skillCenterHint` / `adminConsoleHint`；启用原本闲置的 `newChat` / `backToChat`。
+  - 单测：`standalonePage`、`newChatProject`、`ui.lastSessionId` 共 10 条；`npm run check` 全绿（lint 0 错误，406 测试）。
+  - 本地验证（docker-compose.dev 的 postgres/redis + 后端 + `devtest` 账号）：新对话 → `/app?project=<id>` 且提示写项目名；技能中心顶栏标题/副标题正确、侧栏高亮、返回 → `/app` 顶栏"新对话 · 默认空间"；logo → `/app`；375px 宽返回链接仅图标。
+  - 未验：返回到"最近会话"的分支需要真实会话（本机无模型密钥），逻辑由单测覆盖；e2e `sidebar-project.spec.ts` 同样依赖模型，未跑。

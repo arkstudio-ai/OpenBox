@@ -6,6 +6,9 @@ export const paths = {
   ssoCallback: "/callback",
   invite: (token: string) => `/invite/${encodeURIComponent(token)}`,
   app: "/app",
+  // The greeting + composer is the workspace home; a fresh chat starts there.
+  // With a project it files the first message under that project.
+  newChat: (projectId?: string) => (projectId ? `/app?project=${projectId}` : "/app"),
   chat: (sessionId: string) => `/app/s/${sessionId}`,
   settings: (tab?: string) => (tab ? `/app/settings/${tab}` : "/app/settings"),
   billing: (tab?: string) => (tab ? `/app/billing/${tab}` : "/app/billing"),

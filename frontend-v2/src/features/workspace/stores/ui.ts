@@ -13,6 +13,9 @@ interface WorkspaceUiState {
   mobileSidebarOpen: boolean
   expanded: Record<string, boolean>
   selectedProject: string | null
+  // The conversation most recently open, so a centre page can hand the
+  // person back to it. Persisted: a reload on a centre page still knows.
+  lastSessionId: string | null
   // Per-project sidebar filter: plain conversations (default) or cron runs.
   // Deliberately not persisted — a fresh load always starts on conversations.
   sessionFilter: Record<string, SessionFilter>
@@ -23,6 +26,7 @@ interface WorkspaceUiState {
   toggleProject: (id: string) => void
   isExpanded: (id: string) => boolean
   selectProject: (id: string | null) => void
+  setLastSession: (id: string) => void
   setSessionFilter: (projectId: string, mode: SessionFilter) => void
 }
 
@@ -33,6 +37,7 @@ interface Persisted {
   sidebarCollapsed?: boolean
   expanded?: Record<string, boolean>
   selectedProject?: string | null
+  lastSessionId?: string | null
 }
 
 function readLocal(): Persisted {
@@ -54,6 +59,7 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
         sidebarCollapsed: s.sidebarCollapsed,
         expanded: s.expanded,
         selectedProject: s.selectedProject,
+        lastSessionId: s.lastSessionId,
       }),
     )
   }
@@ -65,6 +71,7 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
     closeMobileSidebar: () => set({ mobileSidebarOpen: false }),
     expanded: local.expanded ?? {},
     selectedProject: local.selectedProject ?? null,
+    lastSessionId: local.lastSessionId ?? null,
     sessionFilter: {},
     setSidebarWidth: (w) => {
       set({ sidebarWidth: Math.min(420, Math.max(220, w)), sidebarCollapsed: false })
@@ -81,6 +88,11 @@ export const useWorkspaceUi = create<WorkspaceUiState>((set, get) => {
     isExpanded: (id) => get().expanded[id] ?? true,
     selectProject: (id) => {
       set({ selectedProject: id })
+      persist()
+    },
+    setLastSession: (id) => {
+      if (get().lastSessionId === id) return
+      set({ lastSessionId: id })
       persist()
     },
     setSessionFilter: (projectId, mode) => {

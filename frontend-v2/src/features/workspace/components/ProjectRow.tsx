@@ -100,7 +100,7 @@ export function ProjectRow({ project, forceExpanded, onAskDelete, children }: Pr
               className="flex size-5.5 items-center justify-center rounded-full hover:bg-n200"
               onClick={() => {
                 touch()
-                navigate(project ? `${paths.app}?project=${project.id}` : paths.app)
+                navigate(paths.newChat(project?.id))
               }}
             >
               <Plus size={14} strokeWidth={2.75} />
@@ -132,7 +132,7 @@ export function ProjectRow({ project, forceExpanded, onAskDelete, children }: Pr
             onClick={() => {
               setMenuOpen(false)
               touch()
-              navigate(project ? `${paths.app}?project=${project.id}` : paths.app)
+              navigate(paths.newChat(project?.id))
             }}
           >
             {t("newChatIn")}

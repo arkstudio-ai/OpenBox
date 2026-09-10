@@ -39,6 +39,9 @@ class CronJob(Base):
     # Delivery config
     delivery: Mapped[dict] = mapped_column(JSONType, server_default="{}")
 
+    # Marketing-autopilot budget authorisation (autopilot/template.py); NULL for plain tasks.
+    template: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+
     # Retry config
     delete_after_run: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     max_retries: Mapped[int] = mapped_column(Integer, server_default=text("3"))

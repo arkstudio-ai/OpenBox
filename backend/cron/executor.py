@@ -410,6 +410,15 @@ def _build_cron_prompt(job: dict, context_summary: str, locale: str = "zh-CN") -
         text(locale, "execute_first"),
     ]
 
+    if job.get("template"):
+        import json as _json
+
+        parts.append(
+            f"[{text(locale, 'template_block')}]\n"
+            f"{text(locale, 'template_note')}\n"
+            f"{_json.dumps(job['template'], ensure_ascii=False)}"
+        )
+
     if context_summary:
         parts.append(
             f"[{text(locale, 'context_summary')}]\n"

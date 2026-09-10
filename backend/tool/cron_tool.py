@@ -20,6 +20,7 @@ class CronToolArgs(BaseModel):
     schedule: str = Field(default="", description="Cron expression (e.g. '0 9 * * *') or interval like 'every 30m'")
     timezone: str = Field(default="UTC", description="Timezone for cron schedule")
     task: str = Field(default="", description="The task prompt to execute on schedule")
+    template: dict | None = Field(default=None, description="marketing-autopilot budget authorisation (see autopilot/template.py); omit for ordinary tasks")
     # For remove/enable/disable:
     job_id: str = Field(default="", description="Job ID to operate on")
 
@@ -97,6 +98,7 @@ async def execute(args: CronToolArgs, ctx: ToolContext) -> ToolResult:
                 name=args.name,
                 schedule=schedule,
                 task_prompt=args.task,
+                template=args.template,
             )
             result = await cron_service.add(
                 ctx.user_id, create, workspace_id=ctx.workspace_id or None

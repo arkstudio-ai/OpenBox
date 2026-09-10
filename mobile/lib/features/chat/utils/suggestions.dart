@@ -30,5 +30,10 @@ SuggestionsPart? latestSuggestions(
   final parts = last.messages.last.parts.whereType<SuggestionsPart>();
   if (parts.isEmpty) return null;
   final part = parts.last;
-  return part.id.isEmpty || part.items.isEmpty ? null : part;
+  if (part.id.isEmpty || part.status == SuggestionStatus.unavailable) {
+    return null;
+  }
+  return part.status == SuggestionStatus.completed && part.items.isEmpty
+      ? null
+      : part;
 }

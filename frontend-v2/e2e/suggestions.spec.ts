@@ -6,8 +6,11 @@ const items = [
   { label: "准备发布", prompt: "请帮我准备发布，我要发布的平台是：", mode: "draft" },
 ]
 const group = (page: Page) => page.getByRole("group", { name: /下一步建议|Suggested next steps/ })
+const loading = (page: Page) => page.getByRole("status", { name: /正在生成下一步建议|Generating suggested next steps/ })
 
-async function fixture(page: Page, options: { failSend?: boolean; noChips?: boolean; longHistory?: boolean } = {}) {
+async function fixture(page: Page, options: {
+  failSend?: boolean; noChips?: boolean; longHistory?: boolean; pending?: boolean; expiresAt?: string
+} = {}) {
   const sent: { text: string; model: string; client_message_id: string }[] = []
   const offsets: number[] = []
   const errors: string[] = []
@@ -31,7 +34,9 @@ async function fixture(page: Page, options: { failSend?: boolean; noChips?: bool
         parts: [
           { type: "text", id: "a-text", channel: "final", text: Array.from({ length: 14 }, (_, i) =>
             `### ${i + 1}. 让每一个想法，都有下一步\n\n从一句想法开始，把资料、分析和创作串联起来。你负责判断方向，OpenBox 帮你推进具体工作。`).join("\n\n") },
-          ...(options.noChips ? [] : [{ type: "suggestions", id: "p1", items }]),
+          ...(options.noChips ? [] : [{ type: "suggestions", id: "p1", items: options.pending ? [] : items,
+            ...(options.pending ? { status: "pending", expires_at: options.expiresAt ?? new Date(Date.now() + 60_000).toISOString() } : {}),
+          }]),
         ] },
       ]
       const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? 0)
@@ -162,4 +167,73 @@ test("light/dark and Chinese/English layouts stay in bounds on desktop and mobil
     }
   }
   expect(errors).toEqual([])
+})
+
+test("a recovered pending suggestion row shimmers in place, then becomes actionable", async ({ page }, testInfo) => {
+  const { sent, errors } = await fixture(page, { pending: true })
+  await expect(loading(page)).toBeVisible()
+  await expect(loading(page).getByRole("button")).toHaveCount(0)
+  await expect(loading(page).locator(".suggestion-placeholder")).toHaveCount(3)
+  await expect(group(page)).toHaveCount(0)
+  const before = await page.getByRole("textbox").boundingBox()
+  const row = await loading(page).boundingBox()
+  expect(row!.y + row!.height).toBeLessThan(before!.y)
+  await expect(loading(page).locator(".suggestion-placeholder").first()).toHaveCSS("height", "32px")
+  await page.screenshot({ path: testInfo.outputPath("suggestion-loading-light.png") })
+  await page.getByRole("button", { name: "Dark", exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath("suggestion-loading-dark.png") })
+  await page.reload()
+  await expect(loading(page)).toBeVisible()
+  await page.getByRole("button", { name: "Complete suggestions", exact: true }).click()
+  await expect(loading(page)).toHaveCount(0)
+  await expect(group(page).getByRole("button")).toHaveCount(1)
+  expect((await page.getByRole("textbox").boundingBox())!.y).toBe(before!.y)
+  expect(sent).toHaveLength(0)
+  expect(errors).toEqual([])
+})
+
+test("the loading row leaves drafts usable and follows visibility and reduced-motion settings", async ({ page }) => {
+  await fixture(page, { pending: true })
+  await expect(loading(page)).toBeVisible()
+  const shimmer = loading(page).locator(".suggestion-placeholder").first()
+  const animation = () => shimmer.evaluate((el) => getComputedStyle(el, "::after").animationName)
+  expect(await animation()).not.toBe("none")
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  expect(await animation()).toBe("none")
+  await page.getByRole("textbox").fill("我可以继续输入")
+  await expect(loading(page)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled()
+  await page.getByRole("textbox").fill("")
+  await expect(loading(page)).toBeVisible()
+  for (const name of ["Toggle permission", "Toggle read only"]) {
+    await page.getByRole("button", { name }).click()
+    await expect(loading(page)).toHaveCount(0)
+    await page.getByRole("button", { name }).click()
+    await expect(loading(page)).toBeVisible()
+  }
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(loading(page)).toBeVisible()
+  expect(await page.locator("body").evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(390)
+})
+
+for (const outcome of ["Empty suggestions", "Failed suggestions"]) {
+  test(`${outcome} removes the loading placeholder`, async ({ page }) => {
+    await fixture(page, { pending: true })
+    await expect(loading(page)).toBeVisible()
+    await page.getByRole("button", { name: outcome, exact: true }).click()
+    await expect(loading(page)).toHaveCount(0)
+    await expect(group(page)).toHaveCount(0)
+  })
+}
+
+test("a worker restart cannot leave an endless loading animation", async ({ page }) => {
+  const time = new Date("2026-09-10T12:00:00Z")
+  await page.clock.install({ time })
+  await fixture(page, { pending: true, expiresAt: "2026-09-10T12:01:00Z" })
+  await expect(loading(page)).toBeVisible()
+  await page.clock.fastForward(60_001)
+  await expect(loading(page)).toHaveCount(0)
+  await page.reload()
+  await expect(loading(page)).toHaveCount(0)
+  await expect(page.getByRole("textbox")).toBeVisible()
 })

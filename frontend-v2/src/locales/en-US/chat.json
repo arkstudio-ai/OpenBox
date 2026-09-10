@@ -1,6 +1,7 @@
 {
   "suggestions": {
     "title": "Suggested next steps",
+    "loading": "Generating suggested next steps",
     "send": "Send suggestion: {{label}}",
     "edit": "Edit suggestion: {{label}}",
     "sendHint": "Click to send: {{prompt}}",

@@ -182,6 +182,8 @@ class SuggestionFixture {
     Widget child, {
     Brightness brightness = Brightness.light,
     double scale = 1,
+    bool reduceMotion = false,
+    TargetPlatform? platform,
   }) => _FixtureLifetime(
     onDispose: disposeContainer,
     child: UncontrolledProviderScope(
@@ -189,14 +191,16 @@ class SuggestionFixture {
       child: MaterialApp(
         theme: ThemeData(
           brightness: brightness,
+          platform: platform,
           extensions: [
             BossipTokens.resolve(BossipThemeName.default_, brightness),
           ],
         ),
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(scale)),
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(scale),
+            disableAnimations: reduceMotion,
+          ),
           child: child!,
         ),
         home: Scaffold(body: SafeArea(child: child)),

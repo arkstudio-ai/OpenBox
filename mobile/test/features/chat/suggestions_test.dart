@@ -24,6 +24,110 @@ class _Pages extends ChatApi {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('suggestion status preserves legacy results and parses deadlines', () {
+    SuggestionsPart parse(Map<String, dynamic> data) =>
+        MessagePart.fromJson({'id': 'p', 'type': 'suggestions', ...data})
+            as SuggestionsPart;
+    expect(parse({}).status, SuggestionStatus.completed);
+    expect(
+      parse({'status': 'unexpected'}).status,
+      SuggestionStatus.unavailable,
+    );
+    final pending = parse({
+      'status': 'pending',
+      'expires_at': '2026-09-10T03:00:00+00:00',
+    });
+    expect(pending.status, SuggestionStatus.pending);
+    expect(pending.expiresAt, DateTime.utc(2026, 9, 10, 3));
+    expect(parse({'expires_at': 'invalid'}).expiresAt, isNull);
+    expect(
+      latestSuggestions(
+        buildChatRows([
+          answer(parts: [pending]),
+        ]),
+        SessionStatus.idle,
+      ),
+      pending,
+    );
+    expect(
+      latestSuggestions(
+        buildChatRows([
+          answer(
+            parts: [
+              parse({'status': 'unavailable'}),
+            ],
+          ),
+        ]),
+        SessionStatus.idle,
+      ),
+      isNull,
+    );
+  });
+
+  for (final terminal in [null, 'completed', 'unavailable']) {
+    test(
+      'terminal $terminal survives delayed pending events and snapshots',
+      () async {
+        final fixture = await SuggestionFixture.create();
+        addTearDown(fixture.dispose);
+        final store = fixture.container.read(chatStreamProvider.notifier);
+        store.setMessages('s1', [answer(parts: [])]);
+        final pending = {
+          'id': 'p1',
+          'type': 'suggestions',
+          'status': 'pending',
+          'expires_at': DateTime.now()
+              .add(const Duration(seconds: 60))
+              .toIso8601String(),
+          'items': <dynamic>[],
+        };
+        // A reconnect can deliver the final update without its creation event.
+        fixture.ws.frames.add(
+          WsEvent('part.updated', {
+            'sessionId': 's1',
+            'messageId': 'm001',
+            'part': {
+              'id': 'p1',
+              'type': 'suggestions',
+              'status': ?terminal,
+              'items': [
+                if (terminal != 'unavailable')
+                  {'label': 'Test', 'prompt': 'Add tests.', 'mode': 'send'},
+              ],
+            },
+          }),
+        );
+        for (final event in ['part.created', 'part.updated']) {
+          fixture.ws.frames.add(
+            WsEvent(event, {
+              'sessionId': 's1',
+              'messageId': 'm001',
+              'part': pending,
+            }),
+          );
+        }
+        store.setMessages('s1', [
+          answer(parts: [MessagePart.fromJson(pending)]),
+        ]);
+        final result = fixture.container
+            .read(chatStreamProvider)
+            .messagesOf('s1')
+            .single
+            .parts
+            .whereType<SuggestionsPart>()
+            .single;
+        expect(
+          result.status,
+          terminal == 'unavailable'
+              ? SuggestionStatus.unavailable
+              : SuggestionStatus.completed,
+        );
+        expect(result.items.length, terminal == 'unavailable' ? 0 : 1);
+        expect(fixture.api.sends, isEmpty);
+      },
+    );
+  }
+
   test('suggestions decode defensively, deduplicate, cap at three', () {
     Map<String, dynamic> item(String label, String prompt, Object mode) => {
       'label': label,

@@ -4,15 +4,25 @@ import type { NextStepSuggestion } from "@/shared/types/api"
 
 interface Props {
   items: NextStepSuggestion[]
+  loading?: boolean
   onSelect: (item: NextStepSuggestion) => void
 }
 
-export function SuggestionChips({ items, onSelect }: Props) {
+const PLACEHOLDER_WIDTHS = ["w-28", "w-36", "w-32"]
+
+export function SuggestionChips({ items, loading = false, onSelect }: Props) {
   const { t } = useTranslation("chat")
-  if (items.length === 0) return null
+  if (!loading && items.length === 0) return null
   return (
-    <div role="group" aria-label={t("suggestions.title")} className="mb-2 flex gap-2 overflow-x-auto px-5 py-1">
-      {items.slice(0, 3).map((item) => (
+    <div role={loading ? "status" : "group"} aria-label={t(loading ? "suggestions.loading" : "suggestions.title")}
+      aria-busy={loading || undefined} className="mb-2 flex gap-2 overflow-x-auto px-5 py-1">
+      {loading ? <>
+        <span className="sr-only">{t("suggestions.loading")}</span>
+        {PLACEHOLDER_WIDTHS.map((width) => (
+          <span key={width} aria-hidden="true"
+            className={`suggestion-placeholder border-hair bg-hairsoft relative h-8 flex-none overflow-hidden rounded-lg border ${width}`} />
+        ))}
+      </> : items.slice(0, 3).map((item) => (
         <button
           key={item.label}
           type="button"

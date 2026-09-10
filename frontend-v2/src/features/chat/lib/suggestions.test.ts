@@ -59,4 +59,28 @@ describe("suggestions belong only to the latest successful answer", () => {
     expect(latestSuggestions(mergeTurns(useStreamStore.getState().messages.get("s1")!), "idle")).toEqual(part)
     store.clearMessages("s1")
   })
+
+  it.each(["completed", "unavailable", undefined] as const)("a delayed pending snapshot cannot replace a %s result", (status) => {
+    const store = useStreamStore.getState()
+    const pending: SuggestionsPart = { ...part, items: [], status: "pending", expires_at: "2026-09-10T12:01:00Z" }
+    const final: SuggestionsPart = { ...part, status, items: status === "unavailable" ? [] : part.items }
+    const snapshot = [user, { ...answer, parts: [pending] }]
+    store.clearMessages("s1")
+    store.setMessages("s1", snapshot)
+    store.updatePart("s1", "a1", final)
+    store.setMessages("s1", snapshot)
+    store.addPart("s1", "a1", pending)
+    store.updatePart("s1", "a1", pending)
+    expect(latestSuggestions(mergeTurns(useStreamStore.getState().messages.get("s1")!), "idle")).toEqual(final)
+    store.clearMessages("s1")
+  })
+
+  it("accepts a final event when the pending event was missed", () => {
+    const store = useStreamStore.getState()
+    store.clearMessages("s1")
+    store.setMessages("s1", [user, { ...answer, parts: [] }])
+    store.updatePart("s1", "a1", { ...part, status: "completed" })
+    expect(latestSuggestions(mergeTurns(useStreamStore.getState().messages.get("s1")!), "idle")).toEqual({ ...part, status: "completed" })
+    store.clearMessages("s1")
+  })
 })

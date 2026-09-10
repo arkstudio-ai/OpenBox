@@ -69,7 +69,9 @@ class _ComposerState extends ConsumerState<Composer> {
 
   bool get _showSuggestions =>
       widget.suggestions != null &&
-      widget.suggestions!.items.isNotEmpty &&
+      (widget.suggestions!.status == SuggestionStatus.pending ||
+          (widget.suggestions!.status == SuggestionStatus.completed &&
+              widget.suggestions!.items.isNotEmpty)) &&
       widget.suggestions!.id != _dismissedSuggestionsId &&
       !widget.busy &&
       !_sending &&
@@ -348,7 +350,10 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Future<void> _selectSuggestion(NextStepSuggestion item) async {
-    if (!_showSuggestions) return;
+    if (!_showSuggestions ||
+        widget.suggestions!.status != SuggestionStatus.completed) {
+      return;
+    }
     setState(() => _dismissedSuggestionsId = widget.suggestions!.id);
     void fill() {
       _controller.value = TextEditingValue(

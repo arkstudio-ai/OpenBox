@@ -225,6 +225,12 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     if (live is ToolPart && snap is ToolPart) {
       return _toolRank(live.status) > _toolRank(snap.status) ? live : snap;
     }
+    if (live is SuggestionsPart && snap is SuggestionsPart) {
+      return live.status != SuggestionStatus.pending &&
+              snap.status == SuggestionStatus.pending
+          ? live
+          : snap;
+    }
     return snap;
   }
 
@@ -284,6 +290,10 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   }
 
   void addPart(String sessionId, String messageId, MessagePart part) {
+    if (part is SuggestionsPart) {
+      updatePart(sessionId, messageId, part);
+      return;
+    }
     _patchMessage(sessionId, messageId, (m) {
       if (m.parts.any((p) => p.id == part.id)) return m;
       return m.copyWith(parts: [...m.parts, part]);

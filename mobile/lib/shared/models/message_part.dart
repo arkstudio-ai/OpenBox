@@ -129,6 +129,8 @@ sealed class MessagePart {
 
 enum SuggestionMode { send, draft }
 
+enum SuggestionStatus { pending, completed, unavailable }
+
 class NextStepSuggestion {
   const NextStepSuggestion({
     required this.label,
@@ -143,7 +145,12 @@ class NextStepSuggestion {
 
 /// Auxiliary UI data, never rendered as assistant prose or executed as tools.
 class SuggestionsPart extends MessagePart {
-  const SuggestionsPart({required super.id, required this.items});
+  const SuggestionsPart({
+    required super.id,
+    required this.items,
+    this.status = SuggestionStatus.completed,
+    this.expiresAt,
+  });
 
   factory SuggestionsPart.fromJson(Map<String, dynamic> json) {
     final items = <NextStepSuggestion>[];
@@ -174,10 +181,18 @@ class SuggestionsPart extends MessagePart {
     return SuggestionsPart(
       id: asString(json['id']) ?? '',
       items: List.unmodifiable(items),
+      status: switch (json['status']) {
+        'pending' => SuggestionStatus.pending,
+        'completed' || null => SuggestionStatus.completed,
+        _ => SuggestionStatus.unavailable,
+      },
+      expiresAt: DateTime.tryParse(asString(json['expires_at']) ?? ''),
     );
   }
 
   final List<NextStepSuggestion> items;
+  final SuggestionStatus status;
+  final DateTime? expiresAt;
 
   @override
   String get type => 'suggestions';

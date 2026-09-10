@@ -88,7 +88,9 @@ async def test_default_follows_chat_model_and_persists_part_and_event(chat):
     rows = await saved(chat)
     assert len(rows) == 1 and rows[0].message_id == mid and rows[0].user_id == chat[0]
     assert rows[0].data["items"] == PAYLOAD["items"]
-    assert chat[3][-1][0] == "part.created" and chat[3][-1][1]["messageId"] == mid
+    assert [kind for kind, _ in chat[3]] == ["part.created", "part.updated"]
+    assert chat[3][0][1]["part"]["status"] == "pending"
+    assert chat[3][-1][1]["messageId"] == mid and rows[0].data["status"] == "completed"
     # REST/reconnect can decode the persisted union, without regenerating it.
     from session.session import get_messages
     restored = await get_messages(chat[1], user_id=chat[0])
@@ -168,13 +170,16 @@ async def test_new_run_during_generation_discards_result(chat, monkeypatch):
         await runtime.invalidate_locked(db, execution)
     release.set()
     await asyncio.wait_for(task, 1)
-    assert not await saved(chat) and not chat[3]
+    rows = await saved(chat)
+    assert len(rows) == 1 and rows[0].data["status"] == "unavailable" and rows[0].data["items"] == []
+    assert chat[3][-1][1]["part"]["status"] == "unavailable"
 
 
 async def test_concurrent_results_cannot_duplicate_cached_part(chat):
     mid = await completed(chat)
     await asyncio.gather(*(suggestions.generate_suggestions(chat[2], mid, "openai/chat-picked") for _ in range(2)))
     assert len(await saved(chat)) == 1
+    assert len(chat[4]) == 1
 
 
 async def test_generation_waits_for_run_lease_to_be_released(chat):
@@ -230,12 +235,14 @@ async def test_empty_result_is_cached(chat, monkeypatch):
     {"type": "tool_call", "tool": suggestions.TOOL_NAME, "args": {"items": "invalid"}},
     {"type": "text_delta", "text": "not structured"},
 ])
-async def test_invalid_output_has_no_side_effect_or_chat_error(chat, monkeypatch, event):
+async def test_invalid_output_closes_placeholder_without_chat_error(chat, monkeypatch, event):
     async def stream(**kwargs):
         yield event
     monkeypatch.setattr(suggestions, "stream_llm", stream)
     await suggestions.generate_suggestions(chat[2], await completed(chat), "openai/chat-picked")
-    assert not await saved(chat) and not chat[3]
+    rows = await saved(chat)
+    assert len(rows) == 1 and rows[0].data["status"] == "unavailable" and rows[0].data["items"] == []
+    assert chat[3][-1][1]["part"]["status"] == "unavailable"
     async with get_db_session() as db:
         assert (await db.get(Session, chat[1])).status == "idle"
 
@@ -251,7 +258,55 @@ async def test_timeout_closes_stream_and_keeps_chat_idle(chat, monkeypatch):
     monkeypatch.setattr(suggestions, "stream_llm", stream)
     monkeypatch.setattr(suggestions, "TIMEOUT_SECONDS", 0.01)
     await suggestions.generate_suggestions(chat[2], await completed(chat), "openai/chat-picked")
-    assert closed.is_set() and not await saved(chat)
+    assert closed.is_set() and (await saved(chat))[0].data["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_pending_state_survives_rest_refresh_then_settles(chat, monkeypatch, cancel):
+    from session.session import get_messages
+    mid = await completed(chat)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        entered.set()
+        await release.wait()
+        yield {"type": "tool_call", "tool": suggestions.TOOL_NAME, "args": PAYLOAD}
+
+    monkeypatch.setattr(suggestions, "stream_llm", delayed)
+    task = asyncio.create_task(suggestions.generate_suggestions(chat[2], mid, "openai/chat-picked"))
+    await asyncio.wait_for(entered.wait(), 1)
+    restored = await get_messages(chat[1], user_id=chat[0])
+    part = restored[-1].parts[-1]
+    assert isinstance(part, SuggestionsPart) and part.status == "pending" and not part.items
+    remaining = (datetime.fromisoformat(part.expires_at) - datetime.now(timezone.utc)).total_seconds()
+    assert 0 < remaining <= 60
+    assert chat[3][-1][1]["part"]["id"] == part.id
+    if cancel:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        release.set()
+        await asyncio.wait_for(task, 1)
+    final = (await saved(chat))[0]
+    assert final.id == part.id
+    assert final.data["status"] == ("unavailable" if cancel else "completed")
+    assert final.data["expires_at"] is None
+    assert final.data["items"] == ([] if cancel else PAYLOAD["items"])
+
+
+@pytest.mark.parametrize("status", ["pending", "unavailable"])
+async def test_unfinished_suggestions_do_not_erase_previous_summary(chat, status):
+    first = await completed(chat)
+    await suggestions.generate_suggestions(chat[2], first, "openai/chat-picked")
+    later = await completed(chat)
+    async with get_db_session() as db:
+        part = SuggestionsPart(status=status, session_id=chat[1], message_id=later)
+        db.add(Part(id=part.id, message_id=later, session_id=chat[1], user_id=chat[0],
+                    type="suggestions", data=part.model_dump(), created_at=datetime.now(timezone.utc)))
+    final = await completed(chat)
+    context = json.loads(await load_context(chat[1], chat[0], final))
+    assert context["previous_summary"] == PAYLOAD["context_summary"]
 
 
 def test_validation_deduplicates_and_rejects_blank_or_oversized_items():

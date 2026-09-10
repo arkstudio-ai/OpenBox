@@ -5,6 +5,7 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/message_part.dart';
+import 'suggestion_loading.dart';
 
 /// One scrollable native row above the input card. Each target is at least
 /// 44 logical pixels high, including when its label fits on one short line.
@@ -22,6 +23,17 @@ class SuggestionChips extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    if (suggestions.status == SuggestionStatus.pending) {
+      return SuggestionLoading(
+        key: ValueKey(suggestions.id),
+        expiresAt: suggestions.expiresAt,
+        label: i18n.t('chat:suggestions.loading'),
+      );
+    }
+    if (suggestions.status == SuggestionStatus.unavailable ||
+        suggestions.items.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Semantics(
       container: true,
       label: i18n.t('chat:suggestions.title'),

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import nullcontext
 
-from sqlalchemy import select
+from sqlalchemy import JSON, or_, select, type_coerce
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.base import get_db_session
 from db.models.message import Message
@@ -99,8 +101,8 @@ def build_context(rounds: list[dict], goal: str, summary: str) -> str:
     return result
 
 
-async def load_context(session_id: str, user_id: str, message_id: str) -> str | None:
-    async with get_db_session() as db:
+async def load_context(session_id: str, user_id: str, message_id: str, *, db: AsyncSession | None = None) -> str | None:
+    async with (nullcontext(db) if db is not None else get_db_session()) as db:
         humans = list(reversed(await _humans(db, session_id, user_id)))
         if not humans:
             return None
@@ -147,8 +149,11 @@ async def load_context(session_id: str, user_id: str, message_id: str) -> str | 
                            "state": "\n".join(state[:6])})
         if not rounds or not answers or answers[-1].id != message_id:
             return None
+        data = type_coerce(Part.data, JSON)
         previous = await db.scalar(select(Part.data).where(
             Part.session_id == session_id, Part.user_id == user_id, Part.type == "suggestions",
             Part.created_at < final.created_at,
+            or_(data["status"].as_string().is_(None), data["status"].as_string() == "completed"),
+            data["context_summary"].as_string() != "",
         ).order_by(Part.created_at.desc(), Part.id.desc()).limit(1))
         return build_context(rounds, oldest[0][1] if oldest else "", (previous or {}).get("context_summary", ""))

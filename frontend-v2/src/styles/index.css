@@ -220,6 +220,28 @@ input:focus-visible {
   }
 }
 
+/* The suggestion row keeps its final height while a soft band sweeps across
+   each placeholder. Theme tokens keep the sheen quiet in light and dark. */
+.suggestion-placeholder::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    color-mix(in srgb, var(--t-shine) 24%, transparent) 50%,
+    transparent 85%
+  );
+  transform: translateX(-100%);
+  animation: suggestion-sweep 1.8s ease-in-out infinite;
+}
+@keyframes suggestion-sweep {
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .suggestion-placeholder::after { animation: none; background: none; }
+}
+
 /* Collapse/expand transition for trace folds (accordion feel). */
 .fold {
   display: grid;

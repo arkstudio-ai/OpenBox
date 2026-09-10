@@ -91,6 +91,11 @@ function mergePart(live: MessagePart, snapshot: MessagePart): MessagePart {
       ? { ...snapshot, ...live }
       : { ...live, ...snapshot }
   }
+  if (live.type === "suggestions" && snapshot.type === "suggestions") {
+    // Results are terminal, including an empty result or failed generation.
+    // A slower REST response must never bring the shimmer back.
+    return live.status !== "pending" && snapshot.status === "pending" ? live : snapshot
+  }
   return snapshot
 }
 
@@ -213,7 +218,9 @@ export const useStreamStore = create<StreamState>((set) => ({
         s.messages,
         sessionId,
         mapParts(list, messageId, (parts) =>
-          parts.some((p) => p.id === part.id) ? parts : [...parts, part],
+          parts.some((p) => p.id === part.id)
+            ? parts.map((p) => p.id === part.id && part.type === "suggestions" ? mergePart(p, part) : p)
+            : [...parts, part],
         ),
       )
     }),
@@ -224,7 +231,11 @@ export const useStreamStore = create<StreamState>((set) => ({
       return commit(
         s.messages,
         sessionId,
-        mapParts(list, messageId, (parts) => parts.map((p) => (p.id === part.id ? part : p))),
+        mapParts(list, messageId, (parts) => {
+          // A reconnect can miss the pending event yet receive its result.
+          if (part.type === "suggestions" && !parts.some((p) => p.id === part.id)) return [...parts, part]
+          return parts.map((p) => p.id === part.id ? (part.type === "suggestions" ? mergePart(p, part) : part) : p)
+        }),
       )
     }),
 

@@ -20,5 +20,6 @@ export function latestSuggestions(
   const turn = turns[turns.length - 1]
   if (turn?.kind !== "assistant" || turn.meta.finish !== "stop" || turn.meta.error) return undefined
   const message = turn.messages[turn.messages.length - 1]
+  if (message.summary) return undefined
   return message.parts.find((part): part is SuggestionsPart => part.type === "suggestions")
 }

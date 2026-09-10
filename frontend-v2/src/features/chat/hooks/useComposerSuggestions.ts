@@ -12,6 +12,25 @@ interface Options {
   onFailure: (prompt: string) => void
 }
 
+/** A persisted deadline survives refresh and bounds a wait after worker death. */
+function useSuggestionWait(suggestions?: SuggestionsPart) {
+  const key = suggestions?.status === "pending" && suggestions.expires_at
+    ? `${suggestions.id}:${suggestions.expires_at}` : undefined
+  const deadline = suggestions?.expires_at
+  const [wait, setWait] = useState({ key, active: false })
+  if (wait.key !== key) setWait({ key, active: false })
+  useEffect(() => {
+    if (!key || !deadline) return
+    const remaining = Date.parse(deadline) - Date.now()
+    if (!Number.isFinite(remaining) || remaining <= 0) return
+    // Arm on the next tick so expired snapshots never flash a placeholder.
+    const start = window.setTimeout(() => setWait({ key, active: true }), 0)
+    const end = window.setTimeout(() => setWait({ key, active: false }), Math.min(remaining, 60_000))
+    return () => { window.clearTimeout(start); window.clearTimeout(end) }
+  }, [key, deadline])
+  return key !== undefined && key === wait.key && wait.active
+}
+
 /** Local composer state is deliberately separate from persisted suggestions.
  *  A click sends through the normal chat path, never an auxiliary model path. */
 export function useComposerSuggestions({
@@ -24,8 +43,11 @@ export function useComposerSuggestions({
     pending.current = null
   }, [sessionKey])
 
-  const visible = !busy && !draft && !hasAttachments && suggestions?.id !== submittedId
-    ? suggestions : undefined
+  const waiting = useSuggestionWait(suggestions)
+  const eligible = !busy && !draft && !hasAttachments && suggestions?.id !== submittedId
+  const loading = eligible && waiting
+  const visible = eligible && suggestions?.status !== "pending" && suggestions?.status !== "unavailable"
+    && suggestions?.items.length ? suggestions : undefined
 
   const select = (item: NextStepSuggestion) => {
     if (!visible || pending.current) return
@@ -45,5 +67,5 @@ export function useComposerSuggestions({
       if (pending.current === request) pending.current = null
     })
   }
-  return { visible, select }
+  return { visible, loading, select }
 }

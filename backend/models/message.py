@@ -327,6 +327,10 @@ class SuggestionsPart(BaseModel):
     """Auxiliary UI data, never replayed as instructions to the chat model."""
     type: Literal["suggestions"] = "suggestions"
     id: str = Field(default_factory=lambda: ascending("part"))
+    # Missing status in historical parts means a completed result. A deadline
+    # lets clients retire a pending placeholder after a worker restart.
+    status: Literal["pending", "completed", "unavailable"] = "completed"
+    expires_at: str | None = None
     items: list[NextStepSuggestion] = Field(default_factory=list, max_length=3)
     context_summary: str = Field(default="", max_length=800)
     model: str = ""

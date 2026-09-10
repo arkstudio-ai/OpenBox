@@ -42,6 +42,15 @@ export function Fixture() {
         <button onClick={() => setPending((value) => !value)}>Toggle permission</button>
         <button onClick={() => setReadOnly((value) => !value)}>Toggle read only</button>
         <button onClick={() => useStreamStore.getState().addPart(sessionId, "a1", asyncPart)}>Late event</button>
+        <button onClick={() => useStreamStore.getState().updatePart(sessionId, "a1", {
+          ...asyncPart, id: "p1", status: "completed",
+        })}>Complete suggestions</button>
+        <button onClick={() => useStreamStore.getState().updatePart(sessionId, "a1", {
+          ...asyncPart, id: "p1", status: "completed", items: [],
+        })}>Empty suggestions</button>
+        <button onClick={() => useStreamStore.getState().updatePart(sessionId, "a1", {
+          ...asyncPart, id: "p1", status: "unavailable", items: [],
+        })}>Failed suggestions</button>
         <button onClick={() => { document.documentElement.dataset.mode = "dark" }}>Dark</button>
         <button onClick={() => { document.documentElement.dataset.mode = "light" }}>Light</button>
         <button onClick={() => void i18n.changeLanguage("en-US")}>English</button>

@@ -270,7 +270,8 @@ export function Composer({
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
-        {suggestionChips.visible && <SuggestionChips items={suggestionChips.visible.items} onSelect={suggestionChips.select} />}
+        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionChips
+          items={suggestionChips.visible?.items ?? []} loading={suggestionChips.loading} onSelect={suggestionChips.select} />}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
 

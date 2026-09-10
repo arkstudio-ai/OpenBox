@@ -203,6 +203,9 @@ export interface NextStepSuggestion {
 export interface SuggestionsPart {
   type: "suggestions"
   id: string
+  /** Historical parts omit status and are completed results. */
+  status?: "pending" | "completed" | "unavailable"
+  expires_at?: string | null
   items: NextStepSuggestion[]
   context_summary?: string
   model?: string

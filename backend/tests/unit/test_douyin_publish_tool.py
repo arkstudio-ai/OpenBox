@@ -79,7 +79,8 @@ def test_skill_frontmatter_names_the_tool():
     assert metadata["name"] == "douyin-publish"
     assert "douyin_publish" in metadata["allowed-tools"] and "question" in metadata["allowed-tools"]
     assert len(text.splitlines()) <= 200
-    assert "douyin-publish" in (root / "video-production" / "SKILL.md").read_text(encoding="utf-8")
+    # a delivered film is handed to the desktop route; the QR skill is reached from there as the fallback
+    assert "douyin-desktop-publish" in (root / "video-production" / "SKILL.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

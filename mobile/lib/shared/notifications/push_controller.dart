@@ -34,6 +34,7 @@ class PushController extends ChangeNotifier {
   Future<void>? _syncing;
   bool _again = false;
   bool _checking = false;
+  int? _permissionEpoch;
   Timer? _retry;
   String get _preferenceKey => 'openbox:notifications-enabled:$userId';
   bool get wanted => prefs.getBool(_preferenceKey) ?? true;
@@ -43,6 +44,7 @@ class PushController extends ChangeNotifier {
   }
 
   void _nativeChanged() {
+    unawaited(ensureAuthorization());
     unawaited(sync());
     _changed();
   }
@@ -76,6 +78,29 @@ class PushController extends ChangeNotifier {
     lifecycle = state;
     setForeground(state == 'resumed' || state == 'inactive');
     if (changed) unawaited(reportPresence());
+    if (state == 'resumed') unawaited(ensureAuthorization());
+  }
+
+  /// Notifications default on. Ask the OS once after login, only while visible;
+  /// a previous denial or explicit opt-out is never silently overridden.
+  Future<void> ensureAuthorization() async {
+    if (_disposed ||
+        userId == null ||
+        sessionId == null ||
+        lifecycle != 'resumed' ||
+        !wanted ||
+        native.status != 'notDetermined' ||
+        _permissionEpoch == _epoch) {
+      return;
+    }
+    final epoch = _epoch;
+    _permissionEpoch = epoch;
+    try {
+      await native.requestAuthorization();
+      if (epoch == _epoch && !_disposed) await sync(force: true);
+    } catch (_) {
+      // Permission UI must not interrupt login or navigation.
+    }
   }
 
   /// Persist a logical sequence before dispatch. Requests may finish out of
@@ -123,6 +148,7 @@ class PushController extends ChangeNotifier {
       }
       unawaited(reportPresence());
       await native.refresh();
+      if (epoch == _epoch) await ensureAuthorization();
       if (epoch == _epoch) await sync(force: true);
     } on DioException catch (error) {
       if (epoch == _epoch) {

@@ -1,0 +1,330 @@
+{
+  "release": {
+    "tag": "20260910-admin-notifications",
+    "architecture": "linux/amd64",
+    "sources": {
+      "backend": "b83ce59007e3aa2420d5aa08a4cb384e59f3b943",
+      "frontend": "1e3a0bf6ffaf6cbd70c1728a307d771c33f8c14e"
+    },
+    "backendImage": "openbox-backend:20260910-admin-notifications-b83ce59",
+    "frontendImage": "openbox-frontend-v2:20260910-admin-notifications-1e3a0bf",
+    "backend": {
+      "imageId": "sha256:728235939d368294b83a9d756ed9e588ace088cb560bd310ace4a3a4dce6fca5",
+      "imageConfigId": "sha256:50c24d9855f46419eff877b94db590660ad0c74dfae43a89d82db75ded85836c",
+      "archiveSha256": "a98620c8bf84aa6677353d8233e5f8f495ae238b61be2457e517a015d7f37649",
+      "archiveBytes": 184873515
+    },
+    "frontend": {
+      "imageId": "sha256:85fd1389d88e87b9da45cdd140040c372fb4ef55c08fa43e473a755c56c1bcbf",
+      "imageConfigId": "sha256:e4554ba0cdf00d056eab2ff1564f0e64db644e899068229167641aca33bd79e3",
+      "archiveSha256": "1896f21621bb63b8b359e0a923a033c55fb00f629b6dfacfa95681cd6b8e98ed",
+      "archiveBytes": 29347582
+    }
+  },
+  "production": {
+    "status": "deployed",
+    "stage": [
+      "backend",
+      "frontend"
+    ],
+    "sources": {
+      "backend": "b83ce59007e3aa2420d5aa08a4cb384e59f3b943",
+      "frontend": "1e3a0bf6ffaf6cbd70c1728a307d771c33f8c14e"
+    },
+    "architecture": "linux/amd64",
+    "images": {
+      "backend": "openbox-backend:20260910-admin-notifications-b83ce59",
+      "frontend": "openbox-frontend-v2:20260910-admin-notifications-1e3a0bf"
+    },
+    "imageIds": {
+      "backend": "sha256:728235939d368294b83a9d756ed9e588ace088cb560bd310ace4a3a4dce6fca5",
+      "frontend": "sha256:85fd1389d88e87b9da45cdd140040c372fb4ef55c08fa43e473a755c56c1bcbf"
+    },
+    "services": {
+      "backend": "healthy",
+      "frontend": "healthy",
+      "postgres": "healthy",
+      "redis": "healthy"
+    },
+    "configurationUnchangedExceptImages": true,
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "backup": "/opt/openbox/backups/20260910-admin-notifications/activation-20260910T125848Z",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      },
+      {
+        "path": "/api/admin/push",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ],
+    "utc": "2026-09-10T13:15:45.597913+00:00"
+  },
+  "deploymentOrder": [
+    {
+      "service": "backend",
+      "cutoverUtc": "2026-09-10T13:06:05.492122+00:00",
+      "healthyUtc": "2026-09-10T13:06:28.159666+00:00"
+    },
+    {
+      "service": "frontend",
+      "cutoverUtc": "2026-09-10T13:08:28.854339+00:00",
+      "healthyUtc": "2026-09-10T13:09:16.773047+00:00"
+    }
+  ],
+  "canary": {
+    "passed": true,
+    "sources": {
+      "backend": "b83ce59007e3aa2420d5aa08a4cb384e59f3b943",
+      "frontend": "1e3a0bf6ffaf6cbd70c1728a307d771c33f8c14e"
+    },
+    "architecture": "linux/amd64",
+    "staticFilesVerified": 108,
+    "postgresCanary": {
+      "postgresReadOnly": true,
+      "adminExists": true,
+      "existingMessagesReadable": 11,
+      "templates": 10
+    },
+    "migrationUnchanged": "e4f6a8b0c2d4",
+    "http": [
+      {
+        "path": "/",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/app",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/app/s/<existing-session>",
+        "status": 200,
+        "sha256": "e61436979debffb8cc4cb7b31eeb5f02756035a5f44f43303aa92f391dfa74ba"
+      },
+      {
+        "path": "/assets/nonexistent-loading.js",
+        "status": 404,
+        "sha256": "40ac94560153a8371c6af4c7d82d3ea030aab0ed776cdcd548cb83055e39b9db"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "/api/push/status",
+        "status": 401,
+        "sha256": "cfec9feffbcc0dabaa0f92491e3609eeb1e9bc8d17625cd7f043be03b609c812"
+      }
+    ]
+  },
+  "backup": {
+    "path": "/opt/openbox/backups/20260910-admin-notifications/activation-20260910T125848Z",
+    "pgDumpBytes": 4543652,
+    "pgDumpSha256": "891171612179169f4bb29d6e7f39db761cab31806ed75ab8acbb0d58b704f41f",
+    "pgRestoreListPassed": true,
+    "activeTasksBeforeCutover": 0
+  },
+  "availability": {
+    "backend": {
+      "startUtc": "2026-09-10T13:05:40.299915+00:00",
+      "endUtc": "2026-09-10T13:06:56.698178+00:00",
+      "endpoints": {
+        "/": {
+          "statuses": {
+            "200": 35
+          }
+        },
+        "/api/environment": {
+          "statuses": {
+            "200": 29,
+            "502": 6
+          },
+          "firstFailureUtc": "2026-09-10T13:06:06.729308+00:00",
+          "lastFailureUtc": "2026-09-10T13:06:17.718017+00:00",
+          "recoveredUtc": "2026-09-10T13:06:19.910564+00:00",
+          "firstFailureToFinalRecoverySeconds": 13.181
+        }
+      }
+    },
+    "frontend": {
+      "startUtc": "2026-09-10T13:08:21.732220+00:00",
+      "endUtc": "2026-09-10T13:11:00.241248+00:00",
+      "endpoints": {
+        "/": {
+          "statuses": {
+            "200": 58,
+            "502": 15
+          },
+          "firstFailureUtc": "2026-09-10T13:08:29.029001+00:00",
+          "lastFailureUtc": "2026-09-10T13:08:59.330850+00:00",
+          "recoveredUtc": "2026-09-10T13:09:01.493407+00:00",
+          "firstFailureToFinalRecoverySeconds": 32.464
+        },
+        "/api/environment": {
+          "statuses": {
+            "200": 58,
+            "502": 15
+          },
+          "firstFailureUtc": "2026-09-10T13:08:29.028872+00:00",
+          "lastFailureUtc": "2026-09-10T13:08:59.330913+00:00",
+          "recoveredUtc": "2026-09-10T13:09:01.493513+00:00",
+          "firstFailureToFinalRecoverySeconds": 32.465
+        }
+      }
+    }
+  },
+  "tests": {
+    "backendNotificationTests": 72,
+    "backendBusinessTests": 18,
+    "backendFinalCopyTests": 7,
+    "webUnitTests": 524,
+    "webBrowserTests": 6,
+    "webBrowserViewportWidths": [
+      320,
+      390,
+      1280
+    ],
+    "webBrowserThemes": [
+      "light",
+      "dark"
+    ],
+    "webCheck": "passed (30 existing lint warnings; zero errors)",
+    "releaseImageNginxRegression": "passed",
+    "flutterTests": 319,
+    "flutterAnalyze": "passed",
+    "mobileLocaleParity": "passed",
+    "mobileFileSizeGate": "passed"
+  },
+  "iosProductionTest": {
+    "device": "iPhone 17 Pro simulator / iOS 26.5",
+    "backendOrigin": "https://ai.bossipai.com.cn",
+    "provider": "APNs sandbox",
+    "actualProviderDelivery": true,
+    "injectedSimulatorNotification": false,
+    "foregroundSuppression": "passed: cancelled, app_foreground, attempts=0",
+    "backgroundBannerAndTap": "passed twice: accepted, attempts=1, receipt=opened",
+    "tapDestination": "superadmin console, notification testing tab selected",
+    "records": [
+      {
+        "id": "c5d8ce03091a4f5791ba4cffde5ba084",
+        "template": "approval_required",
+        "title": "测试 · 等待确认",
+        "body": "《示例任务》需要你的确认。",
+        "status": "accepted",
+        "error": null,
+        "receipt": "opened",
+        "receiptAt": "2026-09-10T13:20:27.321730+00:00",
+        "attempts": 1,
+        "createdAt": "2026-09-10T13:20:08.514752+00:00",
+        "expiresAt": "2026-09-10T13:25:08.514762+00:00",
+        "availableAt": "2026-09-10T13:20:18.525207+00:00"
+      },
+      {
+        "id": "a1c0d025646743ba803377074efbdb66",
+        "template": "approval_required",
+        "title": "测试 · 等待确认",
+        "body": "《示例任务》需要你的确认。",
+        "status": "cancelled",
+        "error": "app_foreground",
+        "receipt": null,
+        "receiptAt": null,
+        "attempts": 0,
+        "createdAt": "2026-09-10T13:17:26.343185+00:00",
+        "expiresAt": "2026-09-10T13:22:26.343190+00:00",
+        "availableAt": "2026-09-10T13:17:36.350056+00:00"
+      },
+      {
+        "id": "5752ffb7193c4ae091ae260a63acbae2",
+        "template": "task_completed",
+        "title": "测试 · 任务完成",
+        "body": "《示例任务》已完成，查看结果。",
+        "status": "accepted",
+        "error": null,
+        "receipt": "opened",
+        "receiptAt": "2026-09-10T13:12:43.261185+00:00",
+        "attempts": 1,
+        "createdAt": "2026-09-10T13:12:13.650867+00:00",
+        "expiresAt": "2026-09-10T13:17:13.650873+00:00",
+        "availableAt": "2026-09-10T13:12:23.656419+00:00"
+      },
+      {
+        "id": "b99db01a407448069d6e640a8720b748",
+        "template": "system_test",
+        "title": "通知测试",
+        "body": "手机通知正常。",
+        "status": "cancelled",
+        "error": "app_foreground",
+        "receipt": null,
+        "receiptAt": null,
+        "attempts": 0,
+        "createdAt": "2026-09-10T13:11:29.955642+00:00",
+        "expiresAt": "2026-09-10T13:16:29.955654+00:00",
+        "availableAt": "2026-09-10T13:11:39.963497+00:00"
+      }
+    ]
+  },
+  "androidProductionTest": {
+    "device": "BossIP_Test_API35 / Android emulator arm64",
+    "backendOrigin": "https://ai.bossipai.com.cn",
+    "test": "mobile/integration_test/production_push_access_test.dart",
+    "passed": 1,
+    "usesAccountCredentials": false,
+    "http": {
+      "GET /api/environment": 200,
+      "GET /api/admin/push": 401,
+      "POST /api/admin/push/test": 401,
+      "POST /api/admin/push/messages/nonexistent/receipt": 401,
+      "POST /api/push/test": 401
+    },
+    "actualJPushArrivalVerified": false,
+    "normalDebugApkReinstalledAfterTest": true
+  },
+  "browser": {
+    "authenticatedSuperadminConsoleVerified": true,
+    "foregroundCancellationVisible": true,
+    "openedReceiptVisible": true,
+    "consoleErrors": 0
+  },
+  "nativeRelease": {
+    "iosSimulatorBuild": "passed",
+    "androidArm64DebugBuild": "passed",
+    "latestBuildsInstalledOnBothSimulators": true,
+    "ordinaryUsersNotificationCardHidden": true,
+    "notificationsEnabledByDefault": true,
+    "foregroundOnlyInitialPermissionRequest": true,
+    "priorDenialAndExplicitOptOutRespected": true,
+    "storeOrPhysicalDeviceRelease": false
+  },
+  "temporaryOssObjectsRemoved": true
+}

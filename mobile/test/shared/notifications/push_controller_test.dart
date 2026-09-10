@@ -101,6 +101,40 @@ void main() {
   });
 
   test(
+    'first mobile login requests permission only when resumed, once',
+    () async {
+      native.status = 'notDetermined';
+      push.setLifecycle('paused');
+      push.setIdentity('user', 'session');
+      await _until(push, () => push.bindingId != null);
+      expect(native.authorizations, 0);
+      expect(push.wanted, isTrue);
+      push.setLifecycle('resumed');
+      await _until(push, () => push.deliveryReady);
+      expect(native.authorizations, 1);
+      await push.checkSession();
+      push.setLifecycle('resumed');
+      expect(native.authorizations, 1);
+    },
+  );
+
+  test(
+    'automatic permission respects a prior denial and explicit opt-out',
+    () async {
+      native.status = 'denied';
+      push.setLifecycle('resumed');
+      push.setIdentity('user', 'session');
+      await _until(push, () => push.bindingId != null);
+      await push.ensureAuthorization();
+      expect(native.authorizations, 0);
+      await push.setEnabled(false);
+      native.status = 'notDetermined';
+      await push.ensureAuthorization();
+      expect(native.authorizations, 0);
+    },
+  );
+
+  test(
     'login registers without prompting, token rotation switches the endpoint',
     () async {
       push.setIdentity('user', 'session');

@@ -1,5 +1,7 @@
 import 'package:bossip_mobile/features/admin/admin_console.dart';
 import 'package:bossip_mobile/features/admin/notifications/notifications_page.dart';
+import 'package:bossip_mobile/features/settings/widgets/account_section.dart';
+import 'package:bossip_mobile/features/settings/widgets/notifications_section.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
@@ -67,6 +69,17 @@ void main() {
       );
       expect(find.text('仅平台超级管理员可访问。'), findsOneWidget);
       expect(h.requests, isEmpty);
+    });
+    testWidgets('$role has no notification settings card', (tester) async {
+      final h = AdminHarness();
+      await mountAdmin(
+        tester,
+        h,
+        const AccountSection(),
+        overrides: [authProvider.overrideWith(() => _Auth(role))],
+      );
+      expect(find.byType(NotificationsSection), findsNothing);
+      expect(find.byType(SwitchListTile), findsNothing);
     });
   }
   for (final brightness in Brightness.values) {

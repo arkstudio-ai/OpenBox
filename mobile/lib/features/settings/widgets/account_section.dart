@@ -30,8 +30,10 @@ class AccountSection extends ConsumerWidget {
           _row(t, i18n.t('settings:account.role'), user.role),
           _row(t, i18n.t('settings:account.userId'), user.id, mono: true),
         ]),
-        const SizedBox(height: 16),
-        const NotificationsSection(),
+        if (user.role == 'admin') ...[
+          const SizedBox(height: 16),
+          const NotificationsSection(),
+        ],
       ],
     );
   }

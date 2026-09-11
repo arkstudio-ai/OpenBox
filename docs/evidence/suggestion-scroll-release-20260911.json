@@ -1,0 +1,192 @@
+{
+  "release": {
+    "source": "617f77ee4ca74ea237f34a25939d8692bedec1b8",
+    "tag": "20260911-suggestion-scroll-617f77e",
+    "image": "openbox-frontend-v2:20260911-suggestion-scroll-617f77e",
+    "architecture": "linux/amd64",
+    "archiveSha256": "30cbc1aa2e24e7e96aefad96646fff918a7341ca306172b876c66a62faaba82f",
+    "archiveBytes": 29355602,
+    "files": {
+      "index.html": "4fd9993a9acc756f0a89d20a14de0e42453812073228d70a83986571b78e64b8",
+      "assets/index-F20xN0D5.css": "2677a9ee17c90cb32c5f31983ea88195cb092ad0f2ed83f2196862a6d8ef6385",
+      "assets/chat-BP4nKYD-.js": "2578caf820139197fbee61c2dc83488cb2173e569a7b0e049e13b0963b9f8900"
+    }
+  },
+  "stage": {
+    "stage": "passed",
+    "image": "openbox-frontend-v2:20260911-suggestion-scroll-617f77e",
+    "imageId": "sha256:3e7f6b86f0a7155e214c275024b5131658d752c019b23c9070ae0db9f047dee4",
+    "checks": [
+      {
+        "path": "index.html",
+        "status": 200,
+        "sha256": "4fd9993a9acc756f0a89d20a14de0e42453812073228d70a83986571b78e64b8"
+      },
+      {
+        "path": "assets/index-F20xN0D5.css",
+        "status": 200,
+        "sha256": "2677a9ee17c90cb32c5f31983ea88195cb092ad0f2ed83f2196862a6d8ef6385"
+      },
+      {
+        "path": "assets/chat-BP4nKYD-.js",
+        "status": 200,
+        "sha256": "2578caf820139197fbee61c2dc83488cb2173e569a7b0e049e13b0963b9f8900"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 200
+      }
+    ]
+  },
+  "deployment": {
+    "status": "deployed",
+    "source": "617f77ee4ca74ea237f34a25939d8692bedec1b8",
+    "image": "openbox-frontend-v2:20260911-suggestion-scroll-617f77e",
+    "services": {
+      "frontend": {
+        "id": "1492293fbf23b797a00a8ce7a75db24d6614d9b9d5b669358a02527ef5bf84f3",
+        "image": "openbox-frontend-v2:20260911-suggestion-scroll-617f77e",
+        "imageId": "sha256:3e7f6b86f0a7155e214c275024b5131658d752c019b23c9070ae0db9f047dee4",
+        "health": "healthy"
+      },
+      "backend": {
+        "id": "8cbf717fc0ded1f766806c105310f7104da002867edc56fe140688e19f28b9df",
+        "image": "openbox-backend:20260911-login-cookie-57830f8",
+        "imageId": "sha256:3b0ff22f62be9e61462dd9a1f731824cd6099272aceddaafa89243c22eccf6a9",
+        "health": "healthy"
+      },
+      "postgres": {
+        "id": "98258cffb1f7511fe5f2810e5586a8541b01d6a157bf68ba79b71f7d0507fc20",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "imageId": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "health": "healthy"
+      },
+      "redis": {
+        "id": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "imageId": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+        "health": "healthy"
+      }
+    },
+    "backup": "/opt/openbox/backups/20260911-suggestion-scroll-617f77e/activation-20260911T082144Z",
+    "pgDumpBytes": 6012885,
+    "pgDumpSha256": "f92a770759e95ed124b98507310d3dbe6ee7333fcf117c830f865286e8e33bf5",
+    "checks": [
+      {
+        "path": "index.html",
+        "status": 200,
+        "sha256": "4fd9993a9acc756f0a89d20a14de0e42453812073228d70a83986571b78e64b8"
+      },
+      {
+        "path": "assets/index-F20xN0D5.css",
+        "status": 200,
+        "sha256": "2677a9ee17c90cb32c5f31983ea88195cb092ad0f2ed83f2196862a6d8ef6385"
+      },
+      {
+        "path": "assets/chat-BP4nKYD-.js",
+        "status": 200,
+        "sha256": "2578caf820139197fbee61c2dc83488cb2173e569a7b0e049e13b0963b9f8900"
+      },
+      {
+        "path": "/api/environment",
+        "status": 200
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 200
+      }
+    ],
+    "utc": "2026-09-11T08:22:10.078457+00:00"
+  },
+  "public": {
+    "origin": "https://ai.bossipai.com.cn",
+    "verifiedUtc": "2026-09-11T08:22:52.197811+00:00",
+    "build": "20260911-suggestion-scroll-617f77e",
+    "checks": [
+      {
+        "path": "index.html",
+        "status": 200,
+        "sha256": "4fd9993a9acc756f0a89d20a14de0e42453812073228d70a83986571b78e64b8"
+      },
+      {
+        "path": "assets/index-F20xN0D5.css",
+        "status": 200,
+        "sha256": "2677a9ee17c90cb32c5f31983ea88195cb092ad0f2ed83f2196862a6d8ef6385"
+      },
+      {
+        "path": "assets/chat-BP4nKYD-.js",
+        "status": 200,
+        "sha256": "2578caf820139197fbee61c2dc83488cb2173e569a7b0e049e13b0963b9f8900"
+      },
+      {
+        "path": "app",
+        "status": 200,
+        "sha256": "4fd9993a9acc756f0a89d20a14de0e42453812073228d70a83986571b78e64b8"
+      },
+      {
+        "path": "api/environment",
+        "status": 200,
+        "sha256": "e4af9038aff65978aad0797450ab690d22f4c61dff9bda3e7489ef4bedd5e0f3"
+      },
+      {
+        "path": "api/auth/logto/config",
+        "status": 200,
+        "sha256": "82e91428c76ba9ff3c93fef48432a61c8f02c0445ce2222324e06f820b449d84"
+      }
+    ],
+    "passed": true
+  },
+  "availability": {
+    "/": {
+      "statusCounts": {
+        "200": 20,
+        "502": 5
+      },
+      "firstFailureUtc": "2026-09-11T08:21:46.245411+00:00",
+      "lastFailureUtc": "2026-09-11T08:21:57.521975+00:00",
+      "recoveredUtc": "2026-09-11T08:21:59.685507+00:00",
+      "interruptionSeconds": 13.4
+    },
+    "/api/environment": {
+      "statusCounts": {
+        "200": 21,
+        "502": 4
+      },
+      "firstFailureUtc": "2026-09-11T08:21:50.242505+00:00",
+      "lastFailureUtc": "2026-09-11T08:21:57.521975+00:00",
+      "recoveredUtc": "2026-09-11T08:21:59.685507+00:00",
+      "interruptionSeconds": 9.4
+    }
+  },
+  "android": {
+    "version": "1.0.18+29",
+    "apk": "mobile/build/releases/BossIP-1.0.18-29/BossIP-1.0.18-29.apk",
+    "apkBytes": 83583619,
+    "apkSha256": "c3f22d764da96e621449526877e55ce3a0c6108fd5e4734abe539c866fd814be",
+    "archive": "BossIP-Android-1.0.18-29-20260911.7z",
+    "archiveBytes": 24971019,
+    "archiveSha256": "77b526909fe217abaa63e804d48aa66e672106c3cbb5b21b1a61e9657c29f568",
+    "signature": "existing Android Debug certificate; release APK, debuggable=false",
+    "api": "https://ai.bossipai.com.cn",
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "archiveVerified": true
+  },
+  "rollbackImage": "openbox-frontend-v2:20260910-fe-928a228",
+  "configurationUnchangedExceptFrontendImage": true,
+  "temporaryOssObjectRemoved": true,
+  "tests": {
+    "webUnit": 41,
+    "targetedBrowser": 5,
+    "flutterLoadingAndScreen": 17,
+    "typecheck": "passed",
+    "globalSuiteRun": false
+  }
+}

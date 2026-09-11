@@ -5,6 +5,15 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云前端：2026-09-11 建议卡滚动修复（仅前端）
+
+- 本机 Docker 构建并发布 `openbox-frontend-v2:20260911-suggestion-scroll-617f77e`，源码 `main@617f77e`，固定 Nginx 1.31.5。
+- 建议卡固定在输入框上方，历史与卡片区域均可上下滚动；卡片和加载态使用全局主题样式。
+- 备用端口验证通过后仅切换 frontend；backend 保持 `20260911-login-cookie-57830f8`，Postgres/Redis 容器未重建，四服务 healthy。
+- 公网构建标识与静态资源指纹一致，首页、应用入口与 API 正常。单实例切换期间短暂 502 后恢复。
+- 同源 Android `1.0.18+29` release APK 已打包为桌面 7z，沿用现有测试签名。
+- [发布、校验和回滚记录](SUGGESTION_SCROLL_RELEASE_20260911.md)。AWS 本次未发布，下方两边前端记录在阿里云已被此版本替代。
+
 ## 当前两边后端：2026-09-11 14:38 `20260911-takeover-fix-a5fa703`（仅后端，修接管卡片）
 
 - 源码 `main@a5fa703`（PR #27）。运营 09-11 实测验证码接管失败：`desktop_takeover` 每次报 `Question tools must be called directly, not inside a batch`，卡片从不出现。

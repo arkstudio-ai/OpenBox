@@ -1,5 +1,7 @@
 """云电脑登录态: site catalogue, cookie/probe judgement, and the probe use cases."""
 import json
+import io
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -43,6 +45,68 @@ def test_script_embeds_payload_and_never_prints_cookie_values():
     command = cdp.build_command(payload)
     assert command.startswith(": obx-login-probe;") and "| python3" in command
     assert len(script) < 16 * 1024
+
+
+@pytest.mark.parametrize(
+    "missing_session,server_code,expected_status,expected_fetches",
+    [(False, 0, "bound", 2), (False, 8, "expired", 2), (True, 0, "expired", 0)],
+)
+def test_creator_qr_login_without_passport_status_cookie(
+    monkeypatch, capsys, missing_session, server_code, expected_status, expected_fetches,
+):
+    """Run the desktop script against the cookie shape observed after QR login.
+
+    The auxiliary passport_auth_status cookie is absent in a valid session;
+    the server still controls revocation, and a missing sessionid stays expired.
+    """
+    fetches = []
+    cookies = [
+        {"name": name, "domain": ".douyin.com", "expires": time.time() + 86400,
+         "value": "private-cookie-value"}
+        for name in ("sessionid", "sid_tt", "uid_tt")
+        if not (missing_session and name == "sessionid")
+    ]
+
+    def fake_urlopen(request, **kwargs):
+        value = ({"Browser": "Chrome/test", "webSocketDebuggerUrl": "ws://browser"}
+                 if request.full_url.endswith("/json/version") else
+                 [{"type": "page", "url": "https://creator.douyin.com/creator-micro/home",
+                   "webSocketDebuggerUrl": "ws://creator"}])
+        return io.StringIO(json.dumps(value))
+
+    class WebSocket:
+        def send(self, message):
+            self.message = json.loads(message)
+
+        def recv(self, **kwargs):
+            message = self.message
+            if message["method"] == "Storage.getCookies":
+                result = {"cookies": cookies}
+            else:
+                assert message["method"] == "Runtime.evaluate"
+                fetches.append(message["params"]["expression"])
+                body = {"status_code": server_code, "douyin_user_verify_info": {
+                    "nick_name": "扫码用户", "douyin_unique_id": "qr-user"}}
+                result = {"result": {"value": json.dumps({"status": 200, "json": body})}}
+            return json.dumps({"id": message["id"], "result": result})
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("websockets.sync.client.connect", lambda *args, **kwargs: WebSocket())
+    creator = sites.get_site("douyin_creator")
+    payload = cdp.build_payload("probe", [sites.site_payload(creator)], level=2, profile=True)
+    exec(compile(cdp.build_script(payload), "<desktop-login-probe>", "exec"), {})
+    output = capsys.readouterr().out
+    assert "private-cookie-value" not in output
+    result = cdp.parse_output(output)
+    assert result["error"] is None
+    verdict = cdp.judge_site(creator, result["sites"][creator.key])
+    assert verdict.status == expected_status
+    assert len(fetches) == expected_fetches
+    if expected_status == "bound":
+        assert verdict.nickname == "扫码用户" and verdict.uid == "qr-user"
 
 
 # ── Judgement ──────────────────────────────────────────────────────────────

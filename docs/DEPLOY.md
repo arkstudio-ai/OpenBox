@@ -5,6 +5,13 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云后端：2026-09-11 后台通知状态竞态修复
+
+- 本地 Docker 构建并发布 `openbox-backend:20260911-push-background-19cfdeb`；保留生产源码基线 `57830f8`，只修改通知发送前复核的延期处理，避免后台状态重复上报时永久取消通知。
+- 24 项通知专项测试通过；453 个发布文件指纹验证通过，数据库版本未变，四服务 healthy，公网首页与 API 正常。只替换 backend。
+- 真机跨品牌离线推送尚未验收：极光厂商通道当前为 0/8，本机没有各厂商配置；已确认当前账号此前绑定到模拟器，并停止模拟器 App 以便真机重登测试。
+- [排查、修复、发布与待办](ANDROID_BACKGROUND_PUSH_20260911.md)，[发布证据](evidence/android-background-push-20260911.json)。AWS 本次未发布。
+
 ## 当前阿里云前端：2026-09-11 建议卡滚动修复（仅前端）
 
 - 本机 Docker 构建并发布 `openbox-frontend-v2:20260911-suggestion-scroll-617f77e`，源码 `main@617f77e`，固定 Nginx 1.31.5。

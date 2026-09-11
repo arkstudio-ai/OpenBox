@@ -1,0 +1,122 @@
+{
+  "patchCommit": "19cfdeba60c2f3904c028072295b07116f59b8bf",
+  "productionSourceBase": "57830f8a7e1d02ef4211fc9112239fb5d17811e7",
+  "localDockerBuild": true,
+  "artifact": {
+    "image": "openbox-backend:20260911-push-background-19cfdeb",
+    "imageId": "sha256:a6e14f10b589538f9d47d8481538fececc9275f73a9988da852bd334ef6f56fe",
+    "archiveSha256": "19f5254ca2887704d0118be724bbc611d61c112e182247afc8d52d99090c7ec0",
+    "archiveBytes": 185914398,
+    "runtimeSha256": "db3afc0976150d554a54a4f7ee32b7820043a9388eecc03695c44e0342eeb7fc",
+    "verifiedCodeFiles": 453
+  },
+  "deployment": {
+    "status": "deployed",
+    "services": {
+      "backend": {
+        "id": "874edeacc1801b6e47716dcbfee1f16b3e940a17fe9e9a001f5b83e69a5fc813",
+        "image": "openbox-backend:20260911-push-background-19cfdeb",
+        "imageId": "sha256:a6e14f10b589538f9d47d8481538fececc9275f73a9988da852bd334ef6f56fe",
+        "health": "healthy"
+      },
+      "frontend": {
+        "id": "1492293fbf23b797a00a8ce7a75db24d6614d9b9d5b669358a02527ef5bf84f3",
+        "image": "openbox-frontend-v2:20260911-suggestion-scroll-617f77e",
+        "imageId": "sha256:3e7f6b86f0a7155e214c275024b5131658d752c019b23c9070ae0db9f047dee4",
+        "health": "healthy"
+      },
+      "postgres": {
+        "id": "98258cffb1f7511fe5f2810e5586a8541b01d6a157bf68ba79b71f7d0507fc20",
+        "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+        "imageId": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "health": "healthy"
+      },
+      "redis": {
+        "id": "4c1a6fb5613aff2961033699acc61d6c6233ac07bd9d24f4d577ebe3caf3769f",
+        "image": "public.ecr.aws/docker/library/redis:7-alpine",
+        "imageId": "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+        "health": "healthy"
+      }
+    },
+    "backup": "/opt/openbox/backups/20260911-push-background-19cfdeb/activation-20260911T084952Z",
+    "checks": {
+      "http://127.0.0.1/api/environment": 200,
+      "http://127.0.0.1/api/auth/logto/config": 200
+    },
+    "environmentUnchanged": true,
+    "utc": "2026-09-11T08:50:17.879600+00:00"
+  },
+  "postcheck": {
+    "backendHealthy": true,
+    "restartCount": 0,
+    "tracebackCount": 0,
+    "pushWorkerWarnings": 0,
+    "providers": "['apns', 'jpush']",
+    "migration": "e4f6a8b0c2d4",
+    "activeExecutions": 0,
+    "presence": {
+      "state": "paused",
+      "reported": "2026-09-11T08:41:28.090546+00:00",
+      "appVersion": "1.0.18+29",
+      "enabled": true
+    }
+  },
+  "public": {
+    "utc": "2026-09-11T08:51:18.725358+00:00",
+    "checks": [
+      {
+        "path": "/",
+        "status": 200
+      },
+      {
+        "path": "/api/environment",
+        "status": 200
+      },
+      {
+        "path": "/api/auth/logto/config",
+        "status": 200
+      }
+    ]
+  },
+  "temporaryOssObjectRemoved": true,
+  "tests": {
+    "targetedPassed": 24,
+    "newRegressionFailuresBeforeFix": 2,
+    "globalSuiteRun": false
+  },
+  "android": {
+    "apkVersion": "1.0.18+29",
+    "clientCodeChanged": false,
+    "emulatorDesktopDeliveryVerified": true,
+    "emulatorScreenOffDeliveryVerified": true,
+    "emulatorOsProcessReclaimDeliveryVerified": false,
+    "testBindingInitiallyOnEmulator": true,
+    "emulatorAppStoppedForPhysicalTesting": true,
+    "physicalPhoneBrand": "Xiaomi",
+    "physicalPhoneModel": null,
+    "physicalPhoneDeliveryVerified": false,
+    "vendorAdaptersInApk": [],
+    "jpushConsoleVendorChannelsConfigured": 0,
+    "jpushConsoleVendorChannelsTotal": 8,
+    "asusEnableAttempt": "provider_ui_returned_modification_failed_and_switch_remained_off"
+  },
+  "availability": {
+    "apiNon200Samples": 9,
+    "apiNon200First": {
+      "utc": "2026-09-11T08:49:54.057067+00:00",
+      "/": 200,
+      "/api/environment": 502
+    },
+    "apiNon200Last": {
+      "utc": "2026-09-11T08:50:15.322355+00:00",
+      "/": 200,
+      "/api/environment": 502
+    },
+    "note": "Client samples include transport errors; final public HTTP checks all passed."
+  },
+  "pending": [
+    "Real vendor push configuration for com.bossip.bipmobile",
+    "Native SDK build with configured vendor channels",
+    "Physical Android re-login and background/screen-off/process-reclaim receipt verification"
+  ]
+}

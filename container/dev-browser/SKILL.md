@@ -7,6 +7,20 @@ description: Browser automation with persistent page state via user's Chrome ext
 
 Browser automation that controls the user's real Chrome browser through the OpenBox Dev Browser Chrome Extension. Write small, focused scripts to accomplish tasks incrementally.
 
+## Published works: deletion needs explicit authorization
+
+Deleting a published video/post is outside publishing, attaching group-buying
+links, republishing, or cleanup unless the user explicitly approves deletion of
+the identified works. First show the account, stable work IDs/permalinks, titles,
+publication times, count, and deletion impact. Existing approval applies only to
+that list. Never delete by a changing list index (`deleteButtons[1]`, `.nth(1)`).
+Verify the stable ID, delete at most one approved work per call, and verify its
+absence before another action. Stop when that ID is absent or the approved list
+is exhausted; never keep deleting the row that moved into its place. On timeout,
+use a read-only check. If the user reports missing works, immediately stop all
+deletion and investigate. Follow the backend published-content boundary for all
+browser, desktop, shell, API, and scheduled operations.
+
 ## Choosing Your Approach
 
 - **Local/source-available sites**: Read the source code first to write selectors directly

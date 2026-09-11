@@ -16,6 +16,20 @@ from db.models.session import Session
 from question import runtime
 
 
+#: The tools whose own part may carry a durable question, mapped to the
+#: continuation kind their answer resumes. A tool that files a question through
+#: ``ask()`` MUST appear here, or the tool call's part fails the guard below and
+#: the question is never delivered. (The guard doubles as the batch check: a
+#: batch-wrapped call's part is the ``batch`` tool, which is absent here.)
+#: `desktop_takeover` files an ordinary question, so it resumes as "question".
+QUESTION_TOOL_CONTINUATIONS: dict[str, str] = {
+    "question": "question",
+    "plan_enter": "plan_enter",
+    "creator_context": "memory_proposal",
+    "desktop_takeover": "question",
+}
+
+
 class QuestionOption(BaseModel):
     label: str
     description: str = ""
@@ -154,11 +168,10 @@ async def ask(
             part = await db.get(Part, part_id) if part_id else None
             if part_id and (part is None or part.session_id != session_id or part.user_id != user_id or part.message_id != message_id):
                 raise KeyError("Question tool call not found")
-            if part and (part.canonical_tool_id or part.data.get("tool")) not in {"question", "plan_enter", "creator_context"}:
+            part_tool = (part.canonical_tool_id or part.data.get("tool")) if part else None
+            if part and part_tool not in QUESTION_TOOL_CONTINUATIONS:
                 raise ValueError("Question tools must be called directly, not inside a batch")
-            if part and continuation["kind"] != {
-                "question": "question", "plan_enter": "plan_enter", "creator_context": "memory_proposal",
-            }[part.canonical_tool_id or part.data.get("tool")]:
+            if part and continuation["kind"] != QUESTION_TOOL_CONTINUATIONS[part_tool]:
                 raise ValueError("Saved continuation does not match the question's tool")
             row = QuestionCheckpoint(
                 id=generate_id(), session_id=session_id, user_id=user_id,

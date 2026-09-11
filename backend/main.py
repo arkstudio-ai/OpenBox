@@ -164,10 +164,14 @@ async def lifespan(app: FastAPI):
     app.state.push_providers = PushProviders.from_env()
     push_worker = PushWorker(app.state.push_providers)
     push_worker.start()
+    from notifications.announcements import InboxJanitor
+    inbox_janitor = InboxJanitor()
+    inbox_janitor.start()
 
     log.info("OpenBox starting...")
     yield
     log.info("OpenBox shutting down, cleaning up...")
+    await inbox_janitor.stop()
     await push_worker.stop()
     await question_worker.stop()
     await desktop_activation_service.stop()
@@ -317,6 +321,12 @@ def create_app() -> FastAPI:
     application.include_router(push_router)
     from api.admin_push import router as admin_push_router
     application.include_router(admin_push_router)
+    # ── 消息中心: inbox, public topic pages, admin announcements ──
+    from api.inbox import router as inbox_router, topics_router
+    from api.admin_messages import router as admin_messages_router
+    application.include_router(inbox_router)
+    application.include_router(topics_router)  # No auth — published topics are shareable
+    application.include_router(admin_messages_router)
     application.include_router(douyin_webhook_router)  # No auth — signed by the platform
 
     # ── Agent routes ──

@@ -116,6 +116,7 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_upgrade_desktop_billing_columns)
         await connection.run_sync(_upgrade_desktop_skill_store_columns)
+        await connection.run_sync(_upgrade_desktop_message_center_columns)
         await connection.run_sync(_seed_single_user_scope)
     log.info(f"Single-user application database at {database_path}")
     return engine
@@ -132,6 +133,33 @@ def _upgrade_desktop_billing_columns(connection) -> None:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancelled_at DATETIME")
     if "cancellation_reason" not in columns:
         connection.exec_driver_sql("ALTER TABLE payment_orders ADD COLUMN cancellation_reason VARCHAR(32)")
+
+
+#: Message-centre additions to ``notifications`` (migration a1c2e3b4d5f6).
+#: Desktop SQLite keeps ``workspace_id NOT NULL`` from its original
+#: create_all; account-level notices there fall back to the seeded workspace.
+_DESKTOP_INBOX_COLUMNS = (
+    ("category", "VARCHAR(16) NOT NULL DEFAULT 'system'"),
+    ("link", "TEXT"),
+    ("source_key", "VARCHAR(255)"),
+    ("announcement_id", "VARCHAR(64)"),
+    ("resolved_at", "DATETIME"),
+    ("expires_at", "DATETIME"),
+)
+
+
+def _upgrade_desktop_message_center_columns(connection) -> None:
+    """Retrofit the message centre onto a desktop database create_all cannot touch."""
+    columns = {column["name"] for column in sa.inspect(connection).get_columns("notifications")}
+    for name, ddl in _DESKTOP_INBOX_COLUMNS:
+        if name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE notifications ADD COLUMN {name} {ddl}")
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_user_created ON notifications (user_id, created_at)"
+    )
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_source ON notifications (user_id, source_key)"
+    )
 
 
 #: The moderated store's additions to ``user_skills``, with the same defaults

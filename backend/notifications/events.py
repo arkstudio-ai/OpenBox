@@ -9,6 +9,7 @@ from auth.mobile import lock_mutation, now, utc
 from db.models.push import PushDelivery, PushDevice, PushMessage
 from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
+from notifications.inbox import add_inbox, link_for, resolve_inbox
 from notifications.store import can_receive, enqueue_notification
 
 from notifications.templates import TEMPLATES, render_template
@@ -23,9 +24,14 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
         return None
     device = await db.get(PushDevice, user_id)
     title, body = render_template(kind, name, device.locale if device else "zh-CN")
+    await lock_mutation(db)
+    # The inbox row is the durable record; the push only points back at it.
+    inbox = await add_inbox(db, user_id=user_id, workspace_id=workspace_id, kind=kind,
+        title=title, body=body, source_key=event_key,
+        link=link_for(kind, workspace_id=workspace_id, session_id=session_id, action_id=action_id))
     return await enqueue_notification(db, user_id=user_id, workspace_id=workspace_id,
         session_id=session_id, action_id=action_id, event_key=event_key, kind=kind,
-        title=title, body=body,
+        title=title, body=body, notification_id=inbox.id,
         guard=guard, ttl_seconds=ttl_seconds)
 
 
@@ -49,6 +55,7 @@ async def question_waiting(db, session, question):
 
 async def cancel_event(db, user_id, event_key):
     await lock_mutation(db)
+    await resolve_inbox(db, user_id, event_key)
     ids = select(PushMessage.id).where(PushMessage.user_id == user_id, PushMessage.event_key == event_key)
     await db.execute(update(PushDelivery).where(PushDelivery.message_id.in_(ids),
         PushDelivery.status.in_(("pending", "sending"))).values(
@@ -148,6 +155,11 @@ async def guard_valid(db, message):
         from db.models.user import User
         user = await db.get(User, message.user_id)
         return bool(user and user.role == "admin" and user.is_active and not user.is_deleted)
+    if kind == "announcement":
+        from db.models.notification import Announcement
+        row = await db.get(Announcement, guard["id"])
+        return bool(row and row.status == "published"
+                    and (not row.expires_at or utc(row.expires_at) > now()))
     session_id = message.payload.get("sessionId")
     if kind == "question":
         row = await db.get(QuestionCheckpoint, guard["id"])

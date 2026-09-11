@@ -463,3 +463,18 @@ publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`
 （Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
 修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
 API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。
+
+
+## 消息中心 M1：后端收件箱、公告与专题（2026-09-11）
+
+推送已合入 main 但只有 App 一个消费端且没有落地列表，站内 `notifications` 表只在授权中心露出，两者互不相通。按
+[MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md) 拍板的方案做 M1 后端：不建第三张表，把 `notifications` 升级为消息中心唯一真源
+（迁移 `a1c2e3b4d5f6`：加 `category/link/source_key/announcement_id/resolved_at/expires_at`，`workspace_id` 改可空；新表
+`announcements`、`topics`）。`notifications/inbox.py` 是统一入口：`events.emit` 在推送入队的同一事务里先写 inbox 行，push payload
+带 `notificationId`；`cancel_event` 顺手打 `resolved_at`；三处旧站内直写改走 `add_inbox` 并补 `link` 与幂等键；提交后总线发
+`inbox.updated`。新接口 `/api/inbox`（跨全部工作空间、游标分页、分类未读数、已读）、公开 `/api/topics/{slug}`、超管
+`/api/admin/messages/*`（公告草稿/定时/发布/撤回/预览发我、专题 CRUD/发布）。公告按受众分批扇出、`source_key` 唯一约束保证重跑幂等，
+推送可选并走原 outbox（`kind=notice` + 公告守卫）。`link` 白名单结构，外链只有第一方可用且主机受 `ANNOUNCEMENT_LINK_HOSTS` /
+`cors_origins` 限制。`InboxJanitor` 每分钟发布到点公告、每天按策略清理（session 类 90 天）。本机 PostgreSQL 16 对迁移做了
+升/降/升三步验证；单测 +20，相关回归 124 项通过；全量 2214 过、5 失败与 origin/main 一致（SQLite 跑不了上游的 `ALTER TYPE`
+迁移测试等，与本次无关）。接口说明见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)。未部署，未合并。

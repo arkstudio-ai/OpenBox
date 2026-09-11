@@ -1,6 +1,6 @@
-# 消息中心（M1 后端 + M3 App + M4 后台界面）
+# 消息中心（M1 后端 + M2 Web + M3 App + M4 后台界面）
 
-方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端接口与行为说明（M1）、App 端实现说明（M3）与超管后台界面说明（M4）；Web 用户侧（M2）按此接。
+方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端接口与行为说明（M1）、Web 用户侧（M2）、App 端（M3）与超管后台界面（M4）的实现说明。
 
 一句话：`notifications` 表是消息中心唯一真源；每条手机推送先是一条 inbox 记录，push payload 里的 `notificationId` 指回它；第一方公告由后台编辑，发布时扇出成每人一条记录；专题页是站内 Markdown。
 
@@ -157,4 +157,21 @@ Web 超管控制台新增「消息通知」栏（`/app/admin/messages`，`ADMIN_
 复制链接使用 Web 的 `/topics/{slug}`（`paths.topic`）；该公开路由在 M2 落地前会 404，链接形态已定。
 
 验证：Web `npm run check`（i18n 对齐、lint、tsc、545 项测试）通过，新增 `AnnouncementsPage.test.tsx`、`TopicsPage.test.tsx`、`AdminMessagesRoute.test.tsx`；App analyze 无问题、locale 与 800 行门禁通过，新增 `admin_messages_test.dart` 5 项，全量 343 过、2 失败与 origin/main 一致。
+
+## Web 用户侧（M2，已实现）
+
+| 位置 | 文件 | 说明 |
+| --- | --- | --- |
+| 传输 | `shared/api/inbox.ts`（`features/inbox/api.ts` 转出） | 类型、`useInboxUnread`（2 分钟轮询）、`useInboxFeed(category)` 游标无限查询、`markRead`、`readAll`、公开 `useTopic(slug)`、`useInboxLiveEvents`（WS `inbox.updated` 与重连时使 `["inbox", userId]` 失效）。放在 shared 层是为了让工作空间侧栏读角标而不跨 feature 引用 |
+| 链接解析 | `features/inbox/lib/resolveLink.ts` | `planInboxLink(link, memberOf)` 纯函数：白名单 kind，会话/定时/授权/技能类要求用户仍是该空间成员；`session` 的 `panel/control` 映射到 `paths.desktopTakeover`；`topic` → `/topics/:slug`；`url` 仅 https；未知 kind 回消息中心。`useOpenInboxLink()` 执行：会话先 `GET /api/agent/session/{id}`（带 `X-Workspace-Id`），再 `setCurrent` 切空间，再 `navigate`；外链 `window.open(noopener)` |
+| 页面 | `features/inbox/components/InboxPage.tsx`、`InboxItemRow.tsx` | 四个分栏带未读数、加载更多、全部已读；点击先标已读（响应里的 link 为准）再路由；跨空间记录显示空间 chip |
+| 专题页 | `features/inbox/components/TopicPage.tsx`、`routes/topics/TopicRoute.tsx` | 公开路由 `/topics/:slug`（不在 `/app` 下，无需登录），独立页头；`react-markdown` + GFM 渲染；CTA 指向站内且未登录时按钮变「登录后继续」并跳登录页（登录页暂不带回跳，登录后回到 `/app`） |
+| 入口 | `features/workspace/components/Sidebar.tsx`、`NavRow.tsx` | 侧栏「消息中心」行在授权中心之上，`NavRow` 新增 `badge`（>99 显示 99+） |
+| 布局 | `app/layouts/WorkspaceLayout.tsx` | 挂 `useInboxLiveEvents()` |
+| 路由 | `shared/router/paths.ts`、`app/router/router.tsx` | `paths.inbox`、`paths.topic(slug)`、`routePatterns.inbox/topic`；`/app/inbox?category=` 可深链到分栏 |
+| WS 契约 | `shared/ws/events.ts` | `"inbox.updated": { userId }` |
+
+未改动：授权中心的通知条幅仍读旧 `/api/notifications`（只看当前工作空间的广播记录，与消息中心的跨空间列表定位不同，兼容窗口内不动）。
+
+验证：`npm run check`（i18n 对齐、lint、tsc、全量测试）通过；新增 `resolveLink.test.ts`、`InboxPage.test.tsx`、`TopicPage.test.tsx`、`NavRow.test.tsx` 共 16 项。未在浏览器里对着真实后端走一遍，放 M5 与后端联调一起验收。
 

@@ -17,6 +17,9 @@
   "topic": {
     "title": "Topic",
     "loadFailed": "This topic could not be loaded or has been taken down",
-    "openLink": "Open link"
+    "openLink": "Open link",
+    "signIn": "Sign in to continue",
+    "enterApp": "Open bossip",
+    "notFound": "This topic does not exist or has been taken down."
   }
 }

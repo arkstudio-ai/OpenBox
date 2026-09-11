@@ -57,6 +57,8 @@ export const routePatterns = {
   cron: "cron",
   skills: "skills",
   authCenter: "auth-center",
+  inbox: "inbox",
+  topic: "/topics/:slug",
   resources: "resources",
   // The console shell owns `/app/admin`; its columns are relative children of
   // that route, so what used to be an `/app` child is now just "fleet".

@@ -498,3 +498,13 @@ App 控制台加第五个底部入口，公告全量可编辑（SegmentedButton/
 留在网页端，按决策 6）。新命名空间 `admin-messages` 双端逐字一致。Web `npm run check` 全过（545 项），App 新增 5 项，全量 343 过、
 2 失败与 origin/main 一致。未部署未发版。
 
+
+## 消息中心 M2：Web 用户侧收件箱与公开专题页（2026-09-11）
+
+`features/inbox/`：四分栏带未读数的消息中心页（`/app/inbox`，游标无限加载、全部已读、跨空间 chip）、公开专题页
+`/topics/:slug`（不在 `/app` 下，`react-markdown` 渲染，CTA 未登录时改为「登录后继续」）。`resolveLink.ts` 的
+`planInboxLink` 是纯函数白名单解析，与 App 的 `InboxNavigator` 同规则：会话类先 `GET /api/agent/session` 校验再切空间跳转，
+`panel/control` 映射到接管路径，外链仅 https 新窗口打开。传输层放 `shared/api/inbox.ts`，侧栏 `NavRow` 加 `badge`，
+「消息中心」行在授权中心之上，`WorkspaceLayout` 挂 `useInboxLiveEvents` 订阅 WS `inbox.updated`。`npm run check` 全过，
+新增 16 项测试。未在浏览器对真实后端联调，随 M5 验收。
+

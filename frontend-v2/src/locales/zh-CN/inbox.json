@@ -17,6 +17,9 @@
   "topic": {
     "title": "专题",
     "loadFailed": "专题加载失败或已下线",
-    "openLink": "打开链接"
+    "openLink": "打开链接",
+    "signIn": "登录后继续",
+    "enterApp": "进入 bossip",
+    "notFound": "专题不存在或已下线。"
   }
 }

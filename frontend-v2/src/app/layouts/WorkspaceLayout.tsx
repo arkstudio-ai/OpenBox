@@ -3,6 +3,7 @@ import { Outlet, useMatch, useParams } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronPanelTab, CronStatusPill } from "@/features/cron"
+import { useInboxLiveEvents } from "@/features/inbox"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -14,6 +15,7 @@ import { paths } from "@/shared/router/paths"
 
 export default function WorkspaceLayout() {
   useWorkspaceEvents()
+  useInboxLiveEvents()
   usePanelEvents()
   const { sessionId } = useParams()
   const panelOpen = usePanelStore((s) => s.open)

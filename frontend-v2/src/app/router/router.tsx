@@ -21,6 +21,7 @@ const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
 const AdminRoute = lazy(() => import("@/routes/admin/AdminRoute"))
 const AdminNotificationsRoute = lazy(() => import("@/routes/admin/AdminNotificationsRoute"))
+const AdminMessagesRoute = lazy(() => import("@/routes/admin/AdminMessagesRoute"))
 const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
 const AdminSkillsRoute = lazy(() => import("@/routes/admin/AdminSkillsRoute"))
 const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
@@ -85,6 +86,7 @@ export const router = createBrowserRouter([
               { index: true, element: <Navigate to={paths.adminFleet} replace /> },
               { path: routePatterns.adminFleet, element: <AdminFleetRoute /> },
               { path: routePatterns.adminNotifications, element: <AdminNotificationsRoute /> },
+              { path: routePatterns.adminMessages, element: <AdminMessagesRoute /> },
               { path: routePatterns.adminSkills, element: <AdminSkillsRoute /> },
               // React Router ranks branches by score before matching, and
               // `billing/workspaces/:workspaceId` scores higher than

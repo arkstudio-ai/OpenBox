@@ -19,17 +19,19 @@ export const paths = {
   cron: "/app/cron",
   skills: "/app/skills",
   authCenter: "/app/auth-center",
-  resources: (projectId?: string) =>
-    projectId ? `/app/resources?project=${projectId}` : "/app/resources",
+  inbox: "/app/inbox",
+  /** Public topic page behind a first-party notice; the route lands with M2. */
+  topic: (slug: string) => `/topics/${encodeURIComponent(slug)}`,
+  resources: (projectId?: string) => (projectId ? `/app/resources?project=${projectId}` : "/app/resources"),
   admin: "/app/admin",
   // Kept at its original value: links to the fleet page predate the console
   // shell and are still handed around in ops runbooks.
   adminFleet: "/app/admin/fleet",
   adminNotifications: "/app/admin/notifications",
+  adminMessages: (tab?: string) => (tab ? `/app/admin/messages/${tab}` : "/app/admin/messages"),
   adminSkills: (tab?: string) => (tab ? `/app/admin/skills/${tab}` : "/app/admin/skills"),
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
-  adminWorkspace: (workspaceId: string) =>
-    `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
+  adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
 } as const
 
 /** Query params a chat URL may carry to open a workbench panel on arrival. */
@@ -61,6 +63,7 @@ export const routePatterns = {
   admin: "admin",
   adminFleet: "fleet",
   adminNotifications: "notifications",
+  adminMessages: "messages/:tab?",
   adminSkills: "skills/:tab?",
   adminBilling: "billing/:tab?",
   adminWorkspace: "billing/workspaces/:workspaceId",

@@ -185,7 +185,8 @@ M1 与 M4 后端部分可以并行；M2、M3 依赖 M1 的接口冻结。
 
 - **M1 后端：已完成（2026-09-11）**，实现细节与接口见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)。与本方案的差异：迁移 id 为 `a1c2e3b4d5f6`（`f1a2b3c4d5e6` 已被占用）；授权失效保留"工作空间广播 + 发起者个人"两条不同粒度记录，不合并；超管预览发我复用扇出逻辑而非测试台延迟。
 - **M3 App：已完成（2026-09-11）**，见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)「App 端」。与本方案的差异：链接解析器放在 `features/inbox/state/inbox_navigator.dart`（feature 层不反向依赖 app 层，router 由调用方传入）；点击推送以 `POST /api/inbox/{id}/read` 的响应作为 link 来源，不再单独拉记录；未加 AppBar 铃铛，入口只在抽屉。
-- M2 Web / M4 后台界面 / M5 上线：未开始。M2 等 PR #20 合并。
+- **M4 后台界面：已完成（2026-09-11）**，见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)「后台界面」。与本方案的差异：App 端没有把公告塞进「通知测试」栏，而是加了第五个底部入口「消息通知」，避免与现有测试台的滚动结构互相干扰；Web 的确认框在 `admin-messages` 内自带一份（feature 之间不互相引用）。
+- M2 Web 用户侧 / M5 上线：未开始。M2 等 PR #20 合并。
 
 ## 九、工作树说明
 

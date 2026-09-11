@@ -14,6 +14,7 @@ part 'fleet_api.dart';
 part 'skills_api.dart';
 part 'billing_api.dart';
 part 'push_api.dart';
+part 'messages_api.dart';
 
 /// Installed only below the guarded admin route, not below a workspace role.
 final adminScopeProvider = Provider<AdminScope>(

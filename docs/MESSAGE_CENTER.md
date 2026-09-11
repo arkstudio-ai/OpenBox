@@ -1,6 +1,6 @@
-# 消息中心（M1 后端 + M3 App）
+# 消息中心（M1 后端 + M3 App + M4 后台界面）
 
-方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端接口与行为说明（M1）及 App 端实现说明（M3）；Web（M2）、后台界面（M4）按此接。
+方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端接口与行为说明（M1）、App 端实现说明（M3）与超管后台界面说明（M4）；Web 用户侧（M2）按此接。
 
 一句话：`notifications` 表是消息中心唯一真源；每条手机推送先是一条 inbox 记录，push payload 里的 `notificationId` 指回它；第一方公告由后台编辑，发布时扇出成每人一条记录；专题页是站内 Markdown。
 
@@ -141,4 +141,20 @@
 未改动：授权中心的通知条幅仍读旧 `/api/notifications`（兼容窗口内），超管控制台仍为四栏（公告编辑属 M4）。
 
 验证：`flutter analyze` 无问题；locale 逐字节校验与 800 行门禁通过；新增测试 17 项（`test/features/inbox/*`、`test/app/notification_host_inbox_test.dart`、`test/features/workspace/session_drawer_inbox_test.dart`）；全量 Flutter 测试 338 过、2 失败与 origin/main 一致（`suggestion_composer_test` 大字号布局，与本次无关）。真机推送点击 → 标已读 → 进会话/专题，待上线前与 M5 一起验收。
+
+## 后台界面（M4，已实现）
+
+Web 超管控制台新增「消息通知」栏（`/app/admin/messages`，`ADMIN_SECTIONS` 加 `messages`），两个 tab；App 超管控制台新增第五个底部入口（`/app/admin/messages`），同样两个 tab。原「通知测试」栏保持不动。
+
+| 端 | 位置 | 说明 |
+| --- | --- | --- |
+| Web | `features/admin-messages/` | `api.ts`（react-query hooks，任何写操作后使 `["admin-messages"]` 失效；已发布且未 `fanoutAt` 的公告 3s 轮询）；`AnnouncementsPage` 列表 + `AnnouncementForm` 对话框（标题、摘要、去向 无/专题/外链、受众 全员/角色/工作空间/指定用户、推送开关、定时、过期），发布前拉单条取 `recipientCount` 放进确认框，撤回二次确认，预览发我；`TopicsPage` 列表 + `TopicForm`（slug、标题、封面、Markdown 正文 + `react-markdown` 实时预览、CTA 文字与去向成对），发布/下架、查看、复制链接。客户端先按服务端同样规则校验（slug 正则、https、CTA 成对、过期晚于发布），服务端 422 文案原样透出，`TOPIC_SLUG_TAKEN` 有专门提示 |
+| Web | `routes/admin/AdminMessagesRoute.tsx` | `:tab?` 分发，非法 tab 回落到公告 |
+| App | `features/admin/messages/` | `messages_page.dart` tabs；`announcements_page.dart` 列表（状态 pill、受众/推送/定时/送达数/去向一行元信息，发布/撤回走 `confirmAdminAction`，预览发我）；`announcement_editor_page.dart` 全量编辑（SegmentedButton 选去向、下拉选受众、多行用户 ID、推送开关、日期+时间选择器）；`topics_page.dart` 只读列表 + 发布/下架 + 复制链接 + 原生 Markdown 预览页，正文编辑提示去网页端（决策 6） |
+| App | `api/messages_api.dart` | `AdminApi` 的 part，全部经 `_record`，沿用作用域校验与取消 |
+| 文案 | `locales/*/admin-messages.json`，`admin.json` 的 `nav.messages` / `section.messages` | Web 与 App 逐字一致 |
+
+复制链接使用 Web 的 `/topics/{slug}`（`paths.topic`）；该公开路由在 M2 落地前会 404，链接形态已定。
+
+验证：Web `npm run check`（i18n 对齐、lint、tsc、545 项测试）通过，新增 `AnnouncementsPage.test.tsx`、`TopicsPage.test.tsx`、`AdminMessagesRoute.test.tsx`；App analyze 无问题、locale 与 800 行门禁通过，新增 `admin_messages_test.dart` 5 项，全量 343 过、2 失败与 origin/main 一致。
 

@@ -489,3 +489,12 @@ API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"�
 标已读、用响应里的 link 路由，读不到再退回原按 `type` 的路由；前台收到推送立即刷角标。locale 新增 `inbox` 命名空间（Web 与
 App 逐字一致）。analyze 无问题，locale 与 800 行门禁通过，新增测试 17 项，全量 338 过、2 失败与 origin/main 一致。未发版。
 
+
+## 消息中心 M4：Web 与 App 超管后台的公告/专题编辑（2026-09-11）
+
+Web 控制台新增「消息通知」栏（`features/admin-messages/`）：公告列表 + 对话框编辑（去向、受众、推送、定时、过期），发布前拉单条
+取实时收件人数进确认框，撤回二次确认，预览发我；专题列表 + 编辑（Markdown 实时预览、CTA 成对校验），发布/下架/查看/复制链接。
+App 控制台加第五个底部入口，公告全量可编辑（SegmentedButton/下拉/日期时间选择器），专题只读 + 发布状态 + 原生预览（正文编辑
+留在网页端，按决策 6）。新命名空间 `admin-messages` 双端逐字一致。Web `npm run check` 全过（545 项），App 新增 5 项，全量 343 过、
+2 失败与 origin/main 一致。未部署未发版。
+

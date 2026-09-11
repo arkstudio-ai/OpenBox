@@ -79,8 +79,15 @@ async def still_sendable(claim):
         decision = await presence.for_delivery(db, row)
         if (not await valid_binding(db, row) or not message or utc(message.expires_at) <= now()
                 or not await can_receive(db, row.user_id, message.workspace_id, message.payload.get("sessionId"))
-                or not await guard_valid(db, message) or decision.action != "allow"):
+                or not await guard_valid(db, message) or decision.action == "suppress"):
             row.status, row.error = "cancelled", "state_changed_before_send"
+            row.lease_id, row.lease_until = None, None
+            return False
+        if decision.action == "defer":
+            # A late background report can renew the settle window after the
+            # claim. Keep the notification queued; no provider I/O took place.
+            row.status, row.available_at, row.error = "pending", decision.until, "presence_" + decision.state
+            row.attempts = max(0, row.attempts - 1)
             row.lease_id, row.lease_until = None, None
             return False
         return True

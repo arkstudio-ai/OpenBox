@@ -21,7 +21,7 @@ def clock(monkeypatch):
 
     clock = Clock()
     for module in ("auth.mobile", "notifications.presence", "notifications.runtime",
-                   "notifications.events", "notifications.store", "api.push"):
+                   "notifications.events", "notifications.store", "notifications.testing"):
         monkeypatch.setattr(module + ".now", lambda: clock.value)
     return clock
 
@@ -122,6 +122,31 @@ async def test_foreground_return_cancels_queued_and_claimed_deliveries(phone, cl
     await PushWorker(fake).tick()
     assert fake.sent == []
     assert all([(await delivery(id)).status == "cancelled" for id in (a, b)])
+
+
+@pytest.mark.parametrize("state", ["hidden", "paused"])
+async def test_background_report_during_claim_defers_instead_of_dropping_push(phone, clock, state):
+    client, user, fake = phone
+    await report(client, "hidden", 1)
+    message = await enqueue(user)
+    clock.advance(4)
+    claim = await claim_delivery(fake.enabled)
+    assert claim
+
+    # A delayed lifecycle/status request can finish after the worker claims
+    # this message, restarting the background settle window before provider I/O.
+    await report(client, state, 2)
+    assert not await still_sendable(claim)
+    row = await delivery(message)
+    assert (row.status, row.error) == ("pending", "presence_background")
+    assert row.lease_id is None and row.lease_until is None
+    assert row.attempts == 0  # No provider request has actually been made.
+    await PushWorker(fake).tick()
+    assert fake.sent == []
+    clock.advance(4)
+    await PushWorker(fake).tick()
+    assert len(fake.sent) == 1
+    assert (await delivery(message)).status == "accepted"
 
 
 async def test_reordered_background_and_duplicate_heartbeat_cannot_override_foreground(phone, clock):

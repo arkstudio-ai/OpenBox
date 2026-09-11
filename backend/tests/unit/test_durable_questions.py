@@ -614,3 +614,30 @@ async def test_questions_are_bounded_and_content_cannot_change_under_one_id(stat
         await q.ask("s1", [q.Question(question="Different question")],
                     {"messageID": "m-p1", "callID": "p1"}, "u1")
     assert (await read(QuestionCheckpoint, request_id)).questions[0]["question"] == "Choose?"
+
+
+async def test_desktop_takeover_part_may_file_a_question(state):
+    # Regression: desktop_takeover files a durable question from its OWN part.
+    # It must be on the question-family allowlist, or the captcha handoff card
+    # is never delivered and the tool errors "must be called directly". The
+    # tool's own unit test mocks ask(), so only a real transaction catches this.
+    request_id = await checkpoint(part_id="pt", tool="desktop_takeover")
+    pending = await q.list_pending("u1")
+    assert request_id in [item.id for item in pending]
+    assert (await read(Part, "pt")).data["status"] == "waiting_input"
+
+
+async def test_a_non_question_tool_part_is_still_rejected(state):
+    # The same guard still blocks a question filed from an unrelated tool's
+    # part (e.g. a batch-wrapped call, whose part is the batch tool): the
+    # allowlist did not simply open up.
+    async with database.get_db_session() as db:
+        db.add(Message(id="m-pb", session_id="s1", user_id="u1", role="assistant",
+                       finish="waiting_input", created_at=runtime.now()))
+        await db.flush()
+        db.add(Part(id="pb", session_id="s1", message_id="m-pb", user_id="u1", type="tool",
+                    data={"id": "pb", "type": "tool", "tool": "bash", "status": "running"},
+                    created_at=runtime.now()))
+    with pytest.raises(ValueError, match="must be called directly"):
+        await q.ask("s1", [q.Question(question="Choose?", options=[q.QuestionOption(label="Yes")])],
+                    {"messageID": "m-pb", "callID": "pb"}, "u1")

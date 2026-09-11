@@ -8,10 +8,77 @@ from pydantic import ValidationError
 import publish.desktop_policy as policy
 import publish.desktop_service as svc
 from publish import desktop_script as script
+from publish.desktop_service import run_script_on_desktop as real_run_script_on_desktop
 from tool.desktop_publish import DesktopPublishArgs, execute
 from tool.tool import ToolContext
 
 SH = policy.SHANGHAI
+
+
+@pytest.fixture
+def publish_transport(world, monkeypatch):
+    """Keep the production script runner and result classifier in the test."""
+    import json
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    class Client:
+        @asynccontextmanager
+        async def desktop_lease(self, **kwargs):
+            yield
+
+        async def execute(self, command, **kwargs):
+            world["runs"].append(command)
+            prefix = "OBX_RESULT " if command.startswith(": obx-desktop-publish;") else ""
+            return SimpleNamespace(exit_code=world.get("exit_code", 0),
+                                   stdout=prefix + json.dumps(world["result"]), stderr="")
+
+    monkeypatch.setattr("platforms.desktop.service._client_for", lambda record: Client())
+    monkeypatch.setattr(svc, "run_script_on_desktop", real_run_script_on_desktop)
+    return world
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+async def test_transport_preserves_risk_for_breaker_and_notification(publish_transport, simulated):
+    from db.base import get_db_session
+    from db.models.notification import Notification
+    from db.models.platform_account import PlatformAccount
+    from sqlalchemy import select
+
+    w = publish_transport
+    w["result"] = {"ok": False, "step": "evidence", "risk": "验证码",
+                   "error": "risk signal (simulated): 验证码" if simulated else "risk signal: 验证码"}
+    args = DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True, simulate_risk=simulated)
+    result = await execute(args, _ctx(w))
+    assert result.metadata["degrade"] is True and result.metadata["retryable"] is False, result.output
+    async with get_db_session() as db:
+        account = await db.get(PlatformAccount, w["acct"])
+        assert account.auto_publish_disabled_at is not None
+        assert ("演练" in account.auto_publish_disabled_reason) is simulated
+        notes = (await db.execute(select(Notification.kind).where(Notification.workspace_id == w["ws"]))).scalars().all()
+        assert notes == ["desktop_publish_degraded"]
+    again = await execute(args, _ctx(w))
+    assert again.metadata["degrade"] is True and len(w["runs"]) == 1
+
+
+async def test_transport_preserves_confirmed_login_expiry(publish_transport):
+    w = publish_transport
+    w["result"] = {"ok": False, "step": "goto", "login_expired": True, "error": "not logged in"}
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True), _ctx(w))
+    assert result.metadata["login_expired"] is True and result.metadata["retryable"] is False, result.output
+    assert (await svc.creator_account(w["ws"])).status == "expired"
+
+
+async def test_transport_failure_and_login_probe_errors_still_raise(publish_transport):
+    from platforms.desktop import service as desktop
+
+    w = publish_transport
+    w["result"] = {"error": "CDP unavailable"}
+    with pytest.raises(desktop.BrowserNotRunning, match="CDP unavailable"):
+        await desktop.run_on_desktop({"desktop_id": "ecd-test"}, {"action": "probe", "sites": []}, lease=True)
+    w["exit_code"] = 7
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True), _ctx(w))
+    assert result.metadata["retryable"] is True and result.metadata["degrade"] is False
 
 
 def _now_sh(hour: int) -> datetime:

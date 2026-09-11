@@ -193,6 +193,7 @@ async def run_script_on_desktop(caller: Caller, record: dict, params: dict, *, t
         summary=f"desktop_publish {'dry-run ' if params.get('dry_run') else ''}{params.get('title', '')[:30]}",
         operation="publish", lease=True, timeout=timeout_s + 30, lease_ttl=float(timeout_s + 60),
         span_kind="platform.publish", session_id=caller.session_id or "desktop-publish", tool_call_id=caller.tool_call_id,
+        allow_script_error=True,
     )
 
 

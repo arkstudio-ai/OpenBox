@@ -22,6 +22,7 @@ import 'mention_menu.dart';
 import 'picker_sheets.dart';
 import 'resource_slot.dart';
 import 'suggestion_chips.dart';
+import 'suggestion_dock.dart';
 
 /// The chat input (web `Composer.tsx`), mobile-optimized: rounded-3xl card
 /// shell, chromeless auto-growing field, model pickers, context ring,
@@ -37,6 +38,7 @@ class Composer extends ConsumerStatefulWidget {
     this.autofocus = false,
     this.resources,
     this.suggestions,
+    this.historyController,
   });
 
   /// Session id, or `draft` on the empty screen.
@@ -45,6 +47,7 @@ class Composer extends ConsumerStatefulWidget {
   final Session? session;
   final bool busy;
   final SuggestionsPart? suggestions;
+  final ScrollController? historyController;
 
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
@@ -590,9 +593,12 @@ class _ComposerState extends ConsumerState<Composer> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_showSuggestions)
-          SuggestionChips(
-            suggestions: widget.suggestions!,
-            onSelect: _selectSuggestion,
+          SuggestionDock(
+            controller: widget.historyController,
+            child: SuggestionChips(
+              suggestions: widget.suggestions!,
+              onSelect: _selectSuggestion,
+            ),
           ),
         input,
       ],

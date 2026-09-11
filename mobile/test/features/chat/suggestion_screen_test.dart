@@ -53,7 +53,7 @@ void main() {
   );
 
   testWidgets(
-    'scrolling history hides chips, returning restores, keyboard stays pinned',
+    'pinned chips allow history and dock drags without sending; keyboard stays pinned',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -78,9 +78,27 @@ void main() {
         of: find.byType(ChatFlow),
         matching: find.byType(ListView),
       );
+      final viewport = tester.getRect(list);
+      final dock = tester.getRect(find.byType(SuggestionChips));
+      final controller = tester.widget<ListView>(list).controller!;
+      final bottom = controller.offset;
+      for (var i = 0; i < 5; i++) {
+        final previous = controller.offset;
+        await tester.drag(list, const Offset(0, 35));
+        await tester.pumpAndSettle();
+        expect(controller.offset, lessThan(previous));
+      }
+      expect(controller.offset, lessThan(bottom - 60));
+      expect(tester.getRect(list), viewport);
+      expect(tester.getRect(find.byType(SuggestionChips)), dock);
       await tester.drag(list, const Offset(0, 500));
       await tester.pumpAndSettle();
-      expect(find.byType(SuggestionChips), findsNothing);
+      expect(find.byType(SuggestionChips), findsOneWidget);
+      final before = controller.offset;
+      await tester.drag(find.text(sendSuggestion.label), const Offset(0, -180));
+      await tester.pumpAndSettle();
+      expect(controller.offset, greaterThan(before));
+      expect(fixture.api.sends, isEmpty);
       await tester.tap(find.byIcon(Icons.arrow_downward));
       await tester.pumpAndSettle();
       expect(find.byType(SuggestionChips), findsOneWidget);

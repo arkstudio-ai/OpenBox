@@ -112,14 +112,51 @@ test("running, waiting, error, permissions and read-only hide chips", async ({ p
   }
 })
 
-test("scrolling up hides chips and returning to the bottom restores them", async ({ page }) => {
+test("pinned chips keep history scrolling in both directions, including over the dock", async ({ page }) => {
   await fixture(page)
   await expect(group(page)).toBeVisible()
-  await page.getByText("14. 让每一个想法，都有下一步", { exact: true }).hover()
-  await page.mouse.wheel(0, -1600)
-  await expect(group(page)).toHaveCount(0)
-  await page.mouse.wheel(0, 4000)
+  const scroller = page.locator(".overflow-y-auto").first()
+  const dock = await group(page).boundingBox()
+  const viewport = await scroller.boundingBox()
+  await page.mouse.move(viewport!.x + viewport!.width / 2, viewport!.y + viewport!.height / 2)
+  const bottom = await scroller.evaluate((el) => el.scrollTop)
+  // Small steps cross the old visibility threshold without a viewport resize.
+  for (let i = 1; i <= 4; i++) {
+    await page.mouse.wheel(0, -30)
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeCloseTo(bottom - i * 30, 0)
+  }
+  expect(await group(page).boundingBox()).toEqual(dock)
+  expect(await scroller.boundingBox()).toEqual(viewport)
+  await group(page).getByRole("button").first().hover()
+  await page.mouse.wheel(0, -300)
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeCloseTo(bottom - 420, 0)
+  await page.mouse.wheel(0, 5000)
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeCloseTo(bottom, 0)
   await expect(group(page)).toBeVisible()
+})
+
+test("pinned mobile chips forward touch drags without sending and still accept taps", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const { sent } = await fixture(page)
+  const scroller = page.locator(".overflow-y-auto").first()
+  await expect(group(page)).toBeVisible()
+  const bottom = await scroller.evaluate((el) => el.scrollTop)
+  const button = group(page).getByRole("button").first()
+  const bounds = (await button.boundingBox())!
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true })
+  const touch = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] })
+  for (const dy of [15, 35, 65, 90]) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...touch, y: touch.y + dy }] })
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(bottom - 60)
+  expect(sent).toHaveLength(0)
+  await expect(group(page)).toBeVisible()
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch] })
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+  await expect.poll(() => sent.length).toBe(1)
 })
 
 test("cached suggestions survive reload; late events cannot leak into a new turn", async ({ page }) => {
@@ -272,7 +309,7 @@ test("all three complete labels align with the input without horizontal scrollin
           expect(unclipped).toBe(true)
         }
         expect(await group(page).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
-        await page.screenshot({ path: testInfo.outputPath(`aligned-${width}-${mode}-${texts === labels[0] ? "zh" : "en"}.png`) })
+        await page.screenshot({ path: testInfo.outputPath(`aligned-${width}-${mode}-${texts === labels[0] ? "zh" : "en"}.png`), animations: "disabled" })
       }
     }
   }

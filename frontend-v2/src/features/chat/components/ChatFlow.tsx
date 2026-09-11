@@ -59,10 +59,11 @@ interface Props {
   /** Set while a stalled run is retrying, so the wait can say which try. */
   retry?: { attempt: number; maxAttempts: number }
   onAtBottomChange?: (atBottom: boolean) => void
+  historyScrollRef?: RefObject<HTMLDivElement | null>
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -111,6 +112,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
 
   const atBottomRef = useRef(true)
   const viewportHeightRef = useRef(0)
+  const scrollTopRef = useRef(0)
   const onScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
@@ -121,11 +123,16 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     // the previous bottom position instead of treating this as a user scroll.
     if (resized && atBottomRef.current) {
       el.scrollTop = el.scrollHeight
+      scrollTopRef.current = el.scrollTop
       return
     }
-    const at = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-    atBottomRef.current = at
-    setAtBottom(at)
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+    // The button has a generous threshold; auto-stick must still release as
+    // soon as the reader scrolls away, including short trackpad movements.
+    if (remaining <= 1) atBottomRef.current = true
+    else if (el.scrollTop < scrollTopRef.current) atBottomRef.current = false
+    scrollTopRef.current = el.scrollTop
+    setAtBottom(remaining < 60)
   }, [])
 
   // Stick to the bottom as content grows. Streaming changes content height
@@ -139,6 +146,7 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     viewportHeightRef.current = el.clientHeight
     const ro = new ResizeObserver(() => {
       if (atBottomRef.current) el.scrollTop = el.scrollHeight
+      scrollTopRef.current = el.scrollTop
       viewportHeightRef.current = el.clientHeight
     })
     ro.observe(content)
@@ -175,7 +183,10 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   return (
     <div className="relative min-h-0 flex-1">
       <div
-        ref={scrollRef}
+        ref={(element) => {
+          scrollRef.current = element
+          if (historyScrollRef) historyScrollRef.current = element
+        }}
         onScroll={onScroll}
         className="scr h-full overflow-y-auto overscroll-contain px-3 pt-1.5 pb-2 sm:px-6.5 [overflow-anchor:none]"
       >

@@ -1,6 +1,6 @@
 // Real chat components, stream store, and send path. The test intercepts HTTP;
 // no real account, provider call, sandbox, or billing mutation is involved.
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router"
@@ -28,11 +28,11 @@ export function Fixture() {
   const messages = useStreamStore((s) => s.messages.get(sessionId) ?? empty)
   const status = useStreamStore((s) => s.status.get(sessionId)) ?? "idle"
   const turns = useMemo(() => mergeTurns(messages), [messages])
-  const [atBottom, setAtBottom] = useState(true)
+  const historyScrollRef = useRef<HTMLDivElement>(null)
   const [pending, setPending] = useState(false)
   const [readOnly, setReadOnly] = useState(false)
   const send = useSendChat(sessionId)
-  const chips = latestSuggestions(turns, status, { atBottom, readOnly, permissionCount: pending ? 1 : 0 })
+  const chips = latestSuggestions(turns, status, { readOnly, permissionCount: pending ? 1 : 0 })
   return (
     <main className="bg-bg text-ink flex h-dvh min-w-0 flex-col">
       <header className="border-hair flex flex-wrap gap-3 border-b p-3 text-xs">
@@ -56,8 +56,8 @@ export function Fixture() {
         <button onClick={() => void i18n.changeLanguage("en-US")}>English</button>
         <button onClick={() => void i18n.changeLanguage("zh-CN")}>中文</button>
       </header>
-      <ChatFlow turns={turns} sessionId={sessionId} busy={isBusyStatus(status)} onAtBottomChange={setAtBottom} />
-      <Composer busy={isBusyStatus(status)} suggestions={chips} sessionKey={sessionId} sessionModel="openai/chat-picked"
+      <ChatFlow turns={turns} sessionId={sessionId} busy={isBusyStatus(status)} historyScrollRef={historyScrollRef} />
+      <Composer busy={isBusyStatus(status)} suggestions={chips} historyScrollRef={historyScrollRef} sessionKey={sessionId} sessionModel="openai/chat-picked"
         agents={[{ name: "build" }, { name: "plan" }]} onSubmit={send}
         onStop={() => useStreamStore.getState().setStatus(sessionId, "idle")} />
     </main>

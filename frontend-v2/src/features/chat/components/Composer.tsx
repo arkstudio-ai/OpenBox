@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
 import { ArrowUp, Square } from "lucide-react"
 import { cn } from "@/shared/lib/cn"
@@ -24,6 +24,7 @@ import { ShortcutPicker } from "./composer/ShortcutPicker"
 import { MentionMenu } from "./composer/MentionMenu"
 import { ModePicker } from "./composer/ModePicker"
 import { SuggestionChips } from "./composer/SuggestionChips"
+import { SuggestionDock } from "./composer/SuggestionDock"
 import type { SuggestionsPart } from "@/shared/types/api"
 import type { ChatAgent } from "../api/agents"
 import type { MentionScope } from "../hooks/useMentionMenu"
@@ -44,6 +45,7 @@ export interface ComposerSubmit {
 interface Props {
   busy: boolean
   suggestions?: SuggestionsPart
+  historyScrollRef?: RefObject<HTMLDivElement | null>
   /** May return a promise; the draft is only discarded once it resolves. */
   onSubmit: (text: string, opts: ComposerSubmit) => void | Promise<void>
   onStop?: () => void
@@ -116,6 +118,7 @@ function SendButton({
 export function Composer({
   busy,
   suggestions,
+  historyScrollRef,
   onSubmit,
   onStop,
   autoFocus,
@@ -270,8 +273,10 @@ export function Composer({
   return (
     <div className="flex-none px-3 pt-1 pb-5 sm:px-6.5">
       <div className="mx-auto w-full max-w-190">
-        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionChips
-          items={suggestionChips.visible?.items ?? []} loading={suggestionChips.loading} onSelect={suggestionChips.select} />}
+        {(suggestionChips.visible || suggestionChips.loading) && <SuggestionDock historyScrollRef={historyScrollRef}>
+          <SuggestionChips items={suggestionChips.visible?.items ?? []}
+            loading={suggestionChips.loading} onSelect={suggestionChips.select} />
+        </SuggestionDock>}
         <InputGroup dragging={drop.dragging} {...drop.dragHandlers}>
           <AttachmentRow items={attachments.items} onRemove={attachments.remove} />
 

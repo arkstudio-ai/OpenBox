@@ -23,7 +23,7 @@ describe("suggestions belong only to the latest successful answer", () => {
     },
   )
 
-  it.each([{ atBottom: false }, { readOnly: true }, { hasError: true }, { permissionCount: 1 }, { questionCount: 1 }])(
+  it.each([{ readOnly: true }, { hasError: true }, { permissionCount: 1 }, { questionCount: 1 }])(
     "hides when blocked by %s", (visibility) => {
       expect(latestSuggestions(mergeTurns([user, answer]), "idle", visibility)).toBeUndefined()
     },

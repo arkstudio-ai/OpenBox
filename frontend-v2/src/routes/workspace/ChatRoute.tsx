@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useParams, useSearchParams } from "react-router"
 import { Spinner } from "@/shared/ui/Spinner"
 import { toast } from "@/shared/ui/Toast"
@@ -111,7 +111,7 @@ export default function ChatRoute() {
 
   const messages = useStreamStore((s) => s.messages.get(sessionId) ?? EMPTY_MESSAGES)
   const turns = useMemo(() => mergeTurns(messages), [messages])
-  const [atBottom, setAtBottom] = useState(true)
+  const historyScrollRef = useRef<HTMLDivElement>(null)
   // A tool part left as "running" is the fallback signal for busy, but only
   // while the session's real status is still unknown — a session opened
   // mid-run reads as busy from this before its first session.status event.
@@ -162,7 +162,7 @@ export default function ChatRoute() {
   const loading = messagesQ.isLoading && messages.length === 0
   const readOnly = isReadOnlySession(session.data?.user_id, currentUserId)
   const suggestions = latestSuggestions(turns, recoveredStatus, {
-    atBottom, readOnly, hasError: Boolean(runError), permissionCount: permissions.length, questionCount: questions.length,
+    readOnly, hasError: Boolean(runError), permissionCount: permissions.length, questionCount: questions.length,
   })
 
   // The task list used to live here, as a card pinned under the last turn,
@@ -195,7 +195,7 @@ export default function ChatRoute() {
         </div>
       ) : (
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
-          onAtBottomChange={setAtBottom}
+          historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
           footer={footer} onStop={stop} retry={retry} />
       )}
@@ -212,6 +212,7 @@ export default function ChatRoute() {
         <Composer
           busy={busy}
           suggestions={suggestions}
+          historyScrollRef={historyScrollRef}
           onSubmit={(text, opts) => send(text, { ...opts, agent: sessionAgent })}
           onStop={stop}
           sessionModel={session.data?.model}

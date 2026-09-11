@@ -2,7 +2,6 @@ import type { SessionStatus, SuggestionsPart } from "@/shared/types/api"
 import type { Turn } from "./turn-view"
 
 interface Visibility {
-  atBottom?: boolean
   readOnly?: boolean
   hasError?: boolean
   permissionCount?: number
@@ -14,9 +13,11 @@ interface Visibility {
 export function latestSuggestions(
   turns: Turn[],
   status: SessionStatus | undefined,
-  { atBottom = true, readOnly = false, hasError = false, permissionCount = 0, questionCount = 0 }: Visibility = {},
+  { readOnly = false, hasError = false, permissionCount = 0, questionCount = 0 }: Visibility = {},
 ): SuggestionsPart | undefined {
-  if (!atBottom || readOnly || hasError || permissionCount > 0 || questionCount > 0 || status !== "idle") return undefined
+  // The dock stays pinned while reading history. Toggling it on scroll changes
+  // the viewport height and can repeatedly pull a near-bottom scroll back down.
+  if (readOnly || hasError || permissionCount > 0 || questionCount > 0 || status !== "idle") return undefined
   const turn = turns[turns.length - 1]
   if (turn?.kind !== "assistant" || turn.meta.finish !== "stop" || turn.meta.error) return undefined
   const message = turn.messages[turn.messages.length - 1]

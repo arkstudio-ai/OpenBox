@@ -42,19 +42,18 @@ class ChatScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
-  bool _atBottom = true;
+  final _historyController = ScrollController();
   String get sessionId => widget.sessionId;
   ComposerResourceSlot? get resources => widget.resources;
 
   @override
-  void didUpdateWidget(ChatScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionId != sessionId) _atBottom = true;
+  void dispose() {
+    _historyController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentSessionId = sessionId;
     final sessionState = ref.watch(chatSessionProvider(sessionId));
     final stream = ref.watch(chatStreamProvider);
     final pending = ref.watch(pendingProvider);
@@ -185,13 +184,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   key: ValueKey(sessionId),
                   rows: widgets,
                   forceScrollToken: lastUserId,
-                  onAtBottomChanged: (value) {
-                    if (mounted &&
-                        currentSessionId == sessionId &&
-                        _atBottom != value) {
-                      setState(() => _atBottom = value);
-                    }
-                  },
+                  controller: _historyController,
                 ),
         ),
         // One line, and it must survive until the next send, so it stays
@@ -230,10 +223,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               session: sessionState.session,
               busy: busy,
               resources: resources,
+              historyController: _historyController,
               suggestions: latestSuggestions(
                 rows,
                 status,
-                atBottom: _atBottom,
                 readOnly: readOnly,
                 hasRunError: runError != null,
                 hasPendingInput: permissions.isNotEmpty || questions.isNotEmpty,

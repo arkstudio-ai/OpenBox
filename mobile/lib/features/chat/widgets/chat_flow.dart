@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../../shared/appearance/tokens.dart';
 
@@ -11,6 +12,7 @@ class ChatFlow extends StatefulWidget {
     required this.rows,
     this.forceScrollToken,
     this.onAtBottomChanged,
+    this.controller,
   });
 
   final List<Widget> rows;
@@ -18,14 +20,17 @@ class ChatFlow extends StatefulWidget {
   /// Changes when the user sends → force pin + jump (web :128-141).
   final Object? forceScrollToken;
   final ValueChanged<bool>? onAtBottomChanged;
+  final ScrollController? controller;
 
   @override
   State<ChatFlow> createState() => _ChatFlowState();
 }
 
 class _ChatFlowState extends State<ChatFlow> {
-  final _controller = ScrollController();
+  final _localController = ScrollController();
+  ScrollController get _controller => widget.controller ?? _localController;
   bool _atBottom = true;
+  bool _stickToBottom = true;
   bool? _reportedAtBottom;
 
   @override
@@ -49,14 +54,15 @@ class _ChatFlowState extends State<ChatFlow> {
     super.didUpdateWidget(oldWidget);
     if (widget.forceScrollToken != oldWidget.forceScrollToken) {
       _atBottom = true;
+      _stickToBottom = true;
       _reportAtBottom();
     }
-    if (_atBottom) _scheduleStick();
+    if (_stickToBottom) _scheduleStick();
   }
 
   void _scheduleStick() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_controller.hasClients || !_atBottom) return;
+      if (!mounted || !_controller.hasClients || !_stickToBottom) return;
       final max = _controller.position.maxScrollExtent;
       if ((_controller.offset - max).abs() > 1) {
         _controller.jumpTo(max);
@@ -66,6 +72,7 @@ class _ChatFlowState extends State<ChatFlow> {
 
   void _jumpToBottom() {
     _atBottom = true;
+    _stickToBottom = true;
     _reportAtBottom();
     if (_controller.hasClients) {
       _controller.animateTo(
@@ -79,7 +86,7 @@ class _ChatFlowState extends State<ChatFlow> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _localController.dispose();
     super.dispose();
   }
 
@@ -90,13 +97,23 @@ class _ChatFlowState extends State<ChatFlow> {
       children: [
         NotificationListener<ScrollMetricsNotification>(
           onNotification: (notification) {
-            if (notification.depth == 0 && _atBottom) _scheduleStick();
+            if (notification.depth == 0 && _stickToBottom) _scheduleStick();
             return false;
           },
           child: NotificationListener<ScrollNotification>(
             onNotification: (notification) {
               if (notification.depth != 0) return false;
               final metrics = notification.metrics;
+              // A small intentional drag must release auto-stick immediately,
+              // even before crossing the back-to-bottom button's threshold.
+              if ((notification is ScrollStartNotification &&
+                      notification.dragDetails != null) ||
+                  (notification is UserScrollNotification &&
+                      notification.direction != ScrollDirection.idle)) {
+                _stickToBottom = false;
+              } else if (notification is ScrollEndNotification) {
+                _stickToBottom = metrics.extentAfter <= 1;
+              }
               final atBottom = metrics.extentAfter < 60;
               if (atBottom != _atBottom) {
                 setState(() => _atBottom = atBottom);

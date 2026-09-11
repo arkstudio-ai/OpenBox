@@ -96,16 +96,16 @@ class _SuggestionLoadingState extends State<SuggestionLoading>
             builder: (context, _) => Row(
               children: [
                 for (var index = 0; index < 3; index++) ...[
-                  if (index > 0) const SizedBox(width: 8),
+                  if (index > 0) const SizedBox(width: 6),
                   Expanded(
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(Radii.lg),
+                      borderRadius: BorderRadius.circular(Radii.xl),
                       child: Container(
                         height: 28,
                         decoration: BoxDecoration(
-                          color: t.hairSoft,
+                          color: t.card,
                           border: Border.all(color: t.hair),
-                          borderRadius: BorderRadius.circular(Radii.lg),
+                          borderRadius: BorderRadius.circular(Radii.xl),
                         ),
                         child: !animate
                             ? null
@@ -125,7 +125,7 @@ class _SuggestionLoadingState extends State<SuggestionLoading>
                                       end: Alignment.bottomRight,
                                       colors: [
                                         Colors.transparent,
-                                        t.n500.withValues(alpha: 0.24),
+                                        t.shine.withValues(alpha: 0.24),
                                         Colors.transparent,
                                       ],
                                     ),

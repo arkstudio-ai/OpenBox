@@ -7,13 +7,11 @@ import 'turn_view.dart';
 SuggestionsPart? latestSuggestions(
   List<ChatRow> rows,
   SessionStatus? status, {
-  bool atBottom = true,
   bool readOnly = false,
   bool hasRunError = false,
   bool hasPendingInput = false,
 }) {
   if (status != SessionStatus.idle ||
-      !atBottom ||
       readOnly ||
       hasRunError ||
       hasPendingInput ||

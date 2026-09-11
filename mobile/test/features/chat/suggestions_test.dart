@@ -192,10 +192,6 @@ void main() {
     }
     final ready = rows([answer()]);
     expect(
-      latestSuggestions(ready, SessionStatus.idle, atBottom: false),
-      isNull,
-    );
-    expect(
       latestSuggestions(ready, SessionStatus.idle, readOnly: true),
       isNull,
     );

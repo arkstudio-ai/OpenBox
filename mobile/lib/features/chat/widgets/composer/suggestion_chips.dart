@@ -44,14 +44,14 @@ class SuggestionChips extends ConsumerWidget {
           builder: (context, constraints) {
             final count = suggestions.items.take(3).length;
             final labelWidth =
-                (constraints.maxWidth - (count - 1) * 8) / count - 16;
+                (constraints.maxWidth - (count - 1) * 6) / count - 20;
             return IntrinsicHeight(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   for (final (index, item)
                       in suggestions.items.take(3).indexed) ...[
-                    if (index > 0) const SizedBox(width: 8),
+                    if (index > 0) const SizedBox(width: 6),
                     Expanded(
                       child: Semantics(
                         button: true,
@@ -74,16 +74,18 @@ class SuggestionChips extends ConsumerWidget {
                             child: OutlinedButton(
                               onPressed: () => onSelect(item),
                               style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(44, 48),
+                                minimumSize: const Size(44, 44),
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
+                                  horizontal: 10,
+                                  vertical: 6,
                                 ),
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                backgroundColor: t.card,
                                 foregroundColor: t.n700,
+                                overlayColor: t.n500,
                                 side: BorderSide(color: t.hair),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(Radii.lg),
+                                  borderRadius: BorderRadius.circular(Radii.xl),
                                 ),
                                 textStyle: const TextStyle(
                                   fontSize: FontSizes.sm,

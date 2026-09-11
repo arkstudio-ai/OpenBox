@@ -69,6 +69,17 @@ async def test_transport_preserves_confirmed_login_expiry(publish_transport):
     assert (await svc.creator_account(w["ws"])).status == "expired"
 
 
+@pytest.mark.parametrize("step,retryable", [("upload", True), ("readback", False)])
+async def test_transport_preserves_failed_step_to_avoid_duplicate_publish(publish_transport, step, retryable):
+    w = publish_transport
+    w["result"] = {"ok": False, "step": step, "error": "page operation timed out"}
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="测试"), _ctx(w))
+    assert result.metadata["retryable"] is retryable
+    assert result.metadata["degrade"] is False
+    if not retryable:
+        assert "发布结果不明" in result.output
+
+
 async def test_transport_failure_and_login_probe_errors_still_raise(publish_transport):
     from platforms.desktop import service as desktop
 

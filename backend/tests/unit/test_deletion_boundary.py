@@ -1,4 +1,4 @@
-"""Every interactive model receives the shipped published-content boundary."""
+"""Every interactive model receives the shipped shared deletion boundary."""
 from pathlib import Path
 
 import pytest
@@ -12,7 +12,7 @@ from agent.loop import _build_system_prompt
     "openai/gemini-3.8-flash", "openai/gpt-5.6-luna", "anthropic/claude",
     "openai/qwen3.8-max", "openai/trinity", "openai/gpt-4",
 ])
-async def test_published_content_boundary_is_loaded_for_each_model(monkeypatch, model):
+async def test_deletion_boundary_is_loaded_for_each_model(monkeypatch, model):
     backend = Path(__file__).resolve().parents[2]
     monkeypatch.chdir(backend)
     policy = (backend / "AGENTS.md").read_text()

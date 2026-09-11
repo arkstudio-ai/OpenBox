@@ -11,10 +11,10 @@ import type {
 
 export interface WsEventMap {
   // connection lifecycle (client-side synthetic)
-  "__connected": Record<string, never>
-  "__disconnected": Record<string, never>
+  __connected: Record<string, never>
+  __disconnected: Record<string, never>
 
-  "session.status": { sessionId: string; status: SessionStatus ; attempt?: number; maxAttempts?: number }
+  "session.status": { sessionId: string; status: SessionStatus; attempt?: number; maxAttempts?: number }
   "session.finalizing": { sessionId: string }
   "session.error": { sessionId: string; error?: { message?: string; code?: string } }
   "session.title": { sessionId: string; title: string }
@@ -28,6 +28,8 @@ export interface WsEventMap {
   "session.compaction.start": { sessionId: string }
   "session.compaction.complete": { sessionId: string; summary?: string }
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
+  /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
+  "inbox.updated": { userId: string }
 
   "message.created": { sessionId: string; message: MessageWithParts }
   "message.updated": { sessionId: string; message: MessageWithParts }

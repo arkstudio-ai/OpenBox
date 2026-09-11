@@ -1037,6 +1037,9 @@ interface QuestionReply {
 | GET | `/api/publish-jobs` | 成员 | 最近 50 条投稿记录 |
 | GET | `/api/publish-jobs/{id}` | 成员 | 轮询投稿状态：`pending\|published\|failed\|expired` |
 | GET / POST | `/api/notifications?unread=`、`/api/notifications/{id}/read` | 成员 | 站内通知（授权失效、投稿完成） |
+| GET / POST | `/api/inbox?category=&unread=&cursor=&limit=`、`/api/inbox/unread`、`/api/inbox/{id}/read`、`/api/inbox/read-all` | 成员 | 消息中心：跨工作空间收件箱、分类未读数、已读（见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)） |
+| GET | `/api/topics/{slug}` | 公开 | 已发布的专题页（Markdown） |
+| GET / POST / PUT | `/api/admin/messages/announcements[/{id}[/publish\|revoke\|preview]]`、`/api/admin/messages/topics[/{id}[/publish\|unpublish]]` | 平台超管 | 第一方公告与专题页管理 |
 | POST | `/api/webhooks/douyin` | 抖音签名 | `verify_webhook` 回 `{challenge}`；`create_video` 按 `share_id` 回写投稿结果；`X-Douyin-Signature = sha1(client_secret + body)`，`Msg-Id` 去重 |
 
 ### PlatformAccount

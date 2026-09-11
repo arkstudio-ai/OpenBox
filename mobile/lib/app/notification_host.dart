@@ -4,10 +4,13 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/inbox/api/inbox_api.dart';
+import '../features/inbox/state/inbox_navigator.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/api/providers.dart';
 import '../shared/i18n/i18n.dart';
+import '../shared/models/inbox.dart';
 import '../shared/notifications/push_controller.dart';
 import '../shared/notifications/system_notifications.dart';
 import '../shared/router/paths.dart';
@@ -135,6 +138,9 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
         _lifecycle != AppLifecycleState.resumed) {
       return;
     }
+    // Every business push is also an inbox row: move the badge now rather
+    // than waiting for the socket's inbox.updated.
+    ref.invalidate(inboxUnreadProvider);
     if (p['sessionId'] != null &&
         p['sessionId'] == _activeSession &&
         p['workspaceId'] == ref.read(workspaceScopeProvider).currentId) {
@@ -208,6 +214,7 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
         }
         return;
       }
+      if (await _openFromInbox(payload, current)) return;
       final workspaceId = payload['workspaceId'];
       final sessionId = payload['sessionId'];
       if (workspaceId is! String) return;
@@ -250,6 +257,37 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
       _opening = false;
       if (mounted && _pending != null) unawaited(_openPending());
     }
+  }
+
+  /// New pushes carry `notificationId`: mark the durable row read and route
+  /// from its server-vetted link. Returns false to fall back to the legacy
+  /// payload-type routing (older pushes, or the row already gone).
+  Future<bool> _openFromInbox(
+    Map<String, dynamic> payload,
+    bool Function() current,
+  ) async {
+    final id = payload['notificationId'];
+    if (id is! String || id.isEmpty) return false;
+    InboxLink? link;
+    try {
+      link = (await ref.read(inboxApiProvider).markRead(id)).link;
+    } catch (_) {
+      return false;
+    }
+    if (!current()) return true;
+    ref.invalidate(inboxUnreadProvider);
+    final navigator = InboxNavigator(ref.read, ref.read(routerProvider));
+    final result = await navigator.open(link, stillCurrent: current);
+    if (result == InboxOpen.unavailable && current()) {
+      unawaited(ref.read(routerProvider).push(Paths.inbox));
+      ref
+          .read(toastProvider.notifier)
+          .push(
+            ToastKind.warning,
+            ref.read(i18nProvider).t('inbox:unavailable'),
+          );
+    }
+    return true;
   }
 
   @override

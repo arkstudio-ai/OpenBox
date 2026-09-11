@@ -9,6 +9,8 @@ import '../features/chat/chat_screen.dart';
 import '../features/chat/empty_chat_screen.dart';
 import '../features/chat/widgets/composer/resource_slot.dart';
 import '../features/cron/cron_screen.dart';
+import '../features/inbox/inbox_screen.dart';
+import '../features/inbox/topic_screen.dart';
 import '../features/landing/landing_page.dart';
 import '../features/resources/resources_screen.dart';
 import '../features/resources/utils/upload_flow.dart';
@@ -93,6 +95,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Paths.cron,
         builder: (context, state) => const CronScreen(),
+      ),
+      GoRoute(
+        path: Paths.inbox,
+        builder: (context, state) =>
+            InboxScreen(initialCategory: state.uri.queryParameters['category']),
+      ),
+      GoRoute(
+        path: '/app/topics/:slug',
+        builder: (context, state) =>
+            TopicScreen(slug: state.pathParameters['slug'] ?? ''),
       ),
       GoRoute(
         path: '/app/resources',

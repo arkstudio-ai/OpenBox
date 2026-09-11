@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 
+from auth.mobile import now
+
 from auth.middleware import get_current_user
 from auth.workspace import get_workspace
 from db.base import get_db_session
@@ -27,15 +29,20 @@ def _to_item(row: Notification) -> dict:
         "kind": row.kind,
         "title": row.title,
         "body": row.body,
+        "category": row.category,
+        "link": row.link,
         "readAt": _iso(row.read_at),
         "createdAt": _iso(row.created_at),
     }
 
 
 def _visible(user_id: str, workspace_id: str):
+    # Compatibility for the authorization-centre strip; the message centre
+    # proper lives at /api/inbox and also shows account-level notices.
     return (
         Notification.workspace_id == workspace_id,
         or_(Notification.user_id.is_(None), Notification.user_id == user_id),
+        or_(Notification.expires_at.is_(None), Notification.expires_at > now()),
     )
 
 

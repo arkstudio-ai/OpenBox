@@ -17,10 +17,13 @@ const CronRoute = lazy(() => import("@/routes/cron/CronRoute"))
 const ResourcesRoute = lazy(() => import("@/routes/resources/ResourcesRoute"))
 const SkillsRoute = lazy(() => import("@/routes/skills/SkillsRoute"))
 const AuthCenterRoute = lazy(() => import("@/routes/auth-center/AuthCenterRoute"))
+const InboxRoute = lazy(() => import("@/routes/inbox/InboxRoute"))
+const TopicRoute = lazy(() => import("@/routes/topics/TopicRoute"))
 const NotFoundRoute = lazy(() => import("@/routes/NotFoundRoute"))
 const InviteRoute = lazy(() => import("@/routes/invite/InviteRoute"))
 const AdminRoute = lazy(() => import("@/routes/admin/AdminRoute"))
 const AdminNotificationsRoute = lazy(() => import("@/routes/admin/AdminNotificationsRoute"))
+const AdminMessagesRoute = lazy(() => import("@/routes/admin/AdminMessagesRoute"))
 const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
 const AdminSkillsRoute = lazy(() => import("@/routes/admin/AdminSkillsRoute"))
 const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
@@ -48,6 +51,8 @@ export const router = createBrowserRouter([
         ),
       },
       { path: paths.ssoCallback, element: <SsoCallbackRoute /> },
+      // Public: a shared topic link renders for anyone; the CTA asks to sign in.
+      { path: routePatterns.topic, element: <TopicRoute /> },
       {
         path: routePatterns.invite,
         element: (
@@ -72,6 +77,7 @@ export const router = createBrowserRouter([
           { path: routePatterns.resources, element: <ResourcesRoute /> },
           { path: routePatterns.skills, element: <SkillsRoute /> },
           { path: routePatterns.authCenter, element: <AuthCenterRoute /> },
+          { path: routePatterns.inbox, element: <InboxRoute /> },
           {
             // The console shell sits behind one role check; every column below
             // it is a plain child, so `RequireAdmin` runs exactly once (§4.2).
@@ -85,6 +91,7 @@ export const router = createBrowserRouter([
               { index: true, element: <Navigate to={paths.adminFleet} replace /> },
               { path: routePatterns.adminFleet, element: <AdminFleetRoute /> },
               { path: routePatterns.adminNotifications, element: <AdminNotificationsRoute /> },
+              { path: routePatterns.adminMessages, element: <AdminMessagesRoute /> },
               { path: routePatterns.adminSkills, element: <AdminSkillsRoute /> },
               // React Router ranks branches by score before matching, and
               // `billing/workspaces/:workspaceId` scores higher than

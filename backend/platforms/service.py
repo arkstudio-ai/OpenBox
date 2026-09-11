@@ -15,7 +15,6 @@ from core.identifier import ascending
 from core.log import create_logger
 from db.base import get_db_session
 from db.models.file_asset import FileAsset
-from db.models.notification import Notification
 from db.models.platform_account import PlatformAccount
 from db.models.publish_job import PublishJob
 from platforms.base import TokenGrant
@@ -307,6 +306,7 @@ async def _mark_expired(db, row: PlatformAccount, reason: str, now: datetime) ->
             kind="platform_auth_expired",
             title=f"{row.platform} 授权已失效",
             body=f"{row.nickname or row.external_id} 的授权已失效（{reason}），请到授权中心重新授权。",
+            source_key=f"auth:{row.id}:expired:{now.date().isoformat()}", action_id=row.id,
         )
     row.status = "expired"
     row.last_error = reason
@@ -472,18 +472,11 @@ async def refresh_due() -> None:
 
 
 # ── Notifications ──────────────────────────────────────────────────────────
-async def add_notification(db, *, workspace_id: str, user_id: str | None, kind: str, title: str, body: str = "") -> None:
-    db.add(
-        Notification(
-            id=ascending("ntf"),
-            workspace_id=workspace_id,
-            user_id=user_id,
-            kind=kind,
-            title=title[:255],
-            body=body,
-            created_at=_now(),
-        )
-    )
+async def add_notification(db, *, workspace_id: str, user_id: str | None, kind: str, title: str, body: str = "",
+                           source_key: str | None = None, action_id: str | None = None) -> None:
+    from notifications.inbox import add_inbox, link_for
+    await add_inbox(db, workspace_id=workspace_id, user_id=user_id, kind=kind, title=title, body=body,
+                    source_key=source_key, link=link_for(kind, workspace_id=workspace_id, action_id=action_id))
 
 
 # ── Publish (Douyin H5 share) ──────────────────────────────────────────────
@@ -680,6 +673,7 @@ async def handle_douyin_event(payload: dict) -> bool:
             kind="publish_done",
             title="抖音投稿已发布",
             body=f"《{job.title or job.file_asset_id}》已在抖音发布。",
+            source_key=f"publish:{job.id}:terminal", action_id=job.id,
         )
         from notifications.events import publish_result
         await publish_result(db, job)

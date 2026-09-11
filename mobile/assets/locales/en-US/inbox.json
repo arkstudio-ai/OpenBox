@@ -1,0 +1,22 @@
+{
+  "title": "Inbox",
+  "subtitle": "Task results, system alerts and official notices",
+  "tabs": {
+    "all": "All",
+    "session": "Chats",
+    "system": "System",
+    "notice": "Official"
+  },
+  "readAll": "Mark all read",
+  "empty": "No messages yet",
+  "loadMore": "Load more",
+  "loadFailed": "Could not load messages",
+  "unavailable": "The content behind this message is no longer available.",
+  "resolved": "Resolved",
+  "workspace": "Workspace: {{name}}",
+  "topic": {
+    "title": "Topic",
+    "loadFailed": "This topic could not be loaded or has been taken down",
+    "openLink": "Open link"
+  }
+}

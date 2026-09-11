@@ -1,6 +1,6 @@
-# 消息中心（M1 后端）
+# 消息中心（M1 后端 + M3 App）
 
-方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端已实现部分的接口与行为说明，Web（M2）、App（M3）、后台界面（M4）按此接。
+方案与拍板见 [MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md)。本文是后端接口与行为说明（M1）及 App 端实现说明（M3）；Web（M2）、后台界面（M4）按此接。
 
 一句话：`notifications` 表是消息中心唯一真源；每条手机推送先是一条 inbox 记录，push payload 里的 `notificationId` 指回它；第一方公告由后台编辑，发布时扇出成每人一条记录；专题页是站内 Markdown。
 
@@ -123,3 +123,22 @@
 - `tests/unit/test_inbox.py`：link 推导与白名单、跨空间可见性、`source_key` 幂等、了结即已读、游标分页、保留策略。
 - `tests/integration/test_message_center.py`：业务事件落 inbox 且推送指回；回答问题后角标清零；提交后 `inbox.updated` 事件；公告扇出幂等/撤回/受众定向/外链白名单/推送与撤回守卫/定时发布；专题草稿不可见、发布后公开、slug 锁定；旧 `/api/notifications` 仍可用。
 - 现有推送、授权中心、技能审核相关 124 项回归全过；PostgreSQL 版推送测试（`PUSH_TEST_DATABASE_URL`）通过。
+
+## App 端（M3，已实现）
+
+| 位置 | 文件 | 说明 |
+| --- | --- | --- |
+| 模型 | `shared/models/inbox.dart` | `InboxItem / InboxLink / InboxUnread / InboxPage / TopicPage` |
+| 传输与状态 | `features/inbox/api/inbox_api.dart` | `InboxApi`；`inboxUnreadProvider`（WS `inbox.updated` 失效 + 2 分钟轮询）；`inboxFeedProvider(category)` 游标分页、本地乐观已读 |
+| 链接解析 | `features/inbox/state/inbox_navigator.dart` | `InboxNavigator(read, router).open(link)`：白名单 kind；`session` / `cron` / `auth_center` / `skills` 先校验用户仍在该工作空间、会话仍可读（`GET /api/agent/session/{id}` 带 `X-Workspace-Id`），再切作用域跳转；`topic` 进站内专题页；`url` 仅 https，系统浏览器打开；未知 kind 回到消息中心；失败返回 `unavailable` 由调用方提示 |
+| 页面 | `features/inbox/inbox_screen.dart`、`widgets/inbox_item_tile.dart` | 四个分栏带未读数，下拉刷新，滚动到底自动加载更多，全部已读，点击先标已读（响应里的 link 为准）再路由；跨空间记录显示空间 chip |
+| 专题页 | `features/inbox/topic_screen.dart` | `/app/topics/:slug`，封面 + 标题 + `gpt_markdown` 正文 + CTA（同一解析器） |
+| 入口 | `features/workspace/widgets/session_drawer.dart` | 抽屉「消息中心」行在授权中心之上，角标为跨空间未读总数（>99 显示 99+） |
+| 路由 | `shared/router/paths.dart`、`app/router.dart` | `Paths.inbox = /app/inbox`（可带 `?category=`），`Paths.topic(slug)` |
+| 推送点击 | `app/notification_host.dart::_openFromInbox` | payload 有 `notificationId` → `POST /api/inbox/{id}/read` 拿到 link → `InboxNavigator`；读不到（旧推送 / 记录已删）→ 退回原按 `type` 路由；目标不可用 → 打开消息中心并 toast。前台收到业务推送时立即刷新角标 |
+| 文案 | `assets/locales/*/inbox.json`、`workspace.json` 的 `inbox / inboxHint` | 与 `frontend-v2/src/locales` 逐字一致（M2 直接使用） |
+
+未改动：授权中心的通知条幅仍读旧 `/api/notifications`（兼容窗口内），超管控制台仍为四栏（公告编辑属 M4）。
+
+验证：`flutter analyze` 无问题；locale 逐字节校验与 800 行门禁通过；新增测试 17 项（`test/features/inbox/*`、`test/app/notification_host_inbox_test.dart`、`test/features/workspace/session_drawer_inbox_test.dart`）；全量 Flutter 测试 338 过、2 失败与 origin/main 一致（`suggestion_composer_test` 大字号布局，与本次无关）。真机推送点击 → 标已读 → 进会话/专题，待上线前与 M5 一起验收。
+

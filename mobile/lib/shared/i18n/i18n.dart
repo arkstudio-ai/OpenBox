@@ -26,6 +26,7 @@ const _namespaces = [
   'common',
   'cron',
   'errors',
+  'inbox',
   'jobs',
   'landing',
   'resources',

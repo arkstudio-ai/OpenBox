@@ -478,3 +478,14 @@ API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"�
 `cors_origins` 限制。`InboxJanitor` 每分钟发布到点公告、每天按策略清理（session 类 90 天）。本机 PostgreSQL 16 对迁移做了
 升/降/升三步验证；单测 +20，相关回归 124 项通过；全量 2214 过、5 失败与 origin/main 一致（SQLite 跑不了上游的 `ALTER TYPE`
 迁移测试等，与本次无关）。接口说明见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)。未部署，未合并。
+
+
+## 消息中心 M3：App 收件箱、专题页与推送点击改造（2026-09-11）
+
+基于 M1 后端接口做 App 端：`features/inbox/` 新增列表页（四分栏带未读数、游标分页、全部已读、跨空间 chip）、专题页
+（`gpt_markdown` 原生渲染 + CTA）和统一的链接解析器 `InboxNavigator`——白名单 kind，会话/定时/授权/技能类先校验成员与会话可读
+再切作用域跳转，`url` 只允许 https 走系统浏览器，未知 kind 回消息中心。抽屉加「消息中心」行与跨空间未读角标，
+`inboxUnreadProvider` 订阅 WS `inbox.updated` 并 2 分钟轮询。`notification_host.dart` 点击推送改为先按 `notificationId`
+标已读、用响应里的 link 路由，读不到再退回原按 `type` 的路由；前台收到推送立即刷角标。locale 新增 `inbox` 命名空间（Web 与
+App 逐字一致）。analyze 无问题，locale 与 800 行门禁通过，新增测试 17 项，全量 338 过、2 失败与 origin/main 一致。未发版。
+

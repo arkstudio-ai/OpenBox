@@ -11,6 +11,8 @@
   "resourceCenterHint": "对象存储中的全部文件",
   "authCenter": "授权中心",
   "authCenterHint": "管理各平台的登录授权",
+  "inbox": "消息中心",
+  "inboxHint": "会话结果与官方通知",
   "projectName": "项目名称",
   "rename": "重命名项目",
   "newChatIn": "新建对话",

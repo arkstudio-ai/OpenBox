@@ -5,6 +5,17 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前两边后端：2026-09-11 14:38 `20260911-takeover-fix-a5fa703`（仅后端，修接管卡片）
+
+- 源码 `main@a5fa703`（PR #27）。运营 09-11 实测验证码接管失败：`desktop_takeover` 每次报 `Question tools must be called directly, not inside a batch`，卡片从不出现。
+  根因：`question.py` 的提问白名单只有 `{question, plan_enter, creator_context}`，`desktop_takeover` 用自己的 part 提问却不在其中，直接调用即被拒（该工具单测 mock 了 ask，未覆盖此闸）。
+  三项失败（缺"打开云桌面接管"按钮、"拒绝"无效、模型退化成 `computer wait` 死循环）都是这一个根因的下游。
+- 修复把白名单与 continuation 映射合并为 `QUESTION_TOOL_CONTINUATIONS` 并加入 `desktop_takeover`；回归测试走真实事务（打补丁前新测试失败、后通过）。
+- EC2 构建 backend 镜像 `docker save|gzip`→scp 到 gw2（sha256 `824795eb…` 两边一致），gw2 与 AWS 各只换 backend：`up -d --no-deps backend`，gw2 18s / AWS 12s healthy。
+  前端保持 `20260910-fe-928a228`，无迁移（仍 `e4f6a8b0c2d4`）。备份 `backups/20260911-takeover-fix-a5fa703/activation-20260911T0638{10,11}Z/`。
+- 公网 `/`、`/api/auth/logto/config` 200；容器内 `question.py` 含 `desktop_takeover: "question"`。
+- 回滚：override backend image 改回 `20260910-takeover-3db71bc`，`up -d --no-deps backend`。
+
 ## 当前两边前端：2026-09-10 22:39 `20260910-fe-928a228`（仅前端，为验证自动换新）
 
 - 源码 `main@928a228`（与线上 `compact-loading-b3fa657` 同代码，仅 build id 不同），EC2 构建、scp 到 gw2，SHA-256 `347be307…` 两边一致。

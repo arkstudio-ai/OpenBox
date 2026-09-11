@@ -149,6 +149,55 @@ async def test_dry_run_is_recorded_as_draft_and_not_counted(world):
     assert pre.metadata["budget"]["today"] == 0 and pre.metadata["can_auto_publish"] is True
 
 
+async def test_ninety_minute_boundary_blocks_before_and_allows_at_boundary(world, monkeypatch):
+    """A refused retry must never reach the desktop or create another job."""
+    ctx = _ctx(world)
+    start = _now_sh(10)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="间隔验收", visibility="private")
+    assert (await execute(args, ctx)).metadata["status"] == "published"
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90) - timedelta(seconds=1))
+    denied = await execute(args, ctx)
+    assert denied.metadata["refused"] and not denied.metadata["degrade"]
+    assert len(world["runs"]) == 1
+    assert len((await execute(DesktopPublishArgs(action="status"), ctx)).metadata["jobs"]) == 1
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90))
+    assert (await execute(args, ctx)).metadata["status"] == "published"
+    assert len(world["runs"]) == 2
+
+
+async def test_fourth_daily_publish_is_refused_before_desktop_then_next_day_resets(world, monkeypatch):
+    """Three spaced posts consume the day; neither retry nor a new day double-counts."""
+    ctx = _ctx(world)
+    start = _now_sh(10)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="日限额验收", visibility="private")
+    for i in range(3):
+        monkeypatch.setattr(svc, "_now", lambda i=i: start + timedelta(minutes=90 * i))
+        assert (await execute(args, ctx)).metadata["status"] == "published"
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90 * 3))
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["budget"]["today"] == 3
+    denied = await execute(args, ctx)
+    assert denied.metadata["refused"] and "每日上限 3" in denied.output
+    assert len(world["runs"]) == 3
+    assert len((await execute(DesktopPublishArgs(action="status"), ctx)).metadata["jobs"]) == 3
+    monkeypatch.setattr(svc, "_now", lambda: (start + timedelta(days=1)).astimezone(SH).replace(hour=8, minute=0))
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["budget"]["today"] == 0 and pre.metadata["can_auto_publish"]
+
+
+async def test_outside_posting_window_refuses_before_upload(world, monkeypatch):
+    ctx = _ctx(world)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="时段验收", visibility="private")
+    for hour in (7, 23):
+        monkeypatch.setattr(svc, "_now", lambda hour=hour: _now_sh(hour))
+        denied = await execute(args, ctx)
+        assert denied.metadata["refused"] and "发布时段" in denied.output
+        assert not world["runs"]
+
+
 async def test_risk_signal_trips_breaker_degrades_and_notifies(world):
     from db.base import get_db_session
     from db.models.notification import Notification

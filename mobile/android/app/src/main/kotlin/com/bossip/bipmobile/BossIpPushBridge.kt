@@ -20,8 +20,6 @@ internal object BossIpPushBridge {
     private const val PREFERENCES = "bossip_jpush"
     private const val KEY_REGISTRATION_ID = "registration_id"
     private const val KEY_INITIAL_OPEN = "initial_open"
-    private const val KEY_PRIVACY_CONSENT = "privacy_consent"
-    private const val KEY_PRIVACY_DECISION = "privacy_decision"
     private const val KEY_PRESENTATION_LIFECYCLE = "presentation_lifecycle"
     private const val KEY_PRESENTATION_SECTION = "presentation_section"
     private const val KEY_PRESENTATION_THREAD_ID = "presentation_thread_id"
@@ -107,22 +105,6 @@ internal object BossIpPushBridge {
         sharedPreferences(context)
             .edit()
             .remove(KEY_INITIAL_OPEN)
-            .apply()
-    }
-
-    fun hasPrivacyDecision(context: Context): Boolean =
-        sharedPreferences(context)
-            .getBoolean(KEY_PRIVACY_DECISION, false)
-
-    fun hasPrivacyConsent(context: Context): Boolean =
-        sharedPreferences(context)
-            .getBoolean(KEY_PRIVACY_CONSENT, false)
-
-    fun setPrivacyConsent(context: Context, granted: Boolean) {
-        sharedPreferences(context)
-            .edit()
-            .putBoolean(KEY_PRIVACY_DECISION, true)
-            .putBoolean(KEY_PRIVACY_CONSENT, granted)
             .apply()
     }
 

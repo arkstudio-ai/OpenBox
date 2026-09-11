@@ -1,7 +1,6 @@
 package com.bossip.bipmobile
 
 import android.Manifest
-import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,10 +15,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.text.SpannableString
-import android.text.method.LinkMovementMethod
-import android.text.util.Linkify
-import android.widget.TextView
 import cn.jpush.android.api.JPushInterface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -33,8 +28,7 @@ import java.util.TimeZone
 open class NotificationActivity : FlutterActivity() {
     private var systemNotificationChannel: MethodChannel? = null
     private var pendingAuthorizationCompletion: ((Boolean) -> Unit)? = null
-    private var pendingConsentResult: MethodChannel.Result? = null
-    private var jpushConsentDialog: AlertDialog? = null
+    private var notificationUserId: String? = null
     private val pendingEvents = mutableListOf<Map<String, Any?>>()
     private var dartNotificationBridgeReady = false
     private var initialNotificationPayload: Map<String, Any?>? = null
@@ -122,6 +116,7 @@ open class NotificationActivity : FlutterActivity() {
     }
 
     private fun setPresentationContext(context: Map<String, Any?>) {
+        notificationUserId = context["userId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
         BossIpPushBridge.updatePresentationContext(
             context = this,
             appLifecycle = context["appLifecycle"]?.toString() ?: "resumed",
@@ -131,14 +126,14 @@ open class NotificationActivity : FlutterActivity() {
             workspaceId = context["workspaceId"]?.toString(),
             bindingId = context["bindingId"]?.toString(),
         )
+        initializeJPush()
     }
 
     override fun onPostResume() {
         super.onPostResume()
         BossIpPushBridge.setLifecycle(this, "resumed")
-        when {
-            BossIpPushBridge.hasPrivacyConsent(this) -> initializeJPush()
-        }
+        initializeJPush()
+        publishAuthorizationChanged()
     }
 
     override fun onStart() {
@@ -171,32 +166,25 @@ open class NotificationActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_POST_NOTIFICATIONS) return
-        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        pendingAuthorizationCompletion?.invoke(granted)
+        // Read the effective OS state, including a disabled notification channel.
+        val granted = notificationAuthorizationStatus() == "granted"
+        val completion = pendingAuthorizationCompletion
         pendingAuthorizationCompletion = null
-        publishSystemNotificationEvent(
-            "authorizationChanged",
-            mapOf(
-                "platform" to "android",
-                "provider" to "jpush",
-                "status" to if (granted) "granted" else "denied",
-            ),
-        )
+        completion?.invoke(granted)
+        publishAuthorizationChanged()
     }
 
     private fun requestNotificationAuthorization(result: MethodChannel.Result) {
-        if (!BossIpPushBridge.hasPrivacyConsent(this)) {
-            showJPushConsentDialog(result)
-            return
+        requestPostNotificationPermission { granted ->
+            if (granted) initializeJPush()
+            result.success(granted)
         }
-        initializeJPush()
-        requestPostNotificationPermission { granted -> result.success(granted) }
     }
 
     private fun requestPostNotificationPermission(completion: (Boolean) -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val granted = notificationAuthorizationStatus() == "granted"
-            publishAuthorizationChanged(granted)
+            publishAuthorizationChanged()
             completion(granted)
             return
         }
@@ -204,7 +192,7 @@ open class NotificationActivity : FlutterActivity() {
             == PackageManager.PERMISSION_GRANTED
         ) {
             val granted = notificationAuthorizationStatus() == "granted"
-            publishAuthorizationChanged(granted)
+            publishAuthorizationChanged()
             completion(granted)
             return
         }
@@ -217,33 +205,27 @@ open class NotificationActivity : FlutterActivity() {
         )
     }
 
-    private fun publishAuthorizationChanged(granted: Boolean) {
+    private fun publishAuthorizationChanged() {
         publishSystemNotificationEvent(
             "authorizationChanged",
             mapOf(
                 "platform" to "android",
                 "provider" to "jpush",
-                "status" to if (granted) "granted" else "denied",
+                "status" to notificationAuthorizationStatus(),
             ),
         )
     }
 
     private fun notificationAuthorizationStatus(): String {
-        if (!BossIpPushBridge.hasPrivacyConsent(this)) return "notDetermined"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled()) {
-            return if (getPreferences(Context.MODE_PRIVATE).getBoolean("push_permission_requested", false)) "denied" else "notDetermined"
-        }
-        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(SYSTEM_NOTIFICATION_ANDROID_CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) return "denied"
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "granted"
-        return if (
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
-            "granted"
-        } else {
-            "notDetermined"
-        }
+        return NotificationAuthorization.status(
+            runtimePermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+            notificationsEnabled = Build.VERSION.SDK_INT < 24 || manager.areNotificationsEnabled(),
+            channelEnabled = Build.VERSION.SDK_INT < 26 ||
+                manager.getNotificationChannel(SYSTEM_NOTIFICATION_ANDROID_CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE,
+            permissionRequested = getPreferences(Context.MODE_PRIVATE).getBoolean("push_permission_requested", false),
+        )
     }
 
     private fun showLocalNotification(
@@ -443,9 +425,9 @@ open class NotificationActivity : FlutterActivity() {
     }
 
     private fun initializeJPush() {
-        if (jpushInitialized || !BossIpPushBridge.hasPrivacyConsent(this)) return
-        // Per Jiguang's compliance guide, no JPush API is called until after
-        // the user has explicitly accepted the disclosure below.
+        if (jpushInitialized || notificationUserId == null || notificationAuthorizationStatus() != "granted") return
+        // Start after login and OS authorization, including an existing grant
+        // or a grant made in system settings while the app was backgrounded.
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         JPushInterface.setDebugMode(debuggable)
         JPushInterface.setThirdPushEnable(applicationContext, true)
@@ -460,61 +442,11 @@ open class NotificationActivity : FlutterActivity() {
             }
     }
 
-    private fun showJPushConsentDialog(result: MethodChannel.Result? = null) {
-        if (BossIpPushBridge.hasPrivacyConsent(this)) {
-            initializeJPush()
-            requestPostNotificationPermission { granted -> result?.success(granted) }
-            return
-        }
-        if (jpushConsentDialog?.isShowing == true) {
-            pendingConsentResult = result ?: pendingConsentResult
-            return
-        }
-        pendingConsentResult = result
-        val disclosure = SpannableString(
-            "BossIP 使用深圳市和讯华谷信息技术有限公司提供的极光推送 SDK，" +
-                "及设备厂商（华为、荣耀、小米、OPPO、vivo、魅族等）的推送通道，" +
-                "用于在 App 后台、锁屏或离线时接收任务结果和待处理提醒。SDK 会处理推送所必需的" +
-                "设备与网络信息。你可以选择暂不开启，之后仍可在设置中重新开启。\n\n" +
-                "极光隐私政策：https://www.jiguang.cn/license/privacy",
-        )
-        Linkify.addLinks(disclosure, Linkify.WEB_URLS)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("开启 BossIP 系统通知")
-            .setMessage(disclosure)
-            .setNegativeButton("暂不开启") { _, _ ->
-                BossIpPushBridge.setPrivacyConsent(this, false)
-                pendingConsentResult?.success(false)
-                pendingConsentResult = null
-            }
-            .setPositiveButton("同意并开启") { _, _ ->
-                BossIpPushBridge.setPrivacyConsent(this, true)
-                initializeJPush()
-                val pending = pendingConsentResult
-                pendingConsentResult = null
-                requestPostNotificationPermission { granted -> pending?.success(granted) }
-            }
-            .create()
-        jpushConsentDialog = dialog
-        dialog.setOnCancelListener {
-            pendingConsentResult?.success(false)
-            pendingConsentResult = null
-        }
-        dialog.setOnDismissListener { jpushConsentDialog = null }
-        dialog.setOnShowListener {
-            dialog.findViewById<TextView>(android.R.id.message)?.movementMethod =
-                LinkMovementMethod.getInstance()
-        }
-        dialog.show()
-    }
-
     override fun onDestroy() {
         localTestHandler.removeCallbacksAndMessages(null)
         BossIpPushBridge.detach()
         pendingAuthorizationCompletion?.invoke(false)
         pendingAuthorizationCompletion = null
-        pendingConsentResult?.success(false)
-        pendingConsentResult = null
         super.onDestroy()
     }
 

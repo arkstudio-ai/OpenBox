@@ -105,6 +105,7 @@ async def run_command_on_desktop(
     timeout: int = COMMAND_TIMEOUT,
     lease_ttl: float = 60.0,
     span_kind: str = "platform.probe",
+    allow_script_error: bool = False,
     session_id: str = "auth-center",
     tool_call_id: str = "",
 ) -> dict:
@@ -112,6 +113,9 @@ async def run_command_on_desktop(
 
     Shared by the login-state probe and hot-list collection: one lease and
     timeline protocol, one mapping of transport failures to platform errors.
+    Publishers opt into structured script errors so their caller can classify
+    risk, login expiry and uncertain posting results instead of retrying them.
+    Process/transport failures still raise regardless of this option.
     """
     from sandbox.events import span
 
@@ -150,7 +154,8 @@ async def run_command_on_desktop(
         if data.get("error"):
             event.status = "fail"
             event.summary = str(data["error"])[:200]
-            raise BrowserNotRunning(str(data["error"])[:200])
+            if not allow_script_error:
+                raise BrowserNotRunning(str(data["error"])[:200])
         event.detail = {"chrome": data.get("chrome"), "targets": data.get("targets")}
         return data
 

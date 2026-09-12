@@ -8,10 +8,88 @@ from pydantic import ValidationError
 import publish.desktop_policy as policy
 import publish.desktop_service as svc
 from publish import desktop_script as script
+from publish.desktop_service import run_script_on_desktop as real_run_script_on_desktop
 from tool.desktop_publish import DesktopPublishArgs, execute
 from tool.tool import ToolContext
 
 SH = policy.SHANGHAI
+
+
+@pytest.fixture
+def publish_transport(world, monkeypatch):
+    """Keep the production script runner and result classifier in the test."""
+    import json
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    class Client:
+        @asynccontextmanager
+        async def desktop_lease(self, **kwargs):
+            yield
+
+        async def execute(self, command, **kwargs):
+            world["runs"].append(command)
+            prefix = "OBX_RESULT " if command.startswith(": obx-desktop-publish;") else ""
+            return SimpleNamespace(exit_code=world.get("exit_code", 0),
+                                   stdout=prefix + json.dumps(world["result"]), stderr="")
+
+    monkeypatch.setattr("platforms.desktop.service._client_for", lambda record: Client())
+    monkeypatch.setattr(svc, "run_script_on_desktop", real_run_script_on_desktop)
+    return world
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+async def test_transport_preserves_risk_for_breaker_and_notification(publish_transport, simulated):
+    from db.base import get_db_session
+    from db.models.notification import Notification
+    from db.models.platform_account import PlatformAccount
+    from sqlalchemy import select
+
+    w = publish_transport
+    w["result"] = {"ok": False, "step": "evidence", "risk": "验证码",
+                   "error": "risk signal (simulated): 验证码" if simulated else "risk signal: 验证码"}
+    args = DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True, simulate_risk=simulated)
+    result = await execute(args, _ctx(w))
+    assert result.metadata["degrade"] is True and result.metadata["retryable"] is False, result.output
+    async with get_db_session() as db:
+        account = await db.get(PlatformAccount, w["acct"])
+        assert account.auto_publish_disabled_at is not None
+        assert ("演练" in account.auto_publish_disabled_reason) is simulated
+        notes = (await db.execute(select(Notification.kind).where(Notification.workspace_id == w["ws"]))).scalars().all()
+        assert notes == ["desktop_publish_degraded"]
+    again = await execute(args, _ctx(w))
+    assert again.metadata["degrade"] is True and len(w["runs"]) == 1
+
+
+async def test_transport_preserves_confirmed_login_expiry(publish_transport):
+    w = publish_transport
+    w["result"] = {"ok": False, "step": "goto", "login_expired": True, "error": "not logged in"}
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True), _ctx(w))
+    assert result.metadata["login_expired"] is True and result.metadata["retryable"] is False, result.output
+    assert (await svc.creator_account(w["ws"])).status == "expired"
+
+
+@pytest.mark.parametrize("step,retryable", [("upload", True), ("readback", False)])
+async def test_transport_preserves_failed_step_to_avoid_duplicate_publish(publish_transport, step, retryable):
+    w = publish_transport
+    w["result"] = {"ok": False, "step": step, "error": "page operation timed out"}
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="测试"), _ctx(w))
+    assert result.metadata["retryable"] is retryable
+    assert result.metadata["degrade"] is False
+    if not retryable:
+        assert "发布结果不明" in result.output
+
+
+async def test_transport_failure_and_login_probe_errors_still_raise(publish_transport):
+    from platforms.desktop import service as desktop
+
+    w = publish_transport
+    w["result"] = {"error": "CDP unavailable"}
+    with pytest.raises(desktop.BrowserNotRunning, match="CDP unavailable"):
+        await desktop.run_on_desktop({"desktop_id": "ecd-test"}, {"action": "probe", "sites": []}, lease=True)
+    w["exit_code"] = 7
+    result = await execute(DesktopPublishArgs(action="publish", asset_id=w["aid"], title="演练", dry_run=True), _ctx(w))
+    assert result.metadata["retryable"] is True and result.metadata["degrade"] is False
 
 
 def _now_sh(hour: int) -> datetime:
@@ -147,6 +225,55 @@ async def test_dry_run_is_recorded_as_draft_and_not_counted(world):
     assert r.metadata["status"] == "draft" and world["runs"][-1]["dry_run"] is True
     pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
     assert pre.metadata["budget"]["today"] == 0 and pre.metadata["can_auto_publish"] is True
+
+
+async def test_ninety_minute_boundary_blocks_before_and_allows_at_boundary(world, monkeypatch):
+    """A refused retry must never reach the desktop or create another job."""
+    ctx = _ctx(world)
+    start = _now_sh(10)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="间隔验收", visibility="private")
+    assert (await execute(args, ctx)).metadata["status"] == "published"
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90) - timedelta(seconds=1))
+    denied = await execute(args, ctx)
+    assert denied.metadata["refused"] and not denied.metadata["degrade"]
+    assert len(world["runs"]) == 1
+    assert len((await execute(DesktopPublishArgs(action="status"), ctx)).metadata["jobs"]) == 1
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90))
+    assert (await execute(args, ctx)).metadata["status"] == "published"
+    assert len(world["runs"]) == 2
+
+
+async def test_fourth_daily_publish_is_refused_before_desktop_then_next_day_resets(world, monkeypatch):
+    """Three spaced posts consume the day; neither retry nor a new day double-counts."""
+    ctx = _ctx(world)
+    start = _now_sh(10)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="日限额验收", visibility="private")
+    for i in range(3):
+        monkeypatch.setattr(svc, "_now", lambda i=i: start + timedelta(minutes=90 * i))
+        assert (await execute(args, ctx)).metadata["status"] == "published"
+    monkeypatch.setattr(svc, "_now", lambda: start + timedelta(minutes=90 * 3))
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["budget"]["today"] == 3
+    denied = await execute(args, ctx)
+    assert denied.metadata["refused"] and "每日上限 3" in denied.output
+    assert len(world["runs"]) == 3
+    assert len((await execute(DesktopPublishArgs(action="status"), ctx)).metadata["jobs"]) == 3
+    monkeypatch.setattr(svc, "_now", lambda: (start + timedelta(days=1)).astimezone(SH).replace(hour=8, minute=0))
+    pre = await execute(DesktopPublishArgs(action="precheck"), ctx)
+    assert pre.metadata["budget"]["today"] == 0 and pre.metadata["can_auto_publish"]
+
+
+async def test_outside_posting_window_refuses_before_upload(world, monkeypatch):
+    ctx = _ctx(world)
+    world["result"] = OK_RESULT
+    args = DesktopPublishArgs(action="publish", asset_id=world["aid"], title="时段验收", visibility="private")
+    for hour in (7, 23):
+        monkeypatch.setattr(svc, "_now", lambda hour=hour: _now_sh(hour))
+        denied = await execute(args, ctx)
+        assert denied.metadata["refused"] and "发布时段" in denied.output
+        assert not world["runs"]
 
 
 async def test_risk_signal_trips_breaker_degrades_and_notifies(world):

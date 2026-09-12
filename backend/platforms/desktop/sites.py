@@ -64,7 +64,10 @@ SITES: tuple[DesktopSite, ...] = (
         login_url="https://creator.douyin.com/",
         home_url="https://creator.douyin.com/creator-micro/home",
         cookie_domains=(".douyin.com",),
-        session_cookies=("sessionid", "sid_tt", "uid_tt", "passport_auth_status"),
+        # QR login verified 2026-09-11: these session cookies are present and
+        # both creator endpoints return code 0 without passport_auth_status.
+        # Requiring that auxiliary cookie prevents the server probe entirely.
+        session_cookies=("sessionid", "sid_tt", "uid_tt"),
         session_probe=LightProbe(
             # The creator home page polls this itself every few tens of seconds.
             url="https://creator.douyin.com/aweme/v1/creator/user_message/unread_count/",

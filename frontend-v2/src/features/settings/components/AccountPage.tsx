@@ -1,13 +1,9 @@
 import { useTranslation } from "react-i18next"
 import { useAuthStore } from "@/shared/api/auth-store"
-import { RowCard, Row } from "./SettingsRow"
+import { RowList, Row, ValueRow } from "./SettingsRow"
 
-function Value({ children, mono }: { children: string; mono?: boolean }) {
-  return (
-    <span className={mono ? "flex-none font-mono text-2xs text-n600" : "flex-none text-sm text-n700"}>
-      {children}
-    </span>
-  )
+function Value({ children }: { children: string }) {
+  return <span className="text-n700 flex-none text-sm">{children}</span>
 }
 
 export function AccountPage() {
@@ -15,11 +11,11 @@ export function AccountPage() {
   const user = useAuthStore((s) => s.user)
   if (!user) return null
   return (
-    <RowCard>
+    <RowList>
       <Row label={t("account.username")} right={<Value>{user.username}</Value>} />
       <Row label={t("account.email")} right={<Value>{user.email || t("account.emailNone")}</Value>} />
       <Row label={t("account.role")} right={<Value>{user.role}</Value>} />
-      <Row label={t("account.userId")} right={<Value mono>{user.id}</Value>} />
-    </RowCard>
+      <ValueRow label={t("account.userId")} value={user.id} mono />
+    </RowList>
   )
 }

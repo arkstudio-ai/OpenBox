@@ -1,20 +1,37 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Menu, MenuItem } from "@/shared/ui/Menu"
-import { useAgentConfig, useAgents, usePreferences, useUpdatePreferences } from "@/features/settings/api/settings"
-import { RowCard, Row, ValuePill } from "./SettingsRow"
+import {
+  useAgentConfig,
+  useAgents,
+  usePreferences,
+  useUpdatePreferences,
+} from "@/features/settings/api/settings"
+import { RowList, Row, ValuePill } from "./SettingsRow"
 
 interface Option {
   id: string
   label: string
 }
 
-function MenuPicker({ value, options, onPick }: { value: string; options: Option[]; onPick: (id: string) => void }) {
+function MenuPicker({
+  value,
+  options,
+  onPick,
+}: {
+  value: string
+  options: Option[]
+  onPick: (id: string) => void
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="relative flex-none">
       <ValuePill value={value} onClick={() => setOpen((o) => !o)} />
-      <Menu open={open} onClose={() => setOpen(false)} className="end-0 top-9 max-h-64 min-w-44 overflow-auto">
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        className="end-0 top-9 max-h-64 min-w-44 overflow-auto"
+      >
         {options.map((o) => (
           <MenuItem
             key={o.id}
@@ -48,7 +65,7 @@ export function ModelsPage() {
   const agentName = agentList.find((a) => a.name === curAgentName)?.name ?? curAgentName ?? DASH
 
   return (
-    <RowCard>
+    <RowList>
       <Row
         label={t("models.defaultModel")}
         hint={t("models.defaultModelHint")}
@@ -71,6 +88,6 @@ export function ModelsPage() {
           />
         }
       />
-    </RowCard>
+    </RowList>
   )
 }

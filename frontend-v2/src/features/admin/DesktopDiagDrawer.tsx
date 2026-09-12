@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { Spinner } from "@/shared/ui/Spinner"
+import { pushOverlay } from "@/shared/ui/overlay-stack"
 import { useCollectDiag, useDesktopDiags, useDesktopEvents, useDiag } from "./api"
 import type { DesktopEvent, DiagCollectResult, DiagLight, DiagRecord, DiagReport } from "./types"
 
@@ -260,12 +261,17 @@ export function DesktopDiagDrawer({ desktopId, onClose }: DrawerProps) {
   const diags = useDesktopDiags(desktopId)
   const collect = useCollectDiag()
 
+  // Mounted only while open, so the whole lifetime is one overlay.
   useEffect(() => {
+    const release = pushOverlay()
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose()
     }
     window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      release()
+    }
   }, [onClose])
 
   let body

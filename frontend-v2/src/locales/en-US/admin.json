@@ -51,8 +51,7 @@
   "title": "Fleet management",
   "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
   "console": {
-    "title": "Admin console",
-    "subtitle": "Fleet, skills, subscriptions and notification tests."
+    "title": "Admin console"
   },
   "nav": {
     "fleet": "Fleet",

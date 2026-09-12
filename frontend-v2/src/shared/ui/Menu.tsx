@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react"
 import { cn } from "@/shared/lib/cn"
+import { pushOverlay } from "./overlay-stack"
 
 interface MenuProps {
   open: boolean
@@ -14,6 +15,7 @@ export function Menu({ open, onClose, className, children }: MenuProps) {
 
   useEffect(() => {
     if (!open) return
+    const release = pushOverlay()
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
@@ -27,6 +29,7 @@ export function Menu({ open, onClose, className, children }: MenuProps) {
       window.clearTimeout(id)
       window.removeEventListener("mousedown", onDown)
       window.removeEventListener("keydown", onKey)
+      release()
     }
   }, [open, onClose])
 

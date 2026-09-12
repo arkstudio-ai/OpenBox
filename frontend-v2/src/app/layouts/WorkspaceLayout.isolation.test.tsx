@@ -58,8 +58,9 @@ let calls: Call[]
 const TARGET = "session_user_b"
 
 // The viewer's own side-effect-free shell reads, never scoped to the inspected
-// session: workspace list, the viewer's projects and session list (sidebar),
-// appearance preferences and the environment badge. Deliberately absent:
+// session: workspace list, the viewer's projects and session list (the topbar
+// names the page and resolves its way back with them), appearance preferences
+// and the environment badge. Deliberately absent:
 // `/api/billing/balance` — its handler settles the billing period
 // (ensure_period_allowance), a write, so the shell must not issue it here.
 const ALLOWED_READS = [
@@ -195,7 +196,10 @@ describe("trajectory routes inside the workspace shell", () => {
       timeout: 8_000,
     })
     expect(calls.some((call) => call.method === "POST" && call.path === "/api/auth/ticket")).toBe(true)
-    // Ordinary pages keep the sidebar credit balance; only the viewer omits it.
+    // Settings takes the window over and renders no sidebar, so the credit
+    // balance belongs to a page that still has one. The viewer omits it even
+    // there, which is what the whole-suite `expectNoViewerExecution` asserts.
+    await act(() => memory.navigate(paths.app))
     await waitFor(() => expect(calls.some((call) => call.path === "/api/billing/balance")).toBe(true))
     await act(() => memory.navigate(paths.adminTrajectories()))
     await waitFor(() => expect(sockets.every((socket) => socket.readyState === FakeSocket.CLOSED)).toBe(true))

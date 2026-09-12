@@ -34,10 +34,14 @@ def _init_agent():
 def _init_infrastructure(config):
     """Initialize multi-user infrastructure (DB, Redis, Blob, Auth).
 
-    Only initializes if jwt_secret is configured (multi-user mode).
-    Single-user mode (no jwt_secret) skips infrastructure init.
+    Multi-user mode initializes shared database, Redis and authentication.
+    Desktop mode only needs a local one-time subscription ticket store.
     """
     if not config.jwt_secret:
+        from cache.memory_cache import MemoryCache
+        from auth.ticket import init_ticket_store
+        config._cache = MemoryCache()
+        init_ticket_store(config._cache)
         log.info("No JWT_SECRET configured — running in single-user mode (no auth)")
         return
 
@@ -57,22 +61,33 @@ def _init_infrastructure(config):
 
 
 async def _cleanup_infrastructure(config):
-    """Close the shared database plus multi-user-only cache resources."""
+    """Close the shared database and the initialized ticket/cache resources."""
     try:
         from db.base import close_engine
         await close_engine()
     except Exception as e:
         log.warning(f"Error closing database: {e}")
 
-    if not config.jwt_secret:
-        return
-
     try:
         cache = getattr(config, '_cache', None)
         if cache:
             await cache.close()
     except Exception as e:
-        log.warning(f"Error closing Redis: {e}")
+        log.warning(f"Error closing cache: {e}")
+
+
+async def _shutdown_trajectory():
+    """Release workers even when a pending receipt reports a durable failure."""
+    from trajectory import flush
+    from trajectory.export import stop_exports
+    from trajectory.payload import stop_archive_worker
+    try:
+        await stop_exports()
+    finally:
+        try:
+            await flush()
+        finally:
+            await stop_archive_worker()
 
 
 @asynccontextmanager
@@ -89,6 +104,17 @@ async def lifespan(app: FastAPI):
     from db.base import ensure_engine
 
     await ensure_engine(config)
+    from trajectory.payload import start_archive_worker
+    await start_archive_worker()
+    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled
+    log.info(
+        "Trajectory monitoring: recording=%s admin_read=%s",
+        trajectory_recording_enabled(),
+        admin_enabled(),
+    )
+    if admin_enabled():
+        from trajectory.export import resume_exports
+        await resume_exports()
 
     # Rebuild process-local routing from the real execution plane. Provider
     # resources can outlive one web process; deleting them on startup would
@@ -210,11 +236,15 @@ async def lifespan(app: FastAPI):
 
     # Container state cleanup
     from sandbox import sandbox_manager
-    await sandbox_manager.release_all(destroy=False)
-    # Provider resources intentionally outlive the web process. Explicit owner
-    # deletion and the database-guarded idle reaper own destructive cleanup;
-    # a rolling web restart must not terminate recoverable provider work.
-    await _cleanup_infrastructure(config)
+    try:
+        await sandbox_manager.release_all(destroy=False)
+        # Provider resources intentionally outlive the web process. Explicit
+        # owner deletion and the database-guarded idle reaper own cleanup.
+    finally:
+        try:
+            await _shutdown_trajectory()
+        finally:
+            await _cleanup_infrastructure(config)
 
 
 def create_app() -> FastAPI:
@@ -295,6 +325,10 @@ def create_app() -> FastAPI:
     application.include_router(admin_fleet_router)
     application.include_router(admin_skills_router)
     application.include_router(admin_billing_router)
+    from api.admin_trajectories import router as admin_trajectories_router
+    from api.admin_trajectory_ws import router as admin_trajectory_ws_router
+    application.include_router(admin_trajectories_router)
+    application.include_router(admin_trajectory_ws_router)
 
     from api.billing import router as billing_router
     application.include_router(billing_router)

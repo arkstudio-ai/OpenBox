@@ -1,0 +1,8 @@
+{
+  "scope": "frontend pure projector only; not end-to-end or database latency",
+  "node": "v24.18.0",
+  "events": 100000,
+  "records": 10000,
+  "elapsedMs": 111.83741599999999,
+  "throughSeq": "100000"
+}

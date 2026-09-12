@@ -56,11 +56,12 @@ async def _mark_interrupted_runs() -> None:
     """Mark cron_runs that were running when the server crashed."""
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from sqlalchemy import update
+    from sqlalchemy import select, update
 
     now = datetime.now(timezone.utc)
 
     async with get_db_session() as db:
+        interrupted = (await db.scalars(select(CronRun).where(CronRun.status == "running"))).all()
         result = await db.execute(
             update(CronRun)
             .where(CronRun.status == "running")
@@ -70,6 +71,15 @@ async def _mark_interrupted_runs() -> None:
                 ended_at=now,
             )
         )
+        from trajectory import TraceContext, record
+        for run in interrupted:
+            if run.trace_context:
+                context = TraceContext.from_dict(run.trace_context)
+                await record("job.finished", {"job_id": run.id, "status": "unknown",
+                    "reason": "process_restarted", "last_known_status": "running"}, context=context, db=db,
+                    event_id=f"cron:{run.id}:interrupted")
+                await record("recording.gap", {"job_id": run.id, "reason": "process_restarted",
+                    "result_availability": "unknown"}, context=context, db=db)
         if result.rowcount > 0:
             log.warning(f"Marked {result.rowcount} interrupted cron run(s) as error")
 

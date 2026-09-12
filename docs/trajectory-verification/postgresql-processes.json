@@ -1,0 +1,116 @@
+{
+  "repeat_count": 5,
+  "all_passed": true,
+  "runs": [
+    {
+      "database": "postgresql",
+      "events": 51,
+      "unique_event_ids": 51,
+      "committed_seq": "51",
+      "next_seq": "52",
+      "contiguous": true,
+      "processes": [
+        {
+          "pid": 77399,
+          "events": 25,
+          "retries": 1
+        },
+        {
+          "pid": 77398,
+          "events": 25,
+          "retries": 1
+        }
+      ],
+      "start_method": "spawn",
+      "simultaneous_start_barrier": true
+    },
+    {
+      "database": "postgresql",
+      "events": 51,
+      "unique_event_ids": 51,
+      "committed_seq": "51",
+      "next_seq": "52",
+      "contiguous": true,
+      "processes": [
+        {
+          "pid": 77442,
+          "events": 25,
+          "retries": 1
+        },
+        {
+          "pid": 77443,
+          "events": 25,
+          "retries": 1
+        }
+      ],
+      "start_method": "spawn",
+      "simultaneous_start_barrier": true
+    },
+    {
+      "database": "postgresql",
+      "events": 51,
+      "unique_event_ids": 51,
+      "committed_seq": "51",
+      "next_seq": "52",
+      "contiguous": true,
+      "processes": [
+        {
+          "pid": 77454,
+          "events": 25,
+          "retries": 1
+        },
+        {
+          "pid": 77455,
+          "events": 25,
+          "retries": 1
+        }
+      ],
+      "start_method": "spawn",
+      "simultaneous_start_barrier": true
+    },
+    {
+      "database": "postgresql",
+      "events": 51,
+      "unique_event_ids": 51,
+      "committed_seq": "51",
+      "next_seq": "52",
+      "contiguous": true,
+      "processes": [
+        {
+          "pid": 77468,
+          "events": 25,
+          "retries": 1
+        },
+        {
+          "pid": 77469,
+          "events": 25,
+          "retries": 1
+        }
+      ],
+      "start_method": "spawn",
+      "simultaneous_start_barrier": true
+    },
+    {
+      "database": "postgresql",
+      "events": 51,
+      "unique_event_ids": 51,
+      "committed_seq": "51",
+      "next_seq": "52",
+      "contiguous": true,
+      "processes": [
+        {
+          "pid": 77480,
+          "events": 25,
+          "retries": 1
+        },
+        {
+          "pid": 77481,
+          "events": 25,
+          "retries": 1
+        }
+      ],
+      "start_method": "spawn",
+      "simultaneous_start_barrier": true
+    }
+  ]
+}

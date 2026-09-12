@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from core.log import create_logger
 from sandbox.client import IdleNotification
 from tool.tool import ToolResult, ToolContext, define_tool
+from trajectory.types import TrajectoryError
 
 log = create_logger("tool.bash")
 
@@ -102,6 +103,8 @@ Reply with one word only: wait, kill, or success"""
         log.warning(f"[LLM Judge] Unrecognized response '{answer}', defaulting to kill")
         return "kill"
     except Exception as e:
+        if isinstance(e, TrajectoryError):
+            raise
         log.warning(f"[LLM Judge] LLM call failed: {e}")
         return "kill"
 
@@ -174,7 +177,25 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                 # Push incremental update to frontend
                 if len(collected_output) <= MAX_STREAM_OUTPUT:
                     await ctx.update_output(collected_output)
+                else:
+                    # The chat preview has a size budget, but observed stdout
+                    # remains part of the execution history after that point.
+                    from trajectory import record, current
+                    trace = getattr(ctx, "trace_context", None) or current()
+                    if trace is not None:
+                        from trajectory.stream_redaction import StreamTextRedactor
+                        if ctx._trajectory_output_redactor is None:
+                            ctx._trajectory_output_redactor = StreamTextRedactor()
+                        safe_output = ctx._trajectory_output_redactor.redact(
+                            chunk.content if ctx._on_output else collected_output,
+                            mode="delta" if ctx._on_output else "replace",
+                        )
+                        await record("tool.output", {
+                            **safe_output,
+                            "stage": "executor_stream",
+                        }, context=trace)
 
+        ctx._trajectory_full_tool_output = collected_output
         output = collected_output
         if len(output) > MAX_STREAM_OUTPUT:
             output = output[:MAX_STREAM_OUTPUT] + "\n... (output truncated)"
@@ -185,7 +206,9 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
             metadata={"exit_code": exit_code},
         )
 
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, TrajectoryError):
+            raise
         # Fallback to non-streaming execution if streaming fails
         result = await ctx.sandbox.execute(
             command=args.command,

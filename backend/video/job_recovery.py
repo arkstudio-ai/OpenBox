@@ -141,6 +141,9 @@ async def sweep() -> int:
             if recovered:
                 advanced += 1
         except Exception as exc:
+            from trajectory.types import TrajectoryError
+            if isinstance(exc, TrajectoryError):
+                raise
             # A job whose provider lookup keeps failing (expired relay task,
             # revoked key) would otherwise warn every sweep. The OpenBox
             # logger itself runs at DEBUG, so logging repeats at debug level is
@@ -200,9 +203,11 @@ async def _recover_job(job) -> bool:
         if job is None or job.status != "transfer_failed":
             return False
 
-    data = await vp._provider_status(target, job.provider_task_id)
-    state = vp._provider_state(data, target)
+    from agent.trajectory import service_scope
     ctx = _recovery_context(job)
+    async with service_scope(ctx, job=job):
+        data = await vp._provider_status(target, job.provider_task_id)
+    state = vp._provider_state(data, target)
 
     if state == "completed":
         refreshed = await vp._finalize_segment(job, data, ctx, settings, target)
@@ -245,6 +250,10 @@ async def _reclaim_stale_finalizing(job_id: str) -> bool:
                 updated_at=datetime.now(timezone.utc),
             )
         )
+        if result.rowcount == 1:
+            from trajectory.jobs import record_job_in_tx
+            job = await db.get(VideoJob, job_id, populate_existing=True)
+            await record_job_in_tx(db, job)
     return result.rowcount == 1
 
 
@@ -261,7 +270,12 @@ def _recovery_context(job):
     # attachment still happens on the next tool call that sees the job.
     from tool.tool import ToolContext
 
-    return ToolContext(session_id=job.session_id or "", user_id=job.user_id)
+    from trajectory import TraceContext
+    from trajectory.jobs import CONTEXT_KEY
+    saved = (job.request_data or {}).get(CONTEXT_KEY)
+    trace = TraceContext.from_dict(saved) if saved else None
+    return ToolContext(session_id=job.session_id or "", user_id=job.user_id,
+                       workspace_id=trace.workspace_id or "" if trace else "", trace_context=trace)
 
 
 def _age_seconds(dt: datetime | None) -> float:

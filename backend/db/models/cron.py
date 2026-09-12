@@ -105,6 +105,8 @@ class CronRun(Base):
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     temp_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    trace_context: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+
     # Execution state
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

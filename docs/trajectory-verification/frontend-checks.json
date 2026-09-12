@@ -1,0 +1,158 @@
+{
+  "generated_at": "2026-09-11T10:41:22.198250+00:00",
+  "product_frozen": {
+    "src_files": 681,
+    "unchanged_since_complete_check_and_build": true,
+    "sha256_of_sorted_file_digests": "6b8220b65f1758cd4a5bf17ee3478bc410982ab48ccdfe0b1e3a09afb7c2bb75",
+    "post_build_changes": "Two e2e QA files: expected baseline count, seek labels and report distribution spread; one i18n audit helper formatted only. No product source changes."
+  },
+  "commands": [
+    {
+      "command": "npm run check",
+      "exit_code": 0,
+      "vitest_files": 105,
+      "vitest_tests": 736,
+      "vitest_duration_s": 10.8,
+      "i18n": "parity OK",
+      "typescript": "passed",
+      "eslint": {
+        "errors": 0,
+        "warnings": 35,
+        "baseline_warnings": 32,
+        "additional": "2 lazy route Fast Refresh warnings and 1 fixture Fast Refresh warning"
+      }
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "command": "Prettier --check -- <185 changed frontend paths>",
+      "exit_code": 0,
+      "paths": 185
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "npx playwright test -c playwright.trajectories.config.ts e2e/trajectories-scale.spec.ts",
+      "exit_code": 0,
+      "tests": 1,
+      "duration_s": 40.3,
+      "metrics": "qa-scale-metrics.json"
+    }
+  ],
+  "functional_e2e": {
+    "unique_cases": 15,
+    "cases": [
+      "golden session: head and historical position match the backend projection",
+      "list: filters, server sort and cursor paging live in the URL and survive a detail round trip",
+      "session: timeline, virtual record tree and inspector with type-specific tabs and captured fields",
+      "replay at a fixed position shows only the recorded prefix: no later result, usage, agent, row or search hit",
+      "live head advances while the replay position, selection and URL stay put",
+      "event and Step stepping, typed seek, play/pause and reload restore the position",
+      "protected $media: shown from the payload endpoint, released on deletion, never read before it existed",
+      "refused read",
+      "watermark socket closed with 4403 latches the refusal without waiting for a REST failure",
+      "role loss in the signed-in account clears what was shown and stops reading",
+      "deleting the watched session clears what was shown",
+      "list refused with 403 shows the access notice and no rows",
+      "read-only viewer: no control can approve, answer, send, resume, cancel or execute",
+      "visual: dark English desktop session with a tool result",
+      "visual: Chinese narrow session and Chinese list and replay"
+    ],
+    "complete_run": {
+      "passed": 14,
+      "failed": 1,
+      "failure": "deleted session header error hidden behind unbound loading gate"
+    },
+    "after_fix": {
+      "targeted_deletion_passed": 1,
+      "before_format_s": 3.2,
+      "after_format_s": 3.4
+    },
+    "claim": "All 15 scenarios have passing evidence across the full run plus the targeted fixed deletion run. This is not a claim that the full 15-case suite was rerun on the final version."
+  },
+  "scale_attempts": [
+    {
+      "log": "supervisor-final-scale.log",
+      "outcome": "Fixture expected count stale: 10003 vs actual10004; no browser samples taken."
+    },
+    {
+      "log": "supervisor-final-scale-calibrated.log",
+      "outcome": "All sampling loops reached report construction, then double distribution of an object failed; no complete metric artifact retained."
+    },
+    {
+      "log": "supervisor-final-scale-report-fixed.log",
+      "outcome": "One complete case passed; all raw samples and missed initial targets retained in qa-scale-metrics.json."
+    }
+  ],
+  "raw_log_index": [
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-check.log",
+      "bytes": 9068,
+      "sha256": "3db500fe89814fe7bcbfe344a8a44ce977c995198514ae643b00963044835148"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-build.log",
+      "bytes": 10124,
+      "sha256": "d1a38dfd772545d375d3bbf51141e66d69dc9b281a34515d5190737eccdf6a93"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-format.log",
+      "bytes": 66,
+      "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/qa-functional-corrected-run.log",
+      "bytes": 4524,
+      "sha256": "81a637993be0118c9567a67212f99ee3971a914b97440a7bd721b220cb2f9fac"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/ui-delete-logs/deletion-e2e-after-format.log",
+      "bytes": 317,
+      "sha256": "b419f79fc137a8d5cc028b9a7c97e7546474a9704d1bf29ebc89b2b7fc19f444"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/qa-scale-calibrate-checks.log",
+      "bytes": 611,
+      "sha256": "027c0e9acd189ea9a16293a1f30a8f61b8b201baba65b404f250086485f519e1"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-scale.log",
+      "bytes": 2060,
+      "sha256": "0bd67eee7edf37ee1e1e07d9405a6c20bea17963a8e6e8b4c26dd708691931b8"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-scale-calibrated.log",
+      "bytes": 2013,
+      "sha256": "9d026b793d73dc775dd795ab61d9545e60febe15b06c223ad9566bfc19995c44"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/supervisor-final-scale-report-fixed.log",
+      "bytes": 378,
+      "sha256": "cdb61bae35df7c72027a9157f2c8f48f16b8bc88aa1bb28d3415ed8f6a75149e"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/ui-delete-logs/deletion-e2e-before-format.log",
+      "bytes": 317,
+      "sha256": "503af644479b6a8f557e6a6096b2ac804b67462c184c67ac761a172299ba59e0"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/ui-delete-logs/vitest-inventory.log",
+      "bytes": 550,
+      "sha256": "4760f95571819a78f44826cee1fee6692ecae83997eeb62a625539baa50f0c91"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/ui-delete-logs/eslint-inventory.log",
+      "bytes": 5668,
+      "sha256": "4938a6e8a4b345b304a4104f1e9e151de1892bb17c896b935fd6f43fc452caf5"
+    },
+    {
+      "path": "frontend-v2/test-results/trajectory-claude/ui-delete-logs/page-tests-before-format.log",
+      "bytes": 543,
+      "sha256": "68618770cc81132db0834afdf0b19a676580a9bc4c73857fd85e839e7f420613"
+    }
+  ]
+}

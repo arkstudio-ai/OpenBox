@@ -25,6 +25,8 @@ const AdminFleetRoute = lazy(() => import("@/routes/admin/AdminFleetRoute"))
 const AdminSkillsRoute = lazy(() => import("@/routes/admin/AdminSkillsRoute"))
 const AdminBillingRoute = lazy(() => import("@/routes/admin/AdminBillingRoute"))
 const AdminWorkspaceRoute = lazy(() => import("@/routes/admin/AdminWorkspaceRoute"))
+const AdminTrajectoriesRoute = lazy(() => import("@/routes/admin/AdminTrajectoriesRoute"))
+const AdminTrajectorySessionRoute = lazy(() => import("@/routes/admin/AdminTrajectorySessionRoute"))
 
 export const router = createBrowserRouter([
   {
@@ -93,6 +95,8 @@ export const router = createBrowserRouter([
               // so the file reads the way it resolves.
               { path: routePatterns.adminWorkspace, element: <AdminWorkspaceRoute /> },
               { path: routePatterns.adminBilling, element: <AdminBillingRoute /> },
+              { path: routePatterns.adminTrajectories, element: <AdminTrajectoriesRoute /> },
+              { path: routePatterns.adminTrajectorySession, element: <AdminTrajectorySessionRoute /> },
             ],
           },
         ],

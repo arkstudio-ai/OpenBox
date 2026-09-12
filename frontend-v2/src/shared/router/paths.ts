@@ -19,8 +19,7 @@ export const paths = {
   cron: "/app/cron",
   skills: "/app/skills",
   authCenter: "/app/auth-center",
-  resources: (projectId?: string) =>
-    projectId ? `/app/resources?project=${projectId}` : "/app/resources",
+  resources: (projectId?: string) => (projectId ? `/app/resources?project=${projectId}` : "/app/resources"),
   admin: "/app/admin",
   // Kept at its original value: links to the fleet page predate the console
   // shell and are still handed around in ops runbooks.
@@ -28,8 +27,12 @@ export const paths = {
   adminNotifications: "/app/admin/notifications",
   adminSkills: (tab?: string) => (tab ? `/app/admin/skills/${tab}` : "/app/admin/skills"),
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
-  adminWorkspace: (workspaceId: string) =>
-    `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
+  adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
+  /** `search` is an already-encoded query string without the leading "?". */
+  adminTrajectories: (search?: string) =>
+    search ? `/app/admin/trajectories?${search}` : "/app/admin/trajectories",
+  adminTrajectorySession: (sessionId: string, search?: string) =>
+    `/app/admin/trajectories/sessions/${encodeURIComponent(sessionId)}${search ? `?${search}` : ""}`,
 } as const
 
 /** Query params a chat URL may carry to open a workbench panel on arrival. */
@@ -64,4 +67,6 @@ export const routePatterns = {
   adminSkills: "skills/:tab?",
   adminBilling: "billing/:tab?",
   adminWorkspace: "billing/workspaces/:workspaceId",
+  adminTrajectories: "trajectories",
+  adminTrajectorySession: "trajectories/sessions/:sessionId",
 } as const

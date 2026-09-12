@@ -950,18 +950,18 @@ def build_payload(
 
 async def submit(route: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
     import httpx
+    from agent.trajectory import capture_service_dispatch, capture_http_response
 
-    async with httpx.AsyncClient(
-        timeout=route.submit_timeout_seconds, follow_redirects=True
-    ) as client:
-        response = await client.post(
-            f"{route.base_url}{path}",
-            headers={"Authorization": auth_header(route), "Content-Type": "application/json"},
-            json=body,
-        )
-    if response.status_code not in (200, 201, 202):
-        response.raise_for_status()
-    return response.json()
+    async with capture_service_dispatch(purpose="video_generation", provider=route.provider,
+            model=str(body.get("model") or route.model), operation="POST " + path,
+            body=body, profile="video_generation") as capture:
+        async with httpx.AsyncClient(timeout=route.submit_timeout_seconds, follow_redirects=True) as client:
+            response = await client.post(f"{route.base_url}{path}",
+                headers={"Authorization": auth_header(route), "Content-Type": "application/json"}, json=body)
+        data = await capture_http_response(capture, response)
+        if response.status_code not in (200, 201, 202):
+            response.raise_for_status()
+        return data
 
 
 def extract_task_id(route: Any, raw: dict[str, Any]) -> str:
@@ -994,6 +994,8 @@ async def status(route: Any, task_id: str) -> dict[str, Any]:
         )
     response.raise_for_status()
     raw = response.json()
+    from agent.trajectory import observe_service_response
+    await observe_service_response(raw, operation="video_status")
     return _unwrap_task_envelope(raw) if channel == "task" else raw
 
 

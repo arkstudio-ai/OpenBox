@@ -9,12 +9,34 @@ import { paths } from "@/shared/router/paths"
 import { useCreditBalance } from "@/shared/api/billing"
 import { formatCredits } from "@/shared/lib/format"
 
-export function UserRow({ sessionCount }: { sessionCount: number }) {
+interface UserRowProps {
+  sessionCount: number
+  /**
+   * Show the credit balance. Reading it is not passive — the server settles the
+   * workspace's billing period on that read — so observation-only pages (the
+   * admin trajectory viewer) turn it off and the query is never mounted.
+   */
+  showCredits?: boolean
+}
+
+/** The balance line owns its query, so omitting the line omits the request. */
+function CreditLine() {
+  const { t } = useTranslation("workspace")
+  const credits = useCreditBalance()
+  return (
+    <span className="text-n600 truncate text-xs">
+      {credits.isError
+        ? t("creditsUnavailable")
+        : t("creditBalance", { value: formatCredits(credits.data?.balance) })}
+    </span>
+  )
+}
+
+export function UserRow({ sessionCount, showCredits = true }: UserRowProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const [menuOpen, setMenuOpen] = useState(false)
-  const credits = useCreditBalance()
 
   const signOut = () => {
     setMenuOpen(false)
@@ -61,11 +83,7 @@ export function UserRow({ sessionCount }: { sessionCount: number }) {
           onClick={() => navigate(paths.billing("usage"))}
         >
           <span className="text-md truncate font-medium">{user?.username}</span>
-          <span className="text-n600 truncate text-xs">
-            {credits.isError
-              ? t("creditsUnavailable")
-              : t("creditBalance", { value: formatCredits(credits.data?.balance) })}
-          </span>
+          {showCredits && <CreditLine />}
           <span className="sr-only">
             {t("userLine", { role: user?.role ?? "user", count: sessionCount })}
           </span>

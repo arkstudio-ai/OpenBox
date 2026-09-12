@@ -47,5 +47,8 @@ async def sweep() -> int:
                 advanced += 1
                 log.info(f"Recovered stranded composition {job.id} to {refreshed.status}")
         except Exception as exc:
+            from trajectory.types import TrajectoryError
+            if isinstance(exc, TrajectoryError):
+                raise
             log.debug(f"compose recovery for {job.id} failed: {type(exc).__name__}")
     return advanced

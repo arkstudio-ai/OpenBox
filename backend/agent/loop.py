@@ -327,6 +327,16 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     ticket = await question_runtime.start_run(session_id, user_id, expected_generation=expected_generation)
     if ticket is None:
         return None
+    from trajectory import bind as bind_trace, record as record_trace
+    run_trace = await question_runtime.get_run_trace(ticket)
+    trace_scope = bind_trace(run_trace)
+    trace_scope.__enter__()
+    step_trace_scope = None
+    step_traces = {}
+    step_times = {}
+    last_step_requests = {}
+    step_attempts = {}
+    finished_steps = set()
     run_context = question_runtime.current_run.set(ticket)
     abort = register_run(session_id)
     lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
@@ -390,6 +400,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 # default would silently match nothing.
                 await update_session(session_id, user_id=user_id, model=model_id)
             except Exception as e:
+                from trajectory import TrajectoryError
+                if isinstance(e, TrajectoryError):
+                    raise
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
         run_id = ticket.run_id
@@ -472,6 +485,17 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 break
 
             step += 1
+            if step_trace_scope is not None:
+                step_trace_scope.__exit__(None, None, None)
+                step_trace_scope = None
+            if run_trace is not None:
+                if step not in step_traces:
+                    step_traces[step] = run_trace.derive(step_id=ascending("step"))
+                    step_times[step] = time.monotonic()
+                    await record_trace("step.started", {"step": step, "timing_source": "producer_monotonic"},
+                                       context=step_traces[step])
+                step_trace_scope = bind_trace(step_traces[step])
+                step_trace_scope.__enter__()
 
             if step > 200:
                 failed = True
@@ -611,6 +635,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             ctx = ToolContext(
                 session_id=session_id,
                 run_id=run_id,
+                trace_context=(step_traces[step].derive(request_id=last_step_requests.get(step))
+                               if step in step_traces else None),
                 user_id=user_id,
                 workspace_id=session.workspace_id,
                 project_id=session.project_id or "",
@@ -633,6 +659,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                     config.tool_exposure.max_search_result_chars_per_step
                 ),
             )
+
+            step_attempts[step] = step_attempts.get(step, 0) + 1
+            ctx._trajectory_attempt = step_attempts[step]
 
             # Create hooks with config permission rules + agent permission rules
             hooks = ToolHooks(
@@ -660,6 +689,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                     raise ValueError("capability result is outside the discovery frontier")
                 from session.internal_parts import ToolRevealEvent, commit_tool_reveals
 
+                from agent.hooks import current_tool_context
+                call_origin = current_tool_context()
                 events = []
                 for stream_seq, tool_id in enumerate(ids):
                     entry = runtime.eligible_catalog.entries.get(tool_id)
@@ -670,7 +701,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                             session_id=session_id,
                             user_id=user_id,
                             message_id=assistant_info.id,
-                            origin_part_id=ctx.part_id,
+                            origin_part_id=call_origin.part_id if call_origin is not None else ctx.part_id,
                             agent_id=agent_name,
                             canonical_tool_id=tool_id,
                             schema_digest=entry.schema_digest,
@@ -912,7 +943,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             )
             # Fetch the image bytes only here, on the path that actually calls
             # a vision model — token counting and cron never need them.
-            llm_messages = await resolve_images(llm_messages, model_id)
+            ctx._trajectory_media_sources = {}
+            llm_messages = await resolve_images(llm_messages, model_id, media_sources=ctx._trajectory_media_sources)
 
             # Determine previous assistant agent for transition detection
             prev_assistant_agent = None
@@ -1151,8 +1183,20 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 tool_choice="required" if output_schema else None,
             )
 
+            if getattr(ctx, "trace_context", None) is not None:
+                last_step_requests[step] = ctx.trace_context.request_id
+
             # Retry policy lives here, not in the step: the step only reports
             # that the failure was transient.
+            if run_trace is not None and result.outcome is not StepOutcome.RETRY:
+                await record_trace("step.finished", {
+                    "step": step, "status": "failed" if result.outcome is StepOutcome.ERROR else
+                        "cancelled" if abort.is_set() else "waiting" if result.finish_reason == "waiting_input" else "completed",
+                    "finish_reason": result.finish_reason, "error": result.error,
+                    "duration_ms": (time.monotonic() - step_times[step]) * 1000,
+                    "timing_source": "producer_monotonic",
+                }, context=step_traces[step])
+                finished_steps.add(step)
             if result.outcome is StepOutcome.RETRY:
                 if llm_retry_count < MAX_LLM_RETRIES:
                     llm_retry_count += 1
@@ -1169,7 +1213,14 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                         "userId": user_id, "sessionId": session_id, "status": "retry",
                         "attempt": llm_retry_count, "maxAttempts": MAX_LLM_RETRIES,
                     })
-                    await asyncio.sleep(delay)
+                    await record_trace("request.retry_scheduled", {
+                        "attempt": step_attempts[step] + 1, "max_attempts": MAX_LLM_RETRIES + 1,
+                        "reason": result.retry_reason, "wait_ms": delay * 1000,
+                    }, context=getattr(ctx, "trace_context", None))
+                    try:
+                        await asyncio.wait_for(abort.wait(), timeout=delay)
+                    except TimeoutError:
+                        pass
                     step -= 1  # a retried attempt is not a step
                     continue
                 log.error(f"LLM error in session {session_id} after {llm_retry_count} retries: {result.error}")
@@ -1256,6 +1307,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                             user_id=user_id,
                         )
                 except Exception as e:
+                    from trajectory import TrajectoryError
+                    if isinstance(e, TrajectoryError):
+                        raise
                     log.warning(f"Failed to record patch part: {e}")
 
             # Upsert PlanPart when plan agent is active
@@ -1314,6 +1368,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             if flushed:
                 log.info(f"Flushed {flushed} pending cron result(s) for session {session_id}")
         except Exception as e:
+            from trajectory import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             log.debug(f"Cron flush skipped: {e}")
 
         bus.publish(SESSION_FINALIZING, {
@@ -1356,6 +1413,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                                     # copy and the composer stays busy.
                                     await update_part_data(part_id, p, publish=True, user_id=user_id)
             except Exception as cleanup_err:
+                from trajectory import TrajectoryError
+                if isinstance(cleanup_err, TrajectoryError):
+                    raise
                 log.warning(f"Tool cleanup error: {cleanup_err}")
 
             # The same problem one level up: a task still flagged in_progress
@@ -1369,12 +1429,18 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
 
                 await settle_running_todos(session_id, user_id)
             except Exception as todo_err:
+                from trajectory import TrajectoryError
+                if isinstance(todo_err, TrajectoryError):
+                    raise
                 log.warning(f"Todo settle error: {todo_err}")
 
             # Post-loop: prune old tool outputs
             try:
                 await prune_tool_outputs(session_id, user_id=user_id)
             except Exception as prune_err:
+                from trajectory import TrajectoryError
+                if isinstance(prune_err, TrajectoryError):
+                    raise
                 log.warning(f"Tool prune error: {prune_err}")
 
         # Finish cleanup before releasing this execution slot. A background
@@ -1388,6 +1454,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         raise
     except Exception as e:
         failed = True
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.error(f"Agent loop error for session {session_id}: {e}")
         bus.publish(SESSION_ERROR, {
             "userId": user_id,
@@ -1401,17 +1470,29 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         try:
             lease_task.cancel()
             await asyncio.gather(lease_task, return_exceptions=True)
+            for unfinished_step in set(step_traces) - finished_steps:
+                await record_trace("step.finished", {
+                    "step": unfinished_step, "status": "cancelled" if interrupted or abort.is_set() else "failed",
+                    "reason": "run_ended_before_step_result",
+                    "duration_ms": (time.monotonic() - step_times[unfinished_step]) * 1000,
+                    "timing_source": "producer_monotonic",
+                }, context=step_traces[unfinished_step])
             await question_runtime.finish_run(ticket, failed=failed, interrupted=interrupted, completed=completed)
         except LookupError:
             pass  # The owner deleted this session while its run was stopping.
         finally:
             question_runtime.current_run.reset(run_context)
             clear_abort(session_id, abort)
-        if suggest and suggestion_target is not None:
-            from agent.suggestions import generate_suggestions
-            task = asyncio.create_task(generate_suggestions(ticket, *suggestion_target))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
+            try:
+                if suggest and suggestion_target is not None:
+                    from agent.suggestions import generate_suggestions
+                    task = asyncio.create_task(generate_suggestions(ticket, *suggestion_target))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
+            finally:
+                if step_trace_scope is not None:
+                    step_trace_scope.__exit__(None, None, None)
+                trace_scope.__exit__(None, None, None)
 
 
 async def _build_system_prompt(
@@ -2005,7 +2086,8 @@ def _image_ref_for_part(p: dict, user_id: str) -> dict | None:
     }
 
 
-async def resolve_images(messages: list[dict], model_id: str | None = None) -> list[dict]:
+async def resolve_images(messages: list[dict], model_id: str | None = None, *,
+                         media_sources: dict[str, str] | None = None) -> list[dict]:
     """Turn image references into inline base64 data URIs.
 
     Deliberately NOT presigned URLs. Several providers (Vertex-backed Gemini
@@ -2087,6 +2169,13 @@ async def resolve_images(messages: list[dict], model_id: str | None = None) -> l
             for ref in images
             if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE
         ]
+        if media_sources is not None:
+            import hashlib
+            for ref in images:
+                if isinstance(ref, dict) and ref["asset_id"] in _IMAGE_CACHE:
+                    uri = _IMAGE_CACHE[ref["asset_id"]]
+                    digest = hashlib.sha256(base64.b64decode(uri.split(",", 1)[1])).hexdigest()
+                    media_sources[digest] = ref["asset_id"]
         missing = len(images) - len(resolved)
         if resolved:
             msg["_images"] = resolved
@@ -2390,6 +2479,9 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
         try:
             title = await _generate_title_with_llm(text, session_id=session_id, user_id=user_id)
         except Exception as e:
+            from trajectory import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             log.debug(f"LLM title generation failed, using truncation: {e}")
             title = None
 
@@ -2401,6 +2493,9 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
 
         await set_session_title(session_id, title, user_id=user_id)
     except Exception as e:
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.warning(f"Failed to generate title: {e}")
 
 
@@ -2448,6 +2543,9 @@ async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id
         return title
 
     except Exception as e:
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.debug(f"LLM title generation error: {e}")
         return None
 

@@ -9,12 +9,17 @@ import type {
   TokenUsage,
 } from "@/shared/types/api"
 
-export interface WsEventMap {
-  // connection lifecycle (client-side synthetic)
-  "__connected": Record<string, never>
-  "__disconnected": Record<string, never>
+/** Client-side synthetic events every channel emits. */
+export interface WsLifecycleEvents {
+  __connected: Record<string, never>
+  /** `code` is the close code when the browser reported one. */
+  __disconnected: { code?: number }
+  /** The channel refused this viewer for good (ticket or close code); no retry follows. */
+  __denied: { status: number }
+}
 
-  "session.status": { sessionId: string; status: SessionStatus ; attempt?: number; maxAttempts?: number }
+export interface WsEventMap extends WsLifecycleEvents {
+  "session.status": { sessionId: string; status: SessionStatus; attempt?: number; maxAttempts?: number }
   "session.finalizing": { sessionId: string }
   "session.error": { sessionId: string; error?: { message?: string; code?: string } }
   "session.title": { sessionId: string; title: string }
@@ -70,3 +75,31 @@ export interface CronJobEvent {
 }
 
 export type WsEventName = keyof WsEventMap
+
+/**
+ * The admin trajectory socket (`/ws/admin/trajectories`). It only carries
+ * committed watermarks — never prompts or outputs — and accepts nothing but
+ * subscribe/unsubscribe/ping (backend api/admin_trajectory_ws.py).
+ */
+export interface TrajectoryWatermark {
+  /** Target owner. `owner_user_id` is the same id under its explicit name. */
+  user_id: string
+  owner_user_id?: string
+  session_id: string
+  trajectory_id: string | null
+  committed_seq: string
+}
+
+export interface TrajectoryWsEventMap extends WsLifecycleEvents {
+  "trajectory.available": TrajectoryWatermark
+  subscribed: TrajectoryWatermark
+  unsubscribed: { session_id: string }
+  error: { code: string; message?: string; session_id?: string }
+  pong: Record<string, never>
+}
+
+/** The only frames a trajectory viewer may send. */
+export type TrajectoryClientMessage =
+  | { type: "subscribe"; session_id: string; after_seq?: string }
+  | { type: "unsubscribe"; session_id: string }
+  | { type: "ping" }

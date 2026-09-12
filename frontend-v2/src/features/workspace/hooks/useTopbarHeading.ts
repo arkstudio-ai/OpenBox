@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useLocation, useParams, useSearchParams } from "react-router"
+import { useLocation, useMatch, useSearchParams } from "react-router"
+import { paths, routePatterns } from "@/shared/router/paths"
 import type { Session } from "@/shared/types/api"
 import { useProjectsQuery } from "../api/projects"
 import { useSessionsQuery } from "../api/sessions"
@@ -43,7 +44,9 @@ interface Heading {
  *  filed under; a session shows its own title and project. */
 export function useTopbarHeading(): Heading {
   const { t } = useTranslation("workspace")
-  const { sessionId } = useParams()
+  // Only a chat URL names the viewer's conversation; admin pages reuse the
+  // `:sessionId` segment for sessions that belong to other people.
+  const sessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId
   const location = useLocation()
   const [params] = useSearchParams()
   const sessions = useSessionsQuery()

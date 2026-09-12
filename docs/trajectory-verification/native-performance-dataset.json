@@ -1,0 +1,32 @@
+{
+  "session_id": "session_frontend_perf",
+  "head_seq": "100009",
+  "events": 100009,
+  "records": 10009,
+  "checkpoints": 20,
+  "checkpoint_watermarks": [
+    "5009",
+    "10009",
+    "15009",
+    "20009",
+    "25009",
+    "30009",
+    "35009",
+    "40009",
+    "45009",
+    "50009",
+    "55009",
+    "60009",
+    "65009",
+    "70009",
+    "75009",
+    "80009",
+    "85009",
+    "90009",
+    "95009",
+    "100009"
+  ],
+  "seed_seconds": 12.58,
+  "dataset": "synthetic events persisted via native recorder; actual API and browser target",
+  "performance_note": "seed duration is not browser or API latency"
+}

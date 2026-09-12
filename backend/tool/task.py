@@ -1,5 +1,6 @@
 """Task tool: spawn sub-agent sessions."""
 from pydantic import BaseModel, Field
+import time
 
 from core.log import create_logger
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -52,33 +53,60 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
             sandbox_info.session_ids.add(child.id)
             sandbox_manager._session_project[child.id] = parent_project
 
-    # Send the prompt
-    await session_mod.create_user_message(
-        session_id=child.id,
-        text=args.prompt,
-        agent=args.subagent_type,
-        user_id=ctx.user_id or "default",
-    )
+    from agent.trajectory import context_for_tool
+    from core.identifier import ascending
+    from trajectory import bind, record
+    parent_trace = await context_for_tool(ctx)
+    child_trace = None
+    if parent_trace is not None:
+        child_trace = parent_trace.derive(source_session_id=child.id, agent_id=ascending("agent"),
+            parent_agent_id=parent_trace.agent_id, parent_call_id=parent_trace.call_id,
+            run_id=None, generation=None, step_id=None, request_id=None, call_id=None,
+            message_id=None, part_id=None)
+    await record("agent.spawned", {"agent": args.subagent_type, "description": args.description,
+        "prompt": args.prompt, "child_session_id": child.id, "model": child_model}, context=child_trace)
+    child_started = time.monotonic()
 
-    # Point this tool call at its child BEFORE the child runs. The UI follows
-    # the child's own parts to show what the subagent is doing; without the
-    # pointer it has nothing to follow, and the pointer is useless if it only
-    # arrives with the result — by then there is nothing left to watch. This
-    # is why the parent's row read "task · running" and nothing else.
-    await _announce_child(ctx, child.id, args.subagent_type)
+    try:
+        with bind(child_trace):
+            # Send the prompt
+            await session_mod.create_user_message(
+                session_id=child.id,
+                text=args.prompt,
+                agent=args.subagent_type,
+                synthetic=True,
+                user_id=ctx.user_id or "default",
+            )
 
-    # Run the agent loop, and let the parent's stop reach it. The child has
-    # its own abort signal, so aborting the parent alone left the subagent
-    # running to completion after the user had already stopped the run.
-    from agent.loop import run_loop
-    await _run_child(ctx, child.id)
+            # Point this tool call at its child BEFORE the child runs. The UI follows
+            # the child's own parts to show what the subagent is doing; without the
+            # pointer it has nothing to follow, and the pointer is useless if it only
+            # arrives with the result — by then there is nothing left to watch. This
+            # is why the parent's row read "task · running" and nothing else.
+            await _announce_child(ctx, child.id, args.subagent_type)
+
+            # Run the agent loop, and let the parent's stop reach it. The child has
+            # its own abort signal, so aborting the parent alone left the subagent
+            # running to completion after the user had already stopped the run.
+            await _run_child(ctx, child.id)
+
+    except BaseException as exc:
+        import asyncio
+        await record("agent.finished", {"status": "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+            "error": {"type": type(exc).__name__, "message": str(exc)}, "child_session_id": child.id,
+            "duration_ms": (time.monotonic() - child_started) * 1000,
+            "timing_source": "producer_monotonic"}, context=child_trace)
+        raise
 
     # Collect output: only the LAST text part (matching opencode's findLast)
     messages = await session_mod.get_messages(child.id, user_id=ctx.user_id or "default")
     text = ""
+    last_assistant = None
     for msg in reversed(messages):
         role = msg.role if isinstance(msg.role, str) else msg.role.value
         if role == "assistant":
+            if last_assistant is None:
+                last_assistant = msg
             parts = msg.parts if isinstance(msg.parts, list) else []
             for part in reversed(parts):
                 p = part if isinstance(part, dict) else (part.model_dump() if hasattr(part, "model_dump") else {})
@@ -97,6 +125,17 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
         "</task_result>",
     ]) if text else "Task completed with no text output."
 
+    await record("agent.message", {"direction": "child_to_parent", "output": text,
+        "model_output": output, "child_session_id": child.id}, context=child_trace)
+    finish = getattr(last_assistant, "finish", None)
+    error = getattr(last_assistant, "error", None)
+    status = ("cancelled" if ctx.abort is not None and ctx.abort.is_set() else
+        "failed" if error else "waiting" if finish == "waiting_input" else
+        "completed" if finish == "stop" else "unknown")
+    await record("agent.finished", {"status": status, "finish_reason": finish, "error": error,
+        "output": text, "model_output": output, "child_session_id": child.id,
+        "duration_ms": (time.monotonic() - child_started) * 1000,
+        "timing_source": "producer_monotonic"}, context=child_trace)
     return ToolResult(
         title=args.description,
         output=output,
@@ -128,6 +167,9 @@ async def _announce_child(ctx: ToolContext, child_id: str, subagent_type: str) -
                     )
                     return
     except Exception as e:  # never fail the task over a progress pointer
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.debug(f"could not announce child session {child_id}: {e}")
 
 

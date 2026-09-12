@@ -213,17 +213,43 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
     content += [{"type": "image_url", "image_url": {"url": u}} for u in frames]
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
                                    message_id=ctx.message_id, kind="video_analyze")
+    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
     usage = None
     credits = None
+    capture = None
     try:
-        response = await litellm.acompletion(model=model, messages=[{"role": "user", "content": content}],
-                                             temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
+        from agent.trajectory import RequestCapture, litellm_chunk_blocks
+        payload = dict(model=model, messages=[{"role": "user", "content": content}],
+                       temperature=0.2, max_tokens=2000, timeout=timeout, **_get_provider_kwargs(model))
+        capture = await RequestCapture.start(ctx, purpose="video_analyze", model_id=model,
+                                             payload=payload, capture_level="adapter_input")
+        response = await litellm.acompletion(**payload)
+        await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
+            await capture.capture_usage(usage)
         text = response.choices[0].message.content or ""
+        await capture.finish("completed", reason="stop")
+    except BaseException as exc:
+        import asyncio
+        if capture is not None:
+            await capture.finish("cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", error=exc)
+        raise
     finally:
         if meter:
-            credits = await meter.finish(usage)
+            import asyncio
+            from agent.trajectory import capture_billing
+            async def settle():
+                charged = await meter.finish(usage)
+                await capture_billing(capture.context if capture is not None else None,
+                                      meter, usage, charged, "video_analyze")
+                return charged
+            settlement = asyncio.create_task(settle())
+            try:
+                credits = await asyncio.shield(settlement)
+            except asyncio.CancelledError:
+                await settlement
+                raise
     return text, usage or {}, credits
 
 
@@ -269,6 +295,7 @@ def _fmt(value) -> str | None:
 async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     from core.config import get_config
     from tool import video_production as vp
+    from trajectory.types import TrajectoryError
 
     cfg = get_config().video_analysis
     if args.action == "status":
@@ -337,24 +364,46 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if len(staged["frames"]) < cfg.min_frames:
             raise AnalyzeRefusal(f"only {len(staged['frames'])} frame(s) reached OSS (need ≥{cfg.min_frames}); analysis not run")
 
+        from agent.trajectory import service_scope, register_owned_media_inputs, retain_derived_media_inputs
+        from trajectory import enabled
+        import copy
+        media_ctx = copy.copy(ctx)
+        media_urls = list(staged["frames"]) + ([staged["audio_url"]] if staged["audio_url"] else [])
+        retained_media, asset_urls = {}, {}
+        if enabled(ctx.user_id):
+            source_id = seed.removeprefix("asset:") if kind == "asset" else None
+            if source_id is None and _owned_bucket_key(seed, ctx) is not None:
+                source_id = (await register_owned_media_inputs(ctx, [seed]))[seed]
+            if source_id:
+                retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
+                media_ctx._trajectory_media_urls = retained_media
+            else:
+                asset_urls = await register_owned_media_inputs(ctx, media_urls)
+                # Reuse the same retained map for the subsequent vision input.
+                async with service_scope(ctx, job=job, asset_urls=asset_urls) as retained_ctx:
+                    media_ctx._trajectory_media_urls = dict(retained_ctx._trajectory_media_urls)
+
         transcript: dict[str, Any] = {}
         stt_credits = None
         if staged["audio_url"]:
             await ctx.update_output("Transcribing…")
             try:
-                transcript = await _transcribe(staged["audio_url"])
+                async with service_scope(media_ctx, job=job, asset_urls=asset_urls, retained_media=retained_media):
+                    transcript = await _transcribe(staged["audio_url"])
                 from billing.media import settle_transcription
 
                 stt_credits = await settle_transcription(
                     job, workspace_id=ctx.workspace_id, model_id=str(transcript.get("model") or "fun-asr"),
                     duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else sampled["duration"],
                 )
+            except TrajectoryError:
+                raise
             except Exception as exc:  # a failed transcript is reported, not fatal: the frames still tell the story
                 log.info(f"analysis {job.id}: transcription failed: {type(exc).__name__}")
                 transcript = {"error": vp._public_error(exc)}
 
         await ctx.update_output("Reading the frames…")
-        text, usage, llm_credits = await _complete(ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
+        text, usage, llm_credits = await _complete(media_ctx, model=cfg.model, frames=staged["frames"], duration=sampled["duration"],
                                                    transcript=str(transcript.get("text") or ""), timeout=cfg.timeout_seconds)
         analysis = parse_analysis(text).model_dump()
         total = (stt_credits or 0) + (llm_credits or 0)
@@ -368,6 +417,8 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         # completed output never carries a stale "error=" line.
         await vp._update_job(job.id, status="completed", error=None, result_data=result,
                              completed_at=datetime.now(timezone.utc), attempt=1)
+    except TrajectoryError:
+        raise
     except AnalysisParseError as exc:
         await vp._update_job(job.id, status="failed", error=f"analysis unparseable: {exc}", completed_at=datetime.now(timezone.utc))
         return ToolResult(title="Analysis failed", output=str(exc), metadata={"job_id": job.id, "status": "failed"})

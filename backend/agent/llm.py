@@ -8,12 +8,14 @@ import hmac as _hmac
 import json as _json
 import re as _re
 from collections.abc import Mapping
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 from urllib.parse import parse_qs as _parse_qs, urlsplit as _urlsplit
 
 from agent.agent import AgentDef
 from agent.tool_payload import build_tool_definitions
+from agent.trajectory import RequestCapture, capture_billing, litellm_chunk_blocks, responses_chunk_blocks, public_value
 from tool.tool import ToolContext, ToolInfo
 from core.log import create_logger
 
@@ -902,6 +904,8 @@ async def _stream_responses_api(
     native_portable_system: list[str] | None = None,
     native_record_capability: Any | None = None,
     native_discovery_state: Any | None = None,
+    trace_ctx: ToolContext | None = None,
+    purpose: str = "chat",
 ) -> AsyncIterator[dict]:
     """Stream LLM via OpenAI Responses API directly (for GPT-5.x reasoning).
 
@@ -971,6 +975,7 @@ async def _stream_responses_api(
     }
     headers.update(_wire_capability_headers(provider_kwargs))
 
+    capture = None
     try:
         tool_calls: list[dict] = []
         stream_usage: dict = {}
@@ -1049,11 +1054,15 @@ async def _stream_responses_api(
                 existing["finalized"] = True
             return tc_index, is_new, emitted_delta
 
+        capture = await RequestCapture.start(
+            trace_ctx, purpose=purpose, model_id=model_id, payload=payload, capture_level="provider_wire",
+        )
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
                     body_text = body.decode("utf-8", errors="replace")
+                    await capture.finish("failed", reason=f"http_{resp.status_code}", error=RuntimeError(body_text))
                     if native_plan is not None:
                         from agent.native_tool_search import is_explicit_native_unsupported
 
@@ -1078,6 +1087,7 @@ async def _stream_responses_api(
                             # Exactly one replay is allowed, and only before
                             # any SSE event. The recursive call has no native
                             # plan, so it cannot recurse/fallback a second time.
+                            await capture.route_changed("native_feature_unsupported")
                             async for event in _stream_responses_api(
                                 model_id,
                                 (
@@ -1097,6 +1107,8 @@ async def _stream_responses_api(
                                 ),
                                 variant=variant,
                                 tool_choice=tool_choice,
+                                trace_ctx=trace_ctx,
+                                purpose=purpose,
                             ):
                                 yield event
                             return
@@ -1113,200 +1125,164 @@ async def _stream_responses_api(
                     }
                     return
 
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-
-                    try:
-                        data = _json.loads(data_str)
-                    except _json.JSONDecodeError as exc:
-                        if native_plan is not None:
-                            raise NativeProtocolError(
-                                "native Responses stream emitted malformed JSON"
-                            ) from exc
-                        continue
-
-                    etype = data.get("type", "")
-
-                    # Capture provider usage before protocol/content handling can
-                    # fail. Incomplete Responses may still contain billable usage.
-                    raw_usage = (data.get("response") or {}).get("usage")
-                    if raw_usage:
-                        from billing.pricing import normalize_usage
-                        stream_usage = normalize_usage(raw_usage)
-                        yield {"type": "usage", "usage": dict(stream_usage)}
-
-                    if etype in {"response.created", "response.completed"}:
-                        candidate_response_id = str(
-                            (data.get("response") or {}).get("id") or ""
-                        )
-                        if (
-                            candidate_response_id
-                            and response_chain_id
-                            and candidate_response_id != response_chain_id
-                        ):
-                            message = "Responses stream changed response id before completion"
+                async def decoded_events():
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            yield _json.loads(data_str)
+                        except _json.JSONDecodeError as exc:
                             if native_plan is not None:
-                                raise NativeProtocolError(message)
-                            raise RuntimeError(message)
-                        if candidate_response_id:
-                            response_chain_id = candidate_response_id
+                                raise NativeProtocolError("native Responses stream emitted malformed JSON") from exc
+                            yield {"type": "malformed_sse", "message": data_str}
 
-                    terminal_error = responses_event_error(data)
-                    if terminal_error:
-                        log.error(f"Responses API stream failed: {terminal_error[:500]}")
-                        yield {"type": "error", "error": Exception(terminal_error)}
-                        return
+                async with aclosing(capture.stream_chunks(decoded_events(), responses_chunk_blocks)) as chunks:
+                    async for data in chunks:
+                        etype = data.get("type", "")
 
-                    if native_normalizer is not None:
-                        normalized = native_normalizer.feed_sse(data)
-                        for native_event in normalized:
-                            if not response_chain_id:
-                                raise NativeProtocolError(
-                                    "native Tool Search event preceded response.created"
-                                )
-                            if native_event.type == "tool_call":
-                                native_call_decisions[
-                                    str(native_event.call_id or "")
-                                ] = native_event
-                                continue
-                            yield {
-                                "type": f"native_{native_event.type}",
-                                "stream_seq": native_event.stream_seq,
-                                "raw_item": dict(native_event.raw_item),
-                                "canonical_tool_id": native_event.canonical_tool_id,
-                                "wire_tool_name": native_event.wire_tool_name,
-                                "same_response_executable": (
-                                    native_event.same_response_executable
-                                ),
-                                "response_chain_id": response_chain_id,
-                            }
+                        # Capture provider usage before protocol/content handling can
+                        # fail. Incomplete Responses may still contain billable usage.
+                        raw_usage = (data.get("response") or {}).get("usage")
+                        if raw_usage:
+                            from billing.pricing import normalize_usage
+                            stream_usage = normalize_usage(raw_usage)
+                            await capture.capture_usage(stream_usage)
+                            yield {"type": "usage", "usage": dict(stream_usage)}
 
-                    # Reasoning summary text (the readable thinking content)
-                    if etype == "response.reasoning_summary_text.delta":
-                        delta = data.get("delta", "")
-                        if delta:
-                            had_streaming_reasoning = True
-                            yield {"type": "reasoning_delta", "text": delta}
+                        if etype in {"response.created", "response.completed"}:
+                            candidate_response_id = str(
+                                (data.get("response") or {}).get("id") or ""
+                            )
+                            if (
+                                candidate_response_id
+                                and response_chain_id
+                                and candidate_response_id != response_chain_id
+                            ):
+                                message = "Responses stream changed response id before completion"
+                                if native_plan is not None:
+                                    raise NativeProtocolError(message)
+                                raise RuntimeError(message)
+                            if candidate_response_id:
+                                response_chain_id = candidate_response_id
 
-                    # Output text
-                    elif etype == "response.output_text.delta":
-                        delta = data.get("delta", "")
-                        if delta:
-                            had_streaming_text = True
-                            yield {"type": "text_delta", "text": delta}
+                        terminal_error = responses_event_error(data)
+                        if terminal_error:
+                            await capture.finish("failed", error=RuntimeError(terminal_error))
+                            log.error(f"Responses API stream failed: {terminal_error[:500]}")
+                            yield {"type": "error", "error": Exception(terminal_error)}
+                            return
 
-                    # Function call: output_item.added creates the entry,
-                    # then function_call_arguments.delta accumulates args.
-                    # IMPORTANT: delta events use "item_id" (= item.id),
-                    # NOT "call_id". We key by item_id for matching.
-                    elif etype == "response.output_item.added":
-                        item = data.get("item", {})
-                        if item.get("type") == "function_call":
-                            tc_index = len(tool_calls)
-                            tool_calls.append({
-                                "item_id": item.get("id", ""),
-                                "call_id": item.get("call_id", ""),
-                                "name": item.get("name", ""),
-                                "args": "",
-                                "finalized": False,
-                            })
-                            # Emit tool_call_start so frontend shows card immediately
-                            if item.get("name") and native_plan is None:
-                                yield {"type": "tool_call_start", "index": tc_index, "tool": item["name"], "call_id": item.get("call_id", "")}
+                        if native_normalizer is not None:
+                            normalized = native_normalizer.feed_sse(data)
+                            for native_event in normalized:
+                                if not response_chain_id:
+                                    raise NativeProtocolError(
+                                        "native Tool Search event preceded response.created"
+                                    )
+                                if native_event.type == "tool_call":
+                                    native_call_decisions[
+                                        str(native_event.call_id or "")
+                                    ] = native_event
+                                    continue
+                                yield {
+                                    "type": f"native_{native_event.type}",
+                                    "stream_seq": native_event.stream_seq,
+                                    "raw_item": dict(native_event.raw_item),
+                                    "canonical_tool_id": native_event.canonical_tool_id,
+                                    "wire_tool_name": native_event.wire_tool_name,
+                                    "same_response_executable": (
+                                        native_event.same_response_executable
+                                    ),
+                                    "response_chain_id": response_chain_id,
+                                }
 
-                    elif etype == "response.function_call_arguments.delta":
-                        item_id = data.get("item_id", "")
-                        delta = data.get("delta", "")
-                        existing = None
-                        tc_index = -1
-                        for i, tc in enumerate(tool_calls):
-                            if tc["item_id"] == item_id:
-                                existing = tc
-                                tc_index = i
-                                break
-                        if existing:
-                            if existing.get("finalized"):
-                                raise RuntimeError(
-                                    "Responses emitted arguments after function call completion"
-                                )
-                            existing["args"] += delta
-                        else:
-                            # Fallback: create entry if output_item.added was missed
-                            tc_index = len(tool_calls)
-                            tool_calls.append({
-                                "item_id": item_id,
-                                "call_id": data.get("call_id", ""),
-                                "name": data.get("name", ""),
-                                "args": delta,
-                                "finalized": False,
-                            })
-                        # Stream argument delta to frontend for live preview
-                        # Native deferred calls are not exposed to the public
-                        # processor until the ordered Tool Search normalizer
-                        # has seen their reveal.  Emitting an args delta here
-                        # would reference a pending card that intentionally
-                        # was not created above.
-                        if delta and native_plan is None:
-                            yield {"type": "tool_call_args_delta", "index": tc_index, "delta": delta}
+                        # Reasoning summary text (the readable thinking content)
+                        if etype == "response.reasoning_summary_text.delta":
+                            delta = data.get("delta", "")
+                            if delta:
+                                had_streaming_reasoning = True
+                                yield {"type": "reasoning_delta", "text": delta}
 
-                    elif etype in {
-                        "response.output_item.done",
-                        "response.function_call_arguments.done",
-                    }:
-                        item = (
-                            data.get("item", {})
-                            if etype == "response.output_item.done"
-                            else {
-                                "item_id": data.get("item_id", ""),
-                                "call_id": data.get("call_id", ""),
-                                "name": data.get("name", ""),
-                                "arguments": data.get("arguments", ""),
-                            }
-                        )
-                        if isinstance(item, dict) and item.get("type", "function_call") == "function_call":
-                            tc_index, is_new, final_delta = capture_final_function_call(item)
-                            if native_plan is None:
-                                captured = tool_calls[tc_index]
-                                if is_new and captured.get("name"):
-                                    yield {
-                                        "type": "tool_call_start",
-                                        "index": tc_index,
-                                        "tool": captured["name"],
-                                        "call_id": captured.get("call_id", ""),
-                                    }
-                                if final_delta:
-                                    yield {
-                                        "type": "tool_call_args_delta",
-                                        "index": tc_index,
-                                        "delta": final_delta,
-                                    }
+                        # Output text
+                        elif etype == "response.output_text.delta":
+                            delta = data.get("delta", "")
+                            if delta:
+                                had_streaming_text = True
+                                yield {"type": "text_delta", "text": delta}
 
-                    # Response completed — extract usage + non-streamed content
-                    # GPT-5.4 does NOT stream tool calls or reasoning; everything
-                    # arrives in response.completed.output as a batch.
-                    elif etype == "response.completed":
-                        resp_data = data.get("response", {})
+                        # Function call: output_item.added creates the entry,
+                        # then function_call_arguments.delta accumulates args.
+                        # IMPORTANT: delta events use "item_id" (= item.id),
+                        # NOT "call_id". We key by item_id for matching.
+                        elif etype == "response.output_item.added":
+                            item = data.get("item", {})
+                            if item.get("type") == "function_call":
+                                tc_index = len(tool_calls)
+                                tool_calls.append({
+                                    "item_id": item.get("id", ""),
+                                    "call_id": item.get("call_id", ""),
+                                    "name": item.get("name", ""),
+                                    "args": "",
+                                    "finalized": False,
+                                })
+                                # Emit tool_call_start so frontend shows card immediately
+                                if item.get("name") and native_plan is None:
+                                    yield {"type": "tool_call_start", "index": tc_index, "tool": item["name"], "call_id": item.get("call_id", "")}
 
-                        # Extract content from response.output for models
-                        # that don't stream individual events (e.g. GPT-5.4).
-                        # Only extract items that weren't already streamed.
-                        for output_item in resp_data.get("output", []):
-                            item_type = output_item.get("type", "")
+                        elif etype == "response.function_call_arguments.delta":
+                            item_id = data.get("item_id", "")
+                            delta = data.get("delta", "")
+                            existing = None
+                            tc_index = -1
+                            for i, tc in enumerate(tool_calls):
+                                if tc["item_id"] == item_id:
+                                    existing = tc
+                                    tc_index = i
+                                    break
+                            if existing:
+                                if existing.get("finalized"):
+                                    raise RuntimeError(
+                                        "Responses emitted arguments after function call completion"
+                                    )
+                                existing["args"] += delta
+                            else:
+                                # Fallback: create entry if output_item.added was missed
+                                tc_index = len(tool_calls)
+                                tool_calls.append({
+                                    "item_id": item_id,
+                                    "call_id": data.get("call_id", ""),
+                                    "name": data.get("name", ""),
+                                    "args": delta,
+                                    "finalized": False,
+                                })
+                            # Stream argument delta to frontend for live preview
+                            # Native deferred calls are not exposed to the public
+                            # processor until the ordered Tool Search normalizer
+                            # has seen their reveal.  Emitting an args delta here
+                            # would reference a pending card that intentionally
+                            # was not created above.
+                            if delta and native_plan is None:
+                                yield {"type": "tool_call_args_delta", "index": tc_index, "delta": delta}
 
-                            if item_type == "reasoning" and not had_streaming_reasoning:
-                                for summary in output_item.get("summary", []):
-                                    text = summary.get("text", "")
-                                    if text:
-                                        yield {"type": "reasoning_delta", "text": text}
-
-                            elif item_type == "function_call":
-                                tc_index, is_new, final_delta = capture_final_function_call(
-                                    output_item
-                                )
+                        elif etype in {
+                            "response.output_item.done",
+                            "response.function_call_arguments.done",
+                        }:
+                            item = (
+                                data.get("item", {})
+                                if etype == "response.output_item.done"
+                                else {
+                                    "item_id": data.get("item_id", ""),
+                                    "call_id": data.get("call_id", ""),
+                                    "name": data.get("name", ""),
+                                    "arguments": data.get("arguments", ""),
+                                }
+                            )
+                            if isinstance(item, dict) and item.get("type", "function_call") == "function_call":
+                                tc_index, is_new, final_delta = capture_final_function_call(item)
                                 if native_plan is None:
                                     captured = tool_calls[tc_index]
                                     if is_new and captured.get("name"):
@@ -1323,12 +1299,50 @@ async def _stream_responses_api(
                                             "delta": final_delta,
                                         }
 
-                            elif item_type == "message" and not had_streaming_text:
-                                for content_part in output_item.get("content", []):
-                                    if content_part.get("type") == "output_text":
-                                        text = content_part.get("text", "")
+                        # Response completed — extract usage + non-streamed content
+                        # GPT-5.4 does NOT stream tool calls or reasoning; everything
+                        # arrives in response.completed.output as a batch.
+                        elif etype == "response.completed":
+                            resp_data = data.get("response", {})
+
+                            # Extract content from response.output for models
+                            # that don't stream individual events (e.g. GPT-5.4).
+                            # Only extract items that weren't already streamed.
+                            for output_item in resp_data.get("output", []):
+                                item_type = output_item.get("type", "")
+
+                                if item_type == "reasoning" and not had_streaming_reasoning:
+                                    for summary in output_item.get("summary", []):
+                                        text = summary.get("text", "")
                                         if text:
-                                            yield {"type": "text_delta", "text": text}
+                                            yield {"type": "reasoning_delta", "text": text}
+
+                                elif item_type == "function_call":
+                                    tc_index, is_new, final_delta = capture_final_function_call(
+                                        output_item
+                                    )
+                                    if native_plan is None:
+                                        captured = tool_calls[tc_index]
+                                        if is_new and captured.get("name"):
+                                            yield {
+                                                "type": "tool_call_start",
+                                                "index": tc_index,
+                                                "tool": captured["name"],
+                                                "call_id": captured.get("call_id", ""),
+                                            }
+                                        if final_delta:
+                                            yield {
+                                                "type": "tool_call_args_delta",
+                                                "index": tc_index,
+                                                "delta": final_delta,
+                                            }
+
+                                elif item_type == "message" and not had_streaming_text:
+                                    for content_part in output_item.get("content", []):
+                                        if content_part.get("type") == "output_text":
+                                            text = content_part.get("text", "")
+                                            if text:
+                                                yield {"type": "text_delta", "text": text}
 
         if native_normalizer is not None:
             native_normalizer.finalize()
@@ -1343,6 +1357,8 @@ async def _stream_responses_api(
                     exc_info=True,
                 )
         log.info(f"Responses API usage for {model_id}: {stream_usage}")
+
+        await capture.finish("completed", reason="tool_calls" if tool_calls else "stop")
 
         # Yield tool calls
         if tool_calls:
@@ -1367,6 +1383,7 @@ async def _stream_responses_api(
                         "tool": tool_name,
                         "wire_tool": tool_name,
                         "args": args,
+                        "arguments_raw": tc["args"],
                         "call_id": call_id,
                         "stream_seq": decision.stream_seq,
                         "native_same_response_executable": (
@@ -1380,18 +1397,21 @@ async def _stream_responses_api(
                     log.warning(f"Unknown tool call: {tool_name}")
                     yield {
                         "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
-                        "args": args, "call_id": call_id, "invalid": True,
+                        "args": args, "arguments_raw": tc["args"], "call_id": call_id, "invalid": True,
                     }
                 else:
                     yield {
                         "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
-                        "args": args, "call_id": call_id,
+                        "args": args, "arguments_raw": tc["args"], "call_id": call_id,
                     }
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
         else:
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         if native_plan is not None and native_record_capability is not None:
             from agent.native_tool_search import NativeProtocolError
 
@@ -1406,8 +1426,13 @@ async def _stream_responses_api(
                         "Could not persist native protocol fallback",
                         exc_info=True,
                     )
+        if capture is not None:
+            await capture.finish("failed", error=e)
         log.error(f"Responses API error: {e}")
         yield {"type": "error", "error": e}
+    finally:
+        if capture is not None and not capture.finished:
+            await capture.finish("cancelled", reason="stream_closed")
 
 
 async def stream_llm(
@@ -1437,6 +1462,8 @@ async def stream_llm(
     from billing.service import UsageMeter
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
+    ctx._trajectory_active_request = None
     usage = None
     # GPT-5.x models: use Responses API for reasoning content
     if _needs_responses_api(model_id):
@@ -1452,11 +1479,16 @@ async def stream_llm(
             native_portable_system=ctx._native_portable_system,
             native_record_capability=ctx._native_record_capability,
             native_discovery_state=ctx,
+            trace_ctx=ctx,
+            purpose=billing_kind,
         )
     else:
-        stream = _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice)
+        stream = _stream_litellm_direct(model_id, system, messages, tools, variant=variant, tool_choice=tool_choice, trace_ctx=ctx, purpose=billing_kind)
     try:
         async for event in stream:
+            trace = getattr(ctx, "_trajectory_active_request", None)
+            if trace is not None:
+                event = {**event, "trajectory_context": trace}
             if event["type"] == "usage":
                 usage = event["usage"]
                 continue
@@ -1464,6 +1496,7 @@ async def stream_llm(
                 usage = event.get("usage") or usage
                 if meter:
                     credits = await meter.finish(usage)
+                    await capture_billing(trace, meter, usage, credits, billing_kind)
                     if event["type"] == "finish":
                         event["usage"] = {**(usage or {}), "cost": float(credits or 0),
                                           "credits": str(credits) if credits is not None else None}
@@ -1474,7 +1507,10 @@ async def stream_llm(
         finally:
             if meter and not meter.finished:
                 # Aborting the consumer must not abandon an already observed charge.
-                settlement = asyncio.create_task(meter.finish(usage))
+                async def settle():
+                    credits = await meter.finish(usage)
+                    await capture_billing(getattr(ctx, "_trajectory_active_request", None), meter, usage, credits, billing_kind)
+                settlement = asyncio.create_task(settle())
                 try:
                     await asyncio.shield(settlement)
                 except asyncio.CancelledError:
@@ -1489,15 +1525,31 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     from billing.service import UsageMeter
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
+    ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
+    ctx._trajectory_active_request = None
     usage = None
+    capture = None
     try:
+        capture = await RequestCapture.start(ctx, purpose=billing_kind, model_id=kwargs["model"],
+                                             payload=kwargs, capture_level="adapter_input")
         response = await litellm.acompletion(**kwargs)
+        await capture.chunk(response, blocks=litellm_chunk_blocks(response))
         if getattr(response, "usage", None):
             usage = normalize_usage(response.usage)
+            await capture.capture_usage(usage)
+        await capture.finish("completed", reason="stop")
         return response
+    except BaseException as exc:
+        if capture is not None:
+            await capture.finish("cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", error=exc)
+        raise
     finally:
         if meter:
-            settlement = asyncio.create_task(meter.finish(usage))
+            async def settle():
+                credits = await meter.finish(usage)
+                await capture_billing(capture.context if capture is not None else None,
+                                      meter, usage, credits, billing_kind)
+            settlement = asyncio.create_task(settle())
             try:
                 await asyncio.shield(settlement)
             except asyncio.CancelledError:
@@ -1602,12 +1654,15 @@ async def _stream_litellm_direct(
     tools: dict[str, ToolInfo],
     variant: str | None = None,
     tool_choice: str | None = None,
+    trace_ctx: ToolContext | None = None,
+    purpose: str = "chat",
 ) -> AsyncIterator[dict]:
     """Stream LLM via LiteLLM. Only yields stream events — no tool execution.
 
     Tool execution is the caller's responsibility (loop.py handles it with
     the correct part_id for SSE events).
     """
+    capture = None
     try:
         import litellm
 
@@ -1697,62 +1752,66 @@ async def _stream_litellm_direct(
         if tool_choice and tool_schemas:
             call_kwargs["tool_choice"] = tool_choice
 
+        capture = await RequestCapture.start(trace_ctx, purpose=purpose, model_id=model_id,
+                                             payload=call_kwargs, capture_level="adapter_input")
         response = await litellm.acompletion(**call_kwargs)
 
         tool_calls = []
         stream_usage: dict = {}  # Captured from the final chunk(s)
 
-        async for chunk in response:
-            # Capture usage from any chunk that carries it (typically the final one).
-            # With stream_options={"include_usage": True}, the provider sends a
-            # final chunk with choices=[] and usage filled.
-            _extract_chunk_usage(chunk, stream_usage)
-            if getattr(chunk, "usage", None) and stream_usage:
-                yield {"type": "usage", "usage": dict(stream_usage)}
+        async with aclosing(capture.stream_chunks(response, litellm_chunk_blocks)) as chunks:
+            async for chunk in chunks:
+                # Capture usage from any chunk that carries it (typically the final one).
+                # With stream_options={"include_usage": True}, the provider sends a
+                # final chunk with choices=[] and usage filled.
+                _extract_chunk_usage(chunk, stream_usage)
+                if getattr(chunk, "usage", None) and stream_usage:
+                    await capture.capture_usage(stream_usage)
+                    yield {"type": "usage", "usage": dict(stream_usage)}
 
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if not delta:
-                continue
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
 
-            # Reasoning/thinking content
-            # LiteLLM standardizes across providers:
-            # - Anthropic thinking → delta.reasoning_content
-            # - OpenAI reasoning → delta.reasoning_content
-            # - DeepSeek R1 → delta.reasoning_content
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                yield {"type": "reasoning_delta", "text": reasoning}
+                # Reasoning/thinking content
+                # LiteLLM standardizes across providers:
+                # - Anthropic thinking → delta.reasoning_content
+                # - OpenAI reasoning → delta.reasoning_content
+                # - DeepSeek R1 → delta.reasoning_content
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    yield {"type": "reasoning_delta", "text": reasoning}
 
-            # Text content
-            if delta.content:
-                yield {"type": "text_delta", "text": delta.content}
+                # Text content
+                if delta.content:
+                    yield {"type": "text_delta", "text": delta.content}
 
-            # Tool calls (accumulate chunks + emit streaming events)
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    if tc.index is not None:
-                        while len(tool_calls) <= tc.index:
-                            tool_calls.append({"id": "", "name": "", "args": "", "_started": False})
-                        if tc.id:
-                            tool_calls[tc.index]["id"] = tc.id
-                        if tc.function:
-                            if tc.function.name:
-                                tool_calls[tc.index]["name"] = tc.function.name
-                            if tc.function.arguments:
-                                tool_calls[tc.index]["args"] += tc.function.arguments
-                        # Emit streaming events so frontend can show tool card immediately
-                        entry = tool_calls[tc.index]
-                        if entry["name"] and not entry["_started"]:
-                            entry["_started"] = True
-                            yield {"type": "tool_call_start", "index": tc.index, "tool": entry["name"], "call_id": entry["id"]}
-                        if tc.function and tc.function.arguments and entry["_started"]:
-                            yield {"type": "tool_call_args_delta", "index": tc.index, "delta": tc.function.arguments}
+                # Tool calls (accumulate chunks + emit streaming events)
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        if tc.index is not None:
+                            while len(tool_calls) <= tc.index:
+                                tool_calls.append({"id": "", "name": "", "args": "", "_started": False})
+                            if tc.id:
+                                tool_calls[tc.index]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls[tc.index]["name"] = tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls[tc.index]["args"] += tc.function.arguments
+                            # Emit streaming events so frontend can show tool card immediately
+                            entry = tool_calls[tc.index]
+                            if entry["name"] and not entry["_started"]:
+                                entry["_started"] = True
+                                yield {"type": "tool_call_start", "index": tc.index, "tool": entry["name"], "call_id": entry["id"]}
+                            if tc.function and tc.function.arguments and entry["_started"]:
+                                yield {"type": "tool_call_args_delta", "index": tc.index, "delta": tc.function.arguments}
 
-            # Finish reason
-            finish_reason = chunk.choices[0].finish_reason if chunk.choices else None
-            if finish_reason:
-                # Don't break yet — there may be a final usage-only chunk after this
-                pass
+                # Finish reason
+                finish_reason = chunk.choices[0].finish_reason if chunk.choices else None
+                if finish_reason:
+                    # Don't break yet — there may be a final usage-only chunk after this
+                    pass
 
         # Fallback: LiteLLM's CustomStreamWrapper may strip usage from chunks
         # and store it in _hidden_params after full consumption.
@@ -1772,7 +1831,9 @@ async def _stream_litellm_direct(
 
         # Usage also arrives through LiteLLM's post-stream fallback on some routes.
         if stream_usage:
+            await capture.capture_usage(stream_usage)
             yield {"type": "usage", "usage": dict(stream_usage)}
+        await capture.finish("completed", reason="tool_calls" if tool_calls else "stop")
 
         # Yield tool calls for the caller to execute
         if tool_calls:
@@ -1789,12 +1850,12 @@ async def _stream_litellm_direct(
                     log.warning(f"Unknown tool call: {tool_name}")
                     yield {
                         "type": "tool_call", "tool": tool_name, "wire_tool": tool_name,
-                        "args": args, "call_id": tc["id"], "invalid": True,
+                        "args": args, "arguments_raw": tc["args"], "call_id": tc["id"], "invalid": True,
                     }
                 else:
                     yield {
                         "type": "tool_call", "tool": repaired, "wire_tool": tool_name,
-                        "args": args, "call_id": tc["id"],
+                        "args": args, "arguments_raw": tc["args"], "call_id": tc["id"],
                     }
 
             yield {"type": "finish", "reason": "tool_calls", "usage": stream_usage}
@@ -1802,8 +1863,16 @@ async def _stream_litellm_direct(
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
+        if capture is not None:
+            await capture.finish("failed", error=e)
         log.error(f"LiteLLM error: {e}")
         yield {"type": "error", "error": e}
+    finally:
+        if capture is not None and not capture.finished:
+            await capture.finish("cancelled", reason="stream_closed")
 
 
 def history_has_tool_calls(messages: list[dict]) -> bool:

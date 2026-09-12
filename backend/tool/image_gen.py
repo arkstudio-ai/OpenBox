@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import asyncio
+import hashlib
 import re
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
@@ -320,8 +323,12 @@ async def _call_provider(
     output_format: str,
     images: list[InputImage],
     mask: InputImage | None,
+    ctx: ToolContext | None = None,
 ) -> list[bytes]:
     from openai import AsyncOpenAI
+    from agent.trajectory import RequestCapture, context_for_tool, public_value
+    from trajectory import enabled
+    from trajectory.types import TrajectoryError
 
     client_kwargs = {
         "api_key": target.api_key,
@@ -344,8 +351,43 @@ async def _call_provider(
     if args.background is not None:
         common["background"] = args.background
 
-    client = AsyncOpenAI(**client_kwargs)
+    # Binary inputs are retained as owned asset versions. The provider request
+    # contains only public parameters and those references, never SDK objects,
+    # credentials, or expiring signed URLs.
+    context = await context_for_tool(ctx) if ctx is not None else None
+    retained = {}
+    inputs = [*images, *([mask] if mask else [])]
+    if context is not None and enabled(context.user_id) and inputs:
+        from db.base import get_db_session
+        from trajectory.artifacts import capture_asset_ids_in_tx
+        async with get_db_session() as db:
+            retained = await capture_asset_ids_in_tx(
+                db, context, [item.asset_id for item in inputs],
+                prepared={item.asset_id: item.data for item in inputs},
+            )
+            await db.commit()
+
+    def input_reference(item):
+        return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
+                "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
+                "payload": retained.get(item.asset_id, {"availability": "not_recorded"})}
+
+    snapshot = {**common, "input": {
+        "operation": "edit" if images else "generate",
+        "images": [input_reference(item) for item in images],
+        "mask": input_reference(mask) if mask else None,
+    }}
+    capture = await RequestCapture.start(
+        ctx, purpose="image_generation", model_id=f"{target.provider}/{target.model}",
+        payload=snapshot, capture_level="adapter_input",
+    )
+    if ctx is not None:
+        ctx._trajectory_image_request_id = capture.context.request_id if capture.context else None
+        ctx._trajectory_image_capture = capture
+
+    client = None
     try:
+        client = AsyncOpenAI(**client_kwargs)
         if images:
             files = [(image.name, image.data, image.mime) for image in images]
             edit_kwargs = dict(common)
@@ -355,9 +397,34 @@ async def _call_provider(
             response = await client.images.edit(**edit_kwargs)
         else:
             response = await client.images.generate(**common)
-        return await _response_images(response)
+        capture.response_ended = time.monotonic()
+        outputs = await _response_images(response)
+        usage = public_value(getattr(response, "usage", None))
+        response_items = getattr(response, "data", None) or []
+        blocks = [{"type": "image", "block_id": f"image:{index}",
+                   "sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data),
+                   "artifact_resolution": "request_id_and_sha256",
+                   "revised_prompt": getattr(response_items[index], "revised_prompt", None)
+                       if index < len(response_items) else None}
+                  for index, data in enumerate(outputs)]
+        # The bytes are stored once by _store_output as deletable asset payloads;
+        # request_id + digest links each returned image to that durable version.
+        await capture.chunk({"created": getattr(response, "created", None), "model": target.model,
+                             "response": {"output": blocks}, "usage": usage}, blocks=blocks)
+        if isinstance(usage, dict):
+            await capture.capture_usage(usage)
+        await capture.finish("completed")
+        return outputs
+    except asyncio.CancelledError as exc:
+        await capture.finish("cancelled", error=exc)
+        raise
+    except Exception as exc:
+        if not isinstance(exc, TrajectoryError):
+            await capture.finish("failed", error=exc)
+        raise
     finally:
-        await client.close()
+        if client is not None:
+            await client.close()
 
 
 def _detect_output(data: bytes, fallback_format: str) -> tuple[str, str]:
@@ -424,8 +491,7 @@ async def _store_output(
     try:
         async with get_db_session() as db:
             project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
-            db.add(
-                FileAsset(
+            asset = FileAsset(
                     id=asset_id,
                     user_id=ctx.user_id,
                     workspace_id=ctx.workspace_id,
@@ -439,7 +505,12 @@ async def _store_output(
                     source="agent",
                     transient=False,
                     created_at=datetime.now(timezone.utc),
-                )
+            )
+            db.add(asset)
+            from trajectory.artifacts import capture_result_asset_in_tx
+            await capture_result_asset_in_tx(
+                db, ctx, asset, content=data,
+                request_id=getattr(ctx, "_trajectory_image_request_id", None),
             )
             await db.commit()
     except Exception:
@@ -497,7 +568,10 @@ async def _store_output(
             is_new=True,
             user_id=ctx.user_id,
         )
-    except Exception:
+    except Exception as exc:
+        from trajectory.types import TrajectoryError
+        if isinstance(exc, TrajectoryError):
+            raise
         # The durable resource is still valid and visible in the resource
         # centre.  Do not delete paid-for output merely because the chat card
         # could not be pinned; report the distinction to the caller instead.
@@ -606,11 +680,15 @@ async def _store_reused(
         return None
     size = head["size"]
     mime = cached_asset.mime
+    from trajectory import enabled
+    from trajectory.artifacts import read_asset_bytes, capture_result_asset_in_tx
+    from types import SimpleNamespace
+    content = (await read_asset_bytes(SimpleNamespace(oss_key=key))
+               if enabled(ctx.user_id) else None)
 
     async with get_db_session() as db:
         project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
-        db.add(
-            FileAsset(
+        asset = FileAsset(
                 id=asset_id,
                 user_id=ctx.user_id,
                 workspace_id=ctx.workspace_id,
@@ -624,8 +702,9 @@ async def _store_reused(
                 source="agent",
                 transient=False,
                 created_at=datetime.now(timezone.utc),
-            )
         )
+        db.add(asset)
+        await capture_result_asset_in_tx(db, ctx, asset, content=content)
         await db.commit()
 
     path = f"/workspace/generated_images/{name}"
@@ -668,7 +747,10 @@ async def _store_reused(
             is_new=True,
             user_id=ctx.user_id,
         )
-    except Exception:
+    except Exception as exc:
+        from trajectory.types import TrajectoryError
+        if isinstance(exc, TrajectoryError):
+            raise
         attached = False
         log.warning("reused image saved to OSS but could not be attached to chat", exc_info=True)
 
@@ -713,6 +795,10 @@ def _public_error(exc: Exception) -> str:
 
 async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
     from core.oss import OssNotConfigured, get_oss
+    from trajectory.types import TrajectoryError
+
+    ctx._trajectory_image_request_id = None
+    ctx._trajectory_image_capture = None
 
     try:
         target, settings = _configured_target()
@@ -817,6 +903,7 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
             output_format=output_format,
             images=images,
             mask=mask,
+            ctx=ctx,
         )
         await ctx.update_output("Uploading generated image to OSS…")
         stored: list[StoredImage] = []
@@ -835,6 +922,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 )
             )
     except Exception as exc:
+        if isinstance(exc, TrajectoryError):
+            raise
         log.warning("image_gen %s failed: %s", mode, _public_error(exc))
         return ToolResult(title=f"Image {mode} failed", output=_public_error(exc))
 
@@ -849,15 +938,35 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
         )
 
     credits = None
+    billing_key = f"image:{ctx.part_id or stored[0].asset_id}"
     try:
         from billing.media import settle_image
 
         credits = await settle_image(
-            key=f"image:{ctx.part_id or stored[0].asset_id}", workspace_id=ctx.workspace_id, user_id=ctx.user_id,
+            key=billing_key, workspace_id=ctx.workspace_id, user_id=ctx.user_id,
             session_id=ctx.session_id, model_id=target.model, count=len(stored),
         )
     except Exception:  # billing must never fail a stored image
         log.warning("image_gen settlement failed", exc_info=True)
+
+    capture = getattr(ctx, "_trajectory_image_capture", None)
+    if capture is not None and capture.context is not None:
+        from types import SimpleNamespace
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.billing import UsageEvent
+        from agent.trajectory import capture_billing
+        async with get_db_session() as db:
+            usage_row = await db.scalar(select(UsageEvent).where(
+                UsageEvent.idempotency_key == billing_key,
+                UsageEvent.user_id == ctx.user_id,
+                UsageEvent.session_id == ctx.session_id,
+                UsageEvent.workspace_id == ctx.workspace_id,
+            ))
+        if usage_row is not None:
+            await capture_billing(capture.context, SimpleNamespace(event_id=usage_row.id),
+                                  {**(capture.usage or {}), "images": len(stored)},
+                                  usage_row.credits, "image_generation")
 
     verb = "Edited" if mode == "edit" else "Generated"
     lines = [

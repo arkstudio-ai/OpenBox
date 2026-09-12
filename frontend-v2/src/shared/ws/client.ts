@@ -1,21 +1,43 @@
 // The single WebSocket client (ENGINEERING_SPEC §12.1). Handshake uses a
 // one-time ticket so tokens never appear in URLs; exponential backoff on
-// reconnect; unknown events are ignored.
+// reconnect; unknown events are ignored. Channels differ only by endpoint
+// configuration — the agent stream and the admin trajectory watermark socket
+// share this reconnect/ticket machinery rather than each growing their own.
 import { env, wsBase } from "@/shared/config/env"
 import { refreshAccessToken, useAuthStore } from "@/shared/api/auth-store"
-import type { WsEventMap, WsEventName } from "@/shared/ws/events"
+import type { WsEventMap, WsLifecycleEvents } from "@/shared/ws/events"
 
-type Handler<E extends WsEventName> = (data: WsEventMap[E]) => void
+export interface WsChannelOptions {
+  /** Socket path, e.g. `/ws/agent`. */
+  path: string
+  /** POST endpoint that issues the one-time ticket for this channel. */
+  ticketPath: string
+  /**
+   * Ticket statuses meaning "not allowed" rather than "try again later"
+   * (a demoted admin). The client stops and emits `__denied` instead of
+   * retrying forever with a credential that will never be accepted.
+   */
+  terminalTicketStatuses?: readonly number[]
+  /** Server close codes with the same meaning, e.g. 4401/4403. */
+  terminalCloseCodes?: readonly number[]
+}
 
-export class AgentWsClient {
+type Handler<M, E extends keyof M> = (data: M[E]) => void
+
+export class WsClient<M extends WsLifecycleEvents> {
   private ws: WebSocket | null = null
-  private handlers = new Map<string, Set<Handler<WsEventName>>>()
+  private handlers = new Map<string, Set<(data: unknown) => void>>()
   private reconnectTimer: number | null = null
   private connectPromise: Promise<void> | null = null
   private generation = 0
   private attempt = 0
   private closedByUser = false
   private _connected = false
+  private readonly options: WsChannelOptions
+
+  constructor(options: WsChannelOptions) {
+    this.options = options
+  }
 
   get connected() {
     return this._connected
@@ -40,32 +62,50 @@ export class AgentWsClient {
     return promise
   }
 
-  private async openConnection(generation: number): Promise<void> {
-    let token = useAuthStore.getState().accessToken
-    if (!token) return
-
-    let ticketResp = await fetch(`${env.apiBase}/api/auth/ticket`, {
+  private async fetchTicket(token: string): Promise<Response> {
+    return fetch(`${env.apiBase}${this.options.ticketPath}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     })
-    if (ticketResp.status === 401) {
-      const newToken = await refreshAccessToken()
-      if (!newToken) return
-      token = newToken
-      ticketResp = await fetch(`${env.apiBase}/api/auth/ticket`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${newToken}` },
-      })
-    }
-    if (generation !== this.generation || this.closedByUser) return
-    if (!ticketResp.ok) {
-      this.scheduleReconnect()
-      return
-    }
+  }
 
-    const { ticket } = (await ticketResp.json()) as { ticket: string }
-    if (generation !== this.generation || this.closedByUser) return
-    const socket = new WebSocket(`${wsBase()}/ws/agent?ticket=${ticket}`)
+  private isCurrent(generation: number): boolean {
+    return generation === this.generation && !this.closedByUser
+  }
+
+  /** The ticket for this attempt, or null when this attempt is over (retry already scheduled if useful). */
+  private async obtainTicket(generation: number): Promise<string | null> {
+    const token = useAuthStore.getState().accessToken
+    if (!token) return null
+    try {
+      let ticketResp = await this.fetchTicket(token)
+      if (ticketResp.status === 401) {
+        const newToken = await refreshAccessToken()
+        if (!newToken) return null
+        ticketResp = await this.fetchTicket(newToken)
+      }
+      if (!this.isCurrent(generation)) return null
+      if (!ticketResp.ok) {
+        if (this.options.terminalTicketStatuses?.includes(ticketResp.status))
+          this.stop({ status: ticketResp.status })
+        else this.scheduleReconnect()
+        return null
+      }
+      const { ticket } = (await ticketResp.json()) as { ticket?: unknown }
+      if (typeof ticket !== "string" || !ticket) throw new TypeError("ticket missing")
+      return this.isCurrent(generation) ? ticket : null
+    } catch {
+      // Offline, a dropped connection or a garbled body: the same "try again
+      // later" as a 5xx. Without this the rejection ended the loop for good.
+      if (this.isCurrent(generation)) this.scheduleReconnect()
+      return null
+    }
+  }
+
+  private async openConnection(generation: number): Promise<void> {
+    const ticket = await this.obtainTicket(generation)
+    if (ticket === null || !this.isCurrent(generation)) return
+    const socket = new WebSocket(`${wsBase()}${this.options.path}?ticket=${encodeURIComponent(ticket)}`)
     this.ws = socket
 
     socket.onopen = () => {
@@ -87,12 +127,17 @@ export class AgentWsClient {
         // non-JSON frame — ignore
       }
     }
-    socket.onclose = () => {
+    socket.onclose = (event?: CloseEvent) => {
       // A stale socket must never null out or reconnect over its replacement.
       if (this.ws !== socket) return
       this._connected = false
       this.ws = null
-      this.dispatch("__disconnected", {})
+      const code = event?.code
+      this.dispatch("__disconnected", { code })
+      if (code !== undefined && this.options.terminalCloseCodes?.includes(code)) {
+        this.stop({ status: code })
+        return
+      }
       if (!this.closedByUser) this.scheduleReconnect()
     }
     socket.onerror = () => {
@@ -100,9 +145,19 @@ export class AgentWsClient {
     }
   }
 
+  /** Terminal refusal: stop reconnecting and let subscribers drop their state. */
+  private stop(detail: { status: number }): void {
+    this.disconnect()
+    this.dispatch("__denied", detail)
+  }
+
   disconnect(): void {
     this.closedByUser = true
     this.generation += 1
+    // The in-flight handshake belongs to the old generation and will bail out
+    // on its own; a connect() right after this must start a fresh attempt
+    // instead of awaiting that dead one.
+    this.connectPromise = null
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
     const socket = this.ws
@@ -111,16 +166,18 @@ export class AgentWsClient {
     socket?.close()
   }
 
-  send(payload: Record<string, unknown>): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload))
+  send(payload: Record<string, unknown>): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false
+    this.ws.send(JSON.stringify(payload))
+    return true
   }
 
-  on<E extends WsEventName>(event: E, handler: Handler<E>): () => void {
+  on<E extends keyof M & string>(event: E, handler: Handler<M, E>): () => void {
     const set = this.handlers.get(event) ?? new Set()
-    set.add(handler as Handler<WsEventName>)
+    set.add(handler as (data: unknown) => void)
     this.handlers.set(event, set)
     return () => {
-      set.delete(handler as Handler<WsEventName>)
+      set.delete(handler as (data: unknown) => void)
     }
   }
 
@@ -129,7 +186,7 @@ export class AgentWsClient {
     if (!set) return
     for (const handler of set) {
       try {
-        handler(data as WsEventMap[WsEventName])
+        handler(data)
       } catch (err) {
         // one bad handler must not break the stream
         console.error(`[ws] handler for ${event} threw`, err)
@@ -146,6 +203,13 @@ export class AgentWsClient {
       this.reconnectTimer = null
       void this.connect()
     }, delay)
+  }
+}
+
+/** The agent event stream every chat surface listens to. */
+export class AgentWsClient extends WsClient<WsEventMap> {
+  constructor() {
+    super({ path: "/ws/agent", ticketPath: "/api/auth/ticket" })
   }
 }
 

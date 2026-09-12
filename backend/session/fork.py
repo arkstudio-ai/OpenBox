@@ -71,8 +71,17 @@ async def fork_session(
         from db.base import get_db_session
         from db.models.message import Message as MessageORM
         from db.models.part import Part as PartORM
+        from db.models.session import Session as SessionORM
+        from trajectory import TraceContext, context_for_session, enabled, record
+        from session.session import prepare_trajectory_baseline_assets, capture_trajectory_baseline_in_tx
+
+        # Fork history is an explicit baseline, never a replay of old activity.
+        # Retain assets before acquiring either trajectory's write lock.
+        prepared_assets = await prepare_trajectory_baseline_assets(
+            source_session_id, user_id, root_session_id=new_session.id)
 
         async with get_db_session() as db:
+            message_mapping = {}
             source_part_ids = []
             for message in messages:
                 for source_part in message.parts or []:
@@ -112,6 +121,7 @@ async def fork_session(
 
             for msg in messages:
                 new_msg_id = ascending("message")
+                message_mapping[msg.id] = new_msg_id
                 role = msg.role if isinstance(msg.role, str) else msg.role.value
 
                 msg_row = MessageORM(
@@ -156,6 +166,35 @@ async def fork_session(
                         created_at=now,
                     )
                     db.add(part_row)
+
+            if enabled(user_id):
+                # The source is recorded before its fresh destination, which
+                # cannot be concurrently running before this call returns.
+                await db.flush()
+                source_context = await context_for_session(db, user_id, source_session_id)
+                source_row = await db.get(SessionORM, source_session_id)
+                await capture_trajectory_baseline_in_tx(db, source_context, source_row,
+                                                         prepared_assets=prepared_assets)
+                from db.models.trajectory import SessionTrajectory
+                source_trajectory = await db.scalar(select(SessionTrajectory).where(
+                    SessionTrajectory.session_id == source_context.session_id,
+                    SessionTrajectory.user_id == user_id))
+                relation = {"source_session_id": source_session_id, "target_session_id": new_session.id,
+                            "source_trajectory_id": source_trajectory.id,
+                            "source_through_seq": str(source_trajectory.committed_seq),
+                            "up_to_message_id": up_to_message_id, "copied_messages": message_mapping,
+                            "history_mode": "baseline_only"}
+                await record("history.forked", {**relation, "direction": "outgoing"},
+                             context=source_context, db=db, event_id=f"fork:{new_session.id}:source")
+                destination_context = TraceContext(user_id, new_session.id, workspace_id=source.workspace_id)
+                destination_row = await db.get(SessionORM, new_session.id)
+                await capture_trajectory_baseline_in_tx(db, destination_context, destination_row,
+                                                         prepared_assets=prepared_assets)
+                await record("history.forked", {**relation, "direction": "incoming"},
+                             context=destination_context, db=db, event_id=f"fork:{new_session.id}:destination")
+            else:
+                from trajectory import mark_capture_paused_in_tx
+                await mark_capture_paused_in_tx(db, user_id, source_session_id)
     else:
         # File-based storage: copy via storage module
         from storage import storage

@@ -103,6 +103,8 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
             QuestionCheckpoint.applied == False,  # noqa: E712
         ).order_by(QuestionCheckpoint.created_at))).all()
         for row in rows:
+            from question.question import checkpoint_context
+            context = await checkpoint_context(db, row, execution)
             result, extra_events = await _apply(db, session, row)
             events.extend(extra_events)
             if row.part_id:
@@ -115,6 +117,30 @@ async def apply_answers(session_id: str, user_id: str) -> int | None:
                 message = await db.get(Message, row.message_id)
                 if message and message.user_id == user_id:
                     message.finish = "tool_calls"
+                from trajectory import record
+                if context:
+                    await record("part.committed", {"part": part.data}, db=db, context=context)
+                    await record("tool.finished", {
+                        "status": "completed", "output": result.get("output", ""),
+                        "model_output": result.get("output", ""),
+                        "question_id": row.id, "reason": "user_answer_applied",
+                    }, db=db, context=context, event_id=f"question_tool_finish:{row.id}")
+            if context:
+                from trajectory import record
+                await record("input.injected", {
+                    "source_kind": "question", "question_id": row.id,
+                    "answers": row.answers, "decision": row.status,
+                }, db=db, context=context, event_id=f"question_inject:{row.id}")
+                for event in extra_events:
+                    event_data = event["data"]
+                    if event["type"] == "message.created":
+                        message_data = event_data["message"]
+                        await record("message.committed", {"message": message_data}, db=db,
+                                     context=context.derive(message_id=message_data["id"], part_id=None))
+                    elif event["type"] == "session.updated":
+                        await record("session.settings_changed", {"after": {"agent": session.agent},
+                                                                   "source_kind": "question"},
+                                     db=db, context=context)
             row.applied = True
             row.updated_at = runtime.now()
         await db.flush()
@@ -150,7 +176,11 @@ async def expire_questions() -> None:
                     QuestionCheckpoint.status == "pending", QuestionCheckpoint.expires_at <= runtime.now(),
                 ))).all()
                 for row in due:
+                    from question.question import checkpoint_context, record_checkpoint
+                    await checkpoint_context(db, row, execution)
                     row.status, row.applied, row.updated_at = "expired", True, runtime.now()
+                    await record_checkpoint(db, row, execution, "question.cancelled",
+                                            {"status": "cancelled", "reason": "expired"})
                     part = await db.get(Part, row.part_id) if row.part_id else None
                     if part:
                         part.data = {**part.data, "status": "error", "error": "Question expired; no approval was granted.",

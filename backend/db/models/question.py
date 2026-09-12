@@ -17,6 +17,9 @@ class SessionExecution(Base):
     run_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(nullable=True)
     run_origin: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # The task identity survives a suspended question and a worker restart.
+    # A new execution lease changes run_id, while the original turn/root stay.
+    trace_context: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     run_progress: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     # A transactional outbox: an accepted answer cannot be separated from its
     # scheduling intent by a process exit. Multiple answers coalesce per turn.

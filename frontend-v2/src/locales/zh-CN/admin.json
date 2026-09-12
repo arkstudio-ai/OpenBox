@@ -58,6 +58,7 @@
     "fleet": "舰队管理",
     "skills": "技能管理",
     "billing": "订阅管理",
+    "trajectories": "轨迹监控",
     "notifications": "通知测试"
   },
   "section": {
@@ -72,6 +73,10 @@
     "billing": {
       "title": "订阅管理",
       "subtitle": "每个空间的订阅、订单与用量，只读。"
+    },
+    "trajectories": {
+      "title": "会话轨迹监控",
+      "subtitle": "跨全部用户与工作区查看、回放已记录的 Agent 会话，只读。"
     },
     "notifications": {
       "title": "通知测试",

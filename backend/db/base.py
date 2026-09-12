@@ -116,9 +116,22 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_upgrade_desktop_billing_columns)
         await connection.run_sync(_upgrade_desktop_skill_store_columns)
+        await connection.run_sync(_upgrade_desktop_trajectory_columns)
         await connection.run_sync(_seed_single_user_scope)
     log.info(f"Single-user application database at {database_path}")
     return engine
+
+
+def _upgrade_desktop_trajectory_columns(connection) -> None:
+    """Keep existing desktop databases compatible with durable trace contexts."""
+    inspector = sa.inspect(connection)
+    tables = set(inspector.get_table_names())
+    for table in ("session_executions", "cron_runs"):
+        if table not in tables:
+            continue
+        columns = {column["name"] for column in inspector.get_columns(table)}
+        if "trace_context" not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
 
 
 def _upgrade_desktop_billing_columns(connection) -> None:
@@ -288,8 +301,16 @@ def get_engine() -> AsyncEngine:
 _READINESS_SCHEMA: dict[str, frozenset[str]] = {
     "session_executions": frozenset({
         "session_id", "user_id", "generation", "run_id", "run_generation", "lease_until",
-        "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at",
+        "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at", "trace_context",
     }),
+    "cron_runs": frozenset({"id", "trace_context"}),
+    "session_trajectories": frozenset({"id", "user_id", "session_id", "committed_seq", "projected_seq", "deleted_at"}),
+    "trajectory_events": frozenset({"event_id", "trajectory_id", "seq", "context", "data", "content_hash"}),
+    "trajectory_payloads": frozenset({"payload_id", "first_seq", "content", "storage_status", "availability", "sha256"}),
+    "trajectory_records": frozenset({"record_id", "applied_seq", "projector_version", "summary", "data"}),
+    "trajectory_session_summaries": frozenset({"trajectory_id", "applied_seq", "statistics"}),
+    "trajectory_checkpoints": frozenset({"trajectory_id", "through_seq", "projector_version", "state", "digest"}),
+    "trajectory_exports": frozenset({"id", "trajectory_id", "through_seq", "status", "storage_key"}),
     "question_checkpoints": frozenset({
         "id", "session_id", "user_id", "generation", "message_id", "part_id", "status",
         "questions", "answers", "draft", "draft_revision", "continuation", "applied",

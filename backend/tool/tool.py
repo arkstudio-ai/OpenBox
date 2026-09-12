@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
@@ -37,6 +38,11 @@ class ToolContext:
     # compaction. In-memory budgets must not reset with every assistant message.
     run_id: str = ""
     agent_id: str = ""
+    # Immutable, per-call trajectory identity; never mutate a parent's context.
+    trace_context: Any = None
+    _trajectory_execute_started: float | None = None
+    _trajectory_full_tool_output: str | None = None
+    _trajectory_output_redactor: Any = None
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
@@ -132,7 +138,8 @@ def define_tool(
     from tool.truncation import truncate_output
 
     async def wrapped_execute(args: dict, ctx: ToolContext) -> ToolResult:
-        if sandbox_required and ctx.sandbox_error:
+        ctx = ctx or ToolContext()
+        if sandbox_required and getattr(ctx, "sandbox_error", None):
             return ToolResult(
                 title="Sandbox unavailable",
                 output=ctx.sandbox_error["detail"],
@@ -151,19 +158,46 @@ def define_tool(
             return ToolResult(
                 title=f"Invalid input for {tool_id}",
                 output=f"Parameter validation error: {exc}",
+                metadata={"error": True, "error_code": "invalid_arguments"},
             )
 
+        from trajectory import current, record
+        trace = getattr(ctx, "trace_context", None) or current()
+        if trace is not None:
+            await record("tool.started", {"tool": tool_id,
+                "effective_arguments": validated.model_dump(mode="json"),
+                "timing_source": "producer_monotonic"}, context=trace)
         # Execute
+        ctx._trajectory_execute_started = time.monotonic()
+        ctx._trajectory_full_tool_output = None
+        if trace is not None:
+            from trajectory.stream_redaction import StreamTextRedactor
+            ctx._trajectory_output_redactor = StreamTextRedactor()
         result = await execute(validated, ctx)
+        duration = time.monotonic() - ctx._trajectory_execute_started
+
+        # Preserve the execution result before the model-facing presentation
+        # applies its length budget. A later tool.finished stores that view.
+        if trace is not None:
+            retained = (ctx._trajectory_full_tool_output
+                if ctx._trajectory_full_tool_output is not None else result.output)
+            safe_output = ctx._trajectory_output_redactor.redact(retained, mode="replace", final=True)
+            await record("tool.output", {
+                **safe_output,
+                "stage": "executor_result", "title": result.title,
+                "metadata": result.metadata, "duration_ms": round(duration * 1000, 3),
+            }, context=trace)
 
         # Truncate output
         truncated = await truncate_output(result.output)
         return ToolResult(
             title=result.title,
             output=truncated.content,
-            metadata={**result.metadata, "truncated": truncated.truncated},
+            metadata={**result.metadata, "truncated": truncated.truncated, "duration": duration},
         )
 
+    # The shared hooks defer the dispatch boundary until validation succeeds.
+    wrapped_execute._trajectory_validates = True
     return ToolInfo(
         id=tool_id,
         description=description,

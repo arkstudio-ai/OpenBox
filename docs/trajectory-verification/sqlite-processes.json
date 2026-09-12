@@ -1,0 +1,22 @@
+{
+  "database": "sqlite",
+  "events": 51,
+  "unique_event_ids": 51,
+  "committed_seq": "51",
+  "next_seq": "52",
+  "contiguous": true,
+  "processes": [
+    {
+      "pid": 75999,
+      "events": 25,
+      "retries": 1
+    },
+    {
+      "pid": 75998,
+      "events": 25,
+      "retries": 1
+    }
+  ],
+  "start_method": "spawn",
+  "simultaneous_start_barrier": true
+}

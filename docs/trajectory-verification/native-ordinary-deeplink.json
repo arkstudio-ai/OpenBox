@@ -1,0 +1,213 @@
+{
+  "passed": true,
+  "role": "user; owner of target session and default workspace",
+  "finalUrl": "http://127.0.0.1:3101/app",
+  "shot": "frontend-v2/test-results/trajectory-claude/native-ordinary-deeplink.png",
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/billing/balance",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/desktop/status",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/jobs",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/config",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/containers",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/skill",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/command",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/agent",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets",
+      "query": [
+        [
+          "project",
+          "all"
+        ],
+        [
+          "source",
+          "all"
+        ],
+        [
+          "kind",
+          "all"
+        ],
+        [
+          "sort",
+          "created"
+        ],
+        [
+          "limit",
+          "200"
+        ]
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/desktop/status",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/desktop/status",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/agent",
+      "sent": [],
+      "receivedTypes": [
+        "server.connected",
+        "session.status",
+        "session.status",
+        "session.status"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+  ],
+  "failedResponses": [
+    {
+      "path": "/api/desktop/status",
+      "status": 503
+    },
+    {
+      "path": "/api/assets",
+      "status": 503
+    },
+    {
+      "path": "/api/desktop/status",
+      "status": 503
+    }
+  ]
+}

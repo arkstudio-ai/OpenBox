@@ -593,6 +593,11 @@ async def create_publish_job(
             updated_at=now,
         )
         db.add(job)
+        from trajectory import current
+        from trajectory.jobs import record_job_in_tx
+        trace = current()
+        await record_job_in_tx(db, job, submitted=True,
+                              session_id=trace.source_session_id if trace else None)
         await db.commit()
         await db.refresh(job)
         return job, schema
@@ -610,6 +615,8 @@ async def get_job(job_id: str, workspace_id: str) -> PublishJob:
         if row.status == "pending" and _aware(row.expires_at) and _aware(row.expires_at) <= _now():
             row.status = "expired"
             row.updated_at = _now()
+            from trajectory.jobs import record_job_in_tx
+            await record_job_in_tx(db, row)
             await db.commit()
             await db.refresh(row)
         return row
@@ -673,6 +680,8 @@ async def handle_douyin_event(payload: dict) -> bool:
                 job.platform_account_id = account.id
         job.published_at = now
         job.updated_at = now
+        from trajectory.jobs import record_job_in_tx
+        await record_job_in_tx(db, job)
         await add_notification(
             db,
             workspace_id=job.workspace_id,

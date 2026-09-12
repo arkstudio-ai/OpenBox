@@ -153,6 +153,7 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
             session_id=session_id,
             text="",
             agent="compaction",
+            synthetic=True,
             user_id=user_id,
         )
         log.info(f"Created compaction user message: {msg.id}")
@@ -189,6 +190,9 @@ async def create_compaction(session_id: str, auto: bool = True, user_id: str = "
         await save_part(part, is_new=True, user_id=user_id)
         log.info(f"Saved compaction part: {part.id} for message {msg.id}")
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.error(f"Failed to create compaction: {e}", exc_info=True)
 
 
@@ -264,6 +268,9 @@ async def _chunked_summarize(
                 if event["type"] == "text_delta":
                     summary_text += event.get("text", "")
         except Exception as e:
+            from trajectory.types import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             log.warning(f"Chunk {i+1}/{len(chunks)} summarization failed: {e}")
             # Fallback: just take first/last few messages as text
             fallback = []
@@ -299,6 +306,16 @@ async def process_compaction(
     from tool.tool import ToolContext
     from core.identifier import ascending
     from bus.events import MESSAGE_TEXT_DELTA
+
+    from trajectory import bind as bind_trace, current as current_trace, record as record_trace
+    from agent.trajectory import public_value
+    import time
+    compaction_id = ascending("compaction")
+    compaction_started = time.monotonic()
+    compaction_trace = current_trace()
+    await record_trace("compaction.started", {"compaction_id": compaction_id,
+        "auto": auto, "model": model_id, "input": public_value(messages),
+        "timing_source": "producer_monotonic"}, context=compaction_trace)
 
     # Find the compaction user message (the one with the compaction part).
     # parent_id MUST point to this message for filter_compacted() boundary detection.
@@ -421,13 +438,23 @@ async def process_compaction(
                 log.error(f"Compaction LLM error: {event['error']}")
                 llm_error = True
                 break
-    except Exception as e:
+    except BaseException as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
+        import asyncio
+        if isinstance(e, asyncio.CancelledError):
+            await record_trace("compaction.finished", {"compaction_id": compaction_id,
+                "status": "cancelled", "summary": summary_text, "applied": False,
+                "duration_ms": (time.monotonic() - compaction_started) * 1000}, context=compaction_trace)
+            raise
         log.error(f"Compaction stream error for session {session_id}: {e}")
         llm_error = True
 
     # Save final text part
     text_part.text = summary_text or ""
-    await save_part(text_part, user_id=user_id)
+    with bind_trace(getattr(ctx, "trace_context", None) or compaction_trace):
+        await save_part(text_part, user_id=user_id)
 
     if llm_error or not summary_text:
         # Don't create a compaction boundary on failure (matching opencode:
@@ -437,8 +464,13 @@ async def process_compaction(
         assistant.summary = True  # Mark as summary attempt
         # assistant.finish deliberately NOT set — prevents bad boundary
         assistant.error = {"message": "Compaction failed to produce a summary"}
-        await update_message_info(assistant, user_id=user_id)
+        with bind_trace(getattr(ctx, "trace_context", None) or compaction_trace):
+            await update_message_info(assistant, user_id=user_id)
         bus.publish(SESSION_COMPACTION_COMPLETE, {"userId": user_id, "sessionId": session_id})
+        await record_trace("compaction.finished", {"compaction_id": compaction_id,
+            "status": "failed", "summary": summary_text, "applied": False,
+            "duration_ms": (time.monotonic() - compaction_started) * 1000,
+            "timing_source": "producer_monotonic"}, context=compaction_trace)
         return "stop"
 
     # Success: mark assistant message as completed summary boundary
@@ -454,7 +486,15 @@ async def process_compaction(
             cost=stream_usage.get("cost", 0),
             credits=stream_usage.get("credits"),
         )
-    await update_message_info(assistant, user_id=user_id)
+    with bind_trace(getattr(ctx, "trace_context", None) or compaction_trace):
+        await update_message_info(assistant, user_id=user_id)
+
+    await record_trace("compaction.finished", {"compaction_id": compaction_id,
+        "status": "completed", "summary": summary_text, "applied": True,
+        "summary_message_id": assistant.id, "tail_start_id": tail_start_id,
+        "request_id": getattr(getattr(ctx, "trace_context", None), "request_id", None),
+        "duration_ms": (time.monotonic() - compaction_started) * 1000,
+        "timing_source": "producer_monotonic"}, context=compaction_trace)
 
     # Compaction changes the context window, never erases lifetime consumption.
     from session.session import update_session, get_session, update_session_tokens
@@ -604,6 +644,9 @@ async def prune_tool_outputs(session_id: str, user_id: str | None = None, aggres
             # Persist to database
             if part_id and msg_id:
                 try:
-                    await update_part_data(part_id, part_data)
+                    await update_part_data(part_id, part_data, user_id=user_id)
                 except Exception as e:
+                    from trajectory import TrajectoryError
+                    if isinstance(e, TrajectoryError):
+                        raise
                     log.warning(f"Failed to persist pruned part {part_id}: {e}")

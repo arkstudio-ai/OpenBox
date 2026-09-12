@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from trajectory.types import TrajectoryError
 from core.log import create_logger
 from question import question as question_mod
 from question.question import Question, QuestionOption
@@ -78,6 +79,8 @@ def _host(url: str) -> str:
     try:
         from urllib.parse import urlsplit
         return urlsplit(url).hostname or ""
+    except TrajectoryError:
+        raise
     except Exception:
         return ""
 
@@ -93,6 +96,8 @@ async def _browser_location(ctx: ToolContext) -> str:
         mode = str(relay.get("mode") or "")
         if mode:
             return "extension" if mode == "extension" else "local"
+    except TrajectoryError:
+        raise
     except Exception as e:
         log.debug(f"browser status probe skipped: {e}")
     # The relay is not up, so whatever blocked the model was on the desktop's

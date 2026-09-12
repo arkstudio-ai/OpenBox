@@ -1,0 +1,65 @@
+{
+  "database": "postgresql",
+  "kill_signal": "SIGKILL",
+  "killed_child_pid": 81716,
+  "exitcode": -9,
+  "lease_seconds": 2,
+  "lease_expiry": "actual_clock_no_database_rewrite",
+  "before_kill": {
+    "pid": 81716,
+    "ticket": {
+      "session_id": "shared_root",
+      "user_id": "writer_owner",
+      "generation": 1,
+      "run_id": "385c7afdf5ef462380ed87238f2140ca"
+    },
+    "call_id": "call_before_kill",
+    "request_id": "request_01M27VJ8CDR7YCWZCBHBKD9TDB",
+    "through_seq": "15",
+    "event_count": 15,
+    "prefix_sha256": "8a318cbd8906f1b70c17894c67518b9781cb78e83223c3abe274b08f76821868"
+  },
+  "recovery_pid": 81719,
+  "recovered_through_seq": "16",
+  "final_through_seq": "34",
+  "prefix_preserved": true,
+  "old_tool_status": "unknown",
+  "old_request_status": "unknown",
+  "old_run_status": "unknown",
+  "automatic_reexecution_count": 0,
+  "new_input_tool_status": "completed",
+  "new_input_run_status": "completed",
+  "new_generation": 2,
+  "side_effects": [
+    {
+      "phase": "before_kill",
+      "pid": 81716,
+      "run_id": "385c7afdf5ef462380ed87238f2140ca"
+    },
+    {
+      "phase": "after_recovery",
+      "pid": 81719,
+      "run_id": "b29a977963254734bf02c7822b589421"
+    }
+  ],
+  "real_components": [
+    "create_user_message",
+    "start_run",
+    "RequestCapture",
+    "ToolHooks",
+    "define_tool",
+    "tool.output transaction commit",
+    "recover_expired_runs",
+    "fixed-watermark replay",
+    "finish_run"
+  ],
+  "substitutes": [
+    "Local fsynced file replaces external tool side effect",
+    "Deterministic RequestCapture adapter without model dispatch"
+  ],
+  "not_covered": [
+    "Remote database failover",
+    "Machine power loss",
+    "Cloud sandbox/network side effect"
+  ]
+}

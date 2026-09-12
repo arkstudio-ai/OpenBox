@@ -64,6 +64,22 @@ async def _db_write(key: list[str], content: Any) -> None:
     # SQLite profile, where it raised "no such function: NOW".
     now = datetime.now(timezone.utc)
     async with get_db_session() as session:
+        trace = None
+        before = None
+        if len(key) == 2 and key[0] == "todo":
+            from trajectory import enabled
+            if enabled():
+                from sqlalchemy import select
+                from db.models.session import Session
+                from trajectory.producers import activity_context
+                owner = await session.scalar(select(Session).where(
+                    Session.id == key[1], Session.is_deleted.is_(False)).with_for_update())
+                if owner is not None and enabled(owner.user_id):
+                    trace = await activity_context(session, owner.user_id, key[1])
+                    previous = await session.execute(text("SELECT value FROM kv_store WHERE key = :key"),
+                                                     {"key": db_key})
+                    old = previous.scalar_one_or_none()
+                    before = json.loads(old) if old else None
         # Upsert: try update first, then insert
         result = await session.execute(
             text("UPDATE kv_store SET value = :value, updated_at = :now WHERE key = :key"),
@@ -74,6 +90,10 @@ async def _db_write(key: list[str], content: Any) -> None:
                 text("INSERT INTO kv_store (key, value, updated_at) VALUES (:key, :value, :now)"),
                 {"key": db_key, "value": value, "now": now},
             )
+        if trace is not None:
+            from trajectory import record
+            await record("todo.changed", {"before": before, "after": content,
+                                           "items": content.get("items", [])}, db=session, context=trace)
 
 
 async def _db_remove(key: list[str]) -> None:

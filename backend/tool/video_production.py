@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from auth.jwt import create_asset_download_token
+from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -638,6 +639,8 @@ async def _create_pending_job(
             )
             db.add(job)
             try:
+                from trajectory.jobs import record_job_in_tx
+                await record_job_in_tx(db, job, submitted=True)
                 await db.commit()
                 return job, None, True
             except IntegrityError:
@@ -703,6 +706,8 @@ async def _create_pending_job(
         db.add(asset)
         db.add(job)
         try:
+            from trajectory.jobs import record_job_in_tx
+            await record_job_in_tx(db, job, submitted=True)
             await db.commit()
             return job, asset, True
         except IntegrityError:
@@ -748,7 +753,16 @@ async def _update_job(job_id: str, **values) -> None:
 
     values["updated_at"] = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        await db.execute(update(VideoJob).where(VideoJob.id == job_id).values(**values))
+        job = await db.scalar(select(VideoJob).where(VideoJob.id == job_id).with_for_update())
+        if job is None:
+            return
+        from trajectory.jobs import CONTEXT_KEY, record_job_in_tx
+        if "request_data" in values and (job.request_data or {}).get(CONTEXT_KEY):
+            values["request_data"] = {**values["request_data"],
+                                      CONTEXT_KEY: job.request_data[CONTEXT_KEY]}
+        for key, value in values.items():
+            setattr(job, key, value)
+        await record_job_in_tx(db, job)
 
 
 async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = None) -> None:
@@ -760,8 +774,31 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
     values: dict[str, Any] = {"status": status}
     if size is not None:
         values["size"] = size
+    from trajectory import enabled
+    if status != "ready" or not enabled():
+        async with get_db_session() as db:
+            await db.execute(update(FileAsset).where(FileAsset.id == asset_id).values(**values))
+        return
     async with get_db_session() as db:
-        await db.execute(update(FileAsset).where(FileAsset.id == asset_id).values(**values))
+        asset = await db.get(FileAsset, asset_id)
+    if asset is None or asset.is_deleted:
+        return
+    from trajectory.artifacts import read_asset_bytes, capture_asset_in_tx
+    content = await read_asset_bytes(asset) if asset.session_id and enabled(asset.user_id) else None
+    async with get_db_session() as db:
+        asset = await db.scalar(select(FileAsset).where(FileAsset.id == asset_id).with_for_update())
+        if asset is None or asset.is_deleted:
+            return
+        for key, value in values.items():
+            setattr(asset, key, value)
+        # The immutable job->output_asset relation supplies the original
+        # callback identity; never attach a completion to the newest chat.
+        from db.models.video_job import VideoJob
+        from trajectory.jobs import record_job_in_tx
+        job = await db.scalar(select(VideoJob).where(VideoJob.output_asset_id == asset_id))
+        if job is not None:
+            trace = await record_job_in_tx(db, job)
+            await capture_asset_in_tx(db, trace, asset, content=content)
 
 
 async def _attach_completed(job, ctx: ToolContext) -> bool:
@@ -854,6 +891,8 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             user_id=ctx.user_id,
         )
         return True
+    except TrajectoryError:
+        raise
     except Exception:
         await _update_job(job.id, attached_message_id=None)
         log.warning("video asset saved but chat attachment failed", exc_info=True)
@@ -915,22 +954,26 @@ def _public_error(exc: Exception) -> str:
 
 async def _provider_submit(target: VideoProviderTarget, payload: dict[str, Any]) -> dict[str, Any]:
     import httpx
+    from agent.trajectory import capture_service_dispatch, capture_http_response
 
     relay = target.wire_format == "bossip_videos"
     path = "/v1/videos" if relay else "/api/v3/contents/generations/tasks"
     request_payload = _bossip_video_payload(target, payload) if relay else payload
-    async with httpx.AsyncClient(timeout=target.submit_timeout_seconds, follow_redirects=True) as client:
-        response = await client.post(
-            f"{target.base_url}{path}",
-            headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
-            json=request_payload,
-        )
-    if response.status_code not in (200, 201, 202):
-        response.raise_for_status()
-    data = response.json()
-    if not data.get("id"):
-        raise RuntimeError("video provider response did not include a task id")
-    return data
+    async with capture_service_dispatch(purpose="video_generation", provider=target.provider,
+            model=str(request_payload.get("model") or target.model), operation="POST " + path,
+            body=request_payload, profile="video_generation") as capture:
+        async with httpx.AsyncClient(timeout=target.submit_timeout_seconds, follow_redirects=True) as client:
+            response = await client.post(
+                f"{target.base_url}{path}",
+                headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
+                json=request_payload,
+            )
+        data = await capture_http_response(capture, response)
+        if response.status_code not in (200, 201, 202):
+            response.raise_for_status()
+        if not data.get("id"):
+            raise RuntimeError("video provider response did not include a task id")
+        return data
 
 
 async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[str, Any]:
@@ -952,7 +995,10 @@ async def _provider_status(target: VideoProviderTarget, task_id: str) -> dict[st
             headers={"Authorization": _auth_header(target.api_key)},
         )
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+    from agent.trajectory import observe_service_response
+    await observe_service_response(data, operation="video_status")
+    return data
 
 
 async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
@@ -971,6 +1017,9 @@ async def _provider_cancel(target: VideoProviderTarget, task_id: str) -> None:
             f"{target.base_url}/api/v3/contents/generations/tasks/{task_id}",
             headers={"Authorization": _auth_header(target.api_key)},
         )
+    from agent.trajectory import observe_service_response
+    await observe_service_response({"http_status": response.status_code, "provider_task_id": task_id},
+                                   operation="video_cancel")
     if response.status_code not in (200, 204, 404):
         response.raise_for_status()
 
@@ -979,26 +1028,23 @@ async def _dashscope_transcribe(
     target: VideoTranscriptionTarget, audio_url: str
 ) -> dict[str, Any]:
     import httpx
+    from agent.trajectory import capture_service_dispatch, capture_http_response, observe_service_response
 
     async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
-        submitted = await client.post(
-            f"{target.base_url}/api/v1/services/audio/asr/transcription",
-            headers={
-                "Authorization": _auth_header(target.api_key),
-                "Content-Type": "application/json",
-                "X-DashScope-Async": "enable",
-            },
-            json={
-                "model": target.model,
-                "input": {"file_urls": [audio_url]},
-                "parameters": {"channel_id": [0], "language_hints": ["zh"]},
-            },
-        )
-        submitted.raise_for_status()
-        submitted_data = submitted.json()
-        task_id = str((submitted_data.get("output") or {}).get("task_id") or "")
-        if not task_id:
-            raise RuntimeError("DashScope transcription response did not include a task_id")
+        payload = {"model": target.model, "input": {"file_urls": [audio_url]},
+                   "parameters": {"channel_id": [0], "language_hints": ["zh"]}}
+        async with capture_service_dispatch(purpose="audio_transcription", provider="dashscope",
+                model=target.model, operation="POST /api/v1/services/audio/asr/transcription",
+                body=payload, profile="audio_transcription") as capture:
+            submitted = await client.post(
+                f"{target.base_url}/api/v1/services/audio/asr/transcription",
+                headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json",
+                         "X-DashScope-Async": "enable"}, json=payload)
+            submitted_data = await capture_http_response(capture, submitted)
+            submitted.raise_for_status()
+            task_id = str((submitted_data.get("output") or {}).get("task_id") or "")
+            if not task_id:
+                raise RuntimeError("DashScope transcription response did not include a task_id")
 
         deadline = asyncio.get_running_loop().time() + target.timeout_seconds
         finished: dict[str, Any] | None = None
@@ -1009,6 +1055,7 @@ async def _dashscope_transcribe(
             )
             response.raise_for_status()
             data = response.json()
+            await observe_service_response(data, operation="transcription_status")
             state = str((data.get("output") or {}).get("task_status") or "").upper()
             if state in {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"}:
                 finished = data
@@ -1039,6 +1086,7 @@ async def _dashscope_transcribe(
         downloaded = await client.get(result_url)
         downloaded.raise_for_status()
         transcript_data = downloaded.json()
+        await observe_service_response(transcript_data, operation="transcription_result")
 
     transcripts = transcript_data.get("transcripts") or []
     text = "\n".join(
@@ -1062,28 +1110,23 @@ async def _provider_transcribe(target: VideoTranscriptionTarget, audio_url: str)
         return await _dashscope_transcribe(target, audio_url)
 
     import httpx
+    from agent.trajectory import capture_service_dispatch, capture_http_response
 
-    async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
-        response = await client.post(
-            f"{target.base_url}/v1/audio/transcriptions",
-            headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
-            json={
-                "model": target.model,
-                "audio_url": audio_url,
-                "response_format": "json",
-            },
-        )
-    response.raise_for_status()
-    data = response.json()
-    text = str(data.get("text") or "").strip()
-    if not text:
-        raise RuntimeError("transcription returned no spoken text")
-    return {
-        "text": text,
-        "duration_ms": data.get("duration_ms") or data.get("durationMs"),
-        "model": target.model,
-        "provider": "openai_url",
-    }
+    payload = {"model": target.model, "audio_url": audio_url, "response_format": "json"}
+    async with capture_service_dispatch(purpose="audio_transcription", provider="openai_url",
+            model=target.model, operation="POST /v1/audio/transcriptions", body=payload,
+            profile="audio_transcription", accepted=False) as capture:
+        async with httpx.AsyncClient(timeout=target.timeout_seconds, follow_redirects=True) as client:
+            response = await client.post(f"{target.base_url}/v1/audio/transcriptions",
+                headers={"Authorization": _auth_header(target.api_key), "Content-Type": "application/json"},
+                json=payload)
+        data = await capture_http_response(capture, response)
+        response.raise_for_status()
+        text = str(data.get("text") or "").strip()
+        if not text:
+            raise RuntimeError("transcription returned no spoken text")
+        return {"text": text, "duration_ms": data.get("duration_ms") or data.get("durationMs"),
+                "model": target.model, "provider": "openai_url"}
 
 
 def _provider_state(data: dict[str, Any], route: Any = None) -> str:
@@ -1207,6 +1250,8 @@ async def _finalize_segment(
         size = await _copy_provider_video_to_oss(
             source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
         )
+    except TrajectoryError:
+        raise
     except Exception as exc:
         # The paid provider task already succeeded. Keep this recoverable so a
         # later wait can fetch a fresh result URL and retry only OSS transfer.
@@ -1234,6 +1279,8 @@ async def _finalize_segment(
             job, asset, model_id=job.model or "", resolution=request.get("resolution"),
             duration_sec=float(requested) if isinstance(requested, (int, float)) and requested > 0 else None,
         )
+    except TrajectoryError:
+        raise
     except Exception as exc:  # billing must never strand a finished, paid video
         log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     await _update_job(
@@ -1452,6 +1499,8 @@ async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]]
     for row in inputs:
         try:
             head = await oss.head(row.oss_key)
+        except TrajectoryError:
+            raise
         except Exception:
             return None
         etag = (head or {}).get("etag") or ""
@@ -1507,6 +1556,8 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
         return None
     try:
         head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
+    except TrajectoryError:
+        raise
     except Exception:
         head = None
     if not head or not head.get("size"):
@@ -1673,6 +1724,8 @@ async def _session_video_resolution(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_resolution:
             return session.video_resolution
         return ""
+    except TrajectoryError:
+        raise
     except Exception:
         return ""
 
@@ -1695,6 +1748,8 @@ async def _session_video_model_id(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_model:
             return session.video_model
         return ""
+    except TrajectoryError:
+        raise
     except Exception:
         return ""
 
@@ -1847,6 +1902,8 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             declared=video_providers.declared_model(target.model, get_config()),
             roles=tuple(roles),
         )
+    except TrajectoryError:
+        raise
     except Exception as exc:
         return ToolResult(
             title="This request would be rejected",
@@ -1921,6 +1978,8 @@ async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResul
         )
     try:
         path = await _materialize_asset(asset, ctx)
+    except TrajectoryError:
+        raise
     except Exception as exc:
         return ToolResult(title="Could not deliver the asset", output=_public_error(exc))
     return ToolResult(
@@ -1945,6 +2004,8 @@ async def _try_materialize(job, ctx: ToolContext) -> str | None:
         if not asset or asset.status != "ready":
             return None
         return await _materialize_asset(asset, ctx)
+    except TrajectoryError:
+        raise
     except Exception as exc:
         log.info(f"workspace delivery skipped for {job.id}: {type(exc).__name__}: {exc}")
         return None
@@ -2020,6 +2081,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "submit":
         try:
             target, settings = _configured_target(None)
+        except TrajectoryError:
+            raise
         except Exception as exc:
             return ToolResult(
                 title="Video generation is not configured",
@@ -2259,15 +2322,18 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 )
 
             async def submit_and_persist_provider_identity():
-                if submit_path is None:
-                    submitted = await _provider_submit(target, payload)
-                else:
-                    submitted = await video_providers.submit(target, submit_path, payload)
-                    if getattr(target, "channel", "ark") == "task":
-                        submitted = {
-                            **submitted,
-                            **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
-                        }
+                from agent.trajectory import service_scope
+                async with service_scope(ctx, job=job,
+                        asset_urls={ref["url"]: row.id for ref, row in zip(refs, inputs)}):
+                    if submit_path is None:
+                        submitted = await _provider_submit(target, payload)
+                    else:
+                        submitted = await video_providers.submit(target, submit_path, payload)
+                        if getattr(target, "channel", "ark") == "task":
+                            submitted = {
+                                **submitted,
+                                **(submitted.get("data") if isinstance(submitted.get("data"), dict) else {}),
+                            }
                 submitted_state = _provider_state(submitted, target)
                 # A provider may return a terminal state from the initial POST. In
                 # our state machine, "completed" means the output is already safe
@@ -2332,6 +2398,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
+        except TrajectoryError:
+            raise
         except Exception as exc:
             if "job" in locals() and created:
                 provider_task_id = (
@@ -2423,6 +2491,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         # Controls always resolve from the persisted model. The deployment's
         # current default is not evidence of the route that owns this task.
         target, settings = _configured_target(job.model or None)
+    except TrajectoryError:
+        raise
     except Exception:
         route_block_reason = "provider_route_unavailable"
     if job.provider_task_id and target is not None:
@@ -2447,7 +2517,11 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "cancel":
         if job.provider_task_id and job.status != "transfer_failed":
             try:
-                await _provider_cancel(target, job.provider_task_id)
+                from agent.trajectory import service_scope
+                async with service_scope(ctx, job=job):
+                    await _provider_cancel(target, job.provider_task_id)
+            except TrajectoryError:
+                raise
             except Exception as exc:
                 return ToolResult(title="Video cancellation failed", output=_public_error(exc))
         cancel_note = (
@@ -2499,6 +2573,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 else:
                     await asyncio.sleep(min(poll_interval_seconds, remaining))
                     job = await _owned_job(job.id, ctx, "segment")
+            except TrajectoryError:
+                raise
             except Exception as exc:
                 if _is_timeout_error(exc):
                     timed_out = True
@@ -2521,17 +2597,16 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 reason=route_block_reason,
             )
         try:
-            if is_wait:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    timed_out = True
-                    break
-                data = await asyncio.wait_for(
-                    _provider_status(target, job.provider_task_id),
-                    timeout=remaining,
-                )
-            else:
-                data = await _provider_status(target, job.provider_task_id)
+            from agent.trajectory import service_scope
+            async with service_scope(ctx, job=job):
+                if is_wait:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    data = await asyncio.wait_for(_provider_status(target, job.provider_task_id), timeout=remaining)
+                else:
+                    data = await _provider_status(target, job.provider_task_id)
             state = _provider_state(data, target)
             if state == "completed":
                 await ctx.update_output("Provider completed; copying the video to OSS…")
@@ -2571,6 +2646,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     await _update_job(job.id, status=state, error=None)
                     job = await _owned_job(job.id, ctx, "segment")
             version = _job_snapshot_version(job)
+        except TrajectoryError:
+            raise
         except Exception as exc:
             if is_wait and _is_timeout_error(exc):
                 timed_out = True
@@ -2704,6 +2781,8 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 
         video_settings = get_config().video_generation
         oss = get_oss()
+    except TrajectoryError:
+        raise
     except Exception as exc:
         return ToolResult(title="Transcription is not configured", output=_public_error(exc))
 
@@ -2747,7 +2826,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             audio_url = oss.presign_get(
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
-            transcript = await _provider_transcribe(target, audio_url)
+            from agent.trajectory import service_scope
+            async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
+                transcript = await _provider_transcribe(target, audio_url)
             credits = None
             try:
                 from billing.media import settle_transcription
@@ -2758,6 +2839,8 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     model_id=target.model,
                     duration_sec=(float(duration_ms) / 1000.0) if isinstance(duration_ms, (int, float)) and duration_ms > 0 else None,
                 )
+            except TrajectoryError:
+                raise
             except Exception as exc:  # billing must never lose a finished transcript
                 log.warning(f"transcription {job.id}: settlement failed: {type(exc).__name__}: {exc}")
             await _update_job(
@@ -2778,6 +2861,8 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     "text": transcript.get("text", ""),
                 },
             )
+        except TrajectoryError:
+            raise
         except Exception as exc:
             if created:
                 await _update_job(
@@ -2823,7 +2908,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
             audio_url = oss.presign_get(
                 source.oss_key, expires_sec=video_settings.provider_input_url_ttl_seconds
             )
-            transcript = await _provider_transcribe(target, audio_url)
+            from agent.trajectory import service_scope
+            async with service_scope(ctx, job=job, asset_urls={audio_url: source.id}):
+                transcript = await _provider_transcribe(target, audio_url)
             await _update_job(
                 job.id,
                 status="completed",
@@ -2831,6 +2918,8 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
+        except TrajectoryError:
+            raise
         except Exception as exc:
             await _update_job(
                 job.id,

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
 from agent.agent import AgentDef
-from agent.llm import stream_llm
+from agent.llm import reasoning_profile, stream_llm
 from agent.structured_output import TOOL_NAME, create_structured_output_tool
 from agent.suggestion_context import load_context
 from bus import bus
@@ -109,6 +109,9 @@ async def _settle(ticket: RunTicket, part: SuggestionsPart, result: SuggestionRe
             "context_summary": result.context_summary if valid else "",
         })
         row.data = final.model_dump()
+        from session.session import record_projection_in_tx
+        await record_projection_in_tx(db, ticket.session_id, ticket.user_id, "part.committed",
+            {"part": final.model_dump(), "operation": "updated"}, message_id=final.message_id, part_id=final.id)
     _publish(PART_UPDATED, ticket, final)
 
 
@@ -133,16 +136,23 @@ async def generate_suggestions(ticket: RunTicket, message_id: str, chat_model: s
             db.add(Part(id=part.id, message_id=message_id, session_id=ticket.session_id,
                         user_id=ticket.user_id, type="suggestions", data=part.model_dump(),
                         created_at=datetime.now(timezone.utc)))
+            from session.session import record_projection_in_tx
+            await record_projection_in_tx(db, ticket.session_id, ticket.user_id, "part.committed",
+                {"part": part.model_dump(), "operation": "created"}, message_id=message_id, part_id=part.id)
         pending = part
         _publish(PART_CREATED, ticket, part)
         tool = create_structured_output_tool(SuggestionResult.model_json_schema(), lambda _: None)
+        # Forced tool output conflicts with thinking on routes such as Qwen.
+        # Use the model's supported off tier for this auxiliary request only.
+        variants = reasoning_profile(model).variants
+        variant = next((value for value in ("none", "off") if value in variants), None)
         result = None
         stream = stream_llm(
             agent_def=AgentDef(name="suggestions", description="Next-step suggestions"),
             system=[SYSTEM], messages=[{"role": "user", "content": context}],
             tools={TOOL_NAME: tool}, model_id=model,
             ctx=ToolContext(session_id=ticket.session_id, user_id=ticket.user_id, message_id=message_id),
-            tool_choice="required", billing_kind="suggestions",
+            variant=variant, tool_choice="required", billing_kind="suggestions",
         )
         async with asyncio.timeout(TIMEOUT_SECONDS), aclosing(stream):
             async for event in stream:

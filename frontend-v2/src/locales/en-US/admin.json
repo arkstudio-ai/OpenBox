@@ -58,6 +58,7 @@
     "fleet": "Fleet",
     "skills": "Skills",
     "billing": "Subscriptions",
+    "trajectories": "Trajectories",
     "notifications": "Notifications"
   },
   "section": {
@@ -72,6 +73,10 @@
     "billing": {
       "title": "Subscriptions",
       "subtitle": "Per-workspace subscriptions, orders, and usage — read only."
+    },
+    "trajectories": {
+      "title": "Session trajectories",
+      "subtitle": "Monitor and replay recorded agent sessions across all users and workspaces — read only."
     },
     "notifications": {
       "title": "Notification tests",

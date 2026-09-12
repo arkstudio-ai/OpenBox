@@ -5,6 +5,24 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前两边发布：2026-09-12 17:00 `20260912-videourl-961075e`（backend + frontend）；gw2 backend 为 `…-hotfix-714a30b`
+
+- 源码 `main@961075e` = PR #32（ark 渠道视频解析器读 `metadata.url`）+ PR #31（设置页/控制台重排，前端）+ `872ae32` 会话轨迹监控（新迁移）。
+  背景：09-10 注册表同步给 Seedance 加了 `wire_shape: metadata` 后，请求以自身模型名进自有 new-api 的火山直连渠道 120，
+  其 `GET /v1/videos/{id}` 只在 `metadata.url` 给结果，ark 解析器不读 → 6 条已付费任务卡 `in_progress`（09-11 06:39Z–09-12 01:31Z）。
+  09-12 08:15Z 先从 gw2 `openbox.json` 下架两条 ark Seedance 条目止血，本次发布时从备份原样加回。
+- EC2 `/opt/openbox/build-main` 构建，`docker save|gzip`→scp 到 gw2 `releases/20260912-videourl-961075e/`，SHA-256 `fdcc5758…` 两边一致。
+  AWS 08:56Z、gw2 08:57Z 各 backend→frontend 串行切换，backend 12s/18s healthy，frontend 12s；迁移 `e4f6a8b0c2d4 → f6a8c0e2b4d6` 两边自动跑完。
+  备份 AWS `backups/20260912-videourl-961075e/activation-20260912T085554Z/`、gw2 `…/activation-20260912T085709Z/`（含 preflight.dump）。
+- 新后端启动时 `video.recovery` 把 5 条卡住的 Seedance 任务直接落成 completed；09-11 06:39Z 那条火山链接已过期 → `transfer_failed`（HTTP 403）。
+- **并发部署修正**：切换前 gw2 backend 实际是 `20260912-publish-risk-714a30b-on-19cfdeb`（08:21Z 发的热修，`714a30b` 属 PR #28，未入 main），
+  被本次 main 部署顶掉。已按同样套路重建 `20260912-videourl-961075e-hotfix-714a30b`（`main@961075e` + cherry-pick `714a30b`，无冲突，
+  `test_desktop_publish`+`test_video_production` 54 项通过，镜像 label `com.bossip.hotfix.base/commit`），09:02Z 仅换 gw2 backend，18s healthy。
+  AWS 保持纯 `20260912-videourl-961075e`（此前也未带该热修）。PR #28 合并后下次全量构建即可去掉 hotfix 后缀。
+- 公网 `/`、`/api/environment`、`/api/auth/logto/config` 200；`index.html` app-build 为 `20260912-videourl-961075e`。
+- 回滚：gw2 override backend 改回 `20260912-publish-risk-714a30b-on-19cfdeb`、frontend `20260911-suggestion-scroll-617f77e`；
+  AWS 两行改回 `20260911-takeover-fix-a5fa703`；均需先 `alembic downgrade e4f6a8b0c2d4`，再 `up -d --no-deps backend`/`frontend`。
+
 ## 当前阿里云后端：2026-09-11 后台通知状态竞态修复
 
 - 本地 Docker 构建并发布 `openbox-backend:20260911-push-background-19cfdeb`；保留生产源码基线 `57830f8`，只修改通知发送前复核的延期处理，避免后台状态重复上报时永久取消通知。

@@ -27,6 +27,14 @@ function ActivePage({ tab }: { tab: SettingsTab }) {
   }
 }
 
+/**
+ * Two panes: the section rail against the start edge, the section itself
+ * beside it. The rail is anchored rather than centred with the content —
+ * centring the pair left it floating mid-screen with the "left menu" nowhere
+ * near the left. The section keeps the chat transcript's reading width and
+ * starts where the rail ends, so the eye travels rail → heading → content
+ * instead of across a gap.
+ */
 export default function SettingsRoute() {
   const { t } = useTranslation("settings")
   const { tab } = useParams()
@@ -34,12 +42,12 @@ export default function SettingsRoute() {
   const active: SettingsTab = SETTINGS_TABS.includes(tab as SettingsTab) ? (tab as SettingsTab) : "account"
 
   return (
-    <div className="scr @container/settings min-h-0 flex-1 overflow-auto px-4 pt-1.5 pb-7">
-      <div className="mx-auto flex w-full max-w-[860px] flex-col items-stretch gap-5 @min-[640px]/settings:flex-row @min-[640px]/settings:items-start @min-[640px]/settings:gap-7">
-        <SettingsNav active={active} />
-        <div className="flex min-w-0 flex-1 flex-col gap-4.5">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
+      <SettingsNav active={active} />
+      <div className="scr min-h-0 flex-1 overflow-auto px-3 pt-2.5 pb-7 sm:px-6.5 sm:pt-1.5">
+        <div className="flex w-full max-w-190 flex-col gap-4.5">
           <div className="flex flex-col gap-1">
-            <span className="text-2xl font-medium tracking-tight">{t(`nav.${active}`)}</span>
+            <h1 className="text-2xl font-medium tracking-tight">{t(`nav.${active}`)}</h1>
             <span className="text-n600 text-sm">{t(`hint.${active}`)}</span>
           </div>
           <ActivePage tab={active} />

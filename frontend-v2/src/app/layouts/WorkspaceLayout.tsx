@@ -36,12 +36,20 @@ export default function WorkspaceLayout() {
   const userId = useAuthStore((s) => s.user?.id)
   const workspaces = useWorkspacesQuery()
   const isSettings = useMatch(`${paths.settings()}/*`) !== null
+  const isAdmin = useMatch(`${paths.admin}/*`) !== null
   const isBilling = useMatch(`${paths.billing()}/*`) !== null
   // The trajectory viewer is read-only observation of other people's work.
   // Nothing that acts for the viewer — agent socket, sandbox or desktop
   // activation, workbench panel, cron widget — may mount beside it.
   const isTrajectories = useMatch(`${paths.adminTrajectories()}/*`) !== null
   const setLastSession = useWorkspaceUi((s) => s.setLastSession)
+
+  // Settings and the admin console take the whole window: their own nav rail is
+  // the only one on screen, and the topbar's back link is the way out. Two rails
+  // side by side made the workspace sidebar and the page's own rail compete to
+  // answer "where am I", and neither page is somewhere you browse alongside a
+  // conversation — you go in, change something, and come back.
+  const takeover = isSettings || isAdmin
 
   // The topbar's "back to chat" on centre pages returns here.
   useEffect(() => {
@@ -66,13 +74,18 @@ export default function WorkspaceLayout() {
     )
   }
 
-  const showWorkbench = !isBilling && !isTrajectories
+  // The panel belongs to a conversation, and the topbar already refuses to open
+  // it away from one. Left mounted it would reappear beside a takeover page as a
+  // third column — the very thing the takeover removes.
+  const showWorkbench = !isBilling && !isTrajectories && !takeover
 
   return (
     <div className="bg-bg text-ink flex h-screen overflow-hidden">
       {!isTrajectories && <ChatRealtime />}
-      {/* The credit balance read settles the viewer's billing period server-side. */}
-      <Sidebar showCredits={!isTrajectories} />
+      {/* The credit balance read settles the viewer's billing period server-side,
+          so the trajectory viewer keeps opting out even though a takeover page
+          renders no sidebar at all today. */}
+      {!takeover && <Sidebar showCredits={!isTrajectories} />}
       {!isTrajectories && (
         <Suspense fallback={null}>
           <DesktopActivationDialog />
@@ -81,7 +94,7 @@ export default function WorkspaceLayout() {
       <main
         className={cn(
           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-          !isSettings && !isBilling && "md:min-w-105",
+          !takeover && !isBilling && "md:min-w-105",
         )}
       >
         <Topbar

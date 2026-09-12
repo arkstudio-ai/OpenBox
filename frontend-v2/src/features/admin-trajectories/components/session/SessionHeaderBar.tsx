@@ -70,9 +70,9 @@ export function SessionHeaderBar({
           <ArrowLeft size={13} aria-hidden />
           {t("session.back")}
         </Link>
-        <h1 className="text-ink min-w-0 truncate text-base font-medium tracking-tight">
+        <h2 className="text-ink min-w-0 truncate text-base font-medium tracking-tight">
           {header.title || t("list.untitled")}
-        </h1>
+        </h2>
         <span
           className="text-n500 text-2xs flex items-center gap-0.5 font-mono"
           data-testid="trajectory-session-id"

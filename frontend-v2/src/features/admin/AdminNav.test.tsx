@@ -51,12 +51,12 @@ describe("activeAdminSection", () => {
 })
 
 describe("adminLayout", () => {
-  it("keeps the reading width and heading for ordinary columns", () => {
-    expect(adminLayout("/app/admin/billing/orders")).toEqual({ wide: false, heading: true })
+  it("keeps the heading for ordinary columns", () => {
+    expect(adminLayout("/app/admin/billing/orders")).toEqual({ heading: true })
   })
 
-  it("widens the trajectory column and gives the detail its own header", () => {
-    expect(adminLayout("/app/admin/trajectories")).toEqual({ wide: true, heading: true })
-    expect(adminLayout("/app/admin/trajectories/sessions/ses-1")).toEqual({ wide: true, heading: false })
+  it("gives the session detail no column heading — it carries its own", () => {
+    expect(adminLayout("/app/admin/trajectories")).toEqual({ heading: true })
+    expect(adminLayout("/app/admin/trajectories/sessions/ses-1")).toEqual({ heading: false })
   })
 })

@@ -161,6 +161,10 @@ export function SessionTable({ rows, isLoading, error, errorText, hrefFor, onOpe
       emptyText={t("list.empty")}
       errorText={errorText}
       loadingLabel={t("list.loading")}
+      // Nine dense columns (two full timestamps among them). Without a floor the
+      // table is just `w-full` and spreads its columns to whatever width it is
+      // handed; with one it keeps its natural rhythm and scrolls in its card.
+      minWidth="min-w-[72rem]"
     />
   )
 }

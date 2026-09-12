@@ -68,7 +68,8 @@ describe("Topbar on a takeover page", () => {
     expect(bar.firstElementChild).toBe(backLink())
     // Nothing to expand: the sidebar is not rendered beside these pages.
     expect(screen.queryByRole("button", { name: "expand" })).toBeNull()
-    // The page names itself once; its own heading carries the detail.
+    // The page names itself in its own rail, so the chrome repeats neither.
+    expect(screen.queryByText("title")).toBeNull()
     expect(screen.queryByText("subtitle")).toBeNull()
   })
 
@@ -125,6 +126,7 @@ describe("Topbar elsewhere", () => {
     const bar = container.firstElementChild!
     expect(bar.firstElementChild).toBe(screen.getByRole("button", { name: "expand" }))
     expect(backLink()).toBeTruthy()
+    expect(screen.getByText("title")).toBeTruthy()
     expect(screen.getByText("subtitle")).toBeTruthy()
   })
 

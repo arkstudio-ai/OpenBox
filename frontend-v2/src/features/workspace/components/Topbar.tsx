@@ -105,12 +105,14 @@ export function Topbar({ panelOpen, onTogglePanel, statusSlot }: TopbarProps) {
           <PanelLeft size={17} strokeWidth={2.4} />
         </button>
       )}
+      {/* A takeover page names itself in its own rail, in the reference's big
+          title above the section list; repeating it here would say it twice. */}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden">
-        <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
-        {/* A takeover page names its own section below; repeating the page's
-            generic subtitle here would say the same thing twice. */}
         {!takeover && (
-          <span className="text-n600 hidden min-w-0 flex-none truncate text-sm sm:block">{subtitle}</span>
+          <>
+            <span className="max-w-3/5 flex-none truncate text-lg font-medium">{title}</span>
+            <span className="text-n600 hidden min-w-0 flex-none truncate text-sm sm:block">{subtitle}</span>
+          </>
         )}
       </div>
       {!takeover && backLink}

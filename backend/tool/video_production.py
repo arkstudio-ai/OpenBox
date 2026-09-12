@@ -1158,7 +1158,13 @@ def _provider_video_url(data: dict[str, Any], route: Any = None) -> str:
 
         return video_providers.result_video_url(route, data)
     containers = [data]
-    for key in ("result", "data", "content"):
+    # `metadata`: observed 2026-09-11 on the self-hosted new-api gateway when a
+    # declared ark model (Seedance 2.0 on the metadata wire shape) is served by
+    # the direct volcengine channel — a completed `GET /v1/videos/{id}` carries
+    # the TOS link only under `metadata.url`. The sd2 parser learned the same
+    # lesson on 2026-08-29; without it the paid task finalizes to "completed
+    # without a video URL" and the job sticks in in_progress forever.
+    for key in ("result", "data", "content", "metadata"):
         value = data.get(key)
         if isinstance(value, dict):
             containers.append(value)

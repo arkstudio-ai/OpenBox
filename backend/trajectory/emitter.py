@@ -1,9 +1,10 @@
 """Fail-open trajectory emitter: bounded queue, writer thread, JSONL spool.
 
 Business code only validates, serializes and enqueues (SPEC §5). One writer
-thread per process owns line counters, file I/O, rotation, the spool budget
-and budget-file refreshes. Nothing here raises into callers: every loss is
-counted and reported to the worker through ``gap`` control lines.
+thread per process owns line counters, file I/O, rotation, the spool budget,
+blob files for large values (SPEC §3) and budget-file refreshes. Nothing here
+raises into callers: every loss is counted and reported to the worker through
+``gap`` control lines.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import collections
 import concurrent.futures
 from datetime import date, datetime, time as time_of_day
 import errno
+import hashlib
 import logging
 import os
 import socket
@@ -28,7 +30,7 @@ from sqlalchemy.orm import Session as SyncSession
 
 from trajectory import spool
 from trajectory.budget import DROP_BUDGET, NORMAL, BudgetReader, filter_event
-from trajectory.config import emitter_settings, enabled, sink
+from trajectory.config import emitter_settings, enabled, integer, sink
 from trajectory.context import TraceContext, current
 from trajectory.types import TrajectoryError, prepare_fast
 
@@ -136,6 +138,102 @@ class _DropWindow:
                              for (user_id, session_id), (runs, requests) in self.sessions.items()]}
 
 
+VALUE_MAX_DEPTH = 6
+#: ``request.prepared`` inputs moved whole, and input lists whose items are moved one by one.
+REQUEST_VALUES = ("system", "instructions", "tools")
+REQUEST_ITEMS = ("messages", "input")
+#: Blobs the writer stored or refreshed recently; their mtime is refreshed at most every BLOB_REFRESH_SECONDS.
+BLOB_MEMORY = 8192
+
+
+def externalize(payload: bytes, *, min_bytes: int,
+                value_bytes: int = spool.BLOB_VALUE_BYTES) -> tuple[bytes, dict[str, bytes]] | None:
+    """``(event JSON with blob references, {sha256: blob content})``, or ``None`` to write the event inline.
+
+    Moved (SPEC §3.2): the ``input.system``, ``instructions`` and ``tools`` of ``request.prepared``
+    and each item of its ``input.messages`` or list-valued ``input`` larger than ``min_bytes``; then
+    any other value inside ``data`` larger than ``value_bytes``, leaves first and at most six levels
+    deep. A value that holds a reference stays inline, so blobs never nest. A blob is the value's
+    compact JSON, exactly as it appears inline. An event that contains ``"$blob"`` itself is never
+    changed: in a version 2 line those bytes are references only.
+    """
+    size = len(payload)
+    request = size > min_bytes and b'"request.prepared"' in payload
+    if (not request and size <= value_bytes) or b'"$blob"' in payload:
+        return None
+    try:
+        event = orjson.loads(payload)
+    except orjson.JSONDecodeError:
+        return None
+    data = event.get("data") if isinstance(event, dict) else None
+    if not isinstance(data, dict):
+        return None
+    blobs: dict[str, bytes] = {}
+
+    def reference(body: bytes) -> dict:
+        sha = hashlib.sha256(body).hexdigest()
+        blobs.setdefault(sha, body)
+        return {spool.BLOB_KEY: sha}
+
+    inputs = data.get("input")
+    if request and event.get("type") == "request.prepared" and isinstance(inputs, dict):
+        for key in REQUEST_VALUES:
+            if inputs.get(key) is not None:
+                body = orjson.dumps(inputs[key])
+                if len(body) > min_bytes:
+                    inputs[key] = reference(body)
+        for key in REQUEST_ITEMS:
+            items = inputs.get(key)
+            if isinstance(items, list):
+                for position, item in enumerate(items):
+                    body = orjson.dumps(item)
+                    if len(body) > min_bytes:
+                        items[position] = reference(body)
+
+    def shrink(value, depth: int):
+        """``(value, holds a reference)`` with the parts over ``value_bytes`` moved out."""
+        if isinstance(value, str):
+            if len(value) * 6 + 2 <= value_bytes:  # at most six bytes per character
+                return value, False
+            body = orjson.dumps(value)
+        elif isinstance(value, (dict, list)):
+            body = orjson.dumps(value)
+            if len(body) <= value_bytes:
+                return value, spool.BLOB_REFERENCE in body
+            if depth < VALUE_MAX_DEPTH:
+                holds = False
+                for key, child in list(value.items() if isinstance(value, dict) else enumerate(value)):
+                    value[key], moved = shrink(child, depth + 1)
+                    holds = holds or moved
+                if holds:
+                    return value, True
+            elif spool.BLOB_REFERENCE in body:
+                return value, True
+        else:
+            return value, False
+        if depth == 0 or len(body) <= value_bytes:
+            return value, False
+        return reference(body), True
+
+    if size > value_bytes:
+        shrink(data, 0)
+    if not blobs:
+        return None
+    return orjson.dumps(event), blobs
+
+
+def _fsync_directory(path) -> bool:
+    try:
+        directory = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError:
+        return False
+    return True
+
+
 class Emitter:
     WAIT_SECONDS = 0.1
     GAP_INTERVAL_SECONDS = 0.1
@@ -145,7 +243,8 @@ class Emitter:
     WRITE_CHUNK_BYTES = 1024 * 1024
 
     def __init__(self, spool_dir: Path, *, role: str = "backend", queue_bytes: int, max_event_bytes: int,
-                 file_bytes: int, file_ms: int, spool_max_bytes: int, budget_refresh_ms: int = 5000):
+                 file_bytes: int, file_ms: int, spool_max_bytes: int, budget_refresh_ms: int = 5000,
+                 blob_min_bytes: int = spool.BLOB_MIN_BYTES):
         self.spool_dir = Path(spool_dir)
         self.role = role
         self.queue_bytes = max(1, int(queue_bytes))
@@ -153,6 +252,8 @@ class Emitter:
         self.file_bytes = max(1, int(file_bytes))
         self.file_seconds = max(1, int(file_ms)) / 1000
         self.spool_max_bytes = max(1, int(spool_max_bytes))
+        self.blob_min_bytes = max(1, int(blob_min_bytes))
+        self.blob_dir = spool.blobs_dir(self.spool_dir)
         self.started_at = time.time()
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
@@ -212,6 +313,13 @@ class Emitter:
         self._buffer: list[bytes] = []
         self._meta: list[tuple] = []
         self._buffer_bytes = 0
+        #: sha256 -> monotonic time this writer last stored or refreshed the blob.
+        self._blobs_seen: collections.OrderedDict[str, float] = collections.OrderedDict()
+        #: Blob files were renamed into place since the blobs directory was last synced.
+        self._blobs_unsynced = False
+        self._blobs_written = 0
+        self._blob_bytes_written = 0
+        self._blob_errors = 0
 
     # Caller side -----------------------------------------------------------
 
@@ -412,7 +520,9 @@ class Emitter:
                     "pending_gaps": len(self._drops) + self._gaps_in_flight,
                     "filtered_events": self._filtered_events,
                     "truncated_events": self._truncated_events, "write_errors": self._write_errors,
-                    "rejected_after_close": self._rejected_after_close, "writer_restarts": self._restarts}
+                    "rejected_after_close": self._rejected_after_close, "writer_restarts": self._restarts,
+                    "blobs_written": self._blobs_written, "blob_bytes_written": self._blob_bytes_written,
+                    "blob_errors": self._blob_errors}
 
     def _note_error(self, exc: BaseException) -> None:
         code = errno.errorcode.get(getattr(exc, "errno", None) or 0)
@@ -527,9 +637,16 @@ class Emitter:
     def _append(self, kind: int, payload: bytes, at: float, routing: tuple | None,
                 window: tuple | None = None) -> bool:
         """Buffer one line under the next counter; ``routing=None`` marks writer-owned lines."""
-        encode = spool.encode_event_line if kind == EVENT else spool.encode_control_line
-        line = encode(self._n, spool.timestamp_bytes(at), payload)
-        if self._spool_estimate + self._buffer_bytes + len(line) > self.spool_max_bytes:
+        stamp = spool.timestamp_bytes(at)
+        external = self._externalize(payload) if kind == EVENT else None
+        if external is not None:
+            pending, added = self._blob_plan(external[1])
+            line = spool.encode_event_line(self._n, stamp, external[0], version=spool.BLOB_VERSION)
+        else:
+            encode = spool.encode_event_line if kind == EVENT else spool.encode_control_line
+            line, pending, added = encode(self._n, stamp, payload), [], 0
+        # New blob bytes count against the spool budget like the line itself.
+        if self._spool_estimate + self._buffer_bytes + len(line) + added > self.spool_max_bytes:
             if routing is not None:
                 self._writer_drop("spool_full", len(payload), at, routing)
             return False
@@ -537,6 +654,12 @@ class Emitter:
             if routing is not None:
                 self._writer_drop("writer_error", len(payload), at, routing)
             return False
+        if external is not None and not self._store_blobs(pending):
+            # A blob that cannot be stored leaves the event inline.
+            line = spool.encode_event_line(self._n, stamp, payload)
+            if self._spool_estimate + self._buffer_bytes + len(line) > self.spool_max_bytes:
+                self._writer_drop("spool_full", len(payload), at, routing)
+                return False
         self._buffer.append(line)
         self._meta.append((self._n, len(line), len(payload), at, routing, window))
         self._buffer_bytes += len(line)
@@ -549,6 +672,96 @@ class Emitter:
         with self._lock:
             self._writer_drops += 1
             self._drop_locked(reason, size, at, *routing)
+
+    def _externalize(self, payload: bytes) -> tuple[bytes, dict[str, bytes]] | None:
+        try:
+            return externalize(payload, min_bytes=self.blob_min_bytes)
+        except Exception as exc:
+            self._note_error(exc)
+            return None
+
+    def _blob_plan(self, blobs: dict[str, bytes]) -> tuple[list[tuple], int]:
+        """The blobs of a line that need storing or an mtime refresh, and the bytes the missing ones add."""
+        now = time.monotonic()
+        pending, added = [], 0
+        for sha, content in blobs.items():
+            seen = self._blobs_seen.get(sha)
+            if seen is not None and now - seen < spool.BLOB_REFRESH_SECONDS:
+                continue
+            try:
+                os.stat(self.blob_dir / sha)
+                exists = True
+            except OSError:
+                exists = False
+                added += len(content)
+            pending.append((sha, content, exists))
+        return pending, added
+
+    def _store_blobs(self, pending: list[tuple]) -> bool:
+        """Refresh the mtime of existing blobs and store missing ones, before the line referencing them."""
+        for sha, content, exists in pending:
+            path = self.blob_dir / sha
+            if exists:
+                try:
+                    os.utime(path)
+                except FileNotFoundError:
+                    exists = False  # swept since the check: store it again
+                except OSError as exc:
+                    self._blob_failed(exc)
+                    return False
+            if not exists and not self._write_blob(path, content):
+                return False
+            self._blobs_seen[sha] = time.monotonic()
+            self._blobs_seen.move_to_end(sha)
+            while len(self._blobs_seen) > BLOB_MEMORY:
+                self._blobs_seen.popitem(last=False)
+        return True
+
+    def _write_blob(self, path: Path, content: bytes) -> bool:
+        """Temp file, fsync, rename: a blob is complete under its name or absent."""
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        try:
+            try:
+                descriptor = os.open(temporary, flags, spool.FILE_MODE)
+            except FileNotFoundError:
+                spool.ensure_private_dir(path.parent)
+                descriptor = os.open(temporary, flags, spool.FILE_MODE)
+        except OSError as exc:
+            self._blob_failed(exc)
+            return False
+        try:
+            os.fchmod(descriptor, spool.FILE_MODE)
+        except OSError:
+            pass
+        try:
+            try:
+                view, written = memoryview(content), 0
+                while written < len(content):
+                    count = self._write(descriptor, view[written:])
+                    if count <= 0:
+                        raise OSError(errno.EIO, "Spool blob write made no progress")
+                    written += count
+                self._fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            self._rename(temporary, path)
+        except OSError as exc:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            self._blob_failed(exc)
+            return False
+        self._blobs_written += 1
+        self._blob_bytes_written += len(content)
+        self._spool_estimate += len(content)
+        self._blobs_unsynced = True
+        return True
+
+    def _blob_failed(self, exc: OSError) -> None:
+        self._blob_errors += 1
+        self._note_error(exc)
 
     def _prepare_directory(self) -> bool:
         if self._ready:
@@ -685,20 +898,16 @@ class Emitter:
             except OSError:
                 pass
             return
+        if self._blobs_unsynced:
+            # A closed file must not outlive a crash without the blob entries its lines reference.
+            self._blobs_unsynced = not _fsync_directory(self.blob_dir)
         try:
             self._rename(path, path.with_name(path.name[:-len(".part")]))
         except OSError as exc:
             self._note_error(exc)
             return
         self._files_closed += 1
-        try:
-            directory = os.open(self.producer_dir, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        except OSError:
-            pass
+        _fsync_directory(self.producer_dir)
 
     def _rotate(self) -> None:
         self._write_buffer()
@@ -796,7 +1005,8 @@ def get_emitter() -> Emitter | None:
                 emitter = Emitter(settings.spool_dir, queue_bytes=settings.queue_bytes,
                                   max_event_bytes=settings.max_event_bytes, file_bytes=settings.file_bytes,
                                   file_ms=settings.file_ms, spool_max_bytes=settings.spool_max_bytes,
-                                  budget_refresh_ms=settings.budget_refresh_ms)
+                                  budget_refresh_ms=settings.budget_refresh_ms,
+                                  blob_min_bytes=integer("TRAJECTORY_SPOOL_BLOB_MIN_BYTES", spool.BLOB_MIN_BYTES))
                 emitter.start()
                 _emitter = emitter
             return _emitter

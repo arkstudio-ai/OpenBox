@@ -315,5 +315,8 @@ async def test_tool_calls_and_file_changes_reach_the_spool_with_their_call_ident
     assert {item["call_id"] for item in events[:6]} == {"call-9"}
     diff = events[3]
     assert diff["data"]["artifact_type"] == "file_diff" and "sk-abcdefghijklmnopqrstuvwx" not in json.dumps(diff)
-    assert events[8]["data"]["stage"] == "executor_result" and events[8]["data"]["final"] is True
+    # Only each call's last output is final: a registered tool's (define_tool) and a direct executor's.
+    assert events[2]["data"].get("final") is None
+    for result_output in (events[4], events[8]):
+        assert result_output["data"]["stage"] == "executor_result" and result_output["data"]["final"] is True
     assert business_statements == []

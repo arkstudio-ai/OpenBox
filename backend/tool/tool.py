@@ -184,7 +184,8 @@ def define_tool(
             safe_output = ctx._trajectory_output_redactor.redact(retained, mode="replace", final=True)
             await record("tool.output", {
                 **safe_output,
-                "stage": "executor_result", "title": result.title,
+                # The call's last output: a degraded budget keeps it (NOTES decision 7).
+                "stage": "executor_result", "final": True, "title": result.title,
                 "metadata": result.metadata, "duration_ms": round(duration * 1000, 3),
             }, context=trace)
 

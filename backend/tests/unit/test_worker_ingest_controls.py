@@ -243,7 +243,7 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     trajectory, stored = await events_of("ses_1")
     assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [
         "paused", "resumed", "paused", "resumed"]
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 2)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
     # A resume without a pause (a trajectory that never paused) changes nothing.
     harness.writer.events(event(session="ses_2"))
     harness.writer.controls({**resumed, "session_id": "ses_2"})
@@ -254,9 +254,9 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
 
 
 async def test_recording_state_epochs_apply_each_transition_once(harness):
-    """Contract 6: a pause carries the epoch of the period its resume opens, and a resume the epoch it opens.
-    A control whose epoch the trajectory has reached is a duplicate or stale, whichever producer or file it
-    comes from; the epoch (a millisecond timestamp) is kept as the trajectory's recording epoch."""
+    """Contract 6: a resume carries the epoch R of the period it opens and a pause R - 1. A control applies only
+    when its epoch is greater than the last applied one, whichever producer or file it comes from; the epoch (a
+    millisecond timestamp) is kept as the trajectory's recording epoch."""
     harness.writer.events(event())
     await harness.run()
     other = SpoolWriter(harness.settings.spool_dir, "20260914080005-other-7-dddddddd")
@@ -266,11 +266,11 @@ async def test_recording_state_epochs_apply_each_transition_once(harness):
     resume = {**state, "state": "resumed", "reason": "recording_reenabled"}
     # Oldest file first: the pause reported twice, its resume twice, then that pause once more (a crashed
     # producer's abandoned file ingested after the resume).
-    harness.writer.controls({**pause, "epoch": first}, age=50)
-    other.controls({**pause, "epoch": first}, age=45)
+    harness.writer.controls({**pause, "epoch": first - 1}, age=50)
+    other.controls({**pause, "epoch": first - 1}, age=45)
     harness.writer.controls({**resume, "epoch": first}, age=40)
     other.controls({**resume, "epoch": first}, age=35)
-    other.controls({**pause, "epoch": first}, age=30)
+    other.controls({**pause, "epoch": first - 1}, age=30)
     await harness.run()
     trajectory, stored = await events_of("ses_1")
     gaps = [(row.data["phase"], row.event_id) for row in stored if row.type == "recording.gap"]
@@ -278,7 +278,7 @@ async def test_recording_state_epochs_apply_each_transition_once(harness):
                     ("resumed", f"gap:{harness.writer.producer_id}:3:ses_1")]
     assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", first)
     # The next period, with a late resume of the previous one in between.
-    harness.writer.controls({**pause, "epoch": second}, {**resume, "epoch": first}, {**resume, "epoch": second})
+    harness.writer.controls({**pause, "epoch": second - 1}, {**resume, "epoch": first}, {**resume, "epoch": second})
     await harness.run()
     trajectory, stored = await events_of("ses_1")
     assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [

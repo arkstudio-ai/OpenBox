@@ -29,7 +29,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.log import create_logger
 from trajectory.config import integer
-from trajectory.lifecycle import GC_KEY, enqueue_gc
 from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, existing_payloads, is_ref, json_blob, upload_json_blobs
 from trajectory.projector import TERMINAL, contribution, reduce, targets
 from trajectory.repository import (UNSUPPORTED_EVENTS_LIMIT, checkpoint_blobs, expanded_state, record_key,
@@ -379,6 +378,22 @@ class ProjectionService:
                 return 0
         return len(events)
 
+    async def _batch_rows(self, db, trajectory, base: int, last: int) -> list[dict]:
+        """Stored events after base up to last, read in pages until their estimated size reaches the byte bound."""
+        rows, size, after = [], 0, base
+        while after < last:
+            page = await stored_events(db, trajectory, after, last, min(self.batch_events, last - after),
+                                       blob_store=self.blob_store)
+            if not page:
+                break
+            for row in page:
+                rows.append(row)
+                size += event_bytes(row)
+                if size >= self.batch_bytes:
+                    return rows
+            after = int(page[-1]["seq"])
+        return rows
+
     async def _externalize(self, trajectory_id: str, records: list[dict]) -> tuple[list[dict], dict[str, dict]]:
         """(records with large values as ``$ref``, their blobs by dedupe key), every new blob uploaded."""
         known: dict[str, str] = {}
@@ -466,7 +481,11 @@ class ProjectionService:
             for key, number in contribution(value).items():
                 statistics[key] = statistics.get(key, 0) + number - old[key]
         if state["unsupported_events"]:
-            statistics["unsupported_events"] = [*statistics.get("unsupported_events", []), *state["unsupported_events"]]
+            # Bounded: the summary keeps the first UNSUPPORTED_EVENTS_LIMIT of them and counts them all.
+            kept = statistics.get("unsupported_events", [])
+            statistics["unsupported_events_count"] = (statistics.get("unsupported_events_count", len(kept))
+                                                      + len(state["unsupported_events"]))
+            statistics["unsupported_events"] = [*kept, *state["unsupported_events"]][:UNSUPPORTED_EVENTS_LIMIT]
         if state["coverage_start"] is not None:
             statistics["coverage_start"] = state["coverage_start"]
         running_status, model, gap = summary_rules(events, summary.running_status, summary.model)

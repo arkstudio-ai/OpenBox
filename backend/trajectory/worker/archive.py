@@ -232,6 +232,7 @@ class ArchiveService:
         """The contiguous hot rows of the next segment within the event and byte limits, or []."""
         events = TrajectoryEvent.__table__
         async with trace_session() as db:
+            await allow_long_statements(db)
             trajectory = await db.get(SessionTrajectory, trajectory_id)
             if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:
                 return []
@@ -297,6 +298,7 @@ class ArchiveService:
                             type(release_error).__name__)
             return 0
         except Exception as exc:
+            self._failed(trajectory_id)
             self.metrics.inc("segment_failures")
             log.warning("Trajectory %s segment %s-%s not archived: %s", trajectory_id, first, last,
                         type(exc).__name__)

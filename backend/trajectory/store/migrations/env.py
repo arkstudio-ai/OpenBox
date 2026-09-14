@@ -116,10 +116,6 @@ def run_migrations_offline(url: str) -> None:
         context.run_migrations()
 
 
-#: DDL on populated tables can outlast the trace role's 5 s statement_timeout default (PostgreSQL).
-MIGRATION_STATEMENT_TIMEOUT = "1h"
-
-
 def do_run_migrations(connection) -> None:
     business_database = inspect(connection).has_table(BUSINESS_VERSION_TABLE)
     # The inspection autobegan a transaction. Alembic would treat it as an
@@ -136,8 +132,6 @@ def do_run_migrations(connection) -> None:
         include_object=include_object_for(connection.dialect.name),
     )
     with context.begin_transaction():
-        if connection.dialect.name == "postgresql":
-            context.execute(f"SET LOCAL statement_timeout = '{MIGRATION_STATEMENT_TIMEOUT}'")
         context.run_migrations()
 
 

@@ -97,21 +97,6 @@ def recording_transition(state: str, epoch: int | None, *, status: str, current_
     return current_epoch if paused else None
 
 
-def asset_view_from_control(control: dict) -> AssetView | None:
-    """What an ``asset.meta`` or ``asset.deleted`` control says about its asset, before the control applies."""
-    if control.get("type") == "asset.deleted":
-        asset_id = _identifier(control.get("asset_id"))
-        return AssetView(asset_id, _identifier(control.get("user_id")), None, None, None, None, True) if asset_id else None
-    record = control.get("asset") if control.get("type") == "asset.meta" else None
-    if not isinstance(record, dict) or _identifier(record.get("id")) is None or not _identifier(record.get("user_id")):
-        return None
-    size = record.get("size")
-    return AssetView(record["id"], record["user_id"], _identifier(record.get("workspace_id")),
-                     _string(record.get("oss_key"), None), _string(record.get("mime"), 128),
-                     size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None,
-                     bool(record.get("is_deleted")))
-
-
 def _identifier(value) -> str | None:
     return value if isinstance(value, str) and 0 < len(value) <= ID_CHARS else None
 

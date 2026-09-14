@@ -231,9 +231,6 @@ async def revoke_asset(db, asset_id: str, *, at: datetime | None = None) -> list
     caller's.
     """
     timestamp = at or now()
-    # Revocation may touch the payloads of many trajectories; the rest of the caller's transaction gets the
-    # long statement timeout (PostgreSQL).
-    await allow_long_statements(db)
     rows = (await db.scalars(select(TrajectoryPayload).where(TrajectoryPayload.source_asset_id == asset_id)
                              .order_by(TrajectoryPayload.trajectory_id, TrajectoryPayload.payload_id))).all()
     if not rows:

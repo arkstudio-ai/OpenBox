@@ -110,7 +110,7 @@ async def test_a_run_start_resumes_a_paused_session_once_and_epochs_never_repeat
         epochs.append((await read(SessionExecution, "s1")).trace_context["recording_epoch"])
         monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
         # A run can start before any session write (a resumed question): its
-        # start rewrites the saved identity and drops the markers.
+        # start resumes and keeps the markers; the next session write clears the flag.
         ticket = await runtime.start_run("s1", "u1")
         assert ticket is not None
         await runtime.finish_run(ticket, completed=True)
@@ -347,10 +347,10 @@ async def test_every_recording_state_carries_an_epoch_that_grows_with_each_trans
     assert (await read(SessionExecution, "s1")).trace_context["recording_epoch"] == 2
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     await create_user_message("s1", "On", user_id="u1")
-    # A run start drops the stored epoch, so the next pause takes its epoch from the clock.
+    # A run start keeps the stored epoch, so epochs stay small counters.
     ticket = await runtime.start_run("s1", "u1")
     await runtime.finish_run(ticket, completed=True)
-    assert "recording_epoch" not in (await read(SessionExecution, "s1")).trace_context
+    assert (await read(SessionExecution, "s1")).trace_context["recording_epoch"] == 2
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     await create_user_message("s1", "Off again", user_id="u1")
     next_period = (await read(SessionExecution, "s1")).trace_context["recording_epoch"]
@@ -360,8 +360,8 @@ async def test_every_recording_state_carries_an_epoch_that_grows_with_each_trans
 
     controls = recording_spool.controls("recording.state")
     assert [(control["state"], control["epoch"]) for control in controls] == [
-        ("paused", 1), ("resumed", 2), ("paused", next_period - 1), ("resumed", next_period)]
-    assert next_period - 1 > 2
+        ("paused", 1), ("resumed", 2), ("paused", 3), ("resumed", 4)]
+    assert next_period == 4
     # A resume names the baseline of the period it opens.
     assert [item["event_id"] for item in recording_spool.events("baseline.captured")] == [
         "evt_baseline_s1_0", "evt_baseline_s1_2", f"evt_baseline_s1_{next_period}"]
@@ -392,12 +392,30 @@ async def test_every_report_of_one_transition_carries_its_epoch_across_writers_a
         "evt_baseline_s1_0", "evt_baseline_s1_2", "evt_baseline_s1_2"]
 
 
-async def test_a_pause_reported_without_the_lock_stays_below_the_resume_once_a_run_start_dropped_the_epoch(
+async def test_a_pause_reported_without_the_lock_after_a_run_start_names_the_epoch_of_the_locked_pause(
         state, recording_spool, monkeypatch):
     from session.fork import fork_session
     await create_user_message("s1", "First", user_id="u1")
     ticket = await runtime.start_run("s1", "u1")
     await runtime.finish_run(ticket, completed=True)
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await fork_session("s1", user_id="u1")
+    await create_user_message("s1", "Off", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await create_user_message("s1", "On", user_id="u1")
+
+    assert [(control["state"], control["epoch"]) for control in recording_spool.controls("recording.state")] == [
+        ("paused", 1), ("paused", 1), ("resumed", 2)]
+
+
+async def test_a_pause_reported_without_the_lock_stays_below_the_resume_when_the_stored_epoch_is_missing(
+        state, recording_spool, monkeypatch):
+    from session.fork import fork_session
+    await create_user_message("s1", "First", user_id="u1")
+    async with database.get_db_session() as db:
+        # An identity saved without the markers, as run starts left it before wave 3.
+        execution = await db.get(SessionExecution, "s1")
+        execution.trace_context = identity(execution.trace_context)
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
     await fork_session("s1", user_id="u1")
     await create_user_message("s1", "Off", user_id="u1")

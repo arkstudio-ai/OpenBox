@@ -58,6 +58,9 @@ DIGEST_FIELDS = (
 RESET_WATERMARKS = ("archived_seq", "projected_seq", "checkpoint_seq")
 PAGE_ROWS = 1000
 REPORT_LIMIT = 20
+#: Statement timeout of the live trace reads (SET LOCAL, PostgreSQL): the openbox_trace role defaults to 5 s,
+#: and the event key lookup scans trajectory_event_keys, which has no trajectory index.
+READ_STATEMENT_TIMEOUT = "300s"
 
 
 class RebuildError(Exception):
@@ -214,10 +217,17 @@ async def segment_events(store: SegmentStore, segment: dict, trajectory_id: str)
     return events
 
 
+async def _long_reads(connection: AsyncConnection) -> None:
+    if connection.dialect.name == "postgresql":
+        # Ends with this transaction; the role default stays for everything else.
+        await connection.execute(text(f"SET LOCAL statement_timeout = '{READ_STATEMENT_TIMEOUT}'"))
+
+
 async def _snapshot(connection: AsyncConnection) -> None:
     if connection.dialect.name == "postgresql":
         # Segments and hot rows must come from one state while the worker archives.
         await connection.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    await _long_reads(connection)
 
 
 async def _pages(connection: AsyncConnection, table, trajectory_id: str, after_seq: int):
@@ -363,6 +373,7 @@ async def _trajectories(engine: AsyncEngine, table, only: list[str], limit: int 
     if limit:
         query = query.limit(limit)
     async with engine.connect() as connection:
+        await _long_reads(connection)
         return [dict(row) for row in (await connection.execute(query)).mappings().all()]
 
 

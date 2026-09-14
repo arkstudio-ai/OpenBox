@@ -15,8 +15,8 @@ applies a control only when its epoch is newer than the last one it applied. A
 resume carries the epoch of the period it opens and a pause the epoch just
 below it, so every report of one transition names the same epoch and each
 later transition a larger one. A pause is one above the stored epoch. A run
-start rewrites the saved identity from ``TraceContext.to_dict()``, which drops
-both markers; the clock then keeps the next pause above every earlier epoch.
+start keeps both markers when it rewrites the saved identity; for an identity
+saved without the epoch, the clock keeps the next pause above every earlier epoch.
 """
 from __future__ import annotations
 
@@ -192,7 +192,7 @@ def _epoch(saved) -> int | None:
 
 
 def _pause_epoch(saved) -> int:
-    """One above the stored period epoch, or from the clock when a run start dropped it."""
+    """One above the stored period epoch, or from the clock when the identity was saved without it."""
     stored = _stored_epoch(saved)
     return stored + 1 if stored is not None else max(1, int(time.time() * 1000))
 
@@ -265,8 +265,8 @@ async def baseline_candidate_in_tx(db, *, user_id: str, session_id: str, context
     A root session never recorded gets a first-period baseline candidate (the
     worker keeps the first copy of an event id). ``pause`` also reports a pause
     while recording is off. Its epoch is the one a locked write gives that
-    pause while the stored epoch is known; once a run start dropped it, the
-    report carries 1, below every resume epoch. Resuming needs the lock: the
+    pause while the stored epoch is known; without it, the report carries 1,
+    below every resume epoch. Resuming needs the lock: the
     next session write or run start of that session resumes.
     """
     if context is None and not pause:
@@ -311,9 +311,9 @@ async def paused_in_tx(db, context: TraceContext) -> bool:
 async def _resume_saved(db, context: TraceContext, saved: dict) -> None:
     """A run or question adopting a paused identity resumes recording (§5.6).
 
-    The run start rewrites the saved identity, which clears the flag; otherwise
-    the next session write clears it, and the process memory keeps either from
-    opening the same period twice.
+    The flag stays until the next session write clears it (a run start keeps
+    the markers), and the process memory keeps either from opening the same
+    period twice.
     """
     root_session_id = context.session_id
     if db is None or context.source_session_id != root_session_id:

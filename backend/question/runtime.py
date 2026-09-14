@@ -326,7 +326,7 @@ async def get_run_trace(ticket: RunTicket):
 
 async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
     from trajectory import current, record
-    from trajectory.producers import activity_context
+    from trajectory.producers import activity_context, markers
     inherited = current()
     saved = execution.trace_context
     if inherited and inherited.user_id == ticket.user_id and (
@@ -346,7 +346,9 @@ async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
                      context=context, db=db)
     if not context.agent_id:
         context = context.derive(agent_id=uuid4().hex)
-    execution.trace_context = context.to_dict()
+    # The recording markers stay (SPEC §5.6): later epochs count on from the
+    # stored one, and a pause flag this start resumed is left to the next session write.
+    execution.trace_context = {**markers(execution.trace_context), **context.to_dict()}
     await record("run.started", {
         "origin": execution.run_origin, "generation": ticket.generation,
         "resume_of_run_id": old_run if resumed else None,

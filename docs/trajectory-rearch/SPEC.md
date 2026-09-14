@@ -772,6 +772,9 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_AUTH_CACHE_SECONDS` | 5 | worker |
 | `TRAJECTORY_BLOB_FAULT` | unset (drills/tests only) | worker |
 | `TRAJECTORY_CMS_REGION` / `TRAJECTORY_CMS_GROUP_ID` | `cn-shanghai` / unset | ops |
+| `TRAJECTORY_ANALYTICS_PREFIX` | `analytics/trajectories/` (refused inside the trajectory key namespace) | analytics |
+| `OPENBOX_TRACE_DB_PASSWORD` | unset; deploy `/opt/openbox/.env`, 16–128 characters of `A-Za-z0-9._~-` (`openssl rand -hex 32`) | overlay (`openbox_trace` role URL), `create-trace-db.sh` |
+| `OPENBOX_TRACE_ROLE` / `OPENBOX_RESTORE_DIR` | `openbox_trace` / `/var/backups/openbox/restore-check` | ops scripts |
 | existing: `TRAJECTORY_RECORDING_ENABLED`, `TRAJECTORY_RECORD_USER_IDS`, `TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`, `JWT_SECRET`, `INTERNAL_API_TOKEN`, `REDIS_URL` | | both |
 
 All integer settings are parsed with a minimum of 1; invalid values fall back to defaults with a warning.

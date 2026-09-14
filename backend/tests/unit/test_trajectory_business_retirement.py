@@ -25,6 +25,14 @@ _RETIRED_NAMES = {"read_asset_bytes", "prepare_asset_ids", "retain_request_media
                   "capture_trajectory_baseline_in_tx", "PendingRange"}
 
 
+#: The producer side of the trajectory package runs inside the business process too.
+_PRODUCER_MODULES = ("trajectory/__init__.py", "trajectory/artifacts.py", "trajectory/budget.py",
+                     "trajectory/config.py", "trajectory/context.py", "trajectory/emitter.py",
+                     "trajectory/files.py", "trajectory/jobs.py", "trajectory/meta_sync.py",
+                     "trajectory/producers.py", "trajectory/recorder.py", "trajectory/spool.py",
+                     "trajectory/types.py")
+
+
 def _business_modules():
     for directory, subdirectories, files in os.walk(BACKEND):
         subdirectories[:] = sorted(name for name in subdirectories if name not in _SKIPPED_DIRECTORIES)
@@ -35,6 +43,8 @@ def _business_modules():
             relative = path.relative_to(BACKEND).as_posix()
             if relative not in _SKIPPED_FILES:
                 yield relative, ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    for relative in _PRODUCER_MODULES:
+        yield relative, ast.parse((BACKEND / relative).read_text(encoding="utf-8"), filename=relative)
 
 
 def _is_trace_storage(module: str) -> bool:

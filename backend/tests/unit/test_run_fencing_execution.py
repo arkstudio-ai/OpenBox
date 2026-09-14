@@ -271,15 +271,21 @@ async def test_recording_failure_while_applying_answers_is_retried_not_a_resume_
     assert not (await read(QuestionCheckpoint, request_id)).applied
 
 
+@pytest.mark.parametrize("restarted", [False, True], ids=["same-process", "after-restart"])
 @pytest.mark.parametrize("second_run", ["regenerate", "plan_accept"])
 async def test_two_completed_runs_in_one_turn_finish_cleanly_with_one_turn_finished(
-        state, monkeypatch, second_run):
+        state, monkeypatch, second_run, restarted):
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     prompt = await create_user_message("s1", "Write a plan", user_id="u1")
     first = await runtime.start_run("s1", "u1")
     with acting_as(first):
         reply = await create_assistant_message("s1", prompt.id, user_id="u1")
     await runtime.finish_run(first, completed=True)
+    if restarted:
+        # A deploy between the two runs: this process remembers no earlier fact
+        # of the turn, while the legacy sink still holds turn_finish for it.
+        monkeypatch.setattr(runtime, "_terminal_runs", runtime._Recent())
+        monkeypatch.setattr(runtime, "_finished_turns", runtime._Recent())
     if second_run == "regenerate":
         await delete_messages_from("s1", reply.id, user_id="u1")
     else:

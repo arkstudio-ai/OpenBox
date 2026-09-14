@@ -369,11 +369,25 @@ async def _record_run_terminal(db, execution, ticket, *, status: str, reason: st
     if not _claim_once(db, _terminal_runs, ticket.run_id):
         return
     started = _trace_run_started.pop(ticket.run_id, None)
-    await record(event_type, {
+    await _record_first(record, event_type, {
         "status": status, "reason": reason,
         "duration_ms": round((time.monotonic() - started) * 1000, 3) if started is not None else None,
         "timing_source": "producer_monotonic" if started is not None else "not_recorded",
     }, context=context, db=db, event_id=f"{event_type}:{ticket.run_id}")
+
+
+async def _record_first(record, event_type: str, data: dict, *, context, db, event_id: str) -> None:
+    """Record a fact with a deterministic id, keeping the first one committed.
+
+    The in-process guard forgets facts committed before a restart. The legacy
+    in-transaction sink rejects a repeated id whose payload differs (a second
+    run completing the same turn, say); that must not roll back the transition.
+    """
+    from trajectory.types import IdempotencyConflict
+    try:
+        await record(event_type, data, context=context, db=db, event_id=event_id)
+    except IdempotencyConflict:
+        log.info("Kept the earlier %s fact %s", event_type, event_id)
 
 
 @asynccontextmanager
@@ -552,8 +566,8 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
             # A regenerated reply or an accepted plan completes the same turn again.
             if (context.session_id == ticket.session_id and session.kind != "cron"
                     and _claim_once(db, _finished_turns, str(context.turn_id))):
-                await record("turn.finished", {"status": "completed"}, context=context, db=db,
-                             event_id=f"turn_finish:{context.turn_id}")
+                await _record_first(record, "turn.finished", {"status": "completed"}, context=context, db=db,
+                                    event_id=f"turn_finish:{context.turn_id}")
     publish_status(ticket.session_id, ticket.user_id, status)
 
 

@@ -72,7 +72,8 @@ class GuardedGcBlobStore:
     entries for the keys it references. Either the delete sees the committed reference and keeps the object
     (the GC entry completes), or it runs while no batch is in flight and every later batch uploads the key
     again. Segment, export and prefix deletes pass through: ingest never reuses those keys, and a deleted or
-    expired trajectory takes no events. Every other operation is the wrapped store's.
+    expired trajectory takes no events. Projection batches and checkpoints hold ``shared()`` from their look at
+    stored values through the commit of their rows. Every other operation is the wrapped store's.
     """
 
     def __init__(self, store, guard: ObjectGuard):
@@ -123,7 +124,7 @@ class WorkerServices:
             self.retention.blob_store = GuardedGcBlobStore(gc_store, self.object_guard)
         self.ingest = ingest or IngestService(settings, retention=self.retention, object_guard=self.object_guard,
                                               **common)
-        self.projection = projection or ProjectionService(settings, **common)
+        self.projection = projection or ProjectionService(settings, object_guard=self.object_guard, **common)
         self.archive = archive or ArchiveService(settings, **common)
         self.exports = exports or ExportService(settings, owner_id=self.owner_id, **common)
         self.budgets = budgets or BudgetService(settings, metrics=metrics)

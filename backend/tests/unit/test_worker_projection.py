@@ -492,3 +492,33 @@ async def test_record_values_equal_to_values_ingested_later_are_visible_where_pr
         assert (await get_checkpoint(db, trajectory_row, 4))["state"] == replay(events[:4])
         for through in range(len(events) + 1):
             assert await state_at(db, trajectory_row, through) == replay(events[:through]), through
+
+
+async def test_uploads_through_the_commit_of_their_rows_hold_the_object_guard(trajectory, blobs):
+    import asyncio
+    from trajectory.worker.lock import ObjectGuard
+    from trajectory.worker.services import GuardedGcBlobStore
+
+    guard = ObjectGuard()
+    service = ProjectionService(settings(record_inline_bytes=64), blob_store=blobs, metrics=Metrics(),
+                                object_guard=guard)
+    await Ingest(blobs).append(TRAJECTORY, [_event(1, "input.accepted", {"text": "hello", "notes": "x" * 300},
+                                                   message_id="msg_1")])
+    entered, release, uploaded = asyncio.Event(), asyncio.Event(), []
+
+    async def slow_put(key):
+        uploaded.append(key)
+        entered.set()
+        await release.wait()
+
+    blobs.faults["put"] = slow_put
+    projecting = asyncio.create_task(service.project(TRAJECTORY))
+    await asyncio.wait_for(entered.wait(), 5)
+    # A GC delete of the value being uploaded waits for the batch to commit its row, then keeps the object.
+    deleting = asyncio.create_task(GuardedGcBlobStore(blobs, guard).delete(uploaded[0]))
+    await asyncio.sleep(0.05)
+    assert guard.holders == 1 and not deleting.done()
+    release.set()
+    assert await asyncio.wait_for(projecting, 5) == 1
+    await asyncio.wait_for(deleting, 5)
+    assert uploaded[0] in blobs.objects and guard.holders == 0

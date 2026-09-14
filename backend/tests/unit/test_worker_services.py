@@ -207,8 +207,9 @@ async def test_spool_dir_override_and_default_wiring(trace_db, settings, tmp_pat
     assert services.settings.spool_dir == tmp_path / "other-spool"
     assert services.ingest.spool_dir == tmp_path / "other-spool"
     assert services.metrics is metrics and services.ingest.retention is services.retention
-    for name in ("ProjectionService", "ArchiveService", "RetentionService"):
+    for name in ("ArchiveService", "RetentionService"):
         assert built[name] == {"blob_store": store, "metrics": metrics}
+    assert built["ProjectionService"] == {"blob_store": store, "metrics": metrics, "object_guard": services.object_guard}
     assert built["ExportService"]["owner_id"] == services.owner_id and built["ExportService"]["blob_store"] is store
 
 

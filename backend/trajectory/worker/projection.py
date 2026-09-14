@@ -17,6 +17,7 @@ the trajectory row and gives up when the trajectory was deleted, expired or
 projected by someone else in the meantime.
 """
 import asyncio
+import contextlib
 import hashlib
 import time
 from datetime import datetime, timezone
@@ -187,10 +188,12 @@ class _Externalizer:
 
 
 class ProjectionService:
-    def __init__(self, settings, *, blob_store, metrics):
+    def __init__(self, settings, *, blob_store, metrics, object_guard=None):
         self.settings = settings
         self.blob_store = blob_store
         self.metrics = metrics
+        #: Shared with the GC's blob deletes (lock.ObjectGuard, services.GuardedGcBlobStore); None: unguarded.
+        self.object_guard = object_guard
         self.batch_events = _setting(settings, "projection_batch_events", "TRAJECTORY_PROJECTION_BATCH_EVENTS", 200)
         self.record_inline_bytes = _setting(settings, "record_inline_bytes", "TRAJECTORY_RECORD_INLINE_BYTES", 16384)
         self.checkpoint_interval = _setting(settings, "checkpoint_interval", "TRAJECTORY_CHECKPOINT_INTERVAL", 1000)
@@ -199,6 +202,9 @@ class ProjectionService:
         self._cursor = ""
         #: (operation, trajectory id) -> (monotonic time it is due again, consecutive failures).
         self._retry: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def _object_guard(self):
+        return self.object_guard.shared() if self.object_guard is not None else contextlib.nullcontext()
 
     async def run_once(self) -> int:
         """One pass: a batch for each lagging trajectory, then its due checkpoint.
@@ -312,27 +318,34 @@ class ProjectionService:
             links.update((record_id, int(event["seq"])) for record_id, value in state["records"].items()
                          if previous.get(record_id) is not value)
         touched = sorted({record_id for record_id, _ in links})
-        prepared, blobs = await self._externalize(trajectory_id, [state["records"][record_id] for record_id in touched])
         events = [event for event, _ in batch]
-        try:
-            async with trace_session() as db:
-                await _background(db)
-                locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
-                if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
-                        or locked.projected_seq != base):
-                    return 0
-                inserted = 0
-                if blobs:
-                    payloads, inserted = await ensure_payload_rows(db, trajectory_id, list(blobs.values()), first_seq=until)
-                    if any(payloads[key].payload_id != blob["payload_id"] for key, blob in blobs.items()):
-                        raise _ReferenceRace()
-                await self._write_records(db, trajectory_id, prepared, links)
-                await self._write_summary(db, locked, events, state, before, until)
-                locked.projected_seq = until
-                locked.stored_bytes = (locked.stored_bytes or 0) + inserted
-        except _ReferenceRace:
-            # Rolled back; the next pass serializes the records with that row's id.
-            return 0
+        # From the look at stored values through the commit of their rows the uploads exclude the GC's blob
+        # deletes, as ingest batches do: a delete either sees the committed reference or runs before the
+        # upload stores the object again.
+        async with self._object_guard():
+            prepared, blobs = await self._externalize(trajectory_id,
+                                                      [state["records"][record_id] for record_id in touched])
+            try:
+                async with trace_session() as db:
+                    await _background(db)
+                    locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id)
+                                             .with_for_update())
+                    if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
+                            or locked.projected_seq != base):
+                        return 0
+                    inserted = 0
+                    if blobs:
+                        payloads, inserted = await ensure_payload_rows(db, trajectory_id, list(blobs.values()),
+                                                                       first_seq=until)
+                        if any(payloads[key].payload_id != blob["payload_id"] for key, blob in blobs.items()):
+                            raise _ReferenceRace()
+                    await self._write_records(db, trajectory_id, prepared, links)
+                    await self._write_summary(db, locked, events, state, before, until)
+                    locked.projected_seq = until
+                    locked.stored_bytes = (locked.stored_bytes or 0) + inserted
+            except _ReferenceRace:
+                # Rolled back; the next pass serializes the records with that row's id.
+                return 0
         return len(events)
 
     async def _externalize(self, trajectory_id: str, records: list[dict]) -> tuple[list[dict], dict[str, dict]]:
@@ -446,7 +459,8 @@ class ProjectionService:
             return False
         try:
             built = await build_checkpoint(trajectory_id, interval=self.checkpoint_interval,
-                                           blob_store=self.blob_store, metrics=self.metrics)
+                                           blob_store=self.blob_store, metrics=self.metrics,
+                                           object_guard=self.object_guard)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -456,11 +470,13 @@ class ProjectionService:
         return built
 
 
-async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, metrics=None) -> bool:
+async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, metrics=None, object_guard=None) -> bool:
     """Checkpoint the fully expanded state at projected_seq in record pages of 100.
 
     Pages are content-addressed blobs (unchanged pages are neither uploaded nor
-    stored again); uploads precede the short locking transaction.
+    stored again); uploads precede the short locking transaction. With an
+    ``object_guard`` (lock.ObjectGuard) the look at stored pages, the uploads and
+    the commit of their rows hold it shared, apart from the GC's blob deletes.
     """
     async with trace_session() as db:
         trajectory = await db.get(SessionTrajectory, trajectory_id)
@@ -478,12 +494,16 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
         await _background(db)
         state = await expanded_state(db, trajectory, through, blob_store=blob_store)
         blobs = checkpoint_blobs(trajectory_id, state)
-        present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"] for blob in blobs])
-    await upload_json_blobs(blob_store, [blob for blob in blobs if blob["dedupe_key"] not in present], metrics=metrics)
-    async with trace_session() as db:
-        await _background(db)
-        locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
-        if locked is None or locked.deleted_at is not None or locked.content_expired_at is not None:
-            return False
-        await store_checkpoint(db, locked, state, blobs)
+    async with object_guard.shared() if object_guard is not None else contextlib.nullcontext():
+        async with trace_session() as db:
+            present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"] for blob in blobs])
+        await upload_json_blobs(blob_store, [blob for blob in blobs if blob["dedupe_key"] not in present],
+                                metrics=metrics)
+        async with trace_session() as db:
+            await _background(db)
+            locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id)
+                                     .with_for_update())
+            if locked is None or locked.deleted_at is not None or locked.content_expired_at is not None:
+                return False
+            await store_checkpoint(db, locked, state, blobs)
     return True

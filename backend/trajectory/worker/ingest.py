@@ -12,6 +12,7 @@ drop whatever had already been committed. Consumed files are deleted and
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import socket
@@ -34,6 +35,7 @@ from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, Traject
 from trajectory.types import ID_FIELDS
 from trajectory.worker import content, meta, spool_reader
 from trajectory.worker.budgets import add_user_bytes
+from trajectory.worker.lock import ObjectGuard
 from trajectory.worker.notify import publish_available
 
 log = create_logger("trajectory.worker.ingest")
@@ -62,7 +64,7 @@ INVALID_LOG_SECONDS = 60.0
 _invalid_logged: dict[str, float] = {}
 COUNTERS = ("lines", "events", "controls", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
             "invalid_events", "gaps", "producer_losses", "quarantined_files", "files_done", "blob_puts",
-            "blob_put_bytes", "blob_put_failures", "deferred_batches")
+            "blob_put_bytes", "blob_put_failures", "deferred_batches", "failed_batches")
 #: Pass counters -> SPEC §8.13 metric names.
 METRICS = {"lines": "ingest_lines", "events": "ingest_events", "duplicates": "duplicates",
            "idempotency_conflicts": "idempotency_conflicts", "deleted_drops": "deleted_drops",
@@ -301,13 +303,17 @@ class _Backoff:
     unavailable: set[int] = field(default_factory=set)
     #: Objects already stored by an earlier attempt of this batch.
     uploaded: set[str] = field(default_factory=set)
+    #: Objects that had a queued GC entry in any attempt: stored again on every attempt, never reused.
+    queued: set[str] = field(default_factory=set)
 
 
 @dataclass
 class PreparedBatch:
     items: list[Item]
-    planner: content.ContentPlanner
+    planner: content.ContentPlanner | None
     cache: meta.MetaCache
+    #: Blob keys of this batch that had queued GC entries when it entered the object guard.
+    queued: set[str] = field(default_factory=set)
 
 
 # -- Service ------------------------------------------------------------------------
@@ -315,13 +321,15 @@ class PreparedBatch:
 class IngestService:
     """Spool reader and ingest transactions of the single writer."""
 
-    def __init__(self, settings, *, blob_store, metrics, retention=None):
+    def __init__(self, settings, *, blob_store, metrics, retention=None, object_guard: ObjectGuard | None = None):
         self.settings = settings
         self.spool_dir = settings.spool_dir
         self.blob_store = blob_store
         self.metrics = metrics
         #: RetentionService-compatible ``tombstone(db, trajectory, *, reason)``; built on first use when None.
         self.retention = retention
+        #: Shared with the GC deletes of this process (WorkerServices): see ``_ingest_batch``.
+        self.object_guard = object_guard if object_guard is not None else ObjectGuard()
         self.hostname = socket.gethostname()
         self.boot_id = spool.boot_id()
         self.last_lag_seconds = 0.0
@@ -331,6 +339,17 @@ class IngestService:
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
+        #: (producer_id, file name) -> (monotonic time before which the file is not retried, failures in a row).
+        self._failures: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def _failed(self, key: tuple[str, str], failure, exc: Exception, result: dict) -> None:
+        attempts = (failure[1] if failure is not None else 0) + 1
+        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
+        self._failures[key] = (time.monotonic() + delay, attempts)
+        result["failed_batches"] += 1
+        # The error type only: database messages can carry event content.
+        log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
+                    "error_type=%s", delay, key[0], key[1], attempts, type(exc).__name__)
 
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
@@ -362,7 +381,20 @@ class IngestService:
                 if remaining is not None and remaining <= 0:
                     waiting[key] = spool_file.mtime
                     continue
-                lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                failure = self._failures.get(key)
+                if failure is not None and time.monotonic() < failure[0]:
+                    result["deferred_batches"] += 1
+                    waiting[key] = spool_file.mtime
+                    continue
+                try:
+                    lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                except Exception as exc:
+                    # One file's failure (a purge that times out, a value the database rejects, a bug) must
+                    # not stop the other producers: the file retries from its committed offset after a backoff.
+                    self._failed(key, failure, exc, result)
+                    waiting[key] = spool_file.mtime
+                    continue
+                self._failures.pop(key, None)
                 if remaining is not None:
                     remaining -= lines
                 if finished:
@@ -370,6 +402,8 @@ class IngestService:
                     progressed = True
                 else:
                     waiting[key] = spool_file.mtime
+        listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
+        self._failures = {key: value for key, value in self._failures.items() if key in listed}
         await self._finish_producers(scan, result)
         await self._save_recent()
         self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)
@@ -495,9 +529,15 @@ class IngestService:
             backoff = self._backoff.get(key)
             try:
                 prepared = await self._prepare(parsed.items, backoff)
-                await self._upload(prepared, key, result)
-                await self._commit(spool_file, scan, prepared, offset=offset, end_offset=end_offset,
-                                   finished=finished, abandoned=abandoned, torn=torn, result=result)
+                # A batch that stores or reuses blobs excludes the GC's blob deletes (lock.ObjectGuard,
+                # services.GuardedGcBlobStore) from its look at the GC queue through its commit: keys with
+                # queued entries are uploaded again, overwriting, and the transaction cancels those entries.
+                guard = self.object_guard.shared() if prepared.planner.object_keys() else contextlib.nullcontext()
+                async with guard:
+                    await self._check_queued(prepared, key)
+                    await self._upload(prepared, key, result)
+                    await self._commit(spool_file, scan, prepared, offset=offset, end_offset=end_offset,
+                                       finished=finished, abandoned=abandoned, torn=torn, result=result)
             except UploadsDeferred:
                 result["deferred_batches"] += 1
                 return False
@@ -566,7 +606,8 @@ class IngestService:
                 merged.update({row.payload_id: row for row in extra})
                 contents[tid] = content.TrajectoryContent.from_rows(merged.values())
         unavailable = backoff.unavailable if backoff is not None else set()
-        await asyncio.to_thread(self._assign_all, events, planner, contents, unavailable)
+        queued = frozenset(backoff.queued) if backoff is not None else frozenset()
+        await asyncio.to_thread(self._assign_all, events, planner, contents, unavailable, queued)
         return PreparedBatch(items, planner, cache)
 
     @staticmethod
@@ -585,12 +626,12 @@ class IngestService:
                 assets=assets, owner_user_id=event["user_id"], workspace_id=workspace)
 
     @staticmethod
-    def _assign_all(events, planner, contents, unavailable) -> None:
+    def _assign_all(events, planner, contents, unavailable, queued=frozenset()) -> None:
         for index, item in events:
             if item.plan is not None:
                 planner.assign(item.plan, index=index, trajectory_id=item.trajectory_id,
                                lookup=contents.get(item.trajectory_id) or content.TrajectoryContent(),
-                               unavailable=item.n in unavailable, size_hint=item.size)
+                               unavailable=item.n in unavailable, size_hint=item.size, queued=queued)
 
     async def _trajectory_rows(self, db, sessions, *, lock: bool = False) -> dict[str, SessionTrajectory]:
         found = {}
@@ -619,7 +660,7 @@ class IngestService:
     async def _payload_rows(db, wanted: dict[str, tuple[set, set]]) -> dict[str, list[content.ExistingPayload]]:
         columns = (TrajectoryPayload.payload_id, TrajectoryPayload.dedupe_key, TrajectoryPayload.sha256,
                    TrajectoryPayload.availability, TrajectoryPayload.storage_kind, TrajectoryPayload.encoding,
-                   TrajectoryPayload.stored_bytes, TrajectoryPayload.source_asset_id)
+                   TrajectoryPayload.stored_bytes, TrajectoryPayload.source_asset_id, TrajectoryPayload.first_seq)
         found: dict[str, dict[str, content.ExistingPayload]] = {}
         for trajectory_id, (keys, digests) in wanted.items():
             rows = found.setdefault(trajectory_id, {})
@@ -643,6 +684,29 @@ class IngestService:
 
     # Uploads ----------------------------------------------------------------------
 
+    async def _check_queued(self, prepared: PreparedBatch, key) -> None:
+        """Keys this batch stores or reuses that have queued GC entries are uploaded again, overwriting.
+
+        Runs inside ``ObjectGuard.shared()``: no GC delete is in progress, but an earlier one may have
+        removed an object whose entry is still queued (its bookkeeping failed, or it is still in its pass),
+        while an available row says the object exists. Keys queued in an earlier attempt of this batch stay
+        suspect even when their entries are gone. The transaction cancels the entries of the keys it
+        references, and retries the batch when it finds an entry this check did not.
+        """
+        planner = prepared.planner
+        keys = planner.object_keys()
+        backoff = self._backoff.get(key)
+        if keys:
+            async with trace_session() as db:
+                for chunk in _chunks(sorted(keys)):
+                    prepared.queued.update((await db.scalars(select(TrajectoryGcQueue.storage_key).where(
+                        TrajectoryGcQueue.kind == "key", TrajectoryGcQueue.storage_key.in_(chunk)))).all())
+            if backoff is not None:
+                backoff.queued |= prepared.queued
+            for object_key in sorted(prepared.queued | (backoff.queued & keys if backoff is not None else set())):
+                planner.store_again(object_key)
+        planner.release_reused()
+
     async def _upload(self, prepared: PreparedBatch, key, result) -> None:
         uploads = prepared.planner.uploads
         if not uploads:
@@ -653,11 +717,12 @@ class IngestService:
         semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
         async def put(upload: content.Upload) -> None:
-            if upload.key in uploaded:
-                return
+            if upload.key in uploaded and upload.if_absent:
+                return  # stored by an earlier attempt, and no GC entry has doubted it since
             async with semaphore:
                 try:
-                    await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type, if_absent=True)
+                    await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type,
+                                              if_absent=upload.if_absent)
                 except Exception as exc:
                     failed.update(upload.events)
                     result["blob_put_failures"] += 1
@@ -897,10 +962,18 @@ class _Transaction:
         self.blobs: dict[tuple[str, str], content.ExistingPayload] = {}
         self.blocked: dict[tuple[str, str], content.ExistingPayload] = {}
         self.inserted: dict[str, str] = {}
+        #: payload_id -> the lowest first_seq this transaction knows (loaded, inserted or lowered).
+        self.first_seqs: dict[str, int] = {}
+        #: payload_id -> (trajectory_id, first_seq) still to write.
+        self.lowered: dict[str, tuple[str, int]] = {}
         self.event_rows: list[dict] = []
         self.key_rows: list[dict] = []
         self.payload_rows: list[dict] = []
         self.gc_keys: list[str] = []
+        #: Blob keys of available rows this transaction references (inserted or reused).
+        self.referenced: set[str] = set()
+        #: (id, storage_key) of GC key entries queued before this transaction for keys of the batch.
+        self.claimable: list[tuple[int, str]] = []
         self.user_bytes: dict[str, int] = {}
         self.unavailable: dict[str, list[tuple]] = {}
         self.notes: list[tuple] = []
@@ -966,6 +1039,15 @@ class _Transaction:
         for trajectory_id, rows in (await self.service._payload_rows(db, wanted)).items():
             for row in rows:
                 self._remember(trajectory_id, row)
+        planner = self.prepared.planner
+        keys = planner.object_keys() if planner is not None else set()
+        for chunk in _chunks(sorted(keys)):
+            self.claimable.extend((entry_id, storage_key) for entry_id, storage_key in (await db.execute(
+                select(TrajectoryGcQueue.id, TrajectoryGcQueue.storage_key).where(
+                    TrajectoryGcQueue.kind == "key", TrajectoryGcQueue.storage_key.in_(chunk)))).all())
+        if any(storage_key not in self.prepared.queued for _, storage_key in self.claimable):
+            # Queued after the batch looked at the queue: prepare it again, so those objects are stored again.
+            raise RetryBatch()
 
     async def finish(self, db, *, end_offset: int | None = None, finished: bool = False) -> None:
         for session_id, entries in self.unavailable.items():
@@ -981,6 +1063,10 @@ class _Transaction:
                 "request_ids": list(dict.fromkeys(entry[2] for entry in entries if entry[2]))[:GAP_REQUEST_IDS],
                 "event_ids": [entry[1] for entry in entries][:GAP_REQUEST_IDS]})
         await self.flush(db)
+        # Objects this transaction references stay stored: their queued GC entries end here (lock.ObjectGuard).
+        cancelled = [entry_id for entry_id, storage_key in self.claimable if storage_key in self.referenced]
+        for chunk in _chunks(cancelled):
+            await db.execute(TrajectoryGcQueue.__table__.delete().where(TrajectoryGcQueue.id.in_(chunk)))
         if self.file is not None and end_offset is not None:
             self.file.bytes_consumed = end_offset
             self.file.lines_consumed = (self.file.lines_consumed or 0) + self.lines
@@ -1014,17 +1100,26 @@ class _Transaction:
         if self.payload_rows:
             await db.execute(insert(TrajectoryPayload), self.payload_rows)
             self.payload_rows = []
+        for payload_id, (trajectory_id, first_seq) in self.lowered.items():
+            # Only ever lower, so a concurrent writer that lowered further (projection) keeps its value.
+            await db.execute(update(TrajectoryPayload).where(
+                TrajectoryPayload.trajectory_id == trajectory_id, TrajectoryPayload.payload_id == payload_id,
+                TrajectoryPayload.first_seq > first_seq).values(first_seq=first_seq)
+                .execution_options(synchronize_session=False))
+        self.lowered = {}
         if self.event_rows:
             await db.execute(insert(TrajectoryEvent), self.event_rows)
             self.event_rows = []
         if self.key_rows:
             await db.execute(insert(TrajectoryEventKey), self.key_rows)
             self.key_rows = []
-        if self.gc_keys:
+        # A key another reference of this transaction keeps available is not garbage.
+        garbage = [key for key in dict.fromkeys(self.gc_keys) if key not in self.referenced]
+        if garbage:
             await db.execute(insert(TrajectoryGcQueue), [
                 {"kind": "key", "storage_key": key, "reason": "content_not_referenced", "attempts": 0,
-                 "next_attempt_at": self.now, "created_at": self.now} for key in dict.fromkeys(self.gc_keys)])
-            self.gc_keys = []
+                 "next_attempt_at": self.now, "created_at": self.now} for key in garbage])
+        self.gc_keys = []
         for state in self.states.values():
             if state.dirty and not state.tombstoned:
                 await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == state.id).values(
@@ -1124,6 +1219,8 @@ class _Transaction:
             if ref.failed:
                 self.unavailable.setdefault(state.session_id, []).append(
                     (item.n, event["event_id"], event.get("request_id"), ref.size_bytes))
+            elif ref.storage_kind == "blob" and ref.availability == "available" and ref.storage_key:
+                self.referenced.add(ref.storage_key)
         self._resolve_fork(item, state)
         data = plan.data
         self.event_rows.append({
@@ -1188,6 +1285,8 @@ class _Transaction:
 
     def _remember(self, trajectory_id: str, row: content.ExistingPayload) -> None:
         self.payloads[(trajectory_id, row.dedupe_key)] = row
+        if row.first_seq is not None:
+            self.first_seqs[row.payload_id] = min(row.first_seq, self.first_seqs.get(row.payload_id, row.first_seq))
         if row.sha256 is None:
             return
         if row.storage_kind == "blob" and row.availability == "available":
@@ -1195,18 +1294,33 @@ class _Transaction:
         elif row.availability != "available":
             self.blocked.setdefault((trajectory_id, row.sha256), row)
 
+    def _visible_from(self, trajectory_id: str, payload_id: str, seq: int) -> None:
+        """A reference at ``seq`` makes its row visible from there (first_seq only moves down).
+
+        Other writers can register a row with a later first_seq than an event that references it (the
+        projection stores record values under the position of its batch, the converter keeps legacy
+        positions); readers resolve a reference only when ``first_seq <= H``. Availability is untouched,
+        so deleted content stays deleted. The projection's ``ensure_payload_rows`` applies the same rule.
+        """
+        current = self.first_seqs.get(payload_id)
+        if current is not None and current > seq:
+            self.first_seqs[payload_id] = seq
+            self.lowered[payload_id] = (trajectory_id, seq)
+
     def _resolve(self, ref: content.PendingRef, state: TrajectoryState, seq: int) -> None:
         """Point ``ref`` at its payload row, inserting it with ``first_seq = seq`` when new."""
         if ref.failed or ref.blocked:
             return
         if ref.payload_id in self.inserted:
             ref.fill(ref.payload_id, self.inserted[ref.payload_id])
+            self._visible_from(state.id, ref.payload_id, seq)
             return
         key = (state.id, ref.dedupe_key)
         row = self.payloads.get(key)
         if row is not None:
             if row.payload_id == ref.payload_id or not ref.nested:
                 ref.fill(row.payload_id, row.availability)
+                self._visible_from(state.id, row.payload_id, seq)
                 return
             # The id is baked into a stored blob: keep it through a second row for the same content.
             alias = hashlib.sha256(f"{ref.dedupe_key}:{ref.payload_id}".encode()).hexdigest()
@@ -1220,6 +1334,7 @@ class _Transaction:
             if not ref.nested:
                 ref.blocked = True
                 ref.fill(blocked.payload_id, blocked.availability)
+                self._visible_from(state.id, blocked.payload_id, seq)
                 return
             self._insert(ref, state, seq, availability=blocked.availability)
             return
@@ -1234,7 +1349,8 @@ class _Transaction:
         blob = ref.storage_kind == "blob"
         row = content.ExistingPayload(ref.payload_id, dedupe or ref.dedupe_key, ref.sha256, availability,
                                       ref.storage_kind, ref.encoding if blob else "identity",
-                                      ref.stored_bytes if blob else 0, ref.source_asset_id)
+                                      ref.stored_bytes if blob else 0, ref.source_asset_id, seq)
+        self.first_seqs[row.payload_id] = seq
         self.payload_rows.append({
             "payload_id": row.payload_id, "trajectory_id": state.id, "dedupe_key": row.dedupe_key,
             "sha256": row.sha256, "size_bytes": ref.size_bytes, "stored_bytes": row.stored_bytes,
@@ -1386,7 +1502,7 @@ class _Transaction:
         for key, row in list(self.payloads.items()):
             if row.source_asset_id == asset_id and row.availability != "deleted":
                 gone = content.ExistingPayload(row.payload_id, row.dedupe_key, row.sha256, "deleted", row.storage_kind,
-                                               row.encoding, row.stored_bytes, row.source_asset_id)
+                                               row.encoding, row.stored_bytes, row.source_asset_id, row.first_seq)
                 self.payloads[key] = gone
                 if row.sha256 is not None:
                     digest_key = (key[0], row.sha256)
@@ -1410,18 +1526,23 @@ class _Transaction:
             return
         occurred = meta.parse_time(control.get("at")) or item.t
         event_id = gap_event_id(self.producer_id, str(item.n), session_id)
+        # Producers suppress repeated pause and resume controls per process only, and the control carries
+        # no epoch, so several processes report the same transition. The trajectory's own state makes the
+        # controls idempotent: a pause applies only to a recording that is not paused, and a resume only
+        # ends a pause, so a duplicate adds no second gap and no second epoch.
+        paused = state.recording_status == "paused"
         if value == "paused":
-            if state.recording_status == "paused":
+            if paused:
                 return
             if await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
                                               occurred_at=occurred, gap=True,
                                               data={"phase": "paused", "reason": "recording_disabled",
                                                     "last_recorded_seq": str(state.committed_seq)}):
                 state.recording_status = "paused"
-        elif await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
-                                            occurred_at=occurred, gap=True,
-                                            data={"phase": "resumed", "reason": "recording_reenabled",
-                                                  "previous_committed_seq": str(state.committed_seq)}):
+        elif paused and await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
+                                                       occurred_at=occurred, gap=True,
+                                                       data={"phase": "resumed", "reason": "recording_reenabled",
+                                                             "previous_committed_seq": str(state.committed_seq)}):
             state.recording_status = "gap"
             state.recording_epoch += 1
 

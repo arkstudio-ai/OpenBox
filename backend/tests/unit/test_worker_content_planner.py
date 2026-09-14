@@ -2,10 +2,38 @@
 import base64
 import hashlib
 
-from trajectory.worker.content import (ContentPlanner, ExistingPayload, TrajectoryContent, dedupe_key, extract_media,
-    media_digests, reference_keys)
+from trajectory.storage import decode_blob
+from trajectory.types import canonical
+from trajectory.worker.content import (BLOB_UNAVAILABLE, ContentPlanner, ExistingPayload, TrajectoryContent,
+    dedupe_key, extract_media, media_digests, reference_keys)
 
 TID = "trj_planner"
+
+
+def test_reused_objects_can_be_stored_again_for_a_queued_gc_entry():
+    system = "S" * 3000
+    planner = ContentPlanner(inline_bytes=65536, blob_key=_key)
+    plan, _ = _bind(planner, {"input": {"system": system}})
+    [ref] = plan.refs
+    row = ExistingPayload("pld_system", ref.dedupe_key, ref.sha256, "available", "blob", "zstd", 99, None, 1)
+    lookup = TrajectoryContent.from_rows([row])
+    planner.assign(plan, index=3, trajectory_id=TID, lookup=lookup)
+    key = _key(TID, ref.sha256)
+    # Reused without an upload, but listed so the ingest can look for queued GC entries.
+    assert ref.payload_id == "pld_system" and planner.uploads == {} and planner.object_keys() == {key}
+    assert planner.store_again(key) and planner.store_again("trajectories/trj_planner/blobs/unknown") is False
+    upload = planner.uploads[key]
+    assert upload.if_absent is False and upload.events == {3}
+    assert decode_blob(upload.data, "zstd") == canonical(system)
+    planner.release_reused()
+    assert planner.object_keys() == {key} and planner.reused[key].content == b""
+    # An event whose new bytes cannot be stored (blob store outage) keeps no reference to a queued key.
+    for queued, expected in ((frozenset({key}), BLOB_UNAVAILABLE), (frozenset(), "pld_system")):
+        planner = ContentPlanner(inline_bytes=65536, blob_key=_key)
+        plan, _ = _bind(planner, {"input": {"system": system}})
+        planner.assign(plan, index=0, trajectory_id=TID, lookup=lookup, unavailable=True, queued=queued)
+        stored = plan.data["input"]["system"]
+        assert (stored if expected is BLOB_UNAVAILABLE else stored["$ref"]["payload_id"]) == expected
 
 
 def _key(trajectory_id, sha):

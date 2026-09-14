@@ -58,7 +58,8 @@ async def add_user_bytes(db, additions: dict[str, int], *, now: datetime) -> Non
     if not additions:
         return
     today = utc_day(now)
-    row = await db.get(TrajectoryWorkerState, USER_BYTES_STATE_KEY)
+    # Row lock: the budget pass rewrites this row in its own transaction (BudgetService._user_levels).
+    row = await db.get(TrajectoryWorkerState, USER_BYTES_STATE_KEY, with_for_update=True)
     value = dict(row.value) if row is not None and isinstance(row.value, dict) else {}
     users = dict(value.get("users") or {}) if value.get("day") == today else {}
     exceeded = dict(value.get("exceeded") or {}) if value.get("day") == today else {}
@@ -120,7 +121,9 @@ class BudgetService:
         return {"sessions": len(sessions), "users": len(users), "changed": changed, "written": written}
 
     async def _user_levels(self, db, now: datetime) -> dict:
-        row = await db.get(TrajectoryWorkerState, USER_BYTES_STATE_KEY)
+        # Row lock: ingest adds bytes to this row in its batch transactions (add_user_bytes); without it
+        # either side could overwrite the other's update of the shared JSON value on PostgreSQL.
+        row = await db.get(TrajectoryWorkerState, USER_BYTES_STATE_KEY, with_for_update=True)
         value = row.value if row is not None and isinstance(row.value, dict) else {}
         if value.get("day") != utc_day(now):
             return {}

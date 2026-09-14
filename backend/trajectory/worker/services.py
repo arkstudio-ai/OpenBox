@@ -20,13 +20,17 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
+from sqlalchemy import select
+
 from core.log import create_logger
 from trajectory.export import ExportService
-from trajectory.store.database import get_trace_engine
+from trajectory.storage import key_prefix
+from trajectory.store.database import get_trace_engine, trace_session
+from trajectory.store.models import TrajectoryPayload
 from trajectory.worker.archive import ArchiveService
 from trajectory.worker.budgets import BudgetService, write_heartbeat
 from trajectory.worker.ingest import IngestService
-from trajectory.worker.lock import writer_lock_for
+from trajectory.worker.lock import ObjectGuard, writer_lock_for
 from trajectory.worker.projection import ProjectionService
 from trajectory.worker.retention import RetentionService
 
@@ -47,6 +51,52 @@ GC_BATCH = 100
 CONTINUOUS_STEPS = ("ingest", "projection")
 
 
+def blob_reference(key) -> tuple[str, str] | None:
+    """``(trajectory_id, sha256)`` of a trajectory blob key (``blob_key``), None for any other key."""
+    namespace = key_prefix()
+    if not isinstance(key, str) or not key.startswith(namespace):
+        return None
+    trajectory_id, _, rest = key[len(namespace):].partition("/")
+    section, _, sha256 = rest.partition("/")
+    return (trajectory_id, sha256) if trajectory_id and section == "blobs" and sha256 and "/" not in sha256 else None
+
+
+class GuardedGcBlobStore:
+    """The store RetentionService deletes through: blob keys are deleted only under the object guard.
+
+    Content-addressed blob keys are reused, and ``process_gc_queue`` checks that no available payload row
+    references a key before it deletes the object, with no lock between the check and the delete. Here the
+    delete of a trajectory blob key takes ``ObjectGuard.exclusive()`` and checks again right before
+    deleting. An ingest batch holds ``ObjectGuard.shared()`` from its look at the GC queue through its
+    commit, and stores again (overwriting) every key that has a queued entry; its transaction cancels those
+    entries for the keys it references. Either the delete sees the committed reference and keeps the object
+    (the GC entry completes), or it runs while no batch is in flight and every later batch uploads the key
+    again. Segment, export and prefix deletes pass through: ingest never reuses those keys, and a deleted or
+    expired trajectory takes no events. Every other operation is the wrapped store's.
+    """
+
+    def __init__(self, store, guard: ObjectGuard):
+        self.store = store
+        self.guard = guard
+
+    def __getattr__(self, name):
+        return getattr(self.store, name)
+
+    async def delete(self, key: str) -> None:
+        reference = blob_reference(key)
+        if reference is None:
+            await self.store.delete(key)
+            return
+        trajectory_id, sha256 = reference
+        async with self.guard.exclusive():
+            async with trace_session() as db:
+                used = await db.scalar(select(TrajectoryPayload.payload_id).where(
+                    TrajectoryPayload.trajectory_id == trajectory_id, TrajectoryPayload.sha256 == sha256,
+                    TrajectoryPayload.storage_key == key, TrajectoryPayload.availability == "available").limit(1))
+            if used is None:
+                await self.store.delete(key)
+
+
 class WorkerServices:
     """Writer lock, writer loops and synchronous passes of one worker process."""
 
@@ -64,8 +114,15 @@ class WorkerServices:
         self.blob_store, self.metrics = blob_store, metrics
         self.owner_id = f"{socket.gethostname()[:32]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         common = {"blob_store": blob_store, "metrics": metrics}
+        #: GC deletes of blob keys and ingest batches that store or reuse blobs exclude each other.
+        self.object_guard = getattr(ingest, "object_guard", None) or ObjectGuard()
         self.retention = retention or RetentionService(settings, **common)
-        self.ingest = ingest or IngestService(settings, retention=self.retention, **common)
+        # The GC queue deletes through the retention service's store (RetentionService.blob_store).
+        gc_store = getattr(self.retention, "blob_store", None)
+        if gc_store is not None and not isinstance(gc_store, GuardedGcBlobStore):
+            self.retention.blob_store = GuardedGcBlobStore(gc_store, self.object_guard)
+        self.ingest = ingest or IngestService(settings, retention=self.retention, object_guard=self.object_guard,
+                                              **common)
         self.projection = projection or ProjectionService(settings, **common)
         self.archive = archive or ArchiveService(settings, **common)
         self.exports = exports or ExportService(settings, owner_id=self.owner_id, **common)

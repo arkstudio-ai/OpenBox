@@ -21,9 +21,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable
 
+import zstandard
+
 from trajectory.projector import _preview
 from trajectory.redaction import sanitize
-from trajectory.storage import encode_blob
+from trajectory.storage import ZSTD_LEVEL, encode_blob
 from trajectory.types import canonical
 
 PREVIEW_FIELDS = ("text", "content", "input", "prompt", "questions", "requested_arguments", "arguments", "summary")
@@ -303,6 +305,8 @@ class ExistingPayload:
     encoding: str
     stored_bytes: int
     source_asset_id: str | None
+    #: Visibility lower bound; None when the caller did not load it.
+    first_seq: int | None = None
 
 
 @dataclass
@@ -341,6 +345,18 @@ class Upload:
     content_type: str
     #: Indexes of the events whose references need this object.
     events: set[int] = field(default_factory=set)
+    #: False overwrites: a queued GC entry means an existing object may already be deleted.
+    if_absent: bool = True
+
+
+@dataclass
+class Reused:
+    """An object that references reuse without an upload because an available payload row stores it."""
+    content: bytes
+    media_type: str
+    #: The stored rows' encoding, which a repeated upload must keep.
+    encoding: str
+    events: set[int] = field(default_factory=set)
 
 
 @dataclass(eq=False)
@@ -376,6 +392,8 @@ class ContentPlanner:
         self._objects: dict[str, tuple[str, int]] = {}
         self._candidates: dict[tuple[str, str], set[str]] = {}
         self.uploads: dict[str, Upload] = {}
+        #: Objects referenced without an upload because an available row stores them, by key.
+        self.reused: dict[str, Reused] = {}
 
     def plan(self, *, index: int, trajectory_id: str, event_type: str, data: dict, media: list[MediaItem],
              helpers: dict, lookup: TrajectoryContent, assets: dict[str, AssetView], owner_user_id: str,
@@ -406,15 +424,17 @@ class ContentPlanner:
         return ContentPlan(data, refs, candidates)
 
     def assign(self, plan: ContentPlan, *, index: int, trajectory_id: str, lookup: TrajectoryContent,
-               unavailable: bool = False, size_hint: int | None = None) -> ContentPlan:
+               unavailable: bool = False, size_hint: int | None = None,
+               queued: frozenset[str] | set[str] = frozenset()) -> ContentPlan:
         """Payload ids, steps 6-7 and blob encoding.
 
         ``unavailable`` stores no new bytes for this event (the blob store kept
-        failing); ``size_hint`` (the spool line length) lets small events skip
-        the size checks.
+        failing), and then also reuses no object whose key is in ``queued``
+        (keys with GC entries, which must be stored again); ``size_hint`` (the
+        spool line length) lets small events skip the size checks.
         """
         for ref in plan.refs:
-            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable, queued)
         if size_hint is not None and size_hint * SIZE_HINT_FACTOR <= self.inline_bytes:
             return plan
         if len(canonical(plan.data)) <= self.inline_bytes:
@@ -425,7 +445,7 @@ class ContentPlanner:
             for ref in inner:
                 ref.nested = True
         for ref in values:
-            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable, queued)
             plan.refs.append(ref)
         body = canonical(plan.data)
         if len(body) > self.inline_bytes:
@@ -435,7 +455,7 @@ class ContentPlanner:
             envelope = _reference(sha, len(body), JSON_MEDIA_TYPE)
             data = {"$payload": envelope}
             ref = PendingRef("payload", data, envelope, "blob", JSON_MEDIA_TYPE, len(body), sha, content=body)
-            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable, queued)
             plan.refs.append(ref)
             plan.data = data
         return plan
@@ -567,21 +587,22 @@ class ContentPlanner:
     # Payload ids and uploads -------------------------------------------------
 
     def _plan_ref(self, ref: PendingRef, index: int, trajectory_id: str, lookup: TrajectoryContent,
-                  unavailable: bool) -> None:
+                  unavailable: bool, queued: frozenset[str] | set[str] = frozenset()) -> None:
         key = (trajectory_id, ref.dedupe_key)
         planned = self._planned.get(key)
         blob = ref.storage_kind == "blob"
         object_key = self.blob_key(trajectory_id, ref.sha256) if blob else None
         if planned is None:
             existing = lookup.rows.get(ref.dedupe_key)
+            if blob and unavailable and object_key not in self._objects and self._needs_bytes(
+                    ref, existing, lookup, object_key in queued):
+                ref.mark_unavailable()
+                return
             if existing is not None:
                 planned = _Planned(existing.payload_id, existing.availability, existing=True)
             elif blob and ref.sha256 in lookup.blocked and object_key not in self._objects:
                 blocked = lookup.blocked[ref.sha256]
                 planned = _Planned(blocked.payload_id, blocked.availability, existing=True, blocked=True)
-            elif blob and unavailable and object_key not in self._objects and ref.sha256 not in lookup.blobs:
-                ref.mark_unavailable()
-                return
             else:
                 planned = _Planned(new_payload_id(), ref.availability, existing=False)
             self._planned[key] = planned
@@ -599,15 +620,56 @@ class ContentPlanner:
         if known is None and ref.sha256 in lookup.blobs:
             row = lookup.blobs[ref.sha256]
             known = self._objects[object_key] = (row.encoding, row.stored_bytes)
+            if ref.content is not None:
+                # Kept until the ingest checks the GC queue: a queued key must be stored again.
+                self.reused[object_key] = Reused(ref.content, ref.media_type, row.encoding)
         if known is None and ref.content is not None:
             stored, encoding = encode_blob(ref.content, ref.media_type)
             known = self._objects[object_key] = (encoding, len(stored))
             self.uploads[object_key] = Upload(object_key, stored, ref.media_type, {index})
         elif object_key in self.uploads:
             self.uploads[object_key].events.add(index)
+        elif object_key in self.reused:
+            self.reused[object_key].events.add(index)
         if known is not None:
             ref.encoding, ref.stored_bytes = known
         ref.content = None
+
+    @staticmethod
+    def _needs_bytes(ref: PendingRef, existing: ExistingPayload | None, lookup: TrajectoryContent,
+                     queued: bool) -> bool:
+        """Whether a blob reference must store bytes: new content, or an object a queued GC entry may delete."""
+        if existing is not None and existing.availability != "available":
+            return False  # deleted or expired content is referenced without bytes
+        if ref.sha256 in lookup.blobs:
+            return queued
+        return ref.sha256 not in lookup.blocked
+
+    def object_keys(self) -> set[str]:
+        """Blob keys this batch stores or reuses: the keys a GC delete must not remove under it."""
+        return set(self.uploads) | set(self.reused)
+
+    def store_again(self, key: str) -> bool:
+        """Overwrite ``key`` when uploading: a queued GC entry may already have deleted the object.
+
+        False when the batch has no bytes for the key (it neither stores nor reuses it).
+        """
+        upload = self.uploads.get(key)
+        if upload is not None:
+            upload.if_absent = False
+            return True
+        reused = self.reused.get(key)
+        if reused is None or not reused.content:
+            return False
+        data = (zstandard.ZstdCompressor(level=ZSTD_LEVEL).compress(reused.content) if reused.encoding == "zstd"
+                else bytes(reused.content))
+        self.uploads[key] = Upload(key, data, reused.media_type, set(reused.events), if_absent=False)
+        return True
+
+    def release_reused(self) -> None:
+        """Drop the bytes kept for reused objects; their keys stay listed."""
+        for reused in self.reused.values():
+            reused.content = b""
 
 
 def reference_keys(plans) -> tuple[set[str], set[str]]:

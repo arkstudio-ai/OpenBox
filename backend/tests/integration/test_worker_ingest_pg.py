@@ -150,14 +150,17 @@ async def test_services_run_one_task_per_loop_and_resume_without_duplicates(migr
     original = IngestService._commit
     calls = {"count": 0}
 
+    class WorkerKilled(BaseException):
+        """Like a kill, nothing inside the worker handles it (ingest isolates ordinary exceptions per file)."""
+
     async def killed(self, *args, **kwargs):
         calls["count"] += 1
         if calls["count"] == 2:
-            raise RuntimeError("killed between upload and commit")
+            raise WorkerKilled("killed between upload and commit")
         return await original(self, *args, **kwargs)
 
     monkeypatch.setattr(IngestService, "_commit", killed)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkerKilled):
         await harness.run()
     monkeypatch.setattr(IngestService, "_commit", original)
     harness.configure()

@@ -127,3 +127,10 @@ async def test_asset_deleted_creates_or_marks_the_replica(trace_db):
         assert (created.is_deleted, created.user_id, parse_time(created.deleted_at)) == (True, "u1", AT)
         assert await db.get(TrajectoryMetaAsset, "asset_ownerless") is None
         assert (marked.is_deleted, parse_time(marked.deleted_at), marked.oss_key) == (True, later, "assets/u1/a.png")
+
+
+def test_times_outside_the_datetime_range_parse_as_missing():
+    # A UTC conversion past year 9999 or before year 1 overflows; it must read as "no time", not raise.
+    assert parse_time("9999-12-31T23:00:00-05:00") is None
+    assert parse_time("0001-01-01T00:30:00+01:00") is None
+    assert parse_time("2026-09-14T08:00:00.000Z") == AT

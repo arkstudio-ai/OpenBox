@@ -1,8 +1,54 @@
-"""Single-writer lock (SPEC §8.1): SQLite file lock and in-memory lock behavior."""
+"""Single-writer lock (SPEC §8.1): SQLite file lock and in-memory lock behavior; the object guard."""
+import asyncio
+
 import pytest
 
 from trajectory.store.database import close_trace_engine, init_trace_engine
-from trajectory.worker.lock import FileWriterLock, ProcessWriterLock, writer_lock_for
+from trajectory.worker.lock import FileWriterLock, ObjectGuard, ProcessWriterLock, writer_lock_for
+
+
+async def test_object_guard_keeps_deletes_apart_from_batches():
+    guard = ObjectGuard()
+    order = []
+    inside, release = asyncio.Event(), asyncio.Event()
+
+    async def batch(name, hold=None):
+        async with guard.shared():
+            order.append(f"{name}+")
+            if hold is not None:
+                inside.set()
+                await hold.wait()
+            order.append(f"{name}-")
+
+    async def delete():
+        async with guard.exclusive():
+            order.append("delete")
+
+    first = asyncio.create_task(batch("a", release))
+    await inside.wait()
+    deleting = asyncio.create_task(delete())
+    await asyncio.sleep(0.01)
+    # A batch that arrives while a delete waits queues behind the delete, so deletes cannot starve.
+    later = asyncio.create_task(batch("b"))
+    await asyncio.sleep(0.01)
+    assert order == ["a+"] and guard.holders == 1
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, deleting, later), 1)
+    assert order == ["a+", "a-", "delete", "b+", "b-"]
+    # A holder cancelled inside the guard does not keep it.
+    held = asyncio.Event()
+
+    async def stuck():
+        async with guard.shared():
+            held.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(stuck())
+    await held.wait()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.wait_for(delete(), 1)
+    assert guard.holders == 0 and order[-1] == "delete"
 
 
 @pytest.fixture

@@ -12,8 +12,10 @@ lock suffices there.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from sqlalchemy import text
@@ -226,3 +228,50 @@ def writer_lock_for(engine: AsyncEngine) -> WriterLock:
         return ProcessWriterLock(url.render_as_string(hide_password=True))
     path = Path(database).expanduser().resolve()
     return FileWriterLock(path.with_name(path.name + LOCK_FILE_SUFFIX))
+
+
+class ObjectGuard:
+    """Keeps blob deletion by the GC queue apart from ingest batches that store or reuse blobs.
+
+    ``RetentionService.process_gc_queue`` checks that no available payload row references a key and then
+    deletes the object, without a database lock across the two steps; an ingest batch that stored or reused
+    the object and committed a reference in between would point at a deleted object. The worker therefore
+    deletes a blob key only inside ``exclusive()``, checking again right before the delete
+    (``services.GuardedGcBlobStore``), and an ingest batch holds ``shared()`` from its check of queued GC
+    keys through its commit (``ingest.IngestService``). Each delete then sees either the committed reference
+    or no batch in flight. GC and ingest run only in the process that holds the writer lock, so a
+    process-local guard is enough.
+
+    ``exclusive()`` waits for the current holders while new ``shared()`` callers wait behind it, so deletes
+    cannot starve; it covers one check and one delete, so a batch waits at most that long. Leaving either
+    side never awaits, so a cancelled holder cannot keep the guard. A task that holds the guard must not
+    enter it again.
+    """
+
+    def __init__(self):
+        self._gate = asyncio.Lock()
+        self._holders = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    @property
+    def holders(self) -> int:
+        return self._holders
+
+    @asynccontextmanager
+    async def shared(self):
+        async with self._gate:
+            self._holders += 1
+            self._idle.clear()
+        try:
+            yield
+        finally:
+            self._holders -= 1
+            if not self._holders:
+                self._idle.set()
+
+    @asynccontextmanager
+    async def exclusive(self):
+        async with self._gate:
+            await self._idle.wait()
+            yield

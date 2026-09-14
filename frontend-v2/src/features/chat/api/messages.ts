@@ -1,48 +1,109 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import type { MessageWithParts, Session } from "@/shared/types/api"
 import { chatKeys } from "./keys"
 import { usePendingStore } from "../stores/pending"
+import { isOptimistic, useStreamStore } from "../stores/stream"
 
 export function useUserId(): string {
   return useAuthStore((s) => s.user?.id ?? "anonymous")
 }
 
-/** The server returns the first 200 rows by default, not the newest 200.
- *  Complete the snapshot before exposing it: a partial history can make old
- *  suggestions look as though they belong to the current answer. */
-export async function fetchMessageSnapshot(sessionId: string, signal?: AbortSignal): Promise<MessageWithParts[]> {
-  const messages = new Map<string, MessageWithParts>()
-  const limit = 200
-  let offset = 0
-  while (true) {
-    const page = await http.get<MessageWithParts[]>(
-      `/api/agent/session/${sessionId}/message?offset=${offset}&limit=${limit}`, { signal },
-    )
-    const previousSize = messages.size
-    for (const message of page) messages.set(message.id, message)
-    if (page.length < limit) return [...messages.values()]
-    // Do not silently expose an incomplete snapshot or loop forever if a
-    // proxy/server ignores the offset. Existing error UI offers recovery.
-    if (messages.size === previousSize) throw new Error("Message pagination did not advance")
-    offset += page.length
-  }
+/** Turns per history page. A turn runs from one user message to the next, so a
+ *  run of tool steps never straddles two pages. */
+export const HISTORY_TURNS = 8
+
+export interface HistoryPage {
+  messages: MessageWithParts[]
+  /** Older messages exist before the first one returned (never after a cursor). */
+  has_more: boolean
 }
 
-export function useMessagesQuery(sessionId: string, live = false) {
+export interface HistoryCursor {
+  /** The turns before this message. */
+  before?: string
+  /** This message and everything newer: the part of a chat that can still change. */
+  after?: string
+  turns?: number
+}
+
+/** A page of a conversation, newest turns first. Chats used to be read from
+ *  offset 0 to the end on every open and every poll — a megabyte a second for a
+ *  350-message conversation while a run was live. */
+export function fetchHistory(sessionId: string, cursor: HistoryCursor = {}, signal?: AbortSignal): Promise<HistoryPage> {
+  const params = new URLSearchParams({ turns: String(cursor.turns ?? HISTORY_TURNS) })
+  if (cursor.before) params.set("before", cursor.before)
+  if (cursor.after) params.set("after", cursor.after)
+  return http.get<HistoryPage>(`/api/agent/session/${sessionId}/history?${params}`, { signal })
+}
+
+/** The message a page was anchored to was deleted (regenerate, dismiss,
+ *  revert): drop what is held and start again from the newest turns. */
+export function isHistoryCursorGone(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "HISTORY_CURSOR_GONE"
+}
+
+/** Where live catch-up resumes: the newest message the server has confirmed. */
+export function newestPersistedId(messages: readonly MessageWithParts[] | undefined): string | undefined {
+  const list = messages ?? []
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (!isOptimistic(list[i])) return list[i].id
+  }
+  return undefined
+}
+
+/** The newest turns of a conversation. Taken on every route mount and again
+ *  whenever an event invalidates it — a terminal status, an answered question,
+ *  a reconnect — then merged into any older pages the reader has loaded. */
+export function useMessagesQuery(sessionId: string) {
   const userId = useUserId()
   return useQuery({
     queryKey: chatKeys.messages(userId, sessionId),
-    queryFn: ({ signal }) => fetchMessageSnapshot(sessionId, signal),
+    queryFn: ({ signal }) => fetchHistory(sessionId, {}, signal),
     enabled: sessionId.length > 0,
-    // A reconnect can only replay durable state, not the WS frames missed
-    // while the page was gone. Poll the durable snapshot during a live run so
-    // a refreshed/reopened page converges even if it reconnects between two
-    // events; take a fresh snapshot on every route mount for the same reason.
     refetchOnMount: "always",
-    refetchInterval: live ? 1_000 : false,
   })
+}
+
+export interface LiveHistory extends HistoryPage {
+  /** Nothing confirmed was held yet, so this is the newest window, not a catch-up. */
+  windowed: boolean
+}
+
+/** While a run is live, re-read the newest confirmed message and everything
+ *  after it once a second. A reconnect replays only durable state, not the
+ *  frames missed while the page was away, so this is how a reopened page
+ *  converges — without downloading the rest of the conversation each time. */
+export function useLiveHistory(sessionId: string, live: boolean) {
+  const userId = useUserId()
+  return useQuery({
+    queryKey: chatKeys.liveHistory(userId, sessionId),
+    queryFn: async ({ signal }): Promise<LiveHistory> => {
+      const after = newestPersistedId(useStreamStore.getState().messages.get(sessionId))
+      const page = await fetchHistory(sessionId, after ? { after } : {}, signal)
+      return { ...page, windowed: !after }
+    },
+    enabled: live && sessionId.length > 0,
+    refetchInterval: live ? 1_000 : false,
+    // The next tick is the retry; a vanished anchor is handled by the caller.
+    retry: false,
+    gcTime: 0,
+  })
+}
+
+/** Put the turns before the oldest confirmed message in front of the view. */
+export async function loadOlderHistory(sessionId: string): Promise<void> {
+  const store = useStreamStore.getState()
+  const before = store.messages.get(sessionId)?.find((m) => !isOptimistic(m))?.id
+  if (!before || store.history.get(sessionId)?.loadingOlder) return
+  store.setHistoryLoading(sessionId, true)
+  try {
+    const page = await fetchHistory(sessionId, { before })
+    useStreamStore.getState().prependHistory(sessionId, before, page.messages, page.has_more)
+  } finally {
+    useStreamStore.getState().setHistoryLoading(sessionId, false)
+  }
 }
 
 export interface SendMessageVars {

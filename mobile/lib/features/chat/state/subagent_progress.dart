@@ -86,10 +86,13 @@ final subagentProgressProvider =
 });
 
 /// One-shot backfill of a child session's transcript into the stream store.
+/// A child session is a single turn, so its newest turn is all of it. The
+/// default `/message` page returned the oldest 200 messages instead, which
+/// for a long subagent run left out exactly the end it was on.
 final _subagentBackfillProvider =
     FutureProvider.family<void, String>((ref, sessionId) async {
   ref.keepAlive();
-  final messages = await ref.read(chatApiProvider).listMessages(sessionId);
-  if (messages.isEmpty) return;
-  ref.read(chatStreamProvider.notifier).setMessages(sessionId, messages);
+  final page = await ref.read(chatApiProvider).history(sessionId, turns: 1);
+  if (page.messages.isEmpty) return;
+  ref.read(chatStreamProvider.notifier).mergeHistory(sessionId, page.messages);
 });

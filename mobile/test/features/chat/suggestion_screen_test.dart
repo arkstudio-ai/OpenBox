@@ -76,11 +76,11 @@ void main() {
       expect(find.byType(SuggestionChips), findsOneWidget);
       final list = find.descendant(
         of: find.byType(ChatFlow),
-        matching: find.byType(ListView),
+        matching: find.byType(CustomScrollView),
       );
       final viewport = tester.getRect(list);
       final dock = tester.getRect(find.byType(SuggestionChips));
-      final controller = tester.widget<ListView>(list).controller!;
+      final controller = tester.widget<CustomScrollView>(list).controller!;
       final bottom = controller.offset;
       for (var i = 0; i < 5; i++) {
         final previous = controller.offset;

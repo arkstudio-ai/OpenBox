@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { http } from "@/shared/api/http"
+import { ApiError, http } from "@/shared/api/http"
 import type { MessageWithParts } from "@/shared/types/api"
-import { fetchMessageSnapshot, sendPromptAsync } from "./messages"
+import { useStreamStore } from "../stores/stream"
+import { fetchHistory, isHistoryCursorGone, loadOlderHistory, newestPersistedId, sendPromptAsync } from "./messages"
 
-vi.mock("@/shared/api/http", () => ({
+vi.mock("@/shared/api/http", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/api/http")>()),
   http: { post: vi.fn(), get: vi.fn() },
 }))
 
@@ -31,34 +33,66 @@ describe("sendPromptAsync", () => {
   })
 })
 
-describe("complete message snapshots", () => {
-  beforeEach(() => vi.resetAllMocks())
-  const message = (id: number): MessageWithParts => ({
-    id: String(id), session_id: "s1", role: "assistant", created_at: String(id), parts: [],
+describe("history pages", () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    useStreamStore.getState().clearMessages("s1")
   })
+  const message = (id: string): MessageWithParts => ({
+    id, session_id: "s1", role: "assistant", created_at: id, parts: [],
+  })
+  const held = () => useStreamStore.getState().messages.get("s1")?.map((m) => m.id)
 
-  it("loads past 200 messages before exposing the latest suggestions", async () => {
-    const latest: MessageWithParts = { ...message(200), finish: "stop", parts: [
-      { type: "suggestions", id: "p-latest", items: [] },
-    ] }
-    vi.mocked(http.get).mockResolvedValueOnce(Array.from({ length: 200 }, (_, i) => message(i)))
-      .mockResolvedValueOnce([latest])
+  it("asks for the newest turns, the turns before a message, or a message and everything after it", async () => {
+    vi.mocked(http.get).mockResolvedValue({ messages: [], has_more: false })
     const signal = new AbortController().signal
-    const result = await fetchMessageSnapshot("s1", signal)
-    expect(result).toHaveLength(201)
-    expect(result[200]).toEqual(latest)
-    expect(http.get).toHaveBeenNthCalledWith(2, "/api/agent/session/s1/message?offset=200&limit=200", { signal })
+
+    await fetchHistory("s1", {}, signal)
+    await fetchHistory("s1", { before: "message_b" })
+    await fetchHistory("s1", { after: "message_a", turns: 1 })
+
+    expect(vi.mocked(http.get).mock.calls).toEqual([
+      ["/api/agent/session/s1/history?turns=8", { signal }],
+      ["/api/agent/session/s1/history?turns=8&before=message_b", { signal: undefined }],
+      ["/api/agent/session/s1/history?turns=1&after=message_a", { signal: undefined }],
+    ])
   })
 
-  it("does not expose partial history when a later page fails", async () => {
-    vi.mocked(http.get).mockResolvedValueOnce(Array.from({ length: 200 }, (_, i) => message(i)))
-      .mockRejectedValueOnce(new Error("offline"))
-    await expect(fetchMessageSnapshot("s1")).rejects.toThrow("offline")
+  it("resumes live catch-up from the newest confirmed message, not an optimistic echo", () => {
+    expect(newestPersistedId([message("message_a"), message("message_b"), { ...message("tmp-1"), role: "user" }]))
+      .toBe("message_b")
+    expect(newestPersistedId([message("tmp-1")])).toBeUndefined()
+    expect(newestPersistedId(undefined)).toBeUndefined()
   })
 
-  it("does not loop when an intermediary repeats the first page", async () => {
-    vi.mocked(http.get).mockResolvedValue(Array.from({ length: 200 }, (_, i) => message(i)))
-    await expect(fetchMessageSnapshot("s1")).rejects.toThrow("Message pagination did not advance")
-    expect(http.get).toHaveBeenCalledTimes(2)
+  it("recognises a page whose anchor message was deleted", () => {
+    expect(isHistoryCursorGone(new ApiError(409, "HISTORY_CURSOR_GONE", "gone"))).toBe(true)
+    expect(isHistoryCursorGone(new ApiError(409, "HTTP_409", "conflict"))).toBe(false)
+    expect(isHistoryCursorGone(new Error("offline"))).toBe(false)
+  })
+
+  it("puts the turns before the oldest held message in front of it", async () => {
+    useStreamStore.getState().mergeHistory("s1", [message("message_c"), message("message_d")], true)
+    vi.mocked(http.get).mockResolvedValueOnce({ messages: [message("message_a"), message("message_b")], has_more: false })
+
+    await loadOlderHistory("s1")
+
+    expect(http.get).toHaveBeenCalledWith("/api/agent/session/s1/history?turns=8&before=message_c", { signal: undefined })
+    expect(held()).toEqual(["message_a", "message_b", "message_c", "message_d"])
+    expect(useStreamStore.getState().history.get("s1")).toEqual({ hasMore: false, loadingOlder: false })
+  })
+
+  it("asks once while an older page is already on its way", async () => {
+    useStreamStore.getState().mergeHistory("s1", [message("message_c")], true)
+    let resolve!: (page: unknown) => void
+    vi.mocked(http.get).mockReturnValueOnce(new Promise((r) => { resolve = r }))
+
+    const first = loadOlderHistory("s1")
+    await loadOlderHistory("s1")
+    resolve({ messages: [message("message_b")], has_more: true })
+    await first
+
+    expect(http.get).toHaveBeenCalledTimes(1)
+    expect(held()).toEqual(["message_b", "message_c"])
   })
 })

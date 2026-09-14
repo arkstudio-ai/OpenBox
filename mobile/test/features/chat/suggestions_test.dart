@@ -1,4 +1,4 @@
-import 'package:bossip_mobile/features/chat/api/chat_api.dart';
+import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/features/chat/state/stream_store.dart';
 import 'package:bossip_mobile/features/chat/utils/suggestions.dart';
 import 'package:bossip_mobile/features/chat/utils/turn_view.dart';
@@ -6,21 +6,9 @@ import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/models/session.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'suggestion_fixtures.dart';
-
-class _Pages extends ChatApi {
-  _Pages(this.page) : super(Dio());
-  final List<ChatMessage> Function(int) page;
-  @override
-  Future<List<ChatMessage>> listMessages(
-    String sessionId, {
-    int offset = 0,
-    int limit = 200,
-  }) async => page(offset);
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -71,7 +59,7 @@ void main() {
         final fixture = await SuggestionFixture.create();
         addTearDown(fixture.dispose);
         final store = fixture.container.read(chatStreamProvider.notifier);
-        store.setMessages('s1', [answer(parts: [])]);
+        store.mergeHistory('s1', [answer(parts: [])]);
         final pending = {
           'id': 'p1',
           'type': 'suggestions',
@@ -106,7 +94,7 @@ void main() {
             }),
           );
         }
-        store.setMessages('s1', [
+        store.mergeHistory('s1', [
           answer(parts: [MessagePart.fromJson(pending)]),
         ]);
         final result = fixture.container
@@ -222,7 +210,7 @@ void main() {
       final fixture = await SuggestionFixture.create();
       addTearDown(fixture.dispose);
       final store = fixture.container.read(chatStreamProvider.notifier);
-      store.setMessages('s1', [answer(parts: [])]);
+      store.mergeHistory('s1', [answer(parts: [])]);
       fixture.ws.frames.add(
         const WsEvent('part.created', {
           'sessionId': 's1',
@@ -236,7 +224,7 @@ void main() {
           },
         }),
       );
-      store.setMessages('s1', [answer(parts: [])]);
+      store.mergeHistory('s1', [answer(parts: [])]);
       var messages = fixture.container
           .read(chatStreamProvider)
           .messagesOf('s1');
@@ -259,7 +247,7 @@ void main() {
           },
         ],
       });
-      store.setMessages('s2', [restored]);
+      store.mergeHistory('s2', [restored]);
       messages = fixture.container.read(chatStreamProvider).messagesOf('s2');
       expect(
         latestSuggestions(buildChatRows(messages), SessionStatus.idle)?.id,
@@ -270,38 +258,36 @@ void main() {
   );
 
   test(
-    'snapshot includes current suggestions after more than 200 messages',
+    'a long conversation opens on a window carrying its current suggestions',
     () async {
       final fixture = await SuggestionFixture.create();
       addTearDown(fixture.dispose);
+      String id(int n) => 'm${n.toString().padLeft(4, '0')}';
       fixture.api.messages = [
-        for (var i = 0; i < 401; i++) answer(id: 'm$i', parts: []),
-        answer(id: 'latest'),
+        for (var i = 0; i <= 200; i++) ...[
+          ChatMessage(
+            id: id(2 * i),
+            sessionId: 's1',
+            role: 'user',
+            parts: const [],
+          ),
+          answer(id: id(2 * i + 1), parts: i == 200 ? [testSuggestions] : []),
+        ],
       ];
-      final snapshot = await fixture.api.messageSnapshot('s1');
-      expect(snapshot.length, 402);
-      expect(fixture.api.offsets, [0, 200, 400]);
-      expect(
-        latestSuggestions(buildChatRows(snapshot), SessionStatus.idle),
-        testSuggestions,
-      );
-    },
-  );
+      fixture.container.read(chatSessionProvider('s1'));
+      await Future<void>.delayed(Duration.zero);
 
-  test(
-    'partial failed or repeated pages cannot become a fresh snapshot',
-    () async {
-      final page = [for (var i = 0; i < 200; i++) answer(id: 'm$i')];
-      await expectLater(
-        _Pages((_) => page).messageSnapshot('s1'),
-        throwsStateError,
-      );
-      await expectLater(
-        _Pages((offset) {
-          if (offset > 0) throw StateError('offline');
-          return page;
-        }).messageSnapshot('s1'),
-        throwsStateError,
+      final messages = fixture.container
+          .read(chatStreamProvider)
+          .messagesOf('s1');
+      expect(fixture.api.historyReads, [
+        (before: null, after: null, turns: chatHistoryTurns),
+      ]);
+      expect(messages, hasLength(2 * chatHistoryTurns));
+      expect(fixture.container.read(chatSessionProvider('s1')).hasMore, isTrue);
+      expect(
+        latestSuggestions(buildChatRows(messages), SessionStatus.idle),
+        testSuggestions,
       );
     },
   );

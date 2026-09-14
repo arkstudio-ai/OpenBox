@@ -5,7 +5,31 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云后端：2026-09-14 视频口播台词不再用 `@`（后端叠加镜像 + 14 台桌面技能）
+## 当前阿里云发布：2026-09-14 16:31 长会话读取完整历史 + 聊天记录按轮分页（backend + frontend 叠加镜像）
+
+- 现象一：智能体每步用 `get_messages()` 读历史，默认只取最早 200 条。会话超过 200 条后模型看到的上下文冻结，看不到之后的工具结果、卡片回答和新消息：
+  `session_7YBXNNJ7KGM2YPWK39MXAJZXCF` 的字幕样式卡被连问 6 次；12 个会话超过 200 条，冻结后共约 1,672 步、228 credits。
+- 现象二：Web 与 App 打开会话和运行中每秒都从第 0 条全量下载历史。350 条消息的会话每次约 1.07 MB，App 80 分钟下载 2 GB；gw2 近 46 小时消息接口 10 GB；14:35 后端在此负载下 OOM。
+- 修复（发布时均未合并）：PR [#34](https://github.com/arkstudio-ai/OpenBox/pull/34)（`6ab602e` 读取完整历史，`6aee878` 上下文卡死保护 `CONTEXT_STALLED`）；
+  PR [#35](https://github.com/arkstudio-ai/OpenBox/pull/35)（`0c7fa14` `GET /session/{id}/history` 按轮分页，`dc0ceef` Web 最新 8 轮 + `after` 增量轮询 + 加载更早，`cab4357` 移动端同样改动，`68bb0fa` nginx gzip）。
+  **移动端代码在 #35 中，本次未打包发版。**
+- 后端：以线上 `20260914-video-dialogue-6f90252-on-961075e-714a30b` 为底，只叠加 `session/session.py`、`agent/loop.py`、`agent/context_stall.py`、`api/sessions.py`，在 gw2 本机构建
+  `openbox-backend:20260914-history-6aee878-68bb0fa-on-6f90252`（`fd1052145726`，label `com.bossip.historyfix.commits=6aee878,68bb0fa`）。
+  叠加前核对线上被替换的 3 个文件与 main 逐字节一致；镜像内 4 个文件 sha256 与清单一致；两分支合并后的后端单测 2265 项全过。
+- 前端：以线上前端源码 `961075e` 加两个 PR 的前端补丁，本机 `vite build`（`VITE_BUILD_ID=20260914-history-6aee878-68bb0fa-on-961075e`），叠加到 `openbox-frontend-v2:20260912-videourl-961075e` 构建
+  `openbox-frontend-v2:20260914-history-6aee878-68bb0fa-on-961075e`（`51d9703076a9`）。123 个文件 sha256 一致，`nginx -t` 通过；该源码树 tsc、i18n 通过，vitest 767/768（唯一失败是既有不稳定的 `WorkspaceLayout.isolation`）。
+  main 上尚未发布的消息中心迁移与页面没有随本次上线。
+- 传输：OSS `oss://bossip/_deploy-tmp/20260914-history-6aee878-68bb0fa/` 中转，包 SHA-256 `6e28d15c…`，构建后已删除；发布目录 `releases/20260914-history-6aee878-68bb0fa/`。
+- gw2：16:21 首次守门检查到 1 个持有租约的运行（普通对话正在回复），顺延；16:27、16:28 两次为 0 后切换 backend，34s healthy，无迁移（仍 `f6a8c0e2b4d6`）。
+  备份 `backups/20260914-history-6aee878-68bb0fa/activation-20260914T082835Z/`（配置、compose、原容器 inspect、`preflight.dump` 162M 经 `pg_restore -l` 校验）。
+  容器内 `get_messages` 读到上述会话全部 348 条，`/history` 最新 8 轮 207 条。随后切换 frontend，12s healthy；postgres、redis 未动。
+- 验证：公网 `/`、`/api/environment` 200，`index.html` app-build 为新 tag，入口 JS 返回 `Content-Encoding: gzip`；切换后后端无错误日志、nginx 无 5xx。
+  尚未更新的 App 仍请求 `/message`，gzip 后平均 68 KB（此前两页分别约 773 KB、302 KB）。
+- 待办：#34、#35 合并前，**从 main 全量构建会回退这两个修复**；移动端分页需发新版 App；运行中两端仍每秒拉一次会话状态；AWS 本次未发布。
+- 回滚：gw2 override 的 backend 改回 `openbox-backend:20260914-video-dialogue-6f90252-on-961075e-714a30b`、frontend 改回 `openbox-frontend-v2:20260912-videourl-961075e`，
+  分别 `docker compose up -d --no-deps backend` / `frontend`；无迁移，无需恢复数据库。
+
+## 历史阿里云后端：2026-09-14 视频口播台词不再用 `@`（后端叠加镜像 + 14 台桌面技能）
 
 - 现象：视频配音开头多念“艾特”。`video-production` 技能让 agent 把台词写成 `说出@<台词>`，提示词原样发给模型，模型把 `@` 念了出来：
   `session_7YBXH4R6PT5SD9YHJ2N3EPD519` 两段 STT 为“艾博南宁的姐妹…”“IPN 来银庄…”，同段改用 `口播台词：` 重生后正常。

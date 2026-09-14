@@ -120,6 +120,61 @@ def prepare(context: TraceContext, event: dict) -> dict:
     return result
 
 
+_CONTEXT_FIELDS = tuple(TraceContext.__dataclass_fields__)
+_REQUIRED_IDS = {"request": "request_id", "tool": "call_id", "run": "run_id", "turn": "turn_id", "step": "step_id", "agent": "agent_id"}
+_TIMINGS = ("duration_ms", "elapsed_ms", "ttft_ms", "generation_ms")
+
+
+def prepare_fast(context: TraceContext, event: dict) -> dict:
+    """``prepare()`` without the canonical JSON pass.
+
+    The emitter serializes the result exactly once (orjson, with markers for
+    unsupported values), so everything except JSON encodability is validated
+    here with the same rules and messages as ``prepare()``.
+    """
+    event_type = event.get("type")
+    if event_type not in EVENT_TYPES or event.get("version", VERSION) != VERSION:
+        raise TrajectoryError("Unsupported trajectory event type or version")
+    data = event.get("data", {})
+    if not isinstance(data, dict):
+        raise TrajectoryError("Event data must be an object")
+    # Same keys and order as context.to_dict(), without asdict() deep copies.
+    result = {}
+    for key in _CONTEXT_FIELDS:
+        value = getattr(context, key)
+        if value is not None:
+            result[key] = value
+    for key in ID_FIELDS:
+        if key in event:
+            result[key] = event[key]
+    result.update(type=event_type, version=VERSION, event_id=event.get("event_id") or f"evt_{uuid4().hex}",
+                  occurred_at=iso(event.get("occurred_at") or now()), data=data)
+    required = _REQUIRED_IDS.get(event_type.split(".")[0])
+    if required and not result.get(required):
+        raise TrajectoryError(f"{event_type} requires {required}")
+    for key in ("user_id", "session_id", "event_id", *ID_FIELDS):
+        if key == "generation" or result.get(key) is None:
+            continue
+        if not isinstance(result[key], str) or not result[key] or len(result[key]) > 128:
+            raise TrajectoryError(f"Invalid event identity: {key}")
+    if event_type in {"request.delta", "tool.output"}:
+        chunk_index = data.get("chunk_index")
+        if chunk_index is not None and (isinstance(chunk_index, bool) or not isinstance(chunk_index, int) or chunk_index < 0):
+            raise TrajectoryError("chunk_index must be nonnegative integer")
+        if data.get("mode", "delta") not in {"delta", "replace"}:
+            raise TrajectoryError("Unknown stream update mode")
+        if "blocks" in data and not isinstance(data["blocks"], list):
+            raise TrajectoryError("Stream blocks must be an array")
+    if event_type == "request.usage" and data.get("mode", "replace") not in {"replace", "delta"}:
+        raise TrajectoryError("Unknown usage update mode")
+    for field in _TIMINGS:
+        if field in data and data[field] is not None:
+            number = data[field]
+            if isinstance(number, bool) or not isinstance(number, (float, int)) or not math.isfinite(number) or number < 0:
+                raise TrajectoryError(f"Invalid timing: {field}")
+    return result
+
+
 class RecordingError(TrajectoryError):
     code = "trajectory_recording_failed"
 

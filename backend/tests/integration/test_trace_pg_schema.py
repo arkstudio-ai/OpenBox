@@ -32,7 +32,7 @@ def _p(day: str) -> str:
     return f"trajectory_events_p{day}"
 
 
-async def _recreate(url: str) -> None:
+async def _recreate(url: str, *, create: bool = True) -> None:
     parsed = make_url(url)
     if parsed.host not in {"localhost", "127.0.0.1"} or not (parsed.database or "").startswith("openbox_trace_test_"):
         raise ValueError("PostgreSQL trace tests require a local disposable openbox_trace_test_* database")
@@ -40,15 +40,16 @@ async def _recreate(url: str) -> None:
     try:
         async with admin.connect() as connection:
             await connection.execute(text(f'DROP DATABASE IF EXISTS "{parsed.database}" WITH (FORCE)'))
-            await connection.execute(text(f'CREATE DATABASE "{parsed.database}"'))
+            if create:
+                await connection.execute(text(f'CREATE DATABASE "{parsed.database}"'))
     finally:
         await admin.dispose()
 
 
-def _alembic(action: str, revision: str) -> None:
+def _alembic(action: str, *args: str) -> None:
     config = Config(str(BACKEND / "alembic_trajectory.ini"))
     config.set_main_option("script_location", str(BACKEND / "trajectory" / "store" / "migrations"))
-    getattr(command, action)(config, revision)
+    getattr(command, action)(config, *args)
 
 
 @pytest.fixture
@@ -149,6 +150,7 @@ async def test_models_create_all_builds_the_migrated_schema(migrated):
         assert await _catalog(modeled) == await _catalog(migrated)
     finally:
         await modeled.dispose()
+        await _recreate(models_url, create=False)
 
 
 async def test_rows_route_by_recorded_on_and_queries_prune(migrated):
@@ -386,6 +388,91 @@ async def test_engine_settings_and_session_semantics_on_postgresql(migrated):
     async with trace_session() as session:
         assert (await session.execute(select(models.SessionTrajectory.id))).scalars().all() == ["trj_a"]
     assert migrated.sync_engine.pool.checkedout() == 0
+
+
+async def test_migration_refuses_a_postgresql_database_holding_the_business_chain(monkeypatch):
+    # A trace URL naming the business database under another host alias passes the URL comparison;
+    # the business alembic_version table must still stop the upgrade before it creates anything.
+    parsed = make_url(URL)
+    business_url = parsed.set(database=f"{parsed.database}_business").render_as_string(hide_password=False)
+    await _recreate(business_url)
+    engine = create_async_engine(business_url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.setenv("TRAJECTORY_DATABASE_URL", business_url)
+        with pytest.raises(SystemExit, match="business migration table alembic_version"):
+            await asyncio.to_thread(_alembic, "upgrade", "head")
+        async with engine.connect() as connection:
+            tables = (await connection.execute(text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))).scalars().all()
+            extensions = (await connection.execute(text("SELECT extname FROM pg_extension"))).scalars().all()
+        assert tables == ["alembic_version"]
+        assert "pg_trgm" not in extensions
+    finally:
+        await engine.dispose()
+        await _recreate(business_url, create=False)
+
+
+async def test_autogenerate_ignores_partitions_and_finds_no_drift(migrated):
+    # The default and daily partitions come from the migration and partitions.py, not from the models.
+    # `alembic check` runs env.py in autogenerate mode: it must neither propose dropping them nor report drift.
+    async with migrated.begin() as connection:
+        await partitions.ensure_partitions(connection, date(2026, 9, 14), 1)
+    await asyncio.to_thread(_alembic, "check")
+
+
+@pytest.mark.parametrize("isolation", ["REPEATABLE READ", "SERIALIZABLE"])
+async def test_partition_ddl_refuses_snapshot_isolation(migrated, isolation):
+    async with migrated.begin() as connection:
+        await partitions.ensure_partitions(connection, date(2026, 9, 1), 0)
+        await _trajectory(connection)
+    maintenance = await migrated.connect()
+    try:
+        await maintenance.execution_options(isolation_level=isolation)
+        await maintenance.begin()
+        assert await partitions.list_partitions(maintenance) == [_p("20260901")]  # takes the snapshot
+        # This row commits after the snapshot and is invisible to it: an emptiness check read from that
+        # snapshot would drop the partition together with the row.
+        async with migrated.begin() as writer:
+            await _events(writer, ("trj_a", 1, date(2026, 9, 1)))
+        with pytest.raises(partitions.PartitionIsolationError, match="READ COMMITTED"):
+            await partitions.drop_partition_if_empty(maintenance, _p("20260901"))
+        with pytest.raises(partitions.PartitionIsolationError, match="READ COMMITTED"):
+            await partitions.ensure_partitions(maintenance, date(2026, 9, 2), 0)
+    finally:
+        await maintenance.rollback()
+        await maintenance.close()
+    async with migrated.connect() as connection:
+        assert await partitions.list_partitions(connection) == [_p("20260901")]
+        assert await _placement(connection) == [(1, _p("20260901"))]
+
+
+async def test_partition_helpers_accept_an_async_session(migrated, monkeypatch):
+    monkeypatch.setattr(partitions, "LOCK_ATTEMPTS", 2)
+    monkeypatch.setattr(partitions, "LOCK_RETRY_SECONDS", 0.01)
+    reader = await migrated.connect()
+    try:
+        await reader.execute(text("SELECT count(*) FROM trajectory_events"))
+        async with trace_session() as session:
+            with pytest.raises(partitions.PartitionLockUnavailable):
+                await partitions.ensure_partitions(session, date(2026, 9, 14), 1)
+            # Busy attempts rolled back to their savepoints, so the session's transaction is still usable.
+            assert await partitions.list_partitions(session) == []
+            await reader.rollback()
+            assert await partitions.ensure_partitions(session, date(2026, 9, 14), 1) == [_p("20260914"), _p("20260915")]
+            await _trajectory(session)
+            await _events(session, ("trj_a", 1, date(2026, 9, 14)))
+    finally:
+        await reader.close()
+    async with trace_session() as session:
+        assert await partitions.list_partitions(session) == [_p("20260914"), _p("20260915")]
+        assert await partitions.drop_partition_if_empty(session, _p("20260914")) is False
+        assert await partitions.drop_partition_if_empty(session, _p("20260915")) is True
+    async with trace_session() as session:
+        assert await partitions.list_partitions(session) == [_p("20260914")]
+        assert await _placement(session) == [(1, _p("20260914"))]
 
 
 async def test_downgrade_base_drops_every_table_and_partition(migrated):

@@ -7,10 +7,9 @@ producer helper keys, inline base64 media, content addressing of
 This module is CPU work on plain JSON values without I/O; the ingest service
 runs it in a thread. Database facts it needs (existing payload rows of a
 trajectory, asset metadata) arrive as lookups, and ``ContentPlanner``
-pre-assigns payload ids so that a whole-data blob already contains the final
-references. The ingest transaction then checks those assumptions, inserts the
-new payload rows with the event's seq as ``first_seq`` and retries the batch
-if anything changed underneath.
+pre-assigns payload ids so that a stored blob already contains the final
+references. The ingest transaction then checks those assumptions and inserts
+the new payload rows with the event's seq as ``first_seq``.
 """
 from __future__ import annotations
 
@@ -44,7 +43,7 @@ BLOB_UNAVAILABLE = {"availability": "not_recorded", "reason": "blob_store_unavai
 ASSET_ID_CHARS = 64
 OSS_KEY_CHARS = 1024
 #: Sanitize can grow a value (``token=a`` becomes ``token=[REDACTED]``) but not
-#: fourfold, so a smaller spool line cannot produce data above the inline limit.
+#: fourfold, so a shorter spool line cannot produce data above the inline limit.
 SIZE_HINT_FACTOR = 4
 _DATA_URL = re.compile(r"data:([^;,]+)(?:;[^,;]+)*;base64,(.*)", re.DOTALL)
 _MEDIA_MARKERS = (b";base64,", b'"base64"', b'"input_audio"')
@@ -99,7 +98,7 @@ def redact_data(data: dict, raw: bytes | None = None) -> dict:
 
 
 def previews(data: dict) -> dict:
-    """Step 2: ``hints.preview`` candidates, computed with the projector's ``_preview``."""
+    """``hints.preview`` candidates, computed with the projector's ``_preview``."""
     return {name: _preview(data[name]) for name in HINT_FIELDS if data.get(name) is not None}
 
 
@@ -179,6 +178,8 @@ class PendingRef:
     blocked: bool = False
     #: Content not stored because the blob store kept failing.
     failed: bool = False
+    #: Stored inside another blob (a large value or the whole data), so its payload id is fixed.
+    nested: bool = False
 
     @property
     def dedupe_key(self) -> str:
@@ -234,7 +235,7 @@ def extract_media(data: dict) -> list[MediaItem]:
     """Replace inline base64 media (in place) with holder dicts; identical media share one holder.
 
     Recognized: ``data:<mime>;base64,`` strings, ``{"type": "base64", "data"}`` objects and
-    ``input_audio.data``. Holders stay empty until ``ContentPlanner`` binds them.
+    ``input_audio.data``. Holders stay empty until ``ContentPlanner.bind``.
     """
     items: dict[tuple[str, str], MediaItem] = {}
 
@@ -274,6 +275,10 @@ def extract_media(data: dict) -> list[MediaItem]:
 
     walk(data)
     return list(items.values())
+
+
+def media_digests(items) -> set[str]:
+    return {item.sha256 for item in items if item.sha256 is not None}
 
 
 @dataclass(frozen=True)
@@ -354,7 +359,15 @@ class _Planned:
 
 
 class ContentPlanner:
-    """Steps 4-8 for the events of one batch, sharing payload ids and uploads across events."""
+    """Steps 4-8 for the events of one batch, sharing payload ids and uploads across events.
+
+    ``bind`` handles media, asset references, previews and request inputs. The
+    caller then looks up the dedupe keys and digests of those references
+    (``reference_keys``), and ``assign`` gives every reference a payload id,
+    externalizes large values and falls back to a whole-data blob. References
+    created by ``assign`` are not looked up in advance; the transaction
+    resolves them (``nested`` marks the ones whose ids are baked into a blob).
+    """
 
     def __init__(self, *, inline_bytes: int, blob_key: Callable[[str, str], str]):
         self.inline_bytes = inline_bytes
@@ -367,40 +380,65 @@ class ContentPlanner:
     def plan(self, *, index: int, trajectory_id: str, event_type: str, data: dict, media: list[MediaItem],
              helpers: dict, lookup: TrajectoryContent, assets: dict[str, AssetView], owner_user_id: str,
              workspace_id: str | None, unavailable: bool = False, size_hint: int | None = None) -> ContentPlan:
-        """Rewrite ``data`` (in place, or replaced by ``$payload``) and collect its references.
+        """``bind`` and ``assign`` with one lookup for both."""
+        plan = self.bind(trajectory_id=trajectory_id, event_type=event_type, data=data, media=media, helpers=helpers,
+                         lookup=lookup, assets=assets, owner_user_id=owner_user_id, workspace_id=workspace_id)
+        return self.assign(plan, index=index, trajectory_id=trajectory_id, lookup=lookup, unavailable=unavailable,
+                           size_hint=size_hint)
 
-        ``unavailable`` stores no new bytes for this event (the blob store failed too often);
-        ``size_hint`` (the spool line length) lets small events skip the size checks.
-        """
+    def bind(self, *, trajectory_id: str, event_type: str, data: dict, media: list[MediaItem], helpers: dict,
+             lookup: TrajectoryContent, assets: dict[str, AssetView], owner_user_id: str,
+             workspace_id: str | None) -> ContentPlan:
+        """Step 4, the hint candidates (after media, before content addressing) and step 5."""
         refs: list[PendingRef] = []
-
-        def add(ref: PendingRef | None) -> None:
-            if ref is not None:
-                self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
-                refs.append(ref)
-
         sources = media_sources(helpers.get("media_sources"))
         for item in media:
-            add(self._bind_media(item, trajectory_id, sources, lookup, assets, owner_user_id, workspace_id))
+            ref = self._bind_media(item, trajectory_id, sources, lookup, assets, owner_user_id, workspace_id)
+            if ref is not None:
+                refs.append(ref)
         if event_type == "artifact.recorded" and "asset_ref" in helpers:
-            add(self._asset_reference(data, helpers["asset_ref"], assets))
+            ref = self._asset_reference(data, helpers["asset_ref"], assets)
+            if ref is not None:
+                refs.append(ref)
         candidates = previews(data)
         if event_type == "request.prepared" and isinstance(data.get("input"), dict):
-            for ref in self._address_request_input(data["input"]):
-                add(ref)
-        if size_hint is not None and size_hint * SIZE_HINT_FACTOR <= self.inline_bytes:
-            return ContentPlan(data, refs, candidates)
-        body = canonical(data)
-        if len(body) > self.inline_bytes:
-            for ref in self._externalize_values(data):
-                add(ref)
-            body = canonical(data)
-            if len(body) > self.inline_bytes:
-                sha = hashlib.sha256(body).hexdigest()
-                envelope = _reference(sha, len(body), JSON_MEDIA_TYPE)
-                data = {"$payload": envelope}
-                add(PendingRef("payload", data, envelope, "blob", JSON_MEDIA_TYPE, len(body), sha, content=body))
+            refs.extend(self._address_request_input(data["input"]))
         return ContentPlan(data, refs, candidates)
+
+    def assign(self, plan: ContentPlan, *, index: int, trajectory_id: str, lookup: TrajectoryContent,
+               unavailable: bool = False, size_hint: int | None = None) -> ContentPlan:
+        """Payload ids, steps 6-7 and blob encoding.
+
+        ``unavailable`` stores no new bytes for this event (the blob store kept
+        failing); ``size_hint`` (the spool line length) lets small events skip
+        the size checks.
+        """
+        for ref in plan.refs:
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+        if size_hint is not None and size_hint * SIZE_HINT_FACTOR <= self.inline_bytes:
+            return plan
+        if len(canonical(plan.data)) <= self.inline_bytes:
+            return plan
+        inner = list(plan.refs)
+        values = self._externalize_values(plan.data)
+        if values:
+            for ref in inner:
+                ref.nested = True
+        for ref in values:
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+            plan.refs.append(ref)
+        body = canonical(plan.data)
+        if len(body) > self.inline_bytes:
+            for ref in plan.refs:
+                ref.nested = True
+            sha = hashlib.sha256(body).hexdigest()
+            envelope = _reference(sha, len(body), JSON_MEDIA_TYPE)
+            data = {"$payload": envelope}
+            ref = PendingRef("payload", data, envelope, "blob", JSON_MEDIA_TYPE, len(body), sha, content=body)
+            self._plan_ref(ref, index, trajectory_id, lookup, unavailable)
+            plan.refs.append(ref)
+            plan.data = data
+        return plan
 
     # Step 4 -----------------------------------------------------------------
 
@@ -570,3 +608,14 @@ class ContentPlanner:
         if known is not None:
             ref.encoding, ref.stored_bytes = known
         ref.content = None
+
+
+def reference_keys(plans) -> tuple[set[str], set[str]]:
+    """Dedupe keys and digests of the references of ``plans`` (the lookup between bind and assign)."""
+    keys, digests = set(), set()
+    for plan in plans:
+        for ref in plan.refs:
+            keys.add(ref.dedupe_key)
+            if ref.sha256 is not None:
+                digests.add(ref.sha256)
+    return keys, digests

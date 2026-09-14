@@ -119,13 +119,13 @@ class _Externalizer:
         return result
 
     def _value(self, value, depth: int):
-        if isinstance(value, (dict, list)) and not is_ref(value):
-            if depth >= EXTERNALIZE_DEPTH:
-                size = len(canonical(value))
-                return (self._reference(value), _REF_SIZE) if size > self.inline_bytes else (value, size)
+        if is_ref(value) or not isinstance(value, (dict, list, str)):
+            return value, len(canonical(value))
+        if isinstance(value, str) or depth >= EXTERNALIZE_DEPTH:
+            size = len(canonical(value))
+        else:
             value, size = self._container(value, depth + 1)
-            return (self._reference(value), _REF_SIZE) if size > self.inline_bytes else (value, size)
-        return value, len(canonical(value))
+        return (self._reference(value), _REF_SIZE) if size > self.inline_bytes else (value, size)
 
     def _container(self, value, depth: int):
         # Children first: an unchanged prompt keeps its own blob while the

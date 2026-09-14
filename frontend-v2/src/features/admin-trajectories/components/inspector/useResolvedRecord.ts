@@ -85,14 +85,19 @@ export function useResolvedRecord(
   record: InspectedRecord,
   fields?: readonly string[],
 ): Resolved<InspectedRecord> {
-  const subject = useMemo<unknown>(() => (fields ? pick(record.data, fields) : record), [fields, record])
+  // Keyed by the names rather than the array, so an inline list cannot make every render a new subject.
+  const names = fields?.join("\n")
+  const subject = useMemo<unknown>(
+    () => (names === undefined ? record : pick(record.data, names.split("\n"))),
+    [names, record],
+  )
   const { resolution, retry } = useResolvedValue(subject)
   const resolved = useMemo((): InspectedRecord | null => {
     if (resolution.status !== "ready") return null
     if (resolution.value === subject) return record
-    if (!fields) return resolution.value as InspectedRecord
+    if (names === undefined) return resolution.value as InspectedRecord
     return { ...record, data: { ...record.data, ...(resolution.value as Record<string, unknown>) } }
-  }, [fields, record, resolution, subject])
+  }, [names, record, resolution, subject])
   const [shown, setShown] = useState<InspectedRecord | null>(null)
   if (resolved && shown !== resolved) setShown(resolved)
 

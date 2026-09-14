@@ -1,3 +1,5 @@
+# Legacy GKE manifest: frozen, not the production path (README.md). The trajectory worker sidecar,
+# its Service and the admin trajectory ingress paths (SPEC §12) are untested.
 ---
 apiVersion: v1
 kind: Namespace
@@ -88,6 +90,8 @@ spec:
         app: openbox-backend
     spec:
       serviceAccountName: openbox-backend
+      # Time for the trajectory-worker sidecar to ingest the last spool files.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: backend
           image: gcr.io/PROJECT_ID/openbox-backend:latest
@@ -157,6 +161,23 @@ spec:
                 secretKeyRef:
                   name: openbox-secrets
                   key: MAX_CONCURRENT_AGENTS
+            # Trajectory events go to the spool shared with the trajectory-worker sidecar.
+            - name: TRAJECTORY_SINK
+              value: "spool"
+            - name: TRAJECTORY_WORKER_MODE
+              value: "external"
+            - name: TRAJECTORY_SPOOL_DIR
+              value: "/var/lib/openbox/trajectory-spool"
+            # Guards the internal endpoints the worker calls (viewer introspection, audit).
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: INTERNAL_API_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: trajectory-spool
+              mountPath: /var/lib/openbox/trajectory-spool
           resources:
             requests:
               cpu: 250m
@@ -176,6 +197,79 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 30
+        # Same image as the backend; one pod, one writer. Never call it openbox-backend-worker:
+        # `make k8s-apply` deletes the Deployment of that name.
+        # No readiness or liveness probe: a pod is Ready only while all of its containers are, and a
+        # NotReady pod also leaves the openbox-backend Service, so a probe here would let the worker or
+        # the trace database take the business API down. For the same reason the command retries the
+        # trace migrations instead of exiting. The load balancer checks the worker's /health through
+        # the openbox-trajectory-worker-config BackendConfig. A worker process that exits still
+        # restarts inside the pod and makes it NotReady for a moment; only a separate Deployment
+        # avoids that.
+        - name: trajectory-worker
+          image: gcr.io/PROJECT_ID/openbox-backend:latest
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until alembic -c alembic_trajectory.ini upgrade head; do
+                echo "trace database migrations failed; retrying in 30 s" >&2
+                sleep 30
+              done
+              exec python -m trajectory.worker
+          ports:
+            - containerPort: 8090
+          env:
+            - name: TRAJECTORY_WORKER_MODE
+              value: "external"
+            - name: TRAJECTORY_SPOOL_DIR
+              value: "/var/lib/openbox/trajectory-spool"
+            # No OSS here: blobs live in the pod until a persistent volume backs this path.
+            - name: TRAJECTORY_BLOB_PROVIDER
+              value: "local"
+            - name: TRAJECTORY_BLOB_LOCAL_PATH
+              value: "/var/lib/openbox/trajectory-blobs"
+            - name: TRAJECTORY_BACKEND_INTERNAL_URL
+              value: "http://127.0.0.1:8080"
+            - name: TRAJECTORY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: TRAJECTORY_DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: REDIS_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: JWT_SECRET
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openbox-secrets
+                  key: INTERNAL_API_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: trajectory-spool
+              mountPath: /var/lib/openbox/trajectory-spool
+            - name: trajectory-blobs
+              mountPath: /var/lib/openbox/trajectory-blobs
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        # Pod-local: spool files the worker has not ingested yet are lost with the pod.
+        - name: trajectory-spool
+          emptyDir: {}
+        - name: trajectory-blobs
+          emptyDir: {}
 
 ---
 apiVersion: v1
@@ -190,6 +284,40 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+
+---
+# Admin trajectory HTTP API and WebSocket served by the trajectory-worker sidecar.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbox-trajectory-worker
+  namespace: openbox
+  annotations:
+    cloud.google.com/backend-config: '{"default": "openbox-trajectory-worker-config"}'
+spec:
+  type: ClusterIP
+  selector:
+    app: openbox-backend
+  ports:
+    - port: 8090
+      targetPort: 8090
+
+---
+# Load balancer settings of the worker: the WebSocket timeout of openbox-backend-config and an explicit
+# health check, because the sidecar has no readiness probe for GKE to derive one from.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: openbox-trajectory-worker-config
+  namespace: openbox
+spec:
+  timeoutSec: 3600
+  connectionDraining:
+    drainingTimeoutSec: 60
+  healthCheck:
+    type: HTTP
+    requestPath: /health
+    port: 8090
 
 ---
 apiVersion: apps/v1
@@ -275,6 +403,21 @@ spec:
   rules:
     - http:
         paths:
+          # The longest prefix wins: admin trajectory routes go to the worker sidecar.
+          - path: /api/admin/trajectories
+            pathType: Prefix
+            backend:
+              service:
+                name: openbox-trajectory-worker
+                port:
+                  number: 8090
+          - path: /ws/admin/trajectories
+            pathType: Prefix
+            backend:
+              service:
+                name: openbox-trajectory-worker
+                port:
+                  number: 8090
           - path: /api
             pathType: Prefix
             backend:

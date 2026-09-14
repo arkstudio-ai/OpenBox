@@ -38,7 +38,9 @@ class TraceContext:
 
     @classmethod
     def from_dict(cls, value: dict) -> "TraceContext":
-        return cls(**value)
+        # A persisted context may carry recording markers beside the identity
+        # (SessionExecution.trace_context, SPEC §5.6); they are not identity.
+        return cls(**{key: item for key, item in value.items() if key in cls.__dataclass_fields__})
 
 
 _context: ContextVar[TraceContext | None] = ContextVar("trajectory_context", default=None)

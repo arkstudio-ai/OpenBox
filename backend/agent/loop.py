@@ -956,7 +956,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             )
             # Fetch the image bytes only here, on the path that actually calls
             # a vision model — token counting and cron never need them.
-            ctx._trajectory_media_sources = {}
+            # Digests of inlined images only matter to a recorded request.
+            from trajectory import enabled as recording_enabled
+            ctx._trajectory_media_sources = {} if recording_enabled(user_id) else None
             llm_messages = await resolve_images(llm_messages, model_id, media_sources=ctx._trajectory_media_sources)
 
             # Determine previous assistant agent for transition detection

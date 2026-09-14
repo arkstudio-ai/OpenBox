@@ -115,8 +115,7 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
 
         except Exception as e:
             from question.runtime import RunRevoked
-            from trajectory import TrajectoryError
-            if isinstance(e, (RunRevoked, TrajectoryError)):
+            if isinstance(e, RunRevoked):
                 raise
             log.error(f"Failed to inject cron result {run.id}: {e}")
 
@@ -158,8 +157,7 @@ async def _do_inject(run_id: str, job: dict, result_text: str, session_id: str, 
 
     except Exception as e:
         from question.runtime import RunRevoked
-        from trajectory import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         log.error(f"Failed to inject cron result {run_id}: {e}")
         return False
@@ -195,8 +193,7 @@ async def _check_and_compact_if_needed(
             await process_compaction(session_id, messages, model_id, auto=True, user_id=user_id)
         except Exception as e:
             from question.runtime import RunRevoked
-            from trajectory import TrajectoryError
-            if isinstance(e, (RunRevoked, TrajectoryError)):
+            if isinstance(e, RunRevoked):
                 raise
             log.warning(f"Pre-injection compaction failed: {e}")
 
@@ -235,31 +232,31 @@ async def _mark_injected(run_id: str) -> None:
 @asynccontextmanager
 async def _result_trace(run_id: str, session_id: str, user_id: str):
     """A queued callback always restores its persisted owner/turn, not its caller's."""
-    from trajectory import TraceContext, bind, context_for_session, enabled
+    from trajectory import TraceContext, bind, enabled
+    from trajectory.producers import baseline_candidate_in_tx, session_context
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from db.models.session import Session
     trace = None
     if enabled(user_id):
         with bind(None):
-            from session.session import capture_trajectory_baseline_in_tx, prepare_trajectory_baseline_assets
-            prepared_assets = await prepare_trajectory_baseline_assets(session_id, user_id,
-                                                                         root_session_id=session_id)
             async with get_db_session() as db:
                 run = await db.get(CronRun, run_id)
-                if run is None or run.user_id != user_id or run.session_id != session_id:
-                    raise ValueError("Cron callback does not match its recorded owner/session")
-                if run.trace_context:
-                    trace = TraceContext.from_dict(run.trace_context)
-                    if trace.user_id != user_id or trace.session_id != session_id:
-                        raise ValueError("Cron callback trajectory ownership mismatch")
-                    trace = trace.derive(source_session_id=session_id, run_id=None, generation=None,
-                                         step_id=None, request_id=None, call_id=None, part_id=None, message_id=None)
-                else:
-                    trace = (await context_for_session(db, user_id, session_id)).derive(turn_id=run_id)
-                    await capture_trajectory_baseline_in_tx(db, trace, await db.get(Session, session_id),
-                                                              prepared_assets=prepared_assets)
-                    run.trace_context = trace.to_dict()
+                # A callback whose identity does not match is not recorded; the
+                # injection itself rechecks the run's owner and session.
+                if run is not None and run.user_id == user_id and run.session_id == session_id:
+                    if run.trace_context:
+                        saved = TraceContext.from_dict(run.trace_context)
+                        if saved.user_id == user_id and saved.session_id == session_id:
+                            trace = saved.derive(source_session_id=session_id, run_id=None, generation=None,
+                                                 step_id=None, request_id=None, call_id=None, part_id=None,
+                                                 message_id=None)
+                    else:
+                        trace = await session_context(db, user_id, session_id)
+                        if trace is not None:
+                            trace = trace.derive(turn_id=run_id)
+                            await baseline_candidate_in_tx(db, user_id=user_id, session_id=session_id,
+                                                           context=trace)
+                            run.trace_context = trace.to_dict()
     with bind(trace):
         token = _injection_run.set(run_id)
         try:

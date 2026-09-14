@@ -69,17 +69,7 @@ async def _db_write(key: list[str], content: Any) -> None:
         if len(key) == 2 and key[0] == "todo":
             from trajectory import enabled
             if enabled():
-                from sqlalchemy import select
-                from db.models.session import Session
-                from trajectory.producers import activity_context
-                owner = await session.scalar(select(Session).where(
-                    Session.id == key[1], Session.is_deleted.is_(False)).with_for_update())
-                if owner is not None and enabled(owner.user_id):
-                    trace = await activity_context(session, owner.user_id, key[1])
-                    previous = await session.execute(text("SELECT value FROM kv_store WHERE key = :key"),
-                                                     {"key": db_key})
-                    old = previous.scalar_one_or_none()
-                    before = json.loads(old) if old else None
+                trace, before = await _todo_trace(session, key[1], db_key)
         # Upsert: try update first, then insert
         result = await session.execute(
             text("UPDATE kv_store SET value = :value, updated_at = :now WHERE key = :key"),
@@ -92,8 +82,38 @@ async def _db_write(key: list[str], content: Any) -> None:
             )
         if trace is not None:
             from trajectory import record
-            await record("todo.changed", {"before": before, "after": content,
-                                           "items": content.get("items", [])}, db=session, context=trace)
+            items = content.get("items", []) if isinstance(content, dict) else []
+            await record("todo.changed", {"before": before, "after": content, "items": items},
+                         db=session, context=trace)
+
+
+async def _todo_trace(session, session_id: str, db_key: str):
+    """Recorded identity and previous list of a todo write, taking no session row lock.
+
+    The fact waits for the write's commit; the previous list is read only while
+    the owner is recorded.
+    """
+    from sqlalchemy import select, text
+    from trajectory import current, enabled
+    from trajectory.producers import activity_context
+    inherited = current()
+    if inherited is not None and inherited.source_session_id == session_id:
+        user_id = inherited.user_id
+    else:
+        from db.models.session import Session
+        user_id = await session.scalar(select(Session.user_id).where(
+            Session.id == session_id, Session.is_deleted.is_(False)))
+    if user_id is None or not enabled(user_id):
+        return None, None
+    trace = await activity_context(session, user_id, session_id)
+    if trace is None:
+        return None, None
+    previous = await session.execute(text("SELECT value FROM kv_store WHERE key = :key"), {"key": db_key})
+    old = previous.scalar_one_or_none()
+    try:
+        return trace, json.loads(old) if old else None
+    except (TypeError, ValueError):
+        return trace, None
 
 
 async def _db_remove(key: list[str]) -> None:

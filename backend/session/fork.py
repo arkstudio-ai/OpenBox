@@ -71,14 +71,8 @@ async def fork_session(
         from db.base import get_db_session
         from db.models.message import Message as MessageORM
         from db.models.part import Part as PartORM
-        from db.models.session import Session as SessionORM
-        from trajectory import TraceContext, context_for_session, enabled, record
-        from session.session import prepare_trajectory_baseline_assets, capture_trajectory_baseline_in_tx
-
-        # Fork history is an explicit baseline, never a replay of old activity.
-        # Retain assets before acquiring either trajectory's write lock.
-        prepared_assets = await prepare_trajectory_baseline_assets(
-            source_session_id, user_id, root_session_id=new_session.id)
+        from trajectory import TraceContext, enabled, record
+        from trajectory.producers import baseline_candidate_in_tx, session_context
 
         async with get_db_session() as db:
             message_mapping = {}
@@ -167,34 +161,28 @@ async def fork_session(
                     )
                     db.add(part_row)
 
-            if enabled(user_id):
-                # The source is recorded before its fresh destination, which
-                # cannot be concurrently running before this call returns.
+            # Fork history is an explicit baseline, never a replay of old
+            # activity. The facts wait for the copy to commit; the worker
+            # resolves the source trajectory and its watermark at ingest.
+            source_context = await session_context(db, user_id, source_session_id) if enabled(user_id) else None
+            if source_context is not None:
                 await db.flush()
-                source_context = await context_for_session(db, user_id, source_session_id)
-                source_row = await db.get(SessionORM, source_session_id)
-                await capture_trajectory_baseline_in_tx(db, source_context, source_row,
-                                                         prepared_assets=prepared_assets)
-                from db.models.trajectory import SessionTrajectory
-                source_trajectory = await db.scalar(select(SessionTrajectory).where(
-                    SessionTrajectory.session_id == source_context.session_id,
-                    SessionTrajectory.user_id == user_id))
+                await baseline_candidate_in_tx(db, user_id=user_id, session_id=source_context.session_id,
+                                               context=source_context)
                 relation = {"source_session_id": source_session_id, "target_session_id": new_session.id,
-                            "source_trajectory_id": source_trajectory.id,
-                            "source_through_seq": str(source_trajectory.committed_seq),
+                            "source_root_session_id": source_context.session_id,
                             "up_to_message_id": up_to_message_id, "copied_messages": message_mapping,
                             "history_mode": "baseline_only"}
                 await record("history.forked", {**relation, "direction": "outgoing"},
                              context=source_context, db=db, event_id=f"fork:{new_session.id}:source")
                 destination_context = TraceContext(user_id, new_session.id, workspace_id=source.workspace_id)
-                destination_row = await db.get(SessionORM, new_session.id)
-                await capture_trajectory_baseline_in_tx(db, destination_context, destination_row,
-                                                         prepared_assets=prepared_assets)
+                await baseline_candidate_in_tx(db, user_id=user_id, session_id=new_session.id,
+                                               context=destination_context)
                 await record("history.forked", {**relation, "direction": "incoming"},
                              context=destination_context, db=db, event_id=f"fork:{new_session.id}:destination")
-            else:
-                from trajectory import mark_capture_paused_in_tx
-                await mark_capture_paused_in_tx(db, user_id, source_session_id)
+            elif not enabled(user_id):
+                await baseline_candidate_in_tx(db, user_id=user_id, session_id=source_session_id,
+                                               context=None, pause=True)
     else:
         # File-based storage: copy via storage module
         from storage import storage

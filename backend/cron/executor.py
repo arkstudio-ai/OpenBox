@@ -61,7 +61,7 @@ async def _execute_cron_job(job: dict) -> dict:
     run_id = ascending("cron_run")
 
     from cron.i18n import is_silent, resolve_locale
-    from trajectory import bind, enabled, record, TrajectoryError
+    from trajectory import bind, enabled
     locale = await resolve_locale(user_id)
     temp_session_id = None
     # A project-only cron run needs its own durable session before recording
@@ -193,9 +193,9 @@ async def _execute_cron_job(job: dict) -> dict:
 
     except Exception as e:
         from question.runtime import RunRevoked
-        if isinstance(e, (RunRevoked, TrajectoryError)):
-            # Never turn a recording outage or a revoked run into a best-effort
-            # summary, webhook delivery or another external execution path.
+        if isinstance(e, RunRevoked):
+            # Never turn a revoked run into a best-effort summary, webhook
+            # delivery or another external execution path.
             raise
         from sandbox.wuying_desktop_service import DesktopNotReady
 
@@ -309,9 +309,6 @@ async def _get_session_summary(job: dict) -> str:
             await _update_summary_cache(job["id"], summary, latest_msg_id)
             return summary
     except Exception as e:
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.warning(f"Summary generation failed for session {session_id}: {e}")
 
     # Fallback: no summary
@@ -365,9 +362,6 @@ async def _generate_summary(messages, job: dict) -> str:
             elif event["type"] == "error":
                 break
     except Exception as e:
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.warning(f"Summary LLM call failed: {e}")
 
     return summary
@@ -616,21 +610,18 @@ async def _create_run_entry(run_id: str, job: dict, started_at: datetime):
     """Create a cron_runs entry with status=running."""
     from db.base import get_db_session
     from db.models.cron import CronRun
-    from trajectory import context_for_session, enabled, record
-    from session.session import capture_trajectory_baseline_in_tx, prepare_trajectory_baseline_assets
+    from trajectory import enabled, record
+    from trajectory.producers import baseline_candidate_in_tx, session_context
 
     trace = None
     target = job.get("session_id") or job.get("_trajectory_temp_session_id")
-    prepared_assets = (await prepare_trajectory_baseline_assets(target, job["user_id"], root_session_id=target)
-        if enabled(job["user_id"]) and target else {})
     async with get_db_session() as db:
         if enabled(job["user_id"]) and target:
-            from session.internal_parts import begin_session_write, lock_owned_session
-            await begin_session_write(db)
-            session_row = await lock_owned_session(db, target, job["user_id"])
-            trace = (await context_for_session(db, job["user_id"], target)).derive(
-                turn_id=run_id, agent_id=ascending("agent"))
-            await capture_trajectory_baseline_in_tx(db, trace, session_row, prepared_assets=prepared_assets)
+            # Recording takes no session lock: the run row and its facts commit together.
+            trace = await session_context(db, job["user_id"], target)
+            if trace is not None:
+                trace = trace.derive(turn_id=run_id, agent_id=ascending("agent"))
+                await baseline_candidate_in_tx(db, user_id=job["user_id"], session_id=target, context=trace)
         row = CronRun(
             id=run_id,
             job_id=job["id"],

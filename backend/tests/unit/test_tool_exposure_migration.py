@@ -33,7 +33,7 @@ def _current_head() -> str:
 def _previous_head_fixture(database_path: Path) -> None:
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY, updated_at DATETIME)")
         # These tables already existed at PREVIOUS_HEAD. Later migrations in
         # the real head chain alter them, so the old fixture cannot omit them.
         connection.exec_driver_sql(
@@ -95,7 +95,7 @@ def _previous_head_fixture(database_path: Path) -> None:
         connection.exec_driver_sql(
             "CREATE TABLE sessions ("
             "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
-            "project_id VARCHAR(64) NOT NULL)"
+            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE messages ("
@@ -164,9 +164,14 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     assert state == "{}"
     assert version == _current_head()
     assert "internal_parts" in inspector.get_table_names()
-    assert {"session_trajectories", "trajectory_events", "trajectory_payloads",
-            "trajectory_records", "trajectory_session_summaries", "trajectory_checkpoints",
-            "trajectory_exports"} <= set(inspector.get_table_names())
+    from db.base import LEGACY_TABLE_NAMES
+    tables = set(inspector.get_table_names())
+    # Trajectory data moved to the trace database: the business schema keeps
+    # the retired tables only under their legacy names, for the converter.
+    assert set(LEGACY_TABLE_NAMES.values()) <= tables
+    assert not set(LEGACY_TABLE_NAMES) & tables
+    for table in ("sessions", "users", "workspaces"):
+        assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
     assert "trace_context" in {column["name"] for column in inspector.get_columns("session_executions")}
     assert "trace_context" in {column["name"] for column in inspector.get_columns("cron_runs")}
     assert next(column["type"].length for column in inspector.get_columns("audit_logs") if column["name"] == "resource_id") == 128

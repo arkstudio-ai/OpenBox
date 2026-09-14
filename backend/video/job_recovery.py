@@ -141,9 +141,6 @@ async def sweep() -> int:
             if recovered:
                 advanced += 1
         except Exception as exc:
-            from trajectory.types import TrajectoryError
-            if isinstance(exc, TrajectoryError):
-                raise
             # A job whose provider lookup keeps failing (expired relay task,
             # revoked key) would otherwise warn every sweep. The OpenBox
             # logger itself runs at DEBUG, so logging repeats at debug level is

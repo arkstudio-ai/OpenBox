@@ -324,9 +324,7 @@ async def _notify_admins_of_submission(published: dict, author_id: str) -> None:
     notice could not be written.
     """
     try:
-        from core.identifier import ascending
         from db.base import get_db_session
-        from db.models.notification import Notification
         from db.models.user import User
         from db.models.user_skill import UserSkill
         from sqlalchemy import select
@@ -352,17 +350,13 @@ async def _notify_admins_of_submission(published: dict, author_id: str) -> None:
                 f"《{published.get('name')}》{f'v{version} ' if version else ''}"
                 f"由 {author.username if author else author_id} 提交，等待审核。"
             )
-            now = datetime.now(timezone.utc)
+            from notifications.inbox import add_inbox
             for admin_id in admins:
-                session.add(Notification(
-                    id=ascending("ntf"),
-                    workspace_id=workspace_id,
-                    user_id=admin_id,
-                    kind="skill_pending",
-                    title="有新的技能待审核",
-                    body=body,
-                    created_at=now,
-                ))
+                await add_inbox(
+                    session, workspace_id=workspace_id, user_id=admin_id, kind="skill_pending",
+                    title="有新的技能待审核", body=body, link={"kind": "admin_skills"},
+                    source_key=f"skill:{published['id']}:v{version or 0}:pending",
+                )
     except Exception:
         # Including RuntimeError: single-user mode runs without the database
         # that holds both the admin list and the notification.

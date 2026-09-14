@@ -86,14 +86,15 @@ async def enqueue_notification(db, *, user_id: str, event_key: str, kind: str,
                                title: str, body: str, workspace_id: str | None = None,
                                session_id: str | None = None, action_id: str | None = None,
                                ttl_seconds: int = 86400, delay_seconds: int = 3,
-                               guard: dict | None = None) -> PushMessage:
+                               guard: dict | None = None, notification_id: str | None = None) -> PushMessage:
     """Enqueue inside the caller's transaction; never commit or call a provider.
 
     Only explicit business signals should call this, not every session idle or
     WS frame. No delivery is backfilled to a device that logs in later.
     """
     if kind not in {"system_test", "task_completed", "task_failed", "approval_required", "input_required",
-                    "cron_completed", "cron_failed", "platform_auth_expired", "publish_done", "publish_failed"}:
+                    "cron_completed", "cron_failed", "platform_auth_expired", "publish_done", "publish_failed",
+                    "notice"}:
         raise ValueError("Unsupported notification kind")
     if not event_key or len(event_key) > 255 or not 1 <= ttl_seconds <= 86400:
         raise ValueError("Invalid notification event key or TTL")
@@ -113,6 +114,7 @@ async def enqueue_notification(db, *, user_id: str, event_key: str, kind: str,
     message.payload = {"schemaVersion": 1, "source": "openbox", "eventId": message.id,
                        "dedupeKey": message.id, "type": kind, "recipientId": user_id,
                        "workspaceId": workspace_id, "sessionId": session_id, "actionId": action_id,
+                       "notificationId": notification_id,
                        "title": title.strip()[:120], "body": body.strip()[:500],
                        "bindingId": device.binding_id if device else None,
                        **({"guard": guard} if guard else {})}

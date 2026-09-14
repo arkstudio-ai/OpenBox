@@ -463,3 +463,48 @@ publish 两次被拒——Playwright `setInputFiles` 经 CDP relay 传文件，`
 （Chrome/Edge 在视频上默认提供该按钮，Edge 切标签还会自动触发），会话重连后旧视频元素冻住，悬浮窗就成了一张过期的桌面截图。
 修复：iframe 的 permissions policy 加 `picture-in-picture 'none'`（`frame.setAttribute("allow", …)`），浏览器不再显示该控件、
 API 亦拒绝。顺带发现该桌面上 Firefox 在跑（"Welcome to Firefox"），疑为 `xdg-open` 把 http 链接交给了默认浏览器，未处理。
+
+
+## 消息中心 M1：后端收件箱、公告与专题（2026-09-11）
+
+推送已合入 main 但只有 App 一个消费端且没有落地列表，站内 `notifications` 表只在授权中心露出，两者互不相通。按
+[MESSAGE_CENTER_PLAN.md](MESSAGE_CENTER_PLAN.md) 拍板的方案做 M1 后端：不建第三张表，把 `notifications` 升级为消息中心唯一真源
+（迁移 `a1c2e3b4d5f6`：加 `category/link/source_key/announcement_id/resolved_at/expires_at`，`workspace_id` 改可空；新表
+`announcements`、`topics`）。`notifications/inbox.py` 是统一入口：`events.emit` 在推送入队的同一事务里先写 inbox 行，push payload
+带 `notificationId`；`cancel_event` 顺手打 `resolved_at`；三处旧站内直写改走 `add_inbox` 并补 `link` 与幂等键；提交后总线发
+`inbox.updated`。新接口 `/api/inbox`（跨全部工作空间、游标分页、分类未读数、已读）、公开 `/api/topics/{slug}`、超管
+`/api/admin/messages/*`（公告草稿/定时/发布/撤回/预览发我、专题 CRUD/发布）。公告按受众分批扇出、`source_key` 唯一约束保证重跑幂等，
+推送可选并走原 outbox（`kind=notice` + 公告守卫）。`link` 白名单结构，外链只有第一方可用且主机受 `ANNOUNCEMENT_LINK_HOSTS` /
+`cors_origins` 限制。`InboxJanitor` 每分钟发布到点公告、每天按策略清理（session 类 90 天）。本机 PostgreSQL 16 对迁移做了
+升/降/升三步验证；单测 +20，相关回归 124 项通过；全量 2214 过、5 失败与 origin/main 一致（SQLite 跑不了上游的 `ALTER TYPE`
+迁移测试等，与本次无关）。接口说明见 [MESSAGE_CENTER.md](MESSAGE_CENTER.md)。未部署，未合并。
+
+
+## 消息中心 M3：App 收件箱、专题页与推送点击改造（2026-09-11）
+
+基于 M1 后端接口做 App 端：`features/inbox/` 新增列表页（四分栏带未读数、游标分页、全部已读、跨空间 chip）、专题页
+（`gpt_markdown` 原生渲染 + CTA）和统一的链接解析器 `InboxNavigator`——白名单 kind，会话/定时/授权/技能类先校验成员与会话可读
+再切作用域跳转，`url` 只允许 https 走系统浏览器，未知 kind 回消息中心。抽屉加「消息中心」行与跨空间未读角标，
+`inboxUnreadProvider` 订阅 WS `inbox.updated` 并 2 分钟轮询。`notification_host.dart` 点击推送改为先按 `notificationId`
+标已读、用响应里的 link 路由，读不到再退回原按 `type` 的路由；前台收到推送立即刷角标。locale 新增 `inbox` 命名空间（Web 与
+App 逐字一致）。analyze 无问题，locale 与 800 行门禁通过，新增测试 17 项，全量 338 过、2 失败与 origin/main 一致。未发版。
+
+
+## 消息中心 M4：Web 与 App 超管后台的公告/专题编辑（2026-09-11）
+
+Web 控制台新增「消息通知」栏（`features/admin-messages/`）：公告列表 + 对话框编辑（去向、受众、推送、定时、过期），发布前拉单条
+取实时收件人数进确认框，撤回二次确认，预览发我；专题列表 + 编辑（Markdown 实时预览、CTA 成对校验），发布/下架/查看/复制链接。
+App 控制台加第五个底部入口，公告全量可编辑（SegmentedButton/下拉/日期时间选择器），专题只读 + 发布状态 + 原生预览（正文编辑
+留在网页端，按决策 6）。新命名空间 `admin-messages` 双端逐字一致。Web `npm run check` 全过（545 项），App 新增 5 项，全量 343 过、
+2 失败与 origin/main 一致。未部署未发版。
+
+
+## 消息中心 M2：Web 用户侧收件箱与公开专题页（2026-09-11）
+
+`features/inbox/`：四分栏带未读数的消息中心页（`/app/inbox`，游标无限加载、全部已读、跨空间 chip）、公开专题页
+`/topics/:slug`（不在 `/app` 下，`react-markdown` 渲染，CTA 未登录时改为「登录后继续」）。`resolveLink.ts` 的
+`planInboxLink` 是纯函数白名单解析，与 App 的 `InboxNavigator` 同规则：会话类先 `GET /api/agent/session` 校验再切空间跳转，
+`panel/control` 映射到接管路径，外链仅 https 新窗口打开。传输层放 `shared/api/inbox.ts`，侧栏 `NavRow` 加 `badge`，
+「消息中心」行在授权中心之上，`WorkspaceLayout` 挂 `useInboxLiveEvents` 订阅 WS `inbox.updated`。`npm run check` 全过，
+新增 16 项测试。未在浏览器对真实后端联调，随 M5 验收。
+

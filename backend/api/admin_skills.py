@@ -24,10 +24,8 @@ from sqlalchemy import func, or_, select
 
 from audit import record
 from auth.middleware import require_admin
-from core.identifier import ascending
 from core.log import create_logger
 from db.base import get_db_session
-from db.models.notification import Notification
 from db.models.skill_install import SkillInstall
 from db.models.user import User
 from db.models.user_skill import UserSkill
@@ -156,16 +154,12 @@ async def _notify_author(result: dict) -> None:
     else:
         body += f"已被下架：{result.get('note') or '未填写原因'}。已安装的副本不受影响。"
     try:
+        from notifications.inbox import add_inbox
         async with get_db_session() as session:
-            session.add(Notification(
-                id=ascending("ntf"),
-                workspace_id=workspace_id,
-                user_id=owner_id,
-                kind=kind,
-                title=title[:255],
-                body=body,
-                created_at=datetime.now(timezone.utc),
-            ))
+            await add_inbox(
+                session, workspace_id=workspace_id, user_id=owner_id, kind=kind,
+                title=title, body=body, link={"kind": "skills", "workspaceId": workspace_id},
+            )
     except Exception as exc:
         log.warning(
             "Could not notify author=%s about %s: %s",

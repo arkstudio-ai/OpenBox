@@ -58,7 +58,8 @@
     "skills": "技能管理",
     "billing": "订阅管理",
     "trajectories": "轨迹监控",
-    "notifications": "通知测试"
+    "notifications": "通知测试",
+    "messages": "消息通知"
   },
   "section": {
     "fleet": {
@@ -80,6 +81,10 @@
     "notifications": {
       "title": "通知测试",
       "subtitle": "检查手机通知、投递状态和业务文案。"
+    },
+    "messages": {
+      "title": "消息通知",
+      "subtitle": "编辑并发布第一方公告与专题页。"
     }
   },
   "confirm": {

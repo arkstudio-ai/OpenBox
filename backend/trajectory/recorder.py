@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session as SyncSession
 from db.base import get_db_session
 from db.models.session import Session
 from db.models.trajectory import SessionTrajectory, TrajectoryEvent
-from trajectory.config import enabled, integer
+from trajectory.config import enabled, integer, sink
 from trajectory.context import TraceContext, current
+from trajectory.emitter import completed_receipt, emit, emit_after_commit, emit_stream, flush_spool
 from trajectory.payload import expand, store_json
 from trajectory.redaction import sanitize
 from trajectory.types import ID_FIELDS, IdempotencyConflict, OwnershipError, RecordingError, canonical, digest, iso, now, prepare
@@ -200,6 +201,13 @@ async def append_events_in_tx(db, context: TraceContext, events: list[dict]) -> 
 
 async def record(type: str, data: dict, *, context: TraceContext | None = None,
                  db=None, event_id: str | None = None, occurred_at=None, **ids):
+    if sink() == "spool":
+        # Fail-open emitter: no trajectory SQL; in-transaction facts wait for commit.
+        if db is not None:
+            emit_after_commit(db, type, data, context=context, event_id=event_id, occurred_at=occurred_at, **ids)
+        else:
+            emit(type, data, context=context, event_id=event_id, occurred_at=occurred_at, **ids)
+        return None
     context = context or current()
     if context is None:
         return None
@@ -389,7 +397,12 @@ def record_stream(context: TraceContext, event: dict):
 
     Producers can enqueue several chunks and await their receipts in order.
     Memory pressure blocks producers rather than discarding observed chunks.
+    With the spool sink the chunk is enqueued (or dropped into a gap) at once
+    and the receipt is already resolved with ``None``.
     """
+    if sink() == "spool":
+        emit_stream(context, event)
+        return completed_receipt()
     loop = asyncio.get_running_loop()
     if not enabled(context.user_id):
         return asyncio.create_task(record("recording.gap", {}, context=context))
@@ -411,6 +424,8 @@ def record_stream(context: TraceContext, event: dict):
 
 
 async def flush(context: TraceContext | None = None) -> str:
+    if sink() == "spool":
+        return await flush_spool()
     context = context or current()
     if context is None:
         streams = [stream for key, stream in list(_streams.items()) if key[0] == id(asyncio.get_running_loop())]

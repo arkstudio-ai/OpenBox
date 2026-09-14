@@ -15,12 +15,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 
-from core.log import create_logger
 from trajectory.store.models import (TrajectoryGcQueue, TrajectoryMetaAsset, TrajectoryMetaSession,
     TrajectoryMetaUser, TrajectoryMetaWorkspace, TrajectoryPayload)
 from trajectory.worker.content import AssetView
-
-log = create_logger("trajectory.worker.meta")
 
 MAX_ANCESTRY_HOPS = 100
 ID_CHARS = 64

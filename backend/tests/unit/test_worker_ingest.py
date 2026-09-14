@@ -307,3 +307,34 @@ async def test_blob_upload_is_idempotent_across_trajectories(harness):
     # Content addressing is per trajectory: each trajectory owns its copy under its own prefix.
     assert len(keys) == 2 and keys[0].split("/")[1] != keys[1].split("/")[1]
     assert {key.split("/")[1] for key in keys} == {first.id, second.id}
+
+
+async def test_invalid_events_are_counted_and_logged_once_per_field(harness, monkeypatch):
+    import logging
+    from trajectory.worker import ingest as ingest_module
+
+    class Records(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    monkeypatch.setattr(ingest_module, "_invalid_logged", {})
+    handler = Records()
+    logger = logging.getLogger("openbox.trajectory.worker.ingest")
+    logger.addHandler(handler)
+    no_data = event(event_id="no_data")
+    no_data["data"] = "not an object"
+    try:
+        harness.writer.events(event(session="s" * 65), no_data, event(session="s" * 65, event_id="again"),
+                              event(event_id="ok"))
+        result = await harness.run()
+    finally:
+        logger.removeHandler(handler)
+    assert (result["invalid_events"], result["events"], result["lines"]) == (3, 1, 4)
+    assert [row.event_id for row in (await events_of("ses_1"))[1][1:]] == ["ok"]
+    warnings = [record.getMessage() for record in handler.records if "invalid spool event" in record.getMessage()]
+    assert len(warnings) == 2
+    assert any("field=session_id" in text for text in warnings) and any("field=data" in text for text in warnings)

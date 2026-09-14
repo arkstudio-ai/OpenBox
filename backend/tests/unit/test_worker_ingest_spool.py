@@ -187,6 +187,41 @@ async def test_blob_store_outage_backs_off_then_records_not_recorded(harness, tm
     assert harness.service._backoff == {} and not list(outage.directory.glob("*.jsonl"))
 
 
+async def test_finished_producer_directories_take_their_file_rows_along(harness):
+    from datetime import datetime, timezone
+
+    from trajectory.store.database import trace_session
+
+    writer = harness.writer
+    writer.file([writer.line("event", event()), writer.line("control", {"type": "producer.goodbye", "last_n": 2})])
+    await harness.run()
+    # A partially consumed file that vanished (removed by hand) leaves a row that nothing will finish.
+    async with trace_session() as db:
+        db.add(TrajectoryIngestFile(producer_id=writer.producer_id, file_name=spool.file_name(9), bytes_consumed=10,
+                                    lines_consumed=1, done=False, updated_at=datetime.now(timezone.utc)))
+    await harness.run()
+    assert not writer.directory.exists()
+    assert await rows(TrajectoryIngestFile) == []
+
+
+async def test_a_crash_after_file_deletion_leaves_no_orphan_rows(harness, monkeypatch):
+    path = harness.writer.events(event(), event())
+    forget = IngestService._forget_files
+
+    async def crashed(self, keys):
+        return None  # the process died after unlinking the file, before its row was deleted
+
+    monkeypatch.setattr(IngestService, "_forget_files", crashed)
+    await harness.run()
+    [row] = await rows(TrajectoryIngestFile)
+    assert row.done and not path.exists()
+    monkeypatch.setattr(IngestService, "_forget_files", forget)
+    harness.configure()
+    result = await harness.run()
+    assert result["lines"] == 0 and await rows(TrajectoryIngestFile) == []
+    assert len((await events_of("ses_1"))[1]) == 3
+
+
 async def test_max_lines_limits_one_pass(harness):
     harness.writer.events(*[event() for _ in range(5)])
     assert (await harness.run(max_lines=3))["lines"] == 3

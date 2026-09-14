@@ -21,13 +21,13 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import insert, or_, select, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from core.log import create_logger
 from trajectory import spool
 from trajectory.storage import blob_key
-from trajectory.store.database import trace_dialect, trace_session
+from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
     TrajectoryIngestFile, TrajectoryIngestProducer, TrajectoryPayload, TrajectoryWorkerState)
 from trajectory.types import ID_FIELDS
@@ -56,6 +56,9 @@ REQUEST_ID_CHARS = 128
 TRAJECTORY_SCHEMA_VERSION = 2
 PROVISIONAL_IDS = 10000
 LOGGED_CONFLICTS = 10000
+INVALID_LOG_SECONDS = 60.0
+#: Invalid event field -> monotonic time before which it is not logged again.
+_invalid_logged: dict[str, float] = {}
 COUNTERS = ("lines", "events", "controls", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
             "invalid_events", "gaps", "producer_losses", "quarantined_files", "files_done", "blob_puts",
             "blob_put_bytes", "blob_put_failures", "deferred_batches")
@@ -446,13 +449,17 @@ class IngestService:
         return rows
 
     async def _delete_consumed(self, scan, done) -> None:
-        """Files whose consuming transaction committed but whose deletion did not happen (a crash, an error)."""
+        """Clean up after a crash between a commit and the file deletion, or the row cleanup that follows it."""
         removed = []
+        listed = set()
         for producer in scan.producers.values():
             for spool_file in producer.files:
                 key = (producer.producer_id, spool_file.name)
+                listed.add(key)
                 if key in done and spool_reader.remove_file(spool_reader.locate(spool_file) or spool_file.path):
                     removed.append(key)
+        # A consumed file that is already gone leaves only its row behind; a producer never reuses a counter.
+        removed.extend(key for key in done if key not in listed)
         await self._forget_files(removed)
 
     async def _forget_files(self, keys) -> None:
@@ -762,7 +769,8 @@ class IngestService:
         for producer in idle:
             goodbye, abandoned = rows.get(producer.producer_id, (False, False))
             if goodbye or abandoned:
-                await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path)
+                if await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path):
+                    await self._forget_producer(producer.producer_id)
                 continue
             if not self._dead(producer, scan):
                 continue
@@ -777,7 +785,17 @@ class IngestService:
                 continue
             tx.after_commit(result)
             log.warning("Spool producer ended without goodbye producer_id=%s", producer.producer_id)
-            await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path)
+            if await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path):
+                await self._forget_producer(producer.producer_id)
+
+    async def _forget_producer(self, producer_id: str) -> None:
+        """A finished producer's directory is gone, so none of its file rows can be needed again."""
+        try:
+            async with trace_session() as db:
+                await db.execute(TrajectoryIngestFile.__table__.delete().where(
+                    TrajectoryIngestFile.producer_id == producer_id))
+        except Exception as exc:
+            log.warning("Ingest producer bookkeeping cleanup failed error_type=%s", type(exc).__name__)
 
     def _dead(self, producer, scan) -> bool:
         document = producer.document if isinstance(producer.document, dict) else None
@@ -1032,8 +1050,12 @@ class _Transaction:
             await self._control(db, item)
         elif item.invalid is not None:
             self.counters["invalid_events"] += 1
-            log.warning("Ignored an invalid spool event field=%s producer_id=%s n=%s", item.invalid,
-                        self.producer_id, item.n)
+            moment = time.monotonic()
+            if moment >= _invalid_logged.get(item.invalid, 0.0):
+                # One line per invalid field per minute: a broken producer must not flood the log.
+                _invalid_logged[item.invalid] = moment + INVALID_LOG_SECONDS
+                log.warning("Ignored an invalid spool event field=%s producer_id=%s n=%s", item.invalid,
+                            self.producer_id, item.n)
         else:
             await self._event(db, item)
 

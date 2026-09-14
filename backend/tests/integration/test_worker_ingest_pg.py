@@ -143,6 +143,9 @@ async def test_services_run_one_task_per_loop_and_resume_without_duplicates(migr
 
     harness = Harness(settings)
     harness.configure(ingest_batch_lines=2)
+    # A producer of its own: stopping the loops may leave the first producer's consumed-file row
+    # behind, and a real producer id never comes back with a reused file counter.
+    harness.writer = SpoolWriter(settings.spool_dir, "20260914080010-resume-5-eeeeeeee")
     harness.writer.events(*[event(session="ses_r", event_id=f"r{index}") for index in range(5)])
     original = IngestService._commit
     calls = {"count": 0}

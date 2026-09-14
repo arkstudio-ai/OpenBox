@@ -1,0 +1,25 @@
+{
+  "title": "消息中心",
+  "subtitle": "会话结果、系统提醒与官方通知",
+  "tabs": {
+    "all": "全部",
+    "session": "会话",
+    "system": "系统",
+    "notice": "官方"
+  },
+  "readAll": "全部已读",
+  "empty": "暂无消息",
+  "loadMore": "加载更多",
+  "loadFailed": "消息加载失败",
+  "unavailable": "这条消息对应的内容已不可访问。",
+  "resolved": "已处理",
+  "workspace": "工作空间：{{name}}",
+  "topic": {
+    "title": "专题",
+    "loadFailed": "专题加载失败或已下线",
+    "openLink": "打开链接",
+    "signIn": "登录后继续",
+    "enterApp": "进入 bossip",
+    "notFound": "专题不存在或已下线。"
+  }
+}

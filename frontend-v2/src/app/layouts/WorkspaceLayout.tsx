@@ -3,6 +3,7 @@ import { Outlet, useMatch } from "react-router"
 import { Sidebar, Topbar, useWorkspaceEvents, useWorkspaceUi } from "@/features/workspace"
 import { DesktopActivationDialog, WorkbenchPanel, usePanelStore, usePanelEvents } from "@/features/workbench"
 import { CronPanelTab, CronStatusPill } from "@/features/cron"
+import { useInboxLiveEvents } from "@/features/inbox"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { useAppearanceStore } from "@/shared/appearance/store"
@@ -20,6 +21,7 @@ import { paths, routePatterns } from "@/shared/router/paths"
  */
 function ChatRealtime() {
   useWorkspaceEvents()
+  useInboxLiveEvents()
   usePanelEvents()
   return null
 }

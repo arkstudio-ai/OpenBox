@@ -36,6 +36,13 @@ abstract final class Paths {
 
   static const String desktop = '/app/desktop';
 
+  /// Message centre (web `paths.inbox`); `topic` is the in-app topic page
+  /// behind a first-party notice (web serves it publicly at `/topics/:slug`).
+  static const String inbox = '/app/inbox';
+
+  static String topic(String slug) =>
+      '/app/topics/${Uri.encodeComponent(slug)}';
+
   static String authCenter({String? jobId}) => jobId == null
       ? '/app/auth-center'
       : '/app/auth-center?job=${Uri.encodeComponent(jobId)}';
@@ -60,6 +67,5 @@ abstract final class Paths {
     String sessionId, {
     String tab = 'menu',
     bool control = false,
-  }) =>
-      '/app/w/$sessionId?tab=$tab${control ? '&control=1' : ''}';
+  }) => '/app/w/$sessionId?tab=$tab${control ? '&control=1' : ''}';
 }

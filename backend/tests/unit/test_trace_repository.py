@@ -193,6 +193,32 @@ async def test_header_at_head_reads_summaries_and_matches_the_replayed_state(tra
     assert fresh["capabilities"]["export"] is False and fresh["statistics"] == statistics(empty_state())
 
 
+async def test_live_header_statuses_include_events_the_projection_has_not_applied(trace_db, blobs, monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    events = await recorded(blobs, "trj_1", "s1")
+    run = {"run_id": "run_2", "turn_id": "turn_2", "agent_id": "root"}
+    more = [_event("trj_1", "s1", "user_a", 13, "run.started", {}, **run),
+            _event("trj_1", "s1", "user_a", 14, "request.started", {"model": "model-y"}, request_id="req_2", **run),
+            _event("trj_1", "s1", "user_a", 15, "permission.requested", {"permission_id": "perm_1"}, call_id="call_2", **run)]
+    await Ingest(blobs).append("trj_1", more)
+    await add_meta("s2", status="meta-status", model="meta-model")
+    await add_trajectory("trj_2", "s2")
+    await Ingest(blobs).append("trj_2", conversation("trj_2", "s2", "user_a")[:2])
+    async with trace_session() as db:
+        lagging = await get_session_header(db, "s1")
+        unprojected = await get_session_header(db, "s2")
+    # The statuses describe the same position as the statistics: the head, not the projection.
+    assert (lagging["through_seq"], lagging["projected_through_seq"]) == ("15", "12")
+    assert (lagging["running_status"], lagging["model"]) == ("waiting", "model-y")
+    assert lagging["statistics"] == statistics(replay(events + more))
+    assert (unprojected["running_status"], unprojected["model"], unprojected["projected_through_seq"]) == ("running", "model-x", "0")
+    await project_all(ProjectionService(settings(), blob_store=blobs, metrics=Metrics()), "trj_1")
+    async with trace_session() as db:
+        projected = await get_session_header(db, "s1")
+    keys = ("running_status", "model", "statistics", "agents", "through_seq")
+    assert {key: projected[key] for key in keys} == {key: lagging[key] for key in keys}
+
+
 async def test_expired_content_keeps_its_summary_but_refuses_record_reads(trace_db, blobs):
     await recorded(blobs, "trj_1", "s1")
     async with trace_session() as db:

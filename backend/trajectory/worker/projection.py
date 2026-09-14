@@ -30,7 +30,7 @@ from trajectory.config import integer
 from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, existing_payloads, is_ref, json_blob, upload_json_blobs
 from trajectory.projector import TERMINAL, contribution, reduce, targets
 from trajectory.repository import (checkpoint_blobs, expanded_state, record_key, records_for_reduction, reduction_events,
-    store_checkpoint, stored_events)
+    store_checkpoint, stored_events, summary_rules)
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryRecord, TrajectoryRecordEvent,
     TrajectorySessionSummary)
@@ -184,26 +184,6 @@ class _Externalizer:
         self.blobs.setdefault(blob["dedupe_key"], blob)
         return {"$ref": {"sha256": blob["sha256"], "size_bytes": blob["size_bytes"], "media_type": JSON_MEDIA_TYPE,
                          "kind": "value", "payload_id": blob["payload_id"]}}
-
-
-def _summary_rules(events: list[dict], running_status: str, model: str | None) -> tuple[str, str | None, bool]:
-    """(running_status, model, gap seen) after the batch, by the same per-event rules as before."""
-    gap = False
-    for event in events:
-        family, _, action = event["type"].partition(".")
-        data = event["data"] if isinstance(event["data"], dict) else {}
-        if family == "run":
-            if action == "started":
-                running_status = "running"
-            elif action in {"finished", "interrupted"}:
-                running_status = "waiting" if data.get("status") == "waiting" else "error" if data.get("status") == "failed" else "idle"
-        if family in {"permission", "question"} and action in {"requested", "asked"}:
-            running_status = "waiting"
-        if event["type"] == "request.started" and data.get("model"):
-            model = str(data["model"])[:128]
-        if event["type"] == "recording.gap" and data.get("phase") != "paused":
-            gap = True
-    return running_status, model, gap
 
 
 class ProjectionService:
@@ -445,7 +425,7 @@ class ProjectionService:
             statistics["unsupported_events"] = [*statistics.get("unsupported_events", []), *state["unsupported_events"]]
         if state["coverage_start"] is not None:
             statistics["coverage_start"] = state["coverage_start"]
-        running_status, model, gap = _summary_rules(events, summary.running_status, summary.model)
+        running_status, model, gap = summary_rules(events, summary.running_status, summary.model)
         if gap and trajectory.recording_status not in {"paused", "deleted", "expired"}:
             trajectory.recording_status = "gap"
         current = summary.last_activity_at

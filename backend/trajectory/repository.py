@@ -326,7 +326,8 @@ async def replay_events(db, trajectory, state: dict, through: int, resolver: Res
                         observe=None) -> dict:
     """Fold the stored events after state["through_seq"] up to through (gap and tail checked).
 
-    ``observe(row, before, after)`` sees each stored row with the states around its event.
+    ``observe(row, event, before, after)`` sees each stored row, the event the
+    reducer folded and the states around it.
     """
     after = int(state["through_seq"])
     while after < through:
@@ -339,7 +340,7 @@ async def replay_events(db, trajectory, state: dict, through: int, resolver: Res
         for row, (event, hints) in zip(rows, await reduction_events(resolver, rows)):
             before, state = state, reduce(state, event, hints)
             if observe is not None:
-                observe(row, before, state)
+                observe(row, event, before, state)
         after = rows[-1]["seq"]
     return state
 
@@ -369,11 +370,11 @@ async def _visible_state(resolver: Resolver, state: dict) -> dict:
     return {**state, "records": dict(zip(state["records"], values))}
 
 
-async def state_at(db, trajectory, through_seq=None, *, blob_store=None):
+async def state_at(db, trajectory, through_seq=None, *, blob_store=None, observe=None):
     through = watermark(trajectory, through_seq)
     resolver = Resolver(db, trajectory.id, through_seq=through, blob_store=blob_store)
     return await _visible_state(resolver, await expanded_state(db, trajectory, through, blob_store=blob_store,
-                                                               resolver=resolver))
+                                                               resolver=resolver, observe=observe))
 
 
 async def get_checkpoint(db, trajectory, at_seq, *, blob_store=None):
@@ -452,6 +453,28 @@ async def drain_checkpoints(limit=10, *, blob_store=None, metrics=None) -> int:
 
 # -- Sessions and headers --
 
+def summary_rules(events: list[dict], running_status: str, model: str | None) -> tuple[str, str | None, bool]:
+    """(running_status, model, gap seen) of a session summary after events, applied in order."""
+    gap = False
+    for event in events:
+        family, _, action = event["type"].partition(".")
+        data = event["data"] if isinstance(event["data"], dict) else {}
+        if family == "run":
+            if action == "started":
+                running_status = "running"
+            elif action in {"finished", "interrupted"}:
+                running_status = "waiting" if data.get("status") == "waiting" else "error" if data.get("status") == "failed" else "idle"
+        if family in {"permission", "question"} and action in {"requested", "asked"}:
+            running_status = "waiting"
+        if event["type"] == "request.started" and data.get("model"):
+            model = str(data["model"])[:128]
+        if event["type"] == "recording.gap" and data.get("phase") != "paused":
+            gap = True
+    return running_status, model, gap
+
+
+SUMMARY_RULE_FAMILIES = frozenset({"run", "permission", "question"})
+
 def _row_metadata(session, trajectory, summary, owner, workspace) -> dict:
     stats = dict(summary.statistics) if summary else contribution(None)
     for key in HIDDEN_STATISTICS:
@@ -529,8 +552,23 @@ async def get_session_header(db, session_id: str, through_seq=None, *, blob_stor
             metrics = statistics(state)
             summaries_only = False
     else:
-        state = await state_at(db, trajectory, head, blob_store=blob_store) if trajectory else empty_state()
+        replayed, ruled = [], []
+
+        def observe(row, event, before, after):
+            if not replayed:
+                replayed.append(row["seq"])
+            if event["type"].partition(".")[0] in SUMMARY_RULE_FAMILIES or event["type"] == "request.started":
+                ruled.append(event)
+        state = await state_at(db, trajectory, head, blob_store=blob_store, observe=observe) if trajectory else empty_state()
         metrics = statistics(state)
+        base = summary.applied_seq if summary is not None else 0
+        if trajectory is not None and head == trajectory.committed_seq and replayed and replayed[0] <= base + 1:
+            # Projection lags the head: carry the summary's statuses through the
+            # events it has not applied, so they describe the same position as
+            # the statistics (a finished run must not read as running).
+            running, model = (summary.running_status, summary.model) if summary is not None else ("idle", None)
+            header["running_status"], header["model"], _ = summary_rules(
+                [event for event in ruled if int(event["seq"]) > base], running, model)
     if trajectory is not None and head < trajectory.committed_seq:
         rows = sorted(state["records"].values(), key=lambda item: int(item["as_of_seq"]))
         root_runs = [row for row in rows if row["kind"] == "run" and row.get("source_session_id") == session_id]
@@ -727,7 +765,7 @@ async def get_record(db, trajectory, record_id, *, through_seq=None, expand="ful
         if stored.applied_seq <= head and stored.projector_version == PROJECTOR_VERSION:
             record = stored.data if expand == "refs" else (await resolver.expand_refs([stored.data]))[0]
     if record is None:
-        def observe(row, before, after):
+        def observe(row, event, before, after):
             # Links exist only for projected events: a lagging projection has
             # none for the newest ones, so keep what the replay applied here.
             value = after["records"].get(record_id)

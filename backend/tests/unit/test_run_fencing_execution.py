@@ -30,6 +30,7 @@ from tests.unit.test_run_fencing_api import (  # noqa: F401
     acting_as,
     add_session,
     expire_lease,
+    loop_harness,
     published,
     recording,
     trajectory_events,
@@ -115,6 +116,58 @@ async def test_stop_then_lease_expiry_keeps_the_session_usable_and_every_sweep_r
     await abort_session_turn("s1", "u1", reason="user_stop", was_active=False)
     await abort_session_turn("s1", "u1", reason="user_stop", was_active=False)
     assert await delete_session("s1", "u1")
+
+
+async def test_stop_then_immediate_send_runs_the_new_turn_untouched_by_the_stopped_run(
+        state, recording, loop_harness, monkeypatch):
+    from session import status as run_status
+    from session.abort import abort_session_turn
+    monkeypatch.setattr("session.abort._ABORT_SETTLE_SECONDS", 0)
+    tickets = []
+    real_start = runtime.start_run
+
+    async def start(*args, **kwargs):
+        ticket = await real_start(*args, **kwargs)
+        tickets.append(ticket)
+        return ticket
+
+    async def no_suggestions(*args, **kwargs):
+        return None
+    monkeypatch.setattr(runtime, "start_run", start)
+    monkeypatch.setattr("agent.suggestions.generate_suggestions", no_suggestions)
+    streaming = asyncio.Event()
+    requests = []
+
+    async def provider(**kwargs):
+        requests.append(kwargs["model_id"])
+        if len(requests) == 1:
+            yield {"type": "text_delta", "text": "Working on the long task"}
+            streaming.set()
+            await asyncio.Event().wait()  # Only the stop ends this response.
+        yield {"type": "text_delta", "text": "Here is the new answer"}
+        yield {"type": "finish", "reason": "stop", "usage": {}}
+    monkeypatch.setattr(loop_harness.processor, "stream_llm", provider)
+
+    await create_user_message("s1", "A long task", user_id="u1")
+    stopped = asyncio.create_task(loop_harness.loop.run_loop("s1", user_id="u1"))
+    await asyncio.wait_for(streaming.wait(), timeout=10)
+    assert await abort_session_turn("s1", "u1", reason="user_stop")
+    # The user sends again at once, while the stopped run may still be unwinding.
+    await create_user_message("s1", "Something else instead", user_id="u1")
+    answer = await asyncio.wait_for(loop_harness.loop.run_loop("s1", user_id="u1"), timeout=10)
+    await asyncio.wait_for(stopped, timeout=10)
+
+    assert answer is not None and len(tickets) == 2
+    first, second = tickets
+    assert runtime.is_revoked(first.run_id) and not runtime.is_revoked(second.run_id)
+    assert (await read(SessionExecution, "s1")).run_id is None
+    assert (await read(Session, "s1")).status == "idle"
+    assert not published(state, "session.error")
+    statuses = [data["status"] for data in published(state, "session.status") if data["sessionId"] == "s1"]
+    assert statuses[-1] == "idle" and "error" not in statuses
+    # Neither run leaves an abort signal behind for a later run to trip over.
+    assert first.run_id not in run_status._run_signals and second.run_id not in run_status._run_signals
+    assert "s1" not in run_status._abort_signals and "s1" not in run_status._pending_aborts
 
 
 async def _apply(operation: str, session_id: str, ticket) -> None:

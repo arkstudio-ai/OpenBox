@@ -177,11 +177,12 @@ def create_app(*, database_url: str | None = None, blob_store=None,
                 shared_cache, distributed = _auth_stores()
                 stack.push_async_callback(shared_cache.close)
                 if distributed:
-                    # Replicas fan trajectory.available out over the Redis bus (SPEC §8.7).
-                    from bus.bus import close_redis_bus, init_redis_bus
+                    # Replicas fan trajectory.available out over trajectory:hints (SPEC §8.7, WAVE3 contract 3);
+                    # the worker never subscribes to the business bus channel.
+                    from bus.trajectory_hints import close_trajectory_hints, init_trajectory_hints
                     from core.config import get_config
-                    await init_redis_bus(get_config().redis_url)
-                    stack.push_async_callback(close_redis_bus)
+                    await init_trajectory_hints(get_config().redis_url)
+                    stack.push_async_callback(close_trajectory_hints)
             client = backend if backend is not None else HttpBackend.from_env()
             if backend is None:
                 stack.push_async_callback(client.close)

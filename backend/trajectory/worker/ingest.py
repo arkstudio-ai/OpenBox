@@ -1084,8 +1084,9 @@ class _Transaction:
                     service._inc(METRICS[name], value)
         for state in self.states.values():
             if state.tombstoned:
+                # The tombstone published the deleted notification as this transaction committed
+                # (lifecycle.publish_after_commit); publishing it here as well announced it twice.
                 result["deleted_trajectories"].add(state.id)
-                publish_available(state, deleted=True)
             elif state.committed_seq > state.initial_committed:
                 result["trajectories"].add(state.id)
                 publish_available(state)

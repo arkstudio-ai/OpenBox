@@ -290,3 +290,30 @@ async def test_recording_state_epochs_apply_each_transition_once(harness):
     trajectory, stored = await events_of("ses_1")
     assert [row.data["phase"] for row in stored if row.type == "recording.gap"][4:] == ["paused"]
     assert (trajectory.recording_status, trajectory.recording_epoch) == ("paused", second)
+
+
+async def test_a_session_deletion_publishes_its_deleted_notification_once(trace_db, settings):
+    from tests.unit.test_worker_ingest import FakeMetrics
+    from trajectory.storage import MemoryBlobStore
+    from trajectory.worker.ingest import IngestService
+    from trajectory.worker.retention import RetentionService
+
+    store, metrics = MemoryBlobStore(), FakeMetrics()
+    retention = RetentionService(settings, blob_store=store, metrics=metrics)
+    service = IngestService(settings, blob_store=store, metrics=metrics, retention=retention)
+    writer = SpoolWriter(settings.spool_dir)
+    received = []
+    unsubscribe = bus.subscribe("trajectory.available", received.append)
+    try:
+        writer.events(event(), event())
+        await service.run_once()
+        trajectory, _ = await events_of("ses_1")
+        writer.controls({"type": "session.deleted", "session_id": "ses_1", "user_id": "u1", "deleted_at": AT})
+        result = await service.run_once()
+    finally:
+        unsubscribe()
+    assert [item["data"] for item in received if item["data"].get("deleted")] == [
+        {"user_id": "u1", "owner_user_id": "u1", "session_id": "ses_1", "trajectory_id": trajectory.id,
+         "committed_seq": "3", "deleted": True}]
+    assert result["deleted_trajectories"] == {trajectory.id}
+    assert (await events_of("ses_1"))[0].deleted_at is not None

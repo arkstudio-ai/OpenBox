@@ -940,8 +940,14 @@ async def save_part(part: MessagePart, is_new: bool = False, *, user_id: str) ->
     })
 
 
-async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_id: str | None = None) -> list[MessageWithParts]:
-    """Get messages for a session with their parts in a single query.
+async def get_messages(session_id: str, offset: int = 0, limit: int | None = None, user_id: str | None = None) -> list[MessageWithParts]:
+    """Get messages for a session with their parts in a single query, oldest first.
+
+    Unbounded unless ``limit`` is given. The agent loop, compaction, abort,
+    fork and revert all need the whole conversation; only the HTTP route pages,
+    and it passes both bounds. This used to default to 200, which handed every
+    caller the *oldest* 200 messages: past that point the model never saw
+    another tool result, answer or user message (2026-09-14).
 
     Args:
         user_id: If provided, verifies session belongs to this user (defense-in-depth).
@@ -959,23 +965,32 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_
             if not ownership.scalar_one_or_none():
                 return []
 
-        # Get messages with pagination
-        msg_result = await db.execute(
+        # Ties on created_at (a fork writes a whole history in one instant) are
+        # broken by id, which ascends with creation: pages never skip or repeat
+        # a row, and the prompt rebuilt from them is byte-stable between steps.
+        query = (
             select(MessageORM).where(MessageORM.session_id == session_id)
-            .order_by(MessageORM.created_at)
-            .offset(offset).limit(limit)
+            .order_by(MessageORM.created_at, MessageORM.id)
         )
-        messages = msg_result.scalars().all()
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        messages = (await db.execute(query)).scalars().all()
 
         if not messages:
             return []
 
-        msg_ids = [m.id for m in messages]
-
-        # Get all parts for these messages in one query
+        # A full load reads parts by session: an IN list over every message id
+        # outgrows the driver's bind-parameter limit on the longest, cron-fed
+        # sessions. A page keeps to its own messages.
+        part_filter = (
+            PartORM.session_id == session_id if not offset and limit is None
+            else PartORM.message_id.in_([m.id for m in messages])
+        )
         parts_result = await db.execute(
-            select(PartORM).where(PartORM.message_id.in_(msg_ids))
-            .order_by(PartORM.created_at)
+            select(PartORM).where(part_filter)
+            .order_by(PartORM.created_at, PartORM.id)
         )
         all_parts = parts_result.scalars().all()
 

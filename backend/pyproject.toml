@@ -52,6 +52,8 @@ dependencies = [
     # desktop stops connecting with a 502 from /api/desktop/ticket.
     "alibabacloud-tea-openapi>=0.3.16,<0.4.0",
     "segno>=1.6.6",
+    "orjson>=3.12.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.optional-dependencies]

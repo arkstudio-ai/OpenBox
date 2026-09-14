@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Download } from "lucide-react"
 import { formatBytes } from "@/shared/lib/format"
@@ -13,6 +14,7 @@ import { mediaKindOf } from "./media"
 import { MediaElement } from "./MediaElement"
 import { TextBlock } from "./TextBlock"
 import { NS } from "./types"
+import { useOnScreen } from "./useOnScreen"
 
 interface PayloadViewProps {
   reference: PayloadRef
@@ -33,16 +35,21 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
  * watermark — never a public URL, the owner's attachment API or a sandbox path.
  * The query resolves "not produced yet at this position", "deleted" (even when
  * replaying an earlier position) and "corrupt" as states without a body and
- * revalidates — with an availability-only check where the server offers one,
- * by reading the bytes again otherwise — so a later deletion unmounts the
- * media element (releasing its object URL) together with the download action.
- * Downloading is an explicit, fresh, server-checked read; the Blob on screen
- * is never handed out.
+ * revalidates — with an availability-only check while the content is on screen
+ * where the server offers one, by reading the bytes again otherwise — so a
+ * later deletion unmounts the media element (releasing its object URL)
+ * together with the download action. Downloading is an explicit, fresh,
+ * server-checked read; the Blob on screen is never handed out.
  */
 export function PayloadView({ reference, filename }: PayloadViewProps) {
   const { t } = useTranslation(NS)
   const { sessionId, throughSeq, refs } = useInspector()
-  const payload = usePayload(sessionId, throughSeq, reference.payload_id, refs ? "meta" : "body")
+  const [view, setView] = useState<HTMLDivElement | null>(null)
+  const shown = useOnScreen(view)
+  const payload = usePayload(sessionId, throughSeq, reference.payload_id, {
+    revalidation: refs ? "meta" : "body",
+    shown,
+  })
   const download = useDownloadPayload(sessionId, throughSeq, reference.payload_id)
   const content = payload.data
 
@@ -70,7 +77,7 @@ export function PayloadView({ reference, filename }: PayloadViewProps) {
       : { ok: false as const }
   const downloadFailed = !!download.error && !(download.error instanceof StaleAccessError)
   return (
-    <div className="flex flex-col gap-2" data-testid="trajectory-payload">
+    <div ref={setView} className="flex flex-col gap-2" data-testid="trajectory-payload">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-n500 text-2xs">
           {t("payload.meta", { type: content.mediaType, size: formatBytes(content.size) })}

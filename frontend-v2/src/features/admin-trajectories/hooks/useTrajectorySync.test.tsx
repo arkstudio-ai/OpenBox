@@ -80,10 +80,10 @@ afterEach(() => {
 })
 
 describe("event catch-up polling", () => {
-  it("polls every 10 s while the socket is open and every 2 s as soon as it drops", async () => {
+  it("polls every 30 s while the socket is open and every 2 s as soon as it drops", async () => {
     socket.connected = true
     mount()
-    await advance(9_999)
+    await advance(29_999)
     expect(engine.poll).not.toHaveBeenCalled()
     await advance(1)
     expect(engine.poll).toHaveBeenCalledTimes(1)
@@ -99,7 +99,7 @@ describe("event catch-up polling", () => {
 
     socket.connected = true
     act(() => socket.emit("__connected"))
-    await advance(9_999)
+    await advance(29_999)
     expect(engine.poll).toHaveBeenCalledTimes(3)
     await advance(1)
     expect(engine.poll).toHaveBeenCalledTimes(4)

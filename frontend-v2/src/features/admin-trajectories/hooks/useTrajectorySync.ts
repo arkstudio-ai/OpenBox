@@ -17,7 +17,7 @@ export interface TrajectorySyncState {
 
 /**
  * The live stream for one target session: acquires its engine, polls for
- * commits a watermark hint may have missed — every 10 s while the socket is
+ * commits a watermark hint may have missed — every 30 s while the socket is
  * open, every 2 s while it is not, less often when hidden and immediately on
  * return — and releases everything when the target changes, the page closes
  * or access is refused.

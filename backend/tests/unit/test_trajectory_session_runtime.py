@@ -117,19 +117,27 @@ async def test_superseded_generation_cannot_commit_a_late_chat_part(monkeypatch)
     from session.session import create_user_message, create_assistant_message, save_part
     from question import runtime
     from models.message import TextPart
-    from trajectory import TrajectoryError
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     session, owner = await make_session()
     first = await create_user_message(session, "first", user_id=owner)
     ticket = await runtime.start_run(session, owner)
     trace = await runtime.get_run_trace(ticket)
-    with bind(trace):
-        assistant = await create_assistant_message(session, first.id, user_id=owner)
+    # The execution runtime fences the run itself; the bound trace only names it.
+    token = runtime.current_run.set(ticket)
+    try:
+        with bind(trace):
+            assistant = await create_assistant_message(session, first.id, user_id=owner)
+    finally:
+        runtime.current_run.reset(token)
     await create_user_message(session, "new independent input", user_id=owner)
     part = TextPart(text="late overwrite", session_id=session, message_id=assistant.id)
     before = len(await events_for(session))
-    with bind(trace), pytest.raises(TrajectoryError):
-        await save_part(part, is_new=True, user_id=owner)
+    token = runtime.current_run.set(ticket)
+    try:
+        with bind(trace), pytest.raises(runtime.RunRevoked):
+            await save_part(part, is_new=True, user_id=owner)
+    finally:
+        runtime.current_run.reset(token)
     async with get_db_session() as db:
         assert await db.get(Part, part.id) is None
     assert len(await events_for(session)) == before

@@ -125,13 +125,12 @@ async def test_a_run_start_resumes_a_paused_session_once_and_epochs_never_repeat
 
 async def test_only_disabled_recording_pauses_a_period_not_an_unresolvable_identity(state, recording_spool):
     await create_user_message("s1", "First", user_id="u1")
-    saved = (await read(SessionExecution, "s1")).trace_context
     # Recording stays on, but this write carries an identity that is not the owner's.
     with bind(TraceContext("u2", "s2", turn_id="foreign")):
         await create_user_message("s1", "Second", user_id="u1")
     assert recording_spool.controls("recording.state") == []
-    assert "recording_paused" not in (await read(SessionExecution, "s1")).trace_context
-    assert saved["recording_epoch"] == 0
+    saved = (await read(SessionExecution, "s1")).trace_context
+    assert "recording_paused" not in saved and saved["recording_epoch"] == 0
 
 
 async def test_a_run_start_that_is_the_first_recorded_activity_opens_period_zero_once(state, recording_spool,

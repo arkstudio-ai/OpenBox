@@ -337,3 +337,130 @@ async def test_todo_writes_take_no_session_lock_and_their_fact_waits_for_commit(
     changes = recording_spool.events("todo.changed")
     assert [item["data"]["before"] for item in changes] == [None, pending]
     assert changes[1]["turn_id"] == "turn-1" and changes[1]["data"]["items"][0]["status"] == "completed"
+
+
+async def test_every_recording_state_carries_an_epoch_that_grows_with_each_transition(state, recording_spool,
+                                                                                    monkeypatch):
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+    assert (await read(SessionExecution, "s1")).trace_context["recording_epoch"] == 2
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await create_user_message("s1", "On", user_id="u1")
+    # A run start drops the stored epoch, so the next pause takes its epoch from the clock.
+    ticket = await runtime.start_run("s1", "u1")
+    await runtime.finish_run(ticket, completed=True)
+    assert "recording_epoch" not in (await read(SessionExecution, "s1")).trace_context
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off again", user_id="u1")
+    next_period = (await read(SessionExecution, "s1")).trace_context["recording_epoch"]
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    ticket = await runtime.start_run("s1", "u1")
+    await runtime.finish_run(ticket, completed=True)
+
+    controls = recording_spool.controls("recording.state")
+    assert [(control["state"], control["epoch"]) for control in controls] == [
+        ("paused", 1), ("resumed", 2), ("paused", next_period - 1), ("resumed", next_period)]
+    assert next_period - 1 > 2
+    # A resume names the baseline of the period it opens.
+    assert [item["event_id"] for item in recording_spool.events("baseline.captured")] == [
+        "evt_baseline_s1_0", "evt_baseline_s1_2", f"evt_baseline_s1_{next_period}"]
+
+
+async def test_every_report_of_one_transition_carries_its_epoch_across_writers_and_processes(
+        state, recording_spool, monkeypatch):
+    from session.fork import fork_session
+    from trajectory import producers
+    from trajectory.producers import activity_context
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await fork_session("s1", user_id="u1")  # Reported without the lock, before a locked write pauses.
+    await create_user_message("s1", "Off", user_id="u1")
+    await fork_session("s1", user_id="u1")  # The pause is persisted now: no further report.
+    paused = (await read(SessionExecution, "s1")).trace_context
+
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    for _process in range(2):
+        # Two processes adopt the same paused identity before either clears the flag.
+        producers.reset_for_tests()
+        async with database.get_db_session() as db:
+            assert await activity_context(db, "u1", "s1", saved=paused) is not None
+
+    assert [(control["state"], control["epoch"]) for control in recording_spool.controls("recording.state")] == [
+        ("paused", 1), ("paused", 1), ("resumed", 2), ("resumed", 2)]
+    assert [item["event_id"] for item in recording_spool.events("baseline.captured")] == [
+        "evt_baseline_s1_0", "evt_baseline_s1_2", "evt_baseline_s1_2"]
+
+
+async def test_a_pause_reported_without_the_lock_stays_below_the_resume_once_a_run_start_dropped_the_epoch(
+        state, recording_spool, monkeypatch):
+    from session.fork import fork_session
+    await create_user_message("s1", "First", user_id="u1")
+    ticket = await runtime.start_run("s1", "u1")
+    await runtime.finish_run(ticket, completed=True)
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await fork_session("s1", user_id="u1")
+    await create_user_message("s1", "Off", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await create_user_message("s1", "On", user_id="u1")
+
+    reported, paused, resumed = recording_spool.controls("recording.state")
+    assert [control["state"] for control in (reported, paused, resumed)] == ["paused", "paused", "resumed"]
+    assert reported["epoch"] == 1 < paused["epoch"] and resumed["epoch"] == paused["epoch"] + 1
+
+
+async def test_unlocked_settings_writes_record_nothing_until_a_locked_write_resumes(state, recording_spool,
+                                                                                  monkeypatch):
+    from session.session import update_session
+    await create_user_message("s1", "First", user_id="u1")
+    await update_session("s1", "u1", title="Recorded")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+    saved = identity((await read(SessionExecution, "s1")).trace_context)
+
+    # Recording is on again, but no locked write has resumed the period yet.
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await update_session("s1", "u1", model="provider/while-paused")
+    with bind(TraceContext.from_dict(saved)):
+        await update_session("s1", "u1", title="Titled by a run")
+    assert [item["data"]["after"] for item in recording_spool.events("session.settings_changed")] == [
+        {"title": "Recorded"}]
+    assert (await read(Session, "s1")).title == "Titled by a run"
+
+    await create_user_message("s1", "On", user_id="u1")
+    # The resume baseline starts from the settings changed meanwhile.
+    assert recording_spool.events("baseline.captured")[-1]["data"]["settings"]["model"] == "provider/while-paused"
+    await update_session("s1", "u1", title="After the resume")
+    assert [item["data"]["after"] for item in recording_spool.events("session.settings_changed")] == [
+        {"title": "Recorded"}, {"title": "After the resume"}]
+
+
+async def test_unlocked_settings_writes_record_again_once_this_process_reopened_the_period(state, recording_spool,
+                                                                                         monkeypatch):
+    from session.session import update_session
+    from trajectory import producers
+    from trajectory.producers import activity_context
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+    paused = (await read(SessionExecution, "s1")).trace_context
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    async with database.get_db_session() as db:
+        # A question adoption resumes and leaves clearing the flag to the next session write.
+        await activity_context(db, "u1", "s1", saved=paused)
+    assert (await read(SessionExecution, "s1")).trace_context["recording_paused"] is True
+
+    await update_session("s1", "u1", title="After the adoption")
+    producers.reset_for_tests()  # A process that did not see the resume.
+    await update_session("s1", "u1", title="Elsewhere")
+    assert [item["data"]["after"]["title"] for item in recording_spool.events("session.settings_changed")] == [
+        "After the adoption"]
+
+
+async def test_an_unreadable_pause_marker_counts_as_paused_and_never_raises():
+    from trajectory.producers import paused_in_tx
+
+    class Unreadable:
+        async def get(self, *args, **kwargs):
+            raise RuntimeError("business database unavailable")
+    assert await paused_in_tx(Unreadable(), TraceContext("u1", "s1")) is True

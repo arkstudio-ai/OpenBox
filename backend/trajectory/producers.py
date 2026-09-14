@@ -8,9 +8,15 @@ be resolved means the activity is not recorded, never that it fails.
 ``SessionExecution.trace_context`` carries the recording markers of SPEC §5.6
 beside the saved identity: ``recording_epoch`` names the baseline of the
 current (or, while paused, the next) recording period and ``recording_paused``
-is set while recording is disabled for the owner. A run start rewrites the
-saved identity from ``TraceContext.to_dict()``, which drops both markers, so a
-new epoch is never derived from a counter alone.
+is set while recording is disabled for the owner.
+
+Every ``recording.state`` control carries an ``epoch`` (contract 6); the worker
+applies a control only when its epoch is newer than the last one it applied. A
+resume carries the epoch of the period it opens and a pause the epoch just
+below it, so every report of one transition names the same epoch and each
+later transition a larger one. A pause is one above the stored epoch. A run
+start rewrites the saved identity from ``TraceContext.to_dict()``, which drops
+both markers; the clock then keeps the next pause above every earlier epoch.
 """
 from __future__ import annotations
 
@@ -34,7 +40,8 @@ MARKER_KEYS = frozenset({EPOCH_KEY, PAUSED_KEY})
 #: Identity that describes one write rather than the saved execution.
 _PER_WRITE_IDS = {"step_id": None, "request_id": None, "call_id": None, "parent_call_id": None,
                   "message_id": None, "part_id": None}
-_PENDING_PERIODS = "trajectory_recording_periods"
+_PENDING_ONCE = "trajectory_recorded_once"
+_ONCE_LIMIT = 16384
 
 
 class _Recent:
@@ -50,19 +57,23 @@ class _Recent:
         while len(self._items) > self._limit:
             self._items.popitem(last=False)
 
+    def discard(self, key) -> None:
+        self._items.pop(key, None)
+
     def __contains__(self, key) -> bool:
         return key in self._items
 
 
-#: (root session, epoch) recording periods whose opening facts this process committed.
-_opened = _Recent()
+#: Facts this process recorded once: recording periods (root session, epoch)
+#: and asset uses (``artifact.recorded`` event ids).
+_opened = _Recent(_ONCE_LIMIT)
 _warned = _Recent(256)
 
 
 def reset_for_tests() -> None:
-    """Forget opened periods: tests reuse session ids across databases."""
+    """Forget opened periods and recorded uses: tests reuse session ids across databases."""
     global _opened, _warned
-    _opened, _warned = _Recent(), _Recent(256)
+    _opened, _warned = _Recent(_ONCE_LIMIT), _Recent(256)
 
 
 def _not_recorded(reason: str) -> None:
@@ -130,34 +141,12 @@ async def activity_context(db, user_id: str, session_id: str, *, saved: dict | N
     return context
 
 
-# Recording markers (SPEC §5.6) ------------------------------------------------
-
-def _epoch(saved) -> int | None:
-    value = saved.get(EPOCH_KEY) if isinstance(saved, dict) else None
-    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
-
-
-def _next_epoch(saved) -> int:
-    """Later than the stored epoch, even when a run start dropped it."""
-    stored = saved.get(EPOCH_KEY) if isinstance(saved, dict) else None
-    previous = stored if isinstance(stored, int) and not isinstance(stored, bool) else 0
-    return max(previous + 1, int(time.time() * 1000))
-
-
-def _state(user_id: str, root_session_id: str, state: str, reason: str) -> dict:
-    return {"type": "recording.state", "user_id": user_id, "session_id": root_session_id,
-            "state": state, "reason": reason, "at": iso(now())}
-
-
-def _owns_root(base: dict, user_id: str, session_id: str) -> bool:
-    return (base.get("user_id") == user_id and base.get("session_id") == session_id
-            and base.get("source_session_id", session_id) == session_id)
-
+# Facts recorded once per process ----------------------------------------------
 
 def _claim(db, key) -> bool:
-    """True the first time a period is opened, counting this transaction's claims."""
+    """True the first time a fact is recorded, counting this transaction's claims."""
     info = getattr(db, "sync_session", db).info
-    pending = info.setdefault(_PENDING_PERIODS, set())
+    pending = info.setdefault(_PENDING_ONCE, set())
     if key in _opened or key in pending:
         return False
     pending.add(key)
@@ -165,7 +154,57 @@ def _claim(db, key) -> bool:
 
 
 def _release(db, key) -> None:
-    getattr(db, "sync_session", db).info.get(_PENDING_PERIODS, set()).discard(key)
+    getattr(db, "sync_session", db).info.get(_PENDING_ONCE, set()).discard(key)
+
+
+def claim_once(db, key) -> bool:
+    """True the first time this process records the fact ``key``.
+
+    With ``db`` the claim is kept when its outer transaction commits and
+    dropped when it rolls back; without ``db`` it is kept at once.
+    """
+    if db is not None:
+        return _claim(db, key)
+    if key in _opened:
+        return False
+    _opened.add(key)
+    return True
+
+
+def release_claim(db, key) -> None:
+    """The claimed fact was not enqueued, so a later use may record it."""
+    if db is not None:
+        _release(db, key)
+    else:
+        _opened.discard(key)
+
+
+# Recording markers (SPEC §5.6) ------------------------------------------------
+
+def _stored_epoch(saved) -> int | None:
+    value = saved.get(EPOCH_KEY) if isinstance(saved, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _epoch(saved) -> int | None:
+    """The stored epoch of a period after the first (never 0)."""
+    return _stored_epoch(saved) or None
+
+
+def _pause_epoch(saved) -> int:
+    """One above the stored period epoch, or from the clock when a run start dropped it."""
+    stored = _stored_epoch(saved)
+    return stored + 1 if stored is not None else max(1, int(time.time() * 1000))
+
+
+def _state(user_id: str, root_session_id: str, state: str, reason: str, epoch: int) -> dict:
+    return {"type": "recording.state", "user_id": user_id, "session_id": root_session_id,
+            "state": state, "epoch": epoch, "reason": reason, "at": iso(now())}
+
+
+def _owns_root(base: dict, user_id: str, session_id: str) -> bool:
+    return (base.get("user_id") == user_id and base.get("session_id") == session_id
+            and base.get("source_session_id", session_id) == session_id)
 
 
 async def _open_period(db, context: TraceContext, root_session_id: str, epoch: int, *, resumed: bool) -> None:
@@ -174,7 +213,7 @@ async def _open_period(db, context: TraceContext, root_session_id: str, epoch: i
     if not _claim(db, key):
         return
     if resumed:
-        emit_control(_state(context.user_id, root_session_id, "resumed", "recording_reenabled"), db=db)
+        emit_control(_state(context.user_id, root_session_id, "resumed", "recording_reenabled", epoch), db=db)
     try:
         from db.models.session import Session
         from session.session import baseline_snapshot
@@ -205,17 +244,18 @@ async def mark_recording_in_tx(db, execution, *, user_id: str, session_id: str,
             await _open_period(db, context, session_id, 0, resumed=False)
             execution.trace_context = {**context.derive(**_PER_WRITE_IDS).to_dict(), EPOCH_KEY: 0}
         elif saved.get(PAUSED_KEY):
-            epoch = _epoch(saved) or _next_epoch(saved)
+            epoch = _epoch(saved) or _pause_epoch(saved) + 1
             await _open_period(db, context, session_id, epoch, resumed=True)
             execution.trace_context = {**base, EPOCH_KEY: epoch}
         return
     if enabled(user_id):
         return  # Recording is on; this write's identity just could not be resolved.
     if base and not saved.get(PAUSED_KEY) and _owns_root(base, user_id, session_id):
-        # The epoch of the next period is fixed now, so every later resume of
-        # this pause names the same baseline.
-        execution.trace_context = {**base, PAUSED_KEY: True, EPOCH_KEY: _next_epoch(saved)}
-        emit_control(_state(user_id, session_id, "paused", "recording_disabled"), db=db)
+        # The next period's epoch is fixed now, so every later resume of this
+        # pause names the same baseline and control epoch; the pause is just below.
+        epoch = _pause_epoch(saved)
+        execution.trace_context = {**base, PAUSED_KEY: True, EPOCH_KEY: epoch + 1}
+        emit_control(_state(user_id, session_id, "paused", "recording_disabled", epoch), db=db)
 
 
 async def baseline_candidate_in_tx(db, *, user_id: str, session_id: str, context: TraceContext | None,
@@ -224,8 +264,10 @@ async def baseline_candidate_in_tx(db, *, user_id: str, session_id: str, context
 
     A root session never recorded gets a first-period baseline candidate (the
     worker keeps the first copy of an event id). ``pause`` also reports a pause
-    while recording is off. Resuming needs the lock: the next session write or
-    run start of that session resumes.
+    while recording is off. Its epoch is the one a locked write gives that
+    pause while the stored epoch is known; once a run start dropped it, the
+    report carries 1, below every resume epoch. Resuming needs the lock: the
+    next session write or run start of that session resumes.
     """
     if context is None and not pause:
         return
@@ -240,7 +282,30 @@ async def baseline_candidate_in_tx(db, *, user_id: str, session_id: str, context
             await _open_period(db, context, session_id, 0, resumed=False)
         return
     if base and not saved.get(PAUSED_KEY) and _owns_root(base, user_id, session_id):
-        emit_control(_state(user_id, session_id, "paused", "recording_disabled"), db=db)
+        emit_control(_state(user_id, session_id, "paused", "recording_disabled",
+                            (_stored_epoch(saved) or 0) + 1), db=db)
+
+
+async def paused_in_tx(db, context: TraceContext) -> bool:
+    """True while the root session's markers report a pause that is not resumed yet (§5.6).
+
+    Only a write that holds the session row lock resumes. Until one does, a
+    writer without the lock records nothing; the resume baseline starts from
+    the session as it is then. A period this process already reopened (a
+    question adoption leaves the flag to the next session write) is resumed.
+    """
+    from db.models.question import SessionExecution
+    root_session_id = context.session_id
+    try:
+        execution = await db.get(SessionExecution, root_session_id)
+    except Exception:
+        _not_recorded("recording markers are not readable")
+        return True
+    saved = execution.trace_context if execution is not None and isinstance(execution.trace_context, dict) else {}
+    if not saved.get(PAUSED_KEY):
+        return False
+    epoch = _epoch(saved)
+    return epoch is None or (root_session_id, epoch) not in _opened
 
 
 async def _resume_saved(db, context: TraceContext, saved: dict) -> None:
@@ -253,7 +318,7 @@ async def _resume_saved(db, context: TraceContext, saved: dict) -> None:
     root_session_id = context.session_id
     if db is None or context.source_session_id != root_session_id:
         return
-    await _open_period(db, context, root_session_id, _epoch(saved) or _next_epoch(saved), resumed=True)
+    await _open_period(db, context, root_session_id, _epoch(saved) or _pause_epoch(saved) + 1, resumed=True)
 
 
 _UNLOADED = object()
@@ -299,7 +364,7 @@ async def _open_first_period(db, context: TraceContext) -> None:
 def _remember_opened(session) -> None:
     if session.in_nested_transaction():
         return
-    for key in session.info.pop(_PENDING_PERIODS, ()):
+    for key in session.info.pop(_PENDING_ONCE, ()):
         _opened.add(key)
 
 
@@ -311,10 +376,10 @@ def _forget_rolled_back(session, previous_transaction) -> None:
         boundary = boundary.parent
     if boundary is not None and boundary.nested:
         return
-    session.info.pop(_PENDING_PERIODS, None)
+    session.info.pop(_PENDING_ONCE, None)
 
 
 @sa_event.listens_for(SyncSession, "after_transaction_end")
 def _forget_uncommitted(session, transaction) -> None:
     if transaction.parent is None:
-        session.info.pop(_PENDING_PERIODS, None)
+        session.info.pop(_PENDING_ONCE, None)

@@ -320,3 +320,55 @@ async def test_tool_calls_and_file_changes_reach_the_spool_with_their_call_ident
     for result_output in (events[4], events[8]):
         assert result_output["data"]["stage"] == "executor_result" and result_output["data"]["final"] is True
     assert business_statements == []
+
+
+async def test_later_uses_of_an_asset_reference_its_first_artifact_fact_without_a_second(state, recording_spool):
+    from models.message import FilePart
+    from session.session import create_assistant_message, save_part
+    from trajectory.artifacts import artifact_event_id, capture_asset
+    await _file_asset("asset_clip")
+    prompt = await create_user_message("s1", "Cut the clip", user_id="u1")
+    assistant = await create_assistant_message("s1", prompt.id, user_id="u1")
+    for part_id in ("p-first", "p-again"):
+        await save_part(FilePart(id=part_id, path="/workspace/clip.mp4", mime_type="video/mp4", asset_id="asset_clip",
+                                 oss_key="assets/u1/asset_clip/asset_clip.mp4", session_id="s1",
+                                 message_id=assistant.id), is_new=True, user_id="u1")
+    dispatched = await capture_asset(TraceContext("u1", "s1", turn_id="later"), await read(FileAsset, "asset_clip"))
+
+    # The worker would keep only the first fact of this id; later uses no longer send conflicting copies.
+    [artifact] = recording_spool.events("artifact.recorded")
+    assert artifact["event_id"] == artifact_event_id("s1", "asset_clip") and artifact["data"]["role"] == "attachment"
+    parts = [item for item in recording_spool.events("part.committed") if item["data"]["part"]["type"] == "file"]
+    assert [item["data"]["artifacts"]["asset_clip"] for item in parts] == [dispatched, dispatched]
+    assert dispatched["event_id"] == artifact["event_id"]
+
+
+async def test_an_asset_use_rolled_back_or_refused_by_the_emitter_leaves_the_fact_to_the_next_use(
+        state, recording_spool, monkeypatch):
+    from trajectory.artifacts import capture_asset_in_tx, capture_asset_reference
+    from trajectory.emitter import Emitter
+    await _file_asset("asset_clip")
+    context = TraceContext("u1", "s1", turn_id="turn")
+    with pytest.raises(RuntimeError):
+        async with database.get_db_session() as db:
+            await capture_asset_in_tx(db, context, await db.get(FileAsset, "asset_clip"), role="input")
+            raise RuntimeError("the business write failed")
+    assert recording_spool.events() == []
+
+    real = Emitter.emit_bytes
+    refusals = {"count": 1}
+
+    def full_queue_once(self, *args, **kwargs):
+        if refusals["count"]:
+            refusals["count"] -= 1
+            return False
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Emitter, "emit_bytes", full_queue_once)
+    use = dict(asset_id="asset_clip", oss_key="assets/u1/asset_clip/asset_clip.mp4", media_type="video/mp4",
+               size_bytes=12)
+    await capture_asset_reference(context, **use)
+    assert recording_spool.events() == []
+    await capture_asset_reference(context, **use)
+    await capture_asset_reference(context, **use)
+    [artifact] = recording_spool.events("artifact.recorded")
+    assert artifact["data"]["asset_ref"]["asset_id"] == "asset_clip"

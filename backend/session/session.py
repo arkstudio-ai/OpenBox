@@ -417,7 +417,8 @@ async def update_session(session_id: str, user_id: str = "default", **kwargs) ->
             if reason is not None:
                 raise runtime.RunRevoked(ticket, reason, "session")
         if setting_keys and previous is not None and previous.user_id == user_id:
-            # This write holds no session row lock, so it leaves the recording markers alone.
+            # This write holds no session row lock: it leaves the recording markers
+            # alone and records nothing while they report a pause.
             await record_projection_in_tx(db, session_id, user_id, "session.settings_changed",
                 {"before": before, "after": {key: kwargs[key] for key in setting_keys}}, locked=False)
 
@@ -562,6 +563,7 @@ async def record_projection_in_tx(db, session_id: str, user_id: str, event_type:
     The fact is enqueued only when the write commits. A ``locked`` write holds
     the session row lock and also keeps the recording markers (SPEC §5.6): the
     first recorded activity, a pause while recording is off, a resume after it.
+    A write without the lock records nothing while the markers report a pause.
     """
     from trajectory import record
     context = await trajectory_context_in_tx(db, session_id, user_id, **ids)
@@ -572,6 +574,10 @@ async def record_projection_in_tx(db, session_id: str, user_id: str, event_type:
                                    session_id=session_id, context=context)
     if context is None:
         return None
+    if not locked:
+        from trajectory.producers import paused_in_tx
+        if await paused_in_tx(db, context):
+            return None
     part = data.get("part") or {}
     if event_type == "part.committed" and not data.get("role"):
         role = await db.scalar(select(MessageORM.role).where(

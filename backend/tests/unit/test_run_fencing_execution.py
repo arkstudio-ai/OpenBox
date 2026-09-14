@@ -170,6 +170,34 @@ async def test_stop_then_immediate_send_runs_the_new_turn_untouched_by_the_stopp
     assert "s1" not in run_status._abort_signals and "s1" not in run_status._pending_aborts
 
 
+async def test_deleting_the_session_under_its_run_ends_the_run_as_an_abort(state, loop_harness, monkeypatch):
+    """A deleted session revokes its run: the run stops without an error for a chat that is gone.
+
+    Recording off only: with the legacy db sink the recorder itself rejects the
+    run's late step facts for a deleted session (the worker drops them in wave 2).
+    """
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    monkeypatch.setattr("sandbox.sandbox_manager.release", AsyncMock())
+    streaming = asyncio.Event()
+
+    async def provider(**kwargs):
+        yield {"type": "text_delta", "text": "Working on it"}
+        streaming.set()
+        await asyncio.Event().wait()  # Only the deletion's stop ends this response.
+        yield {}
+    monkeypatch.setattr(loop_harness.processor, "stream_llm", provider)
+    await create_user_message("s1", "A long task", user_id="u1")
+    run = asyncio.create_task(loop_harness.loop.run_loop("s1", user_id="u1"))
+    await asyncio.wait_for(streaming.wait(), timeout=10)
+    assert await delete_session("s1", "u1")
+
+    assert await asyncio.wait_for(run, timeout=10) is None
+    assert not published(state, "session.error")
+    assert "error" not in [data["status"] for data in published(state, "session.status")]
+    assert (await read(Session, "s1")).is_deleted
+    assert (await read(SessionExecution, "s1")).run_id is None
+
+
 async def _apply(operation: str, session_id: str, ticket) -> None:
     if operation == "cancel":
         await runtime.cancel_session(session_id, "u1")

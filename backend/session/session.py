@@ -426,11 +426,14 @@ async def set_session_status(session_id: str, status: SessionStatus, user_id: st
     ticket = runtime.current_run.get()
     if ticket and ticket.session_id == session_id:
         # A run that no longer owns the session leaves its status alone silently.
-        async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
-            if not runtime.owns(execution, ticket):
-                return
-            value = await runtime.waiting_status(db, execution) if status == SessionStatus.IDLE else status.value
-            session.status = value
+        try:
+            async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
+                if not runtime.owns(execution, ticket):
+                    return
+                value = await runtime.waiting_status(db, execution) if status == SessionStatus.IDLE else status.value
+                session.status = value
+        except LookupError:
+            return  # The owner deleted the session under this run.
         runtime.publish_status(session_id, user_id, value)
         return
     await update_session(session_id, user_id=user_id, status=status)

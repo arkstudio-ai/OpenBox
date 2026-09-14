@@ -400,11 +400,32 @@ async def transaction(session_id: str, user_id: str, *, fence: bool = True):
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
-            session = await lock_owned_session(db, session_id, user_id)
+            session = await lock_for_write(db, session_id, user_id, fence=fence)
             execution = await execution_locked(db, session_id, user_id)
             if fence:
                 assert_current_locked(execution, session_id)
             yield db, session, execution
+
+
+async def lock_for_write(db, session_id: str, user_id: str, *, fence: bool = True):
+    """Lock the owned session row for a write.
+
+    A session its owner deleted is gone for everyone; for a run (or its title
+    and suggestions work) bound to it, that is a revocation like any other, so
+    the run ends as an abort rather than as a failed turn of a deleted chat.
+    """
+    try:
+        return await lock_owned_session(db, session_id, user_id)
+    except LookupError:
+        ticket = bound_ticket(session_id) if fence else None
+        if ticket is None or ticket.user_id != user_id:
+            raise
+        from db.models.session import Session
+        deleted = await db.scalar(select(Session.id).where(
+            Session.id == session_id, Session.user_id == user_id, Session.is_deleted.is_(True)))
+        if deleted is None:
+            raise
+        raise RunRevoked(ticket, "deleted", "write") from None
 
 
 async def execution_locked(db, session_id: str, user_id: str) -> SessionExecution:

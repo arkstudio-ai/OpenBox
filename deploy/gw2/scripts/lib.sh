@@ -26,6 +26,11 @@ need_value() { [ "$2" -ge 2 ] || die "$1 needs a value"; }
 valid_identifier() { [[ ${1:-} =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; }
 positive_integer() { [[ ${1:-} =~ ^[1-9][0-9]{0,8}$ ]]; }
 
+# These names are quoted into SQL identifiers.
+for identifier in "$OPENBOX_PG_USER" "$OPENBOX_BUSINESS_DB" "$OPENBOX_TRACE_DB"; do
+  valid_identifier "$identifier" || die "invalid database identifier in the environment: $identifier"
+done
+
 compose() { (cd "$OPENBOX_DIR" && docker compose "$@"); }
 
 # env_value NAME: the last NAME= assignment in $OPENBOX_DIR/.env, without surrounding quotes.

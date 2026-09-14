@@ -212,13 +212,18 @@ async def payload_meta(db, trajectory, payload_id: str, *, through_seq: int) -> 
 
 
 async def read_blob(db, trajectory, sha256: str, *, through_seq: int, blob_store=None) -> bytes:
-    """The JSON bytes of a content-addressed value visible at through_seq in this trajectory."""
+    """The JSON bytes of a content-addressed value visible at through_seq in this trajectory.
+
+    Media copies bound to an attachment are not values: only the payload
+    endpoint serves them, after checking their source attachment.
+    """
     require_content(trajectory)
     if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
         raise LookupError("Trajectory blob is not available at this position")
     rows = (await db.scalars(select(TrajectoryPayload).where(TrajectoryPayload.trajectory_id == trajectory.id,
         TrajectoryPayload.sha256 == sha256, TrajectoryPayload.storage_kind == "blob",
-        TrajectoryPayload.media_type == JSON_MEDIA_TYPE, TrajectoryPayload.first_seq <= through_seq)
+        TrajectoryPayload.media_type == JSON_MEDIA_TYPE, TrajectoryPayload.source_asset_id.is_(None),
+        TrajectoryPayload.first_seq <= through_seq)
         .order_by(TrajectoryPayload.first_seq))).all()
     if not rows:
         raise LookupError("Trajectory blob is not available at this position")

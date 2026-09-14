@@ -143,6 +143,23 @@ async def test_read_blob_returns_the_json_of_a_visible_value(trajectory, blobs):
             await read_blob(db, trajectory_row, corrupt.sha256, through_seq=9)
 
 
+async def test_read_blob_never_serves_media_bound_to_an_attachment(trajectory, blobs):
+    await add_asset("asset_gone", is_deleted=True, deleted_at=AT)
+    content = canonical({"attached": True})
+    bound = await add_payload(blobs, TRAJECTORY, content, first_seq=1, media_type=JSON, source_asset_id="asset_gone")
+    async with trace_session() as db:
+        trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
+        with pytest.raises(LookupError):
+            await read_blob(db, trajectory_row, bound.sha256, through_seq=9)
+        with pytest.raises(FileNotFoundError, match="attachment"):
+            await read_payload(db, TRAJECTORY, bound.payload_id, through_seq=9)
+    # The same bytes stored as a value of this trajectory are served through that row.
+    value = await add_payload(blobs, TRAJECTORY, content, first_seq=2, media_type=JSON)
+    async with trace_session() as db:
+        trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
+        assert json.loads(await read_blob(db, trajectory_row, value.sha256, through_seq=2)) == {"attached": True}
+
+
 async def test_expand_resolves_refs_payloads_and_current_availability(trajectory, blobs):
     inner = await add_payload(blobs, TRAJECTORY, canonical("inner text"), first_seq=1, media_type=JSON)
     outer = await add_payload(blobs, TRAJECTORY, canonical({"text": _ref(inner), "items": [1, 2]}), first_seq=1, media_type=JSON)

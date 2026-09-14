@@ -80,6 +80,30 @@ def _preview(value, limit=240):
     return text[:limit]
 
 
+PREVIEW_FIELDS = ("text", "content", "input", "prompt", "questions", "requested_arguments", "arguments", "summary")
+RESULT_FIELDS = ("output", "result", "answers", "model_output")
+REFERENCE_KEYS = ("$ref", "$payload", "$media")
+
+
+def _has_reference(value) -> bool:
+    if isinstance(value, dict):
+        return any(key in value for key in REFERENCE_KEYS) or any(_has_reference(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_has_reference(child) for child in value)
+    return False
+
+
+def _field_preview(data, field, hints):
+    # The trace worker stores large values as references; hints.preview keeps
+    # the preview the original value had (computed before externalization).
+    value = data.get(field)
+    if hints and _has_reference(value):
+        preview = (hints.get("preview") or {}).get(field)
+        if isinstance(preview, str):
+            return preview
+    return _preview(value)
+
+
 def _new_record(event, record_id, kind):
     return {"record_id": record_id, "kind": kind, "title": kind, "preview": None,
             "result_preview": None, "status": "pending", "status_reason": None,
@@ -135,7 +159,7 @@ def _usage(record, data):
                 record["usage"][key] = deepcopy(value)
 
 
-def _update(record, event):
+def _update(record, event, hints=None):
     data = event.get("data", {})
     family, action = event["type"].split(".", 1)
     record["as_of_seq"] = str(event["seq"])
@@ -216,12 +240,14 @@ def _update(record, event):
         record["duration_ms"] = None
         record["timing_source"] = None
     record["title"] = str(data.get("title") or data.get("name") or data.get("tool") or data.get("tool_name") or data.get("model") or record["title"])
-    candidate = _preview(data.get("text") or data.get("content") or data.get("input") or data.get("prompt") or data.get("questions") or data.get("requested_arguments") or data.get("arguments") or data.get("summary"))
+    # The first truthy preview field wins; with none, `a or b or ...` yields data["summary"].
+    field = next((name for name in PREVIEW_FIELDS if data.get(name)), "summary")
+    candidate = _field_preview(data, field, hints)
     if candidate is not None and (record["preview"] is None or family in {"input", "message", "part"}):
         record["preview"] = candidate
-    for key in ("output", "result", "answers", "model_output"):
+    for key in RESULT_FIELDS:
         if key in data:
-            record["result_preview"] = _preview(data[key])
+            record["result_preview"] = _field_preview(data, key, hints)
             break
 
 
@@ -250,8 +276,12 @@ def _system_snapshot(state, event):
     return record
 
 
-def reduce(state: dict, event: dict) -> dict:
-    """Copy on write: caller's state and events are never mutated."""
+def reduce(state: dict, event: dict, hints: dict | None = None) -> dict:
+    """Copy on write: caller's state and events are never mutated.
+
+    ``hints`` (trace worker only, ``{"preview": {field: text}}``) supplies the
+    previews of values stored as references; without it nothing changes.
+    """
     if int(event["seq"]) <= int(state["through_seq"]):
         return state
     result = {**state, "records": dict(state["records"]), "through_seq": str(event["seq"])}
@@ -266,13 +296,13 @@ def reduce(state: dict, event: dict) -> dict:
     for record_id, kind in targets(event, result):
         previous = result["records"].get(record_id)
         record = deepcopy(previous) if previous is not None else _new_record(event, record_id, kind)
-        _update(record, event)
+        _update(record, event, hints)
         result["records"][record_id] = record
     if event["type"] == "request.finished":
         assistant_id = f"assistant:{event.get('request_id')}"
         if assistant_id in result["records"]:
             record = deepcopy(result["records"][assistant_id])
-            _update(record, event)
+            _update(record, event, hints)
             result["records"][assistant_id] = record
     if event["type"] in {"run.interrupted", "recording.gap"}:
         for record_id, previous in result["records"].items():

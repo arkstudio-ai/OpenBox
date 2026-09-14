@@ -53,7 +53,11 @@ def parse_time(value) -> datetime | None:
             return None
     else:
         return None
-    return moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment.astimezone(timezone.utc)
+    try:
+        return moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment.astimezone(timezone.utc)
+    except OverflowError:
+        # 9999-12-31T23:00:00-05:00 is past datetime.max in UTC: a value no column can hold, not a crash.
+        return None
 
 
 def _identifier(value) -> str | None:

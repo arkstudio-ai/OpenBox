@@ -145,3 +145,10 @@ async def test_asset_deletion_revokes_references_everywhere(trace_db):
         assert (await db.get(TrajectoryMetaAsset, "asset_1")).is_deleted
     async with trace_session() as db:
         assert await revoke_asset(db, MetaCache(), asset_id="never_used", user_id=None, deleted_at=AT, now=AT) == []
+
+
+def test_times_outside_the_datetime_range_parse_as_missing():
+    # A UTC conversion past year 9999 or before year 1 overflows; it must read as "no time", not raise.
+    assert parse_time("9999-12-31T23:00:00-05:00") is None
+    assert parse_time("0001-01-01T00:30:00+01:00") is None
+    assert parse_time("2026-09-14T08:00:00.000Z") == AT

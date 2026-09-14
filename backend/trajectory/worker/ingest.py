@@ -61,7 +61,7 @@ INVALID_LOG_SECONDS = 60.0
 _invalid_logged: dict[str, float] = {}
 COUNTERS = ("lines", "events", "controls", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
             "invalid_events", "gaps", "producer_losses", "quarantined_files", "files_done", "blob_puts",
-            "blob_put_bytes", "blob_put_failures", "deferred_batches")
+            "blob_put_bytes", "blob_put_failures", "deferred_batches", "failed_batches")
 #: Pass counters -> SPEC §8.13 metric names.
 METRICS = {"lines": "ingest_lines", "events": "ingest_events", "duplicates": "duplicates",
            "idempotency_conflicts": "idempotency_conflicts", "deleted_drops": "deleted_drops",
@@ -330,6 +330,17 @@ class IngestService:
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
+        #: (producer_id, file name) -> (monotonic time before which the file is not retried, failures in a row).
+        self._failures: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def _failed(self, key: tuple[str, str], failure, exc: Exception, result: dict) -> None:
+        attempts = (failure[1] if failure is not None else 0) + 1
+        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
+        self._failures[key] = (time.monotonic() + delay, attempts)
+        result["failed_batches"] += 1
+        # The error type only: database messages can carry event content.
+        log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
+                    "error_type=%s", delay, key[0], key[1], attempts, type(exc).__name__)
 
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
@@ -361,7 +372,20 @@ class IngestService:
                 if remaining is not None and remaining <= 0:
                     waiting[key] = spool_file.mtime
                     continue
-                lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                failure = self._failures.get(key)
+                if failure is not None and time.monotonic() < failure[0]:
+                    result["deferred_batches"] += 1
+                    waiting[key] = spool_file.mtime
+                    continue
+                try:
+                    lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                except Exception as exc:
+                    # One file's failure (a purge that times out, a value the database rejects, a bug) must
+                    # not stop the other producers: the file retries from its committed offset after a backoff.
+                    self._failed(key, failure, exc, result)
+                    waiting[key] = spool_file.mtime
+                    continue
+                self._failures.pop(key, None)
                 if remaining is not None:
                     remaining -= lines
                 if finished:
@@ -369,6 +393,8 @@ class IngestService:
                     progressed = True
                 else:
                     waiting[key] = spool_file.mtime
+        listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
+        self._failures = {key: value for key, value in self._failures.items() if key in listed}
         await self._finish_producers(scan, result)
         await self._save_recent()
         self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)

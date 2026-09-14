@@ -129,14 +129,17 @@ async def test_offsets_commit_with_rows_and_a_restart_never_duplicates(harness, 
     original = IngestService._commit
     calls = {"count": 0}
 
+    class WorkerKilled(BaseException):
+        """Like a kill, nothing inside the worker handles it (test_worker_ingest_crash.py kills processes)."""
+
     async def killed_on_second_batch(self, *args, **kwargs):
         calls["count"] += 1
         if calls["count"] == 2:
-            raise RuntimeError("worker killed between upload and commit")
+            raise WorkerKilled("worker killed between upload and commit")
         return await original(self, *args, **kwargs)
 
     monkeypatch.setattr(IngestService, "_commit", killed_on_second_batch)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkerKilled):
         await harness.run()
     [file_row] = await rows(TrajectoryIngestFile)
     assert (file_row.lines_consumed, file_row.done) == (2, False)
@@ -220,6 +223,49 @@ async def test_a_crash_after_file_deletion_leaves_no_orphan_rows(harness, monkey
     result = await harness.run()
     assert result["lines"] == 0 and await rows(TrajectoryIngestFile) == []
     assert len((await events_of("ses_1"))[1]) == 3
+
+
+async def test_a_failing_batch_backs_off_while_other_producers_continue(harness, monkeypatch):
+    """An unexpected error in one file's batch (a tombstone purge that times out, a row the database rejects)
+    must not end the pass: the other producers' files are ingested and the failing file retries from its
+    committed offset after a backoff."""
+    harness.writer.events(event(event_id="first"))
+    await harness.run()
+    tombstone = harness.retention.tombstone
+    failures = {"left": 1}
+
+    async def flaky_tombstone(db, trajectory, *, reason):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise RuntimeError("canceling statement due to statement timeout")
+        await tombstone(db, trajectory, reason=reason)
+
+    monkeypatch.setattr(harness.retention, "tombstone", flaky_tombstone)
+    failing = harness.writer.controls({"type": "session.deleted", "session_id": "ses_1", "user_id": "u1",
+                                       "deleted_at": "2026-09-14T09:00:00.000Z"}, age=30)
+    other = SpoolWriter(harness.settings.spool_dir, "20260914080003-other-4-eeeeeeee")
+    other.events(event(session="ses_2", event_id="other"), age=10)
+    result = await harness.run()
+    assert result["failed_batches"] == 1 and result["events"] == 1
+    assert [row.event_id for row in (await events_of("ses_2"))[1][1:]] == ["other"]
+    assert failing.exists() and (await events_of("ses_1"))[0].deleted_at is None
+    # The failed file waits for its backoff instead of failing on every pass.
+    result = await harness.run()
+    assert result["failed_batches"] == 0 and result["deferred_batches"] == 1 and failing.exists()
+    for key, (_, attempts) in list(harness.service._failures.items()):
+        harness.service._failures[key] = (0.0, attempts)
+    result = await harness.run()
+    assert result["failed_batches"] == 0 and not failing.exists()
+    assert (await events_of("ses_1"))[0].deleted_at is not None and harness.service._failures == {}
+
+
+async def test_out_of_range_times_are_invalid_values_not_fatal_errors(harness):
+    harness.writer.events(event(event_id="late", occurred_at="9999-12-31T23:00:00-05:00"), event(event_id="kept"))
+    harness.writer.controls({"type": "session.meta", "session": {"id": "ses_1", "user_id": "u1",
+                                                                 "updated_at": "0001-01-01T00:30:00+01:00"}})
+    result = await harness.run()
+    assert (result["invalid_events"], result["events"], result["failed_batches"]) == (1, 1, 0)
+    assert [row.event_id for row in (await events_of("ses_1"))[1][1:]] == ["kept"]
 
 
 async def test_max_lines_limits_one_pass(harness):

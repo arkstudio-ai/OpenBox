@@ -21,8 +21,6 @@ _PRODUCERS: dict[str, str] = {
         "imports the legacy recorder's storage fixture and business trajectory tables (w2-producers)",
     "tests/integration/test_trajectory_boundaries.py":
         "legacy recorder fixture, in-process admin API and business trajectory tables (w2-producers)",
-    "tests/integration/test_trajectory_process_crash.py":
-        "its crash benchmark reads business trajectory tables through the legacy recorder (w2-producers)",
     "tests/integration/test_trajectory_media_deletion.py":
         "in-transaction media retention into business trajectory payloads was removed (w2-producers)",
     "tests/integration/test_trajectory_media_dispatch.py":
@@ -126,8 +124,6 @@ _PROJECTION: dict[str, str] = {
         _PAYLOAD_ROWS,
     "tests/integration/test_trajectory_media_dispatch.py::test_video_dispatch_captures_final_wire_and_poll_does_not_create_request[task]":
         _PAYLOAD_ROWS,
-    "tests/integration/test_trajectory_process_crash.py::test_sigkill_preserves_committed_tool_output_and_never_reexecutes":
-        "crash benchmark replays business-database trajectory tables through repository.state_at",
     "tests/integration/test_trajectory_read_races.py::test_admin_json_and_ticket_are_not_cacheable": _ADMIN_READS,
     "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[asset_deleted-410-export]": _ADMIN_READS,
     "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[asset_deleted-410-payload]": _ADMIN_READS,

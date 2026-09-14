@@ -250,6 +250,8 @@ async def test_blob_endpoint_returns_the_ref_value_at_the_watermark(worker):
         response = await worker.client.get(SESSION + "/blobs/" + malformed)
         assert response.status_code == 422 and response.headers["cache-control"] == "no-store"
     worker.blob.objects[blob_key("trj_a1", SYSTEM_SHA)] = b"not zstd"
+    from trajectory.payload import reset_blob_cache
+    reset_blob_cache()  # the value served above was verified when it entered the cache
     assert (await worker.client.get(SESSION + f"/blobs/{SYSTEM_SHA}")).status_code == 409
     async with trace_session() as db:
         (await db.get(TrajectoryPayload, "pld_system")).availability = "expired"
@@ -257,16 +259,15 @@ async def test_blob_endpoint_returns_the_ref_value_at_the_watermark(worker):
     assert gone.status_code == 410 and gone.headers["cache-control"] == "no-store"
 
 
-async def test_blob_that_changes_during_the_read_is_not_served(worker, monkeypatch):
-    bodies = iter([b'{"version":1}', b'{"version":2}'])
-
-    async def read_blob(db, trajectory, sha256, *, through_seq):
-        return next(bodies)
-
-    monkeypatch.setattr("trajectory.payload.read_blob", read_blob)
+async def test_blob_content_that_does_not_match_its_address_is_never_served(worker):
+    from trajectory.storage import encode_blob
+    from trajectory.types import canonical
+    tampered, _ = encode_blob(canonical({"role": "system", "content": "tampered prompt " * 100}), "application/json")
+    worker.blob.objects[blob_key("trj_a1", SYSTEM_SHA)] = tampered
     response = await worker.client.get(SESSION + f"/blobs/{SYSTEM_SHA}")
-    assert response.status_code == 409 and response.json()["detail"]["message"] == "Blob changed during download"
-    assert b"version" not in response.content.replace(b"Blob changed during download", b"")
+    assert response.status_code == 409 and response.json()["detail"] == {
+        "code": "trajectory_corrupt", "message": "Trajectory content digest mismatch"}
+    assert b"tampered" not in response.content and response.headers["cache-control"] == "no-store"
 
 
 async def test_export_create_status_and_download_contract(worker, monkeypatch):

@@ -5,21 +5,23 @@ are the contract of docs/trajectory-rearch/maps/api.md §2. Additive parts:
 ``expand=refs`` on record detail, ``GET .../blobs/{sha256}``, ``?meta=1`` on
 payloads and ``capabilities.refs`` in the session header. No session or
 execution mutator is reachable from here.
+
+Downloads (payloads, blobs and exports) keep memory bounded: the content is
+spooled to a temporary file in chunks with no trace database session open, the
+viewer and the content's state are revalidated after that read, and only then
+is the file streamed, so a read revoked meanwhile sends no bytes.
 """
-import hashlib
 from datetime import datetime
 from functools import wraps
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
 
 from trajectory import export as exports, payload as payloads, repository
 from trajectory.auth import NoStoreRoute, record_audit, require_trajectory_admin, revalidate_viewer
 from trajectory.store.database import trace_session
-from trajectory.store.models import TrajectoryExport, TrajectoryMetaAsset, TrajectoryPayload
 from trajectory.types import CorruptContent, TrajectoryError
 
 router = APIRouter(prefix="/api/admin/trajectories", tags=["admin-trajectories"], route_class=NoStoreRoute)
@@ -48,6 +50,21 @@ def errors(function):
 async def audit(admin, request, action, session_id=None, details=None):
     await record_audit(admin["user_id"], f"admin.trajectory.{action}", target_id=session_id, details=details,
                        request=request)
+
+
+class SpooledResponse(StreamingResponse):
+    """Streams spooled content (``trajectory.payload.Spooled``) and releases it however the response ends."""
+
+    def __init__(self, spooled, *, media_type: str, headers: dict):
+        super().__init__(spooled.chunks(), media_type=media_type,
+                         headers={**headers, "Content-Length": str(spooled.size)})
+        self.spooled = spooled
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.spooled.close()
 
 
 @router.get("/sessions")
@@ -142,17 +159,22 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, through_seq)
-        row, content = await payloads.read_payload(db, trajectory.id, payload_id, through_seq=through)
+        row = await payloads.validate_payload(db, trajectory.id, payload_id, through_seq=through)
         media_type = row.media_type
-    await audit(admin, request, "payload", session_id, {"payload_id": payload_id, "through_seq": str(through)})
-    await revalidate_viewer(request, admin['user_id'])
-    async with trace_session() as db:
-        _, current = await repository.get_trajectory(db, session_id)
-        row = await payloads.validate_payload(db, current.id, payload_id, through_seq=through)
-        # Asset references without a known hash have nothing to compare.
-        if row.sha256 is not None and hashlib.sha256(content).hexdigest() != row.sha256:
-            raise CorruptContent('Payload changed during download')
-    return Response(content, media_type=media_type, headers={**CONTENT_HEADERS,
+    spooled = await payloads.spool_payload(row)
+    try:
+        await audit(admin, request, "payload", session_id, {"payload_id": payload_id, "through_seq": str(through)})
+        await revalidate_viewer(request, admin['user_id'])
+        async with trace_session() as db:
+            _, current = await repository.get_trajectory(db, session_id)
+            row = await payloads.validate_payload(db, current.id, payload_id, through_seq=through)
+            # Asset references without a known hash have nothing to compare.
+            if row.sha256 is not None and spooled.sha256 != row.sha256:
+                raise CorruptContent('Payload changed during download')
+    except BaseException:
+        spooled.close()
+        raise
+    return SpooledResponse(spooled, media_type=media_type, headers={**CONTENT_HEADERS,
         "Content-Disposition": f'attachment; filename="{payload_id}"'})
 
 
@@ -164,13 +186,18 @@ async def blob(session_id: str, request: Request, sha256: str = Path(pattern=SHA
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, through_seq)
-        content = await payloads.read_blob(db, trajectory, sha256, through_seq=through)
-    await revalidate_viewer(request, admin['user_id'])
-    async with trace_session() as db:
-        _, current = await repository.get_trajectory(db, session_id)
-        if await payloads.read_blob(db, current, sha256, through_seq=through) != content:
-            raise CorruptContent('Blob changed during download')
-    return Response(content, media_type="application/json", headers=CONTENT_HEADERS)
+        row = await payloads.visible_blob(db, trajectory, sha256, through_seq=through)
+    # Spooling verifies the content against its address, so only the state can change meanwhile.
+    spooled = await payloads.spool_blob(row)
+    try:
+        await revalidate_viewer(request, admin['user_id'])
+        async with trace_session() as db:
+            _, current = await repository.get_trajectory(db, session_id)
+            await payloads.visible_blob(db, current, sha256, through_seq=through)
+    except BaseException:
+        spooled.close()
+        raise
+    return SpooledResponse(spooled, media_type="application/json", headers=CONTENT_HEADERS)
 
 
 class ExportBody(BaseModel):
@@ -192,31 +219,7 @@ async def export(session_id: str, body: ExportBody, request: Request, admin: dic
 
 async def _export(db, session_id, export_id):
     _, trajectory = await repository.get_trajectory(db, session_id)
-    row = await db.scalar(select(TrajectoryExport).where(TrajectoryExport.id == export_id,
-        TrajectoryExport.trajectory_id == trajectory.id))
-    if row is None:
-        raise LookupError("Export does not belong to this trajectory")
-    return trajectory, row
-
-
-async def _validate_export_content(db, trajectory, row):
-    if row.status != 'completed':
-        raise HTTPException(409, detail='Export is not ready')
-    if getattr(trajectory, "content_expired_at", None) is not None:
-        raise FileNotFoundError("Trajectory content has expired")
-    visible = (TrajectoryPayload.trajectory_id == trajectory.id, TrajectoryPayload.first_seq <= row.through_seq)
-    deleted = await db.scalar(select(TrajectoryPayload.payload_id).where(*visible,
-        TrajectoryPayload.deleted_at > row.created_at).limit(1))
-    # Asset references need their live asset; other copies bound to an asset
-    # die with a deletion the replica already knows about.
-    removed_source = await db.scalar(select(TrajectoryPayload.payload_id).outerjoin(TrajectoryMetaAsset,
-        TrajectoryMetaAsset.id == TrajectoryPayload.source_asset_id).where(*visible,
-        TrajectoryPayload.source_asset_id.is_not(None), TrajectoryPayload.availability == 'available',
-        or_(and_(TrajectoryPayload.storage_kind == 'asset', TrajectoryMetaAsset.id.is_(None)),
-            TrajectoryMetaAsset.is_deleted.is_(True), TrajectoryMetaAsset.deleted_at.is_not(None),
-            TrajectoryMetaAsset.status == 'deleted')).limit(1))
-    if deleted or removed_source:
-        raise FileNotFoundError('Export invalidated by explicit content deletion; create a new export')
+    return trajectory, await exports.get_export(db, trajectory, export_id)
 
 
 @router.get("/sessions/{session_id}/exports/{export_id}")
@@ -231,16 +234,21 @@ async def export_info(session_id: str, export_id: str, admin: dict = Depends(req
 @errors
 async def export_download(session_id: str, export_id: str, request: Request,
                           admin: dict = Depends(require_trajectory_admin)):
+    # export.validate_export is the one validation: 409 not ready, 410 content deleted or expired since.
     async with trace_session() as db:
         trajectory, row = await _export(db, session_id, export_id)
-        await _validate_export_content(db, trajectory, row)
-        _, content = await exports.read_export(db, trajectory, export_id)
-    await audit(admin, request, "download", session_id, {"export_id": export_id})
-    await revalidate_viewer(request, admin['user_id'])
-    async with trace_session() as db:
-        trajectory, row = await _export(db, session_id, export_id)
-        await _validate_export_content(db, trajectory, row)
-        if hashlib.sha256(content).hexdigest() != row.sha256:
-            raise CorruptContent('Export changed during download')
-    return Response(content, media_type="application/zip", headers={**CONTENT_HEADERS,
+        await exports.validate_export(db, trajectory, row)
+    spooled = await payloads.spool_object(None, row.storage_key, sha256=row.sha256, mismatch="Export digest mismatch")
+    try:
+        await audit(admin, request, "download", session_id, {"export_id": export_id})
+        await revalidate_viewer(request, admin['user_id'])
+        async with trace_session() as db:
+            trajectory, current = await _export(db, session_id, export_id)
+            await exports.validate_export(db, trajectory, current)
+            if current.sha256 != spooled.sha256:
+                raise CorruptContent('Export changed during download')
+    except BaseException:
+        spooled.close()
+        raise
+    return SpooledResponse(spooled, media_type="application/zip", headers={**CONTENT_HEADERS,
         "Content-Disposition": f'attachment; filename="{export_id}.zip"'})

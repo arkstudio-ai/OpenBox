@@ -15,7 +15,7 @@ to ``POST /api/internal/trajectory/audit``.
 import asyncio
 import os
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
@@ -42,6 +42,10 @@ AUDIT_DEDUPE_SECONDS = 60
 DEDUPED_AUDIT_ACTIONS = frozenset({"admin.trajectory.list", "admin.trajectory.view"})
 #: Refusals of an audit batch that resending the same batch cannot fix.
 AUDIT_REJECTED_STATUSES = frozenset({400, 413, 422})
+#: Defaults of TRAJECTORY_AUDIT_MAX_ATTEMPTS and TRAJECTORY_AUDIT_MAX_AGE_SECONDS. With the 1 h backoff cap,
+#: 30 attempts span about 20 hours, so rows queued before a backend outage of most of a day are still delivered.
+DEFAULT_AUDIT_MAX_ATTEMPTS = 30
+DEFAULT_AUDIT_MAX_AGE_SECONDS = 3 * 24 * 3600
 
 _bearer = HTTPBearer(auto_error=False)
 # Desktop mode without JWT_SECRET: the same default administrator as auth.middleware.
@@ -195,12 +199,16 @@ def _mobile_session_error(client: str | None) -> HTTPException:
 
 async def assert_admin(user_id: str, *, client: str | None = "web", sid: str | None = None,
                        jti: str | None = None, fresh: bool = False) -> dict:
-    """401 inactive, deleted or an invalid mobile session; 403 not an admin; 404 administration disabled."""
+    """401 an invalid mobile session, inactive or deleted; 403 not an admin; 404 administration disabled.
+
+    The order is the in-process API's: its authentication refused the token's
+    mobile-session claim before the account row was read.
+    """
     facts = await viewer_facts(user_id, client=client, sid=sid, jti=jti, fresh=fresh)
-    if facts["is_deleted"] or not facts["is_active"]:
-        raise HTTPException(status_code=401, detail="Account is inactive or deleted")
     if not facts["mobile_session_valid"]:
         raise _mobile_session_error(client)
+    if facts["is_deleted"] or not facts["is_active"]:
+        raise HTTPException(status_code=401, detail="Account is inactive or deleted")
     if facts["role"] != "admin":
         raise HTTPException(status_code=403, detail="Platform administrator access required")
     if not facts["admin_enabled"]:
@@ -310,6 +318,16 @@ async def record_audit(user_id: str, action: str, *, target_id: str | None = Non
         return False
 
 
+def audit_max_attempts() -> int:
+    """Failed deliveries after which an audit row is a dead letter (TRAJECTORY_AUDIT_MAX_ATTEMPTS)."""
+    return integer("TRAJECTORY_AUDIT_MAX_ATTEMPTS", DEFAULT_AUDIT_MAX_ATTEMPTS)
+
+
+def audit_max_age_seconds() -> int:
+    """Age at which an audit row whose delivery fails is a dead letter (TRAJECTORY_AUDIT_MAX_AGE_SECONDS)."""
+    return integer("TRAJECTORY_AUDIT_MAX_AGE_SECONDS", DEFAULT_AUDIT_MAX_AGE_SECONDS)
+
+
 class AuditDelivery:
     """Delivers ``trajectory_audit_outbox`` rows to the backend in batches.
 
@@ -317,20 +335,37 @@ class AuditDelivery:
     conditional UPDATE, so concurrent workers never send a row twice within the
     lease. Delivered rows are deleted and failed rows back off (5 s up to 1 h);
     entry ids make a redelivery after a crash idempotent in the backend.
+
+    A row whose failed delivery was its ``audit_max_attempts()``-th, or that was
+    ``audit_max_age_seconds()`` old by then, becomes a dead letter: it stays in
+    the outbox with ``next_attempt_at = DEAD_LETTER_AT``, so no pass claims it
+    again, counts ``audit_dead_letters`` and is logged once. Moving its
+    ``next_attempt_at`` back to the present delivers it again.
     """
     BATCH = 100
     LEASE_SECONDS = 120
     INTERVAL_SECONDS = 2.0
     MAX_BACKOFF_SECONDS = 3600
+    DEAD_LETTER_AT = datetime(9999, 1, 1, tzinfo=timezone.utc)
 
-    def __init__(self, backend: HttpBackend | LocalBackend | None = None, *, interval: float | None = None):
+    def __init__(self, backend: HttpBackend | LocalBackend | None = None, *, interval: float | None = None,
+                 metrics=None):
         self._backend = backend
         self._interval = self.INTERVAL_SECONDS if interval is None else interval
+        self._metrics = metrics
         self._task: asyncio.Task | None = None
 
     @classmethod
     def backoff(cls, attempts: int) -> float:
         return float(min(5 * 2 ** min(max(0, attempts - 1), 20), cls.MAX_BACKOFF_SECONDS))
+
+    @staticmethod
+    def exhausted(attempts: int, created_at: datetime, at: datetime) -> bool:
+        """Whether a row whose ``attempts``-th delivery failed at ``at`` becomes a dead letter."""
+        if created_at.tzinfo is None:
+            # SQLite returns the stored UTC time without its zone.
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return attempts >= audit_max_attempts() or (at - created_at).total_seconds() >= audit_max_age_seconds()
 
     async def deliver_once(self) -> int:
         """One batch; returns the number of rows the backend accepted."""
@@ -348,23 +383,38 @@ class AuditDelivery:
                 update(Outbox).where(Outbox.id.in_(due), Outbox.next_attempt_at <= claimed_at)
                 .values(next_attempt_at=claimed_at + timedelta(seconds=self.LEASE_SECONDS),
                         attempts=Outbox.attempts + 1)
-                .returning(Outbox.id, Outbox.payload, Outbox.attempts)
+                .returning(Outbox.id, Outbox.payload, Outbox.attempts, Outbox.created_at)
                 .execution_options(synchronize_session=False))).all()
         if not rows:
             return 0
         delivered, failed = await self._send(self._backend or get_backend(), rows)
+        retry_from = now()
+        dead = [row for row in failed if self.exhausted(row.attempts, row.created_at, retry_from)]
+        dead_ids = {row.id for row in dead}
         async with trace_session() as db:
             if delivered:
                 await db.execute(delete(Outbox).where(Outbox.id.in_(delivered))
                                  .execution_options(synchronize_session=False))
-            retry_from = now()
-            for row_id, attempts in failed:
-                await db.execute(update(Outbox).where(Outbox.id == row_id)
-                                 .values(next_attempt_at=retry_from + timedelta(seconds=self.backoff(attempts)))
+            for row in failed:
+                retry_at = (self.DEAD_LETTER_AT if row.id in dead_ids
+                            else retry_from + timedelta(seconds=self.backoff(row.attempts)))
+                await db.execute(update(Outbox).where(Outbox.id == row.id).values(next_attempt_at=retry_at)
                                  .execution_options(synchronize_session=False))
+        if dead:
+            self._dead_lettered(dead)
         return len(delivered)
 
-    async def _send(self, backend, rows) -> tuple[list[int], list[tuple[int, int]]]:
+    def _dead_lettered(self, rows) -> None:
+        """Log each new dead letter once and count them."""
+        from trajectory.worker.metrics import get_metrics
+        for row in rows:
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            log.warning("Trajectory audit entry dead-lettered id=%s action=%s attempts=%s",
+                        payload.get("id"), payload.get("action"), row.attempts)
+        (self._metrics or get_metrics()).inc("audit_dead_letters", len(rows))
+
+    async def _send(self, backend, rows) -> tuple[list[int], list]:
+        """(ids of the rows the backend accepted, the rows it did not accept)."""
         try:
             await backend.audit([row.payload for row in rows])
             return [row.id for row in rows], []
@@ -372,10 +422,10 @@ class AuditDelivery:
             rejected = exc
         except Exception as exc:
             log.warning("Trajectory audit delivery failed rows=%s error_type=%s", len(rows), type(exc).__name__)
-            return [], [(row.id, row.attempts) for row in rows]
+            return [], list(rows)
         if len(rows) == 1:
             log.warning("Trajectory audit entry refused id=%s reason=%s", rows[0].payload.get("id"), rejected)
-            return [], [(rows[0].id, rows[0].attempts)]
+            return [], [rows[0]]
         # One refused entry must not hold back the rest of its batch.
         delivered, failed = [], []
         for row in rows:
@@ -385,7 +435,7 @@ class AuditDelivery:
             except Exception as exc:
                 log.warning("Trajectory audit entry not delivered id=%s error_type=%s",
                             row.payload.get("id"), type(exc).__name__)
-                failed.append((row.id, row.attempts))
+                failed.append(row)
         return delivered, failed
 
     def start(self) -> asyncio.Task:

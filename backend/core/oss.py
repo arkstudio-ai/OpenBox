@@ -337,10 +337,13 @@ class OssClient:
         headers: dict[str, str] | None = None,
         internal: bool = False,
         timeout: float = _CONTROL_TIMEOUT,
+        stream: bool = False,
     ):
         """Send one header-signed request; key "" addresses the bucket itself.
 
-        Failures without an HTTP answer become OssError with status 0.
+        With stream=True the body is left unread: the caller reads and closes
+        the response. Failures without an HTTP answer become OssError with
+        status 0.
         """
         import httpx
 
@@ -357,11 +360,12 @@ class OssClient:
                 for name, value in params.items()
             )
         client = self._http or shared_http_client()
+        timeouts = httpx.Timeout(timeout, connect=_CONNECT_TIMEOUT, pool=_POOL_TIMEOUT)
         try:
-            return await client.request(
-                method, url, content=body or None, headers=headers,
-                timeout=httpx.Timeout(timeout, connect=_CONNECT_TIMEOUT, pool=_POOL_TIMEOUT),
-            )
+            if stream:
+                request = client.build_request(method, url, content=body or None, headers=headers, timeout=timeouts)
+                return await client.send(request, stream=True)
+            return await client.request(method, url, content=body or None, headers=headers, timeout=timeouts)
         except httpx.HTTPError as exc:
             raise OssError(0, type(exc).__name__, "", str(exc)) from exc
 
@@ -407,6 +411,30 @@ class OssClient:
         if absent:
             raise FileNotFoundError(f"OSS object not found: {key}")
         raise error
+
+    async def get_object_chunks(self, key: str, *, internal: bool = False, chunk_bytes: int = 1024 * 1024,
+                                timeout: float = 120):
+        """The object as chunks of at most chunk_bytes, for readers that must not hold it whole.
+
+        An async generator. The errors of get_object are raised before the
+        first chunk; timeout bounds each network read, not the whole transfer.
+        """
+        import httpx
+
+        resp = await self._request("GET", _object_key(key), internal=internal, timeout=timeout, stream=True)
+        try:
+            if resp.status_code != 200:
+                await resp.aread()
+                absent, error = _absent(resp)
+                if absent:
+                    raise FileNotFoundError(f"OSS object not found: {key}")
+                raise error
+            async for chunk in resp.aiter_bytes(chunk_bytes):
+                yield chunk
+        except httpx.HTTPError as exc:
+            raise OssError(0, type(exc).__name__, "", str(exc)) from exc
+        finally:
+            await resp.aclose()
 
     async def head_object_info(self, key: str, *, internal: bool = False) -> dict | None:
         """size, mime, etag and last_modified of an object; None when absent."""

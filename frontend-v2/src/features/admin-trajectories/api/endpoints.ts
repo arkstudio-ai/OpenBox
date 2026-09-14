@@ -7,7 +7,9 @@ import type {
   CheckpointResponse,
   EventPage,
   ExportJob,
+  PayloadMeta,
   RecordDetail,
+  RecordExpand,
   RecordPage,
   SearchPage,
   SessionHeader,
@@ -31,6 +33,12 @@ export function queryString(params: Params): string {
 
 function sessionPath(sessionId: string, suffix = ""): string {
   return `${TRAJECTORY_API}/sessions/${encodeURIComponent(sessionId)}${suffix}`
+}
+
+function recordPath(sessionId: string, recordId: string, throughSeq: Seq, expand: RecordExpand): string {
+  // Only `refs` is sent: for the default a server answers exactly as it did before the parameter existed.
+  const query = queryString({ through_seq: throughSeq, expand: expand === "refs" ? expand : undefined })
+  return sessionPath(sessionId, `/records/${encodeURIComponent(recordId)}${query}`)
 }
 
 export interface SessionListParams {
@@ -101,13 +109,11 @@ export const trajectoryApi = {
     ),
 
   record: (sessionId: string, recordId: string, throughSeq: Seq, signal?: AbortSignal) =>
-    http.get<RecordDetail>(
-      sessionPath(
-        sessionId,
-        `/records/${encodeURIComponent(recordId)}${queryString({ through_seq: throughSeq })}`,
-      ),
-      withSignal(signal),
-    ),
+    http.get<RecordDetail>(recordPath(sessionId, recordId, throughSeq, "full"), withSignal(signal)),
+
+  /** The same detail with content-addressed values left as `$ref` envelopes (`capabilities.refs` servers). */
+  recordRefs: (sessionId: string, recordId: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<RecordDetail>(recordPath(sessionId, recordId, throughSeq, "refs"), withSignal(signal)),
 
   events: (sessionId: string, params: EventPageParams, signal?: AbortSignal) =>
     http.get<EventPage>(
@@ -144,6 +150,26 @@ export const trajectoryApi = {
       sessionPath(
         sessionId,
         `/payloads/${encodeURIComponent(payloadId)}${queryString({ through_seq: throughSeq })}`,
+      ),
+      withSignal(signal),
+    ),
+
+  /** Whether protected content is still readable at H, without its bytes (`capabilities.refs` servers). */
+  payloadMeta: (sessionId: string, payloadId: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<PayloadMeta>(
+      sessionPath(
+        sessionId,
+        `/payloads/${encodeURIComponent(payloadId)}${queryString({ through_seq: throughSeq, meta: 1 })}`,
+      ),
+      withSignal(signal),
+    ),
+
+  /** The JSON a `$ref` stands for, as visible at H (`capabilities.refs` servers). */
+  blob: (sessionId: string, sha256: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<unknown>(
+      sessionPath(
+        sessionId,
+        `/blobs/${encodeURIComponent(sha256)}${queryString({ through_seq: throughSeq })}`,
       ),
       withSignal(signal),
     ),

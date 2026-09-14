@@ -28,6 +28,7 @@ import { ToolCatalogPanel } from "./panels/ToolCatalogPanel"
 import { ToolResultPanel } from "./panels/ToolResultPanel"
 import { ToolSchemaPanel } from "./panels/ToolSchemaPanel"
 import { UsagePanel } from "./panels/UsagePanel"
+import { ResolvedRecord } from "./ResolvedRecord"
 import type { InspectedRecord, PanelProps } from "./types"
 
 interface TabPanelProps {
@@ -90,7 +91,20 @@ const BY_KIND_TAB: Readonly<Record<string, Panel>> = {
   "tool_catalog.diff": SystemDiffPanel,
 }
 
+/**
+ * Panels that read the references of just the content they show (SPEC §11.2).
+ * Every other panel gets the record with all its references read, so it renders
+ * exactly as it does for a record the server expanded.
+ */
+const READS_OWN_REFS: ReadonlySet<Panel> = new Set<Panel>([
+  RequestInputPanel,
+  SystemPromptPanel,
+  SystemDiffPanel,
+  ToolCatalogPanel,
+])
+
 export function TabPanel({ record, tab }: TabPanelProps) {
   const Panel = BY_KIND_TAB[`${record.kind}.${tab}`] ?? BY_TAB[tab]
-  return <Panel record={record} />
+  if (READS_OWN_REFS.has(Panel)) return <Panel record={record} />
+  return <ResolvedRecord record={record}>{(resolved) => <Panel record={resolved} />}</ResolvedRecord>
 }

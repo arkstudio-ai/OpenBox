@@ -90,6 +90,8 @@ export interface TrajectoryWatermark {
   session_id: string
   trajectory_id: string | null
   committed_seq: string
+  /** The trajectory was deleted: nothing loaded from it may stay on screen. */
+  deleted?: boolean
 }
 
 export interface TrajectoryWsEventMap extends WsLifecycleEvents {

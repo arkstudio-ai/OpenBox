@@ -78,7 +78,7 @@ describe("retained model input media", () => {
     const { container, unmount } = render(
       withInspector(<MessageView message={message} index={0} />, inspectorEnv()),
     )
-    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input")
+    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", "body")
     const images = container.querySelectorAll("img")
     expect(images).toHaveLength(1)
     expect(images[0].getAttribute("src")).toBe("blob:fixture-media")

@@ -4,12 +4,15 @@ import { fieldState } from "../../../utils/availability"
 import { ContentActions } from "../ContentActions"
 import { Section } from "../Field"
 import { MessageView } from "../MessageView"
+import { ResolvedRecord } from "../ResolvedRecord"
 import { TextBlock } from "../TextBlock"
 import { NS, type PanelProps } from "../types"
 import { ValueView } from "../ValueView"
 
-/** The effective system content at this state, taken from the request that carried it. */
-export function SystemPromptPanel({ record }: PanelProps) {
+/** The captured field whose references this panel reads when it opens. */
+const SHOWN_FIELDS = ["system"] as const
+
+function SystemPrompt({ record }: PanelProps) {
   const { t } = useTranslation(NS)
   const system = fieldState(record, "system")
   const capture = typeof record.data?.capture_level === "string" ? record.data.capture_level : null
@@ -46,5 +49,14 @@ export function SystemPromptPanel({ record }: PanelProps) {
           (typeof system.value !== "string" && !Array.isArray(system.value))) && <ValueView field={system} />}
       </Section>
     </div>
+  )
+}
+
+/** The effective system content at this state, taken from the request that carried it. */
+export function SystemPromptPanel({ record }: PanelProps) {
+  return (
+    <ResolvedRecord record={record} fields={SHOWN_FIELDS}>
+      {(resolved) => <SystemPrompt record={resolved} />}
+    </ResolvedRecord>
   )
 }

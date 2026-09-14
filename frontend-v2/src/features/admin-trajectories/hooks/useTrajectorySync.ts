@@ -2,11 +2,10 @@ import { useEffect, useSyncExternalStore } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { forgetTarget, purgeTrajectoryAccess } from "../api/access"
 import { acquireSync, peekSync, releaseSync, subscribeRegistry } from "../api/registry"
+import { trajectorySocket } from "../api/socket"
 import type { SyncSnapshot, TrajectorySync } from "../api/sync"
 import { useAccessScope } from "../api/queries"
-
-export const LIVE_POLL_MS = 1_000
-export const HIDDEN_POLL_MS = 5_000
+import { eventPollDelay } from "../constants/polling"
 
 const noopSubscribe = () => () => undefined
 const noSnapshot = () => null
@@ -17,9 +16,10 @@ export interface TrajectorySyncState {
 }
 
 /**
- * The live stream for one target session: acquires its engine, polls the head
- * every second while visible (less often when hidden, and immediately on
- * return), and releases everything when the target changes, the page closes
+ * The live stream for one target session: acquires its engine, polls for
+ * commits a watermark hint may have missed — every 10 s while the socket is
+ * open, every 2 s while it is not, less often when hidden and immediately on
+ * return — and releases everything when the target changes, the page closes
  * or access is refused.
  */
 export function useTrajectorySync(sessionId: string, enabled: boolean): TrajectorySyncState {
@@ -54,8 +54,9 @@ export function useTrajectorySync(sessionId: string, enabled: boolean): Trajecto
     const schedule = () => {
       if (cancelled) return
       if (timer !== null) window.clearTimeout(timer)
-      const delay = document.visibilityState === "hidden" ? HIDDEN_POLL_MS : LIVE_POLL_MS
+      const delay = eventPollDelay(trajectorySocket.connected, document.visibilityState === "hidden")
       timer = window.setTimeout(() => {
+        timer = null
         void sync.poll().finally(schedule)
       }, delay)
     }
@@ -63,11 +64,17 @@ export function useTrajectorySync(sessionId: string, enabled: boolean): Trajecto
       if (document.visibilityState === "visible") void sync.poll()
       schedule()
     }
+    // The socket opening or dropping changes how soon a missed commit must be noticed.
+    const offs = [
+      trajectorySocket.on("__connected", schedule),
+      trajectorySocket.on("__disconnected", schedule),
+    ]
     schedule()
     document.addEventListener("visibilitychange", onVisibility)
     return () => {
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
+      for (const off of offs) off()
       document.removeEventListener("visibilitychange", onVisibility)
     }
   }, [sync])

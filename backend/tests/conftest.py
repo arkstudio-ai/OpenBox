@@ -1,7 +1,28 @@
 """Shared test fixtures for all tests."""
 import asyncio
+import os
 import pytest
 from db.base import Base, init_engine, close_engine, get_db_session
+
+# Recording switches from the shell that started pytest. Importing litellm (in
+# its default DEV mode) or main.py loads backend/.env for the rest of the run,
+# and TRAJECTORY_RECORDING_ENABLED=true there would turn recording on for tests
+# written against the default; they then fail with ownership errors depending
+# on which module happened to be imported first.
+_SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
+
+
+@pytest.fixture(autouse=True)
+def trajectory_env_from_shell():
+    """Tests see only the shell's TRAJECTORY_* values; a test that records sets its own.
+
+    Plain os.environ, not monkeypatch: requesting monkeypatch here would set it
+    up before every test's own fixtures and so undo its patches after their
+    teardowns, which then run against whatever the test had patched in.
+    """
+    for key in [k for k in os.environ if k.startswith("TRAJECTORY_") and k not in _SHELL_TRAJECTORY_ENV]:
+        del os.environ[key]
+    os.environ.update(_SHELL_TRAJECTORY_ENV)
 
 
 @pytest.fixture(scope="session")

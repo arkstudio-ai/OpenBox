@@ -23,7 +23,7 @@ def _kv(result):
     return dict(l.split("=", 1) for l in result.output.splitlines() if "=" in l and " " not in l.split("=", 1)[0])
 
 
-async def test_start_plans_from_the_template_and_budget_stop_is_final():
+async def test_start_plans_from_the_template_and_budget_stop_is_final(video_gateway_config):
     ctx = _ctx()
     r = await execute(AutopilotRunArgs(action="start", template=TPL), ctx)
     plan = r.metadata["plan"]

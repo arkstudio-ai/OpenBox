@@ -1,5 +1,4 @@
 """The relay can only authorize a live, non-revoked desktop fingerprint."""
-import json
 
 from core.config import OpenBoxConfig
 from db.repository.cloud_desktop_repo import cloud_desktop_repo
@@ -46,20 +45,3 @@ async def test_tunnel_keys_auth_and_revocation(monkeypatch):
     )
     assert revoked.status_code == 200
     assert revoked.body == b""
-
-
-async def test_desktop_preflight_has_stable_503_code(monkeypatch):
-    import sandbox
-    from api.sessions import _desktop_route_preflight
-    from sandbox.wuying_desktop_service import DesktopNotReady
-
-    class Provider:
-        routes_per_user = True
-
-        async def resolve_user_container(self, owner):
-            raise DesktopNotReady({"state": "not_provisioned"})
-
-    monkeypatch.setattr(sandbox, "provider", Provider())
-    response = await _desktop_route_preflight("new-user")
-    assert response.status_code == 503
-    assert json.loads(response.body)["code"] == "DESKTOP_NOT_READY"

@@ -71,10 +71,64 @@ class FakeBucket:
         if request.method == "DELETE":
             self.objects.pop(key, None)
             return httpx.Response(204)
+        if request.method == "GET":
+            if key not in self.objects:
+                return httpx.Response(404, content=b"<Error><Code>NoSuchKey</Code><RequestId>REQ-2</RequestId></Error>")
+            body, digest = self.objects[key]
+            headers = {"Content-Length": str(len(body))}
+            if digest:
+                headers[backup.SHA256_HEADER] = digest
+            return httpx.Response(200, content=body, headers=headers)
         return httpx.Response(405)
 
     def methods(self) -> list[str]:
         return [request.method for request in self.requests]
+
+
+async def run_download(bucket: FakeBucket, **options) -> tuple[dict, bytes]:
+    sink = io.BytesIO()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(bucket)) as http:
+        result = await backup.download(client(), http, KEY, sink, **options)
+    return result, sink.getvalue()
+
+
+async def test_download_streams_the_object_and_checks_the_recorded_digest():
+    data = bytes(range(256)) * 9000  # about 2.2 MiB, several chunks
+    digest = hashlib.sha256(data).hexdigest()
+    bucket = FakeBucket()
+    bucket.objects[KEY] = (data, digest)
+
+    result, received = await run_download(bucket)
+
+    assert received == data
+    assert result == {"bucket": BUCKET, "key": KEY, "size_bytes": len(data), "sha256": digest}
+    (get,) = bucket.requests
+    assert (get.method, get.url.host, get.url.path) == ("GET", f"{BUCKET}.oss-cn-shanghai-internal.aliyuncs.com", f"/{KEY}")
+    assert get.headers["accept-encoding"] == "identity"
+    assert_signed(get)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "given", "problem"),
+    [("0" * 64, None, "expected 0000"), (None, None, "records no x-oss-meta-sha256"), (None, "f" * 64, "expected ffff")],
+)
+async def test_download_refuses_bytes_it_cannot_verify(recorded, given, problem):
+    bucket = FakeBucket()
+    bucket.objects[KEY] = (b"dump", recorded)
+    with pytest.raises(backup.BackupError, match=problem):
+        await run_download(bucket, sha256=given)
+
+
+async def test_download_accepts_a_given_digest_for_objects_without_one():
+    bucket = FakeBucket()
+    bucket.objects[KEY] = (b"dump", None)
+    result, received = await run_download(bucket, sha256=hashlib.sha256(b"dump").hexdigest())
+    assert received == b"dump" and result["size_bytes"] == 4
+
+
+async def test_download_reports_a_missing_object():
+    with pytest.raises(backup.BackupError, match="does not exist"):
+        await run_download(FakeBucket())
 
 
 async def run_upload(bucket: FakeBucket, source: bytes, size: int, **options) -> dict:
@@ -222,6 +276,18 @@ def test_cli_failures_exit_1(bucket_environment, monkeypatch, capsys):
     monkeypatch.delenv("OSS_BUCKET")
     assert backup.main(["verify", "--key", KEY, "--size", "4"]) == 1
     assert "OSS_BUCKET" in capsys.readouterr().err
+
+
+def test_cli_download_sends_the_bytes_to_stdout_and_the_summary_to_stderr(bucket_environment, capsys):
+    data = b"PGDMP custom archive"
+    bucket = FakeBucket()
+    bucket.objects[KEY] = (data, hashlib.sha256(data).hexdigest())
+    sink, stdout = io.BytesIO(), io.StringIO()
+    code = backup.main(["download", "--key", KEY], stdout=stdout, sink=sink, transport=httpx.MockTransport(bucket))
+    assert code == 0
+    assert sink.getvalue() == data and stdout.getvalue() == ""
+    assert json.loads(capsys.readouterr().err)["size_bytes"] == len(data)
+    assert backup.main(["download", "--key", "assets/x"], sink=io.BytesIO()) == 1
 
 
 def test_cli_presign_put_prints_an_internal_url(bucket_environment):

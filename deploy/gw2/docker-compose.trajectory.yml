@@ -22,7 +22,11 @@ services:
     env_file:
       - config/backend.env
     environment:
-      TRAJECTORY_DATABASE_URL: postgresql+asyncpg://openbox:${OPENBOX_DB_PASSWORD}@postgres:5432/openbox_trace
+      # Dedicated role (scripts/create-trace-db.sh): owns openbox_trace, has no business data, and its
+      # defaults are statement_timeout 5s and work_mem 32MB. Its password is OPENBOX_TRACE_DB_PASSWORD in .env.
+      TRAJECTORY_DATABASE_URL: postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace
+      # Blank on purpose: the business connection string of config/backend.env must not reach the worker.
+      DATABASE_URL: ""
       REDIS_URL: redis://redis:6379/0
       TRAJECTORY_WORKER_MODE: external
       TRAJECTORY_BLOB_PROVIDER: oss
@@ -32,11 +36,14 @@ services:
     volumes:
       - trajectory-spool:/var/lib/openbox/trajectory-spool
       - ./secrets/aliyun-config.json:/run/secrets/aliyun-config.json:ro
-      # Legacy local blob files for `trajectory.tools.migrate_legacy --legacy-blob-path /legacy-blobs`.
+      # Legacy local blob files for `trajectory.tools.migrate_legacy --legacy-blob-path /legacy-blobs`
+      # (read-only; RUNBOOK.md §5 step 7 mounts it writable for --purge-legacy-blobs only).
       - blob-data:/legacy-blobs:ro
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/health"]
       interval: 15s

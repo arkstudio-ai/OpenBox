@@ -225,6 +225,33 @@ def test_counters_become_increments_and_alarm_windows():
     assert values["gaps_recorded_1h"] == 0
 
 
+def test_wave_3_worker_and_host_metrics_are_reported():
+    host = {"backend_cpu_percent": 95.5, "backend_mem_percent": 41.0, "business_trajectory_statements": 0}
+    health = {"status": "ok", "writer": True}
+    worker = {
+        "counters": {"blob_put_raw_bytes": 10, "audit_dead_letters": 0, "analytics_exports": 1,
+                     "analytics_export_failures": 0, "failed_batches": 2},
+        "gauges": {"events_ingested_24h": 1_200_000, "hot_partitions": 9, "budget_degraded_trajectories": 1,
+                   "budget_degraded_users": 0},
+    }
+    _, state = cms.collect(host, health, worker, {}, now=NOW)
+    worker["counters"].update(failed_batches=5, blob_put_raw_bytes=110)
+    values, _ = cms.collect(host, health, worker, state, now=NOW + 60)
+    assert (values["failed_batches_delta"], values["blob_put_raw_bytes_delta"], values["analytics_exports_delta"]) == (3, 100, 0)
+    assert (values["audit_dead_letters_delta"], values["analytics_export_failures_delta"]) == (0, 0)
+    assert (values["events_ingested_24h"], values["hot_partitions"]) == (1_200_000, 9)
+    assert (values["budget_degraded_trajectories"], values["budget_degraded_users"]) == (1, 0)
+    assert (values["backend_cpu_percent"], values["backend_mem_percent"], values["business_trajectory_statements"]) == (95.5, 41.0, 0)
+    assert set(cms.JOB_METRICS).isdisjoint(values)
+
+
+def test_analytics_failures_are_put_as_one_metric(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ALIYUN_CLI_CONFIG", str(tmp_path / "missing.json"))
+    assert cms.main(["put", "--dry-run", "--instance", "gw2", "--metric", "analytics_export_failed=1"], clock=lambda: NOW) == 0
+    (metric,) = json.loads(capsys.readouterr().err)
+    assert (metric["name"], metric["value"], metric["dimensions"]) == ("analytics_export_failed", 1.0, {"instance": "gw2"})
+
+
 def test_flat_metric_bodies_and_unreadable_state_are_accepted():
     values, state = cms.collect({}, {"status": "degraded"}, {"gaps_recorded": "3", "ingest_lag_seconds": 1.5,
                                                             "writer": True}, {"last": "garbage"}, now=NOW)

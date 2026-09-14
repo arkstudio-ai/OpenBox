@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # CloudMonitor alarm rules of the trajectory deployment (SPEC §12), created or updated with
 # PutCustomMetricRule on the custom metrics that push-metrics.sh reports (backend/trajectory/ops/cms.py,
-# dimension instance=<instance>). Run from an operator machine with the aliyun CLI. Rule IDs are fixed
+# dimension instance=<instance>) and on analytics_export_failed, which analytics-export.sh reports after
+# each daily export. Run from an operator machine with the aliyun CLI. Rule IDs are fixed
 # (openbox-<instance>-<name>), so re-running updates the rules in place. Dry run unless --execute.
 #
 #   setup-alarms.sh [--instance gw2] [--group-id 0] [--region cn-shanghai]
@@ -72,7 +73,14 @@ recording-gaps|gaps_recorded_1h|>|0|Average|60|1|WARN|trajectory recording gaps 
 projection-lag|projection_lag_events|>=|5000|Average|60|5|WARN|trajectory projection lag >= 5000 events
 blob-put-failures|blob_put_failures_5m|>=|10|Average|60|1|WARN|trajectory blob put failures >= 10 in 5 min
 trace-db-size|trace_db_bytes|>=|21474836480|Average|300|1|WARN|trace database >= 20 GiB
-oom-kill|oom_kills_1h|>|0|Average|60|1|CRITICAL|kernel OOM kill on the host'
+oom-kill|oom_kills_1h|>|0|Average|60|1|CRITICAL|kernel OOM kill on the host
+archive-lag|archive_lag_events|>=|50000|Average|60|15|WARN|trajectory archive lag >= 50000 events for 15 min
+hot-partitions|hot_partitions|>|10|Average|300|1|WARN|trajectory hot event partitions > 10
+backend-cpu|backend_cpu_percent|>|90|Average|60|5|CRITICAL|backend CPU > 90% of a core for 5 min
+backend-memory|backend_mem_percent|>|90|Average|60|5|CRITICAL|backend memory > 90% of its limit for 5 min
+business-trajectory-statements|business_trajectory_statements|>|0|Average|60|1|CRITICAL|trajectory statements in the business database
+events-ingested-24h|events_ingested_24h|>|1000000|Average|300|1|INFO|trajectory events in 24 h > 1000000 (ClickHouse trigger)
+analytics-export|analytics_export_failed|>|0|Average|60|1|WARN|trajectory analytics export failed'
 
 count=0
 while IFS='|' read -r name metric operator threshold statistics period evaluations level subject; do

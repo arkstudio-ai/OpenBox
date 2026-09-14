@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Drill (SPEC §12): stop the trajectory worker and prove that recording is decoupled from the
-# business. While the worker is stopped the backend must pass every health probe and the spool may
-# only grow; after the restart the spool must drain without producer loss. The admin trajectory UI is
+# business. While the worker is stopped (default 15 minutes) the backend must pass every health probe
+# and the spool may only grow; the spool must then drain within --drain-timeout seconds of the restart
+# (default 300: catch-up within 5 minutes) without producer loss. The admin trajectory UI is
 # unavailable while the worker is stopped. Interrupting the drill starts the worker again.
 # Dry run unless --execute.
 #
-#   drill-worker-stop.sh [--minutes 5] [--drain-timeout 900] [--execute]
+#   drill-worker-stop.sh [--minutes 15] [--drain-timeout 300] [--execute]
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-minutes=5
-drain_timeout=900
+minutes=15
+drain_timeout=300
 while [ $# -gt 0 ]; do
   case "$1" in
     --minutes)
@@ -37,7 +38,7 @@ done
 positive_integer "$minutes" || die "--minutes must be a positive integer"
 positive_integer "$drain_timeout" || die "--drain-timeout must be a positive integer"
 if [ "$EXECUTE" != 1 ]; then
-  log "dry run: would stop trajectory-worker for $minutes min, probe the backend every 10 s, start the worker and wait up to $drain_timeout s for the spool to drain; re-run with --execute"
+  log "dry run: would stop trajectory-worker for $minutes min, probe the backend every 10 s, start the worker and require the spool to drain within $drain_timeout s of the restart; re-run with --execute"
   exit 0
 fi
 
@@ -76,8 +77,13 @@ done
 trap - EXIT
 start_worker
 restarted=$(date +%s)
-wait_healthy trajectory-worker 180 || die "trajectory-worker did not become healthy after the restart"
-wait_drained "$drain_timeout" || die "the spool did not drain within $drain_timeout s"
+wait_healthy trajectory-worker "$drain_timeout" || die "trajectory-worker did not become healthy within $drain_timeout s of the restart"
+# The catch-up budget counts from the restart, including the time the worker needed to become healthy.
+remaining=$((restarted + drain_timeout - $(date +%s)))
+if [ "$remaining" -lt 1 ]; then
+  remaining=1
+fi
+wait_drained "$remaining" || die "the spool did not drain within $drain_timeout s of the restart"
 drain_seconds=$(($(date +%s) - restarted))
 gaps=$(worker_value gaps_recorded)
 loss=$(worker_value producer_loss_events)

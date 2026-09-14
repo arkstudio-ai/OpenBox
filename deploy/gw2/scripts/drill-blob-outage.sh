@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Drill (SPEC §12): object storage outage. The worker is recreated with TRAJECTORY_BLOB_FAULT
-# (default put:1.0, every blob upload fails) for --minutes: ingest must retry with backoff while the
+# (default put:1.0, every blob upload fails) for --minutes (default 30): ingest must retry with backoff while the
 # backend passes every health probe. The worker is then recreated without the fault and the spool
 # must drain. Content that could not be stored for 10 attempts is recorded as blob_store_unavailable
 # with a gap, so run the drill against internal test traffic; without a failed blob upload during the
 # fault the drill cannot pass. Interrupting the drill recreates the worker without the fault.
 # Dry run unless --execute.
 #
-#   drill-blob-outage.sh [--minutes 10] [--fault put:1.0] [--drain-timeout 1800] [--execute]
+#   drill-blob-outage.sh [--minutes 30] [--fault put:1.0] [--drain-timeout 1800] [--execute]
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-minutes=10
+minutes=30
 fault=put:1.0
 drain_timeout=1800
 while [ $# -gt 0 ]; do

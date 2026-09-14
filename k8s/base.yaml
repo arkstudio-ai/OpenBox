@@ -231,6 +231,8 @@ spec:
               value: "/var/lib/openbox/trajectory-blobs"
             - name: TRAJECTORY_BACKEND_INTERNAL_URL
               value: "http://127.0.0.1:8080"
+            # postgresql+asyncpg://openbox_trace:<password>@<host>:5432/openbox_trace: the dedicated
+            # openbox_trace role (deploy/gw2/scripts/create-trace-db.sh), never the business database user.
             - name: TRAJECTORY_DATABASE_URL
               valueFrom:
                 secretKeyRef:

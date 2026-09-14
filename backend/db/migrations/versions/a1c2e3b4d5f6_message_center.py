@@ -59,7 +59,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("category", sa.String(16), nullable=False, server_default=sa.text("'system'")))
         batch.add_column(sa.Column("link", _json(), nullable=True))
         batch.add_column(sa.Column("source_key", sa.String(255), nullable=True))
-        batch.add_column(sa.Column("announcement_id", sa.String(64), sa.ForeignKey("announcements.id"), nullable=True))
+        batch.add_column(sa.Column("announcement_id", sa.String(64), sa.ForeignKey("announcements.id", name="fk_notifications_announcement_id"), nullable=True))
         batch.add_column(sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True))
         batch.add_column(sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))
         batch.create_index("ix_notifications_user_created", ["user_id", "created_at"])

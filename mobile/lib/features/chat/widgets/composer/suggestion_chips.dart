@@ -44,7 +44,7 @@ class SuggestionChips extends ConsumerWidget {
           builder: (context, constraints) {
             final count = suggestions.items.take(3).length;
             final labelWidth =
-                (constraints.maxWidth - (count - 1) * 6) / count - 20;
+                (constraints.maxWidth - (count - 1) * 6) / count - 16;
             return IntrinsicHeight(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -76,7 +76,7 @@ class SuggestionChips extends ConsumerWidget {
                               style: OutlinedButton.styleFrom(
                                 minimumSize: const Size(44, 44),
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
+                                  horizontal: 8,
                                   vertical: 6,
                                 ),
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,

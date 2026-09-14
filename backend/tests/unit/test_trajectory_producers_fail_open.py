@@ -117,13 +117,18 @@ async def test_billing_and_metered_requests_settle(state, failing_emitter, monke
 
 async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_emitter, monkeypatch):
     import httpx
-    from agent.trajectory import service_scope
+    from agent.trajectory import register_owned_media_inputs, retain_derived_media_inputs, service_scope
+    from db.models.file_asset import FileAsset
     from tool import video_production
+    monkeypatch.setattr("core.oss.get_oss", lambda: SimpleNamespace(host="bucket.oss.example"))
     job_id = uuid4().hex
     async with database.get_db_session() as db:
         db.add(VideoJob(id=job_id, user_id="u1", session_id="s1", kind="segment", idempotency_key=job_id,
                         status="submitting", model="fixture", attempt=0, request_data={}, result_data={},
                         created_at=runtime.now(), updated_at=runtime.now()))
+        db.add(FileAsset(id="asset_clip", user_id="u1", workspace_id="w1", session_id="s1", name="clip.mp4",
+                         oss_key="assets/u1/asset_clip/clip.mp4", mime="video/mp4", size=12, status="ready",
+                         created_at=runtime.now()))
     posted = []
 
     class Client:
@@ -137,7 +142,7 @@ async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_
             return False
 
         async def post(self, url, **kwargs):
-            posted.append(url)
+            posted.append((url, kwargs.get("json")))
             return SimpleNamespace(status_code=200, text="", json=lambda: {"id": "provider-task"})
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     target = SimpleNamespace(wire_format="ark", provider="fixture", model="video-model", api_key="key",
@@ -145,6 +150,20 @@ async def test_paid_dispatch_and_media_submit_reach_the_provider(state, failing_
     async with service_scope(_ctx(), job=SimpleNamespace(id=job_id, request_data={})):
         data = await video_production._provider_submit(target, {"model": "video-model", "prompt": "a clip"})
     assert data == {"id": "provider-task"} and len(posted) == 1
+
+    # A media submit: owned inputs and sampled frames become references while the provider gets the real URLs.
+    clip = "https://bucket.oss.example/assets/u1/asset_clip/clip.mp4"
+    frame = "https://bucket.oss.example/analysis/u1/job/frame-1.jpg"
+    media_ctx = _ctx()
+    asset_urls = await register_owned_media_inputs(media_ctx, [clip])
+    retained = await retain_derived_media_inputs(media_ctx, [frame], "asset_clip")
+    assert asset_urls == {clip: "asset_clip"} and list(retained) == [frame]
+    body = {"model": "video-model", "prompt": "a clip", "content": [clip, frame]}
+    async with service_scope(media_ctx, job=SimpleNamespace(id=job_id, request_data={}),
+                             asset_urls=asset_urls, retained_media=retained):
+        media_data = await video_production._provider_submit(target, body)
+    assert media_data == {"id": "provider-task"}
+    assert posted[-1][1]["content"] == [clip, frame]
 
 
 async def test_bash_streams_its_output_without_falling_back(state, failing_emitter):

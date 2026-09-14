@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 
 from core.log import create_logger
 from tool.tool import ToolInfo, ToolResult, ToolContext
-from trajectory.types import TrajectoryError
 
 log = create_logger("tool.mcp")
 
@@ -1031,8 +1030,6 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
                 output=raw_output,
                 metadata={"error": bool(result.get("isError"))},
             )
-        except TrajectoryError:
-            raise
         except Exception as e:
             # Exception messages from remote clients can embed full URLs or
             # rejected argument values. The model receives a bounded actionable
@@ -1442,8 +1439,6 @@ def _create_meta_tools(
                 output=raw_output,
                 metadata={"error": bool(result.get("isError"))},
             )
-        except TrajectoryError:
-            raise
         except Exception as e:
             log.error(
                 "MCP tool %s failed: %s",
@@ -1616,8 +1611,6 @@ def create_mcp_resource_tool() -> ToolInfo:
                 output=output,
                 metadata={"truncated": truncated},
             )
-        except TrajectoryError:
-            raise
         except Exception as e:
             log.error("MCP resource read failed error_type=%s", type(e).__name__)
             return ToolResult(

@@ -31,7 +31,7 @@ async def reconcile_legacy_questions() -> int:
     closed = 0
     for session_id, user_id in candidates:
         try:
-            async with runtime.transaction(session_id, user_id) as (db, session, execution):
+            async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
                 if execution.run_id or execution.generation:
                     continue  # New work acquired the session after the scan.
                 rows = (await db.scalars(select(Part).where(

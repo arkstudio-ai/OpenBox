@@ -192,9 +192,10 @@ async def _execute_cron_job(job: dict) -> dict:
         raise
 
     except Exception as e:
-        if isinstance(e, TrajectoryError):
-            # Never turn a recording outage into a best-effort summary,
-            # webhook delivery or another external execution path.
+        from question.runtime import RunRevoked
+        if isinstance(e, (RunRevoked, TrajectoryError)):
+            # Never turn a recording outage or a revoked run into a best-effort
+            # summary, webhook delivery or another external execution path.
             raise
         from sandbox.wuying_desktop_service import DesktopNotReady
 

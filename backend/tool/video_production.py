@@ -27,6 +27,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from auth.jwt import create_asset_download_token
+from question.runtime import RunRevoked
 from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
@@ -891,7 +892,7 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             user_id=ctx.user_id,
         )
         return True
-    except TrajectoryError:
+    except (RunRevoked, TrajectoryError):
         raise
     except Exception:
         await _update_job(job.id, attached_message_id=None)
@@ -1256,8 +1257,6 @@ async def _finalize_segment(
         size = await _copy_provider_video_to_oss(
             source_url, get_oss(), asset.oss_key, settings.max_provider_output_bytes
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:
         # The paid provider task already succeeded. Keep this recoverable so a
         # later wait can fetch a fresh result URL and retry only OSS transfer.
@@ -1285,8 +1284,6 @@ async def _finalize_segment(
             job, asset, model_id=job.model or "", resolution=request.get("resolution"),
             duration_sec=float(requested) if isinstance(requested, (int, float)) and requested > 0 else None,
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:  # billing must never strand a finished, paid video
         log.warning(f"video job {job.id}: settlement failed: {type(exc).__name__}: {exc}")
     await _update_job(
@@ -1505,8 +1502,6 @@ async def _input_content_digests(inputs: list[Any], oss) -> list[dict[str, Any]]
     for row in inputs:
         try:
             head = await oss.head(row.oss_key)
-        except TrajectoryError:
-            raise
         except Exception:
             return None
         etag = (head or {}).get("etag") or ""
@@ -1562,8 +1557,6 @@ async def _complete_from_reuse(job, source_job, source_asset, ctx: ToolContext) 
         return None
     try:
         head = await get_oss().copy(source_asset.oss_key, asset.oss_key)
-    except TrajectoryError:
-        raise
     except Exception:
         head = None
     if not head or not head.get("size"):
@@ -1730,8 +1723,6 @@ async def _session_video_resolution(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_resolution:
             return session.video_resolution
         return ""
-    except TrajectoryError:
-        raise
     except Exception:
         return ""
 
@@ -1754,8 +1745,6 @@ async def _session_video_model_id(ctx: ToolContext) -> str:
         if session and session.user_id == ctx.user_id and session.video_model:
             return session.video_model
         return ""
-    except TrajectoryError:
-        raise
     except Exception:
         return ""
 
@@ -1908,8 +1897,6 @@ async def _execute_estimate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRe
             declared=video_providers.declared_model(target.model, get_config()),
             roles=tuple(roles),
         )
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(
             title="This request would be rejected",
@@ -1984,8 +1971,6 @@ async def _execute_fetch(args: VideoGenerateArgs, ctx: ToolContext) -> ToolResul
         )
     try:
         path = await _materialize_asset(asset, ctx)
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(title="Could not deliver the asset", output=_public_error(exc))
     return ToolResult(
@@ -2010,8 +1995,6 @@ async def _try_materialize(job, ctx: ToolContext) -> str | None:
         if not asset or asset.status != "ready":
             return None
         return await _materialize_asset(asset, ctx)
-    except TrajectoryError:
-        raise
     except Exception as exc:
         log.info(f"workspace delivery skipped for {job.id}: {type(exc).__name__}: {exc}")
         return None
@@ -2087,8 +2070,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
     if args.action == "submit":
         try:
             target, settings = _configured_target(None)
-        except TrajectoryError:
-            raise
         except Exception as exc:
             return ToolResult(
                 title="Video generation is not configured",
@@ -2404,7 +2385,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
-        except TrajectoryError:
+        except (RunRevoked, TrajectoryError):
             raise
         except Exception as exc:
             if "job" in locals() and created:
@@ -2497,8 +2478,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         # Controls always resolve from the persisted model. The deployment's
         # current default is not evidence of the route that owns this task.
         target, settings = _configured_target(job.model or None)
-    except TrajectoryError:
-        raise
     except Exception:
         route_block_reason = "provider_route_unavailable"
     if job.provider_task_id and target is not None:
@@ -2787,8 +2766,6 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
 
         video_settings = get_config().video_generation
         oss = get_oss()
-    except TrajectoryError:
-        raise
     except Exception as exc:
         return ToolResult(title="Transcription is not configured", output=_public_error(exc))
 
@@ -2845,8 +2822,6 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     model_id=target.model,
                     duration_sec=(float(duration_ms) / 1000.0) if isinstance(duration_ms, (int, float)) and duration_ms > 0 else None,
                 )
-            except TrajectoryError:
-                raise
             except Exception as exc:  # billing must never lose a finished transcript
                 log.warning(f"transcription {job.id}: settlement failed: {type(exc).__name__}: {exc}")
             await _update_job(
@@ -2867,7 +2842,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     "text": transcript.get("text", ""),
                 },
             )
-        except TrajectoryError:
+        except (RunRevoked, TrajectoryError):
             raise
         except Exception as exc:
             if created:
@@ -2924,7 +2899,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
-        except TrajectoryError:
+        except (RunRevoked, TrajectoryError):
             raise
         except Exception as exc:
             await _update_job(

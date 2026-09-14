@@ -1409,8 +1409,9 @@ async def _stream_responses_api(
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        if isinstance(e, (RunRevoked, TrajectoryError)):
             raise
         if native_plan is not None and native_record_capability is not None:
             from agent.native_tool_search import NativeProtocolError
@@ -1460,6 +1461,10 @@ async def stream_llm(
     for executing tools via hooks, so it can pass the correct part_id for SSE events.
     """
     from billing.service import UsageMeter
+    from question.runtime import assert_current
+    # A revoked run starts no provider request and opens no billing meter.
+    # Title and suggestions work is bound to its turn instead of the lease.
+    await assert_current("request")
     meter = await UsageMeter.start(model_id=model_id, session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1523,6 +1528,8 @@ async def metered_completion(*, ctx: ToolContext, billing_kind: str, **kwargs):
     import litellm
     from billing.pricing import normalize_usage
     from billing.service import UsageMeter
+    from question.runtime import assert_current
+    await assert_current("request")
     meter = await UsageMeter.start(model_id=kwargs["model"], session_id=ctx.session_id,
         user_id=ctx.user_id, message_id=ctx.message_id, kind=billing_kind)
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -1863,8 +1870,9 @@ async def _stream_litellm_direct(
             yield {"type": "finish", "reason": "stop", "usage": stream_usage}
 
     except Exception as e:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        if isinstance(e, (RunRevoked, TrajectoryError)):
             raise
         if capture is not None:
             await capture.finish("failed", error=e)

@@ -10,6 +10,7 @@ import shlex
 
 from pydantic import BaseModel, Field
 
+from question.runtime import RunRevoked
 from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -71,7 +72,7 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
             relation_label=name,
             pin_part=args.attach,
         )
-    except TrajectoryError:
+    except (RunRevoked, TrajectoryError):
         raise
     except Exception as e:
         return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])

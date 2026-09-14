@@ -569,8 +569,9 @@ async def _store_output(
             user_id=ctx.user_id,
         )
     except Exception as exc:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         # The durable resource is still valid and visible in the resource
         # centre.  Do not delete paid-for output merely because the chat card
@@ -748,8 +749,9 @@ async def _store_reused(
             user_id=ctx.user_id,
         )
     except Exception as exc:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         attached = False
         log.warning("reused image saved to OSS but could not be attached to chat", exc_info=True)
@@ -922,7 +924,8 @@ async def execute(args: ImageGenArgs, ctx: ToolContext) -> ToolResult:
                 )
             )
     except Exception as exc:
-        if isinstance(exc, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         log.warning("image_gen %s failed: %s", mode, _public_error(exc))
         return ToolResult(title=f"Image {mode} failed", output=_public_error(exc))

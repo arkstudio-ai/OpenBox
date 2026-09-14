@@ -1142,3 +1142,69 @@ docker rm recover
 **在把这份代码整理入库之前，不要从本地向生产发布。**
 
 > **2026-09-04 更新**：上述 5 个迁移与对应代码已随 `main`（`b1f77ae`）入库并推到 GitHub；生产 gw2 已用 `main` 构建的 `20260904-main-b1f77ae` 部署，库升到 `c3e5a7b9d1f4`。本条已解决，可直接从 `main` 构建发布。构建走 AWS 机的 `/opt/openbox/build-main`（`git worktree`，不动 `src/` 的本地改动），传输用 `docker save | gzip | ssh gw2 docker load`（EC2 的 `/root/.ssh/gw2ship`）。
+
+## 五、会话轨迹 worker 拓扑与发布流程（轨迹改造，尚未上线）
+
+> 状态：随 `feat/trajectory-rearch` 准备（SPEC §12），**尚未在任何环境发布**；上线后照惯例在本文开头追加发布记录。
+> 命令、校验、回滚、告警与演练的完整步骤见 [deploy/gw2/RUNBOOK.md](../deploy/gw2/RUNBOOK.md)，设计见 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md)。
+
+### 拓扑
+
+```
+浏览器 → 反向代理 → frontend 容器(nginx)
+                      ├── /api/admin/trajectories/*、/ws/admin/trajectories → trajectory-worker:8090
+                      ├── /api/、/ws/                                        → backend:8080
+                      └── /                                                  静态 SPA
+backend ──(追加 JSONL)──► trajectory-spool 卷（只挂给 backend 与 worker）──► trajectory-worker
+trajectory-worker ──► postgres 的 openbox_trace 库、OSS <桶>/trajectories/、redis、backend 内部接口（viewer / audit）
+宿主机 systemd 定时器 ──► 云监控自定义指标、OSS backups/postgres/、镜像清理
+```
+
+- **新服务 `trajectory-worker`**：与 backend 同一镜像，override 里与 backend 钉同一 tag。命令只跑轨迹库迁移
+  （`alembic -c alembic_trajectory.ini upgrade head`）再 `python -m trajectory.worker`，不覆盖命令就会跑业务迁移并再起一个 uvicorn。
+  单实例单写者（advisory lock），禁止 `--scale`；服务名不能叫 `backend-worker`（`make retire-legacy-worker` 会删除它）。
+- **backend**：`TRAJECTORY_SINK=spool`、`TRAJECTORY_WORKER_MODE=external`，挂 spool 卷；业务请求只做内存入队与追加写，业务库不再有轨迹读写。
+- **frontend**：`TRAJECTORY_HOST=trajectory-worker:8090`，nginx 把两条管理端轨迹路径转给 worker（镜像内默认仍指向 backend）。
+- **postgres**：`mem_limit 2g`，`shared_buffers=512MB`、`effective_cache_size=1GB`、`pg_stat_statements`、`max_connections=200`；生效要重建 postgres，需维护窗口。
+- **新库 `openbox_trace`**：同一 postgres 实例，`deploy/gw2/scripts/create-trace-db.sh` 幂等创建（含 `pg_trgm`），日常备份一并覆盖。
+- **编排文件**：`deploy/gw2/docker-compose.trajectory.yml` 放在基础 compose 与 override 之间，`.env` 增加
+  `COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml`，
+  这样所有裸 `docker compose` 命令都带上 overlay，override 的镜像钉版仍然最后生效。`deploy/gw2` 随发布包下发到 `/opt/openbox/deploy/gw2`（服务器无源码）。
+- `deploy/gw2/docker-compose.base.example.yml` 是按本文与代码地图还原的脱敏线上 compose，只用于 `docker compose config` 校验 overlay（单测覆盖）；发布前要与服务器上的真实文件逐项核对，尤其是 `blob-data` 卷与健康检查。
+
+### 发布顺序（SPEC §12.1）
+
+1. 从发布提交构建 `linux/amd64` 的 backend、frontend 镜像，另打 `deploy/gw2` 包（`git archive`）。
+2. 经 OSS `_deploy-tmp/` 中转并装载到 gw2，保留旧 tag，解包 `deploy/gw2`；用完删除中转对象。
+3. 备份：`.env`、`config/backend.env`、两份 compose、容器 inspect、`pg_dump openbox`（`pg_restore -l` 校验）。
+4. 维护窗口、0 个持有租约的运行：`.env` 写入 `COMPOSE_FILE`，`up -d --no-deps postgres` 让调优生效，
+   `create-trace-db.sh` 建 `openbox_trace`，再 `docker compose restart backend` 重置连接池（restart 不改 backend 配置）。
+5. override 钉 `trajectory-worker` 镜像，`up -d --no-deps trajectory-worker`，等 healthy：迁移完成、`/health` 的 writer/db/spool/blob_store 均为 true，此时录制仍关闭。
+6. `backend.env` 先设 `TRAJECTORY_RECORDING_ENABLED=false`，override 改 backend 镜像，0 活动运行时 `up -d --no-deps backend`；
+   业务迁移把 7 张轨迹表改名为 `legacy_trajectory_*`。
+7. worker 容器内运行 `python -m trajectory.tools.migrate_legacy`（先 `--dry-run`，再转换，再 `--verify`），
+   `pg-backup.sh --legacy-trajectory-tables` 把旧表备份到 OSS，最后 `--finalize-drop`（旧表的不可逆点）。
+8. override 改 frontend 镜像，`up -d --no-deps frontend`，确认两条轨迹路径由 worker 应答。
+9. 先对内部账号开启录制（`TRAJECTORY_RECORD_USER_IDS`），用 `pg_stat_statements` 核对业务库没有 `trajectory_` 语句、指标正常，再对全部用户开启；
+   backend 与 worker 共用录制开关，改完两者都要重建（backend 仍需 0 活动运行）。
+10. `install-timers.sh` 安装定时器；操作机上执行 `apply-oss-lifecycle.sh`、`setup-alarms.sh`；完成四项演练并在本文开头记录。
+
+### 回滚要点
+
+- **worker 异常**（任一步）：`docker compose stop trajectory-worker`，业务不受影响；spool 最多积累到 2 GiB，之后以录制缺口丢弃事件。
+- **第 6 步后、`--finalize-drop` 前**：0 活动运行时先用**新**镜像 `docker compose run --rm --no-deps --entrypoint alembic backend downgrade <上一个业务 head>`
+  把旧表改回原名，再把 override 的 backend 改回旧 tag、恢复 `backend.env`，`up -d --no-deps backend`。切换后写入 `openbox_trace` 的轨迹旧后台看不到，库保留待重试。
+- **`--finalize-drop` 之后**：需先用第 7 步备份到 OSS 的旧表 dump 恢复并改回原名，才能回退 backend。
+- **frontend**：override 改回旧 tag，`up -d --no-deps frontend`。
+- **postgres 调优**：只随整体回退一起撤销（`.env` 去掉 `COMPOSE_FILE` 后在维护窗口重建 postgres）；整体回退顺序 frontend → backend → 停 worker → `.env` → postgres。
+
+### 定时器、告警、生命周期规则与演练
+
+| 项 | 内容 |
+|---|---|
+| `openbox-trajectory-metrics.timer` | 每分钟：宿主机磁盘、spool 大小与最老文件年龄、近 1 小时 OOM kill、轨迹库大小，加上 worker 的 `/health`、`/metrics`，经云监控 `PutCustomMetric` 上报（维度 `instance=gw2`） |
+| `openbox-pg-backup.timer` | 每天 03:30（北京时间）：`openbox`、`openbox_trace` 的 `pg_dump -Fc` 经预签名 PUT 上传到 OSS `backups/postgres/<日期>/`，校验大小与 sha256 后删除本地文件 |
+| `openbox-prune-images.timer` | 每周日 04:30（北京时间）：保留容器在用、compose 引用及每个仓库最新 3 个 tag 的镜像，其余删除 |
+| 告警（`setup-alarms.sh`，联系人组 `云账号报警联系人`） | 磁盘 ≥ 80%、spool ≥ 1 GiB、最老 spool 文件 ≥ 60 s、worker 健康检查失败、近 1 小时出现录制缺口、投影积压 ≥ 5000 事件、5 分钟内 blob 上传失败 ≥ 10、轨迹库 ≥ 20 GiB、OOM kill > 0 |
+| OSS 生命周期（`oss-lifecycle.xml`） | `trajectories/`（不含 `_exports/`）30 天转低频；`trajectories/_exports/` 与 `backups/postgres/` 30 天过期；两个前缀的未完成分片 7 天清理。桶与用户资产共用且 PUT 会覆盖全部规则，脚本先读现有规则按 ID 合并，默认 dry run |
+| 演练（默认 dry run，`--execute` 执行） | `drill-worker-stop.sh`（停 worker，业务不受影响、spool 可排空）、`drill-blob-outage.sh`（OSS 故障注入）、`drill-spool-full.sh`（spool 预算耗尽只产生缺口）、`rebuild-trace-db.sh`（用 OSS 段恢复到临时库并比对摘要） |

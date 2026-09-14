@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenBox PostgreSQL backups (openbox, openbox_trace) to OSS
+Documentation=file:/opt/openbox/deploy/gw2/RUNBOOK.md
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=OPENBOX_DIR=/opt/openbox
+ExecStart=/opt/openbox/deploy/gw2/scripts/pg-backup.sh
+TimeoutStartSec=3h
+Nice=10

@@ -1,0 +1,15 @@
+# Sanitized example of /opt/openbox/docker-compose.override.yml (per-environment differences).
+#
+# Since 2026-09-07 the override pins the backend and frontend images (docs/DEPLOY.md). The
+# trajectory worker is pinned the same way and always runs the backend's tag. The override is
+# the last file of COMPOSE_FILE, so these pins win over docker-compose.trajectory.yml.
+
+services:
+  backend:
+    image: openbox-backend:20260915-trajectory-example
+  trajectory-worker:
+    image: openbox-backend:20260915-trajectory-example
+  frontend:
+    image: openbox-frontend-v2:20260915-trajectory-example
+    ports:
+      - "80:80"

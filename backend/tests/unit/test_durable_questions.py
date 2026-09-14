@@ -30,8 +30,8 @@ async def state(tmp_path, monkeypatch):
     schema = None
     if url:
         parsed = make_url(url)
-        if parsed.host not in {"127.0.0.1", "localhost"} or parsed.database != "openbox_questions":
-            raise ValueError("Question regressions require the isolated local openbox_questions database")
+        if parsed.host not in {"127.0.0.1", "localhost"} or not (parsed.database or "").startswith("openbox_questions"):
+            raise ValueError("Question regressions require an isolated local openbox_questions* database")
         admin = create_async_engine(url)
         schema = f"qtest_{uuid4().hex}"
         async with admin.begin() as connection:

@@ -3,6 +3,8 @@
 Authority and content change while the blob store is still returning bytes;
 the worker must answer with the new state and never leak the bytes.
 """
+from urllib.parse import quote
+
 import pytest
 from sqlalchemy import select
 
@@ -72,7 +74,13 @@ async def test_admin_json_and_ticket_are_not_cacheable(worker):
 
 
 @pytest.mark.parametrize("artifact_id", ENCODED_ARTIFACTS)
-async def test_blob_race_on_encoded_record_reads_stays_consistent(worker, artifact_id):
-    from urllib.parse import quote
-    response = await worker.client.get(SESSION + "/records/" + quote("artifact:" + artifact_id, safe=""))
-    assert response.status_code == 200 and response.json()["record"]["record_id"] == "artifact:" + artifact_id
+async def test_record_detail_accepts_encoded_path_identity(worker, artifact_id):
+    header = (await worker.client.get(SESSION)).json()
+    record_id = "artifact:" + artifact_id
+    response = await worker.client.get(SESSION + "/records/" + quote(record_id, safe=""),
+                                       params={"through_seq": header["through_seq"]})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["record"]["record_id"] == record_id
+    assert response.json()["record"]["data"]["text"] == "stored fixture"
+    assert response.json()["through_seq"] == header["through_seq"]

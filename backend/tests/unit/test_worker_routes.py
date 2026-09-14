@@ -1,14 +1,13 @@
 """Worker admin HTTP API: route-for-route parity with the in-process API it replaces (maps/api.md §2)."""
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
 
 import httpx
 import pytest
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
 import trajectory.auth as trajectory_auth
-from tests.unit.test_worker_app_harness import (ENCODED_ARTIFACTS, MEDIA_SHA, PREFIX, PRIVATE, SESSION,  # noqa: F401
-    SYSTEM_PROMPT, SYSTEM_SHA, admin_env, auth_stores, business_db, internal_backend, token, trace_url, worker)
+from tests.unit.test_worker_app_harness import (MEDIA_SHA, PREFIX, PRIVATE, SESSION, SYSTEM_PROMPT,  # noqa: F401
+    SYSTEM_SHA, admin_env, auth_stores, business_db, internal_backend, token, trace_url, worker)
 from trajectory.auth import NoStoreRoute
 from trajectory.storage import blob_key
 from trajectory.store.database import trace_session
@@ -186,19 +185,6 @@ async def test_record_detail_expands_refs_by_default_and_keeps_them_on_request(w
     assert (await worker.client.get(SESSION + "/records/request:req_a", params={"expand": "none"})).status_code == 422
     early = await worker.client.get(SESSION + "/records/artifact:race_asset", params={"through_seq": "2"})
     assert early.status_code == 404 and early.json() == {"detail": "Record is not available at this position"}
-
-
-@pytest.mark.parametrize("artifact_id", ENCODED_ARTIFACTS)
-async def test_record_detail_accepts_encoded_path_identity(worker, artifact_id):
-    header = (await worker.client.get(SESSION)).json()
-    record_id = "artifact:" + artifact_id
-    response = await worker.client.get(SESSION + "/records/" + quote(record_id, safe=""),
-                                       params={"through_seq": header["through_seq"]})
-    assert response.status_code == 200, response.text
-    assert response.headers["cache-control"] == "no-store"
-    assert response.json()["record"]["record_id"] == record_id
-    assert response.json()["record"]["data"]["text"] == "stored fixture"
-    assert response.json()["through_seq"] == header["through_seq"]
 
 
 async def test_payload_download_is_audited_and_revalidated_after_the_read(worker):

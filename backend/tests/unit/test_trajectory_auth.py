@@ -16,8 +16,8 @@ import trajectory.auth as trajectory_auth
 from auth.jwt import create_refresh_token, decode_access_token
 from core.config import OpenBoxConfig
 from db.models.push import MobileSession
-from tests.unit.test_worker_app_harness import (INTERNAL_TOKEN, SECRET, admin_env, auth_stores,  # noqa: F401
-    business_db, internal_backend, token)
+from tests.unit.test_worker_app_harness import (SECRET, admin_env, auth_stores, business_db,  # noqa: F401
+    internal_backend, token)
 from trajectory.auth import (AuditRejected, HttpBackend, LocalBackend, assert_admin, authenticate, configure_backend,
     require_trajectory_admin, revalidate_viewer, viewer_facts)
 from trajectory.types import now

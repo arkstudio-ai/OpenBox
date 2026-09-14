@@ -168,7 +168,8 @@ async def test_default_components_come_from_the_environment(trace_url, tmp_path,
             backend = trajectory_auth.get_backend()
             assert isinstance(backend, trajectory_auth.HttpBackend)
             assert str(backend._client.base_url) == "http://backend:8080"
-            assert tickets._cache is not None and middleware.is_auth_enabled() in {True, False}
+            from cache.memory_cache import MemoryCache
+            assert isinstance(tickets._cache, MemoryCache)  # without JWT_SECRET: a process ticket store
             assert app.state.worker.services.started == 1
         assert app.state.worker is None and trajectory_auth._backend is None
     finally:

@@ -5,12 +5,19 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Request headers the proxy sets; echoed back as X-Fixture-Seen-<name>.
+FORWARDED = ("Host", "X-Real-IP", "X-Forwarded-For", "X-Forwarded-Proto")
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *_args):
         pass
+
+    def echo_forwarded(self):
+        for name in FORWARDED:
+            self.send_header(f"X-Fixture-Seen-{name}", self.headers.get(name, ""))
 
     def do_GET(self):
         if self.headers.get("Upgrade", "").lower() == "websocket":
@@ -22,6 +29,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Sec-WebSocket-Accept", accept)
             self.send_header("X-Fixture-Path", self.path)
             self.send_header("X-Fixture-Instance", os.environ["QA_INSTANCE"])
+            self.echo_forwarded()
             self.end_headers()
             self.close_connection = True
             return
@@ -37,6 +45,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Connection", "close")
+        self.echo_forwarded()
         self.end_headers()
         self.wfile.write(payload)
         self.close_connection = True

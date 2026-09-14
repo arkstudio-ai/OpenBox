@@ -44,6 +44,9 @@ async function until(check, timeout = 20_000) {
   throw error
 }
 
+/** Request headers nginx sets for every proxied location; the fixture echoes them back. */
+const FORWARDED = ["host", "x-real-ip", "x-forwarded-for", "x-forwarded-proto"]
+
 /** ENV of the release stage: what the image supplies when compose sets nothing. */
 function releaseEnv() {
   const lines = readFileSync(`${root}Dockerfile`, "utf8").split("\n")
@@ -195,6 +198,18 @@ try {
   const ticketPath = "/api/admin/trajectories/ticket"
   const ticket = await (await get(ticketPath, { method: "POST", body: "fixture-only" })).json()
   assert.deepEqual(ticket, { instance: "worker", path: ticketPath, method: "POST", body: "fixture-only" })
+  // The worker is told the same client and scheme as the backend (audit IPs, redirects).
+  const seenHttp = (headers) => Object.fromEntries(FORWARDED.map((name) => [name, headers.get(`x-fixture-seen-${name}`)]))
+  const seenUpgrade = (headers) => Object.fromEntries(FORWARDED.map((name) => [name, headers[`x-fixture-seen-${name}`]]))
+  const backendEcho = await get("/api/echo")
+  const forwarded = seenHttp(backendEcho.headers)
+  assert.equal((await backendEcho.json()).instance, "old")
+  for (const name of FORWARDED) assert.ok(forwarded[name], `The backend must receive ${name}`)
+  assert.equal(forwarded["x-forwarded-proto"], "http")
+  assert.deepEqual(seenUpgrade(agentSocket), forwarded)
+  const workerEcho = await get("/api/admin/trajectories/sessions")
+  assert.equal((await workerEcho.json()).instance, "worker")
+  assert.deepEqual(seenHttp(workerEcho.headers), forwarded, "The worker must receive the backend's proxy headers")
   for (const path of ["/api/admin/trajectoriesx/sessions", "/api/admin/users?limit=1"]) {
     assert.equal((await (await get(path)).json()).instance, "old", `${path} must stay on the backend`)
   }
@@ -207,6 +222,7 @@ try {
   const watermark = await upgrade(origin, watermarkPath)
   assert.equal(watermark["x-fixture-instance"], "worker")
   assert.equal(watermark["x-fixture-path"], watermarkPath)
+  assert.deepEqual(seenUpgrade(watermark), forwarded, "The watermark socket must receive the backend's proxy headers")
   const nested = await upgrade(origin, "/ws/admin/trajectories/other?ticket=local-test-only")
   assert.equal(nested["x-fixture-instance"], "old", "Only the exact socket path is the worker's")
   const rendered = docker("exec", proxy.id, "nginx", "-T")

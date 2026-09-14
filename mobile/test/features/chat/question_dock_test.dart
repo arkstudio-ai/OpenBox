@@ -396,7 +396,7 @@ void main() {
       200,
       scrollable: find
           .descendant(
-            of: find.byType(ListView),
+            of: find.byType(CustomScrollView),
             matching: find.byType(Scrollable),
           )
           .first,
@@ -408,10 +408,10 @@ void main() {
     expect(_canSubmit(tester), isTrue);
 
     // Out of the lazy viewport and back: the card is a different element now.
-    await tester.drag(find.byType(ListView), const Offset(0, 4000));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 4000));
     await tester.pumpAndSettle();
     expect(find.text('Option A'), findsNothing);
-    await tester.drag(find.byType(ListView), const Offset(0, -4000));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -4000));
     await tester.pumpAndSettle();
 
     expect(

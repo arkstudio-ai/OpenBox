@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 
@@ -5,33 +7,58 @@ import '../../../shared/appearance/tokens.dart';
 
 /// Scrolling chat column (web `ChatFlow.tsx`): stick-to-bottom while
 /// streaming (re-pin on content growth), force scroll on send, top/bottom
-/// fade masks, back-to-bottom FAB.
+/// fade masks, back-to-bottom FAB, and older history put in front of the
+/// transcript without moving what is on screen.
 class ChatFlow extends StatefulWidget {
   const ChatFlow({
     super.key,
     required this.rows,
+    this.olderCount = 0,
     this.forceScrollToken,
     this.onAtBottomChanged,
     this.controller,
+    this.onNearTop,
+    this.loadingOlder = false,
   });
 
   final List<Widget> rows;
+
+  /// How many leading [rows] sit above the row the transcript opened on —
+  /// history loaded by scrolling up. They lay out upwards from that row, so
+  /// adding more moves neither what is on screen nor the bottom the list
+  /// sticks to. A plain list would push everything down by their height.
+  final int olderCount;
 
   /// Changes when the user sends → force pin + jump (web :128-141).
   final Object? forceScrollToken;
   final ValueChanged<bool>? onAtBottomChanged;
   final ScrollController? controller;
 
+  /// The top of the transcript is close: time to fetch what precedes it.
+  /// Null when there is nothing older to fetch.
+  final VoidCallback? onNearTop;
+
+  /// An older page is on its way: a small spinner at the top edge.
+  final bool loadingOlder;
+
   @override
   State<ChatFlow> createState() => _ChatFlowState();
 }
 
 class _ChatFlowState extends State<ChatFlow> {
+  /// How close to the top, in logical pixels, counts as near.
+  static const _nearTop = 400.0;
+
+  /// Scroll offset zero is the top of this sliver: the rows the transcript
+  /// opened on and everything after them.
+  static const _newestKey = ValueKey<String>('chat-flow-newest');
+
   final _localController = ScrollController();
   ScrollController get _controller => widget.controller ?? _localController;
   bool _atBottom = true;
   bool _stickToBottom = true;
   bool? _reportedAtBottom;
+  bool _nearTopScheduled = false;
 
   @override
   void initState() {
@@ -58,6 +85,10 @@ class _ChatFlowState extends State<ChatFlow> {
       _reportAtBottom();
     }
     if (_stickToBottom) _scheduleStick();
+    // Older history became available while the top was already in view.
+    if (oldWidget.onNearTop == null && _controller.hasClients) {
+      _checkNearTop(_controller.position);
+    }
   }
 
   void _scheduleStick() {
@@ -67,6 +98,20 @@ class _ChatFlowState extends State<ChatFlow> {
       if ((_controller.offset - max).abs() > 1) {
         _controller.jumpTo(max);
       }
+    });
+  }
+
+  void _checkNearTop(ScrollMetrics metrics) {
+    if (widget.onNearTop == null || _nearTopScheduled) return;
+    // A pinned list settles at its bottom whatever this frame shows, so a
+    // long transcript opening at offset zero is not near its top.
+    final resting = _stickToBottom ? metrics.maxScrollExtent : metrics.pixels;
+    if (resting - metrics.minScrollExtent > _nearTop) return;
+    // Notifications can arrive mid-layout; call out once it is over.
+    _nearTopScheduled = true;
+    scheduleMicrotask(() {
+      _nearTopScheduled = false;
+      if (mounted) widget.onNearTop?.call();
     });
   }
 
@@ -93,11 +138,14 @@ class _ChatFlowState extends State<ChatFlow> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final older = widget.olderCount.clamp(0, widget.rows.length);
     return Stack(
       children: [
         NotificationListener<ScrollMetricsNotification>(
           onNotification: (notification) {
-            if (notification.depth == 0 && _stickToBottom) _scheduleStick();
+            if (notification.depth != 0) return false;
+            if (_stickToBottom) _scheduleStick();
+            _checkNearTop(notification.metrics);
             return false;
           },
           child: NotificationListener<ScrollNotification>(
@@ -114,6 +162,9 @@ class _ChatFlowState extends State<ChatFlow> {
               } else if (notification is ScrollEndNotification) {
                 _stickToBottom = metrics.extentAfter <= 1;
               }
+              if (notification is ScrollUpdateNotification) {
+                _checkNearTop(metrics);
+              }
               final atBottom = metrics.extentAfter < 60;
               if (atBottom != _atBottom) {
                 setState(() => _atBottom = atBottom);
@@ -121,13 +172,34 @@ class _ChatFlowState extends State<ChatFlow> {
               }
               return false;
             },
-            child: ListView.separated(
+            child: CustomScrollView(
               controller: _controller,
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              itemCount: widget.rows.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 20),
-              itemBuilder: (context, index) => widget.rows[index],
+              center: _newestKey,
+              slivers: [
+                if (older > 0)
+                  SliverPadding(
+                    // Laid out upwards: the bottom inset meets the newer
+                    // sliver's top one, making the usual 20 between rows.
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    sliver: SliverList.separated(
+                      itemCount: older,
+                      // Index 0 is the row just above the opening one.
+                      itemBuilder: (context, index) =>
+                          widget.rows[older - 1 - index],
+                      separatorBuilder: (_, _) => const SizedBox(height: 20),
+                    ),
+                  ),
+                SliverPadding(
+                  key: _newestKey,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                  sliver: SliverList.separated(
+                    itemCount: widget.rows.length - older,
+                    itemBuilder: (context, index) => widget.rows[older + index],
+                    separatorBuilder: (_, _) => const SizedBox(height: 20),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -149,6 +221,31 @@ class _ChatFlowState extends State<ChatFlow> {
             ),
           ),
         ),
+        // Over the list rather than in it: a spinner inside the scroll
+        // content would sit above the viewport exactly when someone has
+        // scrolled to the top, and would change the extent it is loading for.
+        if (widget.loadingOlder)
+          Positioned(
+            top: 8,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: Center(
+                child: Material(
+                  color: t.card,
+                  shape: CircleBorder(side: BorderSide(color: t.hair)),
+                  elevation: 1,
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         // Bottom fade mask, only when scrolled up.
         Positioned(
           bottom: 0,

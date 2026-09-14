@@ -114,8 +114,13 @@ class SuggestionApi extends ChatApi {
   }
   final Dio dio;
   final sends = <RequestOptions>[];
-  final offsets = <int>[];
+  final historyReads = <({String? before, String? after, int? turns})>[];
+
+  /// While set, history reads wait for it before answering.
+  Completer<void>? historyGate;
   Future<void> Function(RequestOptions)? onPrompt;
+
+  /// The server's transcript, oldest first.
   List<ChatMessage> messages = [answer()];
   String owner = 'owner';
 
@@ -126,17 +131,63 @@ class SuggestionApi extends ChatApi {
     'user_id': owner,
     'model': 'test/chat',
   });
+
   @override
-  Future<List<ChatMessage>> listMessages(
+  Future<HistoryPage> history(
     String sessionId, {
-    int offset = 0,
-    int limit = 200,
+    int? turns,
+    String? before,
+    String? after,
   }) async {
-    offsets.add(offset);
-    final all = messages.where((m) => m.sessionId == sessionId).toList();
-    return all.sublist(
-      math.min(offset, all.length),
-      math.min(offset + limit, all.length),
+    historyReads.add((before: before, after: after, turns: turns));
+    await historyGate?.future;
+    return window(
+      messages.where((m) => m.sessionId == sessionId).toList(),
+      turns: turns,
+      before: before,
+      after: after,
+    );
+  }
+
+  /// The backend's `get_message_window` over a transcript held oldest first:
+  /// whole turns only, each starting at a user message.
+  static HistoryPage window(
+    List<ChatMessage> all, {
+    int? turns,
+    String? before,
+    String? after,
+  }) {
+    final anchor = after ?? before;
+    final end = anchor == null
+        ? all.length
+        : all.indexWhere((m) => m.id == anchor);
+    if (end < 0) throw cursorGone();
+    if (after != null) return HistoryPage(messages: all.sublist(end));
+    final count = math.min(math.max(turns ?? 20, 1), 100);
+    final starts = [
+      for (var i = end - 1; i >= 0; i--)
+        if (all[i].isUser) i,
+    ];
+    // Fewer turns than asked for reach the start, and whatever preceded it.
+    if (starts.length < count) {
+      return HistoryPage(messages: all.sublist(0, end));
+    }
+    final first = starts[count - 1];
+    return HistoryPage(messages: all.sublist(first, end), hasMore: first > 0);
+  }
+
+  /// The 409 the backend answers when a read's anchor message is gone.
+  static DioException cursorGone() {
+    final request = RequestOptions(path: '/history');
+    return DioException(
+      requestOptions: request,
+      response: Response<dynamic>(
+        requestOptions: request,
+        statusCode: 409,
+        data: <String, dynamic>{
+          'detail': {'code': 'HISTORY_CURSOR_GONE', 'message': 'Reload.'},
+        },
+      ),
     );
   }
 

@@ -115,6 +115,8 @@ async def activity_context(db, user_id: str, session_id: str, *, saved: dict | N
         if (context.source_session_id or context.session_id) == session_id:
             if base and saved.get(PAUSED_KEY):
                 await _resume_saved(db, context, saved)
+            elif not base:
+                await _open_first_period(db, context)
             try:
                 return context.derive(**ids)
             except (TypeError, ValueError):
@@ -122,7 +124,10 @@ async def activity_context(db, user_id: str, session_id: str, *, saved: dict | N
         if base:
             _not_recorded("stored activity source does not match")
             return None
-    return await session_context(db, user_id, session_id, **ids)
+    context = await session_context(db, user_id, session_id, **ids)
+    if context is not None:
+        await _open_first_period(db, context)
+    return context
 
 
 # Recording markers (SPEC §5.6) ------------------------------------------------
@@ -204,6 +209,8 @@ async def mark_recording_in_tx(db, execution, *, user_id: str, session_id: str,
             await _open_period(db, context, session_id, epoch, resumed=True)
             execution.trace_context = {**base, EPOCH_KEY: epoch}
         return
+    if enabled(user_id):
+        return  # Recording is on; this write's identity just could not be resolved.
     if base and not saved.get(PAUSED_KEY) and _owns_root(base, user_id, session_id):
         # The epoch of the next period is fixed now, so every later resume of
         # this pause names the same baseline.
@@ -247,6 +254,45 @@ async def _resume_saved(db, context: TraceContext, saved: dict) -> None:
     if db is None or context.source_session_id != root_session_id:
         return
     await _open_period(db, context, root_session_id, _epoch(saved) or _next_epoch(saved), resumed=True)
+
+
+_UNLOADED = object()
+
+
+def _held_identity(db, session_id: str):
+    """The saved identity of an execution row the caller already loaded, without SQL.
+
+    ``_UNLOADED`` when this transaction does not hold the row (or its value).
+    """
+    try:
+        from sqlalchemy import inspect as instance_state
+        from sqlalchemy.orm.util import identity_key
+        from db.models.question import SessionExecution
+        session = getattr(db, "sync_session", db)
+        execution = session.identity_map.get(identity_key(SessionExecution, session_id))
+        # An expired value would need a load; a row this transaction inserted
+        # without an identity reads as None without one.
+        if execution is None or "trace_context" in instance_state(execution).expired_attributes:
+            return _UNLOADED
+        return identity(execution.trace_context)
+    except Exception:
+        return _UNLOADED
+
+
+async def _open_first_period(db, context: TraceContext) -> None:
+    """§5.6 first recorded activity outside a locked session write (a run start, a question adoption).
+
+    Those callers hold the root session's execution row and save its identity
+    right after; an execution without a saved identity opens period 0 here,
+    with the history that precedes this activity. Other callers do not hold
+    the row, so they add no query and leave the period to the session writes.
+    """
+    root_session_id = context.session_id
+    if db is None or context.source_session_id != root_session_id:
+        return
+    if _held_identity(db, root_session_id) != {}:
+        return
+    await _open_period(db, context, root_session_id, 0, resumed=False)
 
 
 @sa_event.listens_for(SyncSession, "after_commit")

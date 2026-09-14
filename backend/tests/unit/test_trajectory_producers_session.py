@@ -123,6 +123,61 @@ async def test_a_run_start_resumes_a_paused_session_once_and_epochs_never_repeat
         "evt_baseline_s1_0", f"evt_baseline_s1_{epochs[0]}", f"evt_baseline_s1_{epochs[1]}"]
 
 
+async def test_only_disabled_recording_pauses_a_period_not_an_unresolvable_identity(state, recording_spool):
+    await create_user_message("s1", "First", user_id="u1")
+    saved = (await read(SessionExecution, "s1")).trace_context
+    # Recording stays on, but this write carries an identity that is not the owner's.
+    with bind(TraceContext("u2", "s2", turn_id="foreign")):
+        await create_user_message("s1", "Second", user_id="u1")
+    assert recording_spool.controls("recording.state") == []
+    assert "recording_paused" not in (await read(SessionExecution, "s1")).trace_context
+    assert saved["recording_epoch"] == 0
+
+
+async def test_a_run_start_that_is_the_first_recorded_activity_opens_period_zero_once(state, recording_spool,
+                                                                                  business_statements):
+    async with database.get_db_session() as db:
+        db.add(Message(id="m-prior", session_id="s1", user_id="u1", role="user", created_at=runtime.now()))
+
+    # No session write came first (a queued or resumed run): the run start itself opens the period.
+    ticket = await runtime.start_run("s1", "u1")
+    assert ticket is not None
+    await runtime.finish_run(ticket, completed=True)
+    await create_user_message("s1", "Next", user_id="u1")
+
+    events = recording_spool.events()
+    assert [item["type"] for item in events[:3]] == ["baseline.captured", "turn.started", "run.started"]
+    [baseline] = recording_spool.events("baseline.captured")
+    assert baseline["event_id"] == "evt_baseline_s1_0"
+    assert [message["id"] for message in baseline["data"]["history"]] == ["m-prior"]
+    assert _no_trajectory_sql(business_statements)
+
+
+async def test_answering_a_question_asked_before_recording_opens_period_zero(state, recording_spool, monkeypatch):
+    from question import question as q
+    from tests.unit.test_durable_questions import checkpoint
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    request_id = await checkpoint(part_id="p-question")
+    assert recording_spool.events() == []
+
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await q.reply(request_id, [["Yes"]], "u1")
+
+    baselines = recording_spool.events("baseline.captured")
+    assert [item["event_id"] for item in baselines] == ["evt_baseline_s1_0", f"question_adopt:{request_id}"]
+    assert [message["id"] for message in baselines[0]["data"]["history"]] == ["m-p-question"]
+    assert [item["event_id"] for item in recording_spool.events("question.resolved")] == [
+        f"question.resolved:{request_id}:0"]
+
+
+async def test_first_activity_detection_adds_no_query_for_callers_without_the_execution_row(
+        state, recording_spool, business_statements):
+    from storage import storage
+    await storage.write(["todo", "s1"], {"items": [{"id": "t1", "content": "Plan", "status": "pending"}]})
+    assert [item["type"] for item in recording_spool.events()] == ["todo.changed"]
+    assert not [statement for statement in business_statements if "session_executions" in statement]
+
+
 async def test_child_session_writes_leave_the_recording_markers_to_the_root(state, recording_spool):
     await create_user_message("s1", "Delegate", user_id="u1")
     root_saved = (await read(SessionExecution, "s1")).trace_context

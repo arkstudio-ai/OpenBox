@@ -546,17 +546,21 @@ class Worker:
 
 @pytest.fixture
 async def worker(trace_url, internal_backend, business_db, auth_stores, admin_env, monkeypatch, tmp_path):
+    from trajectory.payload import reset_blob_cache
     from trajectory.worker.app import create_app
     blob = MemoryBlobStore()
     layer = ReadLayer(blob)
     layer.install(monkeypatch)
+    # Downloads spool real content: blobs from this store, the seeded asset object (kept in the same store)
+    # through the asset reader, and no blob another test left in the process cache.
+    reset_blob_cache()
     spool = tmp_path / "spool"
     spool.mkdir(mode=0o700)
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(spool))
     services = FakeServices(blob)
     http_backend = internal_backend.client()
     app = create_app(database_url=trace_url, blob_store=blob, services_factory=lambda store: services,
-                     backend=http_backend, cache=auth_stores)
+                     backend=http_backend, cache=auth_stores, asset_reader=blob.get)
     admin = token("admin")
     async with app.router.lifespan_context(app):
         await seed_trace(blob)

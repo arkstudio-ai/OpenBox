@@ -14,23 +14,30 @@ fetcher (at most FETCH_CONCURRENCY downloads in flight per event loop) and an
 LRU cache of decoded, sha256-verified blobs (TRAJECTORY_BLOB_CACHE_BYTES).
 Asset references read the business assets bucket, and only here, when an
 administrator opens the payload.
+
+Admin downloads (``spool_payload``, ``spool_blob`` and ``spool_object``) never
+hold a whole object in memory: stored bytes arrive in chunks and are decoded
+and hashed into an anonymous temporary file, which the caller streams once the
+read is authorized again.
 """
 import asyncio
 import hashlib
 import json
 import os
 import re
+import tempfile
 import weakref
 from collections import OrderedDict
 from uuid import uuid4
 
+import zstandard
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm.attributes import set_committed_value
 
 from trajectory.config import integer
-from trajectory.storage import blob_key, decode_blob, encode_blob, get_blob_store
+from trajectory.storage import CHUNK_BYTES, blob_key, decode_blob, encode_blob, get_blob_store, read_chunks
 from trajectory.store.models import SessionTrajectory, TrajectoryMetaAsset, TrajectoryPayload
 from trajectory.types import CorruptContent, canonical, now
 
@@ -38,6 +45,12 @@ JSON_MEDIA_TYPE = "application/json"
 FETCH_CONCURRENCY = 16
 #: Stored blobs at least this large are decoded and hashed off the event loop.
 THREAD_DECODE_BYTES = 1024 * 1024
+#: Downloads move in chunks of this size, so one download holds about a chunk in memory.
+DOWNLOAD_CHUNK_BYTES = CHUNK_BYTES
+#: A downloaded JSON value up to this size stays in memory and enters the blob cache.
+CACHED_DOWNLOAD_BYTES = 1024 * 1024
+#: Name prefix of download files on platforms that cannot keep them nameless.
+DOWNLOAD_PREFIX = "openbox-trajectory-download-"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -146,7 +159,10 @@ _asset_reader = None
 
 
 def set_asset_reader(reader) -> None:
-    """Install ``async reader(oss_key) -> bytes`` for asset payloads (tests, desktop); None restores OSS."""
+    """Install ``async reader(oss_key) -> bytes`` for asset payloads (tests, desktop); None restores OSS.
+
+    A reader that also has ``chunks(oss_key, *, chunk_bytes)`` streams downloads; others are read whole.
+    """
     global _asset_reader
     _asset_reader = reader
 
@@ -156,21 +172,51 @@ def oss_internal_from_env() -> bool:
     return (os.getenv("TRAJECTORY_OSS_INTERNAL") or "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
-def oss_asset_reader(*, internal: bool | None = None):
-    """An ``async reader(oss_key) -> bytes`` for ``set_asset_reader``: objects of the business bucket (OSS_BUCKET).
+class OssAssetReader:
+    """Objects of the business bucket (OSS_BUCKET): ``await reader(oss_key)`` reads one whole,
+    ``reader.chunks(oss_key)`` streams it.
 
     ``internal`` selects the VPC endpoint (None: TRAJECTORY_OSS_INTERNAL), right
     for the worker next to the bucket and unreachable from a desktop.
     """
-    async def read(oss_key: str) -> bytes:
+
+    def __init__(self, internal: bool | None = None):
+        self.internal = internal
+
+    def _internal(self) -> bool:
+        return oss_internal_from_env() if self.internal is None else self.internal
+
+    async def __call__(self, oss_key: str) -> bytes:
         from core.oss import get_oss
-        return await get_oss().get_object(oss_key, internal=oss_internal_from_env() if internal is None else internal)
-    return read
+        return await get_oss().get_object(oss_key, internal=self._internal())
+
+    async def chunks(self, oss_key: str, *, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES):
+        from core.oss import get_oss
+        async for chunk in get_oss().get_object_chunks(oss_key, internal=self._internal(), chunk_bytes=chunk_bytes):
+            yield chunk
+
+
+def oss_asset_reader(*, internal: bool | None = None) -> OssAssetReader:
+    """The OSS reader of asset payloads, for ``set_asset_reader``."""
+    return OssAssetReader(internal)
 
 
 async def read_asset_object(oss_key: str) -> bytes:
     """Bytes of a business asset object; FileNotFoundError when it is gone."""
     return await (_asset_reader or oss_asset_reader())(oss_key)
+
+
+async def read_asset_chunks(oss_key: str, *, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES):
+    """A business asset object in chunks (a reader without ``chunks`` is read whole); FileNotFoundError when gone."""
+    reader = _asset_reader or oss_asset_reader()
+    chunks = getattr(reader, "chunks", None)
+    if chunks is None:
+        view = memoryview(await reader(oss_key))
+        for offset in range(0, len(view), chunk_bytes):
+            yield view[offset:offset + chunk_bytes]
+        return
+    async for chunk in chunks(oss_key, chunk_bytes=chunk_bytes):
+        yield chunk
 
 
 def require_content(trajectory) -> None:
@@ -223,8 +269,8 @@ async def payload_meta(db, trajectory, payload_id: str, *, through_seq: int) -> 
             "size_bytes": row.size_bytes, "sha256": row.sha256}
 
 
-async def read_blob(db, trajectory, sha256: str, *, through_seq: int, blob_store=None) -> bytes:
-    """The JSON bytes of a content-addressed value visible at through_seq in this trajectory.
+async def visible_blob(db, trajectory, sha256: str, *, through_seq: int) -> TrajectoryPayload:
+    """The available row of a content-addressed JSON value visible at through_seq in this trajectory.
 
     Media copies bound to an attachment are not values: only the payload
     endpoint serves them, after checking their source attachment.
@@ -242,7 +288,178 @@ async def read_blob(db, trajectory, sha256: str, *, through_seq: int, blob_store
     row = next((item for item in rows if item.availability == "available"), None)
     if row is None:
         raise FileNotFoundError("Trajectory content has been deleted")
+    return row
+
+
+async def read_blob(db, trajectory, sha256: str, *, through_seq: int, blob_store=None) -> bytes:
+    """The JSON bytes of the value ``visible_blob`` finds."""
+    row = await visible_blob(db, trajectory, sha256, through_seq=through_seq)
     return await fetch_blob(blob_store, row.storage_key, row.encoding, row.sha256)
+
+
+# -- Downloads --
+
+class Spooled:
+    """Downloaded content of ``size`` bytes with digest ``sha256``, ready to be streamed once.
+
+    Content beyond a download's memory allowance sits in an anonymous temporary
+    file: on POSIX it has no name, so nothing outlives a failed or abandoned
+    download, not even a crash. ``chunks()`` streams the content and releases
+    it; ``close()`` releases it unread.
+    """
+
+    def __init__(self, sha256: str, size: int, *, file=None, content: bytes | None = None):
+        self.sha256 = sha256
+        self.size = size
+        self.content = content
+        self._file = file
+
+    async def chunks(self, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES):
+        try:
+            content, file = self.content, self._file
+            if content is not None:
+                for offset in range(0, len(content), chunk_bytes):
+                    yield content[offset:offset + chunk_bytes]
+            elif file is not None and not file.closed:
+                await asyncio.to_thread(file.seek, 0)
+                while chunk := await asyncio.to_thread(file.read, chunk_bytes):
+                    yield chunk
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        self.content = None
+        if self._file is not None:
+            self._file.close()
+
+
+class _SpoolWriter:
+    """Decodes stored bytes and hashes them into memory, up to ``memory_bytes``, else into a temporary file.
+
+    Used from worker threads. A truncated zstd frame decodes short without an
+    error, so zstd content is complete only when its digest checks.
+    """
+
+    def __init__(self, encoding: str, memory_bytes: int):
+        if encoding not in ("identity", "zstd"):
+            raise CorruptContent(f"Unsupported blob encoding: {encoding!r}")
+        self.digest = hashlib.sha256()
+        self.size = 0
+        self.stored = 0
+        self.memory_bytes = memory_bytes
+        self.buffer: bytearray | None = bytearray()
+        self.file = None
+        # Every frame, concatenated ones included, is decoded into write() in pieces of at most a chunk.
+        self._zstd = (zstandard.ZstdDecompressor().stream_writer(self, write_size=DOWNLOAD_CHUNK_BYTES, closefd=False)
+                      if encoding == "zstd" else None)
+
+    def write(self, data) -> int:
+        self.digest.update(data)
+        self.size += len(data)
+        if self.buffer is not None and self.size <= self.memory_bytes:
+            self.buffer += data
+            return len(data)
+        if self.file is None:
+            self.file = tempfile.TemporaryFile(prefix=DOWNLOAD_PREFIX)
+            self.file.write(self.buffer)
+            self.buffer = None
+        self.file.write(data)
+        return len(data)
+
+    def feed(self, chunk) -> None:
+        self.stored += len(chunk)
+        if self._zstd is None:
+            self.write(chunk)
+            return
+        try:
+            self._zstd.write(chunk)
+        except zstandard.ZstdError as exc:
+            raise CorruptContent("Invalid zstd blob") from exc
+
+    def finish(self) -> Spooled:
+        if self._zstd is not None and not self.stored:
+            raise CorruptContent("Empty zstd blob")
+        if self.file is None:
+            return Spooled(self.digest.hexdigest(), self.size, content=bytes(self.buffer))
+        self.file.flush()
+        return Spooled(self.digest.hexdigest(), self.size, file=self.file)
+
+    def discard(self) -> None:
+        self.buffer = None
+        if self.file is not None:
+            self.file.close()
+
+
+async def _spool(chunks, *, encoding: str, sha256: str | None, mismatch: str, memory_bytes: int = 0) -> Spooled:
+    """Decode, hash and keep the stored bytes ``chunks`` yields; CorruptContent(mismatch) unless they match sha256."""
+    try:
+        writer = await asyncio.to_thread(_SpoolWriter, encoding, memory_bytes)
+        try:
+            async for chunk in chunks:
+                await asyncio.to_thread(writer.feed, chunk)
+            spooled = await asyncio.to_thread(writer.finish)
+        except BaseException:
+            writer.discard()
+            raise
+    finally:
+        await chunks.aclose()
+    if sha256 is not None and spooled.sha256 != sha256:
+        spooled.close()
+        raise CorruptContent(mismatch)
+    return spooled
+
+
+async def _blob_chunks(store, key: str):
+    """A retained blob in chunks; a missing object is corruption, as for ``fetch_blob``."""
+    try:
+        async for chunk in read_chunks(store if store is not None else get_blob_store(), key,
+                                       chunk_bytes=DOWNLOAD_CHUNK_BYTES):
+            yield chunk
+    except FileNotFoundError as exc:
+        raise CorruptContent("Retained trajectory blob is missing") from exc
+
+
+async def spool_payload(row: TrajectoryPayload, *, blob_store=None) -> Spooled:
+    """The bytes of a row ``validate_payload`` returned, spooled to a temporary file and digest-verified.
+
+    The errors are those of ``read_payload``; the object is never held whole.
+    """
+    if row.storage_kind == "asset":
+        try:
+            return await _spool(read_asset_chunks(row.storage_key), encoding="identity", sha256=row.sha256,
+                                mismatch="Trajectory content digest mismatch")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError("Source attachment is unavailable") from exc
+    if row.storage_kind != "blob" or row.sha256 is None:
+        raise CorruptContent("Unsupported trajectory payload storage")
+    return await _spool(_blob_chunks(blob_store, row.storage_key), encoding=row.encoding, sha256=row.sha256,
+                        mismatch="Trajectory content digest mismatch")
+
+
+async def spool_blob(row: TrajectoryPayload, *, blob_store=None) -> Spooled:
+    """The JSON value of a row ``visible_blob`` returned: a blob cache hit, or spooled from the store.
+
+    Values up to CACHED_DOWNLOAD_BYTES stay in memory and enter the cache, as
+    ``fetch_blob`` would add them; larger ones go to a temporary file.
+    """
+    key = (row.storage_key, row.sha256)
+    cache = blob_cache()
+    cached = cache.get(key)
+    if cached is not None:
+        return Spooled(row.sha256, len(cached), content=cached)
+    async with _fetch_limit():
+        spooled = await _spool(_blob_chunks(blob_store, row.storage_key), encoding=row.encoding, sha256=row.sha256,
+                               mismatch="Trajectory content digest mismatch", memory_bytes=CACHED_DOWNLOAD_BYTES)
+    if spooled.content is not None:
+        cache.put(key, spooled.content, spooled.size)
+    return spooled
+
+
+async def spool_object(store, key: str, *, sha256: str | None, mismatch: str, encoding: str = "identity") -> Spooled:
+    """Any stored object (an export archive), spooled and digest-verified; FileNotFoundError when it is gone."""
+    return await _spool(read_chunks(store if store is not None else get_blob_store(), key,
+                                    chunk_bytes=DOWNLOAD_CHUNK_BYTES),
+                        encoding=encoding, sha256=sha256, mismatch=mismatch)
 
 
 # -- Reference resolution --

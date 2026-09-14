@@ -57,6 +57,26 @@ async def test_download_rechecks_during_blob_read(worker, resource, change, stat
     assert response.headers["cache-control"] == "no-store"
 
 
+@pytest.mark.parametrize("change,status", [("role", 403), ("revoked", 401), ("blob_deleted", 410),
+                                           ("root_deleted", 404)])
+async def test_blob_reads_recheck_during_the_store_read(worker, change, status):
+    from tests.unit.test_worker_app_harness import SYSTEM_SHA
+    assert (await worker.client.get(SESSION)).status_code == 200  # the viewer's facts are now cached
+
+    async def interrupted(key):
+        if change != "blob_deleted":
+            await apply(worker, change)
+            return
+        async with trace_session() as db:
+            (await db.get(TrajectoryPayload, "pld_system")).availability = "deleted"
+
+    worker.blob.get_hook = interrupted
+    response = await worker.client.get(SESSION + f"/blobs/{SYSTEM_SHA}")
+    assert response.status_code == status, response.text
+    assert b"fixture assistant" not in response.content
+    assert response.headers["cache-control"] == "no-store"
+
+
 async def test_admin_json_and_ticket_are_not_cacheable(worker):
     paths = [PREFIX + "/sessions", SESSION, SESSION + "/events", SESSION + "/records",
              SESSION + "/records/artifact:race_asset", SESSION + "/checkpoint", SESSION + "/search?q=race",

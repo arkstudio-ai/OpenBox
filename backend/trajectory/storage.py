@@ -42,6 +42,8 @@ COMPRESSIBLE_TYPES = frozenset({
 #: Below this size compression saves little and a frame header costs bytes.
 COMPRESSION_MIN_BYTES = 1024
 ZSTD_LEVEL = 3
+#: Chunk size of streamed reads (get_chunks, read_chunks).
+CHUNK_BYTES = 1024 * 1024
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 #: Name prefix of in-flight LocalBlobStore writes; never listed as keys.
@@ -73,6 +75,22 @@ class BlobStore(Protocol):
     async def delete_prefix(self, prefix: str) -> int: ...
 
     def list(self, prefix: str) -> AsyncIterator[str]: ...
+
+
+async def read_chunks(store: BlobStore, key: str, *, chunk_bytes: int = CHUNK_BYTES) -> AsyncIterator[bytes]:
+    """An object in chunks of at most chunk_bytes, streamed by the stores that offer ``get_chunks``.
+
+    Other stores (MemoryBlobStore, wrappers of it) are read whole with ``get``
+    and sliced. A missing key raises FileNotFoundError, as ``get`` does.
+    """
+    get_chunks = getattr(store, "get_chunks", None)
+    if get_chunks is None:
+        view = memoryview(await store.get(key))
+        for offset in range(0, len(view), chunk_bytes):
+            yield view[offset:offset + chunk_bytes]
+        return
+    async for chunk in get_chunks(key, chunk_bytes=chunk_bytes):
+        yield chunk
 
 
 # -- Encodings --
@@ -263,6 +281,11 @@ class OssBlobStore:
     async def get(self, key: str) -> bytes:
         return await self._client().get_object(check_key(key), internal=self.internal)
 
+    async def get_chunks(self, key: str, *, chunk_bytes: int = CHUNK_BYTES) -> AsyncIterator[bytes]:
+        async for chunk in self._client().get_object_chunks(check_key(key), internal=self.internal,
+                                                             chunk_bytes=chunk_bytes):
+            yield chunk
+
     async def exists(self, key: str) -> bool:
         return await self._client().head_object_info(check_key(key), internal=self.internal) is not None
 
@@ -315,6 +338,14 @@ class LocalBlobStore:
     async def get(self, key: str) -> bytes:
         return await asyncio.to_thread(self._read, self._path(key), key)
 
+    async def get_chunks(self, key: str, *, chunk_bytes: int = CHUNK_BYTES) -> AsyncIterator[bytes]:
+        handle = await asyncio.to_thread(self._open, self._path(key), key)
+        try:
+            while chunk := await asyncio.to_thread(handle.read, chunk_bytes):
+                yield chunk
+        finally:
+            handle.close()
+
     async def exists(self, key: str) -> bool:
         return await asyncio.to_thread(self._path(key).is_file)
 
@@ -354,6 +385,13 @@ class LocalBlobStore:
     def _read(path: Path, key: str) -> bytes:
         try:
             return path.read_bytes()
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as exc:
+            raise FileNotFoundError(f"Blob not found: {key}") from exc
+
+    @staticmethod
+    def _open(path: Path, key: str):
+        try:
+            return open(path, "rb")
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as exc:
             raise FileNotFoundError(f"Blob not found: {key}") from exc
 
@@ -593,6 +631,11 @@ class FaultInjectingBlobStore:
     async def get(self, key: str) -> bytes:
         self._maybe_fail("get", key)
         return await self.inner.get(key)
+
+    async def get_chunks(self, key: str, *, chunk_bytes: int = CHUNK_BYTES) -> AsyncIterator[bytes]:
+        self._maybe_fail("get", key)
+        async for chunk in read_chunks(self.inner, key, chunk_bytes=chunk_bytes):
+            yield chunk
 
     async def exists(self, key: str) -> bool:
         self._maybe_fail("exists", key)

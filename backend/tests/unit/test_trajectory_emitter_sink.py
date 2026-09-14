@@ -44,6 +44,19 @@ def records(emitter):
     return [spool.decode_line(line) for name in names for line in name.read_bytes().splitlines()]
 
 
+@pytest.fixture
+def caplog(caplog, monkeypatch):
+    # Tests that run alembic in-process call fileConfig(), which disables every
+    # logger that already exists, including trajectory.config.
+    monkeypatch.setattr(logging.getLogger("trajectory.config"), "disabled", False)
+    previous = logging.root.manager.disable
+    logging.disable(logging.NOTSET)
+    try:
+        yield caplog
+    finally:
+        logging.disable(previous)
+
+
 def forbidden(*args, **kwargs):
     raise AssertionError("unexpected recorder path")
 

@@ -226,7 +226,8 @@ an ordered `COPY ... (FORMAT parquet, COMPRESSION zstd)`. It runs with:
   `LOAD`, HTTP and S3 reads and every file outside the directory are refused.
 - `lock_configuration=true`, so none of this can be changed again.
 
-The parquet and json extensions are built into the Python wheel, so nothing is ever downloaded.
+The DuckDB Python wheel links the parquet and json extensions statically (checked on DuckDB 1.5.5), so nothing is
+downloaded. Even if an extension were missing, the run would fail with exit status 1 instead of fetching it.
 
 ### 4. Uploading
 

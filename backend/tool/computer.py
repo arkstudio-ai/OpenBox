@@ -16,6 +16,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from question.runtime import RunRevoked
 from trajectory.types import TrajectoryError
 from core.log import create_logger
 from sandbox.desktop import (
@@ -473,8 +474,6 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
     preference = await get_browser_mode(ctx.user_id)
     try:
         state = await ensure_browser(ctx.sandbox, ctx.session_id, relay_mode(preference))
-    except TrajectoryError:
-        raise
     except Exception as e:
         from sandbox.diag import summarize_error
         return ToolResult(
@@ -523,7 +522,7 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
             _geometry_cache[key] = geometry
             dims = await _attach_screenshot(ctx, geometry)
             note = f" Screenshot attached ({dims}); you will see it next turn."
-        except TrajectoryError:
+        except (RunRevoked, TrajectoryError):
             raise
         except Exception as e:
             log.warning(f"post-open screenshot failed: {e}")
@@ -566,8 +565,6 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         timings["prepare_ms"] = round((time.monotonic() - prepare_started) * 1000)
     except NoDesktopError as e:
         return ToolResult(title="no graphical desktop", output=str(e))
-    except TrajectoryError:
-        raise
     except Exception as e:
         return ToolResult(title="computer unavailable", output=str(e)[:400])
 
@@ -652,7 +649,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
                     f" Screenshot attached via OSS ({dims}, {state} after {settle_ms}ms); "
                     "you will see it next turn."
                 )
-            except TrajectoryError:
+            except (RunRevoked, TrajectoryError):
                 raise
             except Exception as e:
                 log.warning(f"post-action screenshot failed: {e}")
@@ -677,7 +674,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             },
         )
 
-    except TrajectoryError:
+    except (RunRevoked, TrajectoryError):
 
         raise
 
@@ -706,7 +703,7 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         ) as lease:
             result = await _execute_locked(args, ctx)
         return _finalize_result(result, args.action, started, lease)
-    except TrajectoryError:
+    except (RunRevoked, TrajectoryError):
         raise
     except Exception as e:
         log.warning(f"computer desktop lease failed: {e}")

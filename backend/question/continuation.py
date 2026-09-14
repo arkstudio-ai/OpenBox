@@ -93,7 +93,7 @@ async def _apply(db, session, row: QuestionCheckpoint) -> tuple[dict, list[dict]
 async def apply_answers(session_id: str, user_id: str) -> int | None:
     """Apply accepted decisions exactly once; return the generation to resume."""
     events = []
-    async with runtime.transaction(session_id, user_id) as (db, session, execution):
+    async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
         if not execution.resume_pending or runtime.is_live(execution):
             return None
         rows = (await db.scalars(select(QuestionCheckpoint).where(
@@ -170,7 +170,7 @@ async def expire_questions() -> None:
         ).distinct())).all()
     for session_id, user_id in rows:
         try:
-            async with runtime.transaction(session_id, user_id) as (db, session, execution):
+            async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
                 due = (await db.scalars(select(QuestionCheckpoint).where(
                     QuestionCheckpoint.session_id == session_id,
                     QuestionCheckpoint.status == "pending", QuestionCheckpoint.expires_at <= runtime.now(),
@@ -193,6 +193,9 @@ async def expire_questions() -> None:
             runtime.publish_status(session_id, user_id, status)
         except LookupError:
             continue
+        except Exception:
+            # One session's failure must not keep every other question from expiring.
+            log.exception("Question expiry failed for %s", session_id)
 
 
 class QuestionContinuationWorker:
@@ -216,8 +219,17 @@ class QuestionContinuationWorker:
         self.runs.clear()
 
     async def tick(self):
-        await runtime.recover_expired_runs()
-        await expire_questions()
+        # Recovery, expiry and resume are independent: one failing phase must
+        # not stall the others for every session.
+        for phase, sweep in (("lease recovery", runtime.recover_expired_runs),
+                             ("question expiry", expire_questions),
+                             ("question resume", self._resume_answered)):
+            try:
+                await sweep()
+            except Exception:
+                log.exception("Question continuation %s sweep failed", phase)
+
+    async def _resume_answered(self):
         self.runs = {key: task for key, task in self.runs.items() if not task.done()}
         async with get_db_session() as db:
             candidates = (await db.execute(select(SessionExecution.session_id, SessionExecution.user_id, SessionExecution.generation).where(
@@ -229,27 +241,41 @@ class QuestionContinuationWorker:
             if session_id in self.runs:
                 continue
             try:
-                generation = await apply_answers(session_id, user_id)
-                if generation is not None:
-                    self.runs[session_id] = asyncio.create_task(self._resume(session_id, user_id, generation))
-            except LookupError:
-                continue
-            except ValueError as exc:
-                log.exception("Question continuation failed for %s", session_id)
-                async with runtime.transaction(session_id, user_id) as (_, session, execution):
-                    if execution.generation != candidate_generation or runtime.is_live(execution):
-                        continue
-                    execution.resume_pending = False
-                    execution.resume_error = str(exc)
-                    session.status = "error"
-                runtime.publish_status(session_id, user_id, "error")
-                bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
-                    "error": {"code": "QUESTION_RESUME_FAILED", "message": "Your answers are saved, but continuation failed. Send a message to continue."}})
+                await self._resume_candidate(session_id, user_id, candidate_generation)
             except Exception:
-                log.exception("Transient question continuation failure for %s; keeping delivery intent", session_id)
-                async with runtime.transaction(session_id, user_id) as (_, _, execution):
-                    if execution.generation == candidate_generation and execution.resume_pending:
-                        execution.next_attempt_at = runtime.now() + timedelta(seconds=10)
+                log.exception("Question continuation handling failed for %s", session_id)
+
+    async def _resume_candidate(self, session_id, user_id, candidate_generation):
+        from trajectory.types import TrajectoryError
+        try:
+            generation = await apply_answers(session_id, user_id)
+            if generation is not None:
+                self.runs[session_id] = asyncio.create_task(self._resume(session_id, user_id, generation))
+        except LookupError:
+            return
+        except ValueError as exc:
+            if isinstance(exc, TrajectoryError):
+                # A recording failure says nothing about the saved answers.
+                await self._retry_later(session_id, user_id, candidate_generation)
+                return
+            log.exception("Question continuation failed for %s", session_id)
+            async with runtime.transaction(session_id, user_id, fence=False) as (_, session, execution):
+                if execution.generation != candidate_generation or runtime.is_live(execution):
+                    return
+                execution.resume_pending = False
+                execution.resume_error = str(exc)
+                session.status = "error"
+            runtime.publish_status(session_id, user_id, "error")
+            bus.publish("session.error", {"userId": user_id, "sessionId": session_id,
+                "error": {"code": "QUESTION_RESUME_FAILED", "message": "Your answers are saved, but continuation failed. Send a message to continue."}})
+        except Exception:
+            await self._retry_later(session_id, user_id, candidate_generation)
+
+    async def _retry_later(self, session_id, user_id, candidate_generation):
+        log.exception("Transient question continuation failure for %s; keeping delivery intent", session_id)
+        async with runtime.transaction(session_id, user_id, fence=False) as (_, _, execution):
+            if execution.generation == candidate_generation and execution.resume_pending:
+                execution.next_attempt_at = runtime.now() + timedelta(seconds=10)
 
     async def _resume(self, session_id, user_id, generation):
         from agent.loop import run_loop

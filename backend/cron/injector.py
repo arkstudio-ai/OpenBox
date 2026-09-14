@@ -114,8 +114,9 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
                 })
 
         except Exception as e:
+            from question.runtime import RunRevoked
             from trajectory import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            if isinstance(e, (RunRevoked, TrajectoryError)):
                 raise
             log.error(f"Failed to inject cron result {run.id}: {e}")
 
@@ -156,8 +157,9 @@ async def _do_inject(run_id: str, job: dict, result_text: str, session_id: str, 
         return True
 
     except Exception as e:
+        from question.runtime import RunRevoked
         from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        if isinstance(e, (RunRevoked, TrajectoryError)):
             raise
         log.error(f"Failed to inject cron result {run_id}: {e}")
         return False
@@ -192,8 +194,9 @@ async def _check_and_compact_if_needed(
             model_id = session.model or get_config().model
             await process_compaction(session_id, messages, model_id, auto=True, user_id=user_id)
         except Exception as e:
+            from question.runtime import RunRevoked
             from trajectory import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            if isinstance(e, (RunRevoked, TrajectoryError)):
                 raise
             log.warning(f"Pre-injection compaction failed: {e}")
 
@@ -203,49 +206,10 @@ async def _inject_messages(
     job_name: str, task_prompt: str, result_text: str
 ) -> None:
     """Create the synthetic user + assistant message pair in the session."""
-    from session.session import create_user_message, create_assistant_message, save_part
-    from models.message import TextPart
-    from core.identifier import ascending
-    from cron.i18n import resolve_locale, text
+    from cron.i18n import resolve_locale
 
     locale = await resolve_locale(user_id)
-    from trajectory import current, enabled
-    if enabled(user_id) and current() is not None and _injection_run.get() is not None:
-        await _inject_recorded_messages(session_id, user_id, job_id, job_name, task_prompt, result_text, locale)
-        return
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    # Synthetic user message: the task
-    user_text = f"[{text(locale, 'scheduled_task')}: {job_name} | job_id: {job_id} | {now}]\n{task_prompt}"
-    user_msg = await create_user_message(
-        session_id=session_id,
-        text=user_text,
-        synthetic=True,
-        user_id=user_id,
-    )
-
-    # Assistant message: the result
-    assistant_info = await create_assistant_message(
-        session_id=session_id,
-        parent_id=user_msg.id,
-        agent="cron",
-        user_id=user_id,
-    )
-
-    # Add text part with the result
-    text_part = TextPart(
-        id=ascending("part"),
-        text=result_text,
-        channel="final",
-        session_id=session_id,
-        message_id=assistant_info.id,
-    )
-    await save_part(text_part, is_new=True, user_id=user_id)
-
-    # Mark assistant as finished
-    from session.session import update_message_info
-    assistant_info.finish = "stop"
-    await update_message_info(assistant_info, user_id=user_id)
+    await _commit_injection(session_id, user_id, job_id, job_name, task_prompt, result_text, locale)
 
 
 async def _mark_injected(run_id: str) -> None:
@@ -304,8 +268,12 @@ async def _result_trace(run_id: str, session_id: str, user_id: str):
             _injection_run.reset(token)
 
 
-async def _inject_recorded_messages(session_id, user_id, job_id, job_name, task_prompt, result_text, locale):
-    """Commit callback consumption, both chat messages and facts atomically."""
+async def _commit_injection(session_id, user_id, job_id, job_name, task_prompt, result_text, locale):
+    """Commit callback consumption, both chat messages and facts atomically.
+
+    One transaction whether recording is on or off: a failure leaves no half
+    pair behind, and the session fence refuses a revoked run's in-run flush.
+    """
     from cron.i18n import text
     from core.identifier import ascending
     from question import runtime
@@ -326,13 +294,14 @@ async def _inject_recorded_messages(session_id, user_id, job_id, job_name, task_
     user_part = TextPart(text=user_text, synthetic=True, session_id=session_id, message_id=user_message_id)
     answer_part = TextPart(text=result_text, channel="final", session_id=session_id, message_id=assistant_message_id)
     async with runtime.transaction(session_id, user_id) as (db, _, _execution):
-        run = await db.get(CronRun, run_id)
-        if run is None or run.user_id != user_id or run.session_id != session_id:
+        run = await db.get(CronRun, run_id) if run_id else None
+        if run_id and (run is None or run.user_id != user_id or run.session_id != session_id):
             raise ValueError("Cron callback owner changed")
-        if run.injected:
+        if run is not None and run.injected:
             return
         db.add(MessageORM(id=user_message_id, session_id=session_id, user_id=user_id, role="user",
-                          summary=False, client_message_id=f"cron:{run_id}", created_at=stamp))
+                          summary=False, client_message_id=f"cron:{run_id}" if run_id else None,
+                          created_at=stamp))
         db.add(MessageORM(id=assistant_message_id, session_id=session_id, user_id=user_id, role="assistant",
                           summary=False, parent_id=user_message_id, agent="cron", finish="stop", created_at=stamp))
         for part in (user_part, answer_part):
@@ -340,7 +309,7 @@ async def _inject_recorded_messages(session_id, user_id, job_id, job_name, task_
                           type="text", data=part.model_dump(), created_at=stamp))
         await record("input.injected", {"text": user_text, "synthetic": True, "source": "cron",
             "job_id": run_id}, context=current(), db=db, message_id=user_message_id, part_id=user_part.id,
-            event_id=f"cron:{run_id}:input")
+            event_id=f"cron:{run_id}:input" if run_id else None)
         for message_id, role, parent_id, part in ((user_message_id, "user", None, user_part),
                 (assistant_message_id, "assistant", user_message_id, answer_part)):
             await record_projection_in_tx(db, session_id, user_id, "message.committed", {"message": {
@@ -348,10 +317,11 @@ async def _inject_recorded_messages(session_id, user_id, job_id, job_name, task_
                 "operation": "created"}, message_id=message_id)
             await record_projection_in_tx(db, session_id, user_id, "part.committed", {
                 "part": part.model_dump(), "operation": "created"}, message_id=message_id, part_id=part.id)
-        run.injected = True
-        run.injected_at = stamp
-        await record("job.progress", {"job_id": run_id, "stage": "result_injected", "callback_index": 1,
-            "message_id": assistant_message_id}, context=current(), db=db, event_id=f"cron:{run_id}:injected")
+        if run is not None:
+            run.injected = True
+            run.injected_at = stamp
+            await record("job.progress", {"job_id": run_id, "stage": "result_injected", "callback_index": 1,
+                "message_id": assistant_message_id}, context=current(), db=db, event_id=f"cron:{run_id}:injected")
     for message_id, role, parent_id, part in ((user_message_id, "user", None, user_part),
             (assistant_message_id, "assistant", user_message_id, answer_part)):
         message = MessageWithParts(id=message_id, session_id=session_id, role=role, parts=[part],

@@ -103,7 +103,8 @@ Reply with one word only: wait, kill, or success"""
         log.warning(f"[LLM Judge] Unrecognized response '{answer}', defaulting to kill")
         return "kill"
     except Exception as e:
-        if isinstance(e, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(e, (RunRevoked, TrajectoryError)):
             raise
         log.warning(f"[LLM Judge] LLM call failed: {e}")
         return "kill"
@@ -207,7 +208,8 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
         )
 
     except Exception as exc:
-        if isinstance(exc, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         # Fallback to non-streaming execution if streaming fails
         result = await ctx.sandbox.execute(

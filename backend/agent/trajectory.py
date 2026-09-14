@@ -306,7 +306,10 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
                                    accepted=True):
     """Capture one observed submit, with later job polls kept out of request counts."""
     import copy
+    from question.runtime import assert_current
     from trajectory import current
+    # A revoked run submits no paid provider work.
+    await assert_current("service")
     scope = _service_scope.get()
     if scope is None:
         from agent.hooks import current_tool_context

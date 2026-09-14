@@ -386,16 +386,32 @@ async def update_session(session_id: str, user_id: str = "default", **kwargs) ->
 
     kwargs["updated_at"] = datetime.now(timezone.utc)
 
+    from question import runtime
+    # A run (or its title/suggestions work) bound to this session may only
+    # write while it still holds the turn. Token and context counters record
+    # consumption that already happened, so they ignore revocation.
+    ticket = runtime.bound_ticket(session_id) if set(kwargs) - {"token_usage", "updated_at"} else None
+    if ticket is not None and isinstance(ticket, runtime.RunTicket):
+        runtime.assert_not_revoked("session", ticket)
+
     async with get_db_session() as db:
         setting_keys = set(kwargs) & {"title", "model", "variant", "agent", "project_id", "directory", "revert"}
         previous = await db.get(SessionORM, session_id) if setting_keys else None
         before = {key: getattr(previous, key, None) for key in setting_keys} if previous else {}
-        await db.execute(
-            update(SessionORM).where(
-                SessionORM.id == session_id,
-                SessionORM.user_id == user_id,
-            ).values(**kwargs)
+        statement = update(SessionORM).where(
+            SessionORM.id == session_id,
+            SessionORM.user_id == user_id,
         )
+        if ticket is not None:
+            statement = statement.where(runtime.write_fence(ticket)).execution_options(
+                synchronize_session=False)
+        result = await db.execute(statement.values(**kwargs))
+        if ticket is not None and result.rowcount == 0:
+            owned = await db.scalar(select(SessionORM.id).where(
+                SessionORM.id == session_id, SessionORM.user_id == user_id))
+            reason = await runtime.write_refusal(db, ticket) if owned else None
+            if reason is not None:
+                raise runtime.RunRevoked(ticket, reason, "session")
         if setting_keys and previous is not None and previous.user_id == user_id:
             await record_projection_in_tx(db, session_id, user_id, "session.settings_changed",
                 {"before": before, "after": {key: kwargs[key] for key in setting_keys}})
@@ -409,11 +425,15 @@ async def set_session_status(session_id: str, status: SessionStatus, user_id: st
     from question import runtime
     ticket = runtime.current_run.get()
     if ticket and ticket.session_id == session_id:
-        async with runtime.transaction(session_id, user_id) as (db, session, execution):
-            if not runtime.owns(execution, ticket):
-                return
-            value = await runtime.waiting_status(db, execution) if status == SessionStatus.IDLE else status.value
-            session.status = value
+        # A run that no longer owns the session leaves its status alone silently.
+        try:
+            async with runtime.transaction(session_id, user_id, fence=False) as (db, session, execution):
+                if not runtime.owns(execution, ticket):
+                    return
+                value = await runtime.waiting_status(db, execution) if status == SessionStatus.IDLE else status.value
+                session.status = value
+        except LookupError:
+            return  # The owner deleted the session under this run.
         runtime.publish_status(session_id, user_id, value)
         return
     await update_session(session_id, user_id=user_id, status=status)
@@ -498,7 +518,11 @@ async def update_session_context(
 
 
 async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
-    """Resolve execution ownership without creating history on read-only paths."""
+    """Resolve the recorded identity of a write without creating history on read-only paths.
+
+    Whether the writer may still write is decided by question.runtime, with
+    recording on or off, before this is reached.
+    """
     from trajectory import TraceContext, context_for_session, current, enabled
     if not enabled(user_id):
         return None
@@ -507,13 +531,6 @@ async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
         if inherited.user_id != user_id:
             raise ValueError("trajectory owner mismatch")
         if inherited.source_session_id == session_id:
-            if inherited.run_id is not None and inherited.generation is not None:
-                from db.models.question import SessionExecution
-                from trajectory import TrajectoryError
-                execution = await db.get(SessionExecution, session_id)
-                if execution is not None and (execution.generation != inherited.generation or
-                        (execution.run_id is not None and execution.run_id != inherited.run_id)):
-                    raise TrajectoryError("Superseded execution cannot update the chat projection")
             return inherited.derive(**ids)
     from db.models.question import SessionExecution
     execution = await db.get(SessionExecution, session_id)

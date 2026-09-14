@@ -91,8 +91,10 @@ class ToolHooks:
                 if isinstance(exc, TrajectoryError):
                     raise
                 from question.question import QuestionSuspended
+                from question.runtime import RunRevoked
+                # A revoked run's tool stops like an aborted one.
                 status = "waiting" if isinstance(exc, QuestionSuspended) else (
-                    "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed")
+                    "cancelled" if isinstance(exc, (asyncio.CancelledError, RunRevoked)) else "failed")
                 await record("tool.finished", {
                     "tool": tool_id, "status": status,
                     "error": {"type": type(exc).__name__, "message": str(exc)},
@@ -128,9 +130,15 @@ class ToolHooks:
         part_id: str = "",
     ) -> ToolResult:
         """Wrap a tool execution with hooks."""
-        from question.runtime import still_current
-        if not await still_current():
-            return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
+        from question.runtime import RunRevoked, assert_current, assert_not_revoked, current_run, is_revoked
+        # A revoked run asks for no permission. The lease itself is checked
+        # right before execution, after any permission wait.
+        assert_not_revoked("tool")
+        run_ticket = current_run.get()
+
+        def revoked() -> bool:
+            return run_ticket is not None and is_revoked(run_ticket.run_id)
+
         start_time = None
         blocked = await self.authorize_tool(tool_id, args)
         if blocked is not None:
@@ -165,6 +173,8 @@ class ToolHooks:
 
         async def _on_output(output: str) -> None:
             """Push incremental tool output to frontend via part.updated."""
+            if revoked():
+                return  # A revoked run records and publishes no further output.
             from trajectory import record
             recorded_output = ctx._trajectory_output_redactor.redact(output, mode="replace")
             await record("tool.output", {"tool": tool_id, **recorded_output,
@@ -192,8 +202,7 @@ class ToolHooks:
 
         # Execute. A capable sandbox adds end-to-end trace headers here.
         try:
-            if not await still_current(progress=True):
-                return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
+            await assert_current("tool", progress=True)
             from trajectory import record
             from agent.trajectory import public_value
             if not getattr(execute_fn, "_trajectory_validates", False):
@@ -214,7 +223,7 @@ class ToolHooks:
                 result = await execute_fn(args, ctx)
         except Exception as e:
             from trajectory.types import TrajectoryError
-            if isinstance(e, TrajectoryError):
+            if isinstance(e, (RunRevoked, TrajectoryError)):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):
@@ -266,13 +275,14 @@ class ToolHooks:
             ctx._authorized_tool_args_key = previous_authorized_args
 
         duration = time.monotonic() - start_time if start_time is not None else None
-        bus.publish(TOOL_COMPLETED, {
-            "userId": self.user_id,
-            "sessionId": self.session_id,
-            "partId": part_id,
-            "output": result.output[:2000] if result.output else "",
-            "title": result.title,
-        })
+        if not revoked():
+            bus.publish(TOOL_COMPLETED, {
+                "userId": self.user_id,
+                "sessionId": self.session_id,
+                "partId": part_id,
+                "output": result.output[:2000] if result.output else "",
+                "title": result.title,
+            })
 
         if not getattr(execute_fn, "_trajectory_validates", False):
             result.metadata["duration"] = duration

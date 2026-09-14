@@ -238,8 +238,9 @@ async def _authorize(ctx: ToolContext) -> ToolResult:
             kind="qr_code",
         )
     except Exception as exc:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         log.warning("could not attach the Douyin authorize QR code", exc_info=True)
     output = (
@@ -306,8 +307,9 @@ async def _publish(args: DouyinPublishArgs, ctx: ToolContext) -> ToolResult:
             kind="qr_code",
         )
     except Exception as exc:
+        from question.runtime import RunRevoked
         from trajectory.types import TrajectoryError
-        if isinstance(exc, TrajectoryError):
+        if isinstance(exc, (RunRevoked, TrajectoryError)):
             raise
         log.warning("could not attach the Douyin publish QR code", exc_info=True)
     output = (

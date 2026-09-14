@@ -180,6 +180,21 @@ async def lock_owned_session(
     return row
 
 
+async def _lock_fenced(db: AsyncSession, session_id: str, user_id: str) -> Session:
+    """Lock the owned session and refuse provider state from a revoked run.
+
+    The execution row is read only when a run is bound to this session; a
+    session deleted under its run refuses that run like any revocation.
+    """
+    from question import runtime
+
+    session_row = await runtime.lock_for_write(db, session_id, user_id)
+    if runtime.bound_ticket(session_id) is not None:
+        execution = await runtime.execution_locked(db, session_id, user_id)
+        runtime.assert_current_locked(execution, session_id)
+    return session_row
+
+
 def _empty_state(*, next_origin_seq: int = 1, provider_fallback: Mapping[str, Any] | None = None) -> dict:
     return {
         "v": STATE_VERSION,
@@ -477,7 +492,7 @@ async def save_internal_part(
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
-            session_row = await lock_owned_session(db, session_id, user_id)
+            session_row = await _lock_fenced(db, session_id, user_id)
             await _require_owned_message(
                 db,
                 session_id=session_id,
@@ -681,7 +696,7 @@ async def commit_tool_reveals(
     async with session_exposure_lock(session_id):
         async with get_db_session() as db:
             await begin_session_write(db)
-            session_row = await lock_owned_session(db, session_id, user_id)
+            session_row = await _lock_fenced(db, session_id, user_id)
 
             # Validate the entire ownership/origin surface before allocating a
             # sequence or adding an ORM row. Duplicate origins are checked once.

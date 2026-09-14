@@ -21,6 +21,10 @@ _pending_aborts: Dict[str, float] = {}
 #: started minutes later.
 PENDING_ABORT_TTL = 30.0
 
+#: The signal of each registered run by run id. Revoking one run must reach
+#: that run only, never a newer run that has since taken the session's slot.
+_run_signals: Dict[str, asyncio.Event] = {}
+
 
 def get_abort_signal(session_id: str) -> asyncio.Event:
     """Get or create an abort signal for a session."""
@@ -29,7 +33,7 @@ def get_abort_signal(session_id: str) -> asyncio.Event:
     return _abort_signals[session_id]
 
 
-def register_run(session_id: str) -> asyncio.Event:
+def register_run(session_id: str, run_id: str | None = None) -> asyncio.Event:
     """The signal for a new run (opencode: one AbortController per run).
 
     Normally fresh: the previous run may still be winding down holding its
@@ -47,7 +51,23 @@ def register_run(session_id: str) -> asyncio.Event:
     if requested is not None and (time.monotonic() - requested) <= PENDING_ABORT_TTL:
         signal.set()
     _abort_signals[session_id] = signal
+    if run_id:
+        _run_signals[run_id] = signal
     return signal
+
+
+def abort_run(run_id: str) -> bool:
+    """Signal one registered run, if it runs in this process.
+
+    Unlike trigger_abort this never remembers a stop for a later run: a run
+    that is not registered here has already ended or runs elsewhere, and its
+    own lease checks stop it.
+    """
+    signal = _run_signals.get(run_id)
+    if signal is None:
+        return False
+    signal.set()
+    return True
 
 
 def trigger_abort(session_id: str) -> None:
@@ -77,6 +97,9 @@ def clear_abort(session_id: str, signal: asyncio.Event | None = None) -> None:
     it still belongs to that run — a newer run's fresh signal must survive
     the old run's cleanup."""
     current = _abort_signals.get(session_id)
+    ended = signal if signal is not None else current
+    for run_id in [key for key, value in _run_signals.items() if value is ended]:
+        _run_signals.pop(run_id, None)
     if current is None:
         return
     if signal is not None and current is not signal:

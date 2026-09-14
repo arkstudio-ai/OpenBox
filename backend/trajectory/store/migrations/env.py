@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from db.base import JSONType
 from trajectory.store.database import TraceBase
+from trajectory.store.partitions import DEFAULT_PARTITION, partition_date
 import trajectory.store.models  # noqa: F401  (registers the trace tables)
 
 VERSION_TABLE = "trajectory_alembic_version"
@@ -77,6 +78,30 @@ def render_item(type_, obj, autogen_context):
     return False
 
 
+def include_name(name, type_, parent_names) -> bool:
+    """Autogenerate never reflects the ``trajectory_events`` partitions.
+
+    The default partition comes from the migration and the daily ones from
+    ``trajectory.store.partitions``, not from the models, so autogenerate
+    would otherwise propose dropping them together with their hot events.
+    """
+    if type_ == "table" and name is not None:
+        return name != DEFAULT_PARTITION and partition_date(name) is None
+    return True
+
+
+def include_object_for(dialect_name: str):
+    """Autogenerate compares a dialect-conditional index (``Index.ddl_if``) only on its own dialect."""
+    def include_object(obj, name, type_, reflected, compare_to) -> bool:
+        condition = getattr(obj, "_ddl_if", None)
+        if type_ != "index" or reflected or condition is None or condition.dialect is None:
+            return True
+        dialects = (condition.dialect,) if isinstance(condition.dialect, str) else tuple(condition.dialect)
+        return dialect_name in dialects
+
+    return include_object
+
+
 def run_migrations_offline(url: str) -> None:
     """Run migrations in 'offline' mode: generate SQL without connecting."""
     context.configure(
@@ -103,6 +128,8 @@ def do_run_migrations(connection) -> None:
         target_metadata=target_metadata,
         version_table=version_table,
         render_item=render_item,
+        include_name=include_name,
+        include_object=include_object_for(connection.dialect.name),
     )
     with context.begin_transaction():
         context.run_migrations()

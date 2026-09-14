@@ -59,8 +59,10 @@ def test_event_and_control_lines_have_the_exact_v1_shape():
 def test_readers_reject_unknown_versions_and_malformed_lines_but_ignore_unknown_keys():
     good = {"v": 1, "k": "control", "n": 1, "t": "2026-09-14T08:00:00.000Z", "control": {"type": "gap"}}
     assert spool.decode_line(orjson.dumps({**good, "future": {"x": 1}}))["future"] == {"x": 1}
-    with pytest.raises(spool.UnsupportedSpoolVersion):
-        spool.decode_line(orjson.dumps({**good, "v": 2}))
+    # true and 1.0 compare equal to 1 in Python but are not format version 1.
+    for version in (2, True, 1.0, "1", None):
+        with pytest.raises(spool.UnsupportedSpoolVersion):
+            spool.decode_line(orjson.dumps({**good, "v": version}))
     malformed = [{**good, "k": "other"}, {**good, "n": 0}, {**good, "n": True}, {**good, "n": "1"},
                  {key: value for key, value in good.items() if key != "t"}, {**good, "control": []},
                  {**good, "control": {"reason": "no type"}}, {"v": 1, "k": "event", "n": 2, "t": "x", "event": 5}]
@@ -121,6 +123,6 @@ def test_budget_documents_round_trip_and_invalid_files_raise(tmp_path):
     assert spool.parse_budgets(path.read_bytes()) == ({"root": "degraded"}, {"u1": "blocked"})
     assert spool.parse_budgets(b'{"version":1}') == ({}, {})
     for raw in (b"{", b"[]", b'{"version":2,"sessions":{}}', b'{"version":1,"sessions":[]}',
-                b'{"version":1,"users":"u1"}'):
+                b'{"version":1,"users":"u1"}', b'{"version":true}', b'{"version":1.0}'):
         with pytest.raises(spool.SpoolFormatError):
             spool.parse_budgets(raw)

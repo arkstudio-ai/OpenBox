@@ -131,7 +131,7 @@ VALID = [
     {"type": "tool.output", "call_id": "c", "data": {"output": "x", "duration_ms": 1.5}},
     {"type": "request.usage", "request_id": "r", "data": {"mode": "delta"}},
     {"type": "run.started", "run_id": "run", "generation": 2, "data": {}},
-    {"type": "message.committed", "source_session_id": None, "caused_by_event_id": "evt_x", "data": {"x": 1}},
+    {"type": "message.committed", "source_session_id": "child", "caused_by_event_id": "evt_x", "data": {"x": 1}},
     {"type": "baseline.captured", "version": 1},
 ]
 INVALID = [
@@ -171,6 +171,27 @@ def test_prepare_fast_matches_prepare_except_for_the_canonical_json_pass():
         with pytest.raises((TypeError, ValueError)):
             prepare(context, {"type": "baseline.captured", "data": data})
         assert prepare_fast(context, {"type": "baseline.captured", "data": data})["data"] is data
+
+
+def test_null_identity_overrides_are_omitted_from_spooled_events(spool_env):
+    context = TraceContext("user", "root", source_session_id="child", generation=0, request_id="req", call_id="call")
+    stamp = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    event = {"type": "message.committed", "event_id": "evt_fixed", "occurred_at": stamp, "data": {},
+             "source_session_id": None, "generation": None, "request_id": None, "call_id": None}
+    slow, fast = prepare(context, event), prepare_fast(context, event)
+    assert {key for key, value in slow.items() if value is None} == {"source_session_id", "generation", "request_id",
+                                                                       "call_id"}
+    # No null identity keys (SPEC §3.3); a missing source means the root session, as in TraceContext.
+    assert fast == {**{key: value for key, value in slow.items() if value is not None}, "source_session_id": "root"}
+    assert list(fast) == [key for key in slow if key not in {"generation", "request_id", "call_id"}]
+    with pytest.raises(TrajectoryError, match="request.started requires request_id"):
+        prepare_fast(context, {"type": "request.started", "request_id": None})
+    assert emit("message.committed", {}, context=context, event_id="evt_nulls", request_id=None, call_id=None)
+    emitter = get_emitter()
+    assert emitter.flush(5)
+    [record] = records(emitter)
+    assert None not in record["event"].values()
+    assert not {"request_id", "call_id"} & set(record["event"]) and record["event"]["generation"] == 0
 
 
 class Model(BaseModel):
@@ -251,6 +272,121 @@ def test_emit_never_raises_when_the_spool_directory_is_unusable(tmp_path, monkey
         assert emitter.stats()["dropped_by_reason"] == {"writer_error": 1}
     finally:
         reset_emitter_for_tests()
+
+
+def test_oversized_events_are_dropped_and_reported_with_their_size(spool_env, monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_EMIT_MAX_EVENT_BYTES", str(64 * KIB))
+    context = TraceContext("user", "root", run_id="run", request_id="req")
+    stamp = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    event = {"type": "request.started", "event_id": "evt_large", "occurred_at": stamp, "data": {"text": "x" * 70 * KIB}}
+    size = len(orjson.dumps(prepare_fast(context, event)))
+    assert emit("request.started", event["data"], context=context, event_id="evt_large", occurred_at=stamp) is None
+    assert emit("request.started", {"text": "small"}, context=context, event_id="evt_small") == "evt_small"
+    emitter = get_emitter()
+    assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
+    assert emitter.flush(5)
+    everything = records(emitter)
+    assert [record["event"]["event_id"] for record in everything if record["k"] == "event"] == ["evt_small"]
+    [gap] = [record["control"] for record in everything if record["k"] == "control"]
+    assert (gap["reason"], gap["dropped_events"], gap["dropped_bytes"]) == ("event_too_large", 1, size)
+    assert gap["sessions"] == [{"user_id": "user", "session_id": "root", "run_ids": ["run"], "request_ids": ["req"]}]
+
+
+def test_gap_counts_survive_identities_that_cannot_be_listed(make_emitter):
+    emitter = make_emitter()
+    emitter.start()
+    emitter.drop("serialization_failed", 5, "user", "root", "run", "req")
+    # Malformed identities from callers: counted, never listed, never able to break the gap line.
+    for user_id, run_id in ((2 ** 70, None), (["unhashable"], None), ("u" * 129, None), ("user", {"not": "str"})):
+        emitter.drop("serialization_failed", 1, user_id, "root", run_id, None)
+    assert emitter.emit_control({"type": "session.deleted", "user_id": 2 ** 70, "session_id": "s",
+                                 "deleted_at": "2026-09-14T08:00:00Z"}) is False
+    # A lone surrogate is a listable str that orjson cannot encode: the counts are still written.
+    emitter.drop("queue_overflow", 3, "user\ud800", "root", None, None)
+    assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
+    assert emitter.flush(5)
+    gaps = {record["control"]["reason"]: record["control"] for record in records(emitter) if record["k"] == "control"}
+    assert (gaps["serialization_failed"]["dropped_events"], gaps["serialization_failed"]["dropped_bytes"]) == (6, 9)
+    assert gaps["serialization_failed"]["sessions"] == [{"user_id": "user", "session_id": "root", "run_ids": ["run"],
+                                                         "request_ids": ["req"]}]
+    assert (gaps["queue_overflow"]["dropped_events"], gaps["queue_overflow"]["sessions"]) == (1, [])
+    assert emitter.stats()["gap_lines"] == 2
+
+
+def hold_start(emitter):
+    """Run ``start()`` on a thread that waits inside directory preparation until released."""
+    entered, release, starter = threading.Event(), threading.Event(), {}
+    original = emitter._prepare_directory
+
+    def prepare():
+        if threading.get_ident() == starter.get("ident"):
+            entered.set()
+            release.wait(5)
+        return original()
+
+    def run():
+        starter["ident"] = threading.get_ident()
+        emitter.start()
+
+    emitter._prepare_directory = prepare
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert entered.wait(5)
+    return thread, release
+
+
+def test_close_during_start_leaves_no_writer_on_the_closed_emitter(make_emitter):
+    emitter = make_emitter()
+    thread, release = hold_start(emitter)
+    emitter.close(1.0)
+    assert emitter.stats()["state"] == "closed"
+    release.set()
+    thread.join(5)
+    time.sleep(0.05)
+    assert emitter._thread is None and not emitter.stats()["writer_alive"]
+    assert emitter.emit_bytes(b'{"late":true}', user_id="u", session_id="s") is False
+
+
+def test_emits_during_start_never_start_a_second_writer(make_emitter):
+    emitter = make_emitter(file_bytes=4 * KIB)
+    thread, release = hold_start(emitter)
+    for index in range(5):
+        assert emitter.emit_bytes(orjson.dumps({"index": index}), user_id="u", session_id="s")
+    assert emitter._thread is None
+    release.set()
+    thread.join(5)
+    writer = emitter._thread
+    assert writer is not None and writer.is_alive()
+    for index in range(5, 400):
+        assert emitter.emit_bytes(orjson.dumps({"index": index, "pad": "x" * 50}), user_id="u", session_id="s")
+    assert emitter.flush(5)
+    assert emitter._thread is writer and emitter.stats()["writer_restarts"] == 0
+    everything = records(emitter)
+    assert [record["n"] for record in everything] == list(range(1, 401))
+    assert [record["event"]["index"] for record in everything] == list(range(400))
+
+
+def test_close_finishes_while_drops_keep_arriving(make_emitter):
+    emitter = make_emitter()
+    append = emitter._append
+
+    def append_then_drop_again(kind, payload, at, routing, window=None):
+        written = append(kind, payload, at, routing, window)
+        if window is not None:
+            # A producer drops again while each gap line is being written.
+            emitter.drop(window[0], 1, "user", "root", None, None)
+        return written
+
+    emitter._append = append_then_drop_again
+    emitter.start()
+    emitter.drop("budget", 1, "user", "root", "run", "req")
+    emitter.drop("invalid_event", 1, "user", "root", "run", "req")
+    started = time.monotonic()
+    emitter.close(3.0)
+    assert emitter.stats()["state"] == "closed" and time.monotonic() - started < 2.0
+    everything = records(emitter)
+    assert everything[-1]["control"] == {"type": "producer.goodbye", "last_n": len(everything)}
+    assert [record["n"] for record in everything] == list(range(1, len(everything) + 1))
 
 
 def test_queue_overflow_is_reported_by_one_gap_with_capped_identities(make_emitter):

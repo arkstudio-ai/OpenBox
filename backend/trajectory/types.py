@@ -131,6 +131,11 @@ def prepare_fast(context: TraceContext, event: dict) -> dict:
     The emitter serializes the result exactly once (orjson, with markers for
     unsupported values), so everything except JSON encodability is validated
     here with the same rules and messages as ``prepare()``.
+
+    Spooled events never carry null identity fields (SPEC §3.3): an explicit
+    ``None`` override removes the context's value instead of storing null, and
+    ``source_session_id=None`` means the root session as in ``TraceContext``.
+    Otherwise the result equals ``prepare()`` output, key order included.
     """
     event_type = event.get("type")
     if event_type not in EVENT_TYPES or event.get("version", VERSION) != VERSION:
@@ -146,7 +151,13 @@ def prepare_fast(context: TraceContext, event: dict) -> dict:
             result[key] = value
     for key in ID_FIELDS:
         if key in event:
-            result[key] = event[key]
+            value = event[key]
+            if value is not None:
+                result[key] = value
+            elif key == "source_session_id":
+                result[key] = context.session_id
+            else:
+                result.pop(key, None)
     result.update(type=event_type, version=VERSION, event_id=event.get("event_id") or f"evt_{uuid4().hex}",
                   occurred_at=iso(event.get("occurred_at") or now()), data=data)
     required = _REQUIRED_IDS.get(event_type.split(".")[0])

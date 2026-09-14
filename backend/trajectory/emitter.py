@@ -75,6 +75,13 @@ class _LogLimiter:
 _log_limiter = _LogLimiter()
 
 
+IDENTITY_MAX_CHARS = 128   # the identity limit enforced by types.prepare()
+
+
+def _listable(value) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= IDENTITY_MAX_CHARS
+
+
 class _DropWindow:
     """Drops of one reason since the last gap line written for that reason."""
     __slots__ = ("events", "bytes", "first", "last", "sessions")
@@ -94,24 +101,23 @@ class _DropWindow:
         self._note(user_id, session_id, (run_id,), (request_id,))
 
     def _note(self, user_id, session_id, run_ids, request_ids) -> None:
-        if not user_id or not session_id:
+        # Only valid identities are listed. Anything else from a malformed caller
+        # (an int beyond 64 bits, an unhashable value) is counted but never
+        # listed, so it cannot make the whole gap control unserializable.
+        if not _listable(user_id) or not _listable(session_id):
             return
-        try:
-            entry = self.sessions.get((user_id, session_id))
-            if entry is None:
-                if len(self.sessions) >= spool.GAP_MAX_SESSIONS:
-                    return
-                entry = self.sessions[(user_id, session_id)] = ({}, {})
-            runs, requests = entry
-            for run_id in run_ids:
-                if run_id and len(runs) < spool.GAP_MAX_RUN_IDS:
-                    runs[run_id] = None
-            for request_id in request_ids:
-                if request_id and len(requests) < spool.GAP_MAX_REQUEST_IDS:
-                    requests[request_id] = None
-        except TypeError:
-            # Unhashable identities from a malformed caller are counted only.
-            return
+        entry = self.sessions.get((user_id, session_id))
+        if entry is None:
+            if len(self.sessions) >= spool.GAP_MAX_SESSIONS:
+                return
+            entry = self.sessions[(user_id, session_id)] = ({}, {})
+        runs, requests = entry
+        for run_id in run_ids:
+            if _listable(run_id) and len(runs) < spool.GAP_MAX_RUN_IDS:
+                runs[run_id] = None
+        for request_id in request_ids:
+            if _listable(request_id) and len(requests) < spool.GAP_MAX_REQUEST_IDS:
+                requests[request_id] = None
 
     def merge(self, newer: "_DropWindow") -> None:
         self.events += newer.events
@@ -217,14 +223,23 @@ class Emitter:
                     if self._state == "running":
                         self._restart_if_dead_locked()
                     return
-                self._state = "running"
+            # The state leaves "new" only together with the thread start, so a
+            # concurrent emit cannot start a second writer and a concurrent
+            # close() cannot be followed by a writer on a closed emitter.
             self._prepare_directory()
             try:
                 self.budgets.maybe_refresh(force=True)
             except Exception as exc:
                 self._note_error(exc)
             with self._lock:
-                self._start_thread_locked()
+                if self._state != "new":
+                    return
+                self._state = "running"
+                try:
+                    self._start_thread_locked()
+                except Exception as exc:
+                    # Retried by the liveness checks in emit, flush and close.
+                    self._note_error(exc)
             atexit.register(self._close_at_exit)
         except Exception as exc:
             self._note_error(exc)
@@ -440,6 +455,9 @@ class Emitter:
     def _iterate(self) -> bool:
         """One drain cycle; True after the goodbye line was handled."""
         with self._lock:
+            if self._state == "closed":
+                # Nothing can be written after producer.goodbye; never spin here.
+                return True
             if not self._queue and self._state == "running" and self._flush_seq == self._flush_done:
                 self._waiting = True
                 self._wake.wait(self._wait_timeout())
@@ -688,9 +706,12 @@ class Emitter:
             self._close_file(rename=True)
 
     def _write_gaps(self, closing: bool) -> None:
-        while self._drops:
+        # At most one gap line per interval. A graceful close writes the windows
+        # pending when it starts; drops that keep arriving cannot delay goodbye.
+        with self._lock:
+            lines = len(self._drops) if closing else 1
+        while lines > 0 and self._drops:
             now = time.monotonic()
-            # At most one gap line per interval; a graceful close writes all.
             if not closing and now - self._last_gap < self.GAP_INTERVAL_SECONDS:
                 return
             with self._lock:
@@ -700,18 +721,17 @@ class Emitter:
                 window = self._drops.pop(reason)
                 # Stays pending until its line is written or the window is restored.
                 self._gaps_in_flight += 1
+            lines -= 1
             self._last_gap = now
+            control = window.control(reason)
             try:
-                payload = orjson.dumps(window.control(reason), default=_json_default, option=orjson.OPT_NON_STR_KEYS)
+                payload = orjson.dumps(control, default=_json_default, option=orjson.OPT_NON_STR_KEYS)
             except Exception as exc:
+                # An identity orjson rejects (a lone surrogate) must not lose the counts.
                 self._note_error(exc)
-                with self._lock:
-                    self._gaps_in_flight -= 1
-                continue
+                payload = orjson.dumps({**control, "sessions": []})
             if not self._append(CONTROL, payload, time.time(), None, (reason, window)):
                 self._restore_window(reason, window)
-                return
-            if not closing:
                 return
 
     def _settle_gap_lines(self, metas: list[tuple]) -> None:
@@ -799,6 +819,8 @@ def _after_fork_in_child() -> None:
     global _emitter, _emitter_lock
     emitter, _emitter = _emitter, None
     _emitter_lock = threading.Lock()
+    # A lock held by another parent thread at fork time would never be released.
+    _log_limiter._lock = threading.Lock()
     if emitter is not None:
         emitter._forked = True
         try:

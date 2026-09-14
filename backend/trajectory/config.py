@@ -70,7 +70,12 @@ def spool_dir() -> Path:
     configured = (os.getenv("TRAJECTORY_SPOOL_DIR") or "").strip()
     if configured:
         return Path(configured).expanduser()
-    if SERVER_SPOOL_DIR.is_dir():
+    try:
+        server = SERVER_SPOOL_DIR.is_dir()
+    except OSError:
+        # Path.is_dir() raises for EACCES on a parent; that directory is unusable.
+        server = False
+    if server:
         return SERVER_SPOOL_DIR
     return BACKEND_DIR / ".openbox" / "trajectory-spool"
 

@@ -142,9 +142,18 @@ CONTENT = ["request.prepared", "request.delta", "request.retry_scheduled", "requ
 
 
 @pytest.mark.parametrize("event_type", LIFECYCLE)
-def test_blocked_passes_lifecycle_events_unchanged(event_type):
+def test_blocked_passes_lifecycle_events_and_keeps_the_degraded_tool_output_limit(event_type):
     data = {"output": "x" * 20000, "status": "completed"}
-    assert filter_event(BLOCKED, event_type, data) == (None, data)
+    verdict, kept = filter_event(BLOCKED, event_type, data)
+    assert verdict is None
+    if event_type.startswith("tool."):
+        # Blocked is stricter than degraded, so tool outputs never pass unbounded.
+        assert kept == {"output": "x" * 8192, "status": "completed", "truncated": True, "original_bytes": 20000}
+        assert data["output"] == "x" * 20000 and "truncated" not in data
+    else:
+        assert kept is data
+    small = {"output": "short", "status": "completed"}
+    assert filter_event(BLOCKED, event_type, small) == (None, small)
 
 
 @pytest.mark.parametrize("event_type", CONTENT)
@@ -175,23 +184,27 @@ def test_emit_applies_budget_file_levels_and_reports_blocked_drops(tmp_path, mon
         deadline = time.monotonic() + 5
         while emitter.budgets.level("user", "blocked_root") != BLOCKED and time.monotonic() < deadline:
             time.sleep(0.01)
-        blocked = TraceContext("user", "blocked_root", run_id="run_b", request_id="req_b")
+        blocked = TraceContext("user", "blocked_root", run_id="run_b", request_id="req_b", call_id="call_b")
         started_id = emit("request.started", {"model": "m"}, context=blocked)
         assert started_id
         assert emit("request.prepared", {"input": {"messages": []}}, context=blocked) is None
+        finished_id = emit("tool.finished", {"output": "y" * 9000, "status": "completed"}, context=blocked)
+        assert finished_id
         assert emitter.flush(5)
         records = [spool.decode_line(line) for path in sorted(emitter.producer_dir.glob("*.jsonl"))
                    for line in path.read_bytes().splitlines()]
     finally:
         reset_emitter_for_tests()
     events = {record["event"]["event_id"]: record["event"] for record in records if record["k"] == "event"}
-    assert list(events) == [final_id, result_id, started_id]
+    assert list(events) == [final_id, result_id, started_id, finished_id]
     assert events[result_id]["data"]["output"] == "z" * 8192
     assert events[result_id]["data"]["truncated"] is True and events[result_id]["data"]["original_bytes"] == 10000
+    assert events[finished_id]["data"] == {"output": "y" * 8192, "status": "completed", "truncated": True,
+                                           "original_bytes": 9000}
     gaps = [record["control"] for record in records if record["k"] == "control" and record["control"]["type"] == "gap"]
     assert [(gap["reason"], gap["dropped_events"]) for gap in gaps] == [("budget", 1)]
     assert gaps[0]["sessions"] == [{"user_id": "user", "session_id": "blocked_root", "run_ids": ["run_b"],
                                     "request_ids": ["req_b"]}]
     stats = emitter.stats()
-    assert stats["filtered_events"] == 2 and stats["truncated_events"] == 1
+    assert stats["filtered_events"] == 2 and stats["truncated_events"] == 2
     assert stats["dropped_by_reason"] == {"budget": 1}

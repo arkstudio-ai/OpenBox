@@ -113,10 +113,28 @@ def test_get_emitter_starts_one_process_emitter_and_reset_closes_it(spool_env):
     assert second is not first and second.producer_id != first.producer_id
 
 
+def test_spool_dir_falls_back_when_the_server_directory_cannot_be_inspected(monkeypatch):
+    class Unsearchable:
+        def is_dir(self):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.delenv("TRAJECTORY_SPOOL_DIR", raising=False)
+    monkeypatch.setattr(config, "SERVER_SPOOL_DIR", Unsearchable())
+    assert config.spool_dir() == config.BACKEND_DIR / ".openbox" / "trajectory-spool"
+
+
 def test_fork_child_gets_a_fresh_emitter_and_never_closes_the_parents(spool_env):
     parent = get_emitter()
-    emitter_module._after_fork_in_child()
+    limiter_lock = emitter_module._log_limiter._lock
+    # Another parent thread was inside a rate-limited log call at fork time.
+    limiter_lock.acquire()
     try:
+        emitter_module._after_fork_in_child()
+    finally:
+        limiter_lock.release()
+    try:
+        assert emitter_module._log_limiter._lock is not limiter_lock
+        assert emitter_module._log_limiter.allow(("fork test", "fresh lock")) is True
         child = get_emitter()
         assert child is not parent and child.producer_id != parent.producer_id
         parent.close(1)

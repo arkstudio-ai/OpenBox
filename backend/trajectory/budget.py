@@ -99,7 +99,13 @@ def filter_event(level: str, event_type, data) -> tuple[str | None, object]:
     if level == NORMAL:
         return None, data
     if level == BLOCKED:
-        return (None if lifecycle(event_type) else DROP_BUDGET), data
+        if not lifecycle(event_type):
+            return DROP_BUDGET, data
+        # Blocked is stricter than degraded: lifecycle tool events that pass keep
+        # the degraded output limit instead of carrying unbounded output.
+        if isinstance(data, dict) and event_type.startswith("tool."):
+            return None, truncate_output(data)
+        return None, data
     if not isinstance(data, dict) or not isinstance(event_type, str):
         return None, data
     if event_type == "request.delta":

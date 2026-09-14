@@ -191,6 +191,58 @@ def test_enospc_drops_affected_lines_keeps_complete_ones_and_recovers(make_emitt
     assert not [name for name in os.listdir(emitter.producer_dir) if name.endswith(".part")]
 
 
+def test_concurrent_emits_under_write_faults_keep_counters_contiguous_and_account_every_line(make_emitter):
+    emitter = make_emitter(file_bytes=16 * KIB, queue_bytes=256 * KIB)
+    calls = {"count": 0}
+
+    def faulty_write(descriptor, data):
+        # Only the writer thread writes. Every 5th call is short, every 7th fails.
+        calls["count"] += 1
+        if calls["count"] % 7 == 0:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        if calls["count"] % 5 == 0 and len(data) > 1:
+            return os.write(descriptor, bytes(data[:len(data) // 2]))
+        return os.write(descriptor, data)
+
+    emitter._write = faulty_write
+    emitter.start()
+    accepted = {}
+
+    def producer(name):
+        count = 0
+        for sequence in range(300):
+            payload = orjson.dumps({"producer": name, "sequence": sequence, "pad": "x" * (sequence % 300)})
+            count += emitter.emit_bytes(payload, user_id="user", session_id=name, request_id=f"{name}:{sequence}")
+            if sequence % 25 == 0:
+                time.sleep(0.001)
+        accepted[name] = count
+
+    threads = [threading.Thread(target=producer, args=(f"p{index}",)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    emitter._write = os.write
+    time.sleep(emitter.RETRY_SECONDS * 2)
+    assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
+    emitter.close(5)
+    stats = emitter.stats()
+    assert stats["state"] == "closed" and stats["write_errors"] > 0 and stats["queued_bytes"] == 0
+    assert not [name for name in os.listdir(emitter.producer_dir) if name.endswith(".part")]
+    everything = records(emitter)
+    assert [record["n"] for record in everything] == list(range(1, len(everything) + 1))
+    assert everything[-1]["control"] == {"type": "producer.goodbye", "last_n": len(everything)}
+    events = [record["event"] for record in everything if record["k"] == "event"]
+    gaps = [record["control"] for record in everything if record["k"] == "control" and record["control"]["type"] == "gap"]
+    # Every accepted line is either in the spool or counted as a writer_error drop; gaps carry every drop.
+    assert len(events) + stats["dropped_by_reason"].get("writer_error", 0) == sum(accepted.values())
+    assert {reason: sum(gap["dropped_events"] for gap in gaps if gap["reason"] == reason)
+            for reason in stats["dropped_by_reason"]} == stats["dropped_by_reason"]
+    for name in accepted:
+        sequences = [event["sequence"] for event in events if event["producer"] == name]
+        assert sequences == sorted(set(sequences))
+
+
 def test_torn_tail_that_cannot_be_truncated_stays_in_an_abandoned_part_file(make_emitter):
     emitter = make_emitter()
     emitter.WAIT_SECONDS = 10

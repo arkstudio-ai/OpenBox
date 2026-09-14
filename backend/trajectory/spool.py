@@ -48,6 +48,10 @@ _EVENT_PREFIX = b'{"v":1,"k":"event","n":'
 _CONTROL_PREFIX = b'{"v":1,"k":"control","n":'
 
 
+def _is_version(value) -> bool:
+    return type(value) is int and value == VERSION
+
+
 class SpoolFormatError(ValueError):
     """A spool line or file that readers must not ingest."""
 
@@ -91,7 +95,8 @@ def decode_line(line: bytes) -> dict:
         raise SpoolFormatError("Spool line is not JSON") from exc
     if not isinstance(record, dict):
         raise SpoolFormatError("Spool line must be an object")
-    if record.get("v") != VERSION:
+    # Exact integer 1: true and 1.0 compare equal to 1 but are not version 1.
+    if not _is_version(record.get("v")):
         raise UnsupportedSpoolVersion("Unsupported spool format version")
     kind, n = record.get("k"), record.get("n")
     if kind not in (KIND_EVENT, KIND_CONTROL):
@@ -240,7 +245,7 @@ def parse_budgets(raw: bytes) -> tuple[dict[str, str], dict[str, str]]:
         document = orjson.loads(raw)
     except orjson.JSONDecodeError as exc:
         raise SpoolFormatError("Budget file is not JSON") from exc
-    if not isinstance(document, dict) or document.get("version") != VERSION:
+    if not isinstance(document, dict) or not _is_version(document.get("version")):
         raise SpoolFormatError("Unsupported budget file")
     levels = []
     for section in ("sessions", "users"):

@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError
 
 from core.log import create_logger
 from trajectory import spool
-from trajectory.lifecycle import revoke_asset
+from trajectory.lifecycle import revoke_asset, worker_setting
 from trajectory.storage import blob_key
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
@@ -70,6 +70,10 @@ METRICS = {"lines": "ingest_lines", "events": "ingest_events", "duplicates": "du
            "idempotency_conflicts": "idempotency_conflicts", "deleted_drops": "deleted_drops",
            "ownership_drops": "ownership_drops", "gaps": "gaps_recorded", "producer_losses": "producer_loss_events",
            "quarantined_files": "quarantined_files"}
+#: A batch waiting for asset metadata looks again this often (TRAJECTORY_ASSET_META_WAIT_SECONDS bounds the wait).
+ASSET_WAIT_POLL_SECONDS = 2.0
+#: Bytes read at a time while the sessions of a quarantined file are collected.
+SESSION_SCAN_BYTES = 4 * 1024 * 1024
 
 
 class RetryBatch(Exception):
@@ -78,6 +82,15 @@ class RetryBatch(Exception):
 
 class UploadsDeferred(Exception):
     """Blob uploads failed; the batch waits for its backoff."""
+
+
+class AssetsPending(Exception):
+    """Content of the batch is bound to assets the metadata replica does not know yet; the batch waits."""
+
+    def __init__(self, deadline: float, since: float):
+        super().__init__(deadline)
+        #: Wall-clock time the wait ends, and when it began.
+        self.deadline, self.since = deadline, since
 
 
 # -- Lines ----------------------------------------------------------------------
@@ -305,6 +318,8 @@ class _Backoff:
     uploaded: set[str] = field(default_factory=set)
     #: Objects that had a queued GC entry in any attempt: stored again on every attempt, never reused.
     queued: set[str] = field(default_factory=set)
+    #: Wall-clock time the batch began to wait for asset metadata (AssetsPending).
+    waiting_since: float | None = None
 
 
 @dataclass
@@ -314,6 +329,8 @@ class PreparedBatch:
     cache: meta.MetaCache
     #: Blob keys of this batch that had queued GC entries when it entered the object guard.
     queued: set[str] = field(default_factory=set)
+    #: Objects this batch stored, in this attempt or an earlier one.
+    uploaded: set[str] = field(default_factory=set)
 
 
 # -- Service ------------------------------------------------------------------------
@@ -341,15 +358,30 @@ class IngestService:
         self._recent_saved = 0.0
         #: (producer_id, file name) -> (monotonic time before which the file is not retried, failures in a row).
         self._failures: dict[tuple[str, str], tuple[float, int]] = {}
+        #: (producer_id, file name) -> committed offset of the batch that failed last.
+        self._failed_offsets: dict[tuple[str, str], int] = {}
+        #: (producer_id, file name) -> committed offset the file is being consumed from.
+        self._positions: dict[tuple[str, str], int] = {}
+        self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
+                                                 "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
+        self.asset_meta_wait_seconds = worker_setting(settings, "asset_meta_wait_seconds",
+                                                      "TRAJECTORY_ASSET_META_WAIT_SECONDS", 10)
+        #: Tombstones this process committed and the stored bytes they released, for the daily report.
+        self.totals = {"tombstones": 0, "released_bytes": 0}
 
-    def _failed(self, key: tuple[str, str], failure, exc: Exception, result: dict) -> None:
-        attempts = (failure[1] if failure is not None else 0) + 1
+    def _failed(self, key: tuple[str, str], failure, exc: Exception, result: dict) -> int:
+        """Back off a failing file; returns how often in a row the batch at its committed offset failed."""
+        offset = self._positions.get(key, 0)
+        attempts = (failure[1] if failure is not None and self._failed_offsets.get(key) == offset else 0) + 1
         delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
         self._failures[key] = (time.monotonic() + delay, attempts)
+        self._failed_offsets[key] = offset
         result["failed_batches"] += 1
+        self._inc("failed_batches")
         # The error type only: database messages can carry event content.
         log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
                     "error_type=%s", delay, key[0], key[1], attempts, type(exc).__name__)
+        return attempts
 
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
@@ -391,10 +423,19 @@ class IngestService:
                 except Exception as exc:
                     # One file's failure (a purge that times out, a value the database rejects, a bug) must
                     # not stop the other producers: the file retries from its committed offset after a backoff.
-                    self._failed(key, failure, exc, result)
+                    # A batch that keeps failing is quarantined with gaps, so the producer's later files proceed.
+                    attempts = self._failed(key, failure, exc, result)
+                    if attempts >= self.max_batch_failures and await self._quarantine_failed(
+                            spool_file, scan, attempts, exc, result):
+                        self._failures.pop(key, None)
+                        self._failed_offsets.pop(key, None)
+                        consumed.add(key)
+                        progressed = True
+                        continue
                     waiting[key] = spool_file.mtime
                     continue
                 self._failures.pop(key, None)
+                self._failed_offsets.pop(key, None)
                 if remaining is not None:
                     remaining -= lines
                 if finished:

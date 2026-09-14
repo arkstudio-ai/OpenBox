@@ -22,10 +22,12 @@ own owner id still holds from a previous run.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import time
 import zipfile
@@ -37,15 +39,18 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_, select, update
 
 from core.log import create_logger
+from core.oss import OssError
 from trajectory.auth import assert_admin
-from trajectory.lifecycle import GC_KEY, enqueue_gc, worker_setting
+from trajectory.lifecycle import GC_KEY, allow_long_statements, enqueue_gc, worker_setting
 from trajectory.payload import read_payload
 from trajectory.projector import empty_state, reduce, statistics
-from trajectory.storage import export_key, get_blob_store
+from trajectory.storage import (FaultInjectingBlobStore, LocalBlobStore, OssBlobStore, check_key, export_key,
+    get_blob_store)
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryExport, TrajectoryMetaAsset,
     TrajectoryPayload, TrajectorySegment)
 from trajectory.types import PROJECTOR_VERSION, CorruptContent, canonical, iso, now
+from trajectory.worker.lock import try_lock_file, unlock_file
 
 log = create_logger("trajectory.export")
 
@@ -56,6 +61,12 @@ LEASE_SECONDS = 120
 EXPORTS_PER_PASS = 4
 EVENT_PAGE = 1000
 WRITE_CHUNK_BYTES = 1024 * 1024
+#: Temporary archive files: one per build, locked by the build that writes it.
+TEMP_PREFIX, TEMP_SUFFIX = "openbox-export-", ".zip"
+#: Chunks of a streamed upload and of the read-back that verifies it.
+TRANSFER_CHUNK_BYTES = 8 * 1024 * 1024
+#: Read and write timeout of one streamed request to OSS.
+TRANSFER_TIMEOUT_SECONDS = 300
 #: The statistics replay is CPU bound: give the event loop back this often (lease heartbeat, other worker loops).
 REPLAY_YIELD_EVENTS = 200
 #: What one ZIP entry adds besides its data: local header, data descriptor and central directory, ZIP64 fields.
@@ -122,19 +133,34 @@ async def validate_export(db, trajectory, row) -> None:
         raise FileNotFoundError("Export invalidated by explicit content deletion; create a new export")
 
 
+async def open_export(db, trajectory, export_id: str) -> TrajectoryExport:
+    """The export row once ``validate_export`` accepts a download of it (errors as for ``read_export``)."""
+    row = await get_export(db, trajectory, export_id)
+    await validate_export(db, trajectory, row)
+    return row
+
+
+async def fetch_export(row, *, blob_store=None) -> bytes:
+    """The verified ZIP bytes of an export ``open_export`` accepted; no database session is involved."""
+    content = await (blob_store if blob_store is not None else get_blob_store()).get(row.storage_key)
+    if hashlib.sha256(content).hexdigest() != row.sha256:
+        raise CorruptContent("Export digest mismatch")
+    return content
+
+
 async def read_export(db, trajectory, export_id: str) -> tuple[TrajectoryExport, bytes]:
     """The completed export's row and verified ZIP bytes.
+
+    The caller's transaction (it only read) is committed before the object
+    is downloaded, so no pooled trace connection is held meanwhile.
 
     LookupError: not an export of this trajectory (404). HTTPException 409:
     not ready. FileNotFoundError: content deleted or expired since, or the
     object is gone (410). CorruptContent: digest mismatch (409).
     """
-    row = await get_export(db, trajectory, export_id)
-    await validate_export(db, trajectory, row)
-    content = await get_blob_store().get(row.storage_key)
-    if hashlib.sha256(content).hexdigest() != row.sha256:
-        raise CorruptContent("Export digest mismatch")
-    return row, content
+    row = await open_export(db, trajectory, export_id)
+    await db.commit()
+    return row, await fetch_export(row)
 
 
 # -- Worker service --
@@ -152,9 +178,24 @@ class ExportService:
         self.lease = timedelta(seconds=lease_seconds)
         self._resumed = False
         self._building: set[str] = set()
+        self._temp_files_checked = False
+
+    async def _remove_stale_temp_files(self) -> None:
+        """Once, before the first build: delete temporary archives no build holds (a killed worker's)."""
+        if self._temp_files_checked:
+            return
+        self._temp_files_checked = True
+        try:
+            removed, size = await asyncio.to_thread(remove_stale_temp_files)
+        except Exception as exc:
+            log.warning("Stale export temporary files were not removed: %s", type(exc).__name__)
+            return
+        if removed:
+            log.info("Removed %s stale export temporary files (%s bytes)", removed, size)
 
     async def run_once(self) -> int:
         """Claim and build unfinished exports; returns how many builds ran (any outcome)."""
+        await self._remove_stale_temp_files()
         built = 0
         try:
             for _ in range(EXPORTS_PER_PASS):

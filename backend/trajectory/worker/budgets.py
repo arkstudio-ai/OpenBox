@@ -19,6 +19,7 @@ from sqlalchemy import or_, select, update
 
 from core.log import create_logger
 from trajectory import spool
+from trajectory.lifecycle import allow_long_statements
 from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryWorkerState
 
@@ -89,6 +90,8 @@ class BudgetService:
             self._since = await asyncio.to_thread(self._read_existing_since)
         settings = self.settings
         async with trace_session() as db:
+            # This scans the trajectory rows, longer than the trace role's request statement timeout allows.
+            await allow_long_statements(db)
             rows = (await db.execute(select(
                 SessionTrajectory.id, SessionTrajectory.session_id, SessionTrajectory.event_count,
                 SessionTrajectory.stored_bytes, SessionTrajectory.budget_level, SessionTrajectory.budget_reason)

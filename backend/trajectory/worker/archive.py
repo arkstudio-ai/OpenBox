@@ -65,6 +65,10 @@ KEY_PRUNE_BATCH = 1000
 KEY_PRUNE_MAX_BATCHES = 50
 #: Uncommitted uploads one marker remembers; anything older waits for the trajectory's prefix deletion.
 MAX_TRACKED_UPLOADS = 50
+#: A trajectory whose archival fails is selected again after 30 s, doubling up to an hour; the others go on.
+RETRY_BASE_SECONDS = 30.0
+RETRY_MAX_SECONDS = 3600.0
+_RETRY_LIMIT = 10_000
 
 
 class ArchiveAbandoned(Exception):
@@ -128,6 +132,8 @@ class ArchiveService:
         self._keys_due = 0.0
         self._reported_holes: set[tuple[str, int]] = set()
         self._active: set[str] = set()
+        #: trajectory id -> (monotonic time it is selected again, failures in a row).
+        self._retry: dict[str, tuple[float, int]] = {}
 
     async def run_once(self) -> int:
         """One pass: housekeeping when due, then every qualifying trajectory. Returns the events archived."""
@@ -151,6 +157,7 @@ class ArchiveService:
             try:
                 archived += await self.archive_trajectory(trajectory_id)
             except Exception as exc:
+                self._failed(trajectory_id)
                 self.metrics.inc("segment_failures")
                 log.warning("Trajectory %s archival failed: %s", trajectory_id, type(exc).__name__)
         await self._report_lag()
@@ -164,7 +171,9 @@ class ArchiveService:
         TRAJECTORY_SEGMENT_IDLE_SECONDS its projected tail is archived too.
         Only events at or below ``projected_seq`` are ever archived. A call
         for a trajectory this service is archiving already returns 0: two
-        interleaved passes would upload overlapping ranges.
+        interleaved passes would upload overlapping ranges. A failure keeps
+        the trajectory out of run_once's selection for a backoff; a stored
+        segment ends the backoff.
         """
         if trajectory_id in self._active:
             return 0
@@ -179,22 +188,45 @@ class ArchiveService:
                 if not stored:
                     break
                 archived += stored
+            if archived:
+                self._retry.pop(trajectory_id, None)
             return archived
         finally:
             self._active.discard(trajectory_id)
 
+    def _failed(self, trajectory_id: str) -> None:
+        """Back off a trajectory whose archival failed: 30 s, doubling up to an hour. Its hot rows stay."""
+        at = time.monotonic()
+        failures = self._retry.get(trajectory_id, (0.0, 0))[1] + 1
+        if trajectory_id not in self._retry and len(self._retry) >= _RETRY_LIMIT:
+            self._retry = {key: value for key, value in self._retry.items() if value[0] > at}
+            if len(self._retry) >= _RETRY_LIMIT:
+                self._retry.pop(next(iter(self._retry)))
+        self._retry[trajectory_id] = (at + min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * 2 ** min(failures - 1, 20)),
+                                      failures)
+
     async def _candidates(self) -> list[str]:
+        """Qualifying trajectories, largest backlog first, except those backing off after a failure.
+
+        The query reads one row more for every trajectory that backs off, so a
+        pass is filled even when all of them sort first: trajectories that
+        fail permanently cannot starve the others.
+        """
+        at = time.monotonic()
+        waiting = {trajectory_id for trajectory_id, (due, _) in self._retry.items() if due > at}
         idle_before = now() - timedelta(seconds=self.segment_idle_seconds)
         backlog = SessionTrajectory.projected_seq - SessionTrajectory.archived_seq
         async with trace_session() as db:
-            return list((await db.scalars(
+            await allow_long_statements(db)
+            ids = (await db.scalars(
                 select(SessionTrajectory.id)
                 .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
                        SessionTrajectory.archived_seq < SessionTrajectory.projected_seq,
                        or_(backlog >= self.segment_events, SessionTrajectory.last_activity_at < idle_before))
                 .order_by(backlog.desc(), SessionTrajectory.id)
-                .limit(TRAJECTORIES_PER_PASS)
-            )).all())
+                .limit(TRAJECTORIES_PER_PASS + len(waiting))
+            )).all()
+        return [trajectory_id for trajectory_id in ids if trajectory_id not in waiting][:TRAJECTORIES_PER_PASS]
 
     async def _next_segment_rows(self, trajectory_id: str) -> list[dict]:
         """The contiguous hot rows of the next segment within the event and byte limits, or []."""
@@ -232,11 +264,15 @@ class ArchiveService:
                 else:
                     continue
                 break
-        if not rows and (trajectory_id, expected) not in self._reported_holes:
-            # Reads of this range fail with a sequence gap as well; archival must not skip over it.
-            self._reported_holes.add((trajectory_id, expected))
-            self.metrics.inc("segment_failures")
-            log.error("Trajectory %s hot event %s is missing; its archival cannot advance", trajectory_id, expected)
+        if not rows:
+            # Reads of this range fail with a sequence gap as well; archival must not skip over it, and the
+            # trajectory backs off instead of heading every pass.
+            self._failed(trajectory_id)
+            if (trajectory_id, expected) not in self._reported_holes:
+                self._reported_holes.add((trajectory_id, expected))
+                self.metrics.inc("segment_failures")
+                log.error("Trajectory %s hot event %s is missing; its archival cannot advance", trajectory_id,
+                          expected)
         return rows
 
     async def _store_segment(self, trajectory_id: str, rows: list[dict]) -> int:

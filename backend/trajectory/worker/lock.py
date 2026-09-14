@@ -195,6 +195,15 @@ def _unlock_descriptor(fd: int) -> None:
         pass
 
 
+def try_lock_file(fd: int) -> bool:
+    """An exclusive, non-blocking lock on an open file descriptor; False while another descriptor holds one."""
+    return _lock_descriptor(fd)
+
+
+def unlock_file(fd: int) -> None:
+    _unlock_descriptor(fd)
+
+
 class ProcessWriterLock(WriterLock):
     """For in-memory SQLite: one holder per database name inside this process."""
 

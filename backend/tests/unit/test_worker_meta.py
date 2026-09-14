@@ -138,20 +138,18 @@ def test_times_outside_the_datetime_range_parse_as_missing():
 
 def test_recording_transitions_follow_epochs_and_the_status_rule_without_them():
     first, second = 1_789_000_000_000, 1_789_000_060_000
-    # A pause names the period its resume opens: it applies once and keeps the current period.
-    assert recording_transition("paused", first, status="recording", current_epoch=0) == 0
-    assert recording_transition("paused", first, status="paused", current_epoch=0) is None
-    assert recording_transition("resumed", first, status="paused", current_epoch=0) == first
-    # Once that period is open, its pause and resume are duplicates or stale, and so is anything older.
-    for state, status in (("resumed", "gap"), ("paused", "gap"), ("paused", "paused")):
-        assert recording_transition(state, first, status=status, current_epoch=first) is None
-    assert recording_transition("resumed", first, status="gap", current_epoch=second) is None
-    # A newer period's resume applies even when its pause was never seen.
+    # A pause carries R - 1 and its resume R: each applies when greater than the last applied epoch.
+    assert recording_transition("paused", first - 1, status="recording", current_epoch=0) == first - 1
+    assert recording_transition("resumed", first, status="paused", current_epoch=first - 1) == first
+    # Repeated or stale controls apply nowhere, whatever the status.
+    for state, epoch, status in (("paused", first - 1, "paused"), ("resumed", first, "gap"), ("paused", first - 1, "gap"),
+                                 ("paused", 1, "gap")):
+        assert recording_transition(state, epoch, status=status, current_epoch=first) is None
     assert recording_transition("resumed", second, status="recording", current_epoch=first) == second
-    # Without an epoch: a pause applies unless paused, a resume only ends a pause, one period further.
+    # Without an epoch: a pause applies unless paused, a resume only ends a pause, and the epoch stays.
     assert recording_transition("paused", None, status="gap", current_epoch=first) == first
     assert recording_transition("paused", None, status="paused", current_epoch=first) is None
-    assert recording_transition("resumed", None, status="paused", current_epoch=first) == first + 1
+    assert recording_transition("resumed", None, status="paused", current_epoch=first) == first
     assert recording_transition("resumed", None, status="recording", current_epoch=0) is None
 
 

@@ -52,6 +52,9 @@ class RetentionService:
                                                      "TRAJECTORY_CONTENT_RETENTION_DAYS", 180)
         self.export_retention_days = worker_setting(settings, "export_retention_days",
                                                     "TRAJECTORY_EXPORT_RETENTION_DAYS", 30)
+        #: Committed work since the process started, for the worker's daily report (WorkerServices).
+        #: released_bytes: stored bytes of expired or tombstoned trajectories and sizes of expired exports.
+        self.totals = {"expired": 0, "tombstones": 0, "released_bytes": 0, "objects_deleted": 0, "gc_failures": 0}
 
     async def run_once(self) -> dict:
         """One pass over every retention duty; returns what each did (0 for a duty that failed)."""
@@ -90,12 +93,18 @@ class RetentionService:
                 return False
             if inactive_before is not None and utc(trajectory.last_activity_at) >= inactive_before:
                 return False
-            return await expire_trajectory_content(db, trajectory)
+            released = trajectory.stored_bytes or 0
+            expired = await expire_trajectory_content(db, trajectory)
+        if expired:
+            self.totals["expired"] += 1
+            self.totals["released_bytes"] += released
+        return expired
 
     async def expire_due_content(self) -> int:
         """Expire trajectories inactive for TRAJECTORY_CONTENT_RETENTION_DAYS; returns how many."""
         cutoff = now() - timedelta(days=self.content_retention_days)
         async with trace_session() as db:
+            await allow_long_statements(db)
             candidates = (await db.scalars(
                 select(SessionTrajectory.id)
                 .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
@@ -119,6 +128,7 @@ class RetentionService:
         Like the control, it only acts for the session's owner.
         """
         async with trace_session() as db:
+            await allow_long_statements(db)
             candidates = (await db.scalars(
                 select(SessionTrajectory.id)
                 .join(TrajectoryMetaSession, and_(TrajectoryMetaSession.id == SessionTrajectory.session_id,
@@ -133,16 +143,23 @@ class RetentionService:
                 async with trace_session() as db:
                     await allow_long_statements(db)
                     trajectory = await lock_trajectory(db, trajectory_id)
-                    if trajectory is not None:
-                        tombstoned += await tombstone_trajectory(db, trajectory, reason="session_deleted")
+                    released = (trajectory.stored_bytes or 0) if trajectory is not None else 0
+                    done = trajectory is not None and await tombstone_trajectory(db, trajectory,
+                                                                                 reason="session_deleted")
             except Exception as exc:
                 log.warning("Trajectory %s tombstone failed: %s", trajectory_id, type(exc).__name__)
+                continue
+            if done:
+                tombstoned += 1
+                self.totals["tombstones"] += 1
+                self.totals["released_bytes"] += released
         return tombstoned
 
     async def expire_exports(self) -> int:
         """Delete exports older than TRAJECTORY_EXPORT_RETENTION_DAYS and queue their objects; returns how many."""
         cutoff = now() - timedelta(days=self.export_retention_days)
         async with trace_session() as db:
+            await allow_long_statements(db)
             rows = (await db.scalars(
                 select(TrajectoryExport)
                 .where(TrajectoryExport.status != "deleted", TrajectoryExport.created_at < cutoff)
@@ -150,7 +167,10 @@ class RetentionService:
                 .limit(SWEEP_LIMIT)
                 .with_for_update()
             )).all()
-            return await delete_exports(db, rows, reason="export_expired")
+            released = sum(row.size_bytes or 0 for row in rows)
+            deleted = await delete_exports(db, rows, reason="export_expired")
+        self.totals["released_bytes"] += released
+        return deleted
 
     async def process_gc_queue(self, limit: int = 100) -> int:
         """Delete the objects of due GC entries, oldest due first; returns the entries completed.

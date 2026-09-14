@@ -22,16 +22,18 @@ import hashlib
 import time
 from datetime import datetime, timezone
 
+import orjson
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.log import create_logger
 from trajectory.config import integer
+from trajectory.lifecycle import GC_KEY, enqueue_gc
 from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, existing_payloads, is_ref, json_blob, upload_json_blobs
 from trajectory.projector import TERMINAL, contribution, reduce, targets
-from trajectory.repository import (checkpoint_blobs, expanded_state, record_key, records_for_reduction, reduction_events,
-    store_checkpoint, stored_events, summary_rules)
+from trajectory.repository import (UNSUPPORTED_EVENTS_LIMIT, checkpoint_blobs, expanded_state, record_key,
+    records_for_reduction, reduction_events, store_checkpoint, stored_events, summary_rules)
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryRecord, TrajectoryRecordEvent,
     TrajectorySessionSummary)
@@ -85,6 +87,28 @@ def _chunks(items: list):
 def _instant(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def event_bytes(row: dict) -> int:
+    """Estimated memory of a stored event once its batch expands it: the stored data plus the content it references."""
+    data = row.get("data")
+    try:
+        size = len(orjson.dumps(data))
+    except TypeError:
+        size = len(canonical(data))  # orjson refuses integers beyond 64 bits
+    stack = [data]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            for key, child in value.items():
+                referenced = child.get("size_bytes") if key in ("$ref", "$payload") and isinstance(child, dict) else None
+                if isinstance(referenced, int) and not isinstance(referenced, bool) and referenced > 0:
+                    size += referenced
+                else:
+                    stack.append(child)
+        elif isinstance(value, list):
+            stack.extend(value)
+    return size
 
 
 def search_doc(record: dict) -> str:
@@ -195,6 +219,8 @@ class ProjectionService:
         #: Shared with the GC's blob deletes (lock.ObjectGuard, services.GuardedGcBlobStore); None: unguarded.
         self.object_guard = object_guard
         self.batch_events = _setting(settings, "projection_batch_events", "TRAJECTORY_PROJECTION_BATCH_EVENTS", 200)
+        self.batch_bytes = _setting(settings, "projection_batch_bytes", "TRAJECTORY_PROJECTION_BATCH_BYTES",
+                                    8 * 1024 * 1024)
         self.record_inline_bytes = _setting(settings, "record_inline_bytes", "TRAJECTORY_RECORD_INLINE_BYTES", 16384)
         self.checkpoint_interval = _setting(settings, "checkpoint_interval", "TRAJECTORY_CHECKPOINT_INTERVAL", 1000)
         self._logged: dict[tuple[str, str], float] = {}
@@ -285,19 +311,24 @@ class ProjectionService:
         self.metrics.set_gauge("projection_lag_events", int(lag or 0))
 
     async def project(self, trajectory_id: str, max_events: int | None = None) -> int:
-        """Project the next batch (at most max_events, default 5 x TRAJECTORY_PROJECTION_BATCH_EVENTS); returns its size."""
+        """Project the next batch (at most max_events, default 5 x TRAJECTORY_PROJECTION_BATCH_EVENTS); returns its size.
+
+        A batch also ends once the estimated expanded size of its events reaches
+        TRAJECTORY_PROJECTION_BATCH_BYTES; it holds one event at least.
+        """
         limit = max_events or self.batch_events * 5
         async with trace_session() as db:
             trajectory = await db.get(SessionTrajectory, trajectory_id)
             if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:
                 return 0
             base = trajectory.projected_seq
-            until = min(trajectory.committed_seq, base + limit)
-            if until <= base:
+            last = min(trajectory.committed_seq, base + limit)
+            if last <= base:
                 return 0
             await _background(db)
-            rows = await stored_events(db, trajectory, base, until, limit, blob_store=self.blob_store)
-            if [row["seq"] for row in rows] != list(range(base + 1, until + 1)):
+            rows = await self._batch_rows(db, trajectory, base, last)
+            until = base + len(rows)
+            if not rows or [row["seq"] for row in rows] != list(range(base + 1, until + 1)):
                 raise CorruptContent("Committed trajectory events are not contiguous")
             resolver = Resolver(db, trajectory_id, through_seq=None, blob_store=self.blob_store)
             batch = await reduction_events(resolver, rows)

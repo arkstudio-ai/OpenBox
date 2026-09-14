@@ -10,6 +10,7 @@ from the environment so passwords stay out of the process list
         python -m trajectory.tools.migrate_legacy --legacy-blob-path /legacy-blobs [--only trj_x ...] [--dry-run]
     python -m trajectory.tools.migrate_legacy --verify         # events, content hashes, payload digests
     python -m trajectory.tools.migrate_legacy --finalize-drop  # after a successful full --verify
+    python -m trajectory.tools.migrate_legacy --legacy-blob-path /legacy-blobs --purge-legacy-blobs [--dry-run]
 
 Each trajectory converts in one trace transaction: its row with the original
 id, owner and status; events with their original seq, event id, context,
@@ -18,11 +19,18 @@ without the redaction pass the legacy recorder already applied); and legacy
 payload rows mapped to rows with the same payload_id and first_seq. Records,
 checkpoints and segments are rebuilt by the worker; exports are not migrated.
 A marker per trajectory in ``trajectory_worker_state`` makes reruns skip
-finished work. The business database is only read, except by
-``--finalize-drop``.
+finished work and lists the legacy blob files the conversion read. The
+business database is only read, except by ``--finalize-drop``. After a
+successful ``--finalize-drop``, ``--purge-legacy-blobs`` deletes exactly those
+files (while they still match their size and sha256) and prints counts and
+bytes.
 
-Exit status: 0 success, 1 conversion errors, verification mismatches or a
-refused drop, 2 usage or configuration errors.
+Every mode takes the trace writer lock and refuses to run while a worker holds
+it: the converter uploads outside the worker's object guard.
+
+Exit status: 0 success, 1 conversion errors, verification mismatches, a
+refused drop or purge, or a worker holding the writer lock, 2 usage or
+configuration errors.
 """
 from __future__ import annotations
 
@@ -43,17 +51,22 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from trajectory.storage import blob_key, decode_blob, encode_blob, get_blob_store
-from trajectory.store.database import close_trace_engine, init_trace_engine, trace_session
+from trajectory.store.database import close_trace_engine, get_trace_engine, init_trace_engine, trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryPayload,
     TrajectorySegment, TrajectoryWorkerState)
 from trajectory.types import ID_FIELDS
 from trajectory.worker import content
+from trajectory.worker.lock import writer_lock_for
 
 LEGACY_ENV = "TRAJECTORY_LEGACY_DATABASE_URL"
 TRACE_ENV = "TRAJECTORY_DATABASE_URL"
 CONVERTED_KEY = "legacy_convert:{}"
 RUN_KEY = "legacy_convert"
 VERIFY_KEY = "legacy_verify"
+FINALIZED_KEY = "legacy_finalized"
+#: Conversion and verification statements can outlast the trace role's 5 s default (PostgreSQL).
+CONVERTER_STATEMENT_TIMEOUT = "10min"
+HASH_CHUNK_BYTES = 1024 * 1024
 PAGE_EVENTS = 500
 #: Table role -> (accepted names after the business rename, first match wins; the original name).
 TABLES = {
@@ -117,6 +130,20 @@ async def _put_state(db, key: str, value: dict) -> None:
         db.add(TrajectoryWorkerState(key=key, value=value, updated_at=now))
     else:
         row.value, row.updated_at = value, now
+
+
+async def _long_statements(db) -> None:
+    """PostgreSQL: the statements of this trace transaction may outlast the trace role's 5 s default."""
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text(f"SET LOCAL statement_timeout = '{CONVERTER_STATEMENT_TIMEOUT}'"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass

@@ -5,6 +5,10 @@ with a warning (``trajectory.config.integer``). The recording and admin
 switches (``TRAJECTORY_RECORDING_ENABLED`` and friends) are not cached here:
 they are shared with the backend and evaluated per call by
 ``trajectory.config``.
+
+The worker never reads ``DATABASE_URL``: it has no business database, and
+its trace database comes from ``TRAJECTORY_DATABASE_URL`` alone (deployments
+give the worker an empty ``DATABASE_URL``).
 """
 from __future__ import annotations
 
@@ -108,6 +112,12 @@ class WorkerSettings:
     internal_api_token: str | None = field(default=None, repr=False)
     #: TRAJECTORY_EXPORT_MAX_BYTES: size cap of one export archive (defaulted, so it follows the secrets).
     export_max_bytes: int = 256 * 1024 * 1024
+    #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES: consecutive failures of one spool file batch before it is quarantined.
+    ingest_max_batch_failures: int = 10
+    #: TRAJECTORY_ASSET_META_WAIT_SECONDS: how long content bound to an asset the metadata replica lacks waits for it.
+    asset_meta_wait_seconds: int = 10
+    #: TRAJECTORY_PROJECTION_BATCH_BYTES: estimated expanded size of one projection batch.
+    projection_batch_bytes: int = 8 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> WorkerSettings:
@@ -144,6 +154,9 @@ class WorkerSettings:
             content_retention_days=integer("TRAJECTORY_CONTENT_RETENTION_DAYS", 180),
             export_retention_days=integer("TRAJECTORY_EXPORT_RETENTION_DAYS", 30),
             export_max_bytes=integer("TRAJECTORY_EXPORT_MAX_BYTES", 256 * 1024 * 1024),
+            ingest_max_batch_failures=integer("TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10),
+            asset_meta_wait_seconds=integer("TRAJECTORY_ASSET_META_WAIT_SECONDS", 10),
+            projection_batch_bytes=integer("TRAJECTORY_PROJECTION_BATCH_BYTES", 8 * 1024 * 1024),
             budget_trajectory_events=integer("TRAJECTORY_BUDGET_TRAJECTORY_EVENTS", 50000),
             budget_trajectory_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BYTES", 200 * 1024 * 1024),
             budget_trajectory_block_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BLOCK_BYTES", 1024 * 1024 * 1024),

@@ -77,27 +77,39 @@ def control_epoch(control: dict) -> int | None:
 def recording_transition(state: str, epoch: int | None, *, status: str, current_epoch: int) -> int | None:
     """The trajectory's ``recording_epoch`` once a ``recording.state`` control applies; None when it does not.
 
-    A resume carries the epoch of the recording period it opens, and a pause
-    the epoch of the period its resume will open: producers fix that epoch when
-    recording stops (``trajectory.producers``). ``recording_epoch`` holds the
-    period of the last applied resume, so a control with an epoch applies only
-    when the epoch is newer. A repeated or delayed resume names a period that is
-    already open, and a pause that arrives after its resume names that period
-    too. A pause also leaves an already paused trajectory alone, so a second
-    report of the same stop adds no gap.
+    Producers give every transition a larger epoch than the one before it: a
+    resume carries the epoch R of the recording period it opens and a pause
+    R - 1, while fork and revert may report a pause with a small epoch.
+    ``recording_epoch`` holds the epoch of the last applied control, so a
+    control with an epoch applies only when its epoch is greater, and its epoch
+    is stored: a repeated control, or a stale one from a crashed producer's
+    abandoned file, applies nowhere.
 
-    Controls without an epoch keep the status rule: a pause applies only when
-    the trajectory is not paused, and a resume only ends a pause (one period
-    further).
+    Controls without an epoch keep the status rule and leave the stored epoch
+    alone: a pause applies only when the trajectory is not paused, and a resume
+    only ends a pause.
     """
+    if epoch is not None:
+        return epoch if epoch > current_epoch else None
     paused = status == PAUSED
-    if epoch is not None and epoch <= current_epoch:
-        return None
     if state == PAUSED:
         return None if paused else current_epoch
-    if epoch is None:
-        return current_epoch + 1 if paused else None
-    return epoch
+    return current_epoch if paused else None
+
+
+def asset_view_from_control(control: dict) -> AssetView | None:
+    """What an ``asset.meta`` or ``asset.deleted`` control says about its asset, before the control applies."""
+    if control.get("type") == "asset.deleted":
+        asset_id = _identifier(control.get("asset_id"))
+        return AssetView(asset_id, _identifier(control.get("user_id")), None, None, None, None, True) if asset_id else None
+    record = control.get("asset") if control.get("type") == "asset.meta" else None
+    if not isinstance(record, dict) or _identifier(record.get("id")) is None or not _identifier(record.get("user_id")):
+        return None
+    size = record.get("size")
+    return AssetView(record["id"], record["user_id"], _identifier(record.get("workspace_id")),
+                     _string(record.get("oss_key"), None), _string(record.get("mime"), 128),
+                     size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None,
+                     bool(record.get("is_deleted")))
 
 
 def _identifier(value) -> str | None:

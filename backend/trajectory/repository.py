@@ -9,6 +9,7 @@ checkpoint plus replay. Session identity comes from the metadata replicas
 """
 from datetime import datetime
 from types import SimpleNamespace
+import asyncio
 import base64
 import hashlib
 import json
@@ -29,7 +30,11 @@ from trajectory.types import (PROJECTOR_VERSION, CorruptContent, TrajectoryError
 
 #: Keys the projection worker keeps next to the summary statistics so a head
 #: read returns the same state as a replay; _metadata strips them.
-HIDDEN_STATISTICS = ("unsupported_events", "coverage_start")
+HIDDEN_STATISTICS = ("unsupported_events", "coverage_start", "unsupported_events_count")
+#: Unsupported events a state lists, the first ones by seq; the summary statistics also count all of them.
+UNSUPPORTED_EVENTS_LIMIT = 100
+#: A replay gives the event loop back this often.
+REPLAY_YIELD_EVENTS = 200
 RECORD_ID_WIDTH = 256
 
 
@@ -328,7 +333,7 @@ async def replay_events(db, trajectory, state: dict, through: int, resolver: Res
     ``observe(row, event, before, after)`` sees each stored row, the event the
     reducer folded and the states around it.
     """
-    after = int(state["through_seq"])
+    after, replayed = int(state["through_seq"]), 0
     while after < through:
         rows = await stored_events(db, trajectory, after, through, 1000, blob_store=blob_store)
         if not rows:
@@ -340,8 +345,20 @@ async def replay_events(db, trajectory, state: dict, through: int, resolver: Res
             before, state = state, reduce(state, event, hints)
             if observe is not None:
                 observe(row, event, before, state)
+            replayed += 1
+            if replayed % REPLAY_YIELD_EVENTS == 0:
+                # A read that replays while projection lags must not hold the worker's event loop.
+                await asyncio.sleep(0)
         after = rows[-1]["seq"]
     return state
+
+
+def bounded_unsupported(state: dict) -> dict:
+    """The state with at most UNSUPPORTED_EVENTS_LIMIT unsupported events, the first ones, as summaries keep them."""
+    unsupported = state.get("unsupported_events") or []
+    if len(unsupported) <= UNSUPPORTED_EVENTS_LIMIT:
+        return state
+    return {**state, "unsupported_events": unsupported[:UNSUPPORTED_EVENTS_LIMIT]}
 
 
 async def expanded_state(db, trajectory, through: int, *, blob_store=None, resolver: Resolver | None = None,
@@ -349,19 +366,20 @@ async def expanded_state(db, trajectory, through: int, *, blob_store=None, resol
     """The state at through with every ``$ref`` expanded and payload availability as stored.
 
     ``observe`` (see replay_events) sees the events replayed on top of a
-    checkpoint; the head state read from record rows replays none.
+    checkpoint; the head state read from record rows replays none. Either way
+    the state lists at most UNSUPPORTED_EVENTS_LIMIT unsupported events.
     """
     require_content(trajectory)
     resolver = resolver or Resolver(db, trajectory.id, through_seq=through, blob_store=blob_store)
     if through == trajectory.projected_seq:
         state = await _head_state(db, trajectory, through, resolver)
         if state is not None:
-            return state
+            return bounded_unsupported(state)
     checkpoint = await _stored_checkpoint(db, trajectory, through, blob_store=blob_store)
     state = checkpoint[1] if checkpoint is not None else empty_state()
     state = await replay_events(db, trajectory, state, through, resolver, blob_store=blob_store, observe=observe)
     values = await resolver.expand_refs(list(state["records"].values()))
-    return {**state, "records": dict(zip(state["records"], values))}
+    return bounded_unsupported({**state, "records": dict(zip(state["records"], values))})
 
 
 async def _visible_state(resolver: Resolver, state: dict) -> dict:

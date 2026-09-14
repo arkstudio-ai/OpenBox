@@ -18,15 +18,18 @@ import os
 import socket
 import uuid
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from core.log import create_logger
 from trajectory.export import ExportService
+from trajectory.lifecycle import allow_long_statements
 from trajectory.storage import key_prefix
+from trajectory.store import partitions
 from trajectory.store.database import get_trace_engine, trace_session
-from trajectory.store.models import TrajectoryPayload
+from trajectory.store.models import TrajectoryEventKey, TrajectoryPayload, TrajectoryWorkerState
 from trajectory.worker.archive import ArchiveService
 from trajectory.worker.budgets import BudgetService, write_heartbeat
 from trajectory.worker.ingest import IngestService
@@ -47,6 +50,14 @@ BUDGET_SECONDS = 10.0
 HEARTBEAT_SECONDS = 5.0
 ERROR_BACKOFF_SECONDS = 5.0
 GC_BATCH = 100
+GAUGE_SECONDS = 300.0
+REPORT_SECONDS = 60.0
+#: trajectory_worker_state row of the day the daily report is collecting, kept across restarts.
+REPORT_STATE_KEY = "report.daily"
+REPORT_FIELDS = ("trajectories_expired", "tombstones_processed", "objects_deleted", "bytes_deleted", "gc_failures",
+                 "degraded_trajectories", "degraded_users")
+#: Report fields that hold the day's highest sample instead of a sum.
+REPORT_PEAKS = ("degraded_trajectories", "degraded_users")
 #: Steps that run whenever the sequential (SQLite) loop wakes; the others follow their own interval.
 CONTINUOUS_STEPS = ("ingest", "projection")
 
@@ -135,6 +146,11 @@ class WorkerServices:
         self._projection_wake: asyncio.Event | None = None
         self._checkpoints: set[str] = set()
         self._last_checkpoints = 0
+        #: The day the daily report collects (from REPORT_STATE_KEY on first use), and the value last saved.
+        self._report: dict | None = None
+        self._report_saved: dict | None = None
+        #: The services' cumulative totals already added to the report.
+        self._folded: dict[str, int] = {}
 
     @property
     def is_writer(self) -> bool:

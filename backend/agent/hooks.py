@@ -87,9 +87,6 @@ class ToolHooks:
             try:
                 result = await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id)
             except BaseException as exc:
-                from trajectory.types import TrajectoryError
-                if isinstance(exc, TrajectoryError):
-                    raise
                 from question.question import QuestionSuspended
                 from question.runtime import RunRevoked
                 # A revoked run's tool stops like an aborted one.
@@ -222,8 +219,7 @@ class ToolHooks:
             else:
                 result = await execute_fn(args, ctx)
         except Exception as e:
-            from trajectory.types import TrajectoryError
-            if isinstance(e, (RunRevoked, TrajectoryError)):
+            if isinstance(e, RunRevoked):
                 raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):

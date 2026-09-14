@@ -28,7 +28,6 @@ from sqlalchemy.exc import IntegrityError
 
 from auth.jwt import create_asset_download_token
 from question.runtime import RunRevoked
-from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -919,7 +918,7 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
             user_id=ctx.user_id,
         )
         return True
-    except (RunRevoked, TrajectoryError):
+    except RunRevoked:
         # No part was saved. Release the claim so the run that owns the
         # conversation can still attach this finished video to its reply.
         try:
@@ -2418,7 +2417,7 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
-        except (RunRevoked, TrajectoryError) as exc:
+        except RunRevoked as exc:
             if "job" in locals() and created:
                 # A refused dispatch never reached the provider: close the job.
                 await _close_refused_submit(job.id, exc)
@@ -2541,8 +2540,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 from agent.trajectory import service_scope
                 async with service_scope(ctx, job=job):
                     await _provider_cancel(target, job.provider_task_id)
-            except TrajectoryError:
-                raise
             except Exception as exc:
                 return ToolResult(title="Video cancellation failed", output=_public_error(exc))
         cancel_note = (
@@ -2594,8 +2591,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                 else:
                     await asyncio.sleep(min(poll_interval_seconds, remaining))
                     job = await _owned_job(job.id, ctx, "segment")
-            except TrajectoryError:
-                raise
             except Exception as exc:
                 if _is_timeout_error(exc):
                     timed_out = True
@@ -2667,8 +2662,6 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     await _update_job(job.id, status=state, error=None)
                     job = await _owned_job(job.id, ctx, "segment")
             version = _job_snapshot_version(job)
-        except TrajectoryError:
-            raise
         except Exception as exc:
             if is_wait and _is_timeout_error(exc):
                 timed_out = True
@@ -2878,7 +2871,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     "text": transcript.get("text", ""),
                 },
             )
-        except (RunRevoked, TrajectoryError) as exc:
+        except RunRevoked as exc:
             if created:
                 await _close_refused_submit(job.id, exc)
             raise
@@ -2937,7 +2930,7 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
-        except (RunRevoked, TrajectoryError) as exc:
+        except RunRevoked as exc:
             # The retry never reached the provider: the job stays failed.
             await _close_refused_submit(job.id, exc, status="failed")
             raise

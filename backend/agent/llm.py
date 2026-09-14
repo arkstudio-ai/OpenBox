@@ -1410,8 +1410,7 @@ async def _stream_responses_api(
 
     except Exception as e:
         from question.runtime import RunRevoked
-        from trajectory.types import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         if native_plan is not None and native_record_capability is not None:
             from agent.native_tool_search import NativeProtocolError
@@ -1871,8 +1870,7 @@ async def _stream_litellm_direct(
 
     except Exception as e:
         from question.runtime import RunRevoked
-        from trajectory.types import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         if capture is not None:
             await capture.finish("failed", error=e)

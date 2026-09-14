@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from core.log import create_logger
 from sandbox.client import IdleNotification
 from tool.tool import ToolResult, ToolContext, define_tool
-from trajectory.types import TrajectoryError
 
 log = create_logger("tool.bash")
 
@@ -104,7 +103,7 @@ Reply with one word only: wait, kill, or success"""
         return "kill"
     except Exception as e:
         from question.runtime import RunRevoked
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         log.warning(f"[LLM Judge] LLM call failed: {e}")
         return "kill"
@@ -209,7 +208,7 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
 
     except Exception as exc:
         from question.runtime import RunRevoked
-        if isinstance(exc, (RunRevoked, TrajectoryError)):
+        if isinstance(exc, RunRevoked):
             raise
         # Fallback to non-streaming execution if streaming fails
         result = await ctx.sandbox.execute(

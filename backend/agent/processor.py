@@ -1153,8 +1153,7 @@ async def process_step(
                                         model_id=model_id)
         finish_reason = "compact"
     except Exception as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         # Preserve partial prose as process narration before returning early;
         # the normal final-save block below is skipped by both retry and error
@@ -1172,8 +1171,7 @@ async def process_step(
                     user_id=user_id,
                 )
             except Exception as checkpoint_error:
-                from trajectory import TrajectoryError
-                if isinstance(checkpoint_error, (RunRevoked, TrajectoryError)):
+                if isinstance(checkpoint_error, RunRevoked):
                     raise
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)

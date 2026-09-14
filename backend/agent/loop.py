@@ -403,8 +403,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                 # default would silently match nothing.
                 await update_session(session_id, user_id=user_id, model=model_id)
             except Exception as e:
-                from trajectory import TrajectoryError
-                if isinstance(e, (question_runtime.RunRevoked, TrajectoryError)):
+                if isinstance(e, question_runtime.RunRevoked):
                     raise
                 log.debug(f"Could not persist model fallback: {e}")
         doom_loop_history = []  # Track tool parts across steps for doom loop detection
@@ -1328,8 +1327,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                             user_id=user_id,
                         )
                 except Exception as e:
-                    from trajectory import TrajectoryError
-                    if isinstance(e, (question_runtime.RunRevoked, TrajectoryError)):
+                    if isinstance(e, question_runtime.RunRevoked):
                         raise
                     log.warning(f"Failed to record patch part: {e}")
 
@@ -1409,9 +1407,6 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         except question_runtime.RunRevoked:
             abort.set()
         except Exception as e:
-            from trajectory import TrajectoryError
-            if isinstance(e, TrajectoryError):
-                raise
             log.debug(f"Cron flush skipped: {e}")
 
         bus.publish(SESSION_FINALIZING, {
@@ -1454,8 +1449,7 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
                                     # copy and the composer stays busy.
                                     await update_part_data(part_id, p, publish=True, user_id=user_id)
             except Exception as cleanup_err:
-                from trajectory import TrajectoryError
-                if isinstance(cleanup_err, (question_runtime.RunRevoked, TrajectoryError)):
+                if isinstance(cleanup_err, question_runtime.RunRevoked):
                     raise
                 log.warning(f"Tool cleanup error: {cleanup_err}")
 
@@ -1470,17 +1464,13 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
 
                 await settle_running_todos(session_id, user_id)
             except Exception as todo_err:
-                from trajectory import TrajectoryError
-                if isinstance(todo_err, TrajectoryError):
-                    raise
                 log.warning(f"Todo settle error: {todo_err}")
 
             # Post-loop: prune old tool outputs
             try:
                 await prune_tool_outputs(session_id, user_id=user_id)
             except Exception as prune_err:
-                from trajectory import TrajectoryError
-                if isinstance(prune_err, (question_runtime.RunRevoked, TrajectoryError)):
+                if isinstance(prune_err, question_runtime.RunRevoked):
                     raise
                 log.warning(f"Tool prune error: {prune_err}")
 
@@ -1500,9 +1490,6 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         return None
     except Exception as e:
         failed = True
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.error(f"Agent loop error for session {session_id}: {e}")
         bus.publish(SESSION_ERROR, {
             "userId": user_id,
@@ -2528,8 +2515,7 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
             title = await _generate_title_with_llm(text, session_id=session_id, user_id=user_id)
         except Exception as e:
             from question.runtime import RunRevoked
-            from trajectory import TrajectoryError
-            if isinstance(e, (RunRevoked, TrajectoryError)):
+            if isinstance(e, RunRevoked):
                 raise
             log.debug(f"LLM title generation failed, using truncation: {e}")
             title = None
@@ -2543,13 +2529,10 @@ async def _ensure_title(session_id: str, user_msg: MessageWithParts, user_id: st
         await set_session_title(session_id, title, user_id=user_id)
     except Exception as e:
         from question.runtime import RunRevoked
-        from trajectory import TrajectoryError
         if isinstance(e, RunRevoked):
             # A new turn replaced the one this title described; nobody awaits this task.
             log.debug(f"Title skipped for superseded turn in {session_id}")
             return
-        if isinstance(e, TrajectoryError):
-            raise
         log.warning(f"Failed to generate title: {e}")
 
 
@@ -2598,8 +2581,7 @@ async def _generate_title_with_llm(user_text: str, session_id: str = "", user_id
 
     except Exception as e:
         from question.runtime import RunRevoked
-        from trajectory import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         log.debug(f"LLM title generation error: {e}")
         return None

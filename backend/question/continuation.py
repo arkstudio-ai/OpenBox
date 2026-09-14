@@ -246,7 +246,6 @@ class QuestionContinuationWorker:
                 log.exception("Question continuation handling failed for %s", session_id)
 
     async def _resume_candidate(self, session_id, user_id, candidate_generation):
-        from trajectory.types import TrajectoryError
         try:
             generation = await apply_answers(session_id, user_id)
             if generation is not None:
@@ -254,10 +253,6 @@ class QuestionContinuationWorker:
         except LookupError:
             return
         except ValueError as exc:
-            if isinstance(exc, TrajectoryError):
-                # A recording failure says nothing about the saved answers.
-                await self._retry_later(session_id, user_id, candidate_generation)
-                return
             log.exception("Question continuation failed for %s", session_id)
             async with runtime.transaction(session_id, user_id, fence=False) as (_, session, execution):
                 if execution.generation != candidate_generation or runtime.is_live(execution):

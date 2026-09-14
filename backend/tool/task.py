@@ -175,8 +175,7 @@ async def _announce_child(ctx: ToolContext, child_id: str, subagent_type: str) -
                     return
     except Exception as e:  # never fail the task over a progress pointer
         from question.runtime import RunRevoked
-        from trajectory import TrajectoryError
-        if isinstance(e, (RunRevoked, TrajectoryError)):
+        if isinstance(e, RunRevoked):
             raise
         log.debug(f"could not announce child session {child_id}: {e}")
 

@@ -379,15 +379,10 @@ async def _record_run_terminal(db, execution, ticket, *, status: str, reason: st
 async def _record_first(record, event_type: str, data: dict, *, context, db, event_id: str) -> None:
     """Record a fact with a deterministic id, keeping the first one committed.
 
-    The in-process guard forgets facts committed before a restart. The legacy
-    in-transaction sink rejects a repeated id whose payload differs (a second
-    run completing the same turn, say); that must not roll back the transition.
+    The in-process guard forgets facts committed before a restart; the
+    trajectory worker keeps the first copy of a repeated event id.
     """
-    from trajectory.types import IdempotencyConflict
-    try:
-        await record(event_type, data, context=context, db=db, event_id=event_id)
-    except IdempotencyConflict:
-        log.info("Kept the earlier %s fact %s", event_type, event_id)
+    await record(event_type, data, context=context, db=db, event_id=event_id)
 
 
 @asynccontextmanager

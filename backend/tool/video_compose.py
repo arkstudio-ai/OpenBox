@@ -23,7 +23,6 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from question.runtime import RunRevoked
-from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 from video import ims_client
@@ -266,7 +265,7 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
                 client_token=compiled.client_token,
                 user_data=json.dumps({"openbox_job": job.id})[:512],
             )
-    except (RunRevoked, TrajectoryError) as exc:
+    except RunRevoked as exc:
         # A refused dispatch never reached IMS: close the job, keep the refusal.
         await vp._close_refused_submit(job.id, exc)
         raise
@@ -311,8 +310,6 @@ async def _execute_job_action(args: VideoComposeArgs, ctx: ToolContext) -> ToolR
             break
         try:
             job = await poll_compose_job(job)
-        except TrajectoryError:
-            raise
         except Exception as exc:
             return ToolResult(title="Composition status unavailable", output=_public(exc),
                               metadata={"job_id": job.id, "status": job.status})

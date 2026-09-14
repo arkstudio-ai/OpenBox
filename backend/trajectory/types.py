@@ -188,18 +188,3 @@ def prepare_fast(context: TraceContext, event: dict) -> dict:
 
 class RecordingError(TrajectoryError):
     code = "trajectory_recording_failed"
-
-
-def recording_boundary(function):
-    from functools import wraps
-    @wraps(function)
-    async def wrapped(*args, **kwargs):
-        try:
-            return await function(*args, **kwargs)
-        except TrajectoryError:
-            raise
-        except Exception as exc:
-            # Type-only message: database URLs and provider bodies can contain
-            # secrets. The chained exception is for internal diagnostics.
-            raise RecordingError(f"Trajectory persistence failed: {type(exc).__name__}") from exc
-    return wrapped

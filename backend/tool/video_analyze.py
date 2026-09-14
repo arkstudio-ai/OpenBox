@@ -299,7 +299,6 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
     from core.config import get_config
     from tool import video_production as vp
     from question.runtime import RunRevoked
-    from trajectory.types import TrajectoryError
 
     cfg = get_config().video_analysis
     if args.action == "status":
@@ -400,7 +399,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
                     job, workspace_id=ctx.workspace_id, model_id=str(transcript.get("model") or "fun-asr"),
                     duration_sec=(float(transcript["duration_ms"]) / 1000.0) if transcript.get("duration_ms") else sampled["duration"],
                 )
-            except (RunRevoked, TrajectoryError):
+            except RunRevoked:
                 raise
             except Exception as exc:  # a failed transcript is reported, not fatal: the frames still tell the story
                 log.info(f"analysis {job.id}: transcription failed: {type(exc).__name__}")
@@ -421,7 +420,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         # completed output never carries a stale "error=" line.
         await vp._update_job(job.id, status="completed", error=None, result_data=result,
                              completed_at=datetime.now(timezone.utc), attempt=1)
-    except (RunRevoked, TrajectoryError):
+    except RunRevoked:
         raise
     except AnalysisParseError as exc:
         await vp._update_job(job.id, status="failed", error=f"analysis unparseable: {exc}", completed_at=datetime.now(timezone.utc))

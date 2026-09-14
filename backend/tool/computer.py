@@ -17,7 +17,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from question.runtime import RunRevoked
-from trajectory.types import TrajectoryError
 from core.log import create_logger
 from sandbox.desktop import (
     SHOT_PATH,
@@ -522,7 +521,7 @@ async def _open_browser(ctx: ToolContext, key: str) -> ToolResult:
             _geometry_cache[key] = geometry
             dims = await _attach_screenshot(ctx, geometry)
             note = f" Screenshot attached ({dims}); you will see it next turn."
-        except (RunRevoked, TrajectoryError):
+        except RunRevoked:
             raise
         except Exception as e:
             log.warning(f"post-open screenshot failed: {e}")
@@ -649,7 +648,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
                     f" Screenshot attached via OSS ({dims}, {state} after {settle_ms}ms); "
                     "you will see it next turn."
                 )
-            except (RunRevoked, TrajectoryError):
+            except RunRevoked:
                 raise
             except Exception as e:
                 log.warning(f"post-action screenshot failed: {e}")
@@ -674,7 +673,7 @@ async def _execute_locked(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
             },
         )
 
-    except (RunRevoked, TrajectoryError):
+    except RunRevoked:
 
         raise
 
@@ -703,7 +702,7 @@ async def execute(args: ComputerArgs, ctx: ToolContext) -> ToolResult:
         ) as lease:
             result = await _execute_locked(args, ctx)
         return _finalize_result(result, args.action, started, lease)
-    except (RunRevoked, TrajectoryError):
+    except RunRevoked:
         raise
     except Exception as e:
         log.warning(f"computer desktop lease failed: {e}")

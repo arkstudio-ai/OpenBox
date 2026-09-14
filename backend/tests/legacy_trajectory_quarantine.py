@@ -225,4 +225,15 @@ def _union(*registries: dict[str, str]) -> dict[str, str]:
     return merged
 
 
-QUARANTINE: dict[str, str] = _union(_PRODUCERS, _SERVICE, _PROJECTION, _ARCHIVE)
+_INTEGRATION: dict[str, str] = {
+    # integ/wave2: business code can no longer receive a TrajectoryError, so its dead handlers were removed.
+    "tests/unit/test_trajectory_runtime.py::test_failed_recording_never_dispatches_provider":
+        "injects a raising recorder to stop provider dispatch; wave 2 recording is fail-open (SPEC §0.2) and the "
+        "handler that re-raised the error was removed (integ/wave2)",
+    "tests/unit/test_run_fencing_execution.py::"
+    "test_recording_failure_while_applying_answers_is_retried_not_a_resume_failure":
+        "injects RecordingError while answers are applied; wave 2 recording never raises and the retry branch for it "
+        "was removed (integ/wave2)",
+}
+
+QUARANTINE: dict[str, str] = _union(_PRODUCERS, _SERVICE, _PROJECTION, _ARCHIVE, _INTEGRATION)

@@ -242,3 +242,32 @@ async def test_a_loop_always_lets_other_tasks_run(trace_db, settings, name):
     finally:
         background.cancel()
     assert len(seen) == 3 and seen[0] < seen[1] < seen[2]
+
+
+async def test_gc_deletes_go_through_the_object_guard_that_ingest_shares(trace_db, settings):
+    from trajectory.storage import blob_key
+    from trajectory.worker.services import GuardedGcBlobStore
+
+    store = MemoryBlobStore()
+    retention = FakeRetentionService()
+    retention.blob_store = store
+    services = _services(settings, blob_store=store, retention=retention)
+    guarded = services.retention.blob_store
+    assert isinstance(guarded, GuardedGcBlobStore) and guarded.store is store
+    assert guarded.guard is services.object_guard is services.ingest.object_guard
+    # Rebuilding services around the same retention service does not wrap its store twice.
+    assert _services(settings, blob_store=store, retention=retention).retention.blob_store.store is store
+    key = blob_key("trj_guarded", "a" * 64)
+    other = "trajectories/trj_guarded/segments/000000000001-000000000002.jsonl.zst"
+    for name in (key, other):
+        await store.put(name, b"x", content_type="application/octet-stream")
+    async with services.object_guard.shared():
+        # A blob delete waits for batches in flight; other keys do not.
+        deleting = asyncio.create_task(guarded.delete(key))
+        await guarded.delete(other)
+        await asyncio.sleep(0.01)
+        assert not deleting.done() and key in store.objects and other not in store.objects
+    await asyncio.wait_for(deleting, 1)
+    assert key not in store.objects
+    await guarded.put(key, b"y", content_type="application/octet-stream")
+    assert await guarded.get(key) == b"y"

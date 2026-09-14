@@ -1,6 +1,7 @@
 """OpenBox unified server: sandbox management + AI agent platform."""
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -76,18 +77,69 @@ async def _cleanup_infrastructure(config):
         log.warning(f"Error closing cache: {e}")
 
 
-async def _shutdown_trajectory():
-    """Release workers even when a pending receipt reports a durable failure."""
-    from trajectory import flush
-    from trajectory.export import stop_exports
-    from trajectory.payload import stop_archive_worker
+def _trajectory_worker_mode(config) -> str:
+    """TRAJECTORY_WORKER_MODE: external (default with JWT_SECRET), embedded (default without) or off."""
+    default = "external" if config.jwt_secret else "embedded"
+    raw = (os.getenv("TRAJECTORY_WORKER_MODE") or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"external", "embedded", "off"}:
+        return raw
+    log.warning(f"Invalid TRAJECTORY_WORKER_MODE={raw!r}; using {default!r}")
+    return default
+
+
+async def _start_trajectory(app: FastAPI, mode: str) -> None:
+    """Start the spool emitter, metadata sync and, in embedded mode, the in-process worker.
+
+    Recording is fail-open: none of them can keep the business app from starting.
+    """
+    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled, sink
+    log.info(
+        "Trajectory monitoring: recording=%s admin_read=%s sink=%s worker=%s",
+        trajectory_recording_enabled(),
+        admin_enabled(),
+        sink(),
+        mode,
+    )
+    # The first get_emitter() creates the spool directory and the writer
+    # thread; that file I/O belongs here, never on a request path.
+    from trajectory.emitter import get_emitter
+    get_emitter()
     try:
-        await stop_exports()
-    finally:
+        from trajectory.meta_sync import start_meta_sync
+        start_meta_sync()
+    except Exception as e:
+        log.warning(f"Trajectory metadata sync did not start: {type(e).__name__}")
+    if mode == "embedded":
         try:
-            await flush()
-        finally:
-            await stop_archive_worker()
+            from trajectory.worker.embedded import start_embedded_worker
+            await start_embedded_worker(app)
+        except Exception as e:
+            log.warning(f"Embedded trajectory worker did not start: {type(e).__name__}: {e}")
+
+
+async def _shutdown_trajectory(mode: str) -> None:
+    """Stop metadata sync, flush and close the emitter, then stop the embedded worker."""
+    try:
+        from trajectory.meta_sync import stop_meta_sync
+        await stop_meta_sync()
+    except Exception as e:
+        log.warning(f"Error stopping trajectory metadata sync: {type(e).__name__}")
+    try:
+        from trajectory.emitter import get_emitter
+        emitter = get_emitter()
+        if emitter is not None:
+            # close(5.0) joins the writer thread; keep the loop free meanwhile.
+            await asyncio.to_thread(emitter.close, 5.0)
+    except Exception as e:
+        log.warning(f"Error closing trajectory emitter: {type(e).__name__}")
+    if mode == "embedded":
+        try:
+            from trajectory.worker.embedded import stop_embedded_worker
+            await stop_embedded_worker()
+        except Exception as e:
+            log.warning(f"Error stopping embedded trajectory worker: {type(e).__name__}")
 
 
 @asynccontextmanager
@@ -104,17 +156,8 @@ async def lifespan(app: FastAPI):
     from db.base import ensure_engine
 
     await ensure_engine(config)
-    from trajectory.payload import start_archive_worker
-    await start_archive_worker()
-    from trajectory.config import admin_enabled, enabled as trajectory_recording_enabled
-    log.info(
-        "Trajectory monitoring: recording=%s admin_read=%s",
-        trajectory_recording_enabled(),
-        admin_enabled(),
-    )
-    if admin_enabled():
-        from trajectory.export import resume_exports
-        await resume_exports()
+    trajectory_mode = getattr(app.state, "trajectory_worker_mode", None) or _trajectory_worker_mode(config)
+    await _start_trajectory(app, trajectory_mode)
 
     # Rebuild process-local routing from the real execution plane. Provider
     # resources can outlive one web process; deleting them on startup would
@@ -246,7 +289,7 @@ async def lifespan(app: FastAPI):
         # owner deletion and the database-guarded idle reaper own cleanup.
     finally:
         try:
-            await _shutdown_trajectory()
+            await _shutdown_trajectory(trajectory_mode)
         finally:
             await _cleanup_infrastructure(config)
 
@@ -329,10 +372,17 @@ def create_app() -> FastAPI:
     application.include_router(admin_fleet_router)
     application.include_router(admin_skills_router)
     application.include_router(admin_billing_router)
-    from api.admin_trajectories import router as admin_trajectories_router
-    from api.admin_trajectory_ws import router as admin_trajectory_ws_router
-    application.include_router(admin_trajectories_router)
-    application.include_router(admin_trajectory_ws_router)
+    application.state.trajectory_worker_mode = _trajectory_worker_mode(config)
+    if application.state.trajectory_worker_mode == "embedded":
+        # Otherwise the trajectory worker serves the admin trajectory API and
+        # socket, and nothing here may import the worker or the trace store.
+        try:
+            from trajectory.worker.embedded import mount_admin_routers
+            mount_admin_routers(application)
+        except Exception as e:
+            # Trajectory administration is fail-open like recording: it never
+            # keeps the business app from being built.
+            log.warning(f"Admin trajectory routes are unavailable: {type(e).__name__}: {e}")
 
     from api.billing import router as billing_router
     application.include_router(billing_router)

@@ -10,6 +10,7 @@ _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget ta
 from agent.agent import get_agent, AgentDef
 from agent.caching import apply_caching, session_cache_key
 from agent.compaction import is_overflow, create_compaction, process_compaction, prune_tool_outputs, get_model_context_limit
+from agent.context_stall import CONTEXT_STALLED_MESSAGE, ContextStallDetector, recent_step_input_tokens
 from agent.hooks import ToolHooks
 from agent.processor import StepOutcome, process_step
 from agent.structured_output import (
@@ -409,6 +410,9 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
         compact_fail_count = 0  # Consecutive compaction failure counter
         finish_reason_prev = ""  # Previous step's finish reason
         last_step_info = None  # Persists an explicit aborted boundary between steps.
+        context_stall = ContextStallDetector()
+        for seen in await recent_step_input_tokens(session_id, context_stall.window):
+            context_stall.observe(seen)
 
         while True:
             if not await question_runtime.still_current(ticket):
@@ -1338,6 +1342,22 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             # Accumulate into session-level token_usage for ContextPanel
             from session.session import update_session_tokens
             await update_session_tokens(session_id, last_finished_tokens, user_id=user_id)
+
+            # Only a step that would carry on is stopped for stalling: a stop, a
+            # question or a compaction ends this iteration on its own.
+            if (context_stall.observe(last_finished_tokens.input)
+                    and finish_reason not in {"stop", "aborted", "waiting_input", "compact"}):
+                log.error(
+                    f"Session {session_id}: {context_stall.repeats} consecutive steps re-sent a prompt "
+                    f"size this session had just sent ({last_finished_tokens.input} input tokens); "
+                    "the model cannot see its own progress, stopping the run"
+                )
+                failed = True
+                bus.publish(SESSION_ERROR, {
+                    "userId": user_id, "sessionId": session_id,
+                    "error": {"code": "CONTEXT_STALLED", "message": CONTEXT_STALLED_MESSAGE},
+                })
+                break
 
             # Check result
             log.info(f"Step {step} finished: reason={finish_reason}, tool_calls={len(result.completed_tool_parts)}, text={len(collected_text)} chars")

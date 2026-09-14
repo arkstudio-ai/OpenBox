@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ArrowDown } from "lucide-react"
+import { ArrowDown, LoaderCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/shared/lib/cn"
 import { isInterruptionMarker, type Turn } from "../lib/turn-view"
@@ -9,6 +9,8 @@ import { UserBubble } from "./UserBubble"
 import { InterruptionDivider } from "./InterruptionDivider"
 
 const VIRTUAL_THRESHOLD = 50
+/** How close to the top, in pixels, the reader gets before older turns load. */
+const LOAD_OLDER_EDGE = 600
 
 interface Row {
   key: string
@@ -60,10 +62,15 @@ interface Props {
   retry?: { attempt: number; maxAttempts: number }
   onAtBottomChange?: (atBottom: boolean) => void
   historyScrollRef?: RefObject<HTMLDivElement | null>
+  /** Older turns exist before the oldest one loaded. */
+  hasMore?: boolean
+  loadingOlder?: boolean
+  /** Fetch the turns before the oldest one loaded. */
+  onLoadOlder?: () => void
 }
 
 /** Scrolling message column: centered, auto-sticks to the bottom, back-to-bottom fab. */
-export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef }: Props) {
+export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer, onStop, retry, onAtBottomChange, historyScrollRef, hasMore = false, loadingOlder = false, onLoadOlder }: Props) {
   const { t } = useTranslation("chat")
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -113,6 +120,42 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   const atBottomRef = useRef(true)
   const viewportHeightRef = useRef(0)
   const scrollTopRef = useRef(0)
+
+  // Older turns load as the reader nears the top. Rows arriving above them
+  // would push what they are reading down the page, so the distance from the
+  // bottom is taken when loading starts and restored once the rows have landed.
+  const firstRowKey = rows[0]?.key
+  // One request per top row: a failed load is retried by scrolling away and
+  // back, not by every scroll event or render while the top stays put.
+  const olderRequestedForRef = useRef<string | undefined>(undefined)
+  const requestOlder = useCallback(() => {
+    if (!scrollRef.current || !hasMore || loadingOlder || !onLoadOlder) return
+    if (olderRequestedForRef.current === firstRowKey) return
+    olderRequestedForRef.current = firstRowKey
+    onLoadOlder()
+  }, [hasMore, loadingOlder, onLoadOlder, firstRowKey])
+  const olderAnchorRef = useRef<{ height: number; top: number; key?: string } | null>(null)
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (loadingOlder) {
+      olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop, key: firstRowKey }
+      return
+    }
+    const anchor = olderAnchorRef.current
+    olderAnchorRef.current = null
+    // Nothing landed in front (the load failed, or the view was reset meanwhile).
+    if (!anchor || anchor.key === firstRowKey || atBottomRef.current) return
+    el.scrollTop = anchor.top + (el.scrollHeight - anchor.height)
+    scrollTopRef.current = el.scrollTop
+  }, [firstRowKey, loadingOlder])
+  // A short page can leave nothing to scroll; keep filling from above until
+  // the column overflows or nothing older is left.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && el.scrollHeight - el.clientHeight <= LOAD_OLDER_EDGE) requestOlder()
+  }, [rows, requestOlder])
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
@@ -132,8 +175,10 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     if (remaining <= 1) atBottomRef.current = true
     else if (el.scrollTop < scrollTopRef.current) atBottomRef.current = false
     scrollTopRef.current = el.scrollTop
+    if (el.scrollTop < LOAD_OLDER_EDGE) requestOlder()
+    else olderRequestedForRef.current = undefined
     setAtBottom(remaining < 60)
-  }, [])
+  }, [requestOlder])
 
   // Stick to the bottom as content grows. Streaming changes content height
   // between React commits (streamdown animates blocks in), so follow real
@@ -207,6 +252,13 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
         aria-hidden
         className="from-bg pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b to-transparent"
       />
+      {/* Over the column rather than in it, so appearing and disappearing never
+          moves the rows the reader is looking at. */}
+      {loadingOlder && (
+        <div role="status" aria-label={t("loadingOlder")} className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
+          <LoaderCircle className="text-n600 size-4 animate-spin" />
+        </div>
+      )}
       <div
         aria-hidden
         className={cn(

@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.unit.test_worker_archive_support import (FakeMetrics, add_events, add_trajectory, event_values, gc_entries,
-    hot_seqs, segment_ranges, trajectory_row, worker_settings)
+    hot_seqs, interleave_ingest_and_archive, segment_ranges, trajectory_row, worker_settings)
 from trajectory.lifecycle import tombstone_trajectory
 from trajectory.ops import rebuild
 from trajectory.storage import LocalBlobStore, MemoryBlobStore, trajectory_prefix
@@ -295,3 +295,32 @@ async def test_the_rebuild_drill_restores_postgresql_segments_into_a_scratch_dat
             (row["seq"], row["data"], row["hints"], row["occurred_at"]) for row in rows]
     finally:
         await _recreate(scratch_url, create=False)
+
+
+async def test_archival_interleaved_with_ingest_commits_on_partitioned_postgresql(migrated):
+    today = now().date()
+    async with migrated.begin() as connection:
+        await partitions.ensure_partitions(connection, today - timedelta(days=2), 2)
+    inserted = await interleave_ingest_and_archive(
+        MemoryBlobStore(), "trj_a", batches=30, per_batch=7, lag=3,
+        recorded_at=lambda seq: at_noon(today - timedelta(days=seq % 3)) + timedelta(microseconds=seq))
+    assert len(inserted) == 210
+    async with migrated.connect() as connection:
+        assert (await connection.execute(text("SELECT count(*) FROM trajectory_events"))).scalar_one() == 0
+
+
+async def test_a_tombstone_in_the_callers_transaction_runs_with_the_long_statement_timeout(migrated):
+    today = now().date()
+    async with migrated.begin() as connection:
+        await partitions.ensure_partitions(connection, today, 0)
+    await add_trajectory("trj_a", committed=2, last_activity_at=now())
+    await add_events([event_values("trj_a", seq, recorded_at=at_noon(today)) for seq in (1, 2)])
+    retention = RetentionService(worker_settings(), blob_store=MemoryBlobStore(), metrics=FakeMetrics())
+    async with trace_session() as db:
+        assert (await db.execute(text("SHOW statement_timeout"))).scalar_one() == "5s"
+        # Ingest applies session.deleted inside its batch transaction.
+        await retention.tombstone(db, await db.get(SessionTrajectory, "trj_a"), reason="session_deleted")
+        assert (await db.execute(text("SHOW statement_timeout"))).scalar_one() == "1min"
+    assert ((await trajectory_row("trj_a")).recording_status, await hot_seqs("trj_a")) == ("deleted", [])
+    async with migrated.connect() as connection:
+        assert (await connection.execute(text("SHOW statement_timeout"))).scalar_one() == "5s"

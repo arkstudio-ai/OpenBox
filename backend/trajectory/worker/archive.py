@@ -7,9 +7,15 @@ A segment is uploaded under its range key, read back and verified, and only
 then does one trace transaction insert the segment row, advance
 ``archived_seq`` and delete the hot rows of the range. Until that commit the
 hot rows stay authoritative, so a crash or failure in between loses nothing:
-the retry writes the same key again (``if_absent=False``), and an upload whose
-range changed meanwhile is handed to the GC queue through the in-flight marker
-kept in ``trajectory_worker_state``.
+the retry writes the same key again (``if_absent=False``).
+
+Every upload is first recorded in the in-flight marker kept in
+``trajectory_worker_state``. An upload that was never committed becomes
+garbage only once archival has passed the first event of its range. Before
+that the same range, and so the same key, can be uploaded and committed again
+(a retry under other segment limits, for example), and a GC entry for that key
+would then delete a committed segment. The marker therefore keeps such
+uploads until a commit moves past them and hands them to the GC queue.
 
 On PostgreSQL the service also keeps a week of daily partitions ahead and
 drops old partitions once archival has emptied them.
@@ -17,14 +23,16 @@ drops old partitions once archival has emptied them.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 
 import orjson
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 
 from core.log import create_logger
-from trajectory.lifecycle import GC_KEY, archive_marker_key, enqueue_gc, utc, worker_setting
+from trajectory.lifecycle import (GC_KEY, allow_long_statements, archive_marker_key, enqueue_gc, utc,
+    worker_setting)
 from trajectory.segments import decode_segment, encode_segment
 from trajectory.storage import segment_key
 from trajectory.store import partitions
@@ -55,6 +63,8 @@ MAINTENANCE_STATEMENT_TIMEOUT = "60s"
 KEY_PRUNE_INTERVAL_SECONDS = 3600
 KEY_PRUNE_BATCH = 1000
 KEY_PRUNE_MAX_BATCHES = 50
+#: Uncommitted uploads one marker remembers; anything older waits for the trajectory's prefix deletion.
+MAX_TRACKED_UPLOADS = 50
 
 
 class ArchiveAbandoned(Exception):
@@ -74,6 +84,32 @@ def segment_row(event) -> dict:
     return row
 
 
+def line_bytes(row: dict) -> int:
+    """Size of a row's JSONL line, the estimate that keeps segments under TRAJECTORY_SEGMENT_MAX_BYTES."""
+    try:
+        return len(orjson.dumps(row)) + 1
+    except TypeError:
+        # orjson refuses integers beyond 64 bits; the segment encoder (json) keeps them.
+        return len(json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode()) + 1
+
+
+def tracked_uploads(value) -> list[dict]:
+    """Uploads an in-flight marker records: the one in flight first, then earlier uncommitted ones."""
+    if not isinstance(value, dict):
+        return []
+    earlier = value.get("superseded")
+    items = ([value] if "storage_key" in value else []) + (earlier if isinstance(earlier, list) else [])
+    uploads, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key, first = item.get("storage_key"), item.get("from_seq")
+        if isinstance(key, str) and isinstance(first, int) and not isinstance(first, bool) and key not in seen:
+            seen.add(key)
+            uploads.append({"storage_key": key, "from_seq": first, "to_seq": item.get("to_seq")})
+    return uploads
+
+
 class ArchiveService:
     """Moves projected hot events into verified object-storage segments; runs in the single writer."""
 
@@ -91,6 +127,7 @@ class ArchiveService:
         self._partitions_due = 0.0
         self._keys_due = 0.0
         self._reported_holes: set[tuple[str, int]] = set()
+        self._active: set[str] = set()
 
     async def run_once(self) -> int:
         """One pass: housekeeping when due, then every qualifying trajectory. Returns the events archived."""
@@ -104,7 +141,9 @@ class ArchiveService:
         if clock >= self._keys_due:
             self._keys_due = clock + KEY_PRUNE_INTERVAL_SECONDS
             try:
-                await self.prune_event_keys()
+                if await self.prune_event_keys() >= KEY_PRUNE_BATCH * KEY_PRUNE_MAX_BATCHES:
+                    # More keys are due than one run deletes: go on at the next pass, not an hour later.
+                    self._keys_due = clock
             except Exception as exc:
                 log.warning("Trajectory event key pruning failed: %s", type(exc).__name__)
         archived = 0
@@ -123,18 +162,26 @@ class ArchiveService:
         A full backlog (TRAJECTORY_SEGMENT_EVENTS projected events) is cut
         into full segments; once the trajectory has been idle for
         TRAJECTORY_SEGMENT_IDLE_SECONDS its projected tail is archived too.
-        Only events at or below ``projected_seq`` are ever archived.
+        Only events at or below ``projected_seq`` are ever archived. A call
+        for a trajectory this service is archiving already returns 0: two
+        interleaved passes would upload overlapping ranges.
         """
-        archived = 0
-        for _ in range(SEGMENTS_PER_TRAJECTORY):
-            rows = await self._next_segment_rows(trajectory_id)
-            if not rows:
-                break
-            stored = await self._store_segment(trajectory_id, rows)
-            if not stored:
-                break
-            archived += stored
-        return archived
+        if trajectory_id in self._active:
+            return 0
+        self._active.add(trajectory_id)
+        try:
+            archived = 0
+            for _ in range(SEGMENTS_PER_TRAJECTORY):
+                rows = await self._next_segment_rows(trajectory_id)
+                if not rows:
+                    break
+                stored = await self._store_segment(trajectory_id, rows)
+                if not stored:
+                    break
+                archived += stored
+            return archived
+        finally:
+            self._active.discard(trajectory_id)
 
     async def _candidates(self) -> list[str]:
         idle_before = now() - timedelta(seconds=self.segment_idle_seconds)
@@ -176,7 +223,7 @@ class ArchiveService:
                     if event["seq"] != expected:
                         break
                     row = segment_row(event)
-                    line = len(orjson.dumps(row)) + 1
+                    line = line_bytes(row)
                     if rows and size + line > self.segment_max_bytes:
                         return rows
                     rows.append(row)
@@ -205,7 +252,13 @@ class ArchiveService:
             await self._commit(trajectory_id, key, stored, meta, len(rows), first, last)
         except ArchiveAbandoned as exc:
             log.info("Trajectory %s segment %s-%s abandoned: %s", trajectory_id, first, last, exc)
-            await self._release_upload(trajectory_id, key)
+            try:
+                await self._release_upload(trajectory_id, key, first)
+            except Exception as release_error:
+                # The marker still names the upload, or a later release will.
+                self.metrics.inc("segment_failures")
+                log.warning("Trajectory %s abandoned segment %s-%s not released: %s", trajectory_id, first, last,
+                            type(release_error).__name__)
             return 0
         except Exception as exc:
             self.metrics.inc("segment_failures")
@@ -226,18 +279,49 @@ class ArchiveService:
             rows = rows[:max(1, min(len(rows) - 1, len(rows) * self.segment_max_bytes // raw))]
 
     async def _mark_in_flight(self, trajectory_id: str, key: str, first: int, last: int) -> None:
-        """Remember the upload before it starts; an earlier upload of another range becomes garbage."""
+        """Record the upload before it starts, together with the earlier uploads that may still be garbage."""
         marker_key = archive_marker_key(trajectory_id)
         async with trace_session() as db:
+            trajectory = await db.get(SessionTrajectory, trajectory_id)
             marker = await db.get(TrajectoryWorkerState, marker_key)
-            previous = marker.value.get("storage_key") if marker is not None and isinstance(marker.value, dict) else None
-            if previous and previous != key and not await self._referenced(db, trajectory_id, previous):
-                await enqueue_gc(db, GC_KEY, previous, "segment_superseded")
+            earlier = [upload for upload in tracked_uploads(marker.value if marker is not None else None)
+                       if upload["storage_key"] != key]
+            archived = trajectory.archived_seq if trajectory is not None else 0
+            kept = await self._collect(db, trajectory_id, earlier, archived, "segment_superseded")
             value = {"storage_key": key, "from_seq": first, "to_seq": last}
+            if kept:
+                value["superseded"] = kept
             if marker is None:
                 db.add(TrajectoryWorkerState(key=marker_key, value=value, updated_at=now()))
             else:
                 marker.value, marker.updated_at = value, now()
+
+    async def _collect(self, db, trajectory_id: str, uploads: list[dict], archived_seq: int | None,
+                       reason: str) -> list[dict]:
+        """Queue the uploads that no commit can reference any more; returns the ones still to track.
+
+        Archival only continues above ``archived_seq``, so an upload whose
+        range starts at or below it can never be committed; with
+        ``archived_seq`` None the content is gone and nothing can be. A key a
+        segment row references is a committed segment, never garbage.
+        """
+        kept = []
+        for upload in uploads:
+            key = upload["storage_key"]
+            if archived_seq is not None and upload["from_seq"] > archived_seq:
+                kept.append(upload)
+                continue
+            if await self._referenced(db, trajectory_id, key):
+                continue
+            try:
+                await enqueue_gc(db, GC_KEY, key, reason)
+            except ValueError as exc:
+                log.warning("Trajectory %s segment upload %s cannot be queued for GC: %s", trajectory_id, key, exc)
+        if len(kept) > MAX_TRACKED_UPLOADS:
+            log.warning("Trajectory %s has %s uncommitted segment uploads; forgetting the oldest", trajectory_id,
+                        len(kept))
+            kept = kept[:MAX_TRACKED_UPLOADS]
+        return kept
 
     async def _verify(self, key: str, stored: bytes, meta: dict, count: int, first: int, last: int) -> None:
         data = await self.blob_store.get(key)
@@ -272,16 +356,39 @@ class ArchiveService:
             trajectory.archived_seq = last
             trajectory.stored_bytes += len(stored)
             trajectory.updated_at = timestamp
-            await db.execute(delete(TrajectoryWorkerState).where(
-                TrajectoryWorkerState.key == archive_marker_key(trajectory_id)))
-
-    async def _release_upload(self, trajectory_id: str, key: str) -> None:
-        async with trace_session() as db:
-            if not await self._referenced(db, trajectory_id, key):
-                await enqueue_gc(db, GC_KEY, key, "segment_abandoned")
             marker = await db.get(TrajectoryWorkerState, archive_marker_key(trajectory_id))
-            if marker is not None and isinstance(marker.value, dict) and marker.value.get("storage_key") == key:
-                await db.delete(marker)
+            if marker is not None:
+                # Every other recorded upload started at or below ``first``: none can be committed now.
+                earlier = [upload for upload in tracked_uploads(marker.value) if upload["storage_key"] != key]
+                kept = await self._collect(db, trajectory_id, earlier, last, "segment_superseded")
+                await self._replace_marker(db, trajectory_id, {"superseded": kept} if kept else None, timestamp)
+
+    async def _release_upload(self, trajectory_id: str, key: str, first: int) -> None:
+        """An upload whose commit was abandoned: collect it only once no commit can use its key, else track it."""
+        async with trace_session() as db:
+            trajectory = await db.get(SessionTrajectory, trajectory_id)
+            live = trajectory is not None and trajectory.deleted_at is None and trajectory.content_expired_at is None
+            marker = await db.get(TrajectoryWorkerState, archive_marker_key(trajectory_id))
+            uploads = tracked_uploads(marker.value if marker is not None else None)
+            if all(upload["storage_key"] != key for upload in uploads):
+                uploads.insert(0, {"storage_key": key, "from_seq": first, "to_seq": None})
+            kept = await self._collect(db, trajectory_id, uploads, trajectory.archived_seq if live else None,
+                                       "segment_abandoned")
+            if kept and marker is None:
+                db.add(TrajectoryWorkerState(key=archive_marker_key(trajectory_id), value={"superseded": kept},
+                                             updated_at=now()))
+            elif marker is not None:
+                await self._replace_marker(db, trajectory_id, {"superseded": kept} if kept else None, now())
+
+    @staticmethod
+    async def _replace_marker(db, trajectory_id: str, value: dict | None, timestamp: datetime) -> None:
+        # Plain statements: another pass may have changed or removed the row since it was read.
+        state = TrajectoryWorkerState
+        if value is None:
+            await db.execute(delete(state).where(state.key == archive_marker_key(trajectory_id)))
+        else:
+            await db.execute(update(state).where(state.key == archive_marker_key(trajectory_id))
+                             .values(value=value, updated_at=timestamp))
 
     @staticmethod
     async def _referenced(db, trajectory_id: str, key: str) -> bool:
@@ -359,8 +466,10 @@ class ArchiveService:
         """Delete idempotency keys older than TRAJECTORY_DEDUPE_DAYS once their events are archived.
 
         Keys of tombstoned or content-expired trajectories (and of trajectory
-        rows that no longer exist) only need the age condition. Returns the
-        number of keys deleted.
+        rows that no longer exist) only need the age condition. Deletes at
+        most KEY_PRUNE_BATCH * KEY_PRUNE_MAX_BATCHES keys per call, each batch
+        in its own transaction; returns the number deleted, so a caller that
+        got the maximum knows more may be due.
         """
         cutoff = now() - timedelta(days=self.dedupe_days)
         keys, trajectories = TrajectoryEventKey, SessionTrajectory
@@ -375,6 +484,7 @@ class ArchiveService:
         total = 0
         for _ in range(KEY_PRUNE_MAX_BATCHES):
             async with trace_session() as db:
+                await allow_long_statements(db)
                 removed = (await db.execute(
                     delete(keys).where(keys.event_id.in_(doomed)).execution_options(synchronize_session=False)
                 )).rowcount

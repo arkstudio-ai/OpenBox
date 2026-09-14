@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as SyncSession
 
@@ -44,6 +44,8 @@ GC_RETRY_MAX_SECONDS = 6 * 3600
 #: the first pass.
 PREFIX_SWEEP_DELAY = timedelta(minutes=15)
 NOTIFICATIONS_KEY = "trajectory_worker_notifications"
+#: Statement timeout of purge and maintenance transactions; far above the 5 s request timeout.
+LONG_STATEMENT_TIMEOUT = "60s"
 
 
 def utc(value: datetime) -> datetime:
@@ -70,11 +72,28 @@ def archive_marker_key(trajectory_id: str) -> str:
     return f"archive:{trajectory_id}"
 
 
+async def allow_long_statements(db) -> None:
+    """PostgreSQL: lift the request-serving statement timeout for the rest of this transaction.
+
+    Purges, pruning and partition maintenance may run statements far longer
+    than the 5 s the trace engine grants per statement; ``SET LOCAL`` ends
+    with the transaction. SQLite: nothing to do.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text(f"SET LOCAL statement_timeout = '{LONG_STATEMENT_TIMEOUT}'"))
+
+
 async def enqueue_gc(db, kind: str, storage_key: str, reason: str, *, at: datetime | None = None,
                      delay: timedelta | None = None) -> None:
-    """Queue an object key (``key``) or a directory prefix ending in "/" (``prefix``) for deletion."""
+    """Queue an object key (``key``) or a directory prefix ending in "/" (``prefix``) for deletion.
+
+    Only objects in the trajectory namespace qualify: the bucket may be the
+    business assets bucket, whose user files GC must never touch.
+    """
     if kind == GC_KEY:
         check_key(storage_key)
+        if not storage_key.startswith(key_prefix()):
+            raise ValueError(f"A GC key must lie in the trajectory namespace: {storage_key!r}")
     elif kind == GC_PREFIX:
         # Only one trajectory's directory: a shorter prefix would empty the whole namespace.
         namespace = key_prefix()
@@ -103,8 +122,11 @@ async def tombstone_trajectory(db, trajectory, *, reason: str, at: datetime | No
     rows remain as tombstones. Idempotency keys hold no content and age out
     through ArchiveService.prune_event_keys (the key table has no index to
     delete them by trajectory inside the caller's transaction). The deleted
-    notification is published after the caller's transaction commits.
+    notification is published after the caller's transaction commits. On
+    PostgreSQL the caller's transaction keeps the long statement timeout
+    from here on (``allow_long_statements``).
     """
+    await allow_long_statements(db)
     trajectory = await lock_trajectory(db, trajectory.id)
     if trajectory is None or trajectory.deleted_at is not None:
         return False
@@ -126,6 +148,7 @@ async def expire_trajectory_content(db, trajectory, *, at: datetime | None = Non
     ``recording_status=expired`` with ``content_expired_at``, the summary row
     and its statistics.
     """
+    await allow_long_statements(db)
     trajectory = await lock_trajectory(db, trajectory.id)
     if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:
         return False

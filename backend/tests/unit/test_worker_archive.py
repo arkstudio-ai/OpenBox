@@ -1,17 +1,20 @@
 """ArchiveService on a SQLite trace database (SPEC §8.10): selection, limits, verification, crash consistency, keys."""
+import asyncio
 import hashlib
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from tests.unit.test_worker_archive_support import (FakeMetrics, add_events, add_trajectory, blob_store, event_values,
-    gc_entries, hot_seqs, segment_ranges, trace_db, trajectory_row, worker_settings, worker_state)
+    gc_entries, hot_seqs, interleave_ingest_and_archive, segment_ranges, trace_db, trajectory_row, worker_settings,
+    worker_state)
 from trajectory.lifecycle import tombstone_trajectory
 from trajectory.segments import decode_segment
 from trajectory.storage import MemoryBlobStore, decode_blob, segment_key
 from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectorySegment
 from trajectory.types import now
+from trajectory.worker import archive as archive_module
 from trajectory.worker.archive import SEGMENT_FIELDS, ArchiveService
 from trajectory.worker.retention import RetentionService
 
@@ -277,3 +280,94 @@ async def test_partition_maintenance_is_a_no_op_on_sqlite(trace_db, blob_store):
     await service.maintain_partitions()
     assert await service.run_once() == 0
     assert metrics.gauges == {"archive_lag_events": 0, "hot_events_rows": 0}
+
+
+async def test_a_superseded_upload_is_kept_until_its_range_can_no_longer_be_committed(trace_db, blob_store,
+                                                                                     monkeypatch):
+    await seed("trj_a", 5, last_activity_at=idle_since())
+    commit = ArchiveService._commit
+
+    async def killed(self, *args, **kwargs):
+        raise RuntimeError("worker killed before the commit")
+
+    monkeypatch.setattr(ArchiveService, "_commit", killed)
+    service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics())
+    assert await service.archive_trajectory("trj_a") == 0
+    await add_events([event_values("trj_a", 6), event_values("trj_a", 7)])
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, "trj_a")
+        trajectory.committed_seq = trajectory.projected_seq = 7
+    assert await service.archive_trajectory("trj_a") == 0
+    five, seven = segment_key("trj_a", 1, 5), segment_key("trj_a", 1, 7)
+    # Both ranges start at the next event to archive: either key may still be committed.
+    assert await gc_entries() == []
+    assert await worker_state("archive:trj_a") == {
+        "storage_key": seven, "from_seq": 1, "to_seq": 7,
+        "superseded": [{"storage_key": five, "from_seq": 1, "to_seq": 5}]}
+
+    # Restarted with smaller segments, the worker produces the 1-5 range, and its key, again and commits it.
+    monkeypatch.setattr(ArchiveService, "_commit", commit)
+    restarted = ArchiveService(worker_settings(segment_events=5), blob_store=blob_store, metrics=FakeMetrics())
+    assert await restarted.archive_trajectory("trj_a") == 7
+    assert await segment_ranges("trj_a") == [(1, 5), (6, 7)]
+    assert (await gc_entries(), await worker_state("archive:trj_a")) == ([("key", seven, "segment_superseded")], None)
+    retention = RetentionService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics())
+    assert await retention.process_gc_queue() == 1
+    assert sorted(blob_store.objects) == sorted([five, segment_key("trj_a", 6, 7)])
+    assert len(decode_segment(blob_store.objects[five])) == 5
+
+
+async def test_interleaved_calls_never_archive_one_trajectory_twice(trace_db, blob_store):
+    await seed("trj_a", 5, last_activity_at=idle_since())
+    entered, release, uploads = asyncio.Event(), asyncio.Event(), []
+
+    async def slow_upload(key):
+        if "/segments/" in key:
+            uploads.append(key)
+            entered.set()
+            await release.wait()
+
+    blob_store.faults["put"] = slow_upload
+    service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics())
+    archiving = asyncio.create_task(service.archive_trajectory("trj_a"))
+    await asyncio.wait_for(entered.wait(), 5)
+    assert await asyncio.wait_for(service.archive_trajectory("trj_a"), 2) == 0
+    release.set()
+    assert await asyncio.wait_for(archiving, 5) == 5
+    assert (uploads, await segment_ranges("trj_a")) == ([segment_key("trj_a", 1, 5)], [(1, 5)])
+
+
+async def test_key_pruning_goes_on_at_the_next_pass_while_old_keys_remain(trace_db, blob_store, monkeypatch):
+    monkeypatch.setattr(archive_module, "KEY_PRUNE_BATCH", 2)
+    monkeypatch.setattr(archive_module, "KEY_PRUNE_MAX_BATCHES", 2)
+    await add_trajectory("trj_a", committed=7, archived=7)
+    old = now() - timedelta(days=40)
+    async with trace_session() as db:
+        for seq in range(1, 8):
+            db.add(TrajectoryEventKey(event_id=f"evt_{seq}", trajectory_id="trj_a", seq=seq, content_hash="0" * 64,
+                                      recorded_at=old))
+
+    async def remaining() -> int:
+        async with trace_session() as db:
+            return await db.scalar(select(func.count()).select_from(TrajectoryEventKey))
+
+    service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics())
+    await service.run_once()
+    assert await remaining() == 3
+    # The first run hit its batch limit, so the next pass continues instead of waiting an hour.
+    await service.run_once()
+    assert await remaining() == 0
+
+
+async def test_integers_beyond_64_bits_are_archived_intact(trace_db, blob_store):
+    await add_trajectory("trj_a", committed=2, last_activity_at=idle_since())
+    await add_events([event_values("trj_a", 1, data={"count": 2 ** 70}), event_values("trj_a", 2)])
+    service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics())
+    assert await service.archive_trajectory("trj_a") == 2
+    first, _ = decode_segment(blob_store.objects[segment_key("trj_a", 1, 2)])
+    assert first["data"] == {"count": 2 ** 70}
+
+
+async def test_archival_interleaved_with_ingest_commits_keeps_every_event_exactly_once(trace_db, blob_store):
+    inserted = await interleave_ingest_and_archive(blob_store, "trj_a", batches=40, per_batch=7, lag=3)
+    assert len(inserted) == 280

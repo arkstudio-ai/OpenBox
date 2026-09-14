@@ -334,3 +334,86 @@ async def test_the_sweep_tombstones_trajectories_whose_session_was_deleted(trace
     assert (await trajectory_row("trj_b")).deleted_at is None
     assert [item["trajectory_id"] for item in notifications] == ["trj_a"]
     assert await retention.tombstone_deleted_sessions() == 0
+
+
+async def test_the_sweep_only_tombstones_for_the_owner_of_the_replicated_session(trace_db, blob_store):
+    await seed_content("trj_a", blob_store)
+    async with trace_session() as db:
+        db.add(TrajectoryMetaSession(id="session_trj_a", user_id="user_b", is_deleted=True, updated_at=now(),
+                                     synced_at=now()))
+    retention = service(blob_store)
+    assert await retention.tombstone_deleted_sessions() == 0
+    assert (await trajectory_row("trj_a")).deleted_at is None
+    async with trace_session() as db:
+        (await db.get(TrajectoryMetaSession, "session_trj_a")).user_id = "user_a"
+    assert await retention.tombstone_deleted_sessions() == 1
+
+
+async def test_a_failing_duty_or_purge_does_not_stop_the_rest_of_the_pass(trace_db, blob_store, monkeypatch):
+    for trajectory_id, days in (("trj_poison", 300), ("trj_old_a", 250), ("trj_old_b", 220)):
+        await add_trajectory(trajectory_id, committed=1, last_activity_at=now() - timedelta(days=days))
+    await add_trajectory("trj_recent", committed=1)
+    stale, free = now() - timedelta(days=40), blob_key("trj_gone", sha("free"))
+    await blob_store.put(free, b"x", content_type="application/octet-stream")
+    async with trace_session() as db:
+        db.add(TrajectoryExport(id="exp_old", trajectory_id="trj_recent", viewer_id="admin", through_seq=1,
+                                status="completed", storage_key=export_key("exp_old", sha("old")), created_at=stale,
+                                updated_at=stale))
+        await enqueue_gc(db, GC_KEY, free, "test")
+    purge = retention_module.expire_trajectory_content
+
+    async def poisoned(db, trajectory, **kwargs):
+        if trajectory.id == "trj_poison":
+            raise RuntimeError("canceling statement due to statement timeout")
+        return await purge(db, trajectory, **kwargs)
+
+    async def unavailable(self):
+        raise ConnectionError("trace database unavailable")
+
+    monkeypatch.setattr(retention_module, "expire_trajectory_content", poisoned)
+    monkeypatch.setattr(RetentionService, "tombstone_deleted_sessions", unavailable)
+    # The free key, one due prefix per expired trajectory and the expired export's key.
+    assert await service(blob_store).run_once() == {"tombstoned": 0, "expired": 2, "exports_expired": 1,
+                                                    "gc_processed": 4}
+    assert [(await trajectory_row(name)).recording_status for name in ("trj_poison", "trj_old_a", "trj_old_b")] == [
+        "recording", "expired", "expired"]
+    assert free not in blob_store.objects
+
+
+async def test_gc_keeps_objects_in_use_and_refuses_foreign_keys_and_live_prefixes(trace_db, blob_store):
+    await add_trajectory("trj_live")
+    await add_trajectory("trj_dead", deleted_at=now(), recording_status="deleted")
+    stamp = now()
+    used, free = blob_key("trj_live", sha("used")), blob_key("trj_live", sha("free"))
+    committed, finished = segment_key("trj_live", 1, 5), export_key("exp_done", sha("zip"))
+    foreign, dead = "assets/user_a/photo.png", blob_key("trj_dead", sha("dead"))
+    for key in (used, free, committed, finished, foreign, dead):
+        await blob_store.put(key, b"x", content_type="application/octet-stream")
+    async with trace_session() as db:
+        # A content-addressed blob, a committed segment and a finished export that use their keys again.
+        db.add(TrajectoryPayload(payload_id="pld_used", trajectory_id="trj_live", dedupe_key=sha("used-key"),
+                                 sha256=sha("used"), size_bytes=1, media_type="application/json", storage_kind="blob",
+                                 storage_key=used, first_seq=1, created_at=stamp))
+        db.add(TrajectorySegment(trajectory_id="trj_live", from_seq=1, to_seq=5, storage_key=committed, event_count=5,
+                                 raw_bytes=1, stored_bytes=1, sha256=sha("segment"), created_at=stamp))
+        db.add(TrajectoryExport(id="exp_done", trajectory_id="trj_live", viewer_id="admin", through_seq=1,
+                                status="completed", storage_key=finished, sha256=sha("zip"), created_at=stamp,
+                                updated_at=stamp))
+        for key in (used, free, committed, finished):
+            await enqueue_gc(db, GC_KEY, key, "test")
+        await enqueue_gc(db, GC_PREFIX, trajectory_prefix("trj_dead"), "test")
+        await enqueue_gc(db, GC_PREFIX, trajectory_prefix("trj_live"), "test")
+        with pytest.raises(ValueError):
+            await enqueue_gc(db, GC_KEY, foreign, "test")
+        # Rows other code inserts directly are checked as well.
+        db.add(TrajectoryGcQueue(kind=GC_KEY, storage_key=foreign, reason="test", attempts=0, next_attempt_at=stamp,
+                                 created_at=stamp))
+    metrics = FakeMetrics()
+    assert await service(blob_store, metrics).process_gc_queue() == 5
+    assert sorted(blob_store.objects) == sorted([used, committed, finished, foreign])
+    async with trace_session() as db:
+        refused = {row.storage_key: (row.attempts, row.last_error)
+                   for row in (await db.scalars(select(TrajectoryGcQueue))).all()}
+    assert set(refused) == {trajectory_prefix("trj_live"), foreign}
+    assert all(attempts == 1 and error.startswith("GcRefused") for attempts, error in refused.values())
+    assert metrics.counters == {"gc_deleted": 2, "gc_failures": 2}

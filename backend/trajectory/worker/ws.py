@@ -128,7 +128,10 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
         data = event.get("data") or {}
         sid = data.get("session_id")
         if isinstance(sid, str) and sid in subscriptions:
-            pending[sid] = data
+            # A deletion is final. Redis fan-out does not keep publish order, so
+            # a watermark that arrives after it must not replace it unsent.
+            if not (pending.get(sid) or {}).get("deleted"):
+                pending[sid] = data
             wake.set()
 
     async def receive():

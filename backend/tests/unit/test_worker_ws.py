@@ -142,6 +142,23 @@ async def test_read_only_protocol_and_direct_watermarks(worker):
     assert audit == [("trj_a1", {"owner_user_id": "a", "session_id": "session_a_1", "through_seq": "3"})] * 2
 
 
+async def test_a_deletion_hint_is_not_replaced_by_a_hint_delivered_after_it(worker):
+    """Redis fan-out does not keep publish order: an older watermark may arrive after the deletion."""
+    ticket = await ticket_for(worker)
+    async with worker.socket(ticket) as (send, receive):
+        assert (await receive())["type"] == "websocket.accept"
+        await send({"type": "subscribe", "session_id": "session_a_1"})
+        assert (await receive())["type"] == "subscribed"
+        hint = {"user_id": "a", "owner_user_id": "a", "session_id": "session_a_1", "trajectory_id": "trj_a1"}
+        # Both arrive before the socket's publisher runs, so they coalesce.
+        bus.publish("trajectory.available", {**hint, "committed_seq": "4", "deleted": True})
+        bus.publish("trajectory.available", {**hint, "committed_seq": "3"})
+        assert await receive() == {"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": "session_a_1"}}
+        bus.publish("trajectory.available", {**hint, "committed_seq": "5"})
+        await send({"type": "ping"})
+        assert await receive() == {"type": "pong", "data": {}}  # the dropped subscription forwards nothing more
+
+
 async def test_subscription_limit_is_sixteen_sessions(worker):
     async with trace_session() as db:
         for index in range(17):

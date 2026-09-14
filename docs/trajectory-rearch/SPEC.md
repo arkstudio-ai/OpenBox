@@ -756,13 +756,14 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_SEGMENT_CACHE_BYTES` / `TRAJECTORY_BLOB_CACHE_BYTES` | 134217728 / 268435456 | worker |
 | `TRAJECTORY_HOT_DAYS` / `TRAJECTORY_DEDUPE_DAYS` | 7 / 30 | worker |
 | `TRAJECTORY_CONTENT_RETENTION_DAYS` / `TRAJECTORY_EXPORT_RETENTION_DAYS` | 180 / 30 | worker |
+| `TRAJECTORY_EXPORT_MAX_BYTES` | 268435456 (size cap of one export archive) | worker |
 | `TRAJECTORY_BUDGET_TRAJECTORY_EVENTS` | 50000 (degraded) | worker |
 | `TRAJECTORY_BUDGET_TRAJECTORY_BYTES` | 209715200 (degraded) | worker |
 | `TRAJECTORY_BUDGET_TRAJECTORY_BLOCK_BYTES` | 1073741824 (blocked) | worker |
 | `TRAJECTORY_BUDGET_USER_DAILY_BYTES` | 2147483648 (degraded for the rest of the UTC day) | worker |
 | `TRAJECTORY_BLOB_PROVIDER` | `local` | worker |
 | `TRAJECTORY_BLOB_LOCAL_PATH` | `<backend>/.openbox/trajectory-blobs` | worker |
-| `TRAJECTORY_OSS_BUCKET` / `_REGION` / `_ENDPOINT` / `_PREFIX` / `_INTERNAL` | `OSS_BUCKET` / `OSS_REGION` / derived / `trajectories/` / `true` | worker |
+| `TRAJECTORY_OSS_BUCKET` / `_REGION` / `_ENDPOINT` / `_PREFIX` / `_INTERNAL` | `OSS_BUCKET` / `OSS_REGION` / derived / `trajectories/` / `true` (asset payload reads of an embedded worker use the public endpoint unless `_INTERNAL` is set) | worker |
 | `TRAJECTORY_BACKEND_INTERNAL_URL` | `http://backend:8080` | worker |
 | `TRAJECTORY_AUTH_CACHE_SECONDS` | 5 | worker |
 | `TRAJECTORY_BLOB_FAULT` | unset (drills/tests only) | worker |

@@ -2,13 +2,12 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
 
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine, trace_session
-from trajectory.store.models import (SessionTrajectory, TrajectoryGcQueue, TrajectoryMetaAsset, TrajectoryMetaSession,
-    TrajectoryMetaUser, TrajectoryMetaWorkspace, TrajectoryPayload)
-from trajectory.worker.meta import (DELETED, OWNERSHIP, MetaCache, apply_meta, mark_session_deleted, ownership_verdict,
-    parse_time, revoke_asset)
+from trajectory.store.models import (TrajectoryMetaAsset, TrajectoryMetaSession, TrajectoryMetaUser,
+    TrajectoryMetaWorkspace)
+from trajectory.worker.meta import (DELETED, OWNERSHIP, MetaCache, apply_meta, mark_asset_deleted, mark_session_deleted,
+    ownership_verdict, parse_time)
 
 AT = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
 
@@ -111,37 +110,20 @@ async def test_ownership_uses_known_metadata_only(trace_db):
                                        source_session_id="child") == DELETED
 
 
-async def test_asset_deletion_revokes_references_everywhere(trace_db):
-    async with trace_session() as db:
-        for trajectory_id, session_id in (("trj_a", "sa"), ("trj_b", "sb")):
-            db.add(SessionTrajectory(id=trajectory_id, user_id="u1", session_id=session_id, workspace_id="w",
-                                     started_at=AT, updated_at=AT, last_activity_at=AT))
-        await db.flush()
-
-        def payload(payload_id, trajectory_id, key, *, source="asset_1", kind="blob", availability="available"):
-            return TrajectoryPayload(payload_id=payload_id, trajectory_id=trajectory_id, dedupe_key=payload_id,
-                                     sha256="0" * 64, size_bytes=1, stored_bytes=1, media_type="image/png",
-                                     encoding="identity", storage_kind=kind, storage_key=key, source_asset_id=source,
-                                     availability=availability, first_seq=1, created_at=AT)
-        db.add_all([
-            payload("pld_1", "trj_a", "trajectories/trj_a/blobs/k1"),
-            payload("pld_2", "trj_a", "trajectories/trj_a/blobs/k2"),
-            payload("pld_3", "trj_a", "trajectories/trj_a/blobs/k2", source=None),  # same bytes stay live unbound
-            payload("pld_4", "trj_b", "assets/u1/asset_1/a.png", kind="asset"),
-            payload("pld_5", "trj_b", "trajectories/trj_b/blobs/k9", availability="deleted"),
-            payload("pld_6", "trj_b", "trajectories/trj_b/blobs/k8", source="asset_2"),
-        ])
+async def test_asset_deleted_creates_or_marks_the_replica(trace_db):
+    # Payload revocation is trajectory.lifecycle.revoke_asset (tests/unit/test_worker_retention.py).
     async with trace_session() as db:
         cache = MetaCache()
-        affected = await revoke_asset(db, cache, asset_id="asset_1", user_id="u1", deleted_at=AT, now=AT)
-        assert affected == ["trj_a", "trj_b"]
-        assert cache.assets["asset_1"].deleted
+        await mark_asset_deleted(db, cache, asset_id="asset_new", user_id="u1", deleted_at=AT, now=AT)
+        assert cache.assets["asset_new"].deleted
+        await mark_asset_deleted(db, MetaCache(), asset_id="asset_ownerless", user_id=None, deleted_at=AT, now=AT)
+    assert await _apply({"type": "asset.meta", "asset": {"id": "asset_1", "user_id": "u1", "oss_key": "assets/u1/a.png",
+                                                         "updated_at": "2026-09-14T07:00:00Z"}})
+    later = AT + timedelta(hours=1)
     async with trace_session() as db:
-        rows = {row.payload_id: row.availability for row in (await db.scalars(select(TrajectoryPayload))).all()}
-        assert rows == {"pld_1": "deleted", "pld_2": "deleted", "pld_3": "available", "pld_4": "deleted",
-                        "pld_5": "deleted", "pld_6": "available"}
-        queued = [(row.kind, row.storage_key, row.reason) for row in (await db.scalars(select(TrajectoryGcQueue))).all()]
-        assert queued == [("key", "trajectories/trj_a/blobs/k1", "asset_deleted")]
-        assert (await db.get(TrajectoryMetaAsset, "asset_1")).is_deleted
+        await mark_asset_deleted(db, MetaCache(), asset_id="asset_1", user_id="u1", deleted_at=later, now=later)
     async with trace_session() as db:
-        assert await revoke_asset(db, MetaCache(), asset_id="never_used", user_id=None, deleted_at=AT, now=AT) == []
+        created, marked = await db.get(TrajectoryMetaAsset, "asset_new"), await db.get(TrajectoryMetaAsset, "asset_1")
+        assert (created.is_deleted, created.user_id, parse_time(created.deleted_at)) == (True, "u1", AT)
+        assert await db.get(TrajectoryMetaAsset, "asset_ownerless") is None
+        assert (marked.is_deleted, parse_time(marked.deleted_at), marked.oss_key) == (True, later, "assets/u1/a.png")

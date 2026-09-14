@@ -190,18 +190,14 @@ async def test_a_writer_that_loses_its_lock_stops_writing(trace_db, settings, mo
 async def test_spool_dir_override_and_default_wiring(trace_db, settings, tmp_path, monkeypatch):
     built = {}
 
-    def module(name, cls):
+    def service(cls):
         def factory(settings_arg, **kwargs):
             built[cls] = kwargs
             return types.SimpleNamespace(settings=settings_arg, **kwargs)
-        fake = types.ModuleType(name)
-        setattr(fake, cls, factory)
-        monkeypatch.setitem(sys.modules, name, fake)
+        monkeypatch.setattr(services_module, cls, factory)
 
-    module("trajectory.worker.projection", "ProjectionService")
-    module("trajectory.worker.archive", "ArchiveService")
-    module("trajectory.worker.retention", "RetentionService")
-    module("trajectory.export", "ExportService")
+    for cls in ("ProjectionService", "ArchiveService", "RetentionService", "ExportService"):
+        service(cls)
     metrics_module = types.ModuleType("trajectory.worker.metrics")
     metrics = FakeMetrics()
     metrics_module.get_metrics = lambda: metrics

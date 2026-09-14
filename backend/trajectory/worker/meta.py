@@ -13,10 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
-from trajectory.store.models import (TrajectoryGcQueue, TrajectoryMetaAsset, TrajectoryMetaSession,
-    TrajectoryMetaUser, TrajectoryMetaWorkspace, TrajectoryPayload)
+from trajectory.store.models import (TrajectoryMetaAsset, TrajectoryMetaSession, TrajectoryMetaUser,
+    TrajectoryMetaWorkspace)
 from trajectory.worker.content import AssetView
 
 MAX_ANCESTRY_HOPS = 100
@@ -218,45 +218,23 @@ async def mark_session_deleted(db, cache: MetaCache, *, session_id: str, user_id
     cache.sessions[session_id] = _session_view(row)
 
 
-async def revoke_asset(db, cache: MetaCache, *, asset_id: str, user_id: str | None, deleted_at: datetime,
-                       now: datetime) -> list[str]:
-    """``asset.deleted``: payload rows bound to the asset become deleted in every trajectory.
+async def mark_asset_deleted(db, cache: MetaCache, *, asset_id: str, user_id: str | None, deleted_at: datetime,
+                             now: datetime) -> None:
+    """``asset.deleted``: the replica row turns deleted, created when the sync has not delivered it yet.
 
-    Blob objects that no other available row of the same trajectory still
-    uses are queued for deletion. Returns the ids of the trajectories that
-    held references to the asset (the caller appends ``artifact.removed``).
+    The payload side of the control (references revoked in every trajectory,
+    copies queued for GC) is ``trajectory.lifecycle.revoke_asset``.
     """
     row = await db.get(TrajectoryMetaAsset, asset_id)
     if row is None:
-        if _identifier(user_id):
-            row = TrajectoryMetaAsset(id=asset_id, user_id=user_id, is_deleted=True, deleted_at=deleted_at,
-                                      updated_at=deleted_at, synced_at=now)
-            db.add(row)
+        if not _identifier(user_id):
+            return
+        row = TrajectoryMetaAsset(id=asset_id, user_id=user_id, is_deleted=True, deleted_at=deleted_at,
+                                  updated_at=deleted_at, synced_at=now)
+        db.add(row)
     else:
         row.is_deleted = True
         row.deleted_at = row.deleted_at or deleted_at
         row.synced_at = now
-    if row is not None:
-        await db.flush()
-        cache.assets[asset_id] = _asset_view(row)
-    references = (await db.execute(select(
-        TrajectoryPayload.trajectory_id, TrajectoryPayload.storage_kind, TrajectoryPayload.storage_key,
-        TrajectoryPayload.availability).where(TrajectoryPayload.source_asset_id == asset_id))).all()
-    if not references:
-        return []
-    await db.execute(update(TrajectoryPayload).where(
-        TrajectoryPayload.source_asset_id == asset_id, TrajectoryPayload.availability != "deleted")
-        .values(availability="deleted", deleted_at=now).execution_options(synchronize_session=False))
-    released: dict[str, set[str]] = {}
-    for trajectory_id, storage_kind, storage_key, availability in references:
-        if storage_kind == "blob" and availability != "deleted":
-            released.setdefault(trajectory_id, set()).add(storage_key)
-    for trajectory_id, keys in released.items():
-        still_used = set((await db.scalars(select(TrajectoryPayload.storage_key).where(
-            TrajectoryPayload.trajectory_id == trajectory_id, TrajectoryPayload.storage_key.in_(sorted(keys)),
-            TrajectoryPayload.availability == "available"))).all())
-        for key in sorted(keys - still_used):
-            db.add(TrajectoryGcQueue(kind="key", storage_key=key, reason="asset_deleted", attempts=0,
-                                     next_attempt_at=now, created_at=now))
     await db.flush()
-    return sorted({trajectory_id for trajectory_id, *_ in references})
+    cache.assets[asset_id] = _asset_view(row)

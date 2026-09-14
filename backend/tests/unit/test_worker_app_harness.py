@@ -295,7 +295,7 @@ class ReadLayer:
         return content
 
     # trajectory.export
-    def create_export(self, db, trajectory, viewer_id, through_seq):
+    async def create_export(self, db, trajectory, viewer_id, through_seq):
         timestamp = now()
         row = TrajectoryExport(id=f"exp_{uuid4().hex}", trajectory_id=trajectory.id, viewer_id=viewer_id,
                                through_seq=through_seq, status="pending", created_at=timestamp, updated_at=timestamp)

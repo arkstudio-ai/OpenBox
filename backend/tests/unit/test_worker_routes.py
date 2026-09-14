@@ -301,10 +301,7 @@ async def test_export_create_status_and_download_contract(worker, monkeypatch):
     assert actions == [("admin.trajectory.download", "session_a_1", {"export_id": "exp_ready"}),
                        ("admin.trajectory.export", "session_a_1", {"through_seq": "2", "export_id": body["export_id"]})]
 
-    async def created_async(db, trajectory, viewer_id, through_seq):
-        return worker.layer.create_export(db, trajectory, viewer_id, through_seq)
-
-    monkeypatch.setattr("trajectory.export.create_export", created_async)
+    # Without a watermark the export is taken at the committed head.
     assert (await worker.client.post(SESSION + "/export", json={})).json()["through_seq"] == "3"
 
     async with trace_session() as db:
@@ -342,20 +339,3 @@ async def test_read_errors_map_to_the_contract_statuses(worker, monkeypatch, err
     response = await worker.client.get(SESSION + "/records")
     assert response.status_code == status and response.json() == {"detail": detail}
     assert response.headers["cache-control"] == "no-store"
-
-
-def test_content_reads_come_from_the_payload_module_else_the_repository(monkeypatch):
-    import trajectory.payload as payloads
-    import trajectory.repository as repository
-
-    def from_payload():
-        pass
-
-    def from_repository():
-        pass
-
-    monkeypatch.setattr(payloads, "read_blob", from_payload, raising=False)
-    monkeypatch.setattr(repository, "read_blob", from_repository, raising=False)
-    assert routes._content("read_blob") is from_payload
-    monkeypatch.delattr(payloads, "read_blob")
-    assert routes._content("read_blob") is from_repository

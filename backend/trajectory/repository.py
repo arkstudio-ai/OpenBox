@@ -7,7 +7,6 @@ H == projected_seq; any other H, or a cache written past H, falls back to a
 checkpoint plus replay. Session identity comes from the metadata replicas
 (``trajectory_meta_*``): no read touches the business database.
 """
-from copy import deepcopy
 from datetime import datetime
 from types import SimpleNamespace
 import base64
@@ -19,7 +18,7 @@ from sqlalchemy import and_, case, func, or_, select
 from trajectory.config import enabled, integer, selected_user_ids
 from trajectory.payload import (LruCache, Resolver, ensure_payload_rows, existing_payloads, expand_all, expand_pages,
     json_blob, reference, require_content, upload_json_blobs)
-from trajectory.projector import agents, contribution, empty_state, reduce, statistics, targets
+from trajectory.projector import agents, contribution, empty_state, reduce, statistics
 from trajectory.segments import load_segment_lines
 from trajectory.storage import get_blob_store
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryMetaSession,
@@ -835,90 +834,3 @@ async def search(db, trajectory, *, q, through_seq=None, cursor=None, limit=50, 
     has_more = offset + limit < len(found)
     return {"items": page, "next_cursor": cursor_encode([str(head), q, offset + limit]) if has_more else None,
             "has_more": has_more, "through_seq": str(head)}
-
-
-# -- Legacy business-database sink (TRAJECTORY_SINK=db) --
-
-async def project_events_in_tx(db, trajectory, events):
-    """In-transaction projection of the legacy recorder into business tables.
-
-    Kept only for that sink until the producer conversion retires it (SPEC
-    10); the trace database is projected by trajectory.worker.projection.
-    Update only touched records; counters use differences, never chunk sums.
-    """
-    from db.models.trajectory import TrajectoryRecord as LegacyRecord, TrajectorySessionSummary as LegacySummary
-    affected = {record_id for event in events for record_id, _ in targets(event)}
-    for event in events:
-        if event["type"] in {"message.committed", "part.committed"} and event.get("message_id"):
-            related = (await db.scalars(select(LegacyRecord.record_id).where(LegacyRecord.trajectory_id == trajectory.id,
-                LegacyRecord.message_id == event["message_id"], LegacyRecord.kind == "assistant"))).all()
-            affected.update(related)
-        if event["type"] == "request.prepared":
-            previous_system = await db.scalar(select(LegacyRecord).where(LegacyRecord.trajectory_id == trajectory.id,
-                LegacyRecord.kind == "system", LegacyRecord.agent_id == event.get("agent_id"))
-                .order_by(LegacyRecord.start_seq.desc()).limit(1))
-            if previous_system is not None:
-                affected.add(previous_system.record_id)
-        if event["type"] == "request.finished":
-            affected.add(f"assistant:{event.get('request_id')}")
-        if event["type"] in {"run.interrupted", "recording.gap"}:
-            rows = (await db.scalars(select(LegacyRecord).where(LegacyRecord.trajectory_id == trajectory.id,
-                LegacyRecord.kind.in_(["request", "tool", "assistant", "step"]),
-                LegacyRecord.status.in_(["pending", "running", "streaming", "waiting"])))).all()
-            affected.update(row.record_id for row in rows if row.data.get("run_id") == event.get("run_id"))
-    existing = {}
-    if affected:
-        rows = (await db.scalars(select(LegacyRecord).where(LegacyRecord.trajectory_id == trajectory.id,
-            LegacyRecord.record_id.in_(affected)))).all()
-        existing = {row.record_id: row for row in rows}
-    state = empty_state()
-    state.update(through_seq=str(trajectory.projected_seq), coverage_start=iso(trajectory.started_at),
-                 records={record_id: deepcopy(row.data) for record_id, row in existing.items()})
-    before = {key: contribution(value) for key, value in state["records"].items()}
-    for event in events:
-        state = reduce(state, event)
-    summary = await db.get(LegacySummary, trajectory.id)
-    if summary is None:
-        summary = LegacySummary(trajectory_id=trajectory.id, user_id=trajectory.user_id,
-            session_id=trajectory.session_id, workspace_id=trajectory.workspace_id,
-            last_activity_at=now(), running_status="idle", recording_status="recording", model=None,
-            applied_seq=0, statistics=contribution(None))
-        db.add(summary)
-    totals = dict(summary.statistics)
-    for record_id, data in state["records"].items():
-        old = before.get(record_id, contribution(None))
-        for key, value in contribution(data).items():
-            totals[key] = totals.get(key, 0) + value - old[key]
-        row = existing.get(record_id)
-        if row is None:
-            row = LegacyRecord(trajectory_id=trajectory.id, record_id=record_id)
-            db.add(row)
-        row.kind = data["kind"]
-        row.status = data["status"]
-        row.agent_id = data.get("agent_id")
-        row.message_id = data.get("message_id")
-        row.start_seq = int(data["start_seq"])
-        row.end_seq = int(data["end_seq"]) if data.get("end_seq") else None
-        row.applied_seq = int(data["as_of_seq"])
-        row.projector_version = PROJECTOR_VERSION
-        row.data = data
-        row.summary = {key: value for key, value in data.items() if key not in {"data", "blocks"}}
-        row.search_text = json.dumps(data, ensure_ascii=False)
-    for event in events:
-        family, action = event["type"].split(".")
-        if family == "run":
-            if action == "started":
-                summary.running_status = "running"
-            elif action in {"finished", "interrupted"}:
-                summary.running_status = "waiting" if event["data"].get("status") == "waiting" else "error" if event["data"].get("status") == "failed" else "idle"
-        if family in {"permission", "question"} and action in {"requested", "asked"}:
-            summary.running_status = "waiting"
-        if event["type"] == "request.started" and event["data"].get("model"):
-            summary.model = str(event["data"]["model"])
-        if event["type"] == "recording.gap":
-            summary.recording_status = trajectory.recording_status = "gap"
-    summary.statistics = totals
-    summary.applied_seq = trajectory.committed_seq
-    summary.last_activity_at = now()
-    trajectory.projected_seq = trajectory.committed_seq
-    await db.flush()

@@ -9,9 +9,6 @@ resurrection.
 Object storage is never touched here. A transaction enqueues the keys and
 prefixes it stopped referencing in ``trajectory_gc_queue``, and
 RetentionService.process_gc_queue deletes the objects afterwards.
-
-``delete_trajectory_in_tx`` and ``purge_deleted_content`` at the end serve the
-legacy business-database sink (TRAJECTORY_SINK=db) and go away with it.
 """
 from __future__ import annotations
 
@@ -31,7 +28,7 @@ from trajectory.storage import check_key, key_prefix, trajectory_prefix
 from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryExport,
     TrajectoryGcQueue, TrajectoryPayload, TrajectoryRecord, TrajectoryRecordEvent, TrajectorySegment,
     TrajectorySessionSummary, TrajectoryWorkerState)
-from trajectory.types import OwnershipError, now
+from trajectory.types import now
 
 log = create_logger("trajectory.lifecycle")
 
@@ -255,7 +252,12 @@ async def revoke_asset(db, asset_id: str, *, at: datetime | None = None) -> list
             TrajectoryPayload.trajectory_id == row.trajectory_id, TrajectoryPayload.storage_kind == "blob",
             TrajectoryPayload.storage_key == row.storage_key, TrajectoryPayload.availability == "available").limit(1))
         if shared is None:
-            await enqueue_gc(db, GC_KEY, row.storage_key, "asset_deleted", at=timestamp)
+            try:
+                await enqueue_gc(db, GC_KEY, row.storage_key, "asset_deleted", at=timestamp)
+            except ValueError:
+                # Ingest revokes inside its batch transaction: a key outside the
+                # trajectory namespace is never deleted, and must not fail the batch.
+                log.warning("Revoked copy outside the trajectory namespace kept trajectory_id=%s", row.trajectory_id)
             queued.add(target)
     live = (await db.scalars(select(SessionTrajectory).where(
         SessionTrajectory.id.in_(sorted({row.trajectory_id for row in rows})),
@@ -316,71 +318,3 @@ def _discard_uncommitted(session, transaction) -> None:
     # committed one already popped its notifications in after_commit.
     if transaction.parent is None:
         session.info.pop(NOTIFICATIONS_KEY, None)
-
-
-# -- Legacy business-database sink --
-
-async def delete_trajectory_in_tx(db, session_id: str, user_id: str) -> None:
-    """Legacy sink: tombstone the business-database trajectory inside the session deletion transaction."""
-    from db.models import trajectory as legacy
-
-    row = await db.scalar(select(legacy.SessionTrajectory).where(
-        legacy.SessionTrajectory.session_id == session_id).with_for_update())
-    if row is None:
-        return
-    if row.user_id != user_id:
-        raise OwnershipError("Cannot delete another owner's trajectory")
-    row.deleted_at, row.recording_status = now(), "deleted"
-    # Keep a tombstone to reject late callbacks. A child session has no root
-    # container of its own, so deleting it cannot erase its parent's facts.
-    for model in (legacy.TrajectoryEvent, legacy.TrajectoryRecord, legacy.TrajectoryCheckpoint,
-                  legacy.TrajectorySessionSummary):
-        await db.execute(delete(model).where(model.trajectory_id == row.id))
-    for payload in (await db.scalars(select(legacy.TrajectoryPayload).where(
-            legacy.TrajectoryPayload.trajectory_id == row.id))).all():
-        payload.availability, payload.deleted_at = "deleted", now()
-        payload.content = None
-    for export in (await db.scalars(select(legacy.TrajectoryExport).where(
-            legacy.TrajectoryExport.trajectory_id == row.id))).all():
-        export.status, export.updated_at = "deleted", now()
-    db.sync_session.info.setdefault("trajectory_notifications", {})[row.id] = {
-        "user_id": user_id, "owner_user_id": user_id, "session_id": session_id,
-        "trajectory_id": row.id, "committed_seq": str(row.committed_seq), "deleted": True}
-
-
-async def purge_deleted_content(limit: int = 100) -> int:
-    """Legacy sink: retryable physical GC of deleted business-database payloads and exports.
-
-    The availability tombstone commits first. Blob I/O uses no database row
-    lock, and an unsuccessful delete retains the durable cleanup work item.
-    """
-    from db.base import get_db_session
-    from db.models import trajectory as legacy
-    from trajectory.payload import get_storage
-
-    async with get_db_session() as db:
-        payloads = (await db.scalars(select(legacy.TrajectoryPayload).where(
-            legacy.TrajectoryPayload.availability == "deleted", legacy.TrajectoryPayload.storage_key != "")
-            .limit(limit))).all()
-        exports = (await db.scalars(select(legacy.TrajectoryExport).where(
-            legacy.TrajectoryExport.status == "deleted", legacy.TrajectoryExport.storage_key.is_not(None))
-            .limit(limit))).all()
-        jobs = ([("payload", row.payload_id, row.storage_key) for row in payloads]
-                + [("export", row.id, row.storage_key) for row in exports])
-    removed = 0
-    for kind, identity, key in jobs:
-        try:
-            await get_storage().delete(key)
-        except Exception:
-            continue
-        async with get_db_session() as db:
-            if kind == "payload":
-                row = await db.get(legacy.TrajectoryPayload, identity)
-                if row is not None and row.availability == "deleted":
-                    row.storage_key = ""
-            else:
-                row = await db.get(legacy.TrajectoryExport, identity)
-                if row is not None and row.status == "deleted":
-                    row.storage_key = None
-        removed += 1
-    return removed

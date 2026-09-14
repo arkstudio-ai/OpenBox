@@ -14,7 +14,6 @@ harness and shutdown.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
 import socket
 import uuid
@@ -22,10 +21,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from core.log import create_logger
+from trajectory.export import ExportService
 from trajectory.store.database import get_trace_engine
+from trajectory.worker.archive import ArchiveService
 from trajectory.worker.budgets import BudgetService, write_heartbeat
 from trajectory.worker.ingest import IngestService
 from trajectory.worker.lock import writer_lock_for
+from trajectory.worker.projection import ProjectionService
+from trajectory.worker.retention import RetentionService
 
 log = create_logger("trajectory.worker.services")
 
@@ -42,10 +45,6 @@ ERROR_BACKOFF_SECONDS = 5.0
 GC_BATCH = 100
 #: Steps that run whenever the sequential (SQLite) loop wakes; the others follow their own interval.
 CONTINUOUS_STEPS = ("ingest", "projection")
-
-
-def _build(module: str, name: str, settings, **kwargs):
-    return getattr(importlib.import_module(module), name)(settings, **kwargs)
 
 
 class WorkerServices:
@@ -65,12 +64,11 @@ class WorkerServices:
         self.blob_store, self.metrics = blob_store, metrics
         self.owner_id = f"{socket.gethostname()[:32]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         common = {"blob_store": blob_store, "metrics": metrics}
-        self.retention = retention or _build("trajectory.worker.retention", "RetentionService", settings, **common)
+        self.retention = retention or RetentionService(settings, **common)
         self.ingest = ingest or IngestService(settings, retention=self.retention, **common)
-        self.projection = projection or _build("trajectory.worker.projection", "ProjectionService", settings, **common)
-        self.archive = archive or _build("trajectory.worker.archive", "ArchiveService", settings, **common)
-        self.exports = exports or _build("trajectory.export", "ExportService", settings, owner_id=self.owner_id,
-                                         **common)
+        self.projection = projection or ProjectionService(settings, **common)
+        self.archive = archive or ArchiveService(settings, **common)
+        self.exports = exports or ExportService(settings, owner_id=self.owner_id, **common)
         self.budgets = budgets or BudgetService(settings, metrics=metrics)
         self._lock = lock
         self._supervisor: asyncio.Task | None = None

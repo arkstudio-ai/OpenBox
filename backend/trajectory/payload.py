@@ -17,7 +17,6 @@ administrator opens the payload.
 """
 import asyncio
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -33,7 +32,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from trajectory.config import integer
 from trajectory.storage import blob_key, decode_blob, encode_blob, get_blob_store
 from trajectory.store.models import SessionTrajectory, TrajectoryMetaAsset, TrajectoryPayload
-from trajectory.types import CorruptContent, OwnershipError, canonical, now
+from trajectory.types import CorruptContent, canonical, now
 
 JSON_MEDIA_TYPE = "application/json"
 FETCH_CONCURRENCY = 16
@@ -152,13 +151,26 @@ def set_asset_reader(reader) -> None:
     _asset_reader = reader
 
 
+def oss_internal_from_env() -> bool:
+    """TRAJECTORY_OSS_INTERNAL (SPEC §13, default true): read the business bucket over its VPC endpoint."""
+    return (os.getenv("TRAJECTORY_OSS_INTERNAL") or "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def oss_asset_reader(*, internal: bool | None = None):
+    """An ``async reader(oss_key) -> bytes`` for ``set_asset_reader``: objects of the business bucket (OSS_BUCKET).
+
+    ``internal`` selects the VPC endpoint (None: TRAJECTORY_OSS_INTERNAL), right
+    for the worker next to the bucket and unreachable from a desktop.
+    """
+    async def read(oss_key: str) -> bytes:
+        from core.oss import get_oss
+        return await get_oss().get_object(oss_key, internal=oss_internal_from_env() if internal is None else internal)
+    return read
+
+
 async def read_asset_object(oss_key: str) -> bytes:
     """Bytes of a business asset object; FileNotFoundError when it is gone."""
-    if _asset_reader is not None:
-        return await _asset_reader(oss_key)
-    from core.oss import get_oss
-    internal = (os.getenv("TRAJECTORY_OSS_INTERNAL") or "true").strip().lower() not in {"0", "false", "no", "off"}
-    return await get_oss().get_object(oss_key, internal=internal)
+    return await (_asset_reader or oss_asset_reader())(oss_key)
 
 
 def require_content(trajectory) -> None:
@@ -591,180 +603,3 @@ async def ensure_payload_rows(db, trajectory_id: str, blobs: list[dict], *,
         if row.first_seq > first_seq:
             set_committed_value(row, "first_seq", first_seq)
     return rows, inserted
-
-
-# -- Legacy business-database sink (TRAJECTORY_SINK=db) --
-# The in-transaction recorder, attachment capture, the business archive loop
-# and the in-process export still stage content in business tables until the
-# producer conversion retires that sink (SPEC 10). Only those callers use the
-# helpers below; they never touch the trace database.
-
-_legacy_override = None
-_legacy_store = None
-
-
-def set_storage(storage) -> None:
-    """Dependency injection for application bootstrap and isolated tests."""
-    global _legacy_override
-    _legacy_override = storage
-
-
-def get_storage():
-    global _legacy_store
-    if _legacy_override is not None:
-        return _legacy_override
-    if _legacy_store is not None:
-        return _legacy_store
-    from core.config import get_config
-    config = get_config()
-    if config.blob_provider == "local" or not config.jwt_secret:
-        from blob.local_blob import LocalBlobStorage
-        path = config.blob_local_path if config.jwt_secret else ".openbox/trajectory-blobs"
-        _legacy_store = LocalBlobStorage(path)
-    elif config.blob_provider == "gcs":
-        from blob.gcs_blob import GCSBlobStorage
-        _legacy_store = GCSBlobStorage(config.gcs_bucket)
-    elif config.blob_provider == "azure":
-        if not config.blob_azure_connection_string:
-            raise RuntimeError("Trajectory blob storage is not configured")
-        from blob.azure_blob import AzureBlobStorage
-        _legacy_store = AzureBlobStorage(config.blob_azure_connection_string, config.blob_azure_container)
-    else:
-        raise RuntimeError("Unsupported trajectory blob storage")
-    return _legacy_store
-
-
-async def upload_bytes(key: str, data: bytes, media_type: str) -> None:
-    storage = get_storage()
-    params = inspect.signature(storage.upload).parameters
-    if "content_type" in params:
-        await storage.upload(key, data, content_type=media_type)
-    else:
-        await storage.upload(key, data, metadata={"content_type": media_type, "sha256": hashlib.sha256(data).hexdigest()})
-
-
-async def download_bytes(key: str) -> bytes:
-    result = get_storage().download(key)
-    if inspect.isawaitable(result):
-        result = await result
-    if hasattr(result, "__aiter__"):
-        return b"".join([chunk async for chunk in result])
-    return bytes(result)
-
-
-async def store_bytes(db, trajectory_id: str, content: bytes, *, first_seq: int,
-                      media_type: str = "application/octet-stream", source_asset_id: str | None = None) -> dict:
-    from db.models.trajectory import TrajectoryPayload as LegacyPayload
-    sha = hashlib.sha256(content).hexdigest()
-    # Dedup stays inside the authorized trajectory. Explicitly removed copies
-    # can never be resurrected by a delayed identical callback.
-    existing = await db.scalar(select(LegacyPayload).where(
-        LegacyPayload.trajectory_id == trajectory_id, LegacyPayload.sha256 == sha,
-        LegacyPayload.media_type == media_type, LegacyPayload.source_asset_id == source_asset_id))
-    if existing is not None:
-        if existing.availability != "available":
-            raise OwnershipError("Removed trajectory content cannot be recreated")
-        return reference(existing)
-    payload_id = f"pld_{uuid4().hex}"
-    row = LegacyPayload(payload_id=payload_id, trajectory_id=trajectory_id, sha256=sha,
-        storage_key=f"trajectories/{trajectory_id}/payloads/{payload_id}/{sha}", size_bytes=len(content),
-        media_type=media_type, storage_status="pending", content=content,
-        encoding="utf-8" if media_type == "application/json" else "binary",
-        availability="available", first_seq=first_seq, source_asset_id=source_asset_id, created_at=now())
-    db.add(row)
-    await db.flush()
-    return reference(row)
-
-
-async def store_json(db, trajectory_id: str, value: dict, *, first_seq: int) -> dict:
-    return {"$payload": await store_bytes(db, trajectory_id, canonical(value), first_seq=first_seq, media_type="application/json")}
-
-
-async def delete_for_asset(db, asset_id: str) -> None:
-    """Called in the attachment deletion transaction; hide before physical GC."""
-    from db.models.trajectory import TrajectoryPayload as LegacyPayload
-    rows = (await db.scalars(select(LegacyPayload).where(LegacyPayload.source_asset_id == asset_id))).all()
-    for row in rows:
-        row.availability = "deleted"
-        row.deleted_at = now()
-        row.content = None
-
-
-async def drain_payloads(limit: int = 100) -> dict:
-    """Archive committed staging rows without retaining any DB transaction.
-
-    Failures preserve the authoritative database bytes for the next attempt.
-    Updates are conditional so concurrent explicit deletion always wins.
-    """
-    from sqlalchemy import update
-    from db.base import get_db_session
-    from db.models.trajectory import TrajectoryPayload as LegacyPayload
-    async with get_db_session() as db:
-        rows = (await db.scalars(select(LegacyPayload).where(
-            LegacyPayload.storage_status == "pending", LegacyPayload.availability == "available")
-            .order_by(LegacyPayload.created_at).limit(limit))).all()
-        jobs = [(row.payload_id, row.storage_key, bytes(row.content), row.media_type, row.sha256)
-                for row in rows if row.content is not None]
-    archived, failed = 0, 0
-    for identity, key, content, media_type, sha in jobs:
-        try:
-            if hashlib.sha256(content).hexdigest() != sha:
-                raise CorruptContent("Staged trajectory payload digest mismatch")
-            await upload_bytes(key, content, media_type)
-            if hashlib.sha256(await download_bytes(key)).hexdigest() != sha:
-                raise CorruptContent("Archived trajectory blob digest mismatch")
-            async with get_db_session() as db:
-                result = await db.execute(update(LegacyPayload).where(
-                    LegacyPayload.payload_id == identity, LegacyPayload.sha256 == sha,
-                    LegacyPayload.availability == "available", LegacyPayload.storage_status == "pending")
-                    .values(content=None, storage_status="stored"))
-                archived += result.rowcount
-                still_live = await db.scalar(select(LegacyPayload.availability).where(LegacyPayload.payload_id == identity))
-            if still_live != "available":
-                await get_storage().delete(key)
-        except Exception:
-            failed += 1
-    return {"archived": archived, "failed": failed}
-
-
-_archive_task = None
-
-
-async def start_archive_worker():
-    """Business-process loop of the legacy sink: staged bytes to blobs, then GC.
-
-    Checkpoints are no longer built here: records, checkpoints and every read
-    live in the trace database, maintained by the trajectory worker.
-    """
-    global _archive_task
-    if _archive_task is not None and not _archive_task.done():
-        return _archive_task
-
-    async def work():
-        from core.log import create_logger
-        from trajectory.lifecycle import purge_deleted_content
-        log = create_logger("trajectory.archive")
-        while True:
-            try:
-                result = await drain_payloads()
-                await purge_deleted_content()
-                if result["failed"]:
-                    log.warning("Trajectory archival retry pending count=%s", result["failed"])
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                log.warning("Trajectory archive worker retry error_type=%s", type(exc).__name__)
-            await asyncio.sleep(5)
-    _archive_task = asyncio.create_task(work())
-    return _archive_task
-
-
-async def stop_archive_worker():
-    global _archive_task
-    if _archive_task is not None:
-        _archive_task.cancel()
-        try:
-            await _archive_task
-        except asyncio.CancelledError:
-            pass
-        _archive_task = None

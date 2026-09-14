@@ -151,15 +151,20 @@ def _auth_stores():
 
 
 def create_app(*, database_url: str | None = None, blob_store=None,
-               services_factory: Callable[[Any], Any] | None = None, backend=None, cache=None) -> FastAPI:
+               services_factory: Callable[[Any], Any] | None = None, backend=None, cache=None,
+               asset_reader=None) -> FastAPI:
     """The worker ASGI app. Arguments replace components the lifespan otherwise builds from the environment;
-    with ``cache`` given, the caller owns the ticket store, the token blacklist and JWT settings."""
+    with ``cache`` given, the caller owns the ticket store, the token blacklist and JWT settings.
+
+    A ``blob_store`` given here is the process store while the app runs (routes and exports read through
+    ``get_blob_store()``); ``asset_reader`` replaces the OSS reader of asset payloads."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         from trajectory.auth import AuditDelivery, HttpBackend, configure_backend
+        from trajectory.payload import oss_asset_reader, set_asset_reader
         from trajectory.store.database import close_trace_engine, init_trace_engine
-        from trajectory.storage import get_blob_store
+        from trajectory.storage import get_blob_store, set_blob_store
 
         url = (database_url or os.getenv("TRAJECTORY_DATABASE_URL") or "").strip()
         if not url:
@@ -182,7 +187,13 @@ def create_app(*, database_url: str | None = None, blob_store=None,
                 stack.push_async_callback(client.close)
             configure_backend(client)
             stack.callback(configure_backend, None)
+            if blob_store is not None:
+                set_blob_store(blob_store)
+                stack.callback(set_blob_store, None)
             store = blob_store if blob_store is not None else get_blob_store()
+            # Asset payloads: the business bucket, over the VPC endpoint unless TRAJECTORY_OSS_INTERNAL=false.
+            set_asset_reader(asset_reader or oss_asset_reader())
+            stack.callback(set_asset_reader, None)
             services = (services_factory or default_services)(store)
             await services.start()
             stack.push_async_callback(services.stop)

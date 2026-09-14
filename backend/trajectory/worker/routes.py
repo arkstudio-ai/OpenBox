@@ -7,7 +7,6 @@ payloads and ``capabilities.refs`` in the session header. No session or
 execution mutator is reachable from here.
 """
 import hashlib
-import inspect
 from datetime import datetime
 from functools import wraps
 from typing import Literal
@@ -49,15 +48,6 @@ def errors(function):
 async def audit(admin, request, action, session_id=None, details=None):
     await record_audit(admin["user_id"], f"admin.trajectory.{action}", target_id=session_id, details=details,
                        request=request)
-
-
-def _content(name: str):
-    """A content read of the read layer (``read_blob``, ``payload_meta``): trajectory.payload's, else trajectory.repository's."""
-    return getattr(payloads, name, None) or getattr(repository, name)
-
-
-async def _resolved(value):
-    return await value if inspect.isawaitable(value) else value
 
 
 @router.get("/sessions")
@@ -147,7 +137,7 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
         async with trace_session() as db:
             _, trajectory = await repository.get_trajectory(db, session_id)
             through = repository.watermark(trajectory, through_seq)
-            info = await _content("payload_meta")(db, trajectory, payload_id, through_seq=through)
+            info = await payloads.payload_meta(db, trajectory, payload_id, through_seq=through)
         return JSONResponse(info, headers=CONTENT_HEADERS)
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
@@ -171,15 +161,14 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
 async def blob(session_id: str, request: Request, sha256: str = Path(pattern=SHA256_PATTERN),
                through_seq: str | None = None, admin: dict = Depends(require_trajectory_admin)):
     """The JSON value of a ``$ref`` visible at ``through_seq`` in this session's trajectory."""
-    read_blob = _content("read_blob")
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, through_seq)
-        content = await read_blob(db, trajectory, sha256, through_seq=through)
+        content = await payloads.read_blob(db, trajectory, sha256, through_seq=through)
     await revalidate_viewer(request, admin['user_id'])
     async with trace_session() as db:
         _, current = await repository.get_trajectory(db, session_id)
-        if await read_blob(db, current, sha256, through_seq=through) != content:
+        if await payloads.read_blob(db, current, sha256, through_seq=through) != content:
             raise CorruptContent('Blob changed during download')
     return Response(content, media_type="application/json", headers=CONTENT_HEADERS)
 
@@ -194,8 +183,8 @@ async def export(session_id: str, body: ExportBody, request: Request, admin: dic
     # The worker's export service builds pending exports under a lease.
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
-        row = await _resolved(exports.create_export(db, trajectory, admin["user_id"],
-                                                    repository.watermark(trajectory, body.through_seq)))
+        row = await exports.create_export(db, trajectory, admin["user_id"],
+                                          repository.watermark(trajectory, body.through_seq))
         result = exports.export_status(row, session_id)
     await audit(admin, request, "export", session_id, {"through_seq": result["through_seq"], "export_id": result["export_id"]})
     return result

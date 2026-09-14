@@ -26,7 +26,6 @@ import contextlib
 import hashlib
 import json
 import os
-import socket
 import tempfile
 import time
 import zipfile
@@ -43,7 +42,7 @@ from trajectory.lifecycle import GC_KEY, enqueue_gc, worker_setting
 from trajectory.payload import read_payload
 from trajectory.projector import empty_state, reduce, statistics
 from trajectory.storage import export_key, get_blob_store
-from trajectory.store.database import get_trace_engine, trace_session
+from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryExport, TrajectoryMetaAsset,
     TrajectoryPayload, TrajectorySegment)
 from trajectory.types import PROJECTOR_VERSION, CorruptContent, canonical, iso, now
@@ -63,8 +62,6 @@ REPLAY_YIELD_EVENTS = 200
 ENTRY_OVERHEAD_BYTES = 512
 #: Room kept for the manifest entry beyond the manifest text itself.
 MANIFEST_RESERVE_BYTES = 4096
-#: Owner id of builds started by this process outside a worker service.
-PROCESS_OWNER = f"{socket.gethostname()[:32]}-{os.getpid()}-{uuid4().hex[:8]}"
 
 
 class ExportTooLarge(Exception):
@@ -73,14 +70,6 @@ class ExportTooLarge(Exception):
 
 class ExportLeaseLost(Exception):
     """The export was deleted or taken over by another worker while this one built it."""
-
-
-class _NullMetrics:
-    def inc(self, name: str, value: int = 1) -> None:
-        pass
-
-    def set_gauge(self, name: str, value) -> None:
-        pass
 
 
 # -- Rows and downloads --
@@ -587,50 +576,3 @@ class _ZipEntry:
 
     def describe(self) -> dict:
         return {"path": self.name, "sha256": self._digest.hexdigest(), "size_bytes": self.size}
-
-
-# -- Backend-process hooks --
-# The in-process admin API and application lifespan build, resume and stop
-# exports through these until the worker owns them; they use the same leases.
-
-_tasks: set[asyncio.Task] = set()
-
-
-async def build_export(export_id: str, *, settings=None, blob_store=None, metrics=None,
-                       owner_id: str | None = None) -> str | None:
-    """Build one export now in this process; returns its status afterwards."""
-    task = asyncio.current_task()
-    if task is not None:
-        _tasks.add(task)
-    try:
-        service = ExportService(settings, blob_store=blob_store or get_blob_store(), metrics=metrics or _NullMetrics(),
-                                owner_id=owner_id or PROCESS_OWNER)
-        # Only resume_exports takes over rows of this owner id: another task of
-        # this process may be building this very export under a live lease.
-        service._resumed = True
-        return await service.build(export_id)
-    finally:
-        if task is not None:
-            _tasks.discard(task)
-
-
-async def resume_exports(*, settings=None, blob_store=None, metrics=None) -> None:
-    """Resume unfinished exports in a background task; nothing to do before the trace database is initialized."""
-    try:
-        get_trace_engine()
-    except RuntimeError:
-        return
-    service = ExportService(settings, blob_store=blob_store or get_blob_store(), metrics=metrics or _NullMetrics(),
-                            owner_id=PROCESS_OWNER)
-    task = asyncio.create_task(service.run_once())
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-
-
-async def stop_exports() -> None:
-    """Cancel this process's export work; the rows resume elsewhere once their leases are released or expire."""
-    tasks = [task for task in list(_tasks) if task is not asyncio.current_task()]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)

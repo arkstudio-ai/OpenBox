@@ -106,6 +106,8 @@ class WorkerSettings:
     redis_url: str | None = field(default=None, repr=False)
     jwt_secret: str | None = field(default=None, repr=False)
     internal_api_token: str | None = field(default=None, repr=False)
+    #: TRAJECTORY_EXPORT_MAX_BYTES: size cap of one export archive (defaulted, so it follows the secrets).
+    export_max_bytes: int = 256 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> WorkerSettings:
@@ -141,6 +143,7 @@ class WorkerSettings:
             dedupe_days=integer("TRAJECTORY_DEDUPE_DAYS", 30),
             content_retention_days=integer("TRAJECTORY_CONTENT_RETENTION_DAYS", 180),
             export_retention_days=integer("TRAJECTORY_EXPORT_RETENTION_DAYS", 30),
+            export_max_bytes=integer("TRAJECTORY_EXPORT_MAX_BYTES", 256 * 1024 * 1024),
             budget_trajectory_events=integer("TRAJECTORY_BUDGET_TRAJECTORY_EVENTS", 50000),
             budget_trajectory_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BYTES", 200 * 1024 * 1024),
             budget_trajectory_block_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BLOCK_BYTES", 1024 * 1024 * 1024),

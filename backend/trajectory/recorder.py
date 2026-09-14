@@ -7,7 +7,7 @@ transaction is enqueued only when that transaction commits.
 from trajectory.config import enabled
 from trajectory.context import TraceContext, current
 from trajectory.emitter import completed_receipt, emit, emit_after_commit, emit_stream, flush_spool
-from trajectory.types import OwnershipError, iso
+from trajectory.types import OwnershipError
 
 
 async def context_for_session(db, user_id: str, session_id: str, **ids) -> TraceContext:
@@ -21,15 +21,6 @@ async def context_for_session(db, user_id: str, session_id: str, **ids) -> Trace
         return inherited.derive(**ids)
     return TraceContext(user_id=user_id, session_id=session_id, source_session_id=session_id,
                         workspace_id=row.workspace_id, **ids)
-
-
-def event_dict(row) -> dict:
-    """The REST envelope of one stored event row."""
-    return {"event_id": row.event_id, "trajectory_id": row.trajectory_id,
-            "user_id": row.user_id, "session_id": row.session_id,
-            **row.context, "source_session_id": row.source_session_id,
-            "seq": str(row.seq), "type": row.type, "version": row.version,
-            "occurred_at": iso(row.occurred_at), "recorded_at": iso(row.recorded_at), "data": row.data}
 
 
 async def record(type: str, data: dict, *, context: TraceContext | None = None,

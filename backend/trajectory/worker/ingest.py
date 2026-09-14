@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 
 from core.log import create_logger
 from trajectory import spool
+from trajectory.lifecycle import revoke_asset
 from trajectory.storage import blob_key
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
@@ -1379,8 +1380,9 @@ class _Transaction:
             return
         deleted_at = meta.parse_time(control.get("deleted_at")) or item.t
         await self.flush(db)
-        affected = await meta.revoke_asset(db, self.cache, asset_id=asset_id, user_id=control.get("user_id"),
-                                           deleted_at=deleted_at, now=self.now)
+        await meta.mark_asset_deleted(db, self.cache, asset_id=asset_id, user_id=control.get("user_id"),
+                                      deleted_at=deleted_at, now=self.now)
+        revocations = await revoke_asset(db, asset_id, at=self.now)
         for key, row in list(self.payloads.items()):
             if row.source_asset_id == asset_id and row.availability != "deleted":
                 gone = content.ExistingPayload(row.payload_id, row.dedupe_key, row.sha256, "deleted", row.storage_kind,
@@ -1391,15 +1393,12 @@ class _Transaction:
                     if self.blobs.get(digest_key) is row:
                         del self.blobs[digest_key]
                     self.blocked.setdefault(digest_key, gone)
-        for trajectory_id in affected:
-            state = await self._state_by_id(db, trajectory_id)
+        for revocation in revocations:
+            state = await self._state_by_id(db, revocation.trajectory.id)
             if state is None or not state.live:
                 continue
-            identity = hashlib.sha256(f"{state.session_id}:{asset_id}:deleted".encode()).hexdigest()
-            await self.append_worker_event(state, event_id=f"asset:{identity}", event_type="artifact.removed",
-                                           occurred_at=deleted_at, data={"artifact_id": asset_id,
-                                                                         "availability": "deleted",
-                                                                         "reason": "explicitly_deleted"})
+            await self.append_worker_event(state, event_id=revocation.event_id, event_type="artifact.removed",
+                                           occurred_at=deleted_at, data=revocation.data)
 
     async def _recording_state(self, db, item: Item) -> None:
         control = item.control

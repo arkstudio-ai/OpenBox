@@ -14,12 +14,11 @@ from sqlalchemy import select, update
 from tests.unit.test_worker_archive_support import (AT, FakeMetrics, add_events, add_trajectory, blob_store, event_values,
     gc_entries, trace_db, worker_settings)
 from trajectory import export
-from trajectory.export import (ExportService, build_export, create_export, export_status, read_export, resume_exports,
-    stop_exports)
-from trajectory.lifecycle import expire_trajectory_content, revoke_asset, tombstone_trajectory, utc
+from trajectory.export import ExportService, create_export, export_status, read_export
+from trajectory.lifecycle import expire_trajectory_content, revoke_asset, tombstone_trajectory
 from trajectory.projector import replay, statistics
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob, export_key, get_blob_store
-from trajectory.store.database import close_trace_engine, trace_session
+from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryExport, TrajectoryMetaAsset, TrajectoryPayload
 from trajectory.types import CorruptContent, canonical, iso, now
 from trajectory.worker.archive import ArchiveService
@@ -492,42 +491,6 @@ async def test_downloads_are_refused_when_not_ready_invalidated_expired_or_corru
         await attempt(ready)
 
 
-async def test_backend_process_hooks_build_stop_and_resume_exports(trace_db, blob_store, payload_reader, admins):
-    await add_trajectory("trj_a", committed=1)
-    await add_events([event_values("trj_a", 1)])
-    assert await build_export(await new_export("trj_a", 1)) == "completed"
-
-    stopped = await new_export("trj_a", 1)
-    entered = asyncio.Event()
-
-    async def stuck_upload(key):
-        if key.startswith("trajectories/_exports/"):
-            entered.set()
-            await asyncio.Event().wait()
-
-    blob_store.faults["put"] = stuck_upload
-    building = asyncio.create_task(build_export(stopped))
-    await asyncio.wait_for(entered.wait(), 5)
-    await stop_exports()
-    assert building.cancelled() and not export._tasks
-    row = await export_row(stopped)
-    assert row.status == "running" and utc(row.lease_until) <= now()
-
-    blob_store.clear_faults()
-    await resume_exports()
-    for _ in range(100):
-        if (await export_row(stopped)).status == "completed":
-            break
-        await asyncio.sleep(0.05)
-    assert (await export_row(stopped)).status == "completed"
-
-
-async def test_resuming_exports_without_a_trace_database_does_nothing():
-    await close_trace_engine()
-    await resume_exports()
-    assert not export._tasks
-
-
 async def test_an_export_across_segments_and_hot_rows_reports_a_deleted_asset(trace_db, blob_store, payload_reader,
                                                                               admins):
     await add_trajectory("trj_a", committed=14)
@@ -688,8 +651,8 @@ async def test_a_payload_larger_than_its_declared_size_is_listed_as_missing(trac
                                              "reason": "ExportTooLarge"}]
 
 
-async def test_a_backend_build_never_takes_over_a_build_of_its_own_process(trace_db, blob_store, payload_reader,
-                                                                          admins):
+async def test_a_second_build_of_an_export_the_service_is_building_does_not_build_it_again(trace_db, blob_store,
+                                                                                          payload_reader, admins):
     await add_trajectory("trj_a", committed=1)
     await add_events([event_values("trj_a", 1)])
     export_id = await new_export("trj_a", 1)
@@ -703,9 +666,10 @@ async def test_a_backend_build_never_takes_over_a_build_of_its_own_process(trace
                 await release.wait()
 
     blob_store.faults["put"] = slow_first_upload
-    building = asyncio.create_task(build_export(export_id))
+    service = worker(blob_store)
+    building = asyncio.create_task(service.build(export_id))
     await asyncio.wait_for(entered.wait(), 5)
-    assert await build_export(export_id) == "running"
+    assert await service.build(export_id) == "running"
     release.set()
     assert await asyncio.wait_for(building, 5) == "completed"
     assert len(uploads) == 1

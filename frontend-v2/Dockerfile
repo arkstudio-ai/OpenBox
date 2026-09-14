@@ -18,6 +18,8 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
     && find /usr/share/nginx/html -type f -exec chmod 644 {} +
 ENV BACKEND_HOST=backend:8080
+# Admin trajectory paths (nginx.conf). Compose points it at the trajectory worker.
+ENV TRAJECTORY_HOST=backend:8080
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

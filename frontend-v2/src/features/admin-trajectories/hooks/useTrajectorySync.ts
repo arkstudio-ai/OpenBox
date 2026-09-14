@@ -2,11 +2,10 @@ import { useEffect, useSyncExternalStore } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { forgetTarget, purgeTrajectoryAccess } from "../api/access"
 import { acquireSync, peekSync, releaseSync, subscribeRegistry } from "../api/registry"
+import { trajectorySocket } from "../api/socket"
 import type { SyncSnapshot, TrajectorySync } from "../api/sync"
 import { useAccessScope } from "../api/queries"
-
-export const LIVE_POLL_MS = 1_000
-export const HIDDEN_POLL_MS = 5_000
+import { eventPollDelay } from "../constants/polling"
 
 const noopSubscribe = () => () => undefined
 const noSnapshot = () => null
@@ -17,9 +16,10 @@ export interface TrajectorySyncState {
 }
 
 /**
- * The live stream for one target session: acquires its engine, polls the head
- * every second while visible (less often when hidden, and immediately on
- * return), and releases everything when the target changes, the page closes
+ * The live stream for one target session: acquires its engine, polls for
+ * commits a watermark hint may have missed — every 10 s while the socket is
+ * open, every 2 s while it is not, less often when hidden and immediately on
+ * return — and releases everything when the target changes, the page closes
  * or access is refused.
  */
 export function useTrajectorySync(sessionId: string, enabled: boolean): TrajectorySyncState {
@@ -50,24 +50,43 @@ export function useTrajectorySync(sessionId: string, enabled: boolean): Trajecto
   useEffect(() => {
     if (!sync) return
     let timer: number | null = null
+    let polling = false
     let cancelled = false
-    const schedule = () => {
-      if (cancelled) return
+    // The next read is due an interval after the previous one ended. The socket
+    // and the tab decide that interval, so a change of either moves the due
+    // time — measured from the last read, never from the change itself: a
+    // socket that keeps opening and dropping cannot postpone the poll forever.
+    let last = Date.now()
+    const arm = () => {
+      if (cancelled || polling) return
       if (timer !== null) window.clearTimeout(timer)
-      const delay = document.visibilityState === "hidden" ? HIDDEN_POLL_MS : LIVE_POLL_MS
-      timer = window.setTimeout(() => {
-        void sync.poll().finally(schedule)
-      }, delay)
+      const delay = eventPollDelay(trajectorySocket.connected, document.visibilityState === "hidden")
+      timer = window.setTimeout(poll, Math.max(0, last + delay - Date.now()))
+    }
+    const poll = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+      polling = true
+      void sync.poll().finally(() => {
+        polling = false
+        last = Date.now()
+        arm()
+      })
     }
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void sync.poll()
-      schedule()
+      if (document.visibilityState !== "visible") arm()
+      // A read already on its way is followed by another one (the engine coalesces them).
+      else if (polling) void sync.poll()
+      else poll()
     }
-    schedule()
+    // The socket opening or dropping changes how soon a missed commit must be noticed.
+    const offs = [trajectorySocket.on("__connected", arm), trajectorySocket.on("__disconnected", arm)]
+    arm()
     document.addEventListener("visibilitychange", onVisibility)
     return () => {
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
+      for (const off of offs) off()
       document.removeEventListener("visibilitychange", onVisibility)
     }
   }, [sync])

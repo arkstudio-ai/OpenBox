@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { useHeaderHintRefresh } from "../../api/queries"
 import { usePlaybackTimer, usePosition } from "../../hooks/usePlayback"
 import { useTrajectorySocket } from "../../hooks/useTrajectorySocket"
 import { useTrajectorySync } from "../../hooks/useTrajectorySync"
@@ -23,16 +24,18 @@ interface RecordedSessionProps {
 
 /**
  * A session with a recording: the ordered event stream, the replay position
- * built from it, the watermark socket, and the workspace at that position.
- * A pinned position (playhead, or `at` in the URL before it is applied) never
- * falls back to anything read at the head while it loads.
+ * built from it, the watermark socket (whose hints also refresh the header),
+ * and the workspace at that position. A pinned position (playhead, or `at` in
+ * the URL before it is applied) never falls back to anything read at the head
+ * while it loads.
  */
 export function RecordedSession({ sessionId, header, detail, onDetail, backHref }: RecordedSessionProps) {
   const { t } = useTranslation("admin-trajectories")
   const { sync, snapshot } = useTrajectorySync(sessionId, true)
   const position = usePosition(sync, snapshot)
   usePlaybackTimer(snapshot, position)
-  useTrajectorySocket(sessionId, header.owner.user_id, sync)
+  const refreshHeader = useHeaderHintRefresh(sessionId)
+  useTrajectorySocket(sessionId, header.owner.user_id, sync, refreshHeader)
   useDetailUrlSync(detail, onDetail)
   const playhead = useTrajectoryView((s) => s.playhead)
   const returnToLive = useTrajectoryView((s) => s.returnToLive)
@@ -77,6 +80,7 @@ export function RecordedSession({ sessionId, header, detail, onDetail, backHref 
           position={ready}
           detail={detail}
           onDetail={onDetail}
+          refs={header.capabilities.refs === true}
         />
       )}
       {!wiped && !ready && position?.status !== "error" && (

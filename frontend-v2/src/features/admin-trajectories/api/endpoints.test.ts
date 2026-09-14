@@ -63,6 +63,21 @@ describe("admin trajectory endpoints", () => {
     for (const call of vi.mocked(http.get).mock.calls) expect(call[1]).toEqual({ signal })
   })
 
+  it("reads a detail with its references, one referenced value and payload availability, all at H", async () => {
+    const digest = "ab".repeat(32)
+    await trajectoryApi.recordRefs("ses/1", "tool:call a", "12", signal)
+    await trajectoryApi.blob("ses/1", digest, "12", signal)
+    await trajectoryApi.payloadMeta("ses/1", "pay_1", "12", signal)
+    expect(vi.mocked(http.get).mock.calls).toEqual([
+      [`${TRAJECTORY_API}/sessions/ses%2F1/records/tool%3Acall%20a?through_seq=12&expand=refs`, { signal }],
+      [`${TRAJECTORY_API}/sessions/ses%2F1/blobs/${digest}?through_seq=12`, { signal }],
+      [`${TRAJECTORY_API}/sessions/ses%2F1/payloads/pay_1?through_seq=12&meta=1`, { signal }],
+    ])
+    // Availability is a JSON answer: no bytes are downloaded to check it.
+    expect(requestBlob).not.toHaveBeenCalled()
+    expect(http.post).not.toHaveBeenCalled()
+  })
+
   it("has exactly one write: creating an export at a fixed watermark", async () => {
     await trajectoryApi.createExport("ses_b", "34", signal)
     expect(http.post).toHaveBeenCalledWith(

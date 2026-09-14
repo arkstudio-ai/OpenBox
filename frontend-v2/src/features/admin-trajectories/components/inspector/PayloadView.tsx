@@ -33,14 +33,16 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
  * watermark — never a public URL, the owner's attachment API or a sandbox path.
  * The query resolves "not produced yet at this position", "deleted" (even when
  * replaying an earlier position) and "corrupt" as states without a body and
- * revalidates, so a later deletion unmounts the media element (releasing its
- * object URL) together with the download action. Downloading is an explicit,
- * fresh, server-checked read; the Blob on screen is never handed out.
+ * revalidates — with an availability-only check where the server offers one,
+ * by reading the bytes again otherwise — so a later deletion unmounts the
+ * media element (releasing its object URL) together with the download action.
+ * Downloading is an explicit, fresh, server-checked read; the Blob on screen
+ * is never handed out.
  */
 export function PayloadView({ reference, filename }: PayloadViewProps) {
   const { t } = useTranslation(NS)
-  const { sessionId, throughSeq } = useInspector()
-  const payload = usePayload(sessionId, throughSeq, reference.payload_id)
+  const { sessionId, throughSeq, refs } = useInspector()
+  const payload = usePayload(sessionId, throughSeq, reference.payload_id, refs ? "meta" : "body")
   const download = useDownloadPayload(sessionId, throughSeq, reference.payload_id)
   const content = payload.data
 

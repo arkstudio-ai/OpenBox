@@ -4,6 +4,7 @@ import { MousePointerClick } from "lucide-react"
 import { ApiError } from "@/shared/api/http"
 import { Spinner } from "@/shared/ui/Spinner"
 import { useRecordDetail } from "../../api/queries"
+import { RECORD_DETAIL_SETTLE_MS } from "../../constants/polling"
 import type { Seq } from "../../types/protocol"
 import { lteSeq } from "../../utils/seq"
 import { tabsFor, type TabId } from "../../utils/tabs"
@@ -21,7 +22,7 @@ import { NS, type InspectedRecord } from "./types"
 
 interface RecordInspectorProps {
   selectedId: string | null
-  /** The position is moving quickly (live or playing): refresh details at most a few times a second. */
+  /** The position is moving quickly (live or playing): refresh details at most every couple of seconds. */
   settle: boolean
 }
 
@@ -43,8 +44,6 @@ interface Shown {
   record: InspectedRecord
 }
 
-const SETTLE_MS = 400
-
 function EmptyState({ text }: EmptyStateProps) {
   return (
     <div
@@ -61,8 +60,12 @@ function InspectorBody({ recordId, local, settle, tab, onTab }: InspectorBodyPro
   const { t } = useTranslation(NS)
   const idBase = useId()
   const env = useInspector()
-  const detailSeq = useSettledSeq(env.throughSeq, settle ? SETTLE_MS : 0)
-  const detail = useRecordDetail(env.sessionId, detailSeq, recordId, true)
+  const detailSeq = useSettledSeq(env.throughSeq, settle ? RECORD_DETAIL_SETTLE_MS : 0)
+  // With content references the detail stays small; each panel reads the references it shows.
+  const detail = useRecordDetail(env.sessionId, detailSeq, recordId, {
+    enabled: true,
+    expand: env.refs ? "refs" : "full",
+  })
   const [shown, setShown] = useState<Shown | null>(null)
   const fresh = detail.data?.record
   if (fresh && shown?.record !== fresh) setShown({ id: recordId, seq: detailSeq, record: fresh })

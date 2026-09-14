@@ -10,6 +10,7 @@ import { JsonTree } from "../JsonTree"
 import { isContentEnvelope } from "../media"
 import { MediaRefView } from "../MediaRefView"
 import { MessageView } from "../MessageView"
+import { ResolvedRecord } from "../ResolvedRecord"
 import { TextBlock } from "../TextBlock"
 import { ToolDefinitionList } from "../ToolDefinitionList"
 import { NS, type PanelProps } from "../types"
@@ -41,6 +42,9 @@ const HANDLED = new Set<string>([
   "extra_body",
   "media_inputs",
 ])
+
+/** The captured fields whose references this panel reads when it opens. */
+const SHOWN_FIELDS = ["input", "media_inputs"] as const
 
 function Messages({ value }: MessagesProps) {
   if (typeof value === "string") return <TextBlock text={value} />
@@ -145,13 +149,7 @@ function Snapshot({ input, name }: SnapshotProps) {
   )
 }
 
-/**
- * The request as the adapter actually dispatched it — effective system text,
- * ordered messages with the media the model received, visible tools, every
- * other captured field and the complete raw snapshot — at its declared capture
- * level. Distinct from the user's own words and from a tool's arguments.
- */
-export function RequestInputPanel({ record }: PanelProps) {
+function RequestInput({ record }: PanelProps) {
   const { t } = useTranslation(NS)
   const capture = typeof record.data?.capture_level === "string" ? record.data.capture_level : null
   const input = fieldState(record, "input")
@@ -180,5 +178,19 @@ export function RequestInputPanel({ record }: PanelProps) {
         </Section>
       )}
     </div>
+  )
+}
+
+/**
+ * The request as the adapter actually dispatched it — effective system text,
+ * ordered messages with the media the model received, visible tools, every
+ * other captured field and the complete raw snapshot — at its declared capture
+ * level. Distinct from the user's own words and from a tool's arguments.
+ */
+export function RequestInputPanel({ record }: PanelProps) {
+  return (
+    <ResolvedRecord record={record} fields={SHOWN_FIELDS}>
+      {(resolved) => <RequestInput record={resolved} />}
+    </ResolvedRecord>
   )
 }

@@ -78,7 +78,7 @@ describe("retained model input media", () => {
     const { container, unmount } = render(
       withInspector(<MessageView message={message} index={0} />, inspectorEnv()),
     )
-    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input")
+    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", "body")
     const images = container.querySelectorAll("img")
     expect(images).toHaveLength(1)
     expect(images[0].getAttribute("src")).toBe("blob:fixture-media")
@@ -136,5 +136,13 @@ describe("retained model input media", () => {
     expect(container.querySelector("[data-availability=deleted]")).not.toBeNull()
     expect(screen.queryByTestId("trajectory-payload-download")).toBeNull()
     expect(revokeUrl).toHaveBeenCalledWith("blob:fixture-media")
+  })
+
+  it("revalidates shown content with the availability check where the server offers one", () => {
+    payloadMock.mockReturnValue(payloadResult(PNG))
+    render(
+      withInspector(<PayloadView reference={{ payload_id: "pl_input" }} />, inspectorEnv([], { refs: true })),
+    )
+    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", "meta")
   })
 })

@@ -9,6 +9,9 @@ import path from "node:path"
 const buildId =
   process.env.VITE_BUILD_ID || new Date().toISOString().replace(/[-:TZ]/g, "").slice(0, 14)
 
+const BACKEND_PROXY_TARGET = "http://localhost:8080"
+const trajectoryProxyTarget = process.env.VITE_TRAJECTORY_PROXY_TARGET || BACKEND_PROXY_TARGET
+
 function appBuildMeta() {
   return {
     name: "app-build-meta",
@@ -39,8 +42,13 @@ export default defineConfig({
     // second checkout can run its dev server alongside the main one.
     port: Number(process.env.PORT) || 3000,
     strictPort: true,
+    // The first matching prefix wins, so the admin trajectory entries come
+    // first. They reach the trajectory worker when VITE_TRAJECTORY_PROXY_TARGET
+    // names it (e.g. http://localhost:8090) and the backend otherwise.
     proxy: {
-      "/api": "http://localhost:8080",
+      "/api/admin/trajectories/": trajectoryProxyTarget,
+      "/ws/admin/trajectories": { target: trajectoryProxyTarget.replace(/^http/, "ws"), ws: true },
+      "/api": BACKEND_PROXY_TARGET,
       "/ws": { target: "ws://localhost:8080", ws: true },
     },
   },

@@ -1,23 +1,38 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError } from "@/shared/api/http"
 import type { AuthUser } from "@/shared/types/api"
 import { useTrajectoryAccess } from "../stores/access"
+import type { PayloadMeta, RecordDetail, SessionHeader } from "../types/protocol"
 import { EMPTY_LIST_PARAMS } from "../utils/params"
 import { saveBlob } from "../utils/download"
 import { purgeTrajectoryAccess, StaleAccessError } from "./access"
 import { trajectoryApi } from "./endpoints"
 import { trajectoryKeys } from "./keys"
-import { useCreateExport, useExportDownload, usePayload, useRecordSearch, useSessionList } from "./queries"
+import {
+  useCreateExport,
+  useExportDownload,
+  useHeaderHintRefresh,
+  usePayload,
+  useRecordDetail,
+  useRecordSearch,
+  useSessionHeader,
+  useSessionList,
+  useSessionListProbe,
+} from "./queries"
 
 vi.mock("./endpoints", () => ({
   trajectoryApi: {
     listSessions: vi.fn(),
+    header: vi.fn(),
+    record: vi.fn(),
+    recordRefs: vi.fn(),
     search: vi.fn(),
     payload: vi.fn(),
+    payloadMeta: vi.fn(),
     createExport: vi.fn(),
     downloadExport: vi.fn(),
     events: vi.fn(),
@@ -39,6 +54,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+const HEADER = { session_id: "ses_b" } as unknown as SessionHeader
+
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   useTrajectoryAccess.setState({ epoch: 0, denied: null })
@@ -50,6 +68,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
   client.clear()
   vi.clearAllMocks()
 })
@@ -104,6 +124,209 @@ describe("protected content", () => {
     api.payload.mockRejectedValueOnce(new ApiError(404, "HTTP_404", "not yet"))
     const { result } = renderHook(() => usePayload("ses_b", "3", "pay_1"), { wrapper })
     await waitFor(() => expect(result.current.data?.availability).toBe("pending"))
+  })
+})
+
+describe("shown content revalidation", () => {
+  // A replaced body reaches the hook through TanStack Query's zero-delay notification timer; the
+  // fake clock runs a zero-delay timer queued while it is already running timers 1 ms later.
+  const settle = () => advance(1)
+  const png = () => ({ blob: new Blob(["png"], { type: "image/png" }), filename: null })
+  const meta = (availability: string): PayloadMeta => ({
+    payload_id: "pay_1",
+    availability,
+    media_type: "image/png",
+    size_bytes: 3,
+    sha256: "ab".repeat(32),
+  })
+
+  it("reads the bytes again every 15 s where the server has no availability check", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    renderHook(() => usePayload("ses_b", "12", "pay_1"), { wrapper })
+    await advance(0)
+    expect(api.payload).toHaveBeenCalledTimes(1)
+    await advance(15_000)
+    expect(api.payload).toHaveBeenCalledTimes(2)
+    expect(api.payloadMeta).not.toHaveBeenCalled()
+  })
+
+  it("reads the bytes once, asks ?meta=1 every 60 s and replaces the body once it is gone", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    api.payloadMeta.mockResolvedValue(meta("available"))
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    await advance(0)
+    expect(result.current.data?.availability).toBe("available")
+    await advance(59_999)
+    expect(api.payloadMeta).not.toHaveBeenCalled()
+    await advance(1)
+    expect(api.payloadMeta).toHaveBeenCalledWith("ses_b", "pay_1", "12", expect.any(AbortSignal))
+    await settle()
+    expect(result.current.data?.availability).toBe("available")
+
+    api.payloadMeta.mockResolvedValue(meta("expired"))
+    await advance(60_000)
+    await settle()
+    expect(api.payloadMeta).toHaveBeenCalledTimes(2)
+    expect(result.current.data).toEqual({
+      availability: "deleted",
+      mediaType: null,
+      size: null,
+      blob: null,
+      text: null,
+    })
+    // Once nothing is shown there is nothing left to check, and the bytes were never read again.
+    await advance(180_000)
+    expect(api.payloadMeta).toHaveBeenCalledTimes(2)
+    expect(api.payload).toHaveBeenCalledTimes(1)
+  })
+
+  it("checks at once when the tab is shown again, and a 410 from the check hides the content", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    api.payloadMeta.mockRejectedValue(new ApiError(410, "trajectory_content_deleted", "deleted"))
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    await advance(0)
+    expect(result.current.data?.availability).toBe("available")
+    act(() => void document.dispatchEvent(new Event("visibilitychange")))
+    await settle()
+    expect(api.payloadMeta).toHaveBeenCalledTimes(1)
+    expect(result.current.data?.availability).toBe("deleted")
+    expect(api.payload).toHaveBeenCalledTimes(1)
+  })
+
+  it("hides the content for an availability it does not know, even an inherited object key", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    api.payloadMeta.mockResolvedValue(meta("constructor"))
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    await advance(0)
+    expect(result.current.data?.availability).toBe("available")
+    act(() => void document.dispatchEvent(new Event("visibilitychange")))
+    await settle()
+    expect(api.payloadMeta).toHaveBeenCalledTimes(1)
+    expect(result.current.data?.availability).toBe("deleted")
+  })
+})
+
+describe("live reads", () => {
+  it("probe the session list every 30 s", async () => {
+    vi.useFakeTimers()
+    api.listSessions.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+    renderHook(() => useSessionListProbe(EMPTY_LIST_PARAMS, true), { wrapper })
+    await advance(0)
+    expect(api.listSessions).toHaveBeenCalledTimes(1)
+    await advance(29_999)
+    expect(api.listSessions).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.listSessions).toHaveBeenCalledTimes(2)
+  })
+
+  it("refresh the header every 30 s without hints", async () => {
+    vi.useFakeTimers()
+    api.header.mockResolvedValue(HEADER)
+    renderHook(() => useSessionHeader("ses_b"), { wrapper })
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(29_999)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.header).toHaveBeenCalledTimes(2)
+  })
+
+  it("follow watermark hints at most every 5 s, honour the latest and read a deletion at once", async () => {
+    vi.useFakeTimers()
+    api.header.mockResolvedValue(HEADER)
+    const { result } = renderHook(
+      () => ({ header: useSessionHeader("ses_b"), hint: useHeaderHintRefresh("ses_b") }),
+      { wrapper },
+    )
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    act(() => result.current.hint({}))
+    act(() => result.current.hint({}))
+    await advance(4_999)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.header).toHaveBeenCalledTimes(2)
+
+    // Long after the last answer a hint is read at once.
+    await advance(6_000)
+    act(() => result.current.hint({}))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(3)
+    act(() => result.current.hint({ deleted: true }))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(4)
+  })
+
+  it("skip hints the shown header already covers, such as the answer to a subscription", async () => {
+    vi.useFakeTimers()
+    api.header.mockResolvedValue({ ...HEADER, committed_seq: "40" } as SessionHeader)
+    const { result } = renderHook(
+      () => ({ header: useSessionHeader("ses_b"), hint: useHeaderHintRefresh("ses_b") }),
+      { wrapper },
+    )
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    act(() => result.current.hint({ committed_seq: "40" }))
+    act(() => result.current.hint({ committed_seq: "039" }))
+    await advance(10_000)
+    expect(api.header).toHaveBeenCalledTimes(1)
+
+    act(() => result.current.hint({ committed_seq: "41" }))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(2)
+  })
+
+  it("read the header again after an answer that was already on its way when a hint arrived", async () => {
+    vi.useFakeTimers()
+    const first = deferred<SessionHeader>()
+    api.header.mockImplementationOnce(() => first.promise)
+    api.header.mockResolvedValue(HEADER)
+    const { result } = renderHook(
+      () => ({ header: useSessionHeader("ses_b"), hint: useHeaderHintRefresh("ses_b") }),
+      { wrapper },
+    )
+    await advance(0)
+    act(() => result.current.hint({}))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await act(async () => first.resolve(HEADER))
+    await advance(4_999)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.header).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("record detail", () => {
+  it("asks for references only when told to, and keeps the two answers apart", async () => {
+    const answer = (data: Record<string, unknown>) =>
+      ({
+        record: { record_id: "request:r", data },
+        through_seq: "12",
+        projector_version: 1,
+      }) as unknown as RecordDetail
+    api.record.mockResolvedValue(answer({ input: { system: "Be precise" } }))
+    api.recordRefs.mockResolvedValue(answer({ input: { system: { $ref: { sha256: "ab".repeat(32) } } } }))
+    const full = renderHook(() => useRecordDetail("ses_b", "12", "request:r", { enabled: true }), { wrapper })
+    await waitFor(() => expect(full.result.current.data).toBeDefined())
+    expect(api.record).toHaveBeenCalledWith("ses_b", "request:r", "12", expect.any(AbortSignal))
+    expect(api.recordRefs).not.toHaveBeenCalled()
+
+    const refs = renderHook(
+      () => useRecordDetail("ses_b", "12", "request:r", { enabled: true, expand: "refs" }),
+      { wrapper },
+    )
+    await waitFor(() => expect(refs.result.current.data).toBeDefined())
+    expect(api.recordRefs).toHaveBeenCalledWith("ses_b", "request:r", "12", expect.any(AbortSignal))
+    expect(api.record).toHaveBeenCalledTimes(1)
+    expect(full.result.current.data?.record.data).toEqual({ input: { system: "Be precise" } })
+    expect(client.getQueryData(trajectoryKeys.recordRefs("admin-a#0", "ses_b", "12", "request:r"))).toEqual(
+      refs.result.current.data,
+    )
   })
 })
 

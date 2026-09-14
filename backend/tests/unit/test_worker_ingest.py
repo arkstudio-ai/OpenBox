@@ -19,11 +19,12 @@ from bus import bus
 from trajectory import spool
 from trajectory.projector import _preview
 from trajectory.redaction import sanitize
-from trajectory.storage import MemoryBlobStore, decode_blob
+from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine, trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
     TrajectoryIngestFile, TrajectoryIngestProducer, TrajectoryPayload)
-from trajectory.types import digest
+from trajectory.types import canonical, digest
+from trajectory.worker.content import dedupe_key
 from trajectory.worker.ingest import IngestService
 from trajectory.worker.meta import parse_time
 from trajectory.worker.settings import WorkerSettings
@@ -295,6 +296,51 @@ async def test_large_values_and_whole_data_are_externalized(harness):
     [row] = await rows(TrajectoryPayload, TrajectoryPayload.payload_id == envelope["payload_id"])
     assert orjson.loads(decode_blob(harness.store.objects[row.storage_key], row.encoding)) == wide
     assert row.first_seq == whole.seq and whole.hints is None
+
+
+async def test_references_lower_first_seq_to_the_earliest_position_without_resurrecting(harness):
+    """Rows another writer registered with a later first_seq (projection record values, converted legacy rows)
+    become visible from the first event that references them (SPEC §8.4 step 8, projection's
+    ``ensure_payload_rows``). Availability never changes: deleted content stays deleted and is not stored again."""
+    harness.writer.events(event())
+    await harness.run()
+    trajectory, _ = await events_of("ses_1")
+    system, instructions = "S" * 3000, "D" * 3000
+    now = datetime.now(timezone.utc)
+    async with trace_session() as db:
+        for value, availability, first_seq in ((system, "available", 50), (instructions, "deleted", 60)):
+            body = canonical(value)
+            sha = hashlib.sha256(body).hexdigest()
+            key = blob_key(trajectory.id, sha)
+            stored, encoding = encode_blob(body, "application/json")
+            if availability == "available":
+                await harness.store.put(key, stored, content_type="application/json")
+            db.add(TrajectoryPayload(
+                payload_id=f"pld_{availability}", trajectory_id=trajectory.id,
+                dedupe_key=dedupe_key(sha, "application/json", None, "blob"), sha256=sha, size_bytes=len(body),
+                stored_bytes=len(stored), media_type="application/json", encoding=encoding, storage_kind="blob",
+                storage_key=key, availability=availability, first_seq=first_seq, created_at=now,
+                deleted_at=None if availability == "available" else now))
+    puts = harness.store.puts
+    harness.writer.events(event("request.prepared", request_id="r1", event_id="r1",
+                                data={"model": "m", "input": {"system": system, "instructions": instructions}}))
+    await harness.run()
+    _, stored = await events_of("ses_1")
+    prepared = stored[-1]
+    assert prepared.seq == 3
+    assert prepared.data["input"]["system"]["$ref"]["payload_id"] == "pld_available"
+    assert prepared.data["input"]["instructions"]["$ref"]["payload_id"] == "pld_deleted"
+    payloads = {row.payload_id: row for row in await rows(TrajectoryPayload)}
+    assert set(payloads) == {"pld_available", "pld_deleted"}
+    assert (payloads["pld_available"].first_seq, payloads["pld_available"].availability) == (3, "available")
+    assert (payloads["pld_deleted"].first_seq, payloads["pld_deleted"].availability) == (3, "deleted")
+    assert payloads["pld_deleted"].deleted_at is not None and harness.store.puts == puts
+    # A later reference leaves the earlier position alone.
+    harness.writer.events(event("request.prepared", request_id="r2", event_id="r2",
+                                data={"model": "m", "input": {"system": system}}))
+    await harness.run()
+    [row] = await rows(TrajectoryPayload, TrajectoryPayload.payload_id == "pld_available")
+    assert row.first_seq == 3
 
 
 async def test_blob_upload_is_idempotent_across_trajectories(harness):

@@ -303,6 +303,8 @@ class ExistingPayload:
     encoding: str
     stored_bytes: int
     source_asset_id: str | None
+    #: Visibility lower bound; None when the caller did not load it.
+    first_seq: int | None = None
 
 
 @dataclass

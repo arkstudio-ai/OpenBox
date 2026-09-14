@@ -618,7 +618,7 @@ class IngestService:
     async def _payload_rows(db, wanted: dict[str, tuple[set, set]]) -> dict[str, list[content.ExistingPayload]]:
         columns = (TrajectoryPayload.payload_id, TrajectoryPayload.dedupe_key, TrajectoryPayload.sha256,
                    TrajectoryPayload.availability, TrajectoryPayload.storage_kind, TrajectoryPayload.encoding,
-                   TrajectoryPayload.stored_bytes, TrajectoryPayload.source_asset_id)
+                   TrajectoryPayload.stored_bytes, TrajectoryPayload.source_asset_id, TrajectoryPayload.first_seq)
         found: dict[str, dict[str, content.ExistingPayload]] = {}
         for trajectory_id, (keys, digests) in wanted.items():
             rows = found.setdefault(trajectory_id, {})
@@ -896,6 +896,10 @@ class _Transaction:
         self.blobs: dict[tuple[str, str], content.ExistingPayload] = {}
         self.blocked: dict[tuple[str, str], content.ExistingPayload] = {}
         self.inserted: dict[str, str] = {}
+        #: payload_id -> the lowest first_seq this transaction knows (loaded, inserted or lowered).
+        self.first_seqs: dict[str, int] = {}
+        #: payload_id -> (trajectory_id, first_seq) still to write.
+        self.lowered: dict[str, tuple[str, int]] = {}
         self.event_rows: list[dict] = []
         self.key_rows: list[dict] = []
         self.payload_rows: list[dict] = []
@@ -1013,6 +1017,13 @@ class _Transaction:
         if self.payload_rows:
             await db.execute(insert(TrajectoryPayload), self.payload_rows)
             self.payload_rows = []
+        for payload_id, (trajectory_id, first_seq) in self.lowered.items():
+            # Only ever lower, so a concurrent writer that lowered further (projection) keeps its value.
+            await db.execute(update(TrajectoryPayload).where(
+                TrajectoryPayload.trajectory_id == trajectory_id, TrajectoryPayload.payload_id == payload_id,
+                TrajectoryPayload.first_seq > first_seq).values(first_seq=first_seq)
+                .execution_options(synchronize_session=False))
+        self.lowered = {}
         if self.event_rows:
             await db.execute(insert(TrajectoryEvent), self.event_rows)
             self.event_rows = []
@@ -1187,6 +1198,8 @@ class _Transaction:
 
     def _remember(self, trajectory_id: str, row: content.ExistingPayload) -> None:
         self.payloads[(trajectory_id, row.dedupe_key)] = row
+        if row.first_seq is not None:
+            self.first_seqs[row.payload_id] = min(row.first_seq, self.first_seqs.get(row.payload_id, row.first_seq))
         if row.sha256 is None:
             return
         if row.storage_kind == "blob" and row.availability == "available":
@@ -1194,18 +1207,33 @@ class _Transaction:
         elif row.availability != "available":
             self.blocked.setdefault((trajectory_id, row.sha256), row)
 
+    def _visible_from(self, trajectory_id: str, payload_id: str, seq: int) -> None:
+        """A reference at ``seq`` makes its row visible from there (first_seq only moves down).
+
+        Other writers can register a row with a later first_seq than an event that references it (the
+        projection stores record values under the position of its batch, the converter keeps legacy
+        positions); readers resolve a reference only when ``first_seq <= H``. Availability is untouched,
+        so deleted content stays deleted. The projection's ``ensure_payload_rows`` applies the same rule.
+        """
+        current = self.first_seqs.get(payload_id)
+        if current is not None and current > seq:
+            self.first_seqs[payload_id] = seq
+            self.lowered[payload_id] = (trajectory_id, seq)
+
     def _resolve(self, ref: content.PendingRef, state: TrajectoryState, seq: int) -> None:
         """Point ``ref`` at its payload row, inserting it with ``first_seq = seq`` when new."""
         if ref.failed or ref.blocked:
             return
         if ref.payload_id in self.inserted:
             ref.fill(ref.payload_id, self.inserted[ref.payload_id])
+            self._visible_from(state.id, ref.payload_id, seq)
             return
         key = (state.id, ref.dedupe_key)
         row = self.payloads.get(key)
         if row is not None:
             if row.payload_id == ref.payload_id or not ref.nested:
                 ref.fill(row.payload_id, row.availability)
+                self._visible_from(state.id, row.payload_id, seq)
                 return
             # The id is baked into a stored blob: keep it through a second row for the same content.
             alias = hashlib.sha256(f"{ref.dedupe_key}:{ref.payload_id}".encode()).hexdigest()
@@ -1219,6 +1247,7 @@ class _Transaction:
             if not ref.nested:
                 ref.blocked = True
                 ref.fill(blocked.payload_id, blocked.availability)
+                self._visible_from(state.id, blocked.payload_id, seq)
                 return
             self._insert(ref, state, seq, availability=blocked.availability)
             return
@@ -1233,7 +1262,8 @@ class _Transaction:
         blob = ref.storage_kind == "blob"
         row = content.ExistingPayload(ref.payload_id, dedupe or ref.dedupe_key, ref.sha256, availability,
                                       ref.storage_kind, ref.encoding if blob else "identity",
-                                      ref.stored_bytes if blob else 0, ref.source_asset_id)
+                                      ref.stored_bytes if blob else 0, ref.source_asset_id, seq)
+        self.first_seqs[row.payload_id] = seq
         self.payload_rows.append({
             "payload_id": row.payload_id, "trajectory_id": state.id, "dedupe_key": row.dedupe_key,
             "sha256": row.sha256, "size_bytes": ref.size_bytes, "stored_bytes": row.stored_bytes,
@@ -1384,7 +1414,7 @@ class _Transaction:
         for key, row in list(self.payloads.items()):
             if row.source_asset_id == asset_id and row.availability != "deleted":
                 gone = content.ExistingPayload(row.payload_id, row.dedupe_key, row.sha256, "deleted", row.storage_kind,
-                                               row.encoding, row.stored_bytes, row.source_asset_id)
+                                               row.encoding, row.stored_bytes, row.source_asset_id, row.first_seq)
                 self.payloads[key] = gone
                 if row.sha256 is not None:
                     digest_key = (key[0], row.sha256)

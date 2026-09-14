@@ -6,6 +6,9 @@ the trace database; ingest uses them to reject events for deleted or foreign
 sessions and to resolve asset references. Unknown metadata never rejects an
 event (the replica may lag the event).
 
+``recording_transition`` decides whether a ``recording.state`` control applies
+(wave-3 contract 6).
+
 All functions run inside the caller's ingest transaction and never commit.
 """
 from __future__ import annotations
@@ -23,6 +26,9 @@ MAX_ANCESTRY_HOPS = 100
 ID_CHARS = 64
 QUERY_CHUNK = 500
 DELETED, OWNERSHIP = "deleted", "ownership"
+PAUSED, RESUMED = "paused", "resumed"
+#: ``session_trajectories.recording_epoch`` is a BIGINT.
+MAX_RECORDING_EPOCH = 2 ** 63 - 1
 
 #: control type -> (model, record key, {column: max characters or None for unbounded text})
 _STRINGS = {
@@ -58,6 +64,40 @@ def parse_time(value) -> datetime | None:
     except OverflowError:
         # 9999-12-31T23:00:00-05:00 is past datetime.max in UTC: a value no column can hold, not a crash.
         return None
+
+
+def control_epoch(control: dict) -> int | None:
+    """The ``epoch`` a ``recording.state`` control carries (contract 6); None when it has no usable one."""
+    value = control.get("epoch")
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_RECORDING_EPOCH:
+        return None
+    return value
+
+
+def recording_transition(state: str, epoch: int | None, *, status: str, current_epoch: int) -> int | None:
+    """The trajectory's ``recording_epoch`` once a ``recording.state`` control applies; None when it does not.
+
+    A resume carries the epoch of the recording period it opens, and a pause
+    the epoch of the period its resume will open: producers fix that epoch when
+    recording stops (``trajectory.producers``). ``recording_epoch`` holds the
+    period of the last applied resume, so a control with an epoch applies only
+    when the epoch is newer. A repeated or delayed resume names a period that is
+    already open, and a pause that arrives after its resume names that period
+    too. A pause also leaves an already paused trajectory alone, so a second
+    report of the same stop adds no gap.
+
+    Controls without an epoch keep the status rule: a pause applies only when
+    the trajectory is not paused, and a resume only ends a pause (one period
+    further).
+    """
+    paused = status == PAUSED
+    if epoch is not None and epoch <= current_epoch:
+        return None
+    if state == PAUSED:
+        return None if paused else current_epoch
+    if epoch is None:
+        return current_epoch + 1 if paused else None
+    return epoch
 
 
 def _identifier(value) -> str | None:

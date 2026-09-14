@@ -212,7 +212,9 @@ def test_offline_sql_carries_postgresql_only_ddl(monkeypatch):
                      "PARTITION BY RANGE (recorded_on)",
                      "CREATE TABLE trajectory_events_default PARTITION OF trajectory_events DEFAULT",
                      "ON trajectory_records USING gin (search_doc gin_trgm_ops)", f"CREATE TABLE {VERSION_TABLE}",
-                     f"INSERT INTO {VERSION_TABLE} (version_num) VALUES ('t0001_initial')"):
+                     f"INSERT INTO {VERSION_TABLE} (version_num) VALUES ('t0001_initial')",
+                     # t0002: producers' millisecond recording epochs need 64 bits.
+                     "ALTER TABLE session_trajectories ALTER COLUMN recording_epoch TYPE BIGINT"):
         assert fragment in postgresql, fragment
 
     monkeypatch.setenv("TRAJECTORY_DATABASE_URL", "sqlite+aiosqlite:///offline-trace.db")
@@ -220,5 +222,5 @@ def test_offline_sql_carries_postgresql_only_ddl(monkeypatch):
     command.upgrade(_config(output_buffer=buffer), "head", sql=True)
     sqlite = buffer.getvalue()
     assert "PRIMARY KEY (trajectory_id, seq)," in sqlite
-    for fragment in ("PARTITION", "pg_trgm", "gin_trgm_ops", "EXTENSION"):
+    for fragment in ("PARTITION", "pg_trgm", "gin_trgm_ops", "EXTENSION", "ALTER TABLE session_trajectories"):
         assert fragment not in sqlite, fragment

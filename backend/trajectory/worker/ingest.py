@@ -1519,32 +1519,29 @@ class _Transaction:
     async def _recording_state(self, db, item: Item) -> None:
         control = item.control
         session_id, user_id, value = control.get("session_id"), control.get("user_id"), control.get("state")
-        if not _identifier(session_id, SESSION_ID_CHARS) or value not in ("paused", "resumed"):
+        if not _identifier(session_id, SESSION_ID_CHARS) or value not in (meta.PAUSED, meta.RESUMED):
             return
         state = await self.state(db, session_id)
         if state is None or not state.live or (isinstance(user_id, str) and state.user_id != user_id):
             return
-        occurred = meta.parse_time(control.get("at")) or item.t
-        event_id = gap_event_id(self.producer_id, str(item.n), session_id)
-        # Producers suppress repeated pause and resume controls per process only, and the control carries
-        # no epoch, so several processes report the same transition. The trajectory's own state makes the
-        # controls idempotent: a pause applies only to a recording that is not paused, and a resume only
-        # ends a pause, so a duplicate adds no second gap and no second epoch.
-        paused = state.recording_status == "paused"
-        if value == "paused":
-            if paused:
-                return
-            if await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
-                                              occurred_at=occurred, gap=True,
-                                              data={"phase": "paused", "reason": "recording_disabled",
-                                                    "last_recorded_seq": str(state.committed_seq)}):
-                state.recording_status = "paused"
-        elif paused and await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
-                                                       occurred_at=occurred, gap=True,
-                                                       data={"phase": "resumed", "reason": "recording_reenabled",
-                                                             "previous_committed_seq": str(state.committed_seq)}):
-            state.recording_status = "gap"
-            state.recording_epoch += 1
+        # Producers suppress repeated pause and resume controls per process only, so several processes
+        # report the same transition, and a control from a crashed producer's abandoned file can arrive
+        # after a newer one. The control's epoch, or without one the trajectory's own state, makes them
+        # idempotent (meta.recording_transition): a duplicate or stale control adds no gap and no epoch.
+        epoch = meta.recording_transition(value, meta.control_epoch(control), status=state.recording_status,
+                                          current_epoch=state.recording_epoch)
+        if epoch is None:
+            return
+        if value == meta.PAUSED:
+            data = {"phase": "paused", "reason": "recording_disabled", "last_recorded_seq": str(state.committed_seq)}
+        else:
+            data = {"phase": "resumed", "reason": "recording_reenabled",
+                    "previous_committed_seq": str(state.committed_seq)}
+        if await self.append_worker_event(state, event_id=gap_event_id(self.producer_id, str(item.n), session_id),
+                                          event_type="recording.gap", data=data, gap=True,
+                                          occurred_at=meta.parse_time(control.get("at")) or item.t):
+            state.recording_status = "paused" if value == meta.PAUSED else "gap"
+            state.recording_epoch = epoch
 
 
 def _text(value, limit: int) -> str | None:

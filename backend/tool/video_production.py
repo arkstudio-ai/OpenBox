@@ -812,12 +812,7 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
         async with get_db_session() as db:
             await db.execute(update(FileAsset).where(FileAsset.id == asset_id).values(**values))
         return
-    async with get_db_session() as db:
-        asset = await db.get(FileAsset, asset_id)
-    if asset is None or asset.is_deleted:
-        return
-    from trajectory.artifacts import read_asset_bytes, capture_asset_in_tx
-    content = await read_asset_bytes(asset) if asset.session_id and enabled(asset.user_id) else None
+    from trajectory.artifacts import capture_asset_in_tx
     async with get_db_session() as db:
         asset = await db.scalar(select(FileAsset).where(FileAsset.id == asset_id).with_for_update())
         if asset is None or asset.is_deleted:
@@ -831,7 +826,7 @@ async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = N
         job = await db.scalar(select(VideoJob).where(VideoJob.output_asset_id == asset_id))
         if job is not None:
             trace = await record_job_in_tx(db, job)
-            await capture_asset_in_tx(db, trace, asset, content=content)
+            await capture_asset_in_tx(db, trace, asset)
 
 
 async def _attach_completed(job, ctx: ToolContext) -> bool:

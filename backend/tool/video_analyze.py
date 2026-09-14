@@ -211,6 +211,9 @@ async def _complete(ctx: ToolContext, *, model: str, frames: list[str], duration
 
     content: list[dict[str, Any]] = [{"type": "text", "text": PROMPT.format(n=len(frames), duration=round(duration, 1), transcript=transcript or "（无）")}]
     content += [{"type": "image_url", "image_url": {"url": u}} for u in frames]
+    from question.runtime import assert_current
+    # A revoked run starts no vision request and opens no billing meter.
+    await assert_current("request")
     meter = await UsageMeter.start(model_id=model, session_id=ctx.session_id, user_id=ctx.user_id,
                                    message_id=ctx.message_id, kind="video_analyze")
     ctx._trajectory_billing_event_id = getattr(meter, "event_id", None)
@@ -374,7 +377,7 @@ async def execute(args: VideoAnalyzeArgs, ctx: ToolContext) -> ToolResult:
         if enabled(ctx.user_id):
             source_id = seed.removeprefix("asset:") if kind == "asset" else None
             if source_id is None and _owned_bucket_key(seed, ctx) is not None:
-                source_id = (await register_owned_media_inputs(ctx, [seed]))[seed]
+                source_id = (await register_owned_media_inputs(ctx, [seed])).get(seed)
             if source_id:
                 retained_media = await retain_derived_media_inputs(ctx, media_urls, source_id)
                 media_ctx._trajectory_media_urls = retained_media

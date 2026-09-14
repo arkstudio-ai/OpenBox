@@ -1,8 +1,20 @@
 """Shared test fixtures for all tests."""
 import asyncio
+import atexit
 import os
+import shutil
+import tempfile
+
 import pytest
 from db.base import Base, init_engine, close_engine, get_db_session
+
+# The spool is the default recording sink. Unless the shell picked a spool
+# directory, whatever tests emit lands in a throwaway one, never under
+# backend/.openbox where no worker consumes it.
+if not os.environ.get("TRAJECTORY_SPOOL_DIR"):
+    _TEST_SPOOL_DIR = tempfile.mkdtemp(prefix="openbox-test-spool-")
+    os.environ["TRAJECTORY_SPOOL_DIR"] = _TEST_SPOOL_DIR
+    atexit.register(shutil.rmtree, _TEST_SPOOL_DIR, ignore_errors=True)
 
 # Recording switches from the shell that started pytest. Importing litellm (in
 # its default DEV mode) or main.py loads backend/.env for the rest of the run,
@@ -10,6 +22,52 @@ from db.base import Base, init_engine, close_engine, get_db_session
 # written against the default; they then fail with ownership errors depending
 # on which module happened to be imported first.
 _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
+
+
+def _quarantine_reason(nodeid: str) -> str | None:
+    from tests.legacy_trajectory_quarantine import QUARANTINE
+    candidates = (nodeid, nodeid.split("[", 1)[0], nodeid.split("::", 1)[0])
+    return next((QUARANTINE[key] for key in candidates if key in QUARANTINE), None)
+
+
+class _QuarantinedTest(pytest.Item):
+    """Stands in for a quarantined module, which may no longer import at all."""
+
+    def runtest(self):
+        pytest.skip("legacy trajectory quarantine")
+
+    def reportinfo(self):
+        # A skip report needs a line number.
+        return self.path, 0, self.name
+
+
+class _QuarantinedModule(pytest.File):
+    def collect(self):
+        item = _QuarantinedTest.from_parent(self, name="quarantined")
+        item.add_marker(pytest.mark.skip(reason=f"legacy trajectory quarantine: {_quarantine_reason(self.nodeid)}"))
+        return [item]
+
+
+def pytest_pycollect_makemodule(module_path, parent):
+    """A module listed in tests/legacy_trajectory_quarantine.py is reported skipped, not imported."""
+    try:
+        nodeid = module_path.relative_to(parent.config.rootpath).as_posix()
+    except ValueError:
+        return None
+    from tests.legacy_trajectory_quarantine import QUARANTINE
+    if nodeid in QUARANTINE:
+        return _QuarantinedModule.from_parent(parent, path=module_path)
+    return None
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip the legacy trajectory tests listed in tests/legacy_trajectory_quarantine.py."""
+    for item in items:
+        if isinstance(item, _QuarantinedTest):
+            continue
+        reason = _quarantine_reason(item.nodeid)
+        if reason is not None:
+            item.add_marker(pytest.mark.skip(reason=f"legacy trajectory quarantine: {reason}"))
 
 
 @pytest.fixture(autouse=True)

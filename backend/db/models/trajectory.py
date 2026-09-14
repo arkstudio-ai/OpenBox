@@ -1,15 +1,29 @@
-"""Append-only execution facts and rebuildable read models.
+"""Retired business-database trajectory tables (SPEC §6.9).
 
-There are deliberately no message/part foreign keys: regenerating a chat does
-not erase its recorded execution. Session deletion is an explicit lifecycle.
+Trajectory data lives in the trace database (``trajectory.store``). These
+mappings are not part of the business ``Base.metadata``: ``create_all`` and the
+readiness probe never see them, and business code does not import this module.
+The business migration renames the tables to ``LEGACY_TABLE_NAMES``; the legacy
+converter reflects those tables rather than using these classes. The classes
+keep the pre-retirement shape (and names) only for read models that have not
+moved to the trace database yet.
 """
 from datetime import datetime
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, mapped_column
-from db.base import Base, JSONType
+from sqlalchemy import BigInteger, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from db.base import JSONType, LEGACY_TABLE_NAMES  # noqa: F401  (the retired names)
+import sqlalchemy as sa
 
 
-class SessionTrajectory(Base):
+class LegacyTrajectoryBase(DeclarativeBase):
+    """Separate metadata: nothing here is created or required in the business database."""
+    type_annotation_map = {
+        dict: JSONType,
+        datetime: sa.DateTime(timezone=True),
+    }
+
+
+class SessionTrajectory(LegacyTrajectoryBase):
     __tablename__ = "session_trajectories"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -26,7 +40,7 @@ class SessionTrajectory(Base):
     __table_args__ = (UniqueConstraint("user_id", "session_id", name="uq_trajectory_owner_session"),)
 
 
-class TrajectoryEvent(Base):
+class TrajectoryEvent(LegacyTrajectoryBase):
     __tablename__ = "trajectory_events"
     event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), nullable=False)
@@ -52,7 +66,7 @@ class TrajectoryEvent(Base):
     )
 
 
-class TrajectoryPayload(Base):
+class TrajectoryPayload(LegacyTrajectoryBase):
     __tablename__ = "trajectory_payloads"
     payload_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -72,7 +86,7 @@ class TrajectoryPayload(Base):
                      Index("ix_trajectory_payload_pending", "storage_status", "availability", "created_at"))
 
 
-class TrajectoryRecord(Base):
+class TrajectoryRecord(LegacyTrajectoryBase):
     __tablename__ = "trajectory_records"
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), primary_key=True)
     record_id: Mapped[str] = mapped_column(String(256), primary_key=True)
@@ -92,7 +106,7 @@ class TrajectoryRecord(Base):
                       Index("ix_trajectory_record_filter", "trajectory_id", "kind", "status", "start_seq"))
 
 
-class TrajectorySessionSummary(Base):
+class TrajectorySessionSummary(LegacyTrajectoryBase):
     __tablename__ = "trajectory_session_summaries"
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -110,7 +124,7 @@ class TrajectorySessionSummary(Base):
                       Index("ix_trajectory_summary_status", "running_status", "recording_status", "last_activity_at"))
 
 
-class TrajectoryCheckpoint(Base):
+class TrajectoryCheckpoint(LegacyTrajectoryBase):
     __tablename__ = "trajectory_checkpoints"
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), primary_key=True)
     through_seq: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -120,7 +134,7 @@ class TrajectoryCheckpoint(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
-class TrajectoryExport(Base):
+class TrajectoryExport(LegacyTrajectoryBase):
     __tablename__ = "trajectory_exports"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     trajectory_id: Mapped[str] = mapped_column(String(64), ForeignKey("session_trajectories.id", ondelete="CASCADE"), nullable=False, index=True)

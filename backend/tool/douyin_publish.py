@@ -129,7 +129,7 @@ async def _pin_png(ctx: ToolContext, png: bytes, *, name: str, label: str, capti
         )
         db.add(asset)
         from trajectory.artifacts import capture_result_asset_in_tx
-        await capture_result_asset_in_tx(db, ctx, asset, content=png)
+        await capture_result_asset_in_tx(db, ctx, asset)
         await db.commit()
     await save_part(
         FilePart(

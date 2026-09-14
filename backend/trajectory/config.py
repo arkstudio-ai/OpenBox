@@ -7,8 +7,9 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SINKS = ("db", "spool")
-# Wave 1 keeps the legacy in-transaction recorder as the default sink.
-DEFAULT_SINK = "db"
+# The legacy in-transaction recorder is gone: "db" now leaves the process
+# without an emitter, so nothing is recorded.
+DEFAULT_SINK = "spool"
 SERVER_SPOOL_DIR = Path("/var/lib/openbox/trajectory-spool")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 _warned: set[tuple[str, str]] = set()

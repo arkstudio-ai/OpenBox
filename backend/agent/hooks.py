@@ -290,7 +290,7 @@ class ToolHooks:
                 ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output,
                 mode="replace", final=True)
             await record("tool.output", {"tool": tool_id, **recorded_output, "title": result.title,
-                "metadata": public_value(result.metadata), "stage": "executor_result",
+                "metadata": public_value(result.metadata), "stage": "executor_result", "final": True,
                 "duration_ms": duration * 1000 if duration is not None else None},
                 context=getattr(ctx, "trace_context", None))
         return result

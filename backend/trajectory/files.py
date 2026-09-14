@@ -9,16 +9,23 @@ from trajectory.redaction import sanitize
 
 
 def captures_files(ctx) -> bool:
+    """Gate for the extra sandbox reads a recorded file version needs."""
     return bool((getattr(ctx, "trace_context", None) or current()) and enabled(ctx.user_id))
 
 
 async def record_file_change(ctx, path: str, *, operation: str,
                              before: str | None = None, after: str | None = None) -> None:
+    """Enqueue the change; the worker externalizes large text. Sanitize runs first: it feeds the digests."""
     if not captures_files(ctx):
         return
     context = getattr(ctx, "trace_context", None) or current()
-    before_visible = sanitize(before) if before is not None else None
-    after_visible = sanitize(after) if after is not None else None
+    try:
+        before_visible = sanitize(before) if before is not None else None
+        after_visible = sanitize(after) if after is not None else None
+    except Exception:
+        # A version that cannot be redacted is never recorded unredacted.
+        before_visible = after_visible = None
+        before = after = None
 
     def version(value, original, absent=False):
         if value is None:

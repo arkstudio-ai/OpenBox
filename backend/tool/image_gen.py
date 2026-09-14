@@ -108,6 +108,7 @@ class InputImage:
     name: str
     mime: str
     data: bytes
+    oss_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -235,7 +236,7 @@ async def _download_asset(oss, row, client, *, limit: int) -> InputImage:
             data.extend(chunk)
             if len(data) > limit:
                 raise RuntimeError(f"{row.name} exceeds the {limit}-byte image limit")
-    return InputImage(row.id, row.name, row.mime, bytes(data))
+    return InputImage(row.id, row.name, row.mime, bytes(data), row.oss_key)
 
 
 async def _load_inputs(
@@ -327,8 +328,7 @@ async def _call_provider(
 ) -> list[bytes]:
     from openai import AsyncOpenAI
     from agent.trajectory import RequestCapture, context_for_tool, public_value
-    from trajectory import enabled
-    from trajectory.types import TrajectoryError
+    from question.runtime import assert_current
 
     client_kwargs = {
         "api_key": target.api_key,
@@ -351,26 +351,24 @@ async def _call_provider(
     if args.background is not None:
         common["background"] = args.background
 
-    # Binary inputs are retained as owned asset versions. The provider request
-    # contains only public parameters and those references, never SDK objects,
-    # credentials, or expiring signed URLs.
+    # A revoked run starts no paid image request (the request-start fence).
+    await assert_current("request")
+    # Binary inputs are recorded as references to their owned assets. The
+    # provider request contains only public parameters and those references,
+    # never SDK objects, credentials, or expiring signed URLs.
     context = await context_for_tool(ctx) if ctx is not None else None
     retained = {}
-    inputs = [*images, *([mask] if mask else [])]
-    if context is not None and enabled(context.user_id) and inputs:
-        from db.base import get_db_session
-        from trajectory.artifacts import capture_asset_ids_in_tx
-        async with get_db_session() as db:
-            retained = await capture_asset_ids_in_tx(
-                db, context, [item.asset_id for item in inputs],
-                prepared={item.asset_id: item.data for item in inputs},
-            )
-            await db.commit()
+    if context is not None:
+        from trajectory.artifacts import capture_asset_reference
+        for item in [*images, *([mask] if mask else [])]:
+            retained[item.asset_id] = await capture_asset_reference(
+                context, asset_id=item.asset_id, oss_key=item.oss_key, media_type=item.mime,
+                size_bytes=len(item.data), name=item.name)
 
     def input_reference(item):
         return {"asset_id": item.asset_id, "name": item.name, "media_type": item.mime,
                 "sha256": hashlib.sha256(item.data).hexdigest(), "size_bytes": len(item.data),
-                "payload": retained.get(item.asset_id, {"availability": "not_recorded"})}
+                "availability": (retained.get(item.asset_id) or {}).get("availability", "not_recorded")}
 
     snapshot = {**common, "input": {
         "operation": "edit" if images else "generate",
@@ -419,8 +417,7 @@ async def _call_provider(
         await capture.finish("cancelled", error=exc)
         raise
     except Exception as exc:
-        if not isinstance(exc, TrajectoryError):
-            await capture.finish("failed", error=exc)
+        await capture.finish("failed", error=exc)
         raise
     finally:
         if client is not None:
@@ -509,7 +506,7 @@ async def _store_output(
             db.add(asset)
             from trajectory.artifacts import capture_result_asset_in_tx
             await capture_result_asset_in_tx(
-                db, ctx, asset, content=data,
+                db, ctx, asset,
                 request_id=getattr(ctx, "_trajectory_image_request_id", None),
             )
             await db.commit()
@@ -681,11 +678,7 @@ async def _store_reused(
         return None
     size = head["size"]
     mime = cached_asset.mime
-    from trajectory import enabled
-    from trajectory.artifacts import read_asset_bytes, capture_result_asset_in_tx
-    from types import SimpleNamespace
-    content = (await read_asset_bytes(SimpleNamespace(oss_key=key))
-               if enabled(ctx.user_id) else None)
+    from trajectory.artifacts import capture_result_asset_in_tx
 
     async with get_db_session() as db:
         project_id = ctx.project_id or await _session_project(db, ctx.session_id, ctx.user_id)
@@ -705,7 +698,7 @@ async def _store_reused(
                 created_at=datetime.now(timezone.utc),
         )
         db.add(asset)
-        await capture_result_asset_in_tx(db, ctx, asset, content=content)
+        await capture_result_asset_in_tx(db, ctx, asset)
         await db.commit()
 
     path = f"/workspace/generated_images/{name}"

@@ -189,11 +189,7 @@ async def attach_sandbox_image(
     if not head:
         raise RuntimeError("Object missing in OSS after upload")
     verified = head["size"] or size
-    from trajectory import enabled
-    from trajectory.artifacts import read_asset_bytes, capture_result_asset_in_tx
-    from types import SimpleNamespace
-    content = (await read_asset_bytes(SimpleNamespace(oss_key=key))
-               if enabled(ctx.user_id) else None)
+    from trajectory.artifacts import capture_result_asset_in_tx
 
     async with get_db_session() as db:
         asset = FileAsset(
@@ -214,7 +210,7 @@ async def attach_sandbox_image(
                 created_at=datetime.now(timezone.utc),
         )
         db.add(asset)
-        await capture_result_asset_in_tx(db, ctx, asset, content=content)
+        await capture_result_asset_in_tx(db, ctx, asset)
         await db.commit()
 
     if not pin_part:

@@ -17,27 +17,28 @@ _revert_snapshots: dict[str, str] = {}  # session_id -> pre-revert snapshot
 async def _begin_restore(session_id: str, user_id: str, *, operation: str,
                          from_snapshot: str | None, to_snapshot: str,
                          message_id: str | None = None):
-    from trajectory import enabled, record, context_for_session, mark_capture_paused_in_tx
-    from db.base import get_db_session
-    if not enabled(user_id):
-        from db.base import _engine
-        if _engine is not None:
-            async with get_db_session() as db:
-                await mark_capture_paused_in_tx(db, user_id, session_id)
+    """Report a restore before it runs; the recording markers are left to session writes.
+
+    An unrecorded session gets a baseline candidate and a disabled owner a pause
+    report (SPEC §5.6). The restore itself never waits on, or fails with, recording.
+    """
+    from db.base import _engine, get_db_session
+    from trajectory import enabled, record
+    from trajectory.producers import baseline_candidate_in_tx, session_context
+    if _engine is None:
         return None, None
-    from db.models.session import Session
-    from core.identifier import ascending
-    from session.session import prepare_trajectory_baseline_assets, capture_trajectory_baseline_in_tx
-    prepared = await prepare_trajectory_baseline_assets(session_id, user_id)
     async with get_db_session() as db:
-        context = await context_for_session(db, user_id, session_id)
-        await capture_trajectory_baseline_in_tx(db, context, await db.get(Session, session_id),
-                                                 prepared_assets=prepared)
-        data = {"operation_id": ascending("restore"), "operation": operation,
-                "from_snapshot": from_snapshot, "to_snapshot": to_snapshot,
-                "from_message_id": message_id, "capture_level": "snapshot_reference"}
-        await record("history.reverted", {**data, "status": "requested"}, context=context, db=db,
-                     event_id=f"{data['operation_id']}:requested")
+        context = await session_context(db, user_id, session_id) if enabled(user_id) else None
+        await baseline_candidate_in_tx(db, user_id=user_id, session_id=session_id,
+                                       context=context, pause=context is None)
+    if context is None:
+        return None, None
+    from core.identifier import ascending
+    data = {"operation_id": ascending("restore"), "operation": operation,
+            "from_snapshot": from_snapshot, "to_snapshot": to_snapshot,
+            "from_message_id": message_id, "capture_level": "snapshot_reference"}
+    await record("history.reverted", {**data, "status": "requested"}, context=context,
+                 event_id=f"{data['operation_id']}:requested")
     return context, data
 
 
@@ -123,9 +124,6 @@ async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -
         return success
 
     except Exception as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.error(f"Failed to revert session {session_id}: {e}")
         return False
 
@@ -153,9 +151,6 @@ async def unrevert(session_id: str, *, user_id: str) -> bool:
         return success
 
     except Exception as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
-            raise
         log.error(f"Failed to unrevert session {session_id}: {e}")
         return False
 

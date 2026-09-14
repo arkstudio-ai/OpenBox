@@ -2,20 +2,25 @@
 
 Only public request fields are copied. Provider credentials and private replay
 state are never passed to the recorder, even when its storage policy changes.
+Capture is fail-open: it opens no database transaction, retains no media bytes
+and never makes a provider call or a delivered chunk wait for the recorder.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from typing import Any
 
 from core.identifier import ascending
+from core.log import create_logger
+
+log = create_logger("agent.trajectory")
 
 REQUEST_FIELDS = frozenset({
     "model", "messages", "input", "instructions", "tools", "tool_choice",
@@ -90,6 +95,17 @@ def provider_output_snapshot(value: Any) -> Any:
     return output
 
 
+_warned: set[str] = set()
+
+
+def _not_recorded(reason: str, exc: BaseException | None = None) -> None:
+    """Log once per reason: a capture failure never reaches the business path."""
+    if reason not in _warned:
+        _warned.add(reason)
+        log.warning("Trajectory capture skipped: %s%s", reason,
+                    f" error_type={type(exc).__name__}" if exc is not None else "")
+
+
 @dataclass(frozen=True)
 class _ServiceScope:
     ctx: Any
@@ -99,20 +115,6 @@ class _ServiceScope:
 
 _service_scope: ContextVar[_ServiceScope | None] = ContextVar("trajectory_service_scope", default=None)
 _service_request: ContextVar[Any] = ContextVar("trajectory_service_request", default=None)
-
-
-def _recording_operation(function):
-    from functools import wraps
-    @wraps(function)
-    async def wrapped(*args, **kwargs):
-        from trajectory.types import RecordingError, TrajectoryError
-        try:
-            return await function(*args, **kwargs)
-        except TrajectoryError:
-            raise
-        except Exception as exc:
-            raise RecordingError("Provider input could not be retained") from exc
-    return wrapped
 
 # These are business bodies assembled by the named adapters. Credentials,
 # transport/SDK objects and unrestricted provider kwargs never enter them.
@@ -126,102 +128,129 @@ SERVICE_FIELDS = {
 }
 
 
-@_recording_operation
-async def register_owned_media_inputs(ctx, urls: list[str]) -> dict[str, str]:
-    """Version already-owned OSS inputs, including internal sampled media.
+def _owned_key(url: str, user_id: str, prefixes: tuple[str, ...]) -> str | None:
+    """The object key of a URL in the configured bucket under one of the owner's prefixes."""
+    from urllib.parse import unquote, urlsplit
+    try:
+        from core.oss import get_oss
+        host = get_oss().host
+        parsed = urlsplit(url)
+    except Exception:
+        return None
+    key = unquote(parsed.path.lstrip("/"))
+    if parsed.scheme not in {"http", "https"} or parsed.hostname != host:
+        return None
+    if not key.startswith(tuple(f"{prefix}{user_id}/" for prefix in prefixes)):
+        return None
+    return key
 
-    Only the configured bucket and server-owned user prefixes are read. Bytes
-    are fetched outside a DB transaction; intermediates become hidden assets
-    so retention/deletion uses the same ownership rules as other attachments.
+
+def _media_id(item: Mapping) -> str:
+    return str(item.get("media_id") or item.get("asset_id"))
+
+
+async def register_owned_media_inputs(ctx, urls: list[str]) -> dict[str, str]:
+    """Map owned OSS inputs to the ready assets stored under their keys.
+
+    Nothing is downloaded and no hidden asset row is created. A key without an
+    asset (sampled media under ``analysis/``) is bound to its source asset by
+    ``retain_derived_media_inputs``; an input that is not owned is simply not
+    mapped, because recording never refuses a dispatch.
     """
     from trajectory import enabled
-    if not enabled(ctx.user_id) or not urls:
+    if not enabled(ctx.user_id) or not urls or await context_for_tool(ctx) is None:
         return {}
-    from urllib.parse import unquote, urlsplit
-    from types import SimpleNamespace
-    from sqlalchemy import select
-    from core.oss import get_oss
-    from db.base import get_db_session
-    from db.models.file_asset import FileAsset
-    from trajectory.artifacts import read_asset_bytes, capture_asset_in_tx
-    from trajectory.types import OwnershipError
-    import mimetypes
-
-    trace = await context_for_tool(ctx)
-    if trace is None:
-        return {}
-    oss = get_oss()
-    result = {}
+    keys = {}
     for url in dict.fromkeys(urls):
-        parsed = urlsplit(url)
-        key = unquote(parsed.path.lstrip("/"))
-        if (parsed.scheme not in {"http", "https"} or parsed.hostname != oss.host
-                or not key.startswith((f"assets/{ctx.user_id}/", f"analysis/{ctx.user_id}/"))):
-            raise OwnershipError("Media input is outside the owned object namespace")
+        key = _owned_key(url, ctx.user_id, ("assets/", "analysis/"))
+        if key is not None:
+            keys[url] = key
+    if not keys:
+        return {}
+    try:
+        from sqlalchemy import select
+        from db.base import get_db_session
+        from db.models.file_asset import FileAsset
         async with get_db_session() as db:
-            asset = await db.scalar(select(FileAsset).where(FileAsset.oss_key == key,
-                FileAsset.user_id == ctx.user_id).order_by(FileAsset.created_at.desc()).limit(1))
-        if asset is not None and (asset.is_deleted or asset.deleted_at or asset.status != "ready"):
-            raise OwnershipError("Media input is deleted or unavailable")
-        if asset is None:
-            content = await read_asset_bytes(SimpleNamespace(oss_key=key))
-            async with get_db_session() as db:
-                asset = FileAsset(id=ascending("asset"), user_id=ctx.user_id,
-                    workspace_id=trace.workspace_id or ctx.workspace_id,
-                    session_id=ctx.session_id, project_id=getattr(ctx, "project_id", None),
-                    name=key.rsplit("/", 1)[-1], oss_key=key,
-                    mime=mimetypes.guess_type(key)[0] or "application/octet-stream",
-                    size=len(content), status="ready", source="agent", transient=True,
-                    is_deleted=False, created_at=datetime.now(timezone.utc))
-                db.add(asset)
-                await capture_asset_in_tx(db, trace, asset, content=content, role="input")
-        result[url] = asset.id
+            rows = (await db.scalars(select(FileAsset).where(
+                FileAsset.oss_key.in_(set(keys.values())), FileAsset.user_id == ctx.user_id,
+            ).order_by(FileAsset.created_at.desc()))).all()
+    except Exception as exc:
+        _not_recorded("owned media inputs could not be resolved", exc)
+        return {}
+    newest = {}
+    for row in rows:
+        newest.setdefault(row.oss_key, row)
+    result = {}
+    for url, key in keys.items():
+        asset = newest.get(key)
+        if asset is not None and not asset.is_deleted and not asset.deleted_at and asset.status == "ready":
+            result[url] = asset.id
     return result
 
 
-@_recording_operation
 async def retain_derived_media_inputs(ctx, urls: list[str], source_asset_id: str) -> dict[str, dict]:
-    """Sampled frames/audio remain revocable with the original owned video."""
-    from trajectory import enabled, ensure_trajectory_in_tx
+    """Sampled frames and audio as OSS-key references bound to their source asset.
+
+    Deleting the source asset revokes them with it. No bytes are read.
+    """
+    import mimetypes
+    from trajectory import enabled
     if not enabled(ctx.user_id) or not urls:
         return {}
-    import base64
-    import hashlib
-    import mimetypes
-    from urllib.parse import unquote, urlsplit
-    from types import SimpleNamespace
-    from core.oss import get_oss
-    from db.base import get_db_session
-    from trajectory.artifacts import read_asset_bytes, retain_request_media_in_tx
-    from trajectory.types import OwnershipError
-    from db.models.file_asset import FileAsset
     trace = await context_for_tool(ctx)
     if trace is None:
         return {}
-    async with get_db_session() as db:
-        source = await db.get(FileAsset, source_asset_id)
-        if source is None or source.is_deleted or source.deleted_at or source.user_id != trace.user_id:
-            raise OwnershipError("Sampled media source is missing or not owned")
-    oss = get_oss()
-    encoded, sources = {}, {}
+    try:
+        from db.base import get_db_session
+        from db.models.file_asset import FileAsset
+        async with get_db_session() as db:
+            source = await db.get(FileAsset, source_asset_id)
+    except Exception as exc:
+        _not_recorded("sampled media source could not be resolved", exc)
+        return {}
+    if source is None or source.is_deleted or source.deleted_at or source.user_id != trace.user_id:
+        return {}
+    result = {}
     for url in dict.fromkeys(urls):
-        parsed = urlsplit(url)
-        key = unquote(parsed.path.lstrip("/"))
-        if parsed.hostname != oss.host or not key.startswith(f"analysis/{trace.user_id}/"):
-            raise OwnershipError("Sampled media is outside the owned staging namespace")
-        content = await read_asset_bytes(SimpleNamespace(oss_key=key))
-        sources[hashlib.sha256(content).hexdigest()] = source_asset_id
-        mime = mimetypes.guess_type(key)[0] or "application/octet-stream"
-        encoded[url] = f"data:{mime};base64," + base64.b64encode(content).decode()
-    async with get_db_session() as db:
-        trajectory = await ensure_trajectory_in_tx(db, trace)
-        retained = await retain_request_media_in_tx(db, trace, list(encoded.values()),
-            first_seq=trajectory.next_seq, source_asset_ids=sources)
-    return {url: {"asset_id": source_asset_id, "payload": item["$media"]}
-            for url, item in zip(encoded, retained)}
+        key = _owned_key(url, trace.user_id, ("analysis/",))
+        if key is None:
+            continue
+        result[url] = {"media_id": f"{source_asset_id}:{hashlib.sha256(key.encode()).hexdigest()[:16]}",
+                       "asset_id": source_asset_id, "source_asset_id": source_asset_id, "oss_key": key,
+                       "media_type": mimetypes.guess_type(key)[0] or "application/octet-stream",
+                       "reference": "derived_asset", "availability": "available"}
+    return result
 
 
-@_recording_operation
+async def _asset_media(trace, asset_urls: Mapping[str, str]) -> dict[str, dict]:
+    """Owned assets as dispatch media references; each use is recorded as an artifact."""
+    from sqlalchemy import select
+    from db.base import get_db_session
+    from db.models.file_asset import FileAsset
+    from trajectory.artifacts import capture_asset
+    identifiers = list(dict.fromkeys(asset_urls.values()))
+    try:
+        async with get_db_session() as db:
+            rows = {row.id: row for row in (await db.scalars(
+                select(FileAsset).where(FileAsset.id.in_(identifiers)))).all()}
+    except Exception as exc:
+        _not_recorded("dispatch media assets could not be resolved", exc)
+        rows = {}
+    availability = {}
+    for asset_id in identifiers:
+        asset = rows.get(asset_id)
+        reference = await capture_asset(trace, asset, role="input") if asset is not None else None
+        availability[asset_id] = (reference or {}).get("availability", "not_recorded")
+    media = {}
+    for url, asset_id in asset_urls.items():
+        asset = rows.get(asset_id)
+        media[url] = {"media_id": asset_id, "asset_id": asset_id, "source_asset_id": asset_id,
+                      "oss_key": getattr(asset, "oss_key", None), "media_type": getattr(asset, "mime", None),
+                      "reference": "asset", "availability": availability[asset_id]}
+    return media
+
+
 async def _service_inputs(ctx, asset_urls, retained_media):
     import copy
     from trajectory import enabled
@@ -231,18 +260,7 @@ async def _service_inputs(ctx, asset_urls, retained_media):
         trace = await context_for_tool(local)
         local.trace_context = trace
         if trace is not None and asset_urls:
-            from db.base import get_db_session
-            from trajectory.artifacts import prepare_asset_ids, capture_asset_ids_in_tx
-            ids = list(dict.fromkeys(asset_urls.values()))
-            prepared = await prepare_asset_ids(trace.user_id, trace.workspace_id, ids,
-                                               root_session_id=trace.session_id)
-            async with get_db_session() as db:
-                retained = await capture_asset_ids_in_tx(db, trace, ids, prepared=prepared, role="input")
-            if any(value.get("availability") != "available" for value in retained.values()):
-                from trajectory.types import OwnershipError
-                raise OwnershipError("Media input became unavailable before dispatch")
-            media.update({url: {"asset_id": asset_id, "payload": retained[asset_id]}
-                          for url, asset_id in asset_urls.items()})
+            media.update(await _asset_media(trace, asset_urls))
     local._trajectory_media_urls = media
     return local, media
 
@@ -270,7 +288,7 @@ def _service_body(value, media):
         return [_service_body(item, media) for item in value]
     if isinstance(value, str):
         if value in media:
-            return "trajectory-media:" + str(media[value]["payload"].get("payload_id") or media[value]["asset_id"])
+            return "trajectory-media:" + _media_id(media[value])
         # IMS puts compiled business objects in JSON-valued query parameters.
         if value.lstrip().startswith(("{", "[")):
             import json
@@ -281,23 +299,27 @@ def _service_body(value, media):
     return public_value(value)
 
 
-@_recording_operation
 async def _link_service_job(scope, capture):
+    """Append a dispatched request to its job: a business link kept only while recording."""
     from db.base import get_db_session
     from db.models.video_job import VideoJob
     from trajectory import record
-    from trajectory.types import OwnershipError
-    async with get_db_session() as db:
-        job = await db.get(VideoJob, scope.job_id, with_for_update=True)
-        if job is None or job.user_id != capture.context.user_id or job.session_id != capture.context.source_session_id:
-            raise OwnershipError("Provider dispatch job does not match the execution scope")
-        metadata = dict(job.request_data or {})
-        identifiers = list(metadata.get("_trajectory_request_ids") or [])
-        identifiers.append(capture.context.request_id)
-        job.request_data = {**metadata, "_trajectory_request_ids": identifiers}
-        await record("job.progress", {"job_id": job.id, "status": job.status,
-            "operation": "provider_dispatch", "provider_request_ids": identifiers,
-            "request_id": capture.context.request_id}, context=capture.context, db=db)
+    try:
+        async with get_db_session() as db:
+            job = await db.get(VideoJob, scope.job_id, with_for_update=True)
+            if (job is None or job.user_id != capture.context.user_id
+                    or job.session_id != capture.context.source_session_id):
+                _not_recorded("provider dispatch job does not match the execution scope")
+                return
+            metadata = dict(job.request_data or {})
+            identifiers = list(metadata.get("_trajectory_request_ids") or [])
+            identifiers.append(capture.context.request_id)
+            job.request_data = {**metadata, "_trajectory_request_ids": identifiers}
+            await record("job.progress", {"job_id": job.id, "status": job.status,
+                "operation": "provider_dispatch", "provider_request_ids": identifiers,
+                "request_id": capture.context.request_id}, context=capture.context, db=db)
+    except Exception as exc:
+        _not_recorded("provider dispatch was not linked to its job", exc)
 
 
 @asynccontextmanager
@@ -322,8 +344,7 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
         scope = _ServiceScope(copy.copy(ctx), None, {}) if ctx is not None else None
     fields = SERVICE_FIELDS[profile]
     visible = _service_body({key: item for key, item in body.items() if key in fields}, scope.media if scope else {})
-    manifest = {str(item["payload"].get("payload_id") or item["asset_id"]): item
-                for item in scope.media.values()} if scope else {}
+    manifest = {_media_id(item): item for item in scope.media.values()} if scope else {}
     dispatch_ctx = copy.copy(scope.ctx) if scope else None
     if dispatch_ctx is not None:
         # Media is settled by the job ledger, not the parent chat UsageMeter.
@@ -405,18 +426,18 @@ def requested_tool_schema(ctx, name: str, tool_info=None) -> tuple[dict, str]:
 
 
 async def context_for_tool(ctx):
-    from trajectory import current, enabled
+    """The execution identity bound to a tool context or task; never a database read.
+
+    A context bound to another owner or session is not recorded under this tool.
+    """
+    from trajectory import current
     context = getattr(ctx, "trace_context", None) or current()
-    if context is not None:
-        if context.user_id != ctx.user_id or context.source_session_id != ctx.session_id:
-            raise ValueError("trajectory execution context does not match tool owner/session")
-        return context
-    if not ctx.user_id or not ctx.session_id or not enabled(ctx.user_id):
+    if context is None:
         return None
-    from db.base import get_db_session
-    from trajectory import context_for_session
-    async with get_db_session() as db:
-        return await context_for_session(db, ctx.user_id, ctx.session_id)
+    if context.user_id != ctx.user_id or context.source_session_id != ctx.session_id:
+        _not_recorded("execution context does not match the tool owner or session")
+        return None
+    return context
 
 
 async def capture_billing(context, meter, usage, credits, purpose: str) -> None:
@@ -450,24 +471,27 @@ class RequestCapture:
         self.usage: dict | None = None
         self.usage_index = 0
         self.response_ended: float | None = None
+        # A redactor that failed once cannot vouch for later chunks of its stream.
+        self._redaction_failed = False
         from trajectory.stream_redaction import CaptureStreamRedactor
         self._stream_redactor = CaptureStreamRedactor() if self.context is not None else None
 
     @classmethod
     async def start(cls, ctx, *, purpose: str, model_id: str, payload: Mapping,
                     capture_level: str):
+        """Enqueue request.prepared and request.started; the provider call never waits on them."""
         context = await context_for_tool(ctx) if ctx is not None else None
         capture = cls(context, ctx, purpose, model_id, capture_level)
         if context is not None:
-            from trajectory import record, enabled, ensure_trajectory_in_tx
-            snapshot = request_snapshot(payload)
-            media = getattr(ctx, "_trajectory_media_urls", None)
-            if media:
-                snapshot = _service_body(snapshot, media)
-                snapshot["media_inputs"] = {str(item["payload"].get("payload_id") or item["asset_id"]): item
-                                             for item in media.values()}
-            async def persist(db=None):
-                await record("request.prepared", {
+            from trajectory import record
+            request_id = capture.context.request_id
+            try:
+                snapshot = request_snapshot(payload)
+                media = getattr(ctx, "_trajectory_media_urls", None)
+                if media:
+                    snapshot = _service_body(snapshot, media)
+                    snapshot["media_inputs"] = {_media_id(item): item for item in media.values()}
+                prepared = {
                     "purpose": purpose, "model": model_id,
                     "provider": model_id.split("/", 1)[0] if "/" in model_id else "unknown",
                     "capture_level": capture_level, "input": snapshot,
@@ -476,129 +500,102 @@ class RequestCapture:
                     "parent_request_id": context.request_id if context.call_id is not None else None,
                     "sdk_internal_attempts": "not_observed",
                     "billing_usage_event_id": getattr(ctx, "_trajectory_billing_event_id", None),
-                }, context=capture.context, db=db, event_id=f"request:{capture.context.request_id}:prepared")
-                await record("request.started", {
-                    "purpose": purpose, "model": model_id,
-                    "capture_level": capture_level, "timing_source": "producer_monotonic",
-                }, context=capture.context, db=db, event_id=f"request:{capture.context.request_id}:started")
-            if enabled(context.user_id):
-                from db.base import get_db_session
-                from trajectory.artifacts import retain_request_media_in_tx
-                from trajectory.types import RecordingError, TrajectoryError
-                try:
-                    async with get_db_session() as db:
-                        trajectory = await ensure_trajectory_in_tx(db, capture.context)
-                        snapshot = await retain_request_media_in_tx(db, capture.context, snapshot,
-                            first_seq=trajectory.next_seq,
-                            source_asset_ids=getattr(ctx, "_trajectory_media_sources", None))
-                        await persist(db)
-                except TrajectoryError:
-                    raise
-                except Exception as exc:
-                    raise RecordingError("Request input could not be recorded") from exc
-            else:
-                await persist()
+                }
+                sources = getattr(ctx, "_trajectory_media_sources", None)
+                if sources:
+                    # Digests of inline media the loop resolved from owned assets;
+                    # the worker binds those bytes to the assets instead of copying them.
+                    prepared["media_sources"] = dict(sources)
+                await record("request.prepared", prepared, context=capture.context,
+                             event_id=f"request:{request_id}:prepared")
+                if context.call_id is None:
+                    ctx._trajectory_request_schemas = request_tool_schemas(snapshot.get("tools"))
+            except Exception as exc:
+                _not_recorded("request input could not be captured", exc)
+            await record("request.started", {
+                "purpose": purpose, "model": model_id,
+                "capture_level": capture_level, "timing_source": "producer_monotonic",
+            }, context=capture.context, event_id=f"request:{request_id}:started")
             # One ToolContext belongs to one request chain. Parallel executors
             # clone it, so this handoff does not modify a sibling's identity.
             if context.call_id is None:
                 ctx.trace_context = capture.context
-                ctx._trajectory_request_schemas = request_tool_schemas(snapshot.get("tools"))
             ctx._trajectory_active_request = capture.context
         capture.started = time.monotonic()
         return capture
 
     def chunk_data(self, raw: Any, *, blocks: list[dict] | None = None):
+        """One redacted delta, or None when this stream can no longer be recorded safely."""
         self.chunk_index += 1
         observed = time.monotonic()
         blocks = blocks or []
-        if any(block.get("delta") for block in blocks):
+        if any(isinstance(block, dict) and block.get("delta") for block in blocks):
             if self.first_output is None:
                 self.first_output = observed
             if self.first_text is None and any(
-                block.get("type") == "text" and block.get("delta") for block in blocks
+                isinstance(block, dict) and block.get("type") == "text" and block.get("delta") for block in blocks
             ):
                 self.first_text = observed
-        data = {
-            "chunk_index": self.chunk_index, "mode": "delta", "blocks": blocks, "purpose": self.purpose,
-            "raw": provider_output_snapshot(raw), "elapsed_ms": (observed - self.started) * 1000,
-        }
-        if self._stream_redactor is None:
-            return data
-        from trajectory.types import RecordingError, TrajectoryError
+        if self._redaction_failed:
+            return None
         try:
-            return self._stream_redactor.redact(data)
-        except TrajectoryError:
-            raise
+            data = {
+                "chunk_index": self.chunk_index, "mode": "delta", "blocks": blocks, "purpose": self.purpose,
+                "raw": provider_output_snapshot(raw), "elapsed_ms": (observed - self.started) * 1000,
+            }
+            return data if self._stream_redactor is None else self._stream_redactor.redact(data)
         except Exception as exc:
-            raise RecordingError("Streaming response could not be redacted") from exc
+            # Unredacted provider output never reaches the spool.
+            self._redaction_failed = True
+            _not_recorded("response chunk could not be redacted", exc)
+            return None
 
     async def chunk(self, raw: Any, *, blocks: list[dict] | None = None):
+        if self.context is None:
+            return
         data = self.chunk_data(raw, blocks=blocks)
-        if self.context is not None:
+        if data is not None:
             from trajectory import record
             await record("request.delta", data, context=self.context,
                          event_id=f"request:{self.context.request_id}:chunk:{data['chunk_index']}")
 
     async def stream_chunks(self, stream, block_builder):
-        """Read ahead within a byte bound; release only committed chunks.
+        """Yield each provider chunk as it arrives, enqueueing its delta on the way.
 
-        Recorder batching must not make the network reader wait one batch
-        timer per token. The producer queues observed chunks with individual
-        receipts; the consumer awaits those receipts in original order.
+        Nothing here waits for the recorder: a slow or failed emitter never
+        delays token delivery.
         """
         if self.context is None:
             async for chunk in stream:
                 yield chunk
             return
         from trajectory import record_stream
-        from trajectory.config import integer
-        from trajectory.types import canonical, now
-        queue = asyncio.Queue(maxsize=32)
-        condition = asyncio.Condition()
-        maximum = integer("TRAJECTORY_PENDING_BYTES", 4 * 1024 * 1024)
-        pending_bytes = 0
-        sentinel = object()
-
-        async def read():
-            nonlocal pending_bytes
-            try:
-                async for chunk in stream:
-                    observed_at = now()
-                    data = self.chunk_data(chunk, blocks=block_builder(chunk))
-                    size = len(canonical(data))
-                    async with condition:
-                        while pending_bytes and pending_bytes + size > maximum:
-                            await condition.wait()
-                        pending_bytes += size
-                    receipt = record_stream(self.context, {
+        from trajectory.types import now
+        ended = False
+        try:
+            async for chunk in stream:
+                observed_at = now()
+                try:
+                    blocks = block_builder(chunk)
+                except Exception as exc:
+                    _not_recorded("response chunk blocks could not be built", exc)
+                    blocks = []
+                data = self.chunk_data(chunk, blocks=blocks)
+                if data is not None:
+                    record_stream(self.context, {
                         "type": "request.delta", "data": data, "occurred_at": observed_at,
                         "event_id": f"request:{self.context.request_id}:chunk:{data['chunk_index']}",
                     })
-                    await queue.put((chunk, receipt, size))
-                self.response_ended = time.monotonic()
-                await queue.put((sentinel, None, 0))
-            except asyncio.CancelledError:
-                raise
-            except BaseException as error:
-                self.response_ended = time.monotonic()
-                await queue.put((sentinel, error, 0))
-
-        reader = asyncio.create_task(read())
-        try:
-            while True:
-                chunk, receipt, size = await queue.get()
-                if chunk is sentinel:
-                    if receipt is not None:
-                        raise receipt
-                    break
-                await receipt
-                async with condition:
-                    pending_bytes -= size
-                    condition.notify_all()
                 yield chunk
+            ended = True
+        except (GeneratorExit, asyncio.CancelledError):
+            raise
+        except BaseException:
+            ended = True
+            raise
         finally:
-            reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
+            if ended:
+                self.response_ended = time.monotonic()
             closer = getattr(stream, "aclose", None)
             if closer is not None:
                 result = closer()
@@ -620,34 +617,35 @@ class RequestCapture:
     async def finish(self, status: str, *, reason: str | None = None, error: BaseException | None = None):
         if self.finished:
             return
+        self.finished = True
         ended = self.response_ended or time.monotonic()
-        if self.context is not None:
-            from trajectory import record
-            from trajectory.types import RecordingError, TrajectoryError
+        if self.context is None:
+            return
+        from trajectory import record
+        finalized = None
+        if self._stream_redactor is not None and not self._redaction_failed:
             try:
                 finalized = self._stream_redactor.finalize()
-            except TrajectoryError:
-                raise
             except Exception as exc:
-                raise RecordingError("Streaming response redaction could not be finalized") from exc
-            if finalized is not None:
-                # A buffered redaction suffix is recorder control data, not an
-                # additional provider chunk or a new generation observation.
-                await record("request.delta", {**finalized, "purpose": self.purpose,
-                    "source": "recorder_redaction", "observed_chunk_count": self.chunk_index,
-                    "elapsed_ms": (ended - self.started) * 1000}, context=self.context,
-                    event_id=f"request:{self.context.request_id}:redaction:finalize")
-            await record("request.finished", {
-                "status": status, "finish_reason": reason, "purpose": self.purpose,
-                "error": {"type": type(error).__name__, "message": str(error)} if error else None,
-                "usage": public_value(self.usage), "chunk_count": self.chunk_index,
-                "duration_ms": (ended - self.started) * 1000,
-                "ttft_ms": (self.first_output - self.started) * 1000 if self.first_output is not None else None,
-                "first_text_ms": (self.first_text - self.started) * 1000 if self.first_text is not None else None,
-                "generation_ms": (ended - self.first_output) * 1000 if self.first_output is not None else None,
-                "timing_source": "producer_monotonic",
-            }, context=self.context, event_id=f"request:{self.context.request_id}:finished")
-        self.finished = True
+                _not_recorded("response redaction could not be finalized", exc)
+        if finalized is not None:
+            # A buffered redaction suffix is recorder control data, not an
+            # additional provider chunk. As the request's last delta it is
+            # marked final, so a degraded budget still keeps it.
+            await record("request.delta", {**finalized, "purpose": self.purpose,
+                "source": "recorder_redaction", "observed_chunk_count": self.chunk_index,
+                "elapsed_ms": (ended - self.started) * 1000, "final": True}, context=self.context,
+                event_id=f"request:{self.context.request_id}:redaction:finalize")
+        await record("request.finished", {
+            "status": status, "finish_reason": reason, "purpose": self.purpose,
+            "error": {"type": type(error).__name__, "message": str(error)} if error else None,
+            "usage": public_value(self.usage), "chunk_count": self.chunk_index,
+            "duration_ms": (ended - self.started) * 1000,
+            "ttft_ms": (self.first_output - self.started) * 1000 if self.first_output is not None else None,
+            "first_text_ms": (self.first_text - self.started) * 1000 if self.first_text is not None else None,
+            "generation_ms": (ended - self.first_output) * 1000 if self.first_output is not None else None,
+            "timing_source": "producer_monotonic",
+        }, context=self.context, event_id=f"request:{self.context.request_id}:finished")
 
     async def route_changed(self, reason: str):
         if self.context is not None:

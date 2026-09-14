@@ -181,6 +181,7 @@ class Emitter:
         self._dropped_by_reason: dict[str, int] = {}
         self._files_closed = 0
         self._gap_lines = 0
+        self._gaps_in_flight = 0
         self._filtered_events = 0
         self._truncated_events = 0
         self._write_errors = 0
@@ -392,7 +393,9 @@ class Emitter:
                     "dropped_bytes": self._dropped_bytes, "dropped_by_reason": dict(self._dropped_by_reason),
                     "files_closed": self._files_closed, "last_error": self._last_error,
                     "spool_bytes": self._spool_estimate, "gap_lines": self._gap_lines,
-                    "pending_gap_reasons": list(self._drops), "filtered_events": self._filtered_events,
+                    "pending_gap_reasons": list(self._drops),
+                    "pending_gaps": len(self._drops) + self._gaps_in_flight,
+                    "filtered_events": self._filtered_events,
                     "truncated_events": self._truncated_events, "write_errors": self._write_errors,
                     "rejected_after_close": self._rejected_after_close, "writer_restarts": self._restarts}
 
@@ -590,7 +593,7 @@ class Emitter:
                 self._file_size += written
                 self._spool_estimate += written
                 self._written_lines += len(self._meta)
-                self._gap_lines += sum(1 for meta in self._meta if meta[5] is not None)
+                self._settle_gap_lines(self._meta)
                 self._buffer, self._meta, self._buffer_bytes = [], [], 0
         self._release()
 
@@ -614,7 +617,7 @@ class Emitter:
         self._file_size += complete
         self._spool_estimate += complete
         self._written_lines += kept
-        self._gap_lines += sum(1 for meta in self._meta[:kept] if meta[5] is not None)
+        self._settle_gap_lines(self._meta[:kept])
         lost = self._meta[kept:]
         self._buffer, self._meta, self._buffer_bytes = [], [], 0
         self._discard_file(lost)
@@ -695,11 +698,15 @@ class Emitter:
                     return
                 reason = next(iter(self._drops))
                 window = self._drops.pop(reason)
+                # Stays pending until its line is written or the window is restored.
+                self._gaps_in_flight += 1
             self._last_gap = now
             try:
                 payload = orjson.dumps(window.control(reason), default=_json_default, option=orjson.OPT_NON_STR_KEYS)
             except Exception as exc:
                 self._note_error(exc)
+                with self._lock:
+                    self._gaps_in_flight -= 1
                 continue
             if not self._append(CONTROL, payload, time.time(), None, (reason, window)):
                 self._restore_window(reason, window)
@@ -707,8 +714,16 @@ class Emitter:
             if not closing:
                 return
 
+    def _settle_gap_lines(self, metas: list[tuple]) -> None:
+        written = sum(1 for meta in metas if meta[5] is not None)
+        if written:
+            with self._lock:
+                self._gap_lines += written
+                self._gaps_in_flight -= written
+
     def _restore_window(self, reason: str, window: _DropWindow) -> None:
         with self._lock:
+            self._gaps_in_flight -= 1
             newer = self._drops.pop(reason, None)
             if newer is not None:
                 window.merge(newer)

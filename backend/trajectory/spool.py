@@ -244,7 +244,8 @@ def parse_budgets(raw: bytes) -> tuple[dict[str, str], dict[str, str]]:
         raise SpoolFormatError("Unsupported budget file")
     levels = []
     for section in ("sessions", "users"):
-        entries = document.get(section) or {}
+        entries = document.get(section)
+        entries = {} if entries is None else entries
         if not isinstance(entries, dict):
             raise SpoolFormatError(f"Budget {section} must be an object")
         levels.append({key: entry["level"] for key, entry in entries.items()

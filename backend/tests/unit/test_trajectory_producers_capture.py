@@ -256,6 +256,30 @@ async def test_cron_run_entry_takes_no_session_lock_and_its_facts_follow_the_run
     assert recording_spool.events("job.finished")[0]["event_id"] == "cron:run-1:finished:ok"
 
 
+async def test_generated_images_are_recorded_as_references_to_their_assets(state, recording_spool, monkeypatch):
+    from session.session import create_assistant_message
+    from tool import image_gen
+    monkeypatch.setattr("trajectory.artifacts.read_asset_bytes", AsyncMock(side_effect=AssertionError("downloaded")))
+    monkeypatch.setattr(image_gen, "_upload_bytes", AsyncMock(return_value=12))
+    prompt = await create_user_message("s1", "Draw a cat", user_id="u1")
+    assistant = await create_assistant_message("s1", prompt.id, user_id="u1")
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", project_id="p1", message_id=assistant.id,
+                      part_id="call-image", trace_context=TraceContext("u1", "s1", turn_id="turn",
+                                                                       call_id="call-image",
+                                                                       message_id=assistant.id))
+    ctx._trajectory_image_request_id = "request-image"
+
+    stored = await image_gen._store_output(ctx, SimpleNamespace(), b"\x89PNG\r\n\x1a\n0000", "png", None, "a cat",
+                                           "generate", 1, 1)
+
+    result = next(item for item in recording_spool.events("artifact.recorded") if item["data"]["role"] == "result")
+    assert (result["request_id"], result["call_id"]) == ("request-image", "call-image")
+    assert result["data"]["asset_ref"] == {"asset_id": stored.asset_id,
+                                           "oss_key": f"assets/u1/{stored.asset_id}/{stored.name}",
+                                           "media_type": "image/png", "size_bytes": 12, "name": stored.name}
+    assert stored.attached
+
+
 class _Value(BaseModel):
     value: str
 

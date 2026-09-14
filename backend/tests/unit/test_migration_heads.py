@@ -27,3 +27,16 @@ def test_single_head_and_unique_revision_ids():
         warnings.simplefilter("error")  # alembic warns on duplicates; make it fatal here
         heads = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini"))).get_heads()
     assert len(heads) == 1, f"expected one alembic head, found {heads}"
+
+
+def test_head_retires_business_trajectory_tables_and_the_trace_chain_stays_separate():
+    """Trajectory tables leave the business chain (SPEC §6.9); the trace database has its own chain."""
+    business = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
+    [head] = business.get_heads()
+    lineage = {script.revision for script in business.iterate_revisions(head, "base")}
+    # Renaming to legacy_trajectory_* and the metadata sync cursor indexes.
+    assert {"d3b5f7a9c1e2", "e5c7a9b1d3f4"} <= lineage
+    trace_config = Config(str(BACKEND / "alembic_trajectory.ini"))
+    trace_config.set_main_option("script_location", str(BACKEND / "trajectory" / "store" / "migrations"))
+    trace = {script.revision for script in ScriptDirectory.from_config(trace_config).walk_revisions()}
+    assert trace and not trace & {script.revision for script in business.walk_revisions()}

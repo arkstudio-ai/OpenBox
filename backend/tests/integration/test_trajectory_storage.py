@@ -120,12 +120,18 @@ async def test_child_ownership_deleted_session_unknown_result(tracedb):
     with pytest.raises(OwnershipError): await append(factory, ctx, [{"type": "operation.late_result", "data": {"result": "late"}}])
 
 @pytest.fixture
-async def client(tracedb):
+async def client(tracedb, monkeypatch):
+    from auth import middleware
     from auth.middleware import get_current_user
     from api.admin_trajectories import router
     app = FastAPI(); app.include_router(router)
     async def viewer(request: Request): return {"user_id": request.headers.get("X-Test-Viewer", "admin"), "role": "admin"}
     app.dependency_overrides[get_current_user] = viewer
+    # revalidate_viewer re-reads the identity through the middleware whenever
+    # auth is enabled, and test_auth_api leaves it enabled for the rest of the
+    # process; answer that check with the same simulated viewer.
+    async def optional_viewer(request: Request, credentials=None): return await viewer(request)
+    monkeypatch.setattr(middleware, "get_optional_current_user", optional_viewer)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client: yield client
 
 async def test_admin_read_paths_live_role_and_target(client, tracedb):

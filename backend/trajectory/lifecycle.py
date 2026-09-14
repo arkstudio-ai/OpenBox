@@ -28,9 +28,9 @@ from sqlalchemy.orm import Session as SyncSession
 from core.log import create_logger
 from trajectory.config import integer
 from trajectory.storage import check_key, key_prefix, trajectory_prefix
-from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryEventKey,
-    TrajectoryExport, TrajectoryGcQueue, TrajectoryPayload, TrajectoryRecord, TrajectoryRecordEvent,
-    TrajectorySegment, TrajectorySessionSummary, TrajectoryWorkerState)
+from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryExport,
+    TrajectoryGcQueue, TrajectoryPayload, TrajectoryRecord, TrajectoryRecordEvent, TrajectorySegment,
+    TrajectorySessionSummary, TrajectoryWorkerState)
 from trajectory.types import OwnershipError, now
 
 log = create_logger("trajectory.lifecycle")
@@ -97,10 +97,12 @@ async def tombstone_trajectory(db, trajectory, *, reason: str, at: datetime | No
     """Tombstone a trajectory whose session was deleted; False when it already is one.
 
     Sets ``deleted_at`` and ``recording_status=deleted``; deletes hot events,
-    records, record links, checkpoints, the summary, segment rows and
-    idempotency keys; marks payloads deleted and exports deleted; queues the
-    trajectory prefix (twice, see PREFIX_SWEEP_DELAY) and export objects for
-    GC. The trajectory and payload rows remain as tombstones. The deleted
+    records, record links, checkpoints, the summary and segment rows; marks
+    payloads and exports deleted; queues the trajectory prefix (twice, see
+    PREFIX_SWEEP_DELAY) and export objects for GC. The trajectory and payload
+    rows remain as tombstones. Idempotency keys hold no content and age out
+    through ArchiveService.prune_event_keys (the key table has no index to
+    delete them by trajectory inside the caller's transaction). The deleted
     notification is published after the caller's transaction commits.
     """
     trajectory = await lock_trajectory(db, trajectory.id)
@@ -113,7 +115,6 @@ async def tombstone_trajectory(db, trajectory, *, reason: str, at: datetime | No
     trajectory.updated_at = timestamp
     await _purge_content(db, trajectory, availability="deleted", reason=reason, at=timestamp)
     await db.execute(delete(TrajectorySessionSummary).where(TrajectorySessionSummary.trajectory_id == trajectory.id))
-    await db.execute(delete(TrajectoryEventKey).where(TrajectoryEventKey.trajectory_id == trajectory.id))
     publish_after_commit(db, trajectory, deleted=True)
     return True
 
@@ -123,7 +124,7 @@ async def expire_trajectory_content(db, trajectory, *, at: datetime | None = Non
 
     Same as a tombstone except that the trajectory keeps
     ``recording_status=expired`` with ``content_expired_at``, the summary row
-    and its statistics, and the idempotency keys (pruned by age).
+    and its statistics.
     """
     trajectory = await lock_trajectory(db, trajectory.id)
     if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:

@@ -99,7 +99,9 @@ async def test_a_tombstone_purges_content_keeps_tombstones_and_notifies_after_co
         assert notifications == []
     assert notifications == [{"trajectory_id": "trj_a", "user_id": "user_a", "session_id": "session_trj_a",
                               "committed_seq": 3, "deleted": True}]
-    assert set((await row_counts("trj_a")).values()) == {0}
+    counts = await row_counts("trj_a")
+    assert counts.pop("trajectory_event_keys") == 1  # keys hold no content and age out through key pruning
+    assert set(counts.values()) == {0}
     assert 0 not in (await row_counts("trj_b")).values()
     trajectory = await trajectory_row("trj_a")
     assert (trajectory.recording_status, trajectory.stored_bytes) == ("deleted", 0)

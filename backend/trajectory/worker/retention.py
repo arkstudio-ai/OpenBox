@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 
 from core.log import create_logger
 from trajectory.lifecycle import (GC_KEY, GC_PREFIX, delete_exports, expire_trajectory_content, gc_retry_delay,
@@ -25,6 +25,14 @@ log = create_logger("trajectory.worker.retention")
 #: Trajectories or exports handled by one sweep; the rest waits for the next pass.
 SWEEP_LIMIT = 100
 ERROR_TEXT_LIMIT = 1000
+#: A content purge may delete many rows; far above the 5 s request timeout.
+PURGE_STATEMENT_TIMEOUT = "60s"
+
+
+async def _allow_long_purge(db) -> None:
+    """PostgreSQL: lift the request-serving statement timeout for this purge transaction only."""
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text(f"SET LOCAL statement_timeout = '{PURGE_STATEMENT_TIMEOUT}'"))
 
 
 class RetentionService:
@@ -65,6 +73,7 @@ class RetentionService:
 
     async def _expire(self, trajectory_id: str, inactive_before: datetime | None) -> bool:
         async with trace_session() as db:
+            await _allow_long_purge(db)
             trajectory = await lock_trajectory(db, trajectory_id)
             if trajectory is None:
                 return False
@@ -105,6 +114,7 @@ class RetentionService:
         tombstoned = 0
         for trajectory_id in candidates:
             async with trace_session() as db:
+                await _allow_long_purge(db)
                 trajectory = await lock_trajectory(db, trajectory_id)
                 if trajectory is not None:
                     tombstoned += await tombstone_trajectory(db, trajectory, reason="session_deleted")

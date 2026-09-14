@@ -19,15 +19,16 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.unit.test_worker_archive_support import (FakeMetrics, add_events, add_trajectory, event_values, gc_entries,
-    hot_seqs, segment_ranges, worker_settings)
+    hot_seqs, segment_ranges, trajectory_row, worker_settings)
 from trajectory.lifecycle import tombstone_trajectory
 from trajectory.ops import rebuild
 from trajectory.storage import LocalBlobStore, MemoryBlobStore, trajectory_prefix
 from trajectory.store import partitions
 from trajectory.store.database import close_trace_engine, init_trace_engine, trace_session
-from trajectory.store.models import SessionTrajectory, TrajectoryEventKey
+from trajectory.store.models import SessionTrajectory, TrajectoryEventKey, TrajectoryMetaSession
 from trajectory.types import now
 from trajectory.worker import archive as archive_module
+from trajectory.worker import retention as retention_module
 from trajectory.worker.archive import ArchiveService
 from trajectory.worker.retention import RetentionService
 
@@ -220,6 +221,37 @@ async def test_pruning_and_tombstones_cover_partitioned_rows(migrated):
     await store.put(f"{trajectory_prefix('trj_a')}blobs/{'a' * 64}", b"x", content_type="application/json")
     assert await RetentionService(worker_settings(), blob_store=store, metrics=FakeMetrics()).process_gc_queue() == 1
     assert store.objects == {}
+
+
+async def test_retention_purges_run_with_the_longer_statement_timeout(migrated, monkeypatch):
+    today = now().date()
+    async with migrated.begin() as connection:
+        await partitions.ensure_partitions(connection, today, 0)
+    await add_trajectory("trj_old", committed=2, last_activity_at=now() - timedelta(days=200))
+    await add_trajectory("trj_gone", committed=2)
+    await add_events([event_values(trajectory_id, seq, recorded_at=at_noon(today))
+                      for trajectory_id in ("trj_old", "trj_gone") for seq in (1, 2)])
+    async with trace_session() as db:
+        db.add(TrajectoryMetaSession(id="session_trj_gone", user_id="user_a", is_deleted=True, updated_at=now(),
+                                     synced_at=now()))
+    timeouts = []
+
+    def observe(purge):
+        async def observed(db, trajectory, **kwargs):
+            timeouts.append((await db.execute(text("SHOW statement_timeout"))).scalar_one())
+            return await purge(db, trajectory, **kwargs)
+        return observed
+
+    for name in ("expire_trajectory_content", "tombstone_trajectory"):
+        monkeypatch.setattr(retention_module, name, observe(getattr(retention_module, name)))
+    result = await RetentionService(worker_settings(), blob_store=MemoryBlobStore(), metrics=FakeMetrics()).run_once()
+    assert (result["tombstoned"], result["expired"]) == (1, 1)
+    assert timeouts == ["1min", "1min"]
+    assert (await hot_seqs("trj_old"), await hot_seqs("trj_gone")) == ([], [])
+    assert ((await trajectory_row("trj_old")).recording_status, (await trajectory_row("trj_gone")).recording_status) == (
+        "expired", "deleted")
+    async with migrated.connect() as connection:
+        assert (await connection.execute(text("SHOW statement_timeout"))).scalar_one() == "5s"
 
 
 async def test_the_rebuild_drill_restores_postgresql_segments_into_a_scratch_database(migrated, monkeypatch, tmp_path):

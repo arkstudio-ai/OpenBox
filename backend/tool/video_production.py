@@ -893,6 +893,12 @@ async def _attach_completed(job, ctx: ToolContext) -> bool:
         )
         return True
     except (RunRevoked, TrajectoryError):
+        # No part was saved. Release the claim so the run that owns the
+        # conversation can still attach this finished video to its reply.
+        try:
+            await _update_job(job.id, attached_message_id=None)
+        except Exception:
+            log.warning("could not release the chat attachment claim of %s", job.id, exc_info=True)
         raise
     except Exception:
         await _update_job(job.id, attached_message_id=None)

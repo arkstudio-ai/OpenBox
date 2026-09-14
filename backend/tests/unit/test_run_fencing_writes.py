@@ -170,8 +170,19 @@ async def test_detached_video_finalization_attaches_after_finish_but_not_after_s
         assert await video_production._attach_completed(finished, ctx)
     assert await _attached(finished.output_asset_id)
 
-    await create_user_message("s1", "A different clip", user_id="u1")
+    retry = await create_user_message("s1", "A different clip", user_id="u1")
     late = await _finished_video("after-supersession")
     with acting_as(ticket), pytest.raises(runtime.RunRevoked):
         await video_production._attach_completed(late, ctx)
     assert not await _attached(late.output_asset_id)
+
+    # The refused attach leaves no claim behind: the run that owns the new turn
+    # can still put the finished video into its own reply.
+    current = await runtime.start_run("s1", "u1")
+    with acting_as(current):
+        reply = await create_assistant_message("s1", retry.id, user_id="u1")
+        owner_ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id=reply.id)
+        assert await video_production._attach_completed(await read(VideoJob, late.id), owner_ctx)
+    assert await _attached(late.output_asset_id)
+    assert (await read(VideoJob, late.id)).attached_message_id == reply.id
+    await runtime.finish_run(current, completed=True)

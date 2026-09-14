@@ -619,7 +619,7 @@ class FakeOssBucket:
         query = dict(parse_qsl(request.url.query.decode(), keep_blank_values=True))
         if request.method == "PUT":
             if request.headers.get("x-oss-forbid-overwrite") == "true" and key in self.objects:
-                return httpx.Response(409, content=b"<Error><Code>FileAlreadyExist</Code><Message>exists</Message></Error>")
+                return httpx.Response(409, content=b"<Error><Code>FileAlreadyExists</Code><Message>The object you specified already exists and can not be overwritten.</Message></Error>")
             self.objects[key] = request.content
             return httpx.Response(200, headers={"ETag": '"E"'})
         if request.method in ("GET", "HEAD") and key:

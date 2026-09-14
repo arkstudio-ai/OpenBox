@@ -393,7 +393,7 @@ class OssClient:
         if resp.status_code == 200:
             return resp.headers.get("etag", "").strip('"')
         error = _error(resp)
-        if forbid_overwrite and resp.status_code == 409 and error.code == "FileAlreadyExist":
+        if forbid_overwrite and resp.status_code == 409 and error.code == "FileAlreadyExists":
             return ""
         raise error
 

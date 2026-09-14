@@ -238,11 +238,11 @@ async def test_put_object_plain_write_uses_the_per_call_timeout():
 
 
 async def test_forbid_overwrite_conflict_counts_as_success():
-    fake = FakeOss(httpx.Response(409, content=error_body("FileAlreadyExist", "The object you specified already exists")))
+    fake = FakeOss(httpx.Response(409, content=error_body("FileAlreadyExists", "The object you specified already exists")))
     assert await client_for(fake).put_object("a/b", b"x", forbid_overwrite=True) == ""
 
 
-@pytest.mark.parametrize("forbid_overwrite,code", [(False, "FileAlreadyExist"), (True, "OperationAborted")])
+@pytest.mark.parametrize("forbid_overwrite,code", [(False, "FileAlreadyExists"), (True, "OperationAborted")])
 async def test_other_conflicts_raise(forbid_overwrite, code):
     fake = FakeOss(httpx.Response(409, content=error_body(code, request_id="req-409")))
     with pytest.raises(OssError) as caught:

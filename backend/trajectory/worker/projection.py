@@ -20,7 +20,7 @@ import hashlib
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -40,8 +40,17 @@ log = create_logger("trajectory.projection")
 SEARCH_DOC_CHARS = 4000
 #: Values nested deeper than this inside record data are sized and stored as a whole.
 EXTERNALIZE_DEPTH = 6
-#: Trajectories visited per pass; the rest wait for the next pass.
+#: Trajectories visited per pass; the next pass continues after the last one.
 PASS_TRAJECTORIES = 100
+#: Candidates read per pass for every trajectory visited: those backing off are skipped.
+SCAN_FACTOR = 4
+#: A failing trajectory is retried after 1 s, doubling up to 5 minutes.
+RETRY_BASE_SECONDS = 1.0
+RETRY_MAX_SECONDS = 300.0
+_RETRY_LIMIT = 10_000
+#: PostgreSQL statement timeout of projection and checkpoint transactions; the
+#: engine's 5 s default is meant for request-serving reads (SPEC 6.1).
+WORKER_STATEMENT_TIMEOUT = "60s"
 _CHUNK = 500
 _REF_SIZE = len(canonical({"$ref": {"sha256": "0" * 64, "size_bytes": 0, "media_type": JSON_MEDIA_TYPE,
                                     "kind": "value", "payload_id": "pld_" + "0" * 32}}))
@@ -54,6 +63,12 @@ def _setting(settings, name: str, env: str, default: int) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
         return value
     return integer(env, default)
+
+
+async def _background(db) -> None:
+    """Let this worker transaction outlast the request statement timeout (PostgreSQL only)."""
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(text(f"SET LOCAL statement_timeout = '{WORKER_STATEMENT_TIMEOUT}'"))
 
 
 def _insert(db, model):
@@ -185,39 +200,80 @@ class ProjectionService:
         self.record_inline_bytes = _setting(settings, "record_inline_bytes", "TRAJECTORY_RECORD_INLINE_BYTES", 16384)
         self.checkpoint_interval = _setting(settings, "checkpoint_interval", "TRAJECTORY_CHECKPOINT_INTERVAL", 1000)
         self._logged: dict[tuple[str, str], float] = {}
+        #: The last trajectory id a pass reached; the next pass continues after it.
+        self._cursor = ""
+        #: (operation, trajectory id) -> (monotonic time it is due again, consecutive failures).
+        self._retry: dict[tuple[str, str], tuple[float, int]] = {}
 
     async def run_once(self) -> int:
         """One pass: a batch for each lagging trajectory, then its due checkpoint.
 
-        Returns events projected plus checkpoints written (0 when idle). One
-        failing trajectory is logged and skipped; the others still progress.
+        Returns events projected plus checkpoints written (0 when idle). A pass
+        visits at most PASS_TRAJECTORIES candidates in id order and the next
+        pass continues after the last one it reached, so a larger backlog
+        still reaches every trajectory. A failing trajectory is logged and
+        backs off (RETRY_BASE_SECONDS doubling up to RETRY_MAX_SECONDS)
+        without holding back the others.
         """
-        async with trace_session() as db:
-            candidates = (await db.scalars(select(SessionTrajectory.id).where(
-                SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
-                (SessionTrajectory.projected_seq < SessionTrajectory.committed_seq)
-                | (SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= self.checkpoint_interval))
-                .order_by(SessionTrajectory.last_activity_at, SessionTrajectory.id).limit(PASS_TRAJECTORIES))).all()
         progress = 0
-        for trajectory_id in candidates:
+        for trajectory_id in await self._candidates():
             try:
                 progress += await self.project(trajectory_id)
-                progress += int(await self.maybe_checkpoint(trajectory_id))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log_failure(trajectory_id, exc)
+                self._failed("project", trajectory_id, exc)
+                continue
+            self._retry.pop(("project", trajectory_id), None)
+            progress += int(await self.maybe_checkpoint(trajectory_id))
         await self._lag_gauge()
         return progress
 
-    def _log_failure(self, trajectory_id: str, exc: Exception) -> None:
-        key, at = (trajectory_id, type(exc).__name__), time.monotonic()
+    async def _candidates(self) -> list[str]:
+        due = select(SessionTrajectory.id).where(
+            SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
+            (SessionTrajectory.projected_seq < SessionTrajectory.committed_seq)
+            | (SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= self.checkpoint_interval))
+        scan = PASS_TRAJECTORIES * SCAN_FACTOR
+        async with trace_session() as db:
+            ids = list((await db.scalars(due.where(SessionTrajectory.id > self._cursor)
+                                         .order_by(SessionTrajectory.id).limit(scan))).all())
+            if len(ids) < scan and self._cursor:
+                # Wrap around to the trajectories up to the cursor.
+                ids.extend((await db.scalars(due.where(SessionTrajectory.id <= self._cursor)
+                                             .order_by(SessionTrajectory.id).limit(scan - len(ids)))).all())
+        at, chosen = time.monotonic(), []
+        for trajectory_id in ids:
+            if len(chosen) >= PASS_TRAJECTORIES:
+                break
+            self._cursor = trajectory_id
+            if self._due("project", trajectory_id, at):
+                chosen.append(trajectory_id)
+        return chosen
+
+    def _due(self, operation: str, trajectory_id: str, at: float) -> bool:
+        retry = self._retry.get((operation, trajectory_id))
+        return retry is None or retry[0] <= at
+
+    def _failed(self, operation: str, trajectory_id: str, exc: Exception) -> None:
+        key, at = (operation, trajectory_id), time.monotonic()
+        failures = self._retry.get(key, (0.0, 0))[1] + 1
+        if key not in self._retry and len(self._retry) >= _RETRY_LIMIT:
+            self._retry = {item: value for item, value in self._retry.items() if value[0] > at}
+            if len(self._retry) >= _RETRY_LIMIT:
+                self._retry.pop(next(iter(self._retry)))
+        self._retry[key] = (at + min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * 2 ** min(failures - 1, 20)), failures)
+        self._log_failure(operation, trajectory_id, exc)
+
+    def _log_failure(self, operation: str, trajectory_id: str, exc: Exception) -> None:
+        key, at = (trajectory_id, f"{operation}:{type(exc).__name__}"), time.monotonic()
         if at - self._logged.get(key, -_LOG_EVERY_SECONDS) >= _LOG_EVERY_SECONDS:
             if len(self._logged) >= _LOGGED_LIMIT:
                 self._logged = {item: logged for item, logged in self._logged.items() if at - logged < _LOG_EVERY_SECONDS}
             self._logged[key] = at
             # Type only: messages of storage and database errors can carry content.
-            log.warning("Trajectory projection failed trajectory_id=%s error_type=%s", trajectory_id, type(exc).__name__)
+            log.warning("Trajectory %s failed trajectory_id=%s error_type=%s",
+                        "projection" if operation == "project" else operation, trajectory_id, type(exc).__name__)
 
     async def _lag_gauge(self) -> None:
         if self.metrics is None:
@@ -238,6 +294,7 @@ class ProjectionService:
             until = min(trajectory.committed_seq, base + limit)
             if until <= base:
                 return 0
+            await _background(db)
             rows = await stored_events(db, trajectory, base, until, limit, blob_store=self.blob_store)
             if [row["seq"] for row in rows] != list(range(base + 1, until + 1)):
                 raise CorruptContent("Committed trajectory events are not contiguous")
@@ -264,6 +321,7 @@ class ProjectionService:
         events = [event for event, _ in batch]
         try:
             async with trace_session() as db:
+                await _background(db)
                 locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
                 if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
                         or locked.projected_seq != base):
@@ -384,9 +442,23 @@ class ProjectionService:
         summary.applied_seq = through
 
     async def maybe_checkpoint(self, trajectory_id: str) -> bool:
-        """Checkpoint at projected_seq when it is TRAJECTORY_CHECKPOINT_INTERVAL past the latest one."""
-        return await build_checkpoint(trajectory_id, interval=self.checkpoint_interval, blob_store=self.blob_store,
-                                      metrics=self.metrics)
+        """Checkpoint at projected_seq when it is TRAJECTORY_CHECKPOINT_INTERVAL past the latest one.
+
+        Never raises (worker loops call it after every pass): a failure is
+        logged and this trajectory's checkpoints back off like a failing batch.
+        """
+        if not self._due("checkpoint", trajectory_id, time.monotonic()):
+            return False
+        try:
+            built = await build_checkpoint(trajectory_id, interval=self.checkpoint_interval,
+                                           blob_store=self.blob_store, metrics=self.metrics)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._failed("checkpoint", trajectory_id, exc)
+            return False
+        self._retry.pop(("checkpoint", trajectory_id), None)
+        return built
 
 
 async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, metrics=None) -> bool:
@@ -403,12 +475,18 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
         if through <= 0 or through - trajectory.checkpoint_seq < interval:
             return False
         if await db.get(TrajectoryCheckpoint, (trajectory_id, through)) is not None:
+            # Stored without moving checkpoint_seq (a converter, a repair): record it, or
+            # the trajectory would stay a candidate of every pass.
+            await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == trajectory_id,
+                SessionTrajectory.checkpoint_seq < through).values(checkpoint_seq=through))
             return False
+        await _background(db)
         state = await expanded_state(db, trajectory, through, blob_store=blob_store)
         blobs = checkpoint_blobs(trajectory_id, state)
         present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"] for blob in blobs])
     await upload_json_blobs(blob_store, [blob for blob in blobs if blob["dedupe_key"] not in present], metrics=metrics)
     async with trace_session() as db:
+        await _background(db)
         locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
         if locked is None or locked.deleted_at is not None or locked.content_expired_at is not None:
             return False

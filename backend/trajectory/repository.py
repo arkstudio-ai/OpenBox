@@ -133,15 +133,27 @@ async def _segment_lines(segment: TrajectorySegment, blob_store):
     return lines
 
 
-async def _archived(db, trajectory_id: str, seqs_from: int, seqs_to: int, blob_store, keep=None) -> list[dict]:
-    if seqs_to < seqs_from:
+async def _archived(db, trajectory_id: str, seqs_from: int, seqs_to: int, blob_store, keep=None,
+                    only: set[int] | None = None) -> list[dict]:
+    """Segment rows with seqs_from <= seq <= seqs_to that keep accepts; with ``only``, just those seqs
+    (segments holding none of them are not downloaded)."""
+    if seqs_to < seqs_from or (only is not None and not only):
         return []
     segments = (await db.scalars(select(TrajectorySegment).where(TrajectorySegment.trajectory_id == trajectory_id,
         TrajectorySegment.to_seq >= seqs_from, TrajectorySegment.from_seq <= seqs_to)
         .order_by(TrajectorySegment.from_seq))).all()
     rows = []
     for segment in segments:
-        for row in (await _segment_lines(segment, blob_store)).rows(seqs_from, seqs_to):
+        if only is None:
+            candidates = (await _segment_lines(segment, blob_store)).rows(seqs_from, seqs_to)
+        else:
+            low, high = max(seqs_from, segment.from_seq), min(seqs_to, segment.to_seq)
+            wanted = sorted(seq for seq in only if low <= seq <= high)
+            if not wanted:
+                continue
+            lines = await _segment_lines(segment, blob_store)
+            candidates = [row for seq in wanted for row in lines.rows(seq, seq)]
+        for row in candidates:
             if row["trajectory_id"] != trajectory_id:
                 raise CorruptContent("Trajectory segment holds events of another trajectory")
             if keep is None or keep(row):
@@ -156,11 +168,14 @@ async def stored_events(db, trajectory, after: int, until: int, limit: int, *, b
     deletes the rows it covers in one transaction, so whatever the hot read
     missed is visible to the segment read that follows it.
     """
+    # Nothing past after + limit can be returned: bounding the hot read keeps a
+    # read of an archived range from loading hot rows it would drop.
+    upper = min(until, after + limit)
     hot = [_stored(row) for row in (await db.scalars(select(TrajectoryEvent).where(
-        TrajectoryEvent.trajectory_id == trajectory.id, TrajectoryEvent.seq > after, TrajectoryEvent.seq <= until)
+        TrajectoryEvent.trajectory_id == trajectory.id, TrajectoryEvent.seq > after, TrajectoryEvent.seq <= upper)
         .order_by(TrajectoryEvent.seq).limit(limit))).all()]
-    first_hot = hot[0]["seq"] if hot else until + 1
-    archived = await _archived(db, trajectory.id, after + 1, min(first_hot - 1, after + limit), blob_store)
+    first_hot = hot[0]["seq"] if hot else upper + 1
+    archived = await _archived(db, trajectory.id, after + 1, first_hot - 1, blob_store)
     return (archived + hot)[:limit]
 
 
@@ -264,10 +279,17 @@ async def records_for_reduction(resolver: Resolver, rows: list[TrajectoryRecord]
 
 # -- State at a watermark --
 
-def _hidden(summary: TrajectorySessionSummary | None) -> dict:
+def _hidden(summary: TrajectorySessionSummary | None, through: int) -> dict:
+    """coverage_start and unsupported_events of the summary as of through.
+
+    The summary row is read after the records or the trajectory row, so a
+    projection that committed in between may have added entries past through.
+    """
     statistics_ = summary.statistics if summary is not None else {}
-    return {"coverage_start": statistics_.get("coverage_start"),
-            "unsupported_events": list(statistics_.get("unsupported_events") or [])}
+    unsupported = [item for item in statistics_.get("unsupported_events") or []
+                   if isinstance(item, dict) and str(item.get("seq")).isdigit() and int(item["seq"]) <= through]
+    return {"coverage_start": statistics_.get("coverage_start") if through >= 1 else None,
+            "unsupported_events": unsupported}
 
 
 async def _head_state(db, trajectory, through: int, resolver: Resolver) -> dict | None:
@@ -278,7 +300,7 @@ async def _head_state(db, trajectory, through: int, resolver: Resolver) -> dict 
     if any(row.applied_seq > through or row.projector_version != PROJECTOR_VERSION for row in relevant):
         return None
     state = empty_state()
-    state.update(through_seq=str(through), **_hidden(await db.get(TrajectorySessionSummary, trajectory.id)))
+    state.update(through_seq=str(through), **_hidden(await db.get(TrajectorySessionSummary, trajectory.id), through))
     values = await resolver.expand_refs([row.data for row in relevant])
     state["records"] = {value["record_id"]: value for value in values}
     return state
@@ -300,8 +322,12 @@ async def _stored_checkpoint(db, trajectory, at_seq: int, *, blob_store=None) ->
     return row, state
 
 
-async def replay_events(db, trajectory, state: dict, through: int, resolver: Resolver, *, blob_store=None) -> dict:
-    """Fold the stored events after state["through_seq"] up to through (gap and tail checked)."""
+async def replay_events(db, trajectory, state: dict, through: int, resolver: Resolver, *, blob_store=None,
+                        observe=None) -> dict:
+    """Fold the stored events after state["through_seq"] up to through (gap and tail checked).
+
+    ``observe(row, before, after)`` sees each stored row with the states around its event.
+    """
     after = int(state["through_seq"])
     while after < through:
         rows = await stored_events(db, trajectory, after, through, 1000, blob_store=blob_store)
@@ -310,14 +336,21 @@ async def replay_events(db, trajectory, state: dict, through: int, resolver: Res
         for offset, row in enumerate(rows):
             if row["seq"] != after + offset + 1:
                 raise CorruptContent(f"Trajectory sequence gap before {row['seq']}")
-        for event, hints in await reduction_events(resolver, rows):
-            state = reduce(state, event, hints)
+        for row, (event, hints) in zip(rows, await reduction_events(resolver, rows)):
+            before, state = state, reduce(state, event, hints)
+            if observe is not None:
+                observe(row, before, state)
         after = rows[-1]["seq"]
     return state
 
 
-async def expanded_state(db, trajectory, through: int, *, blob_store=None, resolver: Resolver | None = None) -> dict:
-    """The state at through with every ``$ref`` expanded and payload availability as stored."""
+async def expanded_state(db, trajectory, through: int, *, blob_store=None, resolver: Resolver | None = None,
+                         observe=None) -> dict:
+    """The state at through with every ``$ref`` expanded and payload availability as stored.
+
+    ``observe`` (see replay_events) sees the events replayed on top of a
+    checkpoint; the head state read from record rows replays none.
+    """
     require_content(trajectory)
     resolver = resolver or Resolver(db, trajectory.id, through_seq=through, blob_store=blob_store)
     if through == trajectory.projected_seq:
@@ -326,7 +359,7 @@ async def expanded_state(db, trajectory, through: int, *, blob_store=None, resol
             return state
     checkpoint = await _stored_checkpoint(db, trajectory, through, blob_store=blob_store)
     state = checkpoint[1] if checkpoint is not None else empty_state()
-    state = await replay_events(db, trajectory, state, through, resolver, blob_store=blob_store)
+    state = await replay_events(db, trajectory, state, through, resolver, blob_store=blob_store, observe=observe)
     values = await resolver.expand_refs(list(state["records"].values()))
     return {**state, "records": dict(zip(state["records"], values))}
 
@@ -479,7 +512,7 @@ async def get_session_header(db, session_id: str, through_seq=None, *, blob_stor
     if trajectory is not None and trajectory.content_expired_at is not None:
         # Expired content keeps its summary and statistics; records are gone.
         state = empty_state()
-        state.update(through_seq=str(head), **_hidden(summary))
+        state.update(through_seq=str(head), **_hidden(summary, head))
         metrics = {**header["statistics"], "through_seq": str(head), "coverage_start": state["coverage_start"]}
     elif trajectory is not None and summary is not None and summary.applied_seq == head == trajectory.projected_seq:
         # The header is a frequent watermark probe: record summaries, never record data.
@@ -487,7 +520,7 @@ async def get_session_header(db, session_id: str, through_seq=None, *, blob_stor
             TrajectoryRecord.kind.in_(["agent", "run"]), TrajectoryRecord.start_seq <= head)
             .order_by(TrajectoryRecord.start_seq, TrajectoryRecord.record_id))).all()
         state = empty_state()
-        state.update(through_seq=str(head), records={row["record_id"]: row for row in rows}, **_hidden(summary))
+        state.update(through_seq=str(head), records={row["record_id"]: row for row in rows}, **_hidden(summary, head))
         metrics = {**header["statistics"], "duration_ms": statistics(state)["duration_ms"], "through_seq": str(head),
                    "coverage_start": state["coverage_start"]}
         summaries_only = True
@@ -608,7 +641,9 @@ async def list_records(db, trajectory, *, through_seq=None, before=None, limit=1
                 query = query.where(field == value)
         if before:
             start_seq, record_id = _record_cursor(before, head)
-            query = query.where(or_(TrajectoryRecord.start_seq < start_seq, and_(TrajectoryRecord.start_seq == start_seq, TrajectoryRecord.record_id < record_id)))
+            # Rows are ordered by the key column, which differs from the id only for ids wider than it.
+            query = query.where(or_(TrajectoryRecord.start_seq < start_seq, and_(TrajectoryRecord.start_seq == start_seq,
+                                                                                 TrajectoryRecord.record_id < record_key(record_id))))
         values = (await db.scalars(query.order_by(TrajectoryRecord.start_seq.desc(), TrajectoryRecord.record_id.desc()).limit(limit + 1))).all()
         page = values[:limit]
         next_cursor = cursor_encode([str(head), page[-1]["start_seq"], page[-1]["record_id"]]) if len(values) > limit and page else None
@@ -617,7 +652,7 @@ async def list_records(db, trajectory, *, through_seq=None, before=None, limit=1
             summary = await db.get(TrajectorySessionSummary, trajectory.id)
             return {"items": list(reversed(page)), "next_cursor": next_cursor, "has_more": len(values) > limit,
                     "through_seq": str(head), "projector_version": PROJECTOR_VERSION,
-                    "unsupported_events": _hidden(summary)["unsupported_events"]}
+                    "unsupported_events": _hidden(summary, head)["unsupported_events"]}
     state = await state_at(db, trajectory, head, blob_store=blob_store)
     records = list(state["records"].values())
     if kind:
@@ -639,10 +674,13 @@ async def list_records(db, trajectory, *, through_seq=None, before=None, limit=1
             "unsupported_events": state["unsupported_events"]}
 
 
-async def _record_events(db, trajectory, record: dict, start: int, end: int, blob_store) -> list[dict]:
+async def _record_events(db, trajectory, record: dict, start: int, end: int, blob_store,
+                         replayed: dict[int, dict] | None = None) -> list[dict]:
     """Stored events of a record in start..end: those the projector applied to it
-    (trajectory_record_events), and for assistant and system records every
-    event of the same request_id. A constant number of statements."""
+    (trajectory_record_events), for assistant and system records every event
+    of the same request_id, and ``replayed`` (stored rows by seq that a replay
+    saw change the record: links exist only up to projected_seq). A constant
+    number of statements."""
     indexed = select(TrajectoryRecordEvent.seq).where(TrajectoryRecordEvent.trajectory_id == trajectory.id,
         TrajectoryRecordEvent.record_id == record_key(record["record_id"]), TrajectoryRecordEvent.seq >= start,
         TrajectoryRecordEvent.seq <= end)
@@ -658,12 +696,18 @@ async def _record_events(db, trajectory, record: dict, start: int, end: int, blo
     segments_exist = start <= archived_upper and await db.scalar(select(TrajectorySegment.from_seq).where(
         TrajectorySegment.trajectory_id == trajectory.id, TrajectorySegment.to_seq >= start,
         TrajectorySegment.from_seq <= archived_upper).limit(1)) is not None
-    if not segments_exist:
-        return hot
-    seqs = set((await db.scalars(indexed)).all())
-    archived = await _archived(db, trajectory.id, start, archived_upper, blob_store, keep=lambda row: row["seq"] not in seen and (
-        row["seq"] in seqs or same_request and row.get("request_id") == request_id))
-    return archived + hot
+    rows = hot
+    if segments_exist:
+        seqs = set((await db.scalars(indexed)).all())
+        # Without the request rule only linked events match: read just their lines.
+        rows = await _archived(db, trajectory.id, start, archived_upper, blob_store, keep=lambda row: row["seq"] not in seen and (
+            row["seq"] in seqs or same_request and row.get("request_id") == request_id),
+            only=None if same_request else seqs) + hot
+    if replayed:
+        found = {row["seq"] for row in rows}
+        rows = sorted([*rows, *(row for seq, row in replayed.items() if start <= seq <= end and seq not in found)],
+                      key=lambda row: row["seq"])
+    return rows
 
 
 async def get_record(db, trajectory, record_id, *, through_seq=None, expand="full", blob_store=None):
@@ -675,7 +719,7 @@ async def get_record(db, trajectory, record_id, *, through_seq=None, expand="ful
     head = watermark(trajectory, through_seq)
     require_content(trajectory)
     resolver = Resolver(db, trajectory.id, through_seq=head, blob_store=blob_store)
-    record = None
+    record, replayed = None, {}
     if head == trajectory.projected_seq:
         stored = await db.get(TrajectoryRecord, (trajectory.id, record_key(record_id)))
         if stored is None or stored.start_seq > head:
@@ -683,12 +727,19 @@ async def get_record(db, trajectory, record_id, *, through_seq=None, expand="ful
         if stored.applied_seq <= head and stored.projector_version == PROJECTOR_VERSION:
             record = stored.data if expand == "refs" else (await resolver.expand_refs([stored.data]))[0]
     if record is None:
-        state = await expanded_state(db, trajectory, head, blob_store=blob_store, resolver=resolver)
+        def observe(row, before, after):
+            # Links exist only for projected events: a lagging projection has
+            # none for the newest ones, so keep what the replay applied here.
+            value = after["records"].get(record_id)
+            if value is not None and value is not before["records"].get(record_id):
+                replayed[row["seq"]] = row
+        state = await expanded_state(db, trajectory, head, blob_store=blob_store, resolver=resolver, observe=observe)
         record = state["records"].get(record_id)
         if record is None:
             raise LookupError("Record is not available at this position")
     record = (await resolver.visible([record]))[0]
-    events = await _record_events(db, trajectory, record, int(record["start_seq"]), min(head, int(record["as_of_seq"])), blob_store)
+    events = await _record_events(db, trajectory, record, int(record["start_seq"]), min(head, int(record["as_of_seq"])),
+                                  blob_store, replayed)
     values = await expand_all(db, trajectory.id, [row["data"] for row in events], through_seq=head,
                               refs=expand == "full", resolver=resolver)
     events = [{**event_dict(row), "data": value} for row, value in zip(events, values)]

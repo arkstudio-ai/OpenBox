@@ -25,9 +25,10 @@ import weakref
 from collections import OrderedDict
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm.attributes import set_committed_value
 
 from trajectory.config import integer
 from trajectory.storage import blob_key, decode_blob, encode_blob, get_blob_store
@@ -550,27 +551,40 @@ async def ensure_payload_rows(db, trajectory_id: str, blobs: list[dict], *,
                               first_seq: int) -> tuple[dict[str, TrajectoryPayload], int]:
     """(rows by dedupe_key, stored bytes of the rows this call inserted) for uploaded blobs.
 
-    Existing rows keep their payload_id and earlier first_seq; a row another
-    writer inserted meanwhile wins the unique key and is returned instead.
+    Existing rows keep their payload_id; a row another writer inserted
+    meanwhile wins the unique key and is returned instead. Every returned row
+    is visible from first_seq on: a row that starts later moves down to it,
+    since the caller references the content at first_seq (a record value can
+    equal a value ingest stored for a later event, and a state at first_seq
+    must still expand it).
     """
     unique = {blob["dedupe_key"]: blob for blob in blobs}
     rows = await existing_payloads(db, trajectory_id, unique)
     missing = [blob for key, blob in unique.items() if key not in rows]
-    if not missing:
-        return rows, 0
-    at = now()
-    created = {blob["dedupe_key"]: blob.get("payload_id") or f"pld_{uuid4().hex}" for blob in missing}
-    for chunk in _chunks(missing):
-        statement = _insert(db, TrajectoryPayload).values([
-            {"payload_id": created[blob["dedupe_key"]], "trajectory_id": trajectory_id, "dedupe_key": blob["dedupe_key"],
-             "sha256": blob["sha256"], "size_bytes": blob["size_bytes"], "stored_bytes": blob["stored_bytes"],
-             "media_type": JSON_MEDIA_TYPE, "encoding": blob["encoding"], "storage_kind": "blob",
-             "storage_key": blob["storage_key"], "source_asset_id": None, "availability": "available",
-             "first_seq": first_seq, "created_at": at, "deleted_at": None} for blob in chunk])
-        await db.execute(statement.on_conflict_do_nothing(index_elements=["trajectory_id", "dedupe_key"]))
-    rows.update(await existing_payloads(db, trajectory_id, created))
-    inserted = sum(blob["stored_bytes"] for blob in missing
-                   if blob["dedupe_key"] in rows and rows[blob["dedupe_key"]].payload_id == created[blob["dedupe_key"]])
+    inserted = 0
+    if missing:
+        at = now()
+        created = {blob["dedupe_key"]: blob.get("payload_id") or f"pld_{uuid4().hex}" for blob in missing}
+        for chunk in _chunks(missing):
+            statement = _insert(db, TrajectoryPayload).values([
+                {"payload_id": created[blob["dedupe_key"]], "trajectory_id": trajectory_id,
+                 "dedupe_key": blob["dedupe_key"], "sha256": blob["sha256"], "size_bytes": blob["size_bytes"],
+                 "stored_bytes": blob["stored_bytes"], "media_type": JSON_MEDIA_TYPE, "encoding": blob["encoding"],
+                 "storage_kind": "blob", "storage_key": blob["storage_key"], "source_asset_id": None,
+                 "availability": "available", "first_seq": first_seq, "created_at": at, "deleted_at": None}
+                for blob in chunk])
+            await db.execute(statement.on_conflict_do_nothing(index_elements=["trajectory_id", "dedupe_key"]))
+        rows.update(await existing_payloads(db, trajectory_id, created))
+        inserted = sum(blob["stored_bytes"] for blob in missing
+                       if blob["dedupe_key"] in rows and rows[blob["dedupe_key"]].payload_id == created[blob["dedupe_key"]])
+    later = sorted(row.payload_id for row in rows.values() if row.first_seq > first_seq)
+    for chunk in _chunks(later):
+        await db.execute(update(TrajectoryPayload).where(TrajectoryPayload.trajectory_id == trajectory_id,
+            TrajectoryPayload.payload_id.in_(chunk), TrajectoryPayload.first_seq > first_seq)
+            .values(first_seq=first_seq).execution_options(synchronize_session=False))
+    for row in rows.values():
+        if row.first_seq > first_seq:
+            set_committed_value(row, "first_seq", first_seq)
     return rows, inserted
 
 

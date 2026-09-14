@@ -8,7 +8,7 @@ import os
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import insert, text
+from sqlalchemy import insert, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -94,6 +94,40 @@ async def test_search_uses_the_trigram_index_escapes_wildcards_and_finds_cjk(pg_
         plan = "\n".join(row[0] for row in (await db.execute(text(
             "EXPLAIN SELECT record_id FROM trajectory_records WHERE search_doc ILIKE '%grep%'"))).all())
     assert "ix_trajectory_records_search_trgm" in plan
+
+
+async def test_short_cjk_and_wildcard_queries_match_like_a_substring_search(pg_trace, blobs):
+    # Queries shorter than a trigram cannot narrow the index; they must still find every match.
+    extra = [("input.accepted", {"text": "请查看季度报告"}, {"message_id": "msg_cjk"}),
+             ("input.accepted", {"text": "€ Zq"}, {"message_id": "msg_short"})]
+    await recorded(blobs, "trj_1", "s1", extra=extra)
+    async with trace_session() as db:
+        trajectory = (await get_trajectory(db, "s1"))[1]
+        documents = (await db.execute(select(TrajectoryRecord.record_id, TrajectoryRecord.search_doc)
+                                      .where(TrajectoryRecord.trajectory_id == trajectory.id)
+                                      .order_by(TrajectoryRecord.start_seq, TrajectoryRecord.record_id))).all()
+        for q in ("报", "报告", "季度报告", "€", "zQ", "Q", "%", "_", "50%_d", "e", "GR", "请查看季度报告的"):
+            found = await search(db, trajectory, q=q, limit=200)
+            assert [item["record_id"] for item in found["items"]] == [
+                record_id for record_id, document in documents if q.casefold() in document.casefold()], q
+            assert all(q.casefold() in item["preview"].casefold() for item in found["items"]), q
+        assert [item["record_id"] for item in (await search(db, trajectory, q="报"))["items"]] == ["user:msg_cjk"]
+
+
+async def test_record_detail_while_projection_lags_on_postgresql(pg_trace, blobs):
+    await recorded(blobs, "trj_1", "s1", project=False)
+    service = _service(blobs)
+    assert await service.project("trj_1", max_events=4) == 4
+    records = ("request:req_1", "assistant:req_1", "tool:call_1", "run:run_trj_1")
+
+    async def details():
+        async with trace_session() as db:
+            trajectory = (await get_trajectory(db, "s1"))[1]
+            return {record_id: await get_record(db, trajectory, record_id) for record_id in records}
+    lagging = await details()
+    assert [event["seq"] for event in lagging["tool:call_1"]["record"]["events"]] == ["7", "8", "9"]
+    await project_all(service, "trj_1")
+    assert lagging == await details()
 
 
 async def test_record_detail_statements_do_not_grow_with_records_on_postgresql(pg_trace, blobs):

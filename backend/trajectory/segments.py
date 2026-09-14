@@ -88,7 +88,8 @@ def _parse(line: bytes, seq: int | None = None) -> dict:
         raise CorruptContent("Invalid trajectory segment line") from exc
     if not isinstance(value, dict) or any(field not in value for field in SEGMENT_FIELDS):
         raise CorruptContent("Invalid trajectory segment row")
-    if seq is not None and value["seq"] != seq:
+    # bool is an int subclass: true must not pass for seq 1.
+    if type(value["seq"]) is not int or (seq is not None and value["seq"] != seq):
         raise CorruptContent("Trajectory segment sequence is not contiguous")
     return value
 
@@ -109,7 +110,7 @@ class SegmentLines:
         self.size = len(raw)
         self.from_seq = _parse(self.lines[0])["seq"]
         self.to_seq = self.from_seq + len(self.lines) - 1
-        if not isinstance(self.from_seq, int) or _parse(self.lines[-1])["seq"] != self.to_seq:
+        if _parse(self.lines[-1])["seq"] != self.to_seq:
             raise CorruptContent("Trajectory segment sequence is not contiguous")
 
     def rows(self, lo: int | None = None, hi: int | None = None) -> list[dict]:

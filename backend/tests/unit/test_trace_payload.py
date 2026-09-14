@@ -268,3 +268,23 @@ async def test_payload_rows_are_deduplicated_per_trajectory_and_keep_given_ids(t
         assert inserted_again == 0 and again[first["dedupe_key"]].payload_id == rows[first["dedupe_key"]].payload_id
         assert again[first["dedupe_key"]].first_seq == 7
         assert await db.scalar(select(func.count()).select_from(TrajectoryPayload)) == 2
+
+
+async def test_rows_referenced_from_an_earlier_position_become_visible_there(trajectory, blobs):
+    # Ingest stored the value for an event at seq 9; a record projected through seq 5 holds the same value.
+    value = {"output": "x" * 40}
+    later = await add_payload(blobs, TRAJECTORY, canonical(value), first_seq=9, media_type=JSON)
+    earlier = json_blob(TRAJECTORY, {"b": 2})
+    async with trace_session() as db:
+        await ensure_payload_rows(db, TRAJECTORY, [earlier], first_seq=3)
+    async with trace_session() as db:
+        rows, inserted = await ensure_payload_rows(db, TRAJECTORY, [json_blob(TRAJECTORY, value), earlier], first_seq=5)
+        assert inserted == 0 and rows[later.dedupe_key].payload_id == later.payload_id
+        assert (rows[later.dedupe_key].first_seq, rows[earlier["dedupe_key"]].first_seq) == (5, 3)
+    async with trace_session() as db:
+        stored = {row.payload_id: row.first_seq for row in (await db.scalars(select(TrajectoryPayload))).all()}
+        assert stored[later.payload_id] == 5 and stored[rows[earlier["dedupe_key"]].payload_id] == 3
+        trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
+        assert json.loads(await read_blob(db, trajectory_row, later.sha256, through_seq=5)) == value
+        with pytest.raises(LookupError):
+            await read_blob(db, trajectory_row, later.sha256, through_seq=4)

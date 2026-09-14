@@ -368,3 +368,89 @@ async def test_run_once_projects_lagging_trajectories_and_isolates_a_failing_one
         projected = {row.id: row.projected_seq for row in (await db.scalars(select(SessionTrajectory))).all()}
     assert projected == {TRAJECTORY: len(events), "trj_bad": 0, "trj_gone": 0}
     assert metrics.gauges["projection_lag_events"] == 1
+
+
+async def test_passes_rotate_past_failing_trajectories_that_back_off(trace_db, blobs, monkeypatch):
+    monkeypatch.setattr(projection, "PASS_TRAJECTORIES", 2)
+    missing = {"$payload": {"payload_id": "pld_missing", "sha256": "0" * 64, "size_bytes": 1, "media_type": JSON,
+                            "availability": "available"}}
+    names = ["trj_bad_1", "trj_bad_2", "trj_good"]
+    ingest = Ingest(blobs)
+    for trajectory_id in names:
+        session_id = f"session_{trajectory_id}"
+        await add_meta(session_id, USER)
+        await add_trajectory(trajectory_id, session_id, USER)
+        await ingest.append(trajectory_id, [{**_event(1, "input.accepted", {"text": "x"}), "trajectory_id": trajectory_id,
+                                             "session_id": session_id, "source_session_id": session_id,
+                                             "event_id": f"evt_{trajectory_id}"}])
+    async with trace_session() as db:
+        await db.execute(update(TrajectoryEvent).where(TrajectoryEvent.trajectory_id.in_(names[:2])).values(data=missing))
+    service = _service(blobs)
+    attempts, project = [], service.project
+
+    async def counted(trajectory_id, max_events=None):
+        attempts.append(trajectory_id)
+        return await project(trajectory_id, max_events)
+    service.project = counted
+    # The failing trajectories fill the first pass; the next one continues after them.
+    assert (await service.run_once(), await service.run_once()) == (0, 1)
+    assert attempts == names
+    # Until their retry is due they are skipped without taking a visit.
+    assert await service.run_once() == 0 and attempts == names
+    service._retry = {key: (0.0, failures) for key, (_, failures) in service._retry.items()}
+    assert await service.run_once() == 0 and attempts == names + names[:2]
+    assert service._retry[("project", "trj_bad_1")][1] == 2
+    async with trace_session() as db:
+        assert (await db.get(SessionTrajectory, "trj_good")).projected_seq == 1
+    # Checkpoint failures never escape maybe_checkpoint, and back off as well.
+    builds = []
+
+    async def broken(trajectory_id, **kwargs):
+        builds.append(trajectory_id)
+        raise ConnectionError("blob store unavailable")
+    monkeypatch.setattr(projection, "build_checkpoint", broken)
+    assert (await service.maybe_checkpoint("trj_good"), await service.maybe_checkpoint("trj_good")) == (False, False)
+    assert builds == ["trj_good"] and service._retry[("checkpoint", "trj_good")][1] == 1
+
+
+async def test_a_checkpoint_row_stored_elsewhere_moves_checkpoint_seq(trajectory, blobs):
+    events = [_event(seq, "input.accepted", {"text": f"message {seq}"}, message_id=f"msg_{seq}") for seq in range(1, 4)]
+    await Ingest(blobs).append(TRAJECTORY, events)
+    service = _service(blobs, checkpoint_interval=3)
+    assert await service.project(TRAJECTORY) == 3
+    async with trace_session() as db:
+        db.add(TrajectoryCheckpoint(trajectory_id=TRAJECTORY, through_seq=3, projector_version=1, state={},
+                                    digest="0" * 64, created_at=AT))
+    assert await service.maybe_checkpoint(TRAJECTORY) is False
+    async with trace_session() as db:
+        assert (await db.get(SessionTrajectory, TRAJECTORY)).checkpoint_seq == 3
+    # No longer a candidate: an idle pass does nothing.
+    assert await service.run_once() == 0
+
+
+async def test_record_values_equal_to_values_ingested_later_are_visible_where_projected(trajectory, blobs):
+    # The output chunks add up to the value that tool.finished carries at seq 4, which ingest
+    # stored first; a record projected through seq 3 references that row.
+    full = "a" * 30 + "b" * 30
+    events = [
+        _event(1, "tool.requested", {"name": "bash"}, call_id="call_1", **RUN),
+        _event(2, "tool.output", {"chunk_index": 0, "output": full[:30]}, call_id="call_1", **RUN),
+        _event(3, "tool.output", {"chunk_index": 1, "output": full[30:]}, call_id="call_1", **RUN),
+        _event(4, "tool.finished", {"status": "completed", "output": full}, call_id="call_1", **RUN),
+    ]
+    await Ingest(blobs, inline_bytes=40).append(TRAJECTORY, events)
+    service = _service(blobs, record_inline_bytes=48, checkpoint_interval=3)
+    assert await service.project(TRAJECTORY, max_events=3) == 3
+    async with trace_session() as db:
+        [row] = (await db.scalars(select(TrajectoryPayload))).all()
+        record = await db.get(TrajectoryRecord, (TRAJECTORY, "tool:call_1"))
+        assert record.data["data"]["output"]["$ref"]["payload_id"] == row.payload_id and row.first_seq == 3
+        trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
+        assert await state_at(db, trajectory_row, 3) == replay(events[:3])
+    assert await service.maybe_checkpoint(TRAJECTORY) is True
+    assert await service.project(TRAJECTORY) == 1
+    async with trace_session() as db:
+        trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
+        assert (await get_checkpoint(db, trajectory_row, 3))["state"] == replay(events[:3])
+        for through in range(len(events) + 1):
+            assert await state_at(db, trajectory_row, through) == replay(events[:through]), through

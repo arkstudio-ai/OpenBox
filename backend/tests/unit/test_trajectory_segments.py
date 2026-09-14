@@ -142,3 +142,14 @@ async def test_load_segment_verifies_the_object_against_its_manifest_row():
     await store.put(KEY, stored[:-4], content_type="application/zstd", if_absent=False)
     with pytest.raises(CorruptContent):
         await load_segment(store, _manifest(meta))
+
+
+@pytest.mark.parametrize("seq", ["1", True, 1.0, None])
+def test_a_seq_that_is_not_an_integer_is_corrupt_content(seq):
+    first = canonical({**_row(1, occurred_at="t", recorded_at="t"), "seq": seq})
+    with pytest.raises(CorruptContent, match="sequence"):
+        SegmentLines(first + b"\n")
+    good = canonical(_row(1, occurred_at="t", recorded_at="t"))
+    last = canonical({**_row(2, occurred_at="t", recorded_at="t"), "seq": seq})
+    with pytest.raises(CorruptContent, match="sequence"):
+        SegmentLines(good + b"\n" + last + b"\n")

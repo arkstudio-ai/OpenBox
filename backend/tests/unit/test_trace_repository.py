@@ -312,6 +312,78 @@ async def test_record_detail_statements_do_not_grow_with_the_number_of_records(t
     assert counts["trj_small"] == counts["trj_large"] <= 6
 
 
+async def test_record_detail_while_projection_lags_lists_every_event_that_changed_the_record(trace_db, blobs):
+    await recorded(blobs, "trj_1", "s1", project=False)
+    service = ProjectionService(settings(), blob_store=blobs, metrics=Metrics())
+    assert await service.project("trj_1", max_events=4) == 4
+    positions, records = (None, "2", "5", "9"), ("request:req_1", "assistant:req_1", "tool:call_1", "run:run_trj_1")
+
+    async def details():
+        async with trace_session() as db:
+            trajectory = (await get_trajectory(db, "s1"))[1]
+            found = {}
+            for through in positions:
+                for record_id in records:
+                    try:
+                        found[through, record_id] = await get_record(db, trajectory, record_id, through_seq=through)
+                    except LookupError:
+                        found[through, record_id] = None
+            return found
+    lagging = await details()
+    # Events after the projected position have no links yet; the replay supplies them.
+    assert _seqs(lagging[None, "request:req_1"]) == ["2", "3", "4", "5", "6"]
+    assert _seqs(lagging[None, "tool:call_1"]) == ["7", "8", "9"] and _seqs(lagging[None, "run:run_trj_1"]) == ["1", "12"]
+    await project_all(service, "trj_1")
+    assert lagging == await details()
+
+
+async def test_reads_at_the_projected_position_ignore_summary_entries_written_after_it(trace_db, blobs):
+    await add_meta("s1")
+    await add_trajectory("trj_1", "s1")
+    events = [_event("trj_1", "s1", "user_a", 1, "trajectory.started", {}),
+              _event("trj_1", "s1", "user_a", 2, "input.accepted", {"text": "hi"}, message_id="msg_1"),
+              _event("trj_1", "s1", "user_a", 3, "trajectory.renamed", {}, version=2)]
+    await Ingest(blobs).append("trj_1", events)
+    service = ProjectionService(settings(), blob_store=blobs, metrics=Metrics())
+    assert await service.project("trj_1", max_events=2) == 2
+    async with trace_session() as db:
+        stale = (await get_trajectory(db, "s1"))[1]
+    # The unsupported event is projected after the trajectory row was read.
+    assert await service.project("trj_1") == 1
+    async with trace_session() as db:
+        assert (await list_records(db, stale, through_seq="2"))["unsupported_events"] == []
+        assert await state_at(db, stale, 2) == replay(events[:2])
+        current = (await get_trajectory(db, "s1"))[1]
+        assert (await list_records(db, current))["unsupported_events"] == replay(events)["unsupported_events"] != []
+
+
+async def test_list_records_and_header_statements_do_not_grow_with_the_number_of_records(trace_db, blobs):
+    counts = {}
+    for trajectory_id, fillers in (("trj_small", 10), ("trj_large", 10_000)):
+        session_id = f"s_{trajectory_id}"
+        await recorded(blobs, trajectory_id, session_id)
+        rows = []
+        for index in range(fillers):
+            summary = {"record_id": f"user:filler_{index:05d}", "kind": "user", "status": "accepted", "start_seq": "1",
+                       "as_of_seq": "1"}
+            rows.append({"trajectory_id": trajectory_id, "record_id": summary["record_id"], "kind": "user",
+                         "status": "accepted", "start_seq": 1, "applied_seq": 1, "projector_version": 1,
+                         "search_doc": "user", "data": {**summary, "data": {"text": "x" * 100}}, "summary": summary})
+        async with trace_session() as db:
+            await db.execute(insert(TrajectoryRecord), rows)
+        async with trace_session() as db:
+            trajectory = (await get_trajectory(db, session_id))[1]
+            with statements(trace_db) as seen:
+                page = await list_records(db, trajectory, limit=5)
+                second = await list_records(db, trajectory, limit=5, before=page["next_cursor"])
+                header = await get_session_header(db, session_id)
+            counts[trajectory_id] = len(seen)
+        assert page["has_more"] and second["has_more"] and len(second["items"]) == 5
+        assert header["statistics"]["request_count"] == 1
+        assert not any("trajectory_records.data" in statement for statement in seen)
+    assert counts["trj_small"] == counts["trj_large"]
+
+
 async def test_record_ids_wider_than_the_key_column_round_trip(trace_db, blobs):
     await add_meta("s1")
     await add_trajectory("trj_1", "s1")
@@ -395,6 +467,27 @@ async def test_read_events_spans_hot_rows_and_segments_with_gap_tail_and_digest_
     async with trace_session() as db:
         with pytest.raises(CorruptContent, match="digest"):
             await read_events(db, (await get_trajectory(db, "s1"))[1], until_seq="9")
+
+
+async def test_record_detail_downloads_only_the_segments_holding_its_linked_events(trace_db, blobs):
+    await recorded(blobs, "trj_1", "s1")
+    records = ("run:run_trj_1", "tool:call_1", "assistant:req_1")
+    async with trace_session() as db:
+        trajectory = (await get_trajectory(db, "s1"))[1]
+        hot = {record_id: await get_record(db, trajectory, record_id) for record_id in records}
+    for through in (3, 6, 9):
+        await archive(blobs, "trj_1", through)
+    reset_segment_cache()
+    async with trace_session() as db:
+        trajectory = (await get_trajectory(db, "s1"))[1]
+        gets = blobs.gets
+        # The run's events are 1 (first segment) and 12 (hot): the other two segments stay untouched.
+        assert await get_record(db, trajectory, "run:run_trj_1") == hot["run:run_trj_1"]
+        assert blobs.gets == gets + 1
+        for record_id in records[1:]:
+            assert await get_record(db, trajectory, record_id) == hot[record_id]
+        page = await read_events(db, trajectory, after_seq="2", limit=5)
+        assert [event["seq"] for event in page["events"]] == ["3", "4", "5", "6", "7"] and page["has_more"]
 
 
 async def read_events_rows(blobs, segment):

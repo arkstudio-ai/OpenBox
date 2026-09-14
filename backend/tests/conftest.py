@@ -12,6 +12,16 @@ from db.base import Base, init_engine, close_engine, get_db_session
 _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
 
 
+def pytest_collection_modifyitems(config, items):
+    """Skip legacy trajectory tests listed in tests/legacy_trajectory_quarantine.py (wave 3 empties it)."""
+    from tests.legacy_trajectory_quarantine import QUARANTINE
+
+    for item in items:
+        reason = QUARANTINE.get(item.nodeid) or QUARANTINE.get(item.nodeid.split("[", 1)[0])
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=f"legacy trajectory quarantine: {reason}"))
+
+
 @pytest.fixture(autouse=True)
 def trajectory_env_from_shell():
     """Tests see only the shell's TRAJECTORY_* values; a test that records sets its own.

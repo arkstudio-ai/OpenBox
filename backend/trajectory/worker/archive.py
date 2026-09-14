@@ -41,6 +41,8 @@ SEGMENT_FIELDS = (
     "request_id", "call_id", "agent_id", "context", "data", "hints", "content_hash", "occurred_at", "recorded_at",
 )
 SEGMENT_CONTENT_TYPE = "application/zstd"
+#: Cadence of the worker loop that calls run_once (SPEC §8.10); run_once itself never waits.
+RUN_INTERVAL_SECONDS = 30
 #: Bounds of one pass; whatever is left waits for the next pass.
 TRAJECTORIES_PER_PASS = 100
 SEGMENTS_PER_TRAJECTORY = 20
@@ -312,6 +314,8 @@ class ArchiveService:
             return
         today = now().date()
         retry = False
+        # A week ahead keeps new rows out of the default partition, which every
+        # partition creation scans (and empties into the new partition).
         try:
             await self._maintenance(lambda connection: partitions.ensure_partitions(
                 connection, today, PARTITION_DAYS_AHEAD))

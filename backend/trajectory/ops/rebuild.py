@@ -3,8 +3,11 @@
 Proves that archived trajectory events can be restored from object storage. For
 each selected live trajectory it copies the trajectory row into a scratch trace
 database (created and migrated by the script), downloads every segment listed
-in trajectory_segments, checks the object's sha256, trajectory, event count and
-sequence range, inserts the events as hot rows, copies the still-hot tail from
+in trajectory_segments, decodes it the way the worker stores it (zstd frames of
+JSON lines, one stored event row per line, SPEC §8.10), checks the sha256 of
+the decoded lines, the trajectory, event count and sequence range and the
+row's raw and stored byte counts, inserts the events as hot rows, copies the
+still-hot tail from
 the live database, and compares a digest of the rebuilt stream read back from
 the scratch database with a digest of the stream read from the sources. Event
 ids and content hashes are also checked against trajectory_event_keys where
@@ -25,7 +28,6 @@ Exit status: 0 when every trajectory rebuilt identically, 1 on any mismatch,
 import argparse
 import asyncio
 import hashlib
-import io
 import json
 import os
 import sys
@@ -42,6 +44,7 @@ from sqlalchemy.sql import sqltypes
 
 from core.aliyun import AliyunCredentialsError
 from trajectory.ops.oss import OpsStorageError, blob_provider, describe_error, http_client, local_blob_root, oss_client
+from trajectory.storage import decode_blob
 from trajectory.types import canonical, iso
 
 SCRATCH_PREFIX = "openbox_trace_rebuild_"
@@ -184,13 +187,14 @@ def _decode(stored: bytes, compression: str | None) -> bytes:
         return stored
     if kind != "zstd":
         raise RebuildError(f"unsupported compression {compression!r}")
-    with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(stored), read_across_frames=True) as reader:
-        return reader.read()
+    # The worker's decoder: every frame, and a truncated frame is an error rather than short content.
+    return decode_blob(stored, "zstd")
 
 
 async def segment_events(store: SegmentStore, segment: dict, trajectory_id: str) -> list[dict]:
     """Decoded, checked events of one segment row; raises on any inconsistency."""
-    raw = _decode(await store.get(segment["storage_key"]), segment.get("compression"))
+    stored = await store.get(segment["storage_key"])
+    raw = _decode(stored, segment.get("compression"))
     if segment.get("sha256") and hashlib.sha256(raw).hexdigest() != segment["sha256"]:
         raise RebuildError("sha256 of the decoded segment does not match trajectory_segments")
     events = [json.loads(line) for line in raw.splitlines() if line.strip()]
@@ -203,6 +207,9 @@ async def segment_events(store: SegmentStore, segment: dict, trajectory_id: str)
         raise RebuildError(f"event sequence does not cover {first}-{last} contiguously")
     if segment.get("event_count") is not None and len(events) != int(segment["event_count"]):
         raise RebuildError(f"{len(events)} events, trajectory_segments says {segment['event_count']}")
+    for column, size in (("raw_bytes", len(raw)), ("stored_bytes", len(stored))):
+        if segment.get(column) is not None and int(segment[column]) != size:
+            raise RebuildError(f"the object has {size} {column.replace('_', ' ')}, trajectory_segments says {segment[column]}")
     return events
 
 

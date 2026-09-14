@@ -146,12 +146,15 @@ def event_values(trajectory_id: str, seq: int, **overrides) -> dict:
     """A hot ``trajectory_events`` row as ingest stores it (microsecond timestamps included)."""
     recorded_at = overrides.pop("recorded_at", AT + timedelta(seconds=seq, microseconds=seq * 1111))
     session_id = overrides.pop("session_id", f"session_{trajectory_id}")
+    # Like ingest, the context holds every non-null identity field; the id columns only index them.
+    context = {"user_id": "user_a", "session_id": session_id, "source_session_id": session_id}
+    context.update({field: overrides[field] for field in ("request_id", "call_id", "agent_id")
+                    if overrides.get(field) is not None})
     values = {
         "trajectory_id": trajectory_id, "seq": seq, "recorded_on": recorded_at.astimezone(timezone.utc).date(),
         "event_id": f"evt_{trajectory_id}_{seq}", "type": "input.accepted", "version": 1, "user_id": "user_a",
         "session_id": session_id, "source_session_id": session_id, "request_id": None, "call_id": None,
-        "agent_id": None, "context": {"user_id": "user_a", "session_id": session_id},
-        "data": {"text": f"message {seq}"}, "hints": None,
+        "agent_id": None, "context": context, "data": {"text": f"message {seq}"}, "hints": None,
         "content_hash": hashlib.sha256(f"{trajectory_id}:{seq}".encode()).hexdigest(),
         "occurred_at": recorded_at - timedelta(milliseconds=5), "recorded_at": recorded_at,
     }

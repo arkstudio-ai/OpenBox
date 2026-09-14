@@ -105,16 +105,18 @@ def cached_credentials() -> dict:
 
     Keyed by the environment that selects the credentials, so a changed key or
     profile applies at once. Failures are not cached; the next call retries.
+    Every call returns its own copy, so a caller that edits the dict cannot
+    change what later callers sign with.
     """
     global _credentials
     selector = tuple(os.environ.get(name) for name in _CREDENTIAL_SELECTORS)
     now = _clock()
     cached = _credentials
     if cached is not None and cached[0] == selector and now - cached[1] < CREDENTIALS_TTL_SECONDS:
-        return cached[2]
-    creds = load_credentials()
+        return dict(cached[2])
+    creds = dict(load_credentials())
     _credentials = (selector, now, creds)
-    return creds
+    return dict(creds)
 
 
 def clear_credentials_cache() -> None:
@@ -378,7 +380,10 @@ class OssClient:
         forbid_overwrite sends x-oss-forbid-overwrite: an existing object is
         kept and the call still succeeds, which makes content-addressed writes
         idempotent. OSS does not report that object's ETag, so the result is "".
+        Any bytes-like data is accepted (bytearray, memoryview), as by the
+        local and in-memory blob stores.
         """
+        data = _as_bytes(data)
         headers = {"Content-Type": content_type, "Content-MD5": _content_md5(data)}
         if forbid_overwrite:
             headers["x-oss-forbid-overwrite"] = "true"
@@ -393,13 +398,15 @@ class OssClient:
         raise error
 
     async def get_object(self, key: str, *, internal: bool = False, timeout: float = 120) -> bytes:
-        """The whole object; FileNotFoundError when OSS answers 404."""
+        """The whole object; FileNotFoundError when OSS answers 404 for the
+        object (a 404 NoSuchBucket raises OssError, see _absent)."""
         resp = await self._request("GET", _object_key(key), internal=internal, timeout=timeout)
         if resp.status_code == 200:
             return resp.content
-        if resp.status_code == 404:
+        absent, error = _absent(resp)
+        if absent:
             raise FileNotFoundError(f"OSS object not found: {key}")
-        raise _error(resp)
+        raise error
 
     async def head_object_info(self, key: str, *, internal: bool = False) -> dict | None:
         """size, mime, etag and last_modified of an object; None when absent."""
@@ -411,19 +418,22 @@ class OssClient:
                 "etag": resp.headers.get("etag", "").strip('"'),
                 "last_modified": resp.headers.get("last-modified", ""),
             }
-        if resp.status_code == 404:
+        absent, error = _absent(resp)
+        if absent:
             return None
-        raise _error(resp)
+        raise error
 
     async def delete_object_key(self, key: str, *, internal: bool = False) -> bool:
         """Delete one object. OSS answers 204 whether or not it existed, so
-        True means gone; False only when OSS answered 404 (nothing to delete)."""
+        True means gone; False only when OSS answered 404 for the object
+        (nothing to delete). A 404 NoSuchBucket raises OssError."""
         resp = await self._request("DELETE", _object_key(key), internal=internal)
         if resp.status_code in (200, 204):
             return True
-        if resp.status_code == 404:
+        absent, error = _absent(resp)
+        if absent:
             return False
-        raise _error(resp)
+        raise error
 
     async def delete_objects(self, keys: list[str], *, internal: bool = False) -> int:
         """Delete keys with POST ?delete in quiet mode, DELETE_BATCH_LIMIT per
@@ -481,8 +491,27 @@ def _object_key(key: str) -> str:
     return key
 
 
+def _as_bytes(data) -> bytes:
+    # httpx sends only bytes as a body: it iterates a bytearray or memoryview
+    # and fails. memoryview() rejects what is not bytes-like (an int would
+    # otherwise become that many zero bytes).
+    return data if isinstance(data, bytes) else bytes(memoryview(data))
+
+
 def _content_md5(data: bytes) -> str:
     return base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode()
+
+
+def _absent(resp) -> tuple[bool, OssError]:
+    """(whether the answer means "no such object", the parsed error).
+
+    Only a 404 for the object itself counts. A 404 NoSuchBucket is a
+    configuration error: read as absent it would turn a wrong bucket name into
+    deleted content, a free key and deletes that succeed without removing
+    anything.
+    """
+    error = _error(resp)
+    return resp.status_code == 404 and error.code != "NoSuchBucket", error
 
 
 def _local_name(tag: str) -> str:

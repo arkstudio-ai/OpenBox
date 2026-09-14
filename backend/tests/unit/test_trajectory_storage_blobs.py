@@ -1,5 +1,6 @@
 """Trajectory blob stores, encodings, keys, fault injection and configuration."""
 import asyncio
+import base64
 import json
 import os
 from pathlib import Path
@@ -341,6 +342,48 @@ async def test_local_listing_skips_in_flight_temp_files(tmp_path):
     assert await keys_of(store, "trajectories/") == [key]
 
 
+async def test_local_delete_prefix_removes_temp_files_of_interrupted_writes(tmp_path):
+    # A process killed between the temp write and the rename leaves the bytes
+    # in a temp file. Deleting the trajectory must not leave them behind.
+    root = tmp_path / "root"
+    store = LocalBlobStore(root)
+    key, other = f"trajectories/trj_1/blobs/{SHA}", f"trajectories/trj_2/blobs/{SHA}"
+    await store.put(key, b"x", content_type="text/plain")
+    await store.put(other, b"y", content_type="text/plain")
+    orphans = [
+        root / "trajectories" / "trj_1" / "blobs" / ".tmp-crashed",
+        root / "trajectories" / "trj_1" / "segments" / ".tmp-killed",
+    ]
+    orphans[1].parent.mkdir(parents=True)
+    for orphan in orphans:
+        orphan.write_bytes(b"content of a write that never renamed")
+    unrelated = root / "trajectories" / "trj_2" / "blobs" / ".tmp-in-flight"
+    unrelated.write_bytes(b"another trajectory")
+
+    assert await keys_of(store, "trajectories/trj_1/") == [key]
+    assert await store.delete_prefix("trajectories/trj_1/") == 1
+    assert not (root / "trajectories" / "trj_1").exists()
+    assert unrelated.exists() and await store.get(other) == b"y"
+    assert await store.delete_prefix("trajectories/trj_2/") == 1
+    assert root.is_dir() and list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("wrap", [bytearray, memoryview])
+async def test_every_store_accepts_bytes_like_data_and_rejects_the_rest(tmp_path, wrap):
+    key, other = blob_key("trj_1", SHA), blob_key("trj_1", SHA2)
+    bucket = FakeOssBucket()
+    for store in (LocalBlobStore(tmp_path), MemoryBlobStore(), oss_store(bucket)):
+        source = bytearray(b"payload")
+        await store.put(key, wrap(source), content_type="application/octet-stream", if_absent=False)
+        source[:] = b"mutated"
+        assert await store.get(key) == b"payload"
+        for data in (7, "text"):
+            with pytest.raises(TypeError):
+                await store.put(other, data, content_type="application/octet-stream")
+        assert not await store.exists(other)
+    assert bucket.objects == {key: b"payload"}
+
+
 # -- MemoryBlobStore --
 
 async def test_memory_store_counters_and_semantics():
@@ -652,6 +695,55 @@ async def test_oss_blob_store_lists_and_deletes_prefixes_across_pages():
     assert list(bucket.objects) == [f"trajectories/trj_10/blobs/{SHA}"]
     assert [request.method for request in bucket.requests] == ["GET", "POST"] * 3
     assert {request.url.host for request in bucket.requests} == {"bucket.oss-cn-shanghai.aliyuncs.com"}
+
+
+async def test_oss_blob_store_signs_each_listing_page_with_current_credentials():
+    bucket = FakeOssBucket()
+    for index in range(2500):
+        bucket.objects[f"trajectories/trj_1/blobs/{index:064x}"] = b"x"
+    loads = []
+
+    def credentials():
+        loads.append(True)
+        return {"access_key_id": f"ak-{len(loads)}", "access_key_secret": "sk"}
+
+    store = oss_store(bucket, credentials=credentials)
+    assert len(await keys_of(store, "trajectories/trj_1/")) == 2500
+    assert [request.headers["authorization"].split(":")[0] for request in bucket.requests] == [
+        "OSS ak-1", "OSS ak-2", "OSS ak-3",
+    ]
+    bucket.requests.clear()
+    assert await store.delete_prefix("trajectories/trj_1/") == 2500
+    assert [(request.method, request.headers["authorization"].split(":")[0]) for request in bucket.requests] == [
+        ("GET", "OSS ak-4"), ("POST", "OSS ak-4"), ("GET", "OSS ak-5"), ("POST", "OSS ak-5"),
+        ("GET", "OSS ak-6"), ("POST", "OSS ak-6"),
+    ]
+
+
+async def test_oss_blob_store_reports_a_missing_bucket_instead_of_missing_objects():
+    missing = b"<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist.</Message></Error>"
+
+    def handler(request):
+        if request.method == "HEAD":
+            return httpx.Response(404, headers={"x-oss-err": base64.b64encode(missing).decode()})
+        return httpx.Response(404, content=missing)
+
+    store = OssBlobStore(
+        "renamed-bucket", "cn-shanghai", credentials=lambda: {"access_key_id": "ak", "access_key_secret": "sk"},
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    key = blob_key("trj_1", SHA)
+    for call in (
+        lambda: store.get(key),
+        lambda: store.exists(key),
+        lambda: store.delete(key),
+        lambda: store.put(key, b"x", content_type="text/plain"),
+        lambda: store.delete_prefix("trajectories/trj_1/"),
+        lambda: keys_of(store, "trajectories/"),
+    ):
+        with pytest.raises(oss.OssError) as caught:
+            await call()
+        assert (caught.value.status, caught.value.code) == (404, "NoSuchBucket")
 
 
 async def test_oss_blob_store_signs_with_credentials_refreshed_every_ten_minutes(monkeypatch):

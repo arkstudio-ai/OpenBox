@@ -172,7 +172,60 @@ async def test_string_to_sign_layout_of_each_request_kind(monkeypatch):
         assert request.headers["authorization"] == f"OSS {KEY_ID}:{reference_signature(request)}"
 
 
+async def test_signatures_match_vectors_computed_by_the_oss2_sdk(monkeypatch):
+    # Authorization values produced by the V1 signer of the oss2 2.19.1 SDK
+    # (ProviderAuth) for exactly these requests with Date fixed to FIXED_DATE:
+    # a signer this module did not write. They also pin the request shapes
+    # (headers, Content-MD5 of the delete body, query, key encoding).
+    monkeypatch.setattr(oss, "formatdate", lambda *args, **kwargs: FIXED_DATE)
+    fake = FakeOss(
+        httpx.Response(200), httpx.Response(200, content=listing([])), httpx.Response(200), httpx.Response(200, content=b"x"),
+    )
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    endpoint, key_id, secret = "oss-cn-shanghai.aliyuncs.com", "LTAI5tTestAccessKey", "TestAccessKeySecret0123456789abcd"
+    plain = OssClient("openbox-traces", "cn-shanghai", endpoint, key_id, secret, http=http)
+    sts = OssClient("openbox-traces", "cn-shanghai", endpoint, key_id, secret, security_token="CAIS+sts/token==", http=http)
+    blob = "trajectories/trj_1/blobs/" + "a" * 64
+
+    await plain.put_object(blob, b'{"a":1}', content_type="application/json", forbid_overwrite=True)
+    await sts.list_objects("trajectories/trj_1/", continuation_token="ChR0+/=", max_keys=100)
+    await plain.delete_objects([blob])
+    await plain.get_object("dir/中文 key+%")
+
+    assert [request.headers["authorization"] for request in fake.requests] == [
+        "OSS LTAI5tTestAccessKey:Tp57c8MHTkjmetprUFvaRBSXtI8=",
+        "OSS LTAI5tTestAccessKey:q9raD+YBairUX0R4HBlQG5PGvt4=",
+        "OSS LTAI5tTestAccessKey:uZm4ciB+uoh3UqMji7uOl4vIN+E=",
+        "OSS LTAI5tTestAccessKey:T0P/UpKQdbdk9U4QegwmnRDDXso=",
+    ]
+    assert fake.requests[1].url.raw_path == (
+        b"/?list-type=2&max-keys=100&encoding-type=url&prefix=trajectories%2Ftrj_1%2F&continuation-token=ChR0%2B%2F%3D"
+    )
+    assert fake.requests[3].url.raw_path == b"/dir/%E4%B8%AD%E6%96%87%20key%2B%25"
+    for request in fake.requests:
+        assert request.url.host == "openbox-traces.oss-cn-shanghai.aliyuncs.com"
+
+
 # -- put_object --
+
+@pytest.mark.parametrize("wrap", [bytearray, memoryview])
+async def test_put_object_accepts_bytes_like_data(wrap):
+    fake = FakeOss(httpx.Response(200, headers={"ETag": '"E"'}))
+    assert await client_for(fake).put_object("a/b.bin", wrap(b"\x00\x01payload"), internal=True) == "E"
+    [request] = fake.requests
+    assert request.method == "PUT" and request.url.host == INTERNAL_HOST and request.url.raw_path == b"/a/b.bin"
+    assert request.content == b"\x00\x01payload"
+    assert request.headers["content-md5"] == md5_b64(b"\x00\x01payload")
+    assert_signed(request)
+
+
+@pytest.mark.parametrize("data", [5, "text", None])
+async def test_put_object_rejects_data_that_is_not_bytes_like(data):
+    fake = FakeOss()
+    with pytest.raises(TypeError):
+        await client_for(fake).put_object("a/b", data)
+    assert fake.requests == []
+
 
 async def test_put_object_plain_write_uses_the_per_call_timeout():
     fake = FakeOss(httpx.Response(200, headers={"ETag": '"E"'}))
@@ -288,6 +341,46 @@ async def test_delete_object_key_outcomes():
     assert fake.requests[2].url.host == INTERNAL_HOST
     for request in fake.requests:
         assert_signed(request)
+
+
+async def test_a_missing_bucket_is_an_error_not_a_missing_object():
+    # OSS answers 404 NoSuchBucket for a wrong bucket name. Read as "no such
+    # object" it would look like deleted content, a free key or a delete that
+    # worked; it must fail loudly instead.
+    missing = error_body("NoSuchBucket", "The specified bucket does not exist.", "req-nb")
+    fake = FakeOss(
+        httpx.Response(404, content=missing),
+        httpx.Response(404, headers={"x-oss-err": base64.b64encode(missing).decode()}),
+        httpx.Response(404, content=missing),
+    )
+    client = client_for(fake)
+    for call in (
+        lambda: client.get_object("a/b"),
+        lambda: client.head_object_info("a/b"),
+        lambda: client.delete_object_key("a/b"),
+    ):
+        with pytest.raises(OssError) as caught:
+            await call()
+        assert (caught.value.status, caught.value.code, caught.value.request_id) == (404, "NoSuchBucket", "req-nb")
+    assert [(request.method, request.url.raw_path) for request in fake.requests] == [
+        ("GET", b"/a/b"), ("HEAD", b"/a/b"), ("DELETE", b"/a/b"),
+    ]
+    for request in fake.requests:
+        assert_signed(request)
+
+
+async def test_a_coded_missing_object_keeps_the_documented_outcomes():
+    no_key = error_body("NoSuchKey", "The specified key does not exist.")
+    fake = FakeOss(
+        httpx.Response(404, content=no_key),
+        httpx.Response(404, headers={"x-oss-err": base64.b64encode(no_key).decode()}),
+        httpx.Response(404, content=no_key),
+    )
+    client = client_for(fake)
+    with pytest.raises(FileNotFoundError):
+        await client.get_object("a/b")
+    assert await client.head_object_info("a/b") is None
+    assert await client.delete_object_key("a/b") is False
 
 
 @pytest.mark.parametrize("key", ["", "/absolute", "\\windows"])
@@ -498,6 +591,21 @@ def test_credentials_are_reused_for_ten_minutes(monkeypatch, credential_clock):
     monkeypatch.setenv("ALIBABA_CLOUD_PROFILE", "rotated")
     assert oss.cached_credentials()["access_key_id"] == "ak-3"
     assert len(loads) == 3
+
+
+def test_cached_credentials_hand_out_copies(monkeypatch, credential_clock):
+    loads = []
+
+    def load():
+        loads.append(True)
+        return {"access_key_id": "ak", "access_key_secret": "sk", "security_token": "sts"}
+
+    monkeypatch.setattr(oss, "load_credentials", load)
+    handed_out = oss.cached_credentials()
+    handed_out["access_key_secret"] = "tampered"
+    handed_out.pop("security_token")
+    assert oss.cached_credentials() == {"access_key_id": "ak", "access_key_secret": "sk", "security_token": "sts"}
+    assert len(loads) == 1
 
 
 def test_credential_failures_are_not_cached(monkeypatch, credential_clock):

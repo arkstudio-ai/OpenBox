@@ -136,6 +136,12 @@ def check_key(key: str, *, prefix: bool = False) -> str:
     return key
 
 
+def _as_bytes(data) -> bytes:
+    # Every store takes any bytes-like object (the OSS client does too) and
+    # rejects the rest; bytes(5) would silently store five zero bytes.
+    return data if isinstance(data, bytes) else bytes(memoryview(data))
+
+
 def _check_delete_prefix(prefix: str) -> str:
     # A prefix delete must name a whole directory: "" would empty the store
     # (on OSS possibly a bucket shared with user assets) and "trj_1" would
@@ -266,9 +272,11 @@ class OssBlobStore:
     async def delete_prefix(self, prefix: str) -> int:
         _check_delete_prefix(prefix)
         # Page by page: a continuation token names the last listed key, so
-        # deleting a page does not disturb the next one.
-        client, token, deleted = self._client(), None, 0
+        # deleting a page does not disturb the next one. Each page signs with
+        # a fresh client, so a long run picks up refreshed credentials.
+        token, deleted = None, 0
         while True:
+            client = self._client()
             objects, token = await client.list_objects(prefix, continuation_token=token, internal=self.internal)
             if objects:
                 deleted += await client.delete_objects([item["key"] for item in objects], internal=self.internal)
@@ -277,9 +285,10 @@ class OssBlobStore:
 
     async def list(self, prefix: str) -> AsyncIterator[str]:
         check_key(prefix, prefix=True)
-        client, token = self._client(), None
+        token = None
         while True:
-            objects, token = await client.list_objects(prefix, continuation_token=token, internal=self.internal)
+            # The consumer may take long between pages: sign each page anew.
+            objects, token = await self._client().list_objects(prefix, continuation_token=token, internal=self.internal)
             for item in objects:
                 yield item["key"]
             if token is None:
@@ -301,7 +310,7 @@ class LocalBlobStore:
         return self.root / check_key(key)
 
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None:
-        await asyncio.to_thread(self._write, self._path(key), bytes(data), if_absent)
+        await asyncio.to_thread(self._write, self._path(key), _as_bytes(data), if_absent)
 
     async def get(self, key: str) -> bytes:
         return await asyncio.to_thread(self._read, self._path(key), key)
@@ -359,7 +368,15 @@ class LocalBlobStore:
         return True
 
     def _remove_all(self, prefix: str) -> int:
-        return sum(self._remove(self.root / key) for key in _walk_keys(self.root, prefix))
+        keys, temps = _walk(self.root, prefix)
+        # A write interrupted before its rename (crash, kill) leaves a temp
+        # file holding object bytes. A prefix delete (tombstone, expiry)
+        # removes those too, uncounted, so no content outlives it and the
+        # emptied directories can be pruned. A write still in flight under the
+        # prefix fails and is retried by its caller.
+        for name in temps:
+            self._remove(self.root / name)
+        return sum(self._remove(self.root / key) for key in keys)
 
     def _prune(self, directory: Path) -> None:
         # Drop directories a delete left empty, up to (not including) the root.
@@ -396,20 +413,25 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _walk_keys(root: Path, prefix: str) -> list[str]:
-    """Sorted keys under root that start with prefix, skipping in-flight temp files."""
+    """Sorted keys under root that start with prefix, skipping temp files."""
+    return _walk(root, prefix)[0]
+
+
+def _walk(root: Path, prefix: str) -> tuple[list[str], list[str]]:
+    """(sorted keys, temp files of in-flight or interrupted writes) under root
+    whose relative paths start with prefix."""
     directory = prefix.rpartition("/")[0]
     start = root / directory if directory else root
     if not start.is_dir():
-        return []
-    keys = []
+        return [], []
+    keys, temps = [], []
     for current, _, files in os.walk(start):
         relative = Path(current).relative_to(root).as_posix()
         base = "" if relative == "." else f"{relative}/"
-        keys.extend(
-            base + name for name in files
-            if not name.startswith(_TEMP_PREFIX) and (base + name).startswith(prefix)
-        )
-    return sorted(keys)
+        for name in files:
+            if (base + name).startswith(prefix):
+                (temps if name.startswith(_TEMP_PREFIX) else keys).append(base + name)
+    return sorted(keys), temps
 
 
 class MemoryBlobStore:
@@ -468,11 +490,11 @@ class MemoryBlobStore:
 
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None:
         check_key(key)
+        stored = _as_bytes(data)
         await self._fault("put", key)
         self.puts += 1
         if if_absent and key in self.objects:
             return
-        stored = bytes(data)
         self.objects[key] = stored
         self.content_types[key] = content_type
         self.bytes += len(stored)

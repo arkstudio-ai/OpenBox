@@ -41,6 +41,28 @@ vi.mock("./endpoints", () => ({
 }))
 vi.mock("../utils/download", () => ({ saveBlob: vi.fn() }))
 
+/** The watermark socket as the live reads see it: open or not, and its lifecycle events. */
+const socket = vi.hoisted(() => {
+  const handlers = new Map<string, Set<() => void>>()
+  return {
+    connected: false,
+    handlers,
+    on(event: string, handler: () => void) {
+      const set = handlers.get(event) ?? new Set()
+      set.add(handler)
+      handlers.set(event, set)
+      return () => {
+        set.delete(handler)
+      }
+    },
+    emit(event: string) {
+      for (const handler of handlers.get(event) ?? []) handler()
+    },
+    disconnect: () => undefined,
+  }
+})
+vi.mock("./socket", () => ({ trajectorySocket: socket }))
+
 const api = vi.mocked(trajectoryApi)
 let client: QueryClient
 
@@ -59,6 +81,8 @@ const HEADER = { session_id: "ses_b" } as unknown as SessionHeader
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  socket.connected = false
+  socket.handlers.clear()
   useTrajectoryAccess.setState({ epoch: 0, denied: null })
   useAuthStore.setState({
     user: { id: "admin-a", role: "admin" } as unknown as AuthUser,
@@ -155,7 +179,9 @@ describe("shown content revalidation", () => {
     vi.useFakeTimers()
     api.payload.mockImplementation(async () => png())
     api.payloadMeta.mockResolvedValue(meta("available"))
-    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", { revalidation: "meta" }), {
+      wrapper,
+    })
     await advance(0)
     expect(result.current.data?.availability).toBe("available")
     await advance(59_999)
@@ -186,7 +212,9 @@ describe("shown content revalidation", () => {
     vi.useFakeTimers()
     api.payload.mockImplementation(async () => png())
     api.payloadMeta.mockRejectedValue(new ApiError(410, "trajectory_content_deleted", "deleted"))
-    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", { revalidation: "meta" }), {
+      wrapper,
+    })
     await advance(0)
     expect(result.current.data?.availability).toBe("available")
     act(() => void document.dispatchEvent(new Event("visibilitychange")))
@@ -200,7 +228,9 @@ describe("shown content revalidation", () => {
     vi.useFakeTimers()
     api.payload.mockImplementation(async () => png())
     api.payloadMeta.mockResolvedValue(meta("constructor"))
-    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", { revalidation: "meta" }), {
+      wrapper,
+    })
     await advance(0)
     expect(result.current.data?.availability).toBe("available")
     act(() => void document.dispatchEvent(new Event("visibilitychange")))
@@ -208,10 +238,39 @@ describe("shown content revalidation", () => {
     expect(api.payloadMeta).toHaveBeenCalledTimes(1)
     expect(result.current.data?.availability).toBe("deleted")
   })
+
+  it("checks only while the content is on screen, and at once when it comes back overdue", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    api.payloadMeta.mockResolvedValue(meta("available"))
+    const { result, rerender } = renderHook(
+      ({ shown }) => usePayload("ses_b", "12", "pay_1", { revalidation: "meta", shown }),
+      { wrapper, initialProps: { shown: true } },
+    )
+    await advance(0)
+    expect(result.current.data?.availability).toBe("available")
+    rerender({ shown: false })
+    await advance(180_000)
+    expect(api.payloadMeta).not.toHaveBeenCalled()
+
+    rerender({ shown: true })
+    await settle()
+    expect(api.payloadMeta).toHaveBeenCalledTimes(1)
+
+    // Out of view 10 s, back 12 s, three times: the next check still comes 60 s after the last answer.
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      rerender({ shown: false })
+      await advance(10_000)
+      rerender({ shown: true })
+      await advance(12_000)
+    }
+    expect(api.payloadMeta).toHaveBeenCalledTimes(2)
+    expect(api.payload).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("live reads", () => {
-  it("probe the session list every 30 s", async () => {
+  it("probe the session list every 30 s without the socket and every 60 s while it is open", async () => {
     vi.useFakeTimers()
     api.listSessions.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
     renderHook(() => useSessionListProbe(EMPTY_LIST_PARAMS, true), { wrapper })
@@ -221,9 +280,16 @@ describe("live reads", () => {
     expect(api.listSessions).toHaveBeenCalledTimes(1)
     await advance(1)
     expect(api.listSessions).toHaveBeenCalledTimes(2)
+
+    socket.connected = true
+    act(() => socket.emit("__connected"))
+    await advance(59_999)
+    expect(api.listSessions).toHaveBeenCalledTimes(2)
+    await advance(1)
+    expect(api.listSessions).toHaveBeenCalledTimes(3)
   })
 
-  it("refresh the header every 30 s without hints", async () => {
+  it("refresh the header every 30 s without the socket", async () => {
     vi.useFakeTimers()
     api.header.mockResolvedValue(HEADER)
     renderHook(() => useSessionHeader("ses_b"), { wrapper })
@@ -233,6 +299,48 @@ describe("live reads", () => {
     expect(api.header).toHaveBeenCalledTimes(1)
     await advance(1)
     expect(api.header).toHaveBeenCalledTimes(2)
+  })
+
+  it("refresh the header 60 s after its last answer while the socket is open, and 30 s once it drops", async () => {
+    vi.useFakeTimers()
+    socket.connected = true
+    api.header.mockResolvedValue(HEADER)
+    renderHook(() => useSessionHeader("ses_b"), { wrapper })
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(59_999)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(api.header).toHaveBeenCalledTimes(2)
+
+    // Dropped 40 s after that answer, already past the 30 s schedule: read at once.
+    await advance(40_000)
+    socket.connected = false
+    act(() => socket.emit("__disconnected"))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(3)
+    await advance(29_000)
+    expect(api.header).toHaveBeenCalledTimes(3)
+    await advance(1_000)
+    expect(api.header).toHaveBeenCalledTimes(4)
+  })
+
+  it("keep the header due while the socket keeps opening and dropping", async () => {
+    vi.useFakeTimers()
+    api.header.mockResolvedValue(HEADER)
+    renderHook(() => useSessionHeader("ses_b"), { wrapper })
+    await advance(0)
+    // For 2 minutes the socket opens every 10 s and drops again 5 s later.
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      socket.connected = true
+      act(() => socket.emit("__connected"))
+      await advance(5_000)
+      socket.connected = false
+      act(() => socket.emit("__disconnected"))
+      await advance(5_000)
+    }
+    // Each change re-plans the next read from the last answer, never from the change.
+    expect(api.header.mock.calls.length).toBeGreaterThanOrEqual(4)
   })
 
   it("follow watermark hints at most every 5 s, honour the latest and read a deletion at once", async () => {

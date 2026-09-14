@@ -5,13 +5,19 @@
 // hook stops reading once access has been refused (stores/access). Intervals
 // live in constants/polling.
 import { useCallback, useEffect, useRef } from "react"
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { useAuthStore } from "@/shared/api/auth-store"
 import { ApiError } from "@/shared/api/http"
 import {
   HEADER_HINT_MIN_MS,
-  HEADER_REFRESH_MS,
-  LIST_PROBE_MS,
+  headerRefreshDelay,
+  listProbeDelay,
   PAYLOAD_META_REVALIDATE_MS,
   PAYLOAD_REVALIDATE_MS,
 } from "../constants/polling"
@@ -23,6 +29,7 @@ import { lteSeq, toSeq } from "../utils/seq"
 import { retryUnlessDenied, trackRequest } from "./access"
 import { trajectoryApi } from "./endpoints"
 import { LIVE, trajectoryKeys } from "./keys"
+import { trajectorySocket } from "./socket"
 
 export const SESSION_PAGE_SIZE = 50
 export const RECORD_PAGE_SIZE = 100
@@ -86,34 +93,73 @@ export function useCachedFirstPage(params: ListParams) {
   }).data
 }
 
-/** Newest row for the current filters and sort, polled so the list can say "updated" without reordering. */
+/** What a safety poll needs from a live query: when it last answered, and how to ask again. */
+type LiveQuery = Pick<UseQueryResult<unknown, unknown>, "dataUpdatedAt" | "errorUpdatedAt" | "refetch">
+
+/**
+ * The safety poll of a query that follows the moving head: read it again
+ * `delay` after its last answer, whatever brought that answer (a hint, focus,
+ * this poll), in a hidden tab too. The watermark socket decides the delay, so
+ * its opening or dropping moves the due time — measured from the last answer,
+ * never from the change: a socket that keeps opening and dropping cannot
+ * postpone the read forever.
+ */
+function useSafetyRefetch(query: LiveQuery, enabled: boolean, delay: (connected: boolean) => number): void {
+  const answeredAt = Math.max(query.dataUpdatedAt, query.errorUpdatedAt)
+  const { refetch } = query
+  useEffect(() => {
+    // Before its first answer the query is still on its first read.
+    if (!enabled || !answeredAt) return
+    let timer: number | null = null
+    const arm = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      const wait = answeredAt + delay(trajectorySocket.connected) - Date.now()
+      // A read already on its way answers for this one.
+      timer = window.setTimeout(() => void refetch({ cancelRefetch: false }), Math.max(0, wait))
+    }
+    const offs = [trajectorySocket.on("__connected", arm), trajectorySocket.on("__disconnected", arm)]
+    arm()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      for (const off of offs) off()
+    }
+  }, [answeredAt, delay, enabled, refetch])
+}
+
+/**
+ * Newest row for the current filters and sort, probed so the list can say
+ * "updated" without reordering: again LIST_PROBE_DISCONNECTED_MS after its last
+ * answer, or LIST_PROBE_CONNECTED_MS while the watermark socket is open.
+ */
 export function useSessionListProbe(params: ListParams, enabled: boolean) {
   const scope = useAccessScope()
   const first = { ...params, cursor: null, trail: [] }
-  return useQuery({
+  const probe = useQuery({
     ...sessionListQuery(scope.viewer, first, 1),
     enabled: enabled && scope.allowed,
-    refetchInterval: LIST_PROBE_MS,
-    refetchIntervalInBackground: true,
     retry: retryUnlessDenied,
   })
+  useSafetyRefetch(probe, enabled && scope.allowed, listProbeDelay)
+  return probe
 }
 
 /**
  * Live header: identity and current statuses. Its statistics describe the head,
- * not a replay position. It refreshes on its own every HEADER_REFRESH_MS; while
- * a recording is shown, watermark hints refresh it sooner (useHeaderHintRefresh).
+ * not a replay position. While a recording is shown, watermark hints refresh it
+ * (useHeaderHintRefresh); on its own it is read again HEADER_REFRESH_CONNECTED_MS
+ * after its last answer while the socket is open, HEADER_REFRESH_DISCONNECTED_MS
+ * while it is not.
  */
 export function useSessionHeader(sessionId: string) {
   const scope = useAccessScope()
-  return useQuery({
+  const header = useQuery({
     queryKey: trajectoryKeys.header(scope.viewer, sessionId, LIVE),
     queryFn: ({ signal }) => trajectoryApi.header(sessionId, undefined, signal),
     enabled: scope.allowed,
-    refetchInterval: HEADER_REFRESH_MS,
-    refetchIntervalInBackground: true,
     retry: retryUnlessDenied,
   })
+  useSafetyRefetch(header, scope.allowed, headerRefreshDelay)
+  return header
 }
 
 /** What a watermark hint (TrajectoryWatermark) tells the live header. */
@@ -348,17 +394,24 @@ export async function loadPayloadMeta(
 /**
  * How shown content notices a deletion. `body` reads the bytes again every
  * PAYLOAD_REVALIDATE_MS and on focus. `meta` (servers with `capabilities.refs`)
- * reads them once, then asks `?meta=1` every PAYLOAD_META_REVALIDATE_MS and
- * whenever the tab becomes visible, and replaces the body once the answer is
- * no longer "available".
+ * reads them once, then asks `?meta=1` PAYLOAD_META_REVALIDATE_MS after the last
+ * answer while the content is on screen — at once when it comes back into view
+ * later than that — and whenever the tab becomes visible, and replaces the body
+ * once the answer is no longer "available".
  */
 export type PayloadRevalidation = "body" | "meta"
+
+export interface PayloadOptions {
+  revalidation?: PayloadRevalidation
+  /** Whether the content is on screen. `meta` checks pause while it is not; `body` re-reads do not. */
+  shown?: boolean
+}
 
 export function usePayload(
   sessionId: string,
   throughSeq: Seq | null,
   payloadId: string | null,
-  revalidation: PayloadRevalidation = "body",
+  { revalidation = "body", shown = true }: PayloadOptions = {},
 ) {
   const scope = useAccessScope()
   const client = useQueryClient()
@@ -380,7 +433,7 @@ export function usePayload(
     refetchInterval: byMeta ? false : visibleInterval(PAYLOAD_REVALIDATE_MS, false),
     retry: retryUnlessDenied,
   })
-  const { refetch: checkAvailability } = useQuery({
+  const meta = useQuery({
     queryKey: trajectoryKeys.payloadMeta(scope.viewer, sessionId, at, id),
     queryFn: async ({ signal }) => {
       const availability = await loadPayloadMeta(sessionId, id, throughSeq ?? "0", signal)
@@ -394,19 +447,24 @@ export function usePayload(
     gcTime: 0,
     retry: retryUnlessDenied,
   })
-  const checking = byMeta && enabled && body.data?.availability === "available"
+  const checkAvailability = meta.refetch
+  const checking = byMeta && enabled && shown && body.data?.availability === "available"
+  // When availability was last learned: the bytes, or a check that answered or failed.
+  const checkedAt = Math.max(body.dataUpdatedAt, meta.dataUpdatedAt, meta.errorUpdatedAt)
   useEffect(() => {
     if (!checking) return
     const check = () => {
       if (!hidden()) void checkAvailability()
     }
-    const timer = window.setInterval(check, PAYLOAD_META_REVALIDATE_MS)
+    // Due an interval after the last answer, so content that scrolls out of view
+    // and back neither postpones the check nor repeats it early.
+    const timer = window.setTimeout(check, Math.max(0, checkedAt + PAYLOAD_META_REVALIDATE_MS - Date.now()))
     document.addEventListener("visibilitychange", check)
     return () => {
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
       document.removeEventListener("visibilitychange", check)
     }
-  }, [checkAvailability, checking])
+  }, [checkAvailability, checkedAt, checking])
   return body
 }
 

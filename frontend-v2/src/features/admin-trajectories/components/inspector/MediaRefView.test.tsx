@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { usePayload, type PayloadContent } from "../../api/queries"
 import { useDownloadPayload } from "../../hooks/useDownloadPayload"
@@ -38,6 +38,24 @@ const PNG: PayloadContent = {
   text: null,
 }
 
+/** Stands in for the browser's IntersectionObserver (jsdom has none); `report` delivers an observation. */
+class FakeIntersectionObserver {
+  static latest: FakeIntersectionObserver | null = null
+  private readonly callback: IntersectionObserverCallback
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    FakeIntersectionObserver.latest = this
+  }
+
+  observe = () => undefined
+  disconnect = () => undefined
+
+  report(isIntersecting: boolean) {
+    this.callback([{ isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver)
+  }
+}
+
 beforeEach(() => {
   Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: revokeUrl })
   createUrl.mockClear()
@@ -49,7 +67,11 @@ beforeEach(() => {
   >)
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  FakeIntersectionObserver.latest = null
+})
 
 describe("retained model input media", () => {
   it("previews a nested $media image through the protected payload read and leaves remote URLs inert", () => {
@@ -78,7 +100,10 @@ describe("retained model input media", () => {
     const { container, unmount } = render(
       withInspector(<MessageView message={message} index={0} />, inspectorEnv()),
     )
-    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", "body")
+    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", {
+      revalidation: "body",
+      shown: true,
+    })
     const images = container.querySelectorAll("img")
     expect(images).toHaveLength(1)
     expect(images[0].getAttribute("src")).toBe("blob:fixture-media")
@@ -143,6 +168,23 @@ describe("retained model input media", () => {
     render(
       withInspector(<PayloadView reference={{ payload_id: "pl_input" }} />, inspectorEnv([], { refs: true })),
     )
-    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", "meta")
+    expect(payloadMock).toHaveBeenCalledWith("ses_test", "10", "pl_input", {
+      revalidation: "meta",
+      shown: true,
+    })
+  })
+
+  it("pauses that check while the content is scrolled out of view", () => {
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver)
+    payloadMock.mockReturnValue(payloadResult(PNG))
+    render(
+      withInspector(<PayloadView reference={{ payload_id: "pl_input" }} />, inspectorEnv([], { refs: true })),
+    )
+    const options = () => payloadMock.mock.lastCall?.[3]
+    expect(options()).toEqual({ revalidation: "meta", shown: true })
+    act(() => FakeIntersectionObserver.latest?.report(false))
+    expect(options()).toEqual({ revalidation: "meta", shown: false })
+    act(() => FakeIntersectionObserver.latest?.report(true))
+    expect(options()).toEqual({ revalidation: "meta", shown: true })
   })
 })

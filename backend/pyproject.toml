@@ -54,6 +54,7 @@ dependencies = [
     "segno>=1.6.6",
     "orjson>=3.12.0",
     "zstandard>=0.25.0",
+    "duckdb>=1.5.5",
 ]
 
 [project.optional-dependencies]

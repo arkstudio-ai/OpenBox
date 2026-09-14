@@ -270,16 +270,27 @@ async def complete_asset(
         row = await _owned_asset(
             db, asset_id, current_user["user_id"], current_user["workspace_id"]
         )
-        head = await oss.head(row.oss_key)
-        if not head:
-            raise HTTPException(409, detail="Object not found in OSS — upload did not complete")
-        actual_size = int(head["size"] or 0)
+    head = await oss.head(row.oss_key)
+    if not head:
+        raise HTTPException(409, detail="Object not found in OSS — upload did not complete")
+    actual_size = int(head["size"] or 0)
+    from trajectory import enabled
+    content = None
+    if row.session_id and actual_size <= _MAX_SIZE and enabled(row.user_id):
+        from trajectory.artifacts import read_asset_bytes
+        content = await read_asset_bytes(row)
+    async with get_db_session() as db:
+        # Recheck access and deletion after remote reads, before committing.
+        row = await _owned_asset(
+            db, asset_id, current_user["user_id"], current_user["workspace_id"])
         # Never trust the size declared when the ticket was opened: a caller
         # can PUT a larger object to the same signed key. Enforce the ceiling
         # against the object OSS actually received.
         if actual_size > _MAX_SIZE:
             row.is_deleted = True
             row.deleted_at = datetime.now(timezone.utc)
+            from trajectory.artifacts import revoke_asset_in_tx
+            await revoke_asset_in_tx(db, row.id)
             await db.commit()
             try:
                 await oss.delete(row.oss_key)
@@ -288,6 +299,11 @@ async def complete_asset(
             raise HTTPException(413, detail="File too large (max 1 GB)")
         row.size = actual_size or row.size
         row.status = "ready"
+        if row.session_id:
+            from trajectory.producers import activity_context
+            from trajectory.artifacts import capture_asset_in_tx
+            trace = await activity_context(db, row.user_id, row.session_id)
+            await capture_asset_in_tx(db, trace, row, role="input", content=content)
         await db.commit()
         return _to_item(row, oss)
 
@@ -414,6 +430,8 @@ async def delete_asset(
         key = row.oss_key
         row.is_deleted = True
         row.deleted_at = datetime.now(timezone.utc)
+        from trajectory.artifacts import revoke_asset_in_tx
+        await revoke_asset_in_tx(db, row.id)
         await db.commit()
     try:
         await oss.delete(key)

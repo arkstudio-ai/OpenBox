@@ -75,7 +75,7 @@ async def _run(monkeypatch, msgs, **kwargs):
     async def fake_get_messages(session_id, *a, **k):
         return msgs
 
-    async def fake_update_part_data(part_id, data):
+    async def fake_update_part_data(part_id, data, **kwargs):
         pruned.append(part_id)
 
     import session.session as sess

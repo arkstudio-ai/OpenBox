@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { pushOverlay } from "./overlay-stack"
 
 interface DialogProps {
   open: boolean
@@ -13,11 +14,15 @@ interface DialogProps {
 export function Dialog({ open, onClose, children, wide, label }: DialogProps) {
   useEffect(() => {
     if (!open) return
+    const release = pushOverlay()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
     window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      release()
+    }
   }, [open, onClose])
 
   if (!open) return null

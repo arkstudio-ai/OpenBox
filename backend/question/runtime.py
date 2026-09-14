@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -35,6 +36,71 @@ class RunTicket:
 
 
 current_run: ContextVar[RunTicket | None] = ContextVar("question_current_run", default=None)
+_trace_run_started: dict[str, float] = {}
+
+
+async def get_run_trace(ticket: RunTicket):
+    """Load the accepted task identity; never infer it from the latest message."""
+    from trajectory import TraceContext, enabled
+    if not enabled(ticket.user_id):
+        return None
+    async with get_db_session() as db:
+        execution = await db.get(SessionExecution, ticket.session_id)
+        if (execution is None or execution.user_id != ticket.user_id
+                or not execution.trace_context):
+            return None
+        context = TraceContext.from_dict(execution.trace_context)
+        if context.run_id != ticket.run_id or context.generation != ticket.generation:
+            return None
+        return context
+
+
+async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
+    from trajectory import current, record
+    from trajectory.producers import activity_context
+    inherited = current()
+    saved = execution.trace_context
+    if inherited and inherited.user_id == ticket.user_id and (
+            inherited.source_session_id or inherited.session_id) == ticket.session_id:
+        saved = inherited.to_dict()
+    context = await activity_context(db, ticket.user_id, ticket.session_id, saved=saved)
+    if context is None:
+        return
+    old_run = context.run_id
+    context = context.derive(run_id=ticket.run_id, generation=ticket.generation,
+                             step_id=None, request_id=None, call_id=None)
+    if not context.turn_id:
+        # Existing pre-rollout pending questions have an explicit continuation
+        # origin. Their new execution gets a task identity without fake history.
+        context = context.derive(turn_id=uuid4().hex)
+        await record("turn.started", {"origin": "continuation" if resumed else "execution"},
+                     context=context, db=db)
+    if not context.agent_id:
+        context = context.derive(agent_id=uuid4().hex)
+    execution.trace_context = context.to_dict()
+    await record("run.started", {
+        "origin": execution.run_origin, "generation": ticket.generation,
+        "resume_of_run_id": old_run if resumed else None,
+        "resume_reason": "question" if resumed else None,
+        "timing_source": "producer_monotonic",
+    }, context=context, db=db, event_id=f"run_start:{ticket.run_id}")
+    _trace_run_started[ticket.run_id] = time.monotonic()
+
+
+async def _record_run_terminal(db, execution, ticket, *, status: str, reason: str | None = None,
+                               event_type: str = "run.finished"):
+    from trajectory import TraceContext, enabled, record
+    if not enabled(ticket.user_id) or not execution.trace_context:
+        return
+    context = TraceContext.from_dict(execution.trace_context)
+    if context.run_id != ticket.run_id:
+        return
+    started = _trace_run_started.pop(ticket.run_id, None)
+    await record(event_type, {
+        "status": status, "reason": reason,
+        "duration_ms": round((time.monotonic() - started) * 1000, 3) if started is not None else None,
+        "timing_source": "producer_monotonic" if started is not None else "not_recorded",
+    }, context=context, db=db, event_id=f"{event_type}:{ticket.run_id}")
 
 
 @asynccontextmanager
@@ -114,6 +180,8 @@ async def start_run(session_id: str, user_id: str, *, expected_generation: int |
         execution.next_attempt_at = None
         execution.updated_at = now()
         session.status = "busy"
+        await _record_run_started(db, session, execution, ticket,
+                                  resumed=expected_generation is not None)
     publish_status(session_id, user_id, "busy")
     return ticket
 
@@ -176,6 +244,16 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
         if status == "error" or (status == "idle" and completed and not interrupted):
             from notifications.events import task_finished
             await task_finished(db, session, ticket, failed=status == "error")
+        trace_status = ("cancelled" if interrupted else "failed" if failed else
+                        "waiting" if status in ("waiting_input", "queued") else "completed")
+        await _record_run_terminal(db, execution, ticket, status=trace_status,
+                                   reason="interrupted" if interrupted else None)
+        if completed and not interrupted and status == "idle" and execution.trace_context:
+            from trajectory import TraceContext, record
+            context = TraceContext.from_dict(execution.trace_context)
+            if context.session_id == ticket.session_id and session.kind != "cron":
+                await record("turn.finished", {"status": "completed"}, context=context, db=db,
+                             event_id=f"turn_finish:{context.turn_id}")
     publish_status(ticket.session_id, ticket.user_id, status)
 
 
@@ -190,15 +268,25 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
         QuestionCheckpoint.status.in_(("pending", "answered", "rejected")),
     ))).all()
     for row in rows:
+        from question.question import checkpoint_context, record_checkpoint
+        # Adopt a legacy pending question before changing its persisted state.
+        await checkpoint_context(db, row, execution)
         from notifications.events import cancel_event
         await cancel_event(db, row.user_id, f"question:{row.id}")
         row.status = status
         row.updated_at = now()
+        await record_checkpoint(db, row, execution, "question.cancelled",
+                                {"status": "cancelled", "reason": status})
         part = await db.get(Part, row.part_id) if row.part_id else None
         if part is not None and part.user_id == execution.user_id:
             part.data = {**part.data, "status": "error", "error": status,
                          "title": "Question superseded" if status == "superseded" else "Question cancelled",
                          "metadata": {**(part.data.get("metadata") or {}), "question_status": status}}
+    if execution.run_id:
+        ticket = RunTicket(execution.session_id, execution.user_id,
+                           execution.run_generation, execution.run_id)
+        await _record_run_terminal(db, execution, ticket, status="cancelled", reason=status,
+                                   event_type="run.interrupted")
     execution.generation += 1
     execution.resume_pending = False
     execution.resume_error = None
@@ -217,6 +305,10 @@ def publish_invalidated(rows: list) -> None:
 
 async def cancel_session(session_id: str, user_id: str) -> None:
     async with transaction(session_id, user_id) as (db, session, execution):
+        if execution.run_id and execution.trace_context:
+            from trajectory import TraceContext, record
+            await record("run.cancel_requested", {"reason": "user_cancel"}, db=db,
+                         context=TraceContext.from_dict(execution.trace_context))
         rows = await invalidate_locked(db, execution, "cancelled")
         session.status = "idle"
     publish_invalidated(rows)
@@ -239,6 +331,8 @@ async def recover_expired_runs() -> None:
                     execution.resume_pending = True
                 status = await waiting_status(db, execution, "error")
                 expired_ticket = RunTicket(session_id, user_id, execution.run_generation, execution.run_id)
+                await _record_run_terminal(db, execution, expired_ticket, status="unknown",
+                                           reason="lease_expired", event_type="run.interrupted")
                 execution.run_id = None
                 execution.lease_until = None
                 session.status = status

@@ -337,6 +337,8 @@ async def delete_session(
             execution.run_id = None
             execution.lease_until = None
             await clear_internal_session_locked(db, row)
+            from trajectory import delete_trajectory_in_tx
+            await delete_trajectory_in_tx(db, session_id, user_id)
             row.is_deleted = True
             row.deleted_at = now
             row.updated_at = now
@@ -385,12 +387,18 @@ async def update_session(session_id: str, user_id: str = "default", **kwargs) ->
     kwargs["updated_at"] = datetime.now(timezone.utc)
 
     async with get_db_session() as db:
+        setting_keys = set(kwargs) & {"title", "model", "variant", "agent", "project_id", "directory", "revert"}
+        previous = await db.get(SessionORM, session_id) if setting_keys else None
+        before = {key: getattr(previous, key, None) for key in setting_keys} if previous else {}
         await db.execute(
             update(SessionORM).where(
                 SessionORM.id == session_id,
                 SessionORM.user_id == user_id,
             ).values(**kwargs)
         )
+        if setting_keys and previous is not None and previous.user_id == user_id:
+            await record_projection_in_tx(db, session_id, user_id, "session.settings_changed",
+                {"before": before, "after": {key: kwargs[key] for key in setting_keys}})
 
     # Re-fetch to return the updated session
     return await get_session(session_id, user_id=user_id)
@@ -489,6 +497,146 @@ async def update_session_context(
     return cu
 
 
+async def trajectory_context_in_tx(db, session_id: str, user_id: str, **ids):
+    """Resolve execution ownership without creating history on read-only paths."""
+    from trajectory import TraceContext, context_for_session, current, enabled
+    if not enabled(user_id):
+        return None
+    inherited = current()
+    if inherited is not None:
+        if inherited.user_id != user_id:
+            raise ValueError("trajectory owner mismatch")
+        if inherited.source_session_id == session_id:
+            if inherited.run_id is not None and inherited.generation is not None:
+                from db.models.question import SessionExecution
+                from trajectory import TrajectoryError
+                execution = await db.get(SessionExecution, session_id)
+                if execution is not None and (execution.generation != inherited.generation or
+                        (execution.run_id is not None and execution.run_id != inherited.run_id)):
+                    raise TrajectoryError("Superseded execution cannot update the chat projection")
+            return inherited.derive(**ids)
+    from db.models.question import SessionExecution
+    execution = await db.get(SessionExecution, session_id)
+    saved = getattr(execution, "trace_context", None) if execution is not None else None
+    # Legacy executions may store {} instead of NULL before capture is enabled.
+    # Both mean there is no saved context; resolve ownership from the session.
+    if isinstance(saved, dict) and saved:
+        inherited = TraceContext.from_dict(saved)
+        if inherited.user_id != user_id or inherited.source_session_id != session_id:
+            raise ValueError("persisted trajectory owner/session mismatch")
+        return inherited.derive(**ids)
+    return await context_for_session(db, user_id, session_id, **ids)
+
+
+async def prepare_trajectory_assets(session_id: str, user_id: str, asset_ids: list[str] | None = None,
+                                    *, include_baseline: bool = False,
+                                    root_session_id: str | None = None) -> dict[str, bytes]:
+    """Read attachment bytes before a session write lock, then recheck in the write."""
+    from trajectory import enabled
+    if not enabled(user_id):
+        return {}
+    from db.models.trajectory import SessionTrajectory, TrajectoryEvent
+    from trajectory.artifacts import prepare_asset_ids
+
+    identifiers = list(asset_ids or [])
+    async with get_db_session() as db:
+        session_row = await db.get(SessionORM, session_id)
+        if session_row is None or session_row.user_id != user_id or session_row.is_deleted:
+            raise ValueError("Attachment session does not belong to the execution scope")
+        if root_session_id is None:
+            context = await trajectory_context_in_tx(db, session_id, user_id)
+            root_session_id = context.session_id if context is not None else session_id
+        workspace_id = session_row.workspace_id
+        if include_baseline:
+            trajectory = await db.scalar(select(SessionTrajectory).where(
+                SessionTrajectory.user_id == user_id, SessionTrajectory.session_id == root_session_id))
+            baseline_exists = trajectory is not None and trajectory.recording_status != "paused" and await db.get(
+                TrajectoryEvent, f"evt_baseline_{trajectory.id}") is not None
+            if not baseline_exists:
+                parts = (await db.scalars(select(PartORM).where(
+                    PartORM.session_id == session_id, PartORM.user_id == user_id,
+                    PartORM.type == "file"))).all()
+                identifiers.extend(part.data["asset_id"] for part in parts
+                    if isinstance(part.data, dict) and part.data.get("asset_id"))
+    return await prepare_asset_ids(user_id, workspace_id, identifiers, root_session_id=root_session_id)
+
+
+async def prepare_trajectory_baseline_assets(session_id: str, user_id: str, *,
+                                             root_session_id: str | None = None) -> dict[str, bytes]:
+    return await prepare_trajectory_assets(session_id, user_id, include_baseline=True,
+                                           root_session_id=root_session_id)
+
+
+async def record_projection_in_tx(db, session_id: str, user_id: str, event_type: str, data: dict,
+                                   *, prepared_assets: dict[str, bytes] | None = None, **ids):
+    """Keep the compatibility mutation and its immutable fact in one commit."""
+    from trajectory import record
+    context = await trajectory_context_in_tx(db, session_id, user_id, **ids)
+    if context is not None:
+        part = data.get("part") or {}
+        if event_type == "part.committed" and not data.get("role"):
+            role = await db.scalar(select(MessageORM.role).where(
+                MessageORM.id == (ids.get("message_id") or part.get("message_id")),
+                MessageORM.session_id == session_id, MessageORM.user_id == user_id))
+            data = {**data, "role": role}
+        if event_type == "part.committed" and part.get("type") == "file" and part.get("asset_id"):
+            from trajectory.artifacts import capture_asset_ids_in_tx
+            artifacts = await capture_asset_ids_in_tx(db, context, [part["asset_id"]], role="attachment",
+                                                       prepared=prepared_assets)
+            data = {**data, "artifacts": artifacts}
+        result = await record(event_type, data, context=context, db=db)
+        if event_type == "part.committed" and part.get("type") == "plan":
+            await record("plan.changed", {"plan_id": part.get("id"), "plan": part}, context=context, db=db)
+        return result
+    from trajectory import mark_capture_paused_in_tx
+    await mark_capture_paused_in_tx(db, user_id, session_id)
+    return None
+
+
+async def capture_trajectory_baseline_in_tx(db, context, session_row, *,
+                                            prepared_assets: dict[str, bytes] | None = None):
+    """Capture existing public history before accepting the first new activity."""
+    if context is None:
+        return
+    from trajectory import ensure_trajectory_in_tx
+    from db.models.trajectory import SessionTrajectory, TrajectoryEvent
+    existing = await db.scalar(select(SessionTrajectory).where(
+        SessionTrajectory.user_id == context.user_id, SessionTrajectory.session_id == context.session_id,
+    ))
+    if existing is not None and existing.recording_status != "paused" and await db.get(
+            TrajectoryEvent, f"evt_baseline_{existing.id}") is not None:
+        return
+    messages = (await db.scalars(select(MessageORM).where(
+        MessageORM.session_id == context.source_session_id,
+        MessageORM.user_id == context.user_id,
+    ).order_by(MessageORM.created_at, MessageORM.id))).all()
+    parts = (await db.scalars(select(PartORM).where(
+        PartORM.session_id == context.source_session_id,
+        PartORM.user_id == context.user_id,
+    ).order_by(PartORM.created_at, PartORM.id))).all()
+    grouped = {}
+    for part in parts:
+        grouped.setdefault(part.message_id, []).append(public_part_data(part.data))
+    baseline = {
+        "legacy_session": bool(messages), "source_session_id": context.source_session_id,
+        "history": [{"id": msg.id, "role": msg.role, "parent_id": msg.parent_id,
+                     "model": msg.model_id or msg.model, "agent": msg.agent,
+                     "finish": msg.finish, "summary": msg.summary,
+                     "parts": grouped.get(msg.id, [])} for msg in messages],
+        "settings": {key: getattr(session_row, key, None) for key in
+                     ("model", "agent", "variant", "project_id", "workspace_id")},
+        "recording_boundary": "new_activity_only",
+    }
+    asset_ids = [part.data["asset_id"] for part in parts
+                 if isinstance(part.data, dict) and part.data.get("type") == "file" and part.data.get("asset_id")]
+    if asset_ids:
+        from trajectory.artifacts import capture_asset_ids_in_tx
+        await ensure_trajectory_in_tx(db, context)
+        baseline["artifacts"] = await capture_asset_ids_in_tx(db, context, asset_ids, role="baseline_input",
+                                                               prepared=prepared_assets)
+    await ensure_trajectory_in_tx(db, context, baseline=baseline)
+
+
 # --- Message Operations ---
 
 async def create_user_message(
@@ -531,7 +679,16 @@ async def create_user_message(
 
     from question import runtime
     invalidated_questions = []
-    async with runtime.transaction(session_id, user_id) as (db, _, execution):
+    prepared_assets = await prepare_trajectory_baseline_assets(session_id, user_id)
+    async with runtime.transaction(session_id, user_id) as (db, session_row, execution):
+        trace = await trajectory_context_in_tx(db, session_id, user_id)
+        if trace is not None:
+            if not synthetic:
+                trace = trace.derive(turn_id=msg_id, run_id=None, generation=None, step_id=None,
+                                     request_id=None, call_id=None, message_id=msg_id, part_id=text_part_id)
+            else:
+                trace = trace.derive(message_id=msg_id, part_id=text_part_id)
+            await capture_trajectory_baseline_in_tx(db, trace, session_row, prepared_assets=prepared_assets)
         if not synthetic:
             invalidated_questions = await runtime.invalidate_locked(db, execution)
         msg_row = MessageORM(
@@ -539,6 +696,7 @@ async def create_user_message(
             session_id=session_id,
             user_id=user_id,
             role="user",
+            summary=False,
             client_message_id=client_message_id,
             agent=agent,
             model=model,
@@ -558,6 +716,26 @@ async def create_user_message(
             created_at=now,
         )
         db.add(part_row)
+        if trace is not None:
+            from trajectory import record
+            trace = trace.derive(generation=execution.generation)
+            saved_turn = (execution.trace_context or {}).get("turn_id")
+            if not synthetic or not execution.trace_context or saved_turn == trace.turn_id:
+                execution.trace_context = trace.to_dict()
+            if not synthetic:
+                await record("turn.started", {"source": "user_input"}, context=trace, db=db)
+            await record("input.injected" if synthetic else "input.accepted", {
+                "text": text, "synthetic": synthetic, "agent": agent, "model": model,
+                "variant": variant, "client_message_id": client_message_id, "output_format": output_format,
+            }, context=trace, db=db)
+            await record("message.committed", {"message": {"id": msg_id, "role": "user",
+                "agent": agent, "model": model, "variant": variant}, "operation": "created"},
+                context=trace, db=db)
+            await record("part.committed", {"part": text_part.model_dump(), "role": "user", "operation": "created"},
+                         context=trace, db=db)
+        else:
+            from trajectory import mark_capture_paused_in_tx
+            await mark_capture_paused_in_tx(db, user_id, session_id)
 
     if not synthetic:
         from session.status import discard_pending_abort
@@ -605,18 +783,22 @@ async def create_assistant_message(
         agent=agent,
     )
 
-    async with get_db_session() as db:
+    from question import runtime
+    async with runtime.transaction(session_id, user_id) as (db, _, _execution):
         msg_row = MessageORM(
             id=msg_id,
             session_id=session_id,
             user_id=user_id,
             role="assistant",
+            summary=False,
             parent_id=parent_id,
             model_id=model_id,
             agent=agent,
             created_at=now,
         )
         db.add(msg_row)
+        await record_projection_in_tx(db, session_id, user_id, "message.committed",
+            {"message": info.model_dump(mode="json"), "operation": "created"}, message_id=msg_id)
 
     # Publish MESSAGE_CREATED so frontend creates the message entry
     # before subsequent part.created / text_delta events arrive
@@ -658,10 +840,17 @@ async def update_message_info(info: MessageInfo, user_id: str = "default") -> No
         values["structured"] = info.structured
 
     if values:
-        async with get_db_session() as db:
+        from question import runtime
+        async with runtime.transaction(info.session_id, user_id) as (db, _, _execution):
             await db.execute(
                 update(MessageORM).where(MessageORM.id == info.id).values(**values)
             )
+            await record_projection_in_tx(db, info.session_id, user_id, "message.committed",
+                {"message": info.model_dump(mode="json"), "operation": "updated"}, message_id=info.id)
+            if info.summary and info.finish == "stop":
+                await record_projection_in_tx(db, info.session_id, user_id, "context.replaced",
+                    {"reason": "compaction", "summary_message_id": info.id,
+                     "boundary_message_id": info.parent_id, "applied": True}, message_id=info.id)
 
     from bus.events import MESSAGE_UPDATED
     # Send key fields so frontend can merge without losing parts
@@ -708,7 +897,10 @@ async def save_part(part: MessagePart, is_new: bool = False, *, user_id: str) ->
     import json as _json
     part_dict = _json.loads(_json.dumps(part_dict).replace("\\u0000", ""))
 
-    async with get_db_session() as db:
+    from question import runtime
+    prepared_assets = (await prepare_trajectory_assets(session_id, user_id, [part_dict["asset_id"]])
+        if part_dict.get("type") == "file" and part_dict.get("asset_id") else {})
+    async with runtime.transaction(session_id, user_id) as (db, _, _execution):
         if is_new:
             row = PartORM(
                 id=part.id,
@@ -726,6 +918,9 @@ async def save_part(part: MessagePart, is_new: bool = False, *, user_id: str) ->
             await db.execute(
                 update(PartORM).where(PartORM.id == part.id).values(**values)
             )
+        await record_projection_in_tx(db, session_id, user_id, "part.committed",
+            {"part": part_dict, "operation": "created" if is_new else "updated"},
+            message_id=msg_id, part_id=part.id, prepared_assets=prepared_assets)
 
     # Exclude internal fields from SSE event (frontend doesn't need them)
     sse_dict = public_part_data(part.model_dump(exclude={
@@ -881,6 +1076,8 @@ async def delete_messages_from(
                 await delete_internal_parts_for_messages_locked(db, session_row, doomed)
                 await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
                 await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
+                await record_projection_in_tx(db, session_id, user_id, "history.regenerated",
+                    {"from_message_id": message_id, "removed_message_ids": doomed})
 
             survivor = await db.execute(
                 select(MessageORM.id).where(
@@ -959,6 +1156,8 @@ async def delete_failed_turn(
             await delete_internal_parts_for_messages_locked(db, session_row, doomed)
             await db.execute(PartORM.__table__.delete().where(PartORM.message_id.in_(doomed)))
             await db.execute(MessageORM.__table__.delete().where(MessageORM.id.in_(doomed)))
+            await record_projection_in_tx(db, session_id, user_id, "history.reverted",
+                {"reason": "dismiss_failed_turn", "removed_message_ids": doomed})
 
     log.info(f"Dismissed failed turn {message_id} in {session_id} ({len(doomed)} message(s))")
     return len(doomed)
@@ -995,17 +1194,34 @@ async def update_part_data(part_id: str, data: dict, publish: bool = False, user
     """
     data = public_part_data(data)
     async with get_db_session() as db:
+        row = await db.get(PartORM, part_id)
+        if row is None:
+            return
+        if row.user_id != user_id:
+            raise ValueError("Part does not belong to the execution owner")
+        session_id, message_id = row.session_id, row.message_id
+    prepared_assets = (await prepare_trajectory_assets(session_id, user_id, [data["asset_id"]])
+        if data.get("type") == "file" and data.get("asset_id") else {})
+    from question import runtime
+    async with runtime.transaction(session_id, user_id) as (db, _, _execution):
+        row = await db.get(PartORM, part_id)
+        if row is None:
+            return
         await db.execute(
-            update(PartORM).where(PartORM.id == part_id).values(data=data)
+            update(PartORM).where(PartORM.id == part_id, PartORM.user_id == user_id,
+                                 PartORM.session_id == session_id).values(data=data)
         )
+        await record_projection_in_tx(db, session_id, user_id, "part.committed",
+            {"part": data, "operation": "updated"}, message_id=message_id, part_id=part_id,
+            prepared_assets=prepared_assets)
     if not publish:
         return
     sse_dict = {k: v for k, v in data.items() if k not in ("session_id", "message_id", "state")}
     from bus.events import PART_UPDATED
     bus.publish(PART_UPDATED, {
         "userId": user_id,
-        "sessionId": data.get("session_id", ""),
-        "messageId": data.get("message_id", ""),
+        "sessionId": session_id,
+        "messageId": message_id,
         "part": sse_dict,
     })
 

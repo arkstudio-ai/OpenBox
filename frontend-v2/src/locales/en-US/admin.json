@@ -51,13 +51,13 @@
   "title": "Fleet management",
   "subtitle": "Inspect the warm pool, desktop state, and reconciliation alerts.",
   "console": {
-    "title": "Admin console",
-    "subtitle": "Fleet, skills, subscriptions and notification tests."
+    "title": "Admin console"
   },
   "nav": {
     "fleet": "Fleet",
     "skills": "Skills",
     "billing": "Subscriptions",
+    "trajectories": "Trajectories",
     "notifications": "Notifications",
     "messages": "Messages"
   },
@@ -73,6 +73,10 @@
     "billing": {
       "title": "Subscriptions",
       "subtitle": "Per-workspace subscriptions, orders, and usage — read only."
+    },
+    "trajectories": {
+      "title": "Session trajectories",
+      "subtitle": "Monitor and replay recorded agent sessions across all users and workspaces — read only."
     },
     "notifications": {
       "title": "Notification tests",

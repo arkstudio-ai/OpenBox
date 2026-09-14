@@ -1,0 +1,1132 @@
+{
+  "name": "empty_message_invalid_tool_emoji_system_identity",
+  "events": [
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "seq": "1",
+      "event_id": "evt_edge_1",
+      "type": "trajectory.started",
+      "data": {
+        "existing_session": false
+      },
+      "occurred_at": "2026-09-11T08:00:01.001Z",
+      "recorded_at": "2026-09-11T08:00:01.001Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "muser",
+      "seq": "2",
+      "event_id": "evt_edge_2",
+      "type": "input.accepted",
+      "data": {
+        "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+        "source_kind": "web"
+      },
+      "occurred_at": "2026-09-11T08:00:01.002Z",
+      "recorded_at": "2026-09-11T08:00:01.002Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "muser",
+      "seq": "3",
+      "event_id": "evt_edge_3",
+      "type": "message.committed",
+      "data": {
+        "operation": "created",
+        "message": {
+          "id": "muser",
+          "role": "user"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.003Z",
+      "recorded_at": "2026-09-11T08:00:01.003Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "muser",
+      "part_id": "puser",
+      "seq": "4",
+      "event_id": "evt_edge_4",
+      "type": "part.committed",
+      "data": {
+        "role": "user",
+        "operation": "created",
+        "part": {
+          "id": "puser",
+          "type": "text",
+          "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.004Z",
+      "recorded_at": "2026-09-11T08:00:01.004Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "mai",
+      "seq": "5",
+      "event_id": "evt_edge_5",
+      "type": "message.committed",
+      "data": {
+        "operation": "created",
+        "message": {
+          "id": "mai",
+          "role": "assistant"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.005Z",
+      "recorded_at": "2026-09-11T08:00:01.005Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "request_id": "req1",
+      "message_id": "mai",
+      "seq": "6",
+      "event_id": "evt_edge_6",
+      "type": "request.prepared",
+      "data": {
+        "input": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "Inspect requests precisely"
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "capture_level": "adapter_input"
+      },
+      "occurred_at": "2026-09-11T08:00:01.006Z",
+      "recorded_at": "2026-09-11T08:00:01.006Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "request_id": "req1",
+      "message_id": "mai",
+      "seq": "7",
+      "event_id": "evt_edge_7",
+      "type": "request.started",
+      "data": {},
+      "occurred_at": "2026-09-11T08:00:01.007Z",
+      "recorded_at": "2026-09-11T08:00:01.007Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "mai",
+      "part_id": "pai",
+      "seq": "8",
+      "event_id": "evt_edge_8",
+      "type": "part.committed",
+      "data": {
+        "role": "assistant",
+        "part": {
+          "id": "pai",
+          "type": "text",
+          "text": ""
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.008Z",
+      "recorded_at": "2026-09-11T08:00:01.008Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "request_id": "req1",
+      "message_id": "mai",
+      "seq": "9",
+      "event_id": "evt_edge_9",
+      "type": "request.delta",
+      "data": {
+        "chunk_index": 0,
+        "blocks": [
+          {
+            "type": "reasoning",
+            "block_id": "reason",
+            "delta": "Checking"
+          },
+          {
+            "type": "tool_arguments",
+            "block_id": "tool:0",
+            "delta": null,
+            "tool": "read"
+          }
+        ]
+      },
+      "occurred_at": "2026-09-11T08:00:01.009Z",
+      "recorded_at": "2026-09-11T08:00:01.009Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "mai",
+      "part_id": "preason",
+      "seq": "10",
+      "event_id": "evt_edge_10",
+      "type": "part.committed",
+      "data": {
+        "role": "assistant",
+        "part": {
+          "id": "preason",
+          "type": "reasoning",
+          "text": "Checking"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.010Z",
+      "recorded_at": "2026-09-11T08:00:01.010Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "request_id": "req1",
+      "message_id": "mai",
+      "seq": "11",
+      "event_id": "evt_edge_11",
+      "type": "request.finished",
+      "data": {
+        "status": "failed",
+        "error": "interrupted",
+        "duration_ms": null
+      },
+      "occurred_at": "2026-09-11T08:00:01.011Z",
+      "recorded_at": "2026-09-11T08:00:01.011Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "mai",
+      "seq": "12",
+      "event_id": "evt_edge_12",
+      "type": "message.committed",
+      "data": {
+        "operation": "updated",
+        "message": {
+          "id": "mai",
+          "role": "assistant",
+          "finish": "error",
+          "error": "interrupted"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.012Z",
+      "recorded_at": "2026-09-11T08:00:01.012Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "call_id": "bad_call",
+      "request_id": "req1",
+      "seq": "13",
+      "event_id": "evt_edge_13",
+      "type": "tool.requested",
+      "data": {
+        "name": "read",
+        "arguments_raw": "{",
+        "requested_arguments": null
+      },
+      "occurred_at": "2026-09-11T08:00:01.013Z",
+      "recorded_at": "2026-09-11T08:00:01.013Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "call_id": "bad_call",
+      "request_id": "req1",
+      "seq": "14",
+      "event_id": "evt_edge_14",
+      "type": "tool.finished",
+      "data": {
+        "status": "failed",
+        "reason": "invalid_arguments",
+        "duration_ms": null
+      },
+      "occurred_at": "2026-09-11T08:00:01.014Z",
+      "recorded_at": "2026-09-11T08:00:01.014Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "message_id": "mai",
+      "part_id": "ptool",
+      "seq": "15",
+      "event_id": "evt_edge_15",
+      "type": "part.committed",
+      "data": {
+        "role": "assistant",
+        "part": {
+          "id": "ptool",
+          "type": "tool",
+          "output": "invalid"
+        }
+      },
+      "occurred_at": "2026-09-11T08:00:01.015Z",
+      "recorded_at": "2026-09-11T08:00:01.015Z"
+    },
+    {
+      "trajectory_id": "trj_edge",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "agent_id": "agent_a",
+      "version": 1,
+      "run_id": "run_a",
+      "request_id": "req2",
+      "message_id": "mai2",
+      "seq": "16",
+      "event_id": "evt_edge_16",
+      "type": "request.prepared",
+      "data": {
+        "input": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "Inspect requests precisely"
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "capture_level": "adapter_input"
+      },
+      "occurred_at": "2026-09-11T08:00:01.016Z",
+      "recorded_at": "2026-09-11T08:00:01.016Z"
+    }
+  ],
+  "expected_state": {
+    "projector_version": 1,
+    "through_seq": "16",
+    "records": {
+      "baseline:trj_edge": {
+        "record_id": "baseline:trj_edge",
+        "kind": "baseline",
+        "title": "baseline",
+        "preview": null,
+        "result_preview": null,
+        "status": "running",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "1",
+        "end_seq": null,
+        "as_of_seq": "1",
+        "started_at": "2026-09-11T08:00:01.001Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "existing_session": false,
+          "coverage_start": "2026-09-11T08:00:01.001Z"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "user:muser": {
+        "record_id": "user:muser",
+        "kind": "user",
+        "title": "user",
+        "preview": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+        "result_preview": null,
+        "status": "accepted",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "muser",
+        "part_id": "puser",
+        "caused_by_event_id": null,
+        "start_seq": "2",
+        "end_seq": null,
+        "as_of_seq": "4",
+        "started_at": "2026-09-11T08:00:01.002Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+          "source_kind": "web",
+          "operation": "created",
+          "message": {
+            "id": "muser",
+            "role": "user"
+          },
+          "role": "user",
+          "part": {
+            "id": "puser",
+            "type": "text",
+            "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+          },
+          "committed_parts": {
+            "puser": {
+              "id": "puser",
+              "type": "text",
+              "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+            }
+          }
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "system:req1": {
+        "record_id": "system:req1",
+        "kind": "system",
+        "title": "System state",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req1",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "mai",
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "6",
+        "end_seq": "6",
+        "as_of_seq": "6",
+        "started_at": "2026-09-11T08:00:01.006Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "system": [
+            {
+              "role": "system",
+              "content": "Inspect requests precisely"
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "before": null,
+          "source_request_id": "req1",
+          "capture_level": "adapter_input"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "request:req1": {
+        "record_id": "request:req1",
+        "kind": "request",
+        "title": "request",
+        "preview": "Checking",
+        "result_preview": null,
+        "status": "failed",
+        "status_reason": "interrupted",
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req1",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "mai",
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "6",
+        "end_seq": "11",
+        "as_of_seq": "11",
+        "started_at": "2026-09-11T08:00:01.007Z",
+        "finished_at": "2026-09-11T08:00:01.011Z",
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "input": {
+            "messages": [
+              {
+                "role": "system",
+                "content": "Inspect requests precisely"
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "capture_level": "adapter_input",
+          "status": "failed",
+          "error": "interrupted",
+          "duration_ms": null
+        },
+        "blocks": [
+          {
+            "block_id": "reason",
+            "type": "reasoning",
+            "text": "Checking",
+            "chunk_index": 0
+          },
+          {
+            "block_id": "tool:0",
+            "type": "tool_arguments",
+            "text": "",
+            "tool": "read",
+            "chunk_index": 0
+          }
+        ],
+        "usage": {}
+      },
+      "assistant:req1": {
+        "record_id": "assistant:req1",
+        "kind": "assistant",
+        "title": "assistant",
+        "preview": "Checking",
+        "result_preview": null,
+        "status": "failed",
+        "status_reason": "interrupted",
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req1",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "mai",
+        "part_id": "preason",
+        "caused_by_event_id": null,
+        "start_seq": "9",
+        "end_seq": "11",
+        "as_of_seq": "12",
+        "started_at": "2026-09-11T08:00:01.009Z",
+        "finished_at": "2026-09-11T08:00:01.011Z",
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "role": "assistant",
+          "part": {
+            "id": "preason",
+            "type": "reasoning",
+            "text": "Checking"
+          },
+          "committed_parts": {
+            "preason": {
+              "id": "preason",
+              "type": "reasoning",
+              "text": "Checking"
+            }
+          },
+          "status": "failed",
+          "error": "interrupted",
+          "duration_ms": null,
+          "operation": "updated",
+          "message": {
+            "id": "mai",
+            "role": "assistant",
+            "finish": "error",
+            "error": "interrupted"
+          }
+        },
+        "blocks": [
+          {
+            "block_id": "reason",
+            "type": "reasoning",
+            "text": "Checking",
+            "chunk_index": 0
+          },
+          {
+            "block_id": "tool:0",
+            "type": "tool_arguments",
+            "text": "",
+            "tool": "read",
+            "chunk_index": 0
+          }
+        ],
+        "usage": {}
+      },
+      "tool:bad_call": {
+        "record_id": "tool:bad_call",
+        "kind": "tool",
+        "title": "read",
+        "preview": null,
+        "result_preview": null,
+        "status": "failed",
+        "status_reason": "invalid_arguments",
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req1",
+        "call_id": "bad_call",
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "13",
+        "end_seq": "14",
+        "as_of_seq": "14",
+        "started_at": null,
+        "finished_at": "2026-09-11T08:00:01.014Z",
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "name": "read",
+          "arguments_raw": "{",
+          "requested_arguments": null,
+          "requested_at": "2026-09-11T08:00:01.013Z",
+          "status": "failed",
+          "reason": "invalid_arguments",
+          "duration_ms": null
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "request:req2": {
+        "record_id": "request:req2",
+        "kind": "request",
+        "title": "request",
+        "preview": "{\"messages\":[{\"role\":\"system\",\"content\":\"Inspect requests precisely\"}],\"tools\":[{\"name\":\"read\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}}]}",
+        "result_preview": null,
+        "status": "pending",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": null,
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req2",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "mai2",
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "16",
+        "end_seq": null,
+        "as_of_seq": "16",
+        "started_at": "2026-09-11T08:00:01.016Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "input": {
+            "messages": [
+              {
+                "role": "system",
+                "content": "Inspect requests precisely"
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "capture_level": "adapter_input"
+        },
+        "blocks": [],
+        "usage": {}
+      }
+    },
+    "unsupported_events": [],
+    "coverage_start": "2026-09-11T08:00:01.001Z"
+  },
+  "expected_statistics": {
+    "request_count": 2,
+    "tool_count": 1,
+    "error_count": 2,
+    "unknown_count": 0,
+    "input_tokens": null,
+    "output_tokens": null,
+    "usage_complete": false,
+    "duration_ms": null,
+    "through_seq": "16",
+    "coverage_start": "2026-09-11T08:00:01.001Z"
+  },
+  "expected_agents": [],
+  "historical": {
+    "through_seq": "13",
+    "state": {
+      "projector_version": 1,
+      "through_seq": "13",
+      "records": {
+        "baseline:trj_edge": {
+          "record_id": "baseline:trj_edge",
+          "kind": "baseline",
+          "title": "baseline",
+          "preview": null,
+          "result_preview": null,
+          "status": "running",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "1",
+          "end_seq": null,
+          "as_of_seq": "1",
+          "started_at": "2026-09-11T08:00:01.001Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "existing_session": false,
+            "coverage_start": "2026-09-11T08:00:01.001Z"
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "user:muser": {
+          "record_id": "user:muser",
+          "kind": "user",
+          "title": "user",
+          "preview": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+          "result_preview": null,
+          "status": "accepted",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": "muser",
+          "part_id": "puser",
+          "caused_by_event_id": null,
+          "start_seq": "2",
+          "end_seq": null,
+          "as_of_seq": "4",
+          "started_at": "2026-09-11T08:00:01.002Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+            "source_kind": "web",
+            "operation": "created",
+            "message": {
+              "id": "muser",
+              "role": "user"
+            },
+            "role": "user",
+            "part": {
+              "id": "puser",
+              "type": "text",
+              "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+            },
+            "committed_parts": {
+              "puser": {
+                "id": "puser",
+                "type": "text",
+                "text": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+              }
+            }
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "system:req1": {
+          "record_id": "system:req1",
+          "kind": "system",
+          "title": "System state",
+          "preview": null,
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req1",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": "mai",
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "6",
+          "end_seq": "6",
+          "as_of_seq": "6",
+          "started_at": "2026-09-11T08:00:01.006Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "system": [
+              {
+                "role": "system",
+                "content": "Inspect requests precisely"
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ],
+            "before": null,
+            "source_request_id": "req1",
+            "capture_level": "adapter_input"
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "request:req1": {
+          "record_id": "request:req1",
+          "kind": "request",
+          "title": "request",
+          "preview": "Checking",
+          "result_preview": null,
+          "status": "failed",
+          "status_reason": "interrupted",
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req1",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": "mai",
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "6",
+          "end_seq": "11",
+          "as_of_seq": "11",
+          "started_at": "2026-09-11T08:00:01.007Z",
+          "finished_at": "2026-09-11T08:00:01.011Z",
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "input": {
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Inspect requests precisely"
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "capture_level": "adapter_input",
+            "status": "failed",
+            "error": "interrupted",
+            "duration_ms": null
+          },
+          "blocks": [
+            {
+              "block_id": "reason",
+              "type": "reasoning",
+              "text": "Checking",
+              "chunk_index": 0
+            },
+            {
+              "block_id": "tool:0",
+              "type": "tool_arguments",
+              "text": "",
+              "tool": "read",
+              "chunk_index": 0
+            }
+          ],
+          "usage": {}
+        },
+        "assistant:req1": {
+          "record_id": "assistant:req1",
+          "kind": "assistant",
+          "title": "assistant",
+          "preview": "Checking",
+          "result_preview": null,
+          "status": "failed",
+          "status_reason": "interrupted",
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req1",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": "mai",
+          "part_id": "preason",
+          "caused_by_event_id": null,
+          "start_seq": "9",
+          "end_seq": "11",
+          "as_of_seq": "12",
+          "started_at": "2026-09-11T08:00:01.009Z",
+          "finished_at": "2026-09-11T08:00:01.011Z",
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "role": "assistant",
+            "part": {
+              "id": "preason",
+              "type": "reasoning",
+              "text": "Checking"
+            },
+            "committed_parts": {
+              "preason": {
+                "id": "preason",
+                "type": "reasoning",
+                "text": "Checking"
+              }
+            },
+            "status": "failed",
+            "error": "interrupted",
+            "duration_ms": null,
+            "operation": "updated",
+            "message": {
+              "id": "mai",
+              "role": "assistant",
+              "finish": "error",
+              "error": "interrupted"
+            }
+          },
+          "blocks": [
+            {
+              "block_id": "reason",
+              "type": "reasoning",
+              "text": "Checking",
+              "chunk_index": 0
+            },
+            {
+              "block_id": "tool:0",
+              "type": "tool_arguments",
+              "text": "",
+              "tool": "read",
+              "chunk_index": 0
+            }
+          ],
+          "usage": {}
+        },
+        "tool:bad_call": {
+          "record_id": "tool:bad_call",
+          "kind": "tool",
+          "title": "read",
+          "preview": null,
+          "result_preview": null,
+          "status": "pending",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": null,
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req1",
+          "call_id": "bad_call",
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "13",
+          "end_seq": null,
+          "as_of_seq": "13",
+          "started_at": null,
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "name": "read",
+            "arguments_raw": "{",
+            "requested_arguments": null,
+            "requested_at": "2026-09-11T08:00:01.013Z"
+          },
+          "blocks": [],
+          "usage": {}
+        }
+      },
+      "unsupported_events": [],
+      "coverage_start": "2026-09-11T08:00:01.001Z"
+    }
+  }
+}

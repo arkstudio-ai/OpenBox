@@ -16,9 +16,12 @@ depends_on = None
 
 def upgrade() -> None:
     # Names can be 64 characters plus the kind prefix; desktop ids up to 96.
-    op.alter_column(
-        "audit_logs", "resource_id", existing_type=sa.String(64), type_=sa.String(128)
-    )
+    # SQLite requires table recreation for type changes; batch mode preserves
+    # the same ALTER COLUMN operation on PostgreSQL.
+    with op.batch_alter_table("audit_logs") as batch:
+        batch.alter_column(
+            "resource_id", existing_type=sa.String(64), type_=sa.String(128)
+        )
     op.create_table(
         "skill_catalog_packages",
         sa.Column("catalog_id", sa.String(96), primary_key=True),

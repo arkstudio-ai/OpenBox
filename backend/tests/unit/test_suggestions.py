@@ -217,6 +217,60 @@ async def test_uses_existing_provider_adapter_and_billing_boundary(chat, monkeyp
     assert len(await saved(chat)) == 1
 
 
+@pytest.mark.parametrize("model, wire", [
+    ("openai/qwen3.8-flash", {"reasoning_effort": "none"}),
+    ("openai/qwen3.8-max", {"reasoning_effort": "none"}),
+    ("deepseek/deepseek-v4-flash", {"thinking": {"type": "disabled"}}),
+])
+async def test_forced_suggestion_output_disables_supported_thinking(chat, monkeypatch, model, wire):
+    import litellm
+    from litellm.types.utils import ModelResponseStream
+    from agent import llm
+    from billing.service import UsageMeter
+
+    requests = []
+
+    async def stream():
+        yield ModelResponseStream(choices=[{
+            "index": 0,
+            "delta": {"tool_calls": [{
+                "index": 0, "id": "suggestion-output", "type": "function",
+                "function": {"name": suggestions.TOOL_NAME, "arguments": json.dumps(PAYLOAD)},
+            }]},
+            "finish_reason": "tool_calls",
+        }])
+
+    async def completion(**kwargs):
+        requests.append(kwargs)
+        # Model-side rejection seen in the local Qwen request logs. Exercise
+        # the real adapter so a caller-only mock cannot hide this conflict.
+        if kwargs.get("extra_body") != wire:
+            raise ValueError("Forced tool output is unsupported in thinking mode")
+        return stream()
+
+    async def start(**kwargs):
+        return None
+
+    for setting in ("modify_params", "drop_params", "reasoning_auto_summary"):
+        monkeypatch.setattr(litellm, setting, getattr(litellm, setting))
+    monkeypatch.setattr(UsageMeter, "start", start)
+    monkeypatch.setattr(litellm, "acompletion", completion)
+    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _model: {})
+    monkeypatch.setattr(suggestions, "stream_llm", llm.stream_llm)
+    async with runtime.transaction(chat[1], chat[0]) as (_, session, _):
+        session.variant = llm.reasoning_profile(model).default_variant
+
+    await suggestions.generate_suggestions(chat[2], await completed(chat), model)
+
+    rows = await saved(chat)
+    assert len(requests) == 1 and requests[0]["tool_choice"] == "required"
+    assert rows[0].data["status"] == "completed"
+    assert rows[0].data["items"] == PAYLOAD["items"]
+    assert chat[3][-1][1]["part"]["status"] == "completed"
+    async with get_db_session() as db:
+        assert (await db.get(Session, chat[1])).variant == llm.reasoning_profile(model).default_variant
+
+
 async def test_empty_result_is_cached(chat, monkeypatch):
     async def stream(**kwargs):
         chat[4].append(kwargs)

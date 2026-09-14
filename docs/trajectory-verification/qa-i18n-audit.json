@@ -1,0 +1,258 @@
+{
+  "namespace": "admin-trajectories",
+  "keysInLocale": 679,
+  "baseKeys": 654,
+  "referencedKeys": 654,
+  "missing": [],
+  "unused": [],
+  "unclassifiedLiterals": [],
+  "suspiciousValues": [],
+  "foreignNamespaces": [],
+  "dynamicCalls": [
+    {
+      "at": "src/features/admin-trajectories/components/AccessNotice.tsx:18",
+      "arg": "labelKey(DENIAL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/ListSortControl.tsx:27",
+      "arg": "LIST_SORT_LABELS[sort]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/SessionFilters.tsx:80",
+      "arg": "RUN_STATUS_LABELS[value]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/SessionFilters.tsx:91",
+      "arg": "RECORDING_STATUS_LABELS[value]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/StatusPills.tsx:34",
+      "arg": "labelKey(table.labels"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/AvailabilityNote.tsx:28",
+      "arg": "KEYS[state]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/ContentActions.tsx:41",
+      "arg": "format === \"text\" || format === \"markdown\" ? \"common.copyText\" : \"common.copyJson\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/InspectorHeader.tsx:30",
+      "arg": "labelKey(ORDINAL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/InspectorHeader.tsx:32",
+      "arg": "labelKey(KIND_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/InspectorTabs.tsx:53",
+      "arg": "TAB_LABELS[tab]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/InstantValue.tsx:32",
+      "arg": "MODE_LABELS[mode]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/RecordLink.tsx:28",
+      "arg": "labelKey(KIND_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx:39",
+      "arg": "labelKey(CAPTURE_LEVEL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx:66",
+      "arg": "labelKey(FIELD_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx:79",
+      "arg": "labelKey(CAPTURE_LEVEL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/AssistantPreviewPanel.tsx:32",
+      "arg": "labelKey(BLOCK_TYPE_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/AssistantPreviewPanel.tsx:86",
+      "arg": "record.data.channel === \"commentary\" ? \"assistant.commentary\" : \"assistant.final\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/CapturedFieldsPanel.tsx:38",
+      "arg": "labelKey(FIELD_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/InputPreviewPanel.tsx:40",
+      "arg": "note"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/QuestionsPanel.tsx:33",
+      "arg": "multiple ? \"question.multiple\" : \"question.single\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RawContentPanel.tsx:27",
+      "arg": "labelKey(BLOCK_TYPE_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RelatedPanel.tsx:31",
+      "arg": "labelKey(RELATION_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.tsx:131",
+      "arg": "labelKey(CAPTURE_LEVEL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.tsx:133",
+      "arg": "CAPTURE_NOTES[capture]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RetryAttemptsPanel.tsx:39",
+      "arg": "labelKey(FIELD_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/RetryAttemptsPanel.tsx:60",
+      "arg": "changed ? \"retry.inputChanged\" : \"retry.inputSame\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SourcePanel.tsx:18",
+      "arg": "labelKey(FIELD_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SourcePanel.tsx:23",
+      "arg": "labelKey(CAPTURE_LEVEL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/StateContentPanel.tsx:60",
+      "arg": "note"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SummaryPanel.tsx:33",
+      "arg": "text ? \"summary.shapeText\" : tools ? \"summary.shapeToolsOnly\" : reasoning ? \"summary.shapeReasoningOnly\" : \"summary.shapeOther\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SummaryPanel.tsx:119",
+      "arg": "labelKey(FIELD_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SummaryPanel.tsx:129",
+      "arg": "labelKey(RELATION_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/SystemPromptPanel.tsx:18",
+      "arg": "labelKey(CAPTURE_LEVEL_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx:91",
+      "arg": "point ? \"timing.occurred\" : \"timing.started\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx:119",
+      "arg": "live ? \"timingSource.liveEstimate\" : \"timingSource.replayEstimate\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx:121",
+      "arg": "labelKey(TIMING_SOURCE_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx:127",
+      "arg": "live ? \"timing.openLive\" : \"timing.openReplay\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ToolResultPanel.tsx:39",
+      "arg": "labelKey(AVAILABILITY_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ToolSchemaPanel.tsx:36",
+      "arg": "labelKey(SCHEMA_SOURCE_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/ToolSchemaPanel.tsx:38",
+      "arg": "SOURCE_NOTES[source]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/UsagePanel.tsx:39",
+      "arg": "labelKey(USAGE_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/inspector/panels/UsagePanel.tsx:119",
+      "arg": "statistics.usage_complete ? \"usage.complete\" : \"usage.partial\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/AgentTreePanel.tsx:26",
+      "arg": "depth === 0 && !node.recordId ? \"agents.main\" : \"agents.unnamed\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/ExportControl.tsx:48",
+      "arg": "labelKey(EXPORT_STATUS_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/KindBadge.tsx:17",
+      "arg": "labelKey(KIND_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/PlaybackBar.tsx:58",
+      "arg": "model.playing ? \"playback.pause\" : \"playback.play\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/PlaybackBar.tsx:95",
+      "arg": "model.live ? \"playback.live\" : \"playback.replay\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/RecordRowView.tsx:50",
+      "arg": "labelKey(ORDINAL_SHORT_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/RecordRowView.tsx:77",
+      "arg": "row.collapsed ? \"table.expand\" : \"table.collapse\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/RecordToolbar.tsx:47",
+      "arg": "labelKey(KIND_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/RecordToolbar.tsx:54",
+      "arg": "labelKey(RECORD_STATUS_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/RecordedSession.tsx:54",
+      "arg": "snapshot?.phase === \"gone\" ? \"session.gone\" : \"session.accessEnded\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/SessionHeaderBar.tsx:88",
+      "arg": "live ? \"session.positionLive\" : \"session.positionReplay\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/StatisticsStrip.tsx:60",
+      "arg": "statistics.usage_complete ? \"stats.scopeComplete\" : \"stats.scopePartial\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/SyncNotice.tsx:49",
+      "arg": "error?.kind === \"network\" ? \"sync.retrying\" : \"sync.opening\""
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/SyncNotice.tsx:56",
+      "arg": "labelKey(SYNC_ERROR_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/SyncNotice.tsx:67",
+      "arg": "labelKey(CHECKPOINT_REJECTION_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/SyncNotice.tsx:75",
+      "arg": "labelKey(SYNC_ERROR_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/TimelinePanel.tsx:50",
+      "arg": "labelKey(KIND_LABELS"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/TimelinePanel.tsx:83",
+      "arg": "SCALE_LABELS[option]"
+    },
+    {
+      "at": "src/features/admin-trajectories/components/session/TimelinePanel.tsx:101",
+      "arg": "LANE_LABELS[lane]"
+    }
+  ],
+  "hardcodedCandidates": []
+}

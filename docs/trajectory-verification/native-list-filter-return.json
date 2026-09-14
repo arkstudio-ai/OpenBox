@@ -1,0 +1,250 @@
+{
+  "passed": true,
+  "filteredUrl": "http://127.0.0.1:3101/app/admin/trajectories?user=user_b",
+  "detailUrl": "http://127.0.0.1:3101/app/admin/trajectories/sessions/session_user_b?back=user%3Duser_b",
+  "returnedUrl": "http://127.0.0.1:3101/app/admin/trajectories?user=user_b",
+  "shot": "frontend-v2/test-results/trajectory-claude/native-list-filter-return.png",
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "user_id",
+          "user_b"
+        ],
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "user_id",
+          "user_b"
+        ],
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "0"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected",
+        "update"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_user_b"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_user_b"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "failedResponses": []
+}

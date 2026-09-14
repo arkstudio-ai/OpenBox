@@ -1,4 +1,5 @@
 """Apply Patch tool: structured multi-file patches."""
+import shlex
 from pydantic import BaseModel, Field
 
 from tool.tool import ToolResult, ToolContext, define_tool
@@ -22,6 +23,7 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
             if current_op:
                 current_op["content"] = "\n".join(current_content)
                 operations.append(current_op)
+                current_op = None
             break
         elif line.startswith("*** Update File: "):
             if current_op:
@@ -49,8 +51,13 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
         current_op["content"] = "\n".join(current_content)
         operations.append(current_op)
 
+    from trajectory.files import captures_files, record_file_change
+    from trajectory.types import TrajectoryError
+    from tool.edit import _strip_line_numbers
     results = []
+    errors = 0
     for op in operations:
+        before = after = None
         try:
             if op["type"] == "add":
                 content = "\n".join(
@@ -59,9 +66,17 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
                     if not l.startswith("-")
                 )
                 await ctx.sandbox.write_file(op["path"], content)
+                after = content
                 results.append(f"Added {op['path']}")
             elif op["type"] == "delete":
-                await ctx.sandbox.execute(f"rm -f '{op['path']}'")
+                if captures_files(ctx):
+                    try:
+                        before = _strip_line_numbers(await ctx.sandbox.read_file(op["path"], offset=0, limit=100000))
+                    except Exception:
+                        pass
+                outcome = await ctx.sandbox.execute(f"rm -f -- {shlex.quote(op['path'])}")
+                if outcome.exit_code != 0:
+                    raise RuntimeError(outcome.stderr or "File deletion failed")
                 results.append(f"Deleted {op['path']}")
             elif op["type"] == "update":
                 # Read current file
@@ -72,17 +87,24 @@ async def execute(args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
                     tab_idx = l.find("\t")
                     file_lines.append(l[tab_idx + 1:] if tab_idx >= 0 else l)
                 current = "\n".join(file_lines)
+                before = current
 
                 # Apply patch hunks
                 new_content = _apply_patch_hunks(current, op["content"])
                 await ctx.sandbox.write_file(op["path"], new_content)
+                after = new_content
                 results.append(f"Updated {op['path']}")
+            await record_file_change(ctx, op["path"], operation=op["type"], before=before, after=after)
+        except TrajectoryError:
+            raise
         except Exception as e:
+            errors += 1
             results.append(f"Error on {op['path']}: {e}")
 
     return ToolResult(
         title=f"Applied patch ({len(operations)} files)",
         output="\n".join(results),
+        metadata={"error": bool(errors), "failed_files": errors},
     )
 
 

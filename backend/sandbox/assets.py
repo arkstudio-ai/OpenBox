@@ -189,12 +189,17 @@ async def attach_sandbox_image(
     if not head:
         raise RuntimeError("Object missing in OSS after upload")
     verified = head["size"] or size
+    from trajectory import enabled
+    from trajectory.artifacts import read_asset_bytes, capture_result_asset_in_tx
+    from types import SimpleNamespace
+    content = (await read_asset_bytes(SimpleNamespace(oss_key=key))
+               if enabled(ctx.user_id) else None)
 
     async with get_db_session() as db:
-        db.add(
-            FileAsset(
+        asset = FileAsset(
                 id=asset_id,
                 user_id=ctx.user_id,
+                workspace_id=getattr(ctx, "workspace_id", None),
                 session_id=ctx.session_id,
                 # The resource centre files agent output under the same project
                 # the conversation runs in.
@@ -207,8 +212,9 @@ async def attach_sandbox_image(
                 source="agent",
                 transient=transient,
                 created_at=datetime.now(timezone.utc),
-            )
         )
+        db.add(asset)
+        await capture_result_asset_in_tx(db, ctx, asset, content=content)
         await db.commit()
 
     if not pin_part:

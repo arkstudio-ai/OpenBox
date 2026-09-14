@@ -51,6 +51,14 @@ def _create_current_schema(connection, *, missing_internal_column: str | None = 
     from db.models.desktop_event import DesktopEvent
     for model in (QuestionCheckpoint, SessionExecution, DesktopActivation, DesktopEvent):
         model.__table__.create(connection)
+    from db.models.cron import CronRun
+    from db.models.trajectory import (
+        SessionTrajectory, TrajectoryEvent, TrajectoryPayload, TrajectoryRecord,
+        TrajectorySessionSummary, TrajectoryCheckpoint, TrajectoryExport,
+    )
+    for model in (CronRun, SessionTrajectory, TrajectoryEvent, TrajectoryPayload, TrajectoryRecord,
+                  TrajectorySessionSummary, TrajectoryCheckpoint, TrajectoryExport):
+        model.__table__.create(connection)
     from db.models.billing import BillingSubscription, CreditBalance, CreditLedger, PaymentOrder, PaymentOrderRequest, UsageEvent
     for model in (CreditBalance, CreditLedger, PaymentOrder, UsageEvent, BillingSubscription, PaymentOrderRequest):
         model.__table__.create(connection)
@@ -159,4 +167,34 @@ def test_desktop_upgrade_preserves_old_orders_and_is_repeatable():
         assert connection.exec_driver_sql("SELECT id, credits, kind, product FROM payment_orders").one() == (
             "existing", 25, "topup", None,
         )
+    engine.dispose()
+
+
+def test_desktop_trace_context_upgrade_preserves_old_runs_and_is_repeatable():
+    from db.base import _upgrade_desktop_trajectory_columns
+    engine = sa.create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        for table in ("session_executions", "cron_runs"):
+            connection.exec_driver_sql(f"CREATE TABLE {table} (id TEXT PRIMARY KEY)")
+            connection.exec_driver_sql(f"INSERT INTO {table} VALUES ('existing')")
+        _upgrade_desktop_trajectory_columns(connection)
+        _upgrade_desktop_trajectory_columns(connection)
+        for table in ("session_executions", "cron_runs"):
+            assert connection.exec_driver_sql(f"SELECT id, trace_context FROM {table}").one() == ("existing", None)
+    engine.dispose()
+
+
+@pytest.mark.parametrize("table,column", [
+    ("session_executions", "trace_context"), ("cron_runs", "trace_context"),
+    ("trajectory_payloads", "content"), ("trajectory_payloads", "storage_status"),
+])
+def test_readiness_requires_trajectory_migration_columns(table, column):
+    engine = sa.create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        _create_current_schema(connection)
+        for index in sa.inspect(connection).get_indexes(table):
+            if column in index.get("column_names", []):
+                connection.exec_driver_sql(f'DROP INDEX "{index["name"]}"')
+        connection.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {column}")
+        assert _missing_readiness_schema(connection) == (f"{table}.{column}",)
     engine.dispose()

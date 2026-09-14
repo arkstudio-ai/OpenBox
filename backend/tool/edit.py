@@ -380,7 +380,7 @@ async def execute(args: EditArgs, ctx: ToolContext) -> ToolResult:
         raw_content = await ctx.sandbox.read_file(args.file_path, offset=0, limit=100000)
         content = _strip_line_numbers(raw_content)
     except Exception as e:
-        return ToolResult(title=f"Error reading {args.file_path}", output=str(e))
+        return ToolResult(title=f"Error reading {args.file_path}", output=str(e), metadata={"error": True})
 
     try:
         new_content = replace(content, args.old_string, args.new_string, args.replace_all)
@@ -388,6 +388,7 @@ async def execute(args: EditArgs, ctx: ToolContext) -> ToolResult:
         return ToolResult(
             title="Edit failed",
             output=f"{e} (file: {args.file_path})",
+            metadata={"error": True},
         )
 
     count = content.count(args.old_string) or 1 if args.replace_all else 1
@@ -395,11 +396,15 @@ async def execute(args: EditArgs, ctx: ToolContext) -> ToolResult:
     try:
         await ctx.sandbox.write_file(args.file_path, new_content)
     except Exception as e:
-        return ToolResult(title=f"Error writing {args.file_path}", output=str(e))
+        return ToolResult(title=f"Error writing {args.file_path}", output=str(e), metadata={"error": True})
+
+    from trajectory.files import captures_files, record_file_change
+    await record_file_change(ctx, args.file_path, operation="edit", before=content, after=new_content)
 
     output = f"{stale_warning}Replaced {count} occurrence(s)"
 
     # F6: Auto-format (best-effort)
+    formatter = None
     try:
         from core.config import get_config
         if getattr(get_config(), "auto_format", True):
@@ -409,6 +414,11 @@ async def execute(args: EditArgs, ctx: ToolContext) -> ToolResult:
                 output += f"\n(auto-formatted with {formatter})"
     except Exception:
         pass
+
+    if formatter and captures_files(ctx):
+        after = _strip_line_numbers(await ctx.sandbox.read_file(args.file_path, offset=0, limit=100000))
+        if after != new_content:
+            await record_file_change(ctx, args.file_path, operation="format", before=new_content, after=after)
 
     # F5: LSP diagnostics (best-effort)
     try:

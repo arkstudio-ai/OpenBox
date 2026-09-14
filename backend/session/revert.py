@@ -6,11 +6,49 @@ history and restore the sandbox to that state.
 from session.session import get_messages, save_part
 from snapshot import snapshot
 from core.log import create_logger
+import time
 
 log = create_logger("session.revert")
 
 # Store the pre-revert snapshot so unrevert can restore it
 _revert_snapshots: dict[str, str] = {}  # session_id -> pre-revert snapshot
+
+
+async def _begin_restore(session_id: str, user_id: str, *, operation: str,
+                         from_snapshot: str | None, to_snapshot: str,
+                         message_id: str | None = None):
+    from trajectory import enabled, record, context_for_session, mark_capture_paused_in_tx
+    from db.base import get_db_session
+    if not enabled(user_id):
+        from db.base import _engine
+        if _engine is not None:
+            async with get_db_session() as db:
+                await mark_capture_paused_in_tx(db, user_id, session_id)
+        return None, None
+    from db.models.session import Session
+    from core.identifier import ascending
+    from session.session import prepare_trajectory_baseline_assets, capture_trajectory_baseline_in_tx
+    prepared = await prepare_trajectory_baseline_assets(session_id, user_id)
+    async with get_db_session() as db:
+        context = await context_for_session(db, user_id, session_id)
+        await capture_trajectory_baseline_in_tx(db, context, await db.get(Session, session_id),
+                                                 prepared_assets=prepared)
+        data = {"operation_id": ascending("restore"), "operation": operation,
+                "from_snapshot": from_snapshot, "to_snapshot": to_snapshot,
+                "from_message_id": message_id, "capture_level": "snapshot_reference"}
+        await record("history.reverted", {**data, "status": "requested"}, context=context, db=db,
+                     event_id=f"{data['operation_id']}:requested")
+    return context, data
+
+
+async def _finish_restore(context, data, success: bool, started: float):
+    if context is None:
+        return
+    from trajectory import record
+    await record("history.reverted", {**data, "status": "completed" if success else "failed",
+                 "duration_ms": (time.monotonic() - started) * 1000,
+                 "timing_source": "producer_monotonic"}, context=context,
+                 event_id=f"{data['operation_id']}:finished")
 
 
 async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -> bool:
@@ -70,12 +108,24 @@ async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -
             _revert_snapshots[session_id] = current_snapshot
 
         # Restore to target snapshot
-        success = await snapshot.restore(target_snapshot, session_id, sandbox)
+        context, data = await _begin_restore(session_id, user_id, operation="restore",
+                                             from_snapshot=current_snapshot,
+                                             to_snapshot=target_snapshot, message_id=message_id)
+        started = time.monotonic()
+        try:
+            success = await snapshot.restore(target_snapshot, session_id, sandbox)
+        except Exception:
+            await _finish_restore(context, data, False, started)
+            raise
+        await _finish_restore(context, data, success, started)
         if success:
             log.info(f"Reverted session {session_id} to snapshot {target_snapshot[:12]}")
         return success
 
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.error(f"Failed to revert session {session_id}: {e}")
         return False
 
@@ -83,17 +133,29 @@ async def revert_to_message(session_id: str, message_id: str, *, user_id: str) -
 async def unrevert(session_id: str, *, user_id: str) -> bool:
     """Undo a revert by restoring the pre-revert snapshot."""
     try:
-        pre_revert = _revert_snapshots.pop(session_id, None)
+        pre_revert = _revert_snapshots.get(session_id)
         if not pre_revert:
             log.warning(f"No revert to undo for session {session_id}")
             return False
 
-        success = await snapshot.restore(pre_revert, session_id, user_id=user_id)
+        context, data = await _begin_restore(session_id, user_id, operation="undo_restore",
+                                             from_snapshot=None, to_snapshot=pre_revert)
+        started = time.monotonic()
+        try:
+            success = await snapshot.restore(pre_revert, session_id, user_id=user_id)
+        except Exception:
+            await _finish_restore(context, data, False, started)
+            raise
+        await _finish_restore(context, data, success, started)
         if success:
+            _revert_snapshots.pop(session_id, None)
             log.info(f"Unreverted session {session_id} to snapshot {pre_revert[:12]}")
         return success
 
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.error(f"Failed to unrevert session {session_id}: {e}")
         return False
 

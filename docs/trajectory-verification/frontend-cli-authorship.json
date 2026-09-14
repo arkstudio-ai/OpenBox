@@ -1,0 +1,1661 @@
+{
+  "authoring_policy": "Frontend product implementation, component tests and fixture E2E authored by Claude CLI; supervisor orchestrated, reviewed, ran native verification, and wrote this evidence/report. Format writes also executed by Claude CLI.",
+  "worktree": "OpenBox-trajectory",
+  "base_commit": "521338c7580f1dd1a9b6f3b0e151310c250c4852",
+  "cli_executable": "/Users/wang/.local/bin/claude",
+  "notes": [
+    "Large raw logs remain in ignored frontend-v2/test-results/trajectory-claude; hashes and operation counts retained here.",
+    "CLI Write/Edit paths do not enumerate paths changed by Bash; those operations remain in the hashed raw logs.",
+    "Repeated API certificate/connection failures were preserved; no TLS verification was disabled.",
+    "QA session97e87f12 and UI resume077c final attempt were stopped after repeated API retries, before ownership handoff."
+  ],
+  "logs": [
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/calibrated-implementation.jsonl",
+      "sha256": "2bfd11a107c230b2e19e8899b5ce653c3c89b802de6d0a71f84ac1addd8f095d",
+      "bytes": 2092403,
+      "sessions": [
+        "03c54a11-4ccf-4fa5-ad2c-290c640d6b3f"
+      ],
+      "first_timestamp": "2026-09-11T08:12:09.433Z",
+      "last_timestamp": "2026-09-11T08:49:53.888Z",
+      "tool_counts": {
+        "Bash": 43,
+        "Read": 1,
+        "Write": 56,
+        "Edit": 29
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/app/layouts/WorkspaceLayout.tsx",
+        "frontend-v2/src/features/admin-trajectories/api/access.ts",
+        "frontend-v2/src/features/admin-trajectories/api/endpoints.ts",
+        "frontend-v2/src/features/admin-trajectories/api/keys.ts",
+        "frontend-v2/src/features/admin-trajectories/api/queries.ts",
+        "frontend-v2/src/features/admin-trajectories/api/registry.ts",
+        "frontend-v2/src/features/admin-trajectories/api/socket.ts",
+        "frontend-v2/src/features/admin-trajectories/api/sync.test.ts",
+        "frontend-v2/src/features/admin-trajectories/api/sync.ts",
+        "frontend-v2/src/features/admin-trajectories/components/SessionFilters.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/SessionTable.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/StatusPills.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectoryListPage.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/AvailabilityNote.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/CopyButton.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/Field.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/JsonTree.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownRenderer.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownText.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/PayloadView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/TextBlock.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/ValueView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/context.ts",
+        "frontend-v2/src/features/admin-trajectories/constants/labels.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/usePlayback.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectoryAccessWatcher.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySocket.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySync.ts",
+        "frontend-v2/src/features/admin-trajectories/stores/view.ts",
+        "frontend-v2/src/features/admin-trajectories/types/protocol.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/adapter.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/adapter.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/availability.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/diff.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/download.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/layout.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/params.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/playback.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/projector.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/projector.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/python.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/relations.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/seq.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/seq.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/statistics.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/tabs.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/time.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/timeline.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/view.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/view.ts",
+        "frontend-v2/src/features/admin/AdminNav.test.tsx",
+        "frontend-v2/src/features/admin/index.ts",
+        "frontend-v2/src/features/admin/sections.ts",
+        "frontend-v2/src/features/workspace/components/ProjectTree.tsx",
+        "frontend-v2/src/features/workspace/hooks/useTopbarHeading.ts",
+        "frontend-v2/src/routes/admin/AdminRoute.tsx",
+        "frontend-v2/src/shared/router/paths.ts",
+        "frontend-v2/src/shared/ws/client.ts",
+        "frontend-v2/src/shared/ws/events.ts"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": true,
+          "terminal_reason": "aborted_streaming",
+          "num_turns": 131,
+          "duration_ms": 2269047,
+          "result_excerpt": ""
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/core-final-seek.jsonl",
+      "sha256": "73284e5dcc19eabfec62e6432b3a7e6e35b6f29e22b7efc99d6f995dc18ff202",
+      "bytes": 6548,
+      "sessions": [
+        "03c54a11-4ccf-4fa5-ad2c-290c640d6b3f"
+      ],
+      "first_timestamp": "2026-09-11T10:11:20.350Z",
+      "last_timestamp": "2026-09-11T10:11:20.350Z",
+      "tool_counts": {},
+      "explicit_write_paths": [],
+      "api_retries": 10,
+      "results": [
+        {
+          "is_error": true,
+          "terminal_reason": "api_error",
+          "num_turns": 1,
+          "duration_ms": 202829,
+          "result_excerpt": "API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/core-review.jsonl",
+      "sha256": "a29fe757a37040ac45d61f2b38318df8f0c00abb507a30d642c925c8496bcead",
+      "bytes": 1908770,
+      "sessions": [
+        "03c54a11-4ccf-4fa5-ad2c-290c640d6b3f"
+      ],
+      "first_timestamp": "2026-09-11T08:51:01.175Z",
+      "last_timestamp": "2026-09-11T09:17:43.547Z",
+      "tool_counts": {
+        "Bash": 49,
+        "Edit": 49,
+        "Write": 27
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/app/layouts/WorkspaceLayout.isolation.test.tsx",
+        "frontend-v2/src/app/layouts/WorkspaceLayout.tsx",
+        "frontend-v2/src/app/router/router.test.ts",
+        "frontend-v2/src/app/router/router.tsx",
+        "frontend-v2/src/features/admin-trajectories/api/access.test.ts",
+        "frontend-v2/src/features/admin-trajectories/api/access.ts",
+        "frontend-v2/src/features/admin-trajectories/api/endpoints.test.ts",
+        "frontend-v2/src/features/admin-trajectories/api/endpoints.ts",
+        "frontend-v2/src/features/admin-trajectories/api/queries.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/api/queries.ts",
+        "frontend-v2/src/features/admin-trajectories/api/registry.ts",
+        "frontend-v2/src/features/admin-trajectories/api/sync.test.ts",
+        "frontend-v2/src/features/admin-trajectories/api/sync.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useStableWatermark.test.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useStableWatermark.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectoryAccessWatcher.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySocket.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySync.ts",
+        "frontend-v2/src/features/admin-trajectories/index.ts",
+        "frontend-v2/src/features/admin-trajectories/stores/access.ts",
+        "frontend-v2/src/features/admin-trajectories/types/protocol.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/adapter.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/adapter.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/artifact.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/artifact.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/availability.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/params.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/params.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/projector.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/projector.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/tabs.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/view.test.ts",
+        "frontend-v2/src/features/admin-trajectories/utils/view.ts",
+        "frontend-v2/src/features/workspace/components/Sidebar.tsx",
+        "frontend-v2/src/features/workspace/components/UserRow.tsx",
+        "frontend-v2/src/routes/admin/AdminTrajectoriesRoute.tsx",
+        "frontend-v2/src/routes/admin/AdminTrajectorySessionRoute.tsx",
+        "frontend-v2/src/shared/ws/client.test.ts",
+        "frontend-v2/src/shared/ws/client.ts",
+        "frontend-v2/test-results/trajectory-claude/core-ui-contract.md"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 126,
+          "duration_ms": 1607423,
+          "result_excerpt": "Review item 20 is done, and it was the last independent item in my scope. What's left is the full `npm run check` and build, and they depend entirely on the UI process landing `TrajectorySessionPage` and the locale namespace. There's nothing further I can request in parallel right now, so I'm pausing until the background watcher reports; it notifies me when those files appear.\n\nWhere core stands:\n- **Tests:** the full suite passed earlier (91 files, 675 tests). I've since added tests for endpoint read-only behaviour, `useStableWatermark`, export races and `$media`, and route isolation with the"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/core-short-seek.jsonl",
+      "sha256": "cc0190db66a15d0be61179f0f73878487ad3ad259a8a80e9af1a56698ed5b13e",
+      "bytes": 823409,
+      "sessions": [
+        "40408f71-c2cf-4255-b455-ec1101542f99"
+      ],
+      "first_timestamp": "2026-09-11T10:11:49.055Z",
+      "last_timestamp": "2026-09-11T10:22:41.231Z",
+      "tool_counts": {
+        "Bash": 18,
+        "Glob": 3,
+        "Read": 10,
+        "Grep": 5,
+        "Edit": 7,
+        "Write": 3
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/api/sync.test.ts",
+        "frontend-v2/src/features/admin-trajectories/api/sync.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/usePlayback.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/hooks/usePlayback.ts",
+        "frontend-v2/test-results/trajectory-claude/core-final-seek-review.md"
+      ],
+      "api_retries": 2,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 47,
+          "duration_ms": 661113,
+          "result_excerpt": "A seek into older history now loads events only up to the requested H and shows H as soon as they're in. The feature's tests pass (25 files, 185 tests), and tsc and eslint on the core folders are clean. I didn't run the browser, server or build; those are for the supervisor.\n\n**Seek fix (`api/sync.ts`)**\n- **Loading:** `loadSide` asks for events up to exactly H instead of up to the main base, so seeking to H75200 no longer waits for the ~25,000 later events.\n- **Short forward seeks:** if H is at most 4 pages (2,000 events by default) past the end of the loaded history, the engine adds just the"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/implementation.jsonl",
+      "sha256": "721efed6fe9fd99cce30c254a5e192965f1da19b0cabe87eba827faebbf6431e",
+      "bytes": 919349,
+      "sessions": [
+        "03c54a11-4ccf-4fa5-ad2c-290c640d6b3f"
+      ],
+      "first_timestamp": "2026-09-11T08:05:06.060Z",
+      "last_timestamp": "2026-09-11T08:11:32.678Z",
+      "tool_counts": {
+        "Bash": 16,
+        "Read": 17,
+        "Write": 5
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/lib/projector/fields.ts",
+        "frontend-v2/src/features/admin-trajectories/lib/projector/state.ts",
+        "frontend-v2/src/features/admin-trajectories/lib/seq.test.ts",
+        "frontend-v2/src/features/admin-trajectories/lib/seq.ts",
+        "frontend-v2/src/features/admin-trajectories/types/protocol.ts"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": true,
+          "terminal_reason": "aborted_streaming",
+          "num_turns": 40,
+          "duration_ms": 389536,
+          "result_excerpt": ""
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/payload-download.jsonl",
+      "sha256": "fff2ef3523eab461a8366988ef8c633af5962bd41de8f900064b2c3b8b13bf34",
+      "bytes": 339732,
+      "sessions": [
+        "03c54a11-4ccf-4fa5-ad2c-290c640d6b3f"
+      ],
+      "first_timestamp": "2026-09-11T09:24:27.564Z",
+      "last_timestamp": "2026-09-11T09:29:14.621Z",
+      "tool_counts": {
+        "Bash": 12,
+        "Edit": 8,
+        "Write": 3
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/api/access.ts",
+        "frontend-v2/src/features/admin-trajectories/hooks/useDownloadPayload.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/hooks/useDownloadPayload.ts"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": null,
+          "num_turns": 0,
+          "duration_ms": 28,
+          "result_excerpt": ""
+        },
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 24,
+          "duration_ms": 292618,
+          "result_excerpt": "The protected payload download hook is ready. The UI process has been told to use it in place of the direct `saveBlob` call.\n\n**Hook:** `useDownloadPayload(sessionId, throughSeq, payloadId)` in `features/admin-trajectories/hooks/useDownloadPayload.ts`. Call `download.mutate({ filename })`, or with no argument; the file name defaults to the payload id.\n\n- **Every click fetches afresh.** It re-reads the payload from the admin endpoint at the shown position. A Blob already on screen is never reused.\n- **Access is checked twice.** Before sending, and again right before saving, it checks the curren"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-audit-format.jsonl",
+      "sha256": "be4244750b7396b287b1fe3f3482191b5449699d1668295bbd3e57f31213131b",
+      "bytes": 7858,
+      "sessions": [
+        "40408f71-c2cf-4255-b455-ec1101542f99"
+      ],
+      "first_timestamp": "2026-09-11T10:43:07.467Z",
+      "last_timestamp": "2026-09-11T10:43:10.201Z",
+      "tool_counts": {
+        "Bash": 1
+      },
+      "explicit_write_paths": [],
+      "api_retries": 1,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 2,
+          "duration_ms": 11422,
+          "result_excerpt": "Prettier formatted `e2e/helpers/trajectory-i18n-audit.mjs` using the repo's `.prettierrc`. `--write` exited 0, and `--check` then exited 0 (\"All matched files use Prettier code style!\"). Nothing else was touched."
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-final-handoff.jsonl",
+      "sha256": "35c6f5746ab2a2ebe909b3c9e6523fca88dade079809fd1d4af3b91cb5c68e59",
+      "bytes": 402305,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": "2026-09-11T10:16:22.549Z",
+      "last_timestamp": "2026-09-11T10:22:11.189Z",
+      "tool_counts": {
+        "Bash": 27,
+        "Read": 1,
+        "ToolSearch": 1
+      },
+      "explicit_write_paths": [],
+      "api_retries": 1,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 30,
+          "duration_ms": 356487,
+          "result_excerpt": "No earlier scale metrics exist, so the upcoming scale run will be the first measurement. Nothing else can proceed until core's seek session finishes: both remaining runs exercise the core files it is still editing. The background wait will notify me when it ends, or after 25 minutes if core hangs.\n\nCurrent state:\n- **Locales:** both `playback.newer_one` and `playback.newer_other` now show `{{n}}`, and the five missing keys are added in English and Chinese. i18n parity passes, and the namespace audit reports 0 missing and 0 unused keys (659 referenced).\n- **Functional spec:** 14 of 15 tests pas"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-fixture-network.jsonl",
+      "sha256": "2a9f92b9eb8bc944f0540022972695b0bcbcaa0b2f870252802208d1ebea1e27",
+      "bytes": 2076,
+      "sessions": [],
+      "first_timestamp": null,
+      "last_timestamp": null,
+      "tool_counts": {},
+      "explicit_write_paths": [],
+      "api_retries": 0,
+      "results": []
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-implementation.jsonl",
+      "sha256": "5c4f536a6c7df2b43c6acc48a9ade488183216701abc393fe61bb84e7f610d3d",
+      "bytes": 2900041,
+      "sessions": [
+        "97e87f12-3030-49b3-889d-121f88327a35"
+      ],
+      "first_timestamp": "2026-09-11T09:13:53.380Z",
+      "last_timestamp": "2026-09-11T10:14:20.950Z",
+      "tool_counts": {
+        "Bash": 45,
+        "Read": 27,
+        "Write": 12,
+        "Edit": 6
+      },
+      "explicit_write_paths": [
+        "frontend-v2/e2e/fixtures/trajectories.html",
+        "frontend-v2/e2e/fixtures/trajectories.tsx",
+        "frontend-v2/e2e/helpers/trajectory-data.ts",
+        "frontend-v2/e2e/helpers/trajectory-i18n-audit.mjs",
+        "frontend-v2/e2e/helpers/trajectory-metrics.ts",
+        "frontend-v2/e2e/helpers/trajectory-server.ts",
+        "frontend-v2/e2e/trajectories-scale.spec.ts",
+        "frontend-v2/e2e/trajectories.spec.ts",
+        "frontend-v2/playwright.trajectories.config.ts",
+        "frontend-v2/src/locales/en-US/admin-trajectories.json",
+        "frontend-v2/src/locales/zh-CN/admin-trajectories.json"
+      ],
+      "api_retries": 31,
+      "results": []
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-scale-calibrate.jsonl",
+      "sha256": "1d6fe75f4025627fd0a4b5c93e5e980025f6a3cc21d10ead85d620d9a05064e7",
+      "bytes": 182813,
+      "sessions": [
+        "40408f71-c2cf-4255-b455-ec1101542f99"
+      ],
+      "first_timestamp": "2026-09-11T10:33:08.387Z",
+      "last_timestamp": "2026-09-11T10:35:52.800Z",
+      "tool_counts": {
+        "Read": 2,
+        "Grep": 4,
+        "Bash": 6,
+        "Write": 1
+      },
+      "explicit_write_paths": [
+        "frontend-v2/test-results/trajectory-claude/qa-scale-calibrate-review.md"
+      ],
+      "api_retries": 2,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 14,
+          "duration_ms": 174105,
+          "result_excerpt": "The scale fixture now expects 10,004 records instead of 10,003, and the seek labels match how seeking works now. Prettier and ESLint pass on the two files. I didn't run the scale test, `npm run check`, the build or any native scripts; those are yours.\n\n**Record count**\n- **What the fixture really produces:** I ran the generator through the real projector, in memory only. It gives 100,000 events and 10,004 records:\n  - 10,000 tool records;\n  - one **baseline** record (`baseline:trj_sess-scale-100k`), created by `trajectory.started` at seq 1;\n  - one each of turn, run and step, at seq 2–4.\n\n  Th"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/qa-scale-report.jsonl",
+      "sha256": "e9146a843a647a9d455614c91339059a01a9db042e5f90575b30de3ed208c824",
+      "bytes": 49657,
+      "sessions": [
+        "40408f71-c2cf-4255-b455-ec1101542f99"
+      ],
+      "first_timestamp": "2026-09-11T10:37:51.266Z",
+      "last_timestamp": "2026-09-11T10:38:13.926Z",
+      "tool_counts": {
+        "Grep": 1,
+        "Read": 1,
+        "Edit": 1,
+        "Bash": 1
+      },
+      "explicit_write_paths": [
+        "frontend-v2/e2e/trajectories-scale.spec.ts"
+      ],
+      "api_retries": 3,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 5,
+          "duration_ms": 38815,
+          "result_excerpt": "Fixed: line 325 of `e2e/trajectories-scale.spec.ts` now spreads `...live` instead of `...distribution(live)`. `live` was already built once at line 264, so the report was running `distribution()` a second time on that result, which caused the \"not iterable\" error.\n\nNothing else changed: sample counts, targets, thresholds, the `note` and the raw samples are as they were.\n\nOn that file only, Prettier `--write` left it unchanged, `--check` exits 0, and ESLint exits 0 with no findings. I didn't run the scale spec or any other checks, and nothing is committed or left running."
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-components.jsonl",
+      "sha256": "c7f94dce015a7588d606feab26f156fc8e8253214fc507c37fbaee7000f5d232",
+      "bytes": 3254679,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": "2026-09-11T09:13:53.312Z",
+      "last_timestamp": "2026-09-11T10:04:08.677Z",
+      "tool_counts": {
+        "Bash": 46,
+        "Edit": 18,
+        "Write": 66,
+        "Grep": 1,
+        "Read": 3
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/components/AccessNotice.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/ListSortControl.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectoryListPage.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/AvailabilityNote.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/InspectorHeader.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/InspectorTabs.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/InstantValue.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/JsonTree.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownRenderer.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MediaElement.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MediaRefView.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MediaRefView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MessageView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/PayloadView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/RecordInspector.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/TabPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/envelopeContext.ts",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/media.ts",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactDiffPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactPanels.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactPreviewPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/EventsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RetryAttemptsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SourcePanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolArgumentsPanel.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/eventNotes.ts",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/tabIds.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/AgentTreePanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/ExportControl.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/FilterMenu.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/InspectorResizer.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/PlaybackBar.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/PlaybackBar.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordRowView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordTable.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordTable.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordToolbar.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordedSession.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SearchPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SeekControl.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SessionHeaderBar.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SessionWorkspace.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/StatisticsStrip.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SummaryPreview.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/SyncNotice.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/TimelinePanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/ordinals.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/seekScale.test.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/tableLayout.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/useDetailUrlSync.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/useNow.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/useSettledSeq.ts",
+        "frontend-v2/src/features/admin-trajectories/components/testing/harness.ts",
+        "frontend-v2/src/features/admin-trajectories/constants/inspector.ts",
+        "frontend-v2/src/features/admin-trajectories/constants/labels.ts",
+        "frontend-v2/test-results/trajectory-claude/ui-qa-contract.md"
+      ],
+      "api_retries": 24,
+      "results": [
+        {
+          "is_error": true,
+          "terminal_reason": "api_error",
+          "num_turns": 135,
+          "duration_ms": 2120111,
+          "result_excerpt": "API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-delete-format-short.jsonl",
+      "sha256": "0246c591540b95bbc69779060e0629e00ef2dfe0aa76d9c8786080f908e79355",
+      "bytes": 569112,
+      "sessions": [
+        "40408f71-c2cf-4255-b455-ec1101542f99"
+      ],
+      "first_timestamp": "2026-09-11T10:25:49.042Z",
+      "last_timestamp": "2026-09-11T10:31:02.490Z",
+      "tool_counts": {
+        "Read": 5,
+        "Bash": 16,
+        "Grep": 6,
+        "Edit": 8,
+        "Write": 1
+      },
+      "explicit_write_paths": [
+        "frontend-v2/e2e/trajectories.spec.ts",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.tsx",
+        "frontend-v2/test-results/trajectory-claude/ui-delete-final-review.md"
+      ],
+      "api_retries": 4,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 37,
+          "duration_ms": 333480,
+          "result_excerpt": "A deleted session now shows the \"deleted\" message instead of loading forever, and the Playwright deletion case that failed now passes. Formatting is finished across all 184 files in the inventory.\n\n**Fix (`TrajectorySessionPage.tsx`)**\n- After a deletion, the page is left with no bound session and is never rebound. The old check showed loading whenever the page wasn't bound, before it looked at the header error, so the 410/404 error never appeared.\n- New order: denied, then any header error (bound or not), then loading, then session data. Data still only renders once bound, so no other session"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-delete-format.jsonl",
+      "sha256": "770c2e502ab650d9c34edb9748e3d49497f60f8c4ba6c11d238a7d371c4a10f0",
+      "bytes": 7483,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": null,
+      "last_timestamp": null,
+      "tool_counts": {},
+      "explicit_write_paths": [],
+      "api_retries": 8,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": null,
+          "num_turns": 0,
+          "duration_ms": 27,
+          "result_excerpt": ""
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-final-correctness.jsonl",
+      "sha256": "bd89add6387c312b54b185cd0524345da4d5a69c592a7b4febd2093575057146",
+      "bytes": 303530,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": "2026-09-11T10:05:00.327Z",
+      "last_timestamp": "2026-09-11T10:09:41.739Z",
+      "tool_counts": {
+        "Bash": 13,
+        "Write": 8,
+        "Edit": 2
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.fixedH.test.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/eventNotes.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/PendingPosition.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/RecordedSession.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.test.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.ts",
+        "frontend-v2/test-results/trajectory-claude/ui-final-review.md"
+      ],
+      "api_retries": 4,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 24,
+          "duration_ms": 303049,
+          "result_excerpt": "Both blockers are fixed, and each has a regression test. All checks pass: 37 component tests, 254 tests across the trajectory, admin and admin-route suites, 0 type errors, and a clean lint on components and constants.\n\n**1. Seeking back past the head checkpoint** (`session/usePlaybackControls.ts`)\n- The replay range now starts at seq 0, the start of recorded history, instead of the loaded checkpoint's base. The slider, seek, previous-event and \"play from start\" all use it, and the sync engine loads older history on demand.\n- Previous Step also looks at the Step records in the current position'"
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-implementation.jsonl",
+      "sha256": "9c50e820d406ca20f0d65b67f9ddccadd32d85eed3abe07807ecf1b7d7eb4270",
+      "bytes": 2003402,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": "2026-09-11T08:51:01.003Z",
+      "last_timestamp": "2026-09-11T09:13:40.514Z",
+      "tool_counts": {
+        "Bash": 26,
+        "Read": 43,
+        "Edit": 5,
+        "Write": 50
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/components/inspector/ContentActions.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/DiffView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/DurationValue.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/Field.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/InlineValue.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/InstantValue.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownRenderer.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownText.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MediaElement.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/MessageView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/PayloadView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/RecordLink.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/SchemaTree.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/TabPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/ToolDefinitionList.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/UnifiedDiffView.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/context.ts",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/AgentTreeTab.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactPreviewPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/AssistantPreviewPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/CapturedFieldsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/EventsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/InputPreviewPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/InterruptImpactPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/JobProgressPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/QuestionsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RawContentPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RelatedPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestOptionsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RetryAttemptsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SourcePanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/StateContentPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SummaryPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SystemDiffPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SystemPromptPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolArgumentsPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolCatalogPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolResultPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolSchemaPanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/panels/UsagePanel.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/inspector/types.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/KindBadge.tsx",
+        "frontend-v2/src/features/admin-trajectories/components/session/format.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/ordinals.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/seekScale.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/timelineMarks.ts",
+        "frontend-v2/src/features/admin-trajectories/constants/inspector.ts",
+        "frontend-v2/src/features/admin-trajectories/constants/labels.ts"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": true,
+          "terminal_reason": "aborted_streaming",
+          "num_turns": 126,
+          "duration_ms": 1364435,
+          "result_excerpt": ""
+        }
+      ]
+    },
+    {
+      "local_log": "frontend-v2/test-results/trajectory-claude/ui-step-index.jsonl",
+      "sha256": "e6be18d06a6ac40e458959784c653523c4316edaa6d7ab3859ce48fe5aca82e6",
+      "bytes": 98392,
+      "sessions": [
+        "077c717d-4087-44b8-8e8b-427b60c4b964"
+      ],
+      "first_timestamp": "2026-09-11T10:10:28.581Z",
+      "last_timestamp": "2026-09-11T10:11:48.372Z",
+      "tool_counts": {
+        "Read": 1,
+        "Write": 1,
+        "Edit": 1,
+        "Bash": 4
+      },
+      "explicit_write_paths": [
+        "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.test.ts",
+        "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.ts"
+      ],
+      "api_retries": 0,
+      "results": [
+        {
+          "is_error": false,
+          "terminal_reason": "completed",
+          "num_turns": 8,
+          "duration_ms": 108048,
+          "result_excerpt": "Next Step now finds Steps between the replay position and the head checkpoint, so it no longer disables or skips them after a seek. The focused navigation and page tests pass (4 files, 17 tests), type-check has 0 errors, and lint on the two changed files is clean. These are jsdom tests; the native seek check is still yours.\n\n**Fix** (only `components/session/usePlaybackControls.ts`):\n- Step navigation now builds a list of Step start seqs from three sources: the loaded events, the loaded projection's records (`snapshot.live.records`) and the current position's records. It reads only the seq val"
+        }
+      ]
+    }
+  ],
+  "frontend_files": [
+    {
+      "path": "frontend-v2/e2e/fixtures/trajectories.html",
+      "sha256": "1b7f972ebf9022b2820643d270e19a0cc014d2372ce1530f592a307f3acb95f2",
+      "bytes": 318
+    },
+    {
+      "path": "frontend-v2/e2e/fixtures/trajectories.tsx",
+      "sha256": "4c97ede6071900dcbe774ee249999fb9e60684537eb1b82c6ca29991924f6782",
+      "bytes": 3345
+    },
+    {
+      "path": "frontend-v2/e2e/helpers/trajectory-data.ts",
+      "sha256": "ecabdd5689e43728d8f92ad30feca9818838eb8bfcb499cb345c224b0e1de17b",
+      "bytes": 23042
+    },
+    {
+      "path": "frontend-v2/e2e/helpers/trajectory-i18n-audit.mjs",
+      "sha256": "ebbaf31cd1944ecf221c5b6e4eb93b1991b40f7933471f0835000a394e932840",
+      "bytes": 6723
+    },
+    {
+      "path": "frontend-v2/e2e/helpers/trajectory-metrics.ts",
+      "sha256": "b60b190ef575be5f7cdda1f4e38b31f7ca21f75bc1367f977cf98d217d7ad6ed",
+      "bytes": 5441
+    },
+    {
+      "path": "frontend-v2/e2e/helpers/trajectory-server.ts",
+      "sha256": "fd3847e92ff259787e18029dcae125361b6df9c834514b96b065c3050c945bab",
+      "bytes": 28815
+    },
+    {
+      "path": "frontend-v2/e2e/trajectories-scale.spec.ts",
+      "sha256": "f70fb17ed08c377b7ce050e2f449a0dcaff8041c11a351a921b8e47af71c0ff9",
+      "bytes": 15817
+    },
+    {
+      "path": "frontend-v2/e2e/trajectories.spec.ts",
+      "sha256": "2e6ff39765bb3f2c3093c74f32337ed6d1d233063e795f59325330082125c00f",
+      "bytes": 37580
+    },
+    {
+      "path": "frontend-v2/playwright.trajectories.config.ts",
+      "sha256": "44245c5eea95a7233be9d28664851b8db70ad9e7f03fae69ea6e52426fa50097",
+      "bytes": 1291
+    },
+    {
+      "path": "frontend-v2/src/app/layouts/WorkspaceLayout.isolation.test.tsx",
+      "sha256": "5599a54c02d5361eb7d15bc30e25c752caf888abc791f28d04ce216844fa1769",
+      "bytes": 7892
+    },
+    {
+      "path": "frontend-v2/src/app/layouts/WorkspaceLayout.tsx",
+      "sha256": "27dd497820fcdd3a3f153b6ccd0c7437402c840bef5da1072d4abb7d5ff431c4",
+      "bytes": 4645
+    },
+    {
+      "path": "frontend-v2/src/app/router/router.test.ts",
+      "sha256": "d4db7f0f4174bcddb283c2e745fb459b91fe8f883201baa84922ec8f0355d771",
+      "bytes": 2383
+    },
+    {
+      "path": "frontend-v2/src/app/router/router.tsx",
+      "sha256": "4291845cba1dd67bd3c1d82adf46cd50c4345559a9643134354f97763c9f81d6",
+      "bytes": 5038
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/access.test.ts",
+      "sha256": "cfdc88dbad6e8c210e7c95ab94a68b62900a9282a2a27010fad58cf3a91d19f1",
+      "bytes": 6602
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/access.ts",
+      "sha256": "7a3ccd82b6142f6d97ca1f12f9ea47798d66ab76a0de0d07c00257cbaaf73d56",
+      "bytes": 7916
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/endpoints.test.ts",
+      "sha256": "b4412e43102455d76fc05ec1ff27eb96bd88bf5cf33a1cc003e95800795eab2b",
+      "bytes": 3389
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/endpoints.ts",
+      "sha256": "5c67e39f6c140aa0976ccd9aaa65fd55f116942031f8fb5569f768312e787d23",
+      "bytes": 5173
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/keys.ts",
+      "sha256": "b95e044ef6436d1cb1381b38f33ab9aa0ccb3209c7611aa2dc7852a7a0b9cf82",
+      "bytes": 1891
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/queries.test.tsx",
+      "sha256": "447b96f1f939d895708079c029d67661a10cee14776abc6e2d661de51a820259",
+      "bytes": 8284
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/queries.ts",
+      "sha256": "b3c6bba3c0d5fcc0592cddc837d6caa28f93bcdf1827d8289ee407d07c3da8e2",
+      "bytes": 12812
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/registry.ts",
+      "sha256": "39dc0af5b861494893a9c56ee19eac09974f28a46c2001c3ce423d2dd175ba00",
+      "bytes": 2653
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/socket.ts",
+      "sha256": "f59072e7b4229152413eb2b241c368b0a3c4cbca82508eaf13b3b4f58249f8bd",
+      "bytes": 971
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/sync.test.ts",
+      "sha256": "4ef30f4050b99db14abc625a6aeb891472387b60e66dc6b1010157601aca6c58",
+      "bytes": 20910
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/api/sync.ts",
+      "sha256": "d1e78a6a861087936c429e28164b1ac35c03b1c16c6eee057120d956602d1ab3",
+      "bytes": 17950
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/AccessNotice.tsx",
+      "sha256": "f6ce2039156fbf49dcf042ba596dfb61c815d44fab5a1edaff46e3b07d9984b9",
+      "bytes": 1008
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/ListSortControl.tsx",
+      "sha256": "a4cd259a35a0fc21ba89f54427463ae5733350db29487bf368ef9e13b12b0438",
+      "bytes": 1141
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/SessionFilters.tsx",
+      "sha256": "4453b6d4e29183b66d92f630036b19809f8948b2a0261f0a67517877e1458a2d",
+      "bytes": 6350
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/SessionTable.tsx",
+      "sha256": "13872c8d62d6b97ff10f674c394c04b106af4fa985535ad77171fe94021e8f6b",
+      "bytes": 5408
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/StatusPills.tsx",
+      "sha256": "de8d2610d6b1adbd8b27d3d7b6f56b891b52a455937c75862598ba180b951bba",
+      "bytes": 1296
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/TrajectoryListPage.tsx",
+      "sha256": "d6e695d50b3199a07d63991962b654bb5eedb5e6ba2ac43c6c68c026dd09eb26",
+      "bytes": 4503
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.fixedH.test.tsx",
+      "sha256": "a2e4b8dcc1cd188ea61709c2bd2e6a81bf0b64eb1fc7ed43428aba077bc170b3",
+      "bytes": 7587
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.test.tsx",
+      "sha256": "903ac8238d80d0f2bb675ae894ee7bd7c1e0dd9fdb8538c7432a9312b4c5141e",
+      "bytes": 11211
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/TrajectorySessionPage.tsx",
+      "sha256": "23bc158bba2b58fe0845439e8491f7a13b30d9e000236a467bedba57f2fb373b",
+      "bytes": 4075
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/AvailabilityNote.tsx",
+      "sha256": "bbac3257780d7f1ef391c59bf54848a04b239b50cfbb904cd59bfb2e0cd28d7d",
+      "bytes": 1123
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/ContentActions.tsx",
+      "sha256": "060b2733c3651c4d641c3b13b56966a796c5e7322505208b86fb537db104cc7a",
+      "bytes": 2178
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/CopyButton.tsx",
+      "sha256": "3b487dd0b9a955867cb83c4042d33c9bc3d9ebbdff7037b434c61ec32c1d7b05",
+      "bytes": 991
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/DiffView.tsx",
+      "sha256": "73eb511e6c130388922e6db8fecca336f5531b856f5bb339affe940f45797347",
+      "bytes": 1736
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/DurationValue.tsx",
+      "sha256": "32b1d729b56d8ad60f95672a2e94f3990d975d28f813e014b7c09a60306f2948",
+      "bytes": 806
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/Field.tsx",
+      "sha256": "99404823adab9ca1f71144febd221a00f68946bdc426001f2aa1dd96cdf26420",
+      "bytes": 1119
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/InlineValue.tsx",
+      "sha256": "946dc2d48f0736944567d29e4e0cab95a48a72cbbb1955485ab75d5ba4620983",
+      "bytes": 1744
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/InspectorHeader.tsx",
+      "sha256": "8a38d02d0bf1b76d8ec2905c2a8be64776171cbc79ac2089c777d13c75828010",
+      "bytes": 2945
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/InspectorTabs.tsx",
+      "sha256": "62a140a216f93a81a7eed2de748c17b0e1b23e66c9e8c9eea41c23561f89b1a9",
+      "bytes": 2260
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/InstantValue.tsx",
+      "sha256": "a4f2e9ccda823c7657718bba0f67f36960ca7e3b707806d5576149f8c78d3ba7",
+      "bytes": 1311
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/JsonTree.tsx",
+      "sha256": "f69e8579d4a4537e63fd157c96f384e6cd20da8da01efdb39f296b72d575f1e8",
+      "bytes": 4903
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownRenderer.test.tsx",
+      "sha256": "7a3ba4667221a642d972eee3abe999f6dfa2aedb81231a017d1e9fbc897d43e4",
+      "bytes": 2054
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownRenderer.tsx",
+      "sha256": "51d5674a1a271a1347242c8a6ba4a254428bb38bbf5f1afb7f6c875ceff8a253",
+      "bytes": 1918
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MarkdownText.tsx",
+      "sha256": "dce69397acbbdfb3d8ecd721491ddf92a95012bfc07d5a76f1458a1fbfe2cc6c",
+      "bytes": 463
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MediaElement.tsx",
+      "sha256": "68100c21cbf1259d19014b9a79e04c04f741b888d0e7ab0a19a614bfcf2e7234",
+      "bytes": 1430
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MediaRefView.test.tsx",
+      "sha256": "a0610005e571d92bbb351739ca4cd6801e027eafeec9f6d7bcada8e3499eee6c",
+      "bytes": 5441
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MediaRefView.tsx",
+      "sha256": "83991ec86e97a18aed7fc0b451a29dd4a9bc3fecfb9293e0274bf900a9783646",
+      "bytes": 2920
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/MessageView.tsx",
+      "sha256": "9413c8a926f32c2318a4209171e2929d8524a4f1256164d2e6a10c2055b1e9d4",
+      "bytes": 3099
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/PayloadView.tsx",
+      "sha256": "b2ccfe6a6fca9d62398a2cc2dff5b1af4c603219d8659b0aa514bc7f08350458",
+      "bytes": 3955
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/RecordInspector.tsx",
+      "sha256": "6aed400909146949a0acf650d216e19030dcc182bf784331492ea54acae74418",
+      "bytes": 5234
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/RecordLink.tsx",
+      "sha256": "858b5695e6673870d19e1a043d6a325b7f32b1e2e78bae0f67fefadb3792769b",
+      "bytes": 1406
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/SchemaTree.tsx",
+      "sha256": "67efcc76e8f3a889ee6b5cefe4b654b41a9bd610d779aa591f80d3ff35334d7f",
+      "bytes": 4493
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/TabPanel.tsx",
+      "sha256": "967e5cdd6bb64bdba0c18053bce4aade68dab6676ad89eb4efade5c16415691f",
+      "bytes": 3784
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/TextBlock.tsx",
+      "sha256": "26869d193ead718ce4393b6267633ac915263d742fc114b988ab3b2804574e37",
+      "bytes": 1444
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/ToolDefinitionList.tsx",
+      "sha256": "df474f55cc763cad56208787706b27fec5efe981535a0dad8c99dc7b27baddee",
+      "bytes": 2846
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/UnifiedDiffView.tsx",
+      "sha256": "232fc758517bdcb91cb6248cb5e150a5dcc13a525a0ddc17188b9773ce70487d",
+      "bytes": 1874
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/ValueView.tsx",
+      "sha256": "4588c35803d2528a85d4765a599378142ebb44baf0ac2882268ba7b27d0cf14d",
+      "bytes": 1213
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/context.ts",
+      "sha256": "980cd9dd3bcd1d9c25252735eec621c20dda781c1eaa46244edc8a8d5cc03f9c",
+      "bytes": 1516
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/envelopeContext.ts",
+      "sha256": "ddb2eaa7c224c569647570aa14409116354a890e455a2fc022e9292d6c87a33f",
+      "bytes": 654
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/media.ts",
+      "sha256": "c2e2abea301b5eaede4bac6e518c2da7843cd3800604a107e6d2ca453b7e8cab",
+      "bytes": 1228
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/AgentTreeTab.tsx",
+      "sha256": "6a3f5c0a58d17a5ae50b1cce523e30af0bad3423fac220c4551ff1a8f3886825",
+      "bytes": 2345
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactDiffPanel.tsx",
+      "sha256": "f8d6c93bd681f2035594853e3e77e1a0bc8c4578eaadfaf42492af3a96b20106",
+      "bytes": 3129
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactPanels.test.tsx",
+      "sha256": "41220fe86c83183afacca8ca533225a7d6e9d032bc23b8b42a31aa6387def6fe",
+      "bytes": 5476
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactPreviewPanel.tsx",
+      "sha256": "89fd1c2fbdbff94cb99177161e1c778a108d8fe215417b1ffec582af32e877cd",
+      "bytes": 2665
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ArtifactVersionsPanel.tsx",
+      "sha256": "7937d1eb6b1713d7308033b4587e2d0b012c0288d9452c3f7cb309dc96cfbd70",
+      "bytes": 4435
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/AssistantPreviewPanel.tsx",
+      "sha256": "4a31b7517dc654d920eff8f8493ab138a2991201f8a7a65555a5d608f205e5f8",
+      "bytes": 4895
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/CapturedFieldsPanel.tsx",
+      "sha256": "4670f0068b6f0ee2d16b2e95283d1fcafbd93572b1d7345a868551f26625ec22",
+      "bytes": 2127
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/EventsPanel.tsx",
+      "sha256": "eac1343d7d5c6054b556abc6e286f906cde0009908a734ecaa0cb78f79d8e77d",
+      "bytes": 3260
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/InputPreviewPanel.tsx",
+      "sha256": "ebe4280d294a2b2e6bba6aa042560602b3966088cabbfa5e07b4a9778846d9c7",
+      "bytes": 3067
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/InterruptImpactPanel.tsx",
+      "sha256": "e5c94fa28e8c16c3194b053984b92b54d857917e9d93b73ade6f69209bd954f2",
+      "bytes": 1604
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/JobProgressPanel.tsx",
+      "sha256": "34e6c7e8cbc902214165208e0d69de38ec739b108b80027ff11153cadc6f6d3a",
+      "bytes": 1532
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/QuestionsPanel.tsx",
+      "sha256": "9e19b5481647e22e6021d3b051b7054cecce1efad0c6b9c2862172db06dd798e",
+      "bytes": 3952
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RawContentPanel.tsx",
+      "sha256": "b31e400ec92829460cfbf83de36db893fa9db1d34a5888f52c76821cada4620e",
+      "bytes": 2698
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RelatedPanel.tsx",
+      "sha256": "08f7467955146c4f7a967d247e3acebde7928d806244283d104622c387ad165c",
+      "bytes": 2592
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.test.tsx",
+      "sha256": "8efd9d06c5c4d57ac2473dfc8baf7cedbce221ed0bdf257913b9e3ec85218c2a",
+      "bytes": 3091
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestInputPanel.tsx",
+      "sha256": "ae367b99b22b6222564b87bc4f8a628fcea0b66b11e9d960549330a0663f8e9d",
+      "bytes": 6633
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RequestOptionsPanel.tsx",
+      "sha256": "18c2aabbb85db90cf3da68d7822793fab8ffd9ebbcd8c0306db6814918ebe916",
+      "bytes": 2402
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/RetryAttemptsPanel.tsx",
+      "sha256": "a4c31a28aac24f50f0ee579f8134893e9c4849c33d2e99cd6c44085543522f0a",
+      "bytes": 3707
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SourcePanel.tsx",
+      "sha256": "f15d295fa685ab67715e7c6f9fba08c0a05be5d6600b58effd5583066ff22ccf",
+      "bytes": 2693
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/StateContentPanel.tsx",
+      "sha256": "883457c6afa9a79c6a68a88586d557a79d9e3f73315e924de072c2bd50b322b1",
+      "bytes": 3711
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SummaryPanel.tsx",
+      "sha256": "dc1c05a13c0ad8837583c3f695b79b4d8d6d947d1d1cbb85a0e6881723acadc2",
+      "bytes": 6939
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SystemDiffPanel.tsx",
+      "sha256": "a22cbd9726b693b09b180ca2253b2f52a5c90287eb0f7aa500ad76376b70771b",
+      "bytes": 3464
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/SystemPromptPanel.tsx",
+      "sha256": "3677f994f7c28ad169f81a2d4a70eb0ccc0fa4f7d68eb4907fdf42679bb81afa",
+      "bytes": 2026
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/TimingPanel.tsx",
+      "sha256": "cfc9ab894bd12c4558a9fc3f6b55b1c09ee3be56e26c94e2c48c75a60a9ff86a",
+      "bytes": 5604
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolArgumentsPanel.test.tsx",
+      "sha256": "8e81bcdad66bbb61dddb1aea47cff845fc7f097ee2cbfa8d61f4833809fb51c7",
+      "bytes": 3018
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolArgumentsPanel.tsx",
+      "sha256": "a640b777ed1a00d96da7e39de476577c4fc2a9375b1aacbefeacaa6f87004c2e",
+      "bytes": 3943
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolCatalogPanel.tsx",
+      "sha256": "1ea9a6a7e87c7a15b4ab55c78285c162244024929fc587ccc806b5108e9ce6c3",
+      "bytes": 1395
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolResultPanel.tsx",
+      "sha256": "e03108dae67bfc9a8bad6ea34eba2b24c7f7ef522560a6697f04386fe4947960",
+      "bytes": 4639
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/ToolSchemaPanel.tsx",
+      "sha256": "53c1c7f7150bc324032b6e0050a8e01cfeb0d2a44e695ed50ac6f63c953060a0",
+      "bytes": 3468
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/UsagePanel.tsx",
+      "sha256": "f01395cf5c16882a49a5113bba12c02c31d2ed2d0a7900be48ff3b87662d47f2",
+      "bytes": 5884
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/panels/eventNotes.ts",
+      "sha256": "a47f650239a0d31e26ddcadd3c10b5454a07b3757f9c3b98550962af80f38fe9",
+      "bytes": 870
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/tabIds.ts",
+      "sha256": "29f9ddc5ae08a0acb449a70c2a929e35dc77644af6aa8eccaf1796bc2d994b7e",
+      "bytes": 227
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/inspector/types.ts",
+      "sha256": "7bbe64a2af6cc2047f1ce85b0db7520a2769334524b13303ea0e403b2637ae4c",
+      "bytes": 338
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/AgentTreePanel.tsx",
+      "sha256": "d8dea09be817dfa82bddd5b48de4f712885d3202252309c3fe664806308192e8",
+      "bytes": 3918
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/ExportControl.tsx",
+      "sha256": "26f3fa6fae1c1fdce007266d9a7255541f0f8d8bb0b15714972e51bf9fe93da5",
+      "bytes": 2981
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/FilterMenu.tsx",
+      "sha256": "25d2fde2c36d0d30107ac2cab03ae72137a25ce568a5c711cdb27828cb7235ef",
+      "bytes": 2029
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/InspectorResizer.tsx",
+      "sha256": "e451950c171f41a1b5228fc832b283e2300cf5f6995413279b0eb33d17d38898",
+      "bytes": 2158
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/KindBadge.tsx",
+      "sha256": "c936c44316dec027b82a0fc9e235db5ec17f5d3d8623a73115b40f3899825ace",
+      "bytes": 859
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/PendingPosition.tsx",
+      "sha256": "e35e0f6bcb1699105c78c5eedb432c6b72dc5a0d0c525adc45f04aa3f6c370ec",
+      "bytes": 1206
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/PlaybackBar.test.tsx",
+      "sha256": "343c6520c047b37a60cf0726059bf194631572b9644565f0c62aff04f13baceb",
+      "bytes": 3427
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/PlaybackBar.tsx",
+      "sha256": "67a91e8100702e02d8177e093f2164aa7a1331b2a81445d5e6f83d5400c87a64",
+      "bytes": 5910
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/RecordRowView.tsx",
+      "sha256": "98202e3e3789a35063acfa0dc6e10da82ae33c10d34d8ef7f15e4d4133f60dd1",
+      "bytes": 5568
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/RecordTable.test.tsx",
+      "sha256": "ec06d3b1695a46b9ad254f8e31a3aeb38c5ed857b35d57c113563a864ed3a3a8",
+      "bytes": 4279
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/RecordTable.tsx",
+      "sha256": "462bcb92d0e5b41b6549cb4cb712689d403df333b89f76a7deb95cef6359f0ec",
+      "bytes": 6414
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/RecordToolbar.tsx",
+      "sha256": "19bb6638fbf36d1c94fda2176732f12b281690154f9d4b77e61259cfdc10472a",
+      "bytes": 3917
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/RecordedSession.tsx",
+      "sha256": "a4a192b7ebed4f24c7d6ad069ab65f29ad33d9fcccf83be16ba9b49b875aa5a4",
+      "bytes": 3580
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SearchPanel.tsx",
+      "sha256": "eacb6cf4af65e580cc349939f665226f28812e07c7851781814b1e1f34ad6fc7",
+      "bytes": 5739
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SeekControl.tsx",
+      "sha256": "dd3cc1a54d82029a7d863b125982b0006f694777d1c56e52fcb43f36d2454595",
+      "bytes": 2216
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SessionHeaderBar.tsx",
+      "sha256": "8d1833a466a0b0fb3250f72479fc8cbc309fb64606ba99a602eb889692133e73",
+      "bytes": 4572
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SessionWorkspace.tsx",
+      "sha256": "d437caf7b0b72cbc0439069c8b982813fc7e4ddc1e216189df9d8c82b74b977a",
+      "bytes": 8510
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/StatisticsStrip.tsx",
+      "sha256": "26ad135fc583b92fd4b292cd70d8be70deb47b4fee00e4987a792bd477dcdc4b",
+      "bytes": 3098
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SummaryPreview.tsx",
+      "sha256": "a1af8a08762854a318527ee92a422e6ab716f5c880979bff05fb9abdde533d1a",
+      "bytes": 2680
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/SyncNotice.tsx",
+      "sha256": "852fde60b194ea8dc0a8c49e6d3391aaf99da3a60d85dee23ec01c139c8c4e93",
+      "bytes": 3347
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/TimelinePanel.tsx",
+      "sha256": "2669f1a51e9ba979bc85860541a71b6b5167f9f8d72519cda70b95b411873cc7",
+      "bytes": 8939
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/format.ts",
+      "sha256": "4a7eef75ee417424f5bca588c7c45a99d054e0963363ff376cb691116fa933ab",
+      "bytes": 1338
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/ordinals.ts",
+      "sha256": "d2ed234a58f3a924f1b7ed2e70adcf4256c1382bf489907fb97a255148a8c84a",
+      "bytes": 1869
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/seekScale.test.ts",
+      "sha256": "9021ff8d20dd11fbc538fa9a749cbc9457d17114f4e2fa48e3d3c089e9ac70a7",
+      "bytes": 2356
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/seekScale.ts",
+      "sha256": "c224f4eadaaed5b650a441f86821fdb66a0082a8598749b083d4efab99e796e5",
+      "bytes": 1348
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/tableLayout.ts",
+      "sha256": "b5fbf67a6bf47eb8f598773f2ad8f2e1c770b57215a764e1a16d127676a51f6b",
+      "bytes": 1056
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/timelineMarks.ts",
+      "sha256": "eb32e1638e6679f94b76c6dd7cb33ccfc3b45d5ba11e1d6630d7f82831dbe4a3",
+      "bytes": 2266
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/useDetailUrlSync.ts",
+      "sha256": "6fb35dcdabb1bdf2b082af2c030aaab6722cfc532213c1e0b57f554026efca41",
+      "bytes": 892
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/useNow.ts",
+      "sha256": "71681d9e7459c39f0cf846fbc40786c4d7aa45f8e1e3c38ade4a643683b6ca02",
+      "bytes": 1003
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.test.ts",
+      "sha256": "aa4670ee1fc68eb50b737e113d98341a12b5481ba1930216c4f05a6f373bb0b0",
+      "bytes": 7617
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/usePlaybackControls.ts",
+      "sha256": "2523e3bb47ebe0bd92d37c2c7624cebaa36d9c46005abeed857d5540821b2f0a",
+      "bytes": 7418
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/session/useSettledSeq.ts",
+      "sha256": "57c6648d8d9ee6670f81e510e8804ce92e77001b6011ddd99cd0f87ace5ae8ae",
+      "bytes": 954
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/components/testing/harness.ts",
+      "sha256": "346bfbfc5523f1d7281b2bd955afe8e34f0532aaf892f26f73730c6bb2336ecf",
+      "bytes": 2740
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/constants/inspector.ts",
+      "sha256": "16affa388c1f35bb8dbaa971a7157266866db8ec7d55654bd2c8cecc28252144",
+      "bytes": 11156
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/constants/labels.ts",
+      "sha256": "20d0cbd417e79c5ed5fc60a20b6b23f48fefb5e8af0c16a39f91d520d481c092",
+      "bytes": 9210
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useDownloadPayload.test.tsx",
+      "sha256": "b16fd0a3fee018ed5b50e0e82b68783a5c1f8272d2188c024f1678d3bcd18fe8",
+      "bytes": 9202
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useDownloadPayload.ts",
+      "sha256": "1a35be61cbde94aa1732392cbaad34657870230238a9f9dbdb1e697a06049ef2",
+      "bytes": 3670
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/usePlayback.test.tsx",
+      "sha256": "0533932ee51a8cdf1814d22eb364a047e2271677200a19ec056bc14f5fffe92b",
+      "bytes": 4349
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/usePlayback.ts",
+      "sha256": "313872ad3b88ddf8af7b95b4d1de8584a1e10edbb112f5dc037a14462aa57132",
+      "bytes": 4025
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useStableWatermark.test.ts",
+      "sha256": "a498b428ce6a57c2533d54fed87d8f02b63d6f80672c3d3ce24da5a3e5146009",
+      "bytes": 1238
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useStableWatermark.ts",
+      "sha256": "39c469c0573dac0eb32993822ca996dfa5d62e42352d01d3931015e225656c12",
+      "bytes": 873
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useTrajectoryAccessWatcher.ts",
+      "sha256": "ef49d62ee3d48f1e3615925457df13b53e4dc4f5dd86074cf2f32b64bf2bf878",
+      "bytes": 598
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySocket.ts",
+      "sha256": "9a30a839babd9b9087c3e9034abe2adaccfd5d8c01d593a2ce2a73f1cbd7b358",
+      "bytes": 1818
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/hooks/useTrajectorySync.ts",
+      "sha256": "557f0f334a33982f5f80a178597931a1e119835d09a56b4844bf31b19c22f400",
+      "bytes": 2596
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/index.ts",
+      "sha256": "4b2eda4cbaca95f58ba35441cba9852da880099920e8aa403aab82eb137a7944",
+      "bytes": 368
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/stores/access.ts",
+      "sha256": "4070cfac10d36010b0fcdc9cdd2978182cfe524032d49a81547b68df2e4ffca1",
+      "bytes": 1350
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/stores/view.ts",
+      "sha256": "dadf2cbad2918f5d3b6fd5e1ac6d0044aebe24212367604648273d88026db0ed",
+      "bytes": 3321
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/types/protocol.ts",
+      "sha256": "174013bd1ded37720f46b0451e5be16eb4335bbed9bb2c895716b594ef678ac9",
+      "bytes": 9363
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/adapter.test.ts",
+      "sha256": "cef2a46959be665f7c83e04f1d0433652ca922d82e8f300265c78a0cbf07fec2",
+      "bytes": 4648
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/adapter.ts",
+      "sha256": "ad72845a036b610d457d83fd133aaaf656745c559540f22987ccc3c0b7ed7a2a",
+      "bytes": 5010
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/artifact.test.ts",
+      "sha256": "d5afdc9303890737545681e6ea09b8bb0d8d7b897390844eba96d7a3c393bee3",
+      "bytes": 6329
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/artifact.ts",
+      "sha256": "de4d6ba38e1b8d70df5253c06e70e680a54956332e6f0e5c0afa71bf31cb8139",
+      "bytes": 3603
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/availability.ts",
+      "sha256": "92f546bf0ff2ee91b5a283c8c4272ce7774088d3b555f8bfaab9104343107391",
+      "bytes": 5378
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/diff.ts",
+      "sha256": "121d81982d5e8f6d5fd85cacc429a570b91d83d923a0d565a039e4e4ea45e9dd",
+      "bytes": 2130
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/download.ts",
+      "sha256": "838d82124710dce956207e61bb9c8e7afe56f8118ab05ce724ddd83a8596468e",
+      "bytes": 433
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/layout.test.ts",
+      "sha256": "f532fef9cc3e7da78f016dabd657958b55c0a448c6942dc3d41cc628b13cb8ff",
+      "bytes": 4608
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/params.test.ts",
+      "sha256": "ed1ff869bc829fa59d4e661661eebc78cfd2c0cbc787a18dfd6324ee787d631c",
+      "bytes": 3303
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/params.ts",
+      "sha256": "641eae6fecf2e3897096f1597adc6c094406dc85994458ac99d62d83b83ee579",
+      "bytes": 7179
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/playback.ts",
+      "sha256": "1095e919496e32fcf9ade562f3630152fd24290cf0a06dc5a02edc19bf3c910d",
+      "bytes": 3058
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/projector.test.ts",
+      "sha256": "91cf15c239a65fbf57ba787f63256acb6eda9aa9bb1ba549e84ef05f657a61a4",
+      "bytes": 10386
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/projector.ts",
+      "sha256": "7d38a2b210e6404bfac56369a411873afd3b5699d639dc286a73edb40dc5157f",
+      "bytes": 24009
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/python.ts",
+      "sha256": "a7630f810a1e2ca30a46dc97ad623964a8cd23da2ecd3baaddcf8c833a07b362",
+      "bytes": 4963
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/relations.ts",
+      "sha256": "9f3418f13c4d93d2fadd569cca9c080ee0ae2d9176b7d66ebd91141317a3c79c",
+      "bytes": 2092
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/seq.test.ts",
+      "sha256": "0da7a5fa6e2378a02de16bceeac22bb95647456fa121da739b60039ae272365e",
+      "bytes": 2526
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/seq.ts",
+      "sha256": "fe46da802e89355cb68f7ed7d931b9fb2b90afe2ff9bed200c07222b88fee97b",
+      "bytes": 2799
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/statistics.ts",
+      "sha256": "0218bbf8a6702c5241163457a05a02f93c3bb552cb63c6c9c09b82ae7e3c5b48",
+      "bytes": 3807
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/tabs.ts",
+      "sha256": "9438abefe9c53be1d3475f594fb4690696089e816ee0b0afa2d6aef9209403df",
+      "bytes": 2899
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/time.ts",
+      "sha256": "c1bb2724e8f8f06a598ae6b8269798a59a9a7a2be18c1eaea1cdb9f8d395da43",
+      "bytes": 3294
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/timeline.ts",
+      "sha256": "2bdf681c0d4acf78ae5faae4f34d0e75fe26d4618c4f170cc445e50822b2f4d9",
+      "bytes": 4001
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/view.test.ts",
+      "sha256": "00361906a64dd2b6480be1d7414b647dccf7e001446440c013edaea6df47c0ad",
+      "bytes": 8310
+    },
+    {
+      "path": "frontend-v2/src/features/admin-trajectories/utils/view.ts",
+      "sha256": "201423dde5224a1505a0fb9cae11e0c1ce84b50f9a670873763b9e5d158faa5d",
+      "bytes": 8932
+    },
+    {
+      "path": "frontend-v2/src/features/admin/AdminNav.test.tsx",
+      "sha256": "74a6c7b79f3094545a9a7c60b28bef1920e0edeee323eecdaaf82857bf6d33e0",
+      "bytes": 2604
+    },
+    {
+      "path": "frontend-v2/src/features/admin/index.ts",
+      "sha256": "eea661b844ac53da9d366062bdfde13c275ecdc9b2a341d1279b2b799754ca7f",
+      "bytes": 226
+    },
+    {
+      "path": "frontend-v2/src/features/admin/sections.ts",
+      "sha256": "a6b8929ed5ce8b30d87f29ead360d533f25bf2ae7abf1bb61305230413bf6bc7",
+      "bytes": 1723
+    },
+    {
+      "path": "frontend-v2/src/features/workspace/components/ProjectTree.tsx",
+      "sha256": "9ae75a33cc7665f8782b7b29bc1d2755c6acd460771294a99d99480be1bf8af9",
+      "bytes": 7160
+    },
+    {
+      "path": "frontend-v2/src/features/workspace/components/Sidebar.tsx",
+      "sha256": "31643007b61186cf537f88819b98355ab3799a6e2afcc2c6f2c7a5856229a84b",
+      "bytes": 10121
+    },
+    {
+      "path": "frontend-v2/src/features/workspace/components/UserRow.tsx",
+      "sha256": "6d97dc6ef1241f4cd83c366d5d4ce09770de36eb3033f42d1affcac5b73aebb9",
+      "bytes": 3753
+    },
+    {
+      "path": "frontend-v2/src/features/workspace/hooks/useTopbarHeading.ts",
+      "sha256": "4d12c3ea92a5a1caae96ea131bacdb3d9567417b28cb0614063d679e8f8d3cef",
+      "bytes": 3207
+    },
+    {
+      "path": "frontend-v2/src/locales/en-US/admin-trajectories.json",
+      "sha256": "4c3a76ba7b7231bf7de7f46dc0507a9037c3d68dc48fb6a67e2fc32980367a84",
+      "bytes": 28875
+    },
+    {
+      "path": "frontend-v2/src/locales/en-US/admin.json",
+      "sha256": "ab83178c9883c3d59ed128b465f2f9fe069e3e1d2b398a28e7e72e41e5158232",
+      "bytes": 10437
+    },
+    {
+      "path": "frontend-v2/src/locales/zh-CN/admin-trajectories.json",
+      "sha256": "a76c29d9f61d27ff8a91f43e9da5d445198e5e5227474d7bf01e961921ed487a",
+      "bytes": 28637
+    },
+    {
+      "path": "frontend-v2/src/locales/zh-CN/admin.json",
+      "sha256": "899d27e38a0c926d639dc163373e077dca677f5f101dc203b2e9288dcf9198f7",
+      "bytes": 10124
+    },
+    {
+      "path": "frontend-v2/src/routes/admin/AdminRoute.tsx",
+      "sha256": "a4c6bffa33727d3eba3feb165aacd6c0b7ec2dc877e9c8bb9699c63054618f71",
+      "bytes": 1955
+    },
+    {
+      "path": "frontend-v2/src/routes/admin/AdminTrajectoriesRoute.tsx",
+      "sha256": "8a52bc47d755e5ab2e569e67f29ffe691b64dbbd0b8a778a4d7b5de6e8d44bd5",
+      "bytes": 310
+    },
+    {
+      "path": "frontend-v2/src/routes/admin/AdminTrajectorySessionRoute.tsx",
+      "sha256": "7aa1018c8ba3800a108bd76bb66cf43acb7c4619c4b03a3583756fa1ba4b8dad",
+      "bytes": 661
+    },
+    {
+      "path": "frontend-v2/src/shared/router/paths.ts",
+      "sha256": "ba28fa4f1000e1522e20b93baec7e35cb0dedbbe99a792fba5b18fc02a4cd82b",
+      "bytes": 3347
+    },
+    {
+      "path": "frontend-v2/src/shared/ws/client.test.ts",
+      "sha256": "86a29b15adc059f414e74b77fafd690a112c2b599ccdd963ac5033628ec4f4e8",
+      "bytes": 7067
+    },
+    {
+      "path": "frontend-v2/src/shared/ws/client.ts",
+      "sha256": "744586ff4fc6d0b14694c5b58d5f5721978354fb79e75586351fbe690257117c",
+      "bytes": 7843
+    },
+    {
+      "path": "frontend-v2/src/shared/ws/events.ts",
+      "sha256": "7a05ae5c289a2b6a5833e567cb11e6851483dce07526894f48a88006bf6e9a00",
+      "bytes": 4292
+    }
+  ]
+}

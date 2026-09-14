@@ -15,6 +15,14 @@ log = create_logger("cron.executor")
 
 
 async def execute_cron_job(job: dict) -> dict:
+    # A scheduler task may have inherited the API caller's ContextVar. Its
+    # persisted target is the only execution authority for this new run.
+    from trajectory import bind
+    with bind(None):
+        return await _execute_cron_job(job)
+
+
+async def _execute_cron_job(job: dict) -> dict:
     """Execute a single cron job. Called by the timer.
 
     Returns {"status": "ok"|"error"|"skipped", "error"?: str, "summary_text"?: str, ...}
@@ -52,13 +60,18 @@ async def execute_cron_job(job: dict) -> dict:
     started_at = datetime.now(timezone.utc)
     run_id = ascending("cron_run")
 
-    # Create cron_runs entry with status=running
-    await _create_run_entry(run_id, job, started_at)
-
     from cron.i18n import is_silent, resolve_locale
-
+    from trajectory import bind, enabled, record, TrajectoryError
     locale = await resolve_locale(user_id)
     temp_session_id = None
+    # A project-only cron run needs its own durable session before recording
+    # starts. Creating this row does not acquire a sandbox or invoke a model.
+    if enabled(user_id) and not session_id:
+        temp_session_id = await _create_temp_session(job, locale)
+        job = {**job, "_trajectory_temp_session_id": temp_session_id}
+    trace = await _create_run_entry(run_id, job, started_at)
+    trace_scope = bind(trace)
+    trace_scope.__enter__()
     try:
         # A missing per-desktop route is a scheduling skip, not an agent
         # failure. Check it before summary generation so the skip spends no
@@ -77,14 +90,18 @@ async def execute_cron_job(job: dict) -> dict:
         context_summary = await _get_session_summary(job)
 
         # 2. Create temporary session
-        temp_session_id = await _create_temp_session(job, locale)
+        if temp_session_id is None:
+            temp_session_id = await _create_temp_session(job, locale)
+        temp_trace = trace.derive(source_session_id=temp_session_id) if trace is not None else None
+        await _attach_temp_session(run_id, temp_session_id, temp_trace, job)
 
         # 3. Build prompt and inject into temp session
         prompt = _build_cron_prompt(job, context_summary, locale)
-        await _inject_prompt(temp_session_id, user_id, prompt)
+        with bind(temp_trace):
+            await _inject_prompt(temp_session_id, user_id, prompt)
 
-        # 4. Acquire sandbox and run agent loop
-        result_text = await _run_agent_loop(temp_session_id, user_id, job, locale)
+            # 4. Acquire sandbox and run agent loop
+            result_text = await _run_agent_loop(temp_session_id, user_id, job, locale)
 
         # 5. Extract result
         ended_at = datetime.now(timezone.utc)
@@ -175,6 +192,10 @@ async def execute_cron_job(job: dict) -> dict:
         raise
 
     except Exception as e:
+        if isinstance(e, TrajectoryError):
+            # Never turn a recording outage into a best-effort summary,
+            # webhook delivery or another external execution path.
+            raise
         from sandbox.wuying_desktop_service import DesktopNotReady
 
         ended_at = datetime.now(timezone.utc)
@@ -236,6 +257,7 @@ async def execute_cron_job(job: dict) -> dict:
                 await sandbox_manager.release(temp_session_id, user_id=user_id)
             except Exception as e:
                 log.debug(f"Sandbox release for {temp_session_id} failed: {e}")
+        trace_scope.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +308,9 @@ async def _get_session_summary(job: dict) -> str:
             await _update_summary_cache(job["id"], summary, latest_msg_id)
             return summary
     except Exception as e:
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.warning(f"Summary generation failed for session {session_id}: {e}")
 
     # Fallback: no summary
@@ -339,6 +364,9 @@ async def _generate_summary(messages, job: dict) -> str:
             elif event["type"] == "error":
                 break
     except Exception as e:
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.warning(f"Summary LLM call failed: {e}")
 
     return summary
@@ -386,7 +414,7 @@ async def _create_temp_session(job: dict, locale: str = "zh-CN") -> str:
         agent=job.get("agent", "build"),
         model=model,
         title=text(locale, "temp_title", name=job.get("name", "task")),
-        parent_id=job["session_id"],
+        parent_id=job.get("session_id"),
         project_id=project_id,
         kind="cron",
     )
@@ -583,12 +611,25 @@ async def _dispatch_delivery(job: dict, status: str, summary_text: str | None, d
 # DB helpers
 # ---------------------------------------------------------------------------
 
-async def _create_run_entry(run_id: str, job: dict, started_at: datetime) -> None:
+async def _create_run_entry(run_id: str, job: dict, started_at: datetime):
     """Create a cron_runs entry with status=running."""
     from db.base import get_db_session
     from db.models.cron import CronRun
+    from trajectory import context_for_session, enabled, record
+    from session.session import capture_trajectory_baseline_in_tx, prepare_trajectory_baseline_assets
 
+    trace = None
+    target = job.get("session_id") or job.get("_trajectory_temp_session_id")
+    prepared_assets = (await prepare_trajectory_baseline_assets(target, job["user_id"], root_session_id=target)
+        if enabled(job["user_id"]) and target else {})
     async with get_db_session() as db:
+        if enabled(job["user_id"]) and target:
+            from session.internal_parts import begin_session_write, lock_owned_session
+            await begin_session_write(db)
+            session_row = await lock_owned_session(db, target, job["user_id"])
+            trace = (await context_for_session(db, job["user_id"], target)).derive(
+                turn_id=run_id, agent_id=ascending("agent"))
+            await capture_trajectory_baseline_in_tx(db, trace, session_row, prepared_assets=prepared_assets)
         row = CronRun(
             id=run_id,
             job_id=job["id"],
@@ -598,8 +639,33 @@ async def _create_run_entry(run_id: str, job: dict, started_at: datetime) -> Non
             status="running",
             task_prompt=job.get("task_prompt"),
             started_at=started_at,
+            temp_session_id=job.get("_trajectory_temp_session_id"),
+            trace_context=trace.to_dict() if trace is not None else None,
         )
         db.add(row)
+        if trace is not None:
+            await record("turn.started", {"source": "cron", "job_id": run_id}, context=trace, db=db)
+            await record("job.submitted", {"job_id": run_id, "job_type": "cron",
+                "cron_job_id": job["id"], "name": job.get("name"), "task_prompt": job.get("task_prompt"),
+                "schedule": job.get("schedule"), "model": job.get("model"), "agent": job.get("agent"),
+                "temp_session_id": job.get("_trajectory_temp_session_id")},
+                context=trace, db=db, event_id=f"cron:{run_id}:submitted")
+    return trace
+
+
+async def _attach_temp_session(run_id, temp_session_id, trace, job):
+    from db.base import get_db_session
+    from db.models.cron import CronRun
+    from trajectory import record
+    async with get_db_session() as db:
+        row = await db.get(CronRun, run_id)
+        row.temp_session_id = temp_session_id
+        if trace is not None:
+            await record("agent.spawned", {"agent": job.get("agent", "build"),
+                "prompt": job.get("task_prompt"), "child_session_id": temp_session_id,
+                "job_id": run_id, "mode": "scheduled"}, context=trace, db=db)
+            await record("job.progress", {"job_id": run_id, "stage": "agent_started",
+                "temp_session_id": temp_session_id}, context=trace, db=db)
 
 
 async def _update_run_entry(
@@ -643,6 +709,21 @@ async def _update_run_entry(
             values["injected_at"] = datetime.now(timezone.utc)
 
     async with get_db_session() as db:
+        row = await db.get(CronRun, run_id)
+        prior_status = row.status if row is not None else None
+        saved = row.trace_context if row is not None else None
         await db.execute(
             update(CronRun).where(CronRun.id == run_id).values(**values)
         )
+        if saved and prior_status != status:
+            from trajectory import TraceContext, record
+            trace = TraceContext.from_dict(saved)
+            outcome = "completed" if status == "ok" else "denied" if status == "skipped" else "failed"
+            await record("job.finished", {"job_id": run_id, "cron_job_id": job_id,
+                "status": outcome, "output": summary_text, "context_summary": context_summary,
+                "error": error_message, "duration_ms": duration_ms,
+                "temp_session_id": temp_session_id, "injected": injected},
+                context=trace, db=db, event_id=f"cron:{run_id}:finished:{status}")
+            await record("agent.finished", {"status": outcome, "job_id": run_id,
+                "output": summary_text, "error": error_message, "duration_ms": duration_ms}, context=trace, db=db)
+            await record("turn.finished", {"status": outcome, "job_id": run_id}, context=trace, db=db)

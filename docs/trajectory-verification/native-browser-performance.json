@@ -1,0 +1,2003 @@
+{
+  "passed": true,
+  "environment": {
+    "browser": "151.0.7922.34",
+    "viewport": {
+      "width": 1600,
+      "height": 1000
+    },
+    "source": "native8091 backend; Vite3101 development frontend",
+    "cache": "warm JS and connection, trajectory query cache cleared on list; each descending seek outside previous checkpoint",
+    "measurement": "DOM MutationObserver from actual click/form-submit, visible after two animation frames",
+    "dataset": "100009 persisted events / 10009 records / 20 checkpoints"
+  },
+  "first": [
+    {
+      "sample": 1,
+      "firstVisibleSummaryMs": 175.6000000089407,
+      "fullWorkspaceMs": 820.3000000119209,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 2,
+      "firstVisibleSummaryMs": 115.20000000298023,
+      "fullWorkspaceMs": 1303.0999999940395,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 3,
+      "firstVisibleSummaryMs": 116.90000000596046,
+      "fullWorkspaceMs": 1352.7000000029802,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 4,
+      "firstVisibleSummaryMs": 124.29999999701977,
+      "fullWorkspaceMs": 1249.0999999940395,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 5,
+      "firstVisibleSummaryMs": 115.1000000089407,
+      "fullWorkspaceMs": 1245.7999999970198,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 6,
+      "firstVisibleSummaryMs": 115.40000000596046,
+      "fullWorkspaceMs": 1324.5,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 7,
+      "firstVisibleSummaryMs": 121.59999999403954,
+      "fullWorkspaceMs": 1234,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 8,
+      "firstVisibleSummaryMs": 114.79999999701977,
+      "fullWorkspaceMs": 1215.7000000029802,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 9,
+      "firstVisibleSummaryMs": 118.59999999403954,
+      "fullWorkspaceMs": 1285.0999999940395,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    },
+    {
+      "sample": 10,
+      "firstVisibleSummaryMs": 117.1000000089407,
+      "fullWorkspaceMs": 1288.7000000029802,
+      "renderedRows": 38,
+      "totalRows": "10009"
+    }
+  ],
+  "seeks": [
+    {
+      "target": "95200",
+      "paintReadyMs": 642.5,
+      "renderedRows": 38,
+      "totalRows": "9529"
+    },
+    {
+      "target": "90200",
+      "paintReadyMs": 619.5,
+      "renderedRows": 38,
+      "totalRows": "9029"
+    },
+    {
+      "target": "85200",
+      "paintReadyMs": 574,
+      "renderedRows": 38,
+      "totalRows": "8529"
+    },
+    {
+      "target": "80200",
+      "paintReadyMs": 544.6999999880791,
+      "renderedRows": 38,
+      "totalRows": "8029"
+    },
+    {
+      "target": "75200",
+      "paintReadyMs": 503.79999999701977,
+      "renderedRows": 38,
+      "totalRows": "7529"
+    },
+    {
+      "target": "70200",
+      "paintReadyMs": 502,
+      "renderedRows": 38,
+      "totalRows": "7029"
+    },
+    {
+      "target": "65200",
+      "paintReadyMs": 462.90000000596046,
+      "renderedRows": 38,
+      "totalRows": "6529"
+    },
+    {
+      "target": "60200",
+      "paintReadyMs": 354.20000000298023,
+      "renderedRows": 38,
+      "totalRows": "6029"
+    },
+    {
+      "target": "55200",
+      "paintReadyMs": 413.8999999910593,
+      "renderedRows": 38,
+      "totalRows": "5529"
+    },
+    {
+      "target": "50200",
+      "paintReadyMs": 392.59999999403954,
+      "renderedRows": 38,
+      "totalRows": "5029"
+    }
+  ],
+  "summary": {
+    "samples": 10,
+    "minMs": 114.79999999701977,
+    "medianMs": 116.90000000596046,
+    "p95Ms": 175.6000000089407,
+    "maxMs": 175.6000000089407
+  },
+  "fullWorkspace": {
+    "samples": 10,
+    "minMs": 820.3000000119209,
+    "medianMs": 1249.0999999940395,
+    "p95Ms": 1352.7000000029802,
+    "maxMs": 1352.7000000029802
+  },
+  "seek": {
+    "samples": 10,
+    "minMs": 354.20000000298023,
+    "medianMs": 502,
+    "p95Ms": 642.5,
+    "maxMs": 642.5
+  },
+  "shot": "frontend-v2/test-results/trajectory-claude/native-large-replay-final.png",
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/records",
+      "query": [
+        [
+          "through_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "50"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions",
+      "query": [
+        [
+          "sort",
+          "last_activity_desc"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "95200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "95009"
+        ],
+        [
+          "until_seq",
+          "95200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "90200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "90009"
+        ],
+        [
+          "until_seq",
+          "90200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "85200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "85009"
+        ],
+        [
+          "until_seq",
+          "85200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "80200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "80009"
+        ],
+        [
+          "until_seq",
+          "80200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "75200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "75009"
+        ],
+        [
+          "until_seq",
+          "75200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "70200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "70009"
+        ],
+        [
+          "until_seq",
+          "70200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "65200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "65009"
+        ],
+        [
+          "until_seq",
+          "65200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "60200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "60009"
+        ],
+        [
+          "until_seq",
+          "60200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "55200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "100009"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "55009"
+        ],
+        [
+          "until_seq",
+          "55200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/checkpoint",
+      "query": [
+        [
+          "at_seq",
+          "50200"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_frontend_perf/events",
+      "query": [
+        [
+          "after_seq",
+          "50009"
+        ],
+        [
+          "until_seq",
+          "50200"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_frontend_perf"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "failedResponses": []
+}

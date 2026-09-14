@@ -1,0 +1,1953 @@
+{
+  "name": "old_session_tools_questions_retry_child_agent",
+  "events": [
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_1",
+      "seq": "1",
+      "type": "trajectory.started",
+      "occurred_at": "2026-09-11T08:00:00.001Z",
+      "recorded_at": "2026-09-11T08:00:00.001Z",
+      "data": {
+        "existing_session": true
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_2",
+      "seq": "2",
+      "type": "baseline.captured",
+      "occurred_at": "2026-09-11T08:00:00.002Z",
+      "recorded_at": "2026-09-11T08:00:00.002Z",
+      "data": {
+        "history": [
+          {
+            "role": "user",
+            "content": "历史只在基线"
+          }
+        ],
+        "configuration": {
+          "model": "fixture"
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "message_id": "msg_user",
+      "event_id": "evt_fixture_3",
+      "seq": "3",
+      "type": "input.accepted",
+      "occurred_at": "2026-09-11T08:00:00.003Z",
+      "recorded_at": "2026-09-11T08:00:00.003Z",
+      "data": {
+        "text": "检查日志",
+        "source_kind": "web"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_4",
+      "seq": "4",
+      "type": "turn.started",
+      "occurred_at": "2026-09-11T08:00:00.004Z",
+      "recorded_at": "2026-09-11T08:00:00.004Z",
+      "data": {}
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_5",
+      "seq": "5",
+      "type": "run.started",
+      "occurred_at": "2026-09-11T08:00:00.005Z",
+      "recorded_at": "2026-09-11T08:00:00.005Z",
+      "data": {}
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "step_id": "step_a",
+      "event_id": "evt_fixture_6",
+      "seq": "6",
+      "type": "step.started",
+      "occurred_at": "2026-09-11T08:00:00.006Z",
+      "recorded_at": "2026-09-11T08:00:00.006Z",
+      "data": {}
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_7",
+      "seq": "7",
+      "type": "request.prepared",
+      "occurred_at": "2026-09-11T08:00:00.007Z",
+      "recorded_at": "2026-09-11T08:00:00.007Z",
+      "data": {
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "检查日志"
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "capture_level": "adapter_input",
+        "model": "fixture",
+        "purpose": "chat"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_8",
+      "seq": "8",
+      "type": "request.started",
+      "occurred_at": "2026-09-11T08:00:00.008Z",
+      "recorded_at": "2026-09-11T08:00:00.008Z",
+      "data": {}
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_9",
+      "seq": "9",
+      "type": "request.delta",
+      "occurred_at": "2026-09-11T08:00:00.009Z",
+      "recorded_at": "2026-09-11T08:00:00.009Z",
+      "data": {
+        "chunk_index": 0,
+        "blocks": [
+          {
+            "block_id": "reasoning:0",
+            "type": "reasoning",
+            "delta": "先检查"
+          },
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "delta": "我来"
+          }
+        ]
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_10",
+      "seq": "10",
+      "type": "request.delta",
+      "occurred_at": "2026-09-11T08:00:00.010Z",
+      "recorded_at": "2026-09-11T08:00:00.010Z",
+      "data": {
+        "chunk_index": 1,
+        "blocks": [
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "delta": "读取"
+          }
+        ]
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_11",
+      "seq": "11",
+      "type": "request.usage",
+      "occurred_at": "2026-09-11T08:00:00.011Z",
+      "recorded_at": "2026-09-11T08:00:00.011Z",
+      "data": {
+        "mode": "replace",
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 8
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_12",
+      "seq": "12",
+      "type": "request.finished",
+      "occurred_at": "2026-09-11T08:00:00.012Z",
+      "recorded_at": "2026-09-11T08:00:00.012Z",
+      "data": {
+        "status": "completed",
+        "duration_ms": 28
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_13",
+      "seq": "13",
+      "type": "tool.requested",
+      "occurred_at": "2026-09-11T08:00:00.013Z",
+      "recorded_at": "2026-09-11T08:00:00.013Z",
+      "data": {
+        "name": "read",
+        "requested_arguments": {
+          "path": "log.txt"
+        },
+        "schema": {
+          "name": "read",
+          "parameters": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "event_id": "evt_fixture_14",
+      "seq": "14",
+      "type": "permission.requested",
+      "occurred_at": "2026-09-11T08:00:00.014Z",
+      "recorded_at": "2026-09-11T08:00:00.014Z",
+      "data": {
+        "permission_id": "perm_a",
+        "reason": "read permission"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "event_id": "evt_fixture_15",
+      "seq": "15",
+      "type": "permission.resolved",
+      "occurred_at": "2026-09-11T08:00:00.015Z",
+      "recorded_at": "2026-09-11T08:00:00.015Z",
+      "data": {
+        "permission_id": "perm_a",
+        "status": "completed",
+        "decision": "allow"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "request_id": "req_a",
+      "event_id": "evt_fixture_16",
+      "seq": "16",
+      "type": "tool.started",
+      "occurred_at": "2026-09-11T08:00:00.016Z",
+      "recorded_at": "2026-09-11T08:00:00.016Z",
+      "data": {
+        "effective_arguments": {
+          "path": "log.txt"
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "event_id": "evt_fixture_17",
+      "seq": "17",
+      "type": "tool.output",
+      "occurred_at": "2026-09-11T08:00:00.017Z",
+      "recorded_at": "2026-09-11T08:00:00.017Z",
+      "data": {
+        "chunk_index": 0,
+        "mode": "replace",
+        "output": "one"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "event_id": "evt_fixture_18",
+      "seq": "18",
+      "type": "tool.output",
+      "occurred_at": "2026-09-11T08:00:00.018Z",
+      "recorded_at": "2026-09-11T08:00:00.018Z",
+      "data": {
+        "chunk_index": 1,
+        "mode": "replace",
+        "output": "one two"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "call_id": "call_a",
+      "event_id": "evt_fixture_19",
+      "seq": "19",
+      "type": "tool.finished",
+      "occurred_at": "2026-09-11T08:00:00.019Z",
+      "recorded_at": "2026-09-11T08:00:00.019Z",
+      "data": {
+        "status": "completed",
+        "output": "one two",
+        "duration_ms": 17
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_20",
+      "seq": "20",
+      "type": "question.asked",
+      "occurred_at": "2026-09-11T08:00:00.020Z",
+      "recorded_at": "2026-09-11T08:00:00.020Z",
+      "data": {
+        "question_id": "q_a",
+        "questions": [
+          {
+            "question": "继续？",
+            "options": [
+              "继续",
+              "结束"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_21",
+      "seq": "21",
+      "type": "question.draft_saved",
+      "occurred_at": "2026-09-11T08:00:00.021Z",
+      "recorded_at": "2026-09-11T08:00:00.021Z",
+      "data": {
+        "question_id": "q_a",
+        "draft": {
+          "answer": "继续"
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_22",
+      "seq": "22",
+      "type": "question.resolved",
+      "occurred_at": "2026-09-11T08:00:00.022Z",
+      "recorded_at": "2026-09-11T08:00:00.022Z",
+      "data": {
+        "question_id": "q_a",
+        "answers": [
+          "继续"
+        ]
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_23",
+      "seq": "23",
+      "type": "run.finished",
+      "occurred_at": "2026-09-11T08:00:00.023Z",
+      "recorded_at": "2026-09-11T08:00:00.023Z",
+      "data": {
+        "status": "waiting"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_24",
+      "seq": "24",
+      "type": "run.started",
+      "occurred_at": "2026-09-11T08:00:00.024Z",
+      "recorded_at": "2026-09-11T08:00:00.024Z",
+      "data": {
+        "resume_of_run_id": "run_a"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_child",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "parent_agent_id": "agent_a",
+      "event_id": "evt_fixture_25",
+      "seq": "25",
+      "type": "agent.spawned",
+      "occurred_at": "2026-09-11T08:00:00.025Z",
+      "recorded_at": "2026-09-11T08:00:00.025Z",
+      "data": {
+        "name": "子 Agent",
+        "prompt": "整理输出"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_child",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_child",
+      "event_id": "evt_fixture_26",
+      "seq": "26",
+      "type": "request.started",
+      "occurred_at": "2026-09-11T08:00:00.026Z",
+      "recorded_at": "2026-09-11T08:00:00.026Z",
+      "data": {
+        "model": "fixture"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_child",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_child",
+      "event_id": "evt_fixture_27",
+      "seq": "27",
+      "type": "request.finished",
+      "occurred_at": "2026-09-11T08:00:00.027Z",
+      "recorded_at": "2026-09-11T08:00:00.027Z",
+      "data": {
+        "status": "failed",
+        "error": "fixture timeout"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_child",
+      "event_id": "evt_fixture_28",
+      "seq": "28",
+      "type": "request.retry_scheduled",
+      "occurred_at": "2026-09-11T08:00:00.028Z",
+      "recorded_at": "2026-09-11T08:00:00.028Z",
+      "data": {
+        "attempt": 2,
+        "next_request_id": "req_retry",
+        "wait_ms": 5
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_retry",
+      "event_id": "evt_fixture_29",
+      "seq": "29",
+      "type": "request.started",
+      "occurred_at": "2026-09-11T08:00:00.029Z",
+      "recorded_at": "2026-09-11T08:00:00.029Z",
+      "data": {
+        "model": "fallback",
+        "provider": "fixture"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_retry",
+      "event_id": "evt_fixture_30",
+      "seq": "30",
+      "type": "request.delta",
+      "occurred_at": "2026-09-11T08:00:00.030Z",
+      "recorded_at": "2026-09-11T08:00:00.030Z",
+      "data": {
+        "block_id": "text:0",
+        "block_type": "text",
+        "chunk_index": 0,
+        "delta": "完成"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "request_id": "req_retry",
+      "event_id": "evt_fixture_31",
+      "seq": "31",
+      "type": "request.finished",
+      "occurred_at": "2026-09-11T08:00:00.031Z",
+      "recorded_at": "2026-09-11T08:00:00.031Z",
+      "data": {
+        "status": "completed",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_child",
+      "parent_agent_id": "agent_a",
+      "event_id": "evt_fixture_32",
+      "seq": "32",
+      "type": "agent.finished",
+      "occurred_at": "2026-09-11T08:00:00.032Z",
+      "recorded_at": "2026-09-11T08:00:00.032Z",
+      "data": {
+        "status": "completed",
+        "output": "完成"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_b",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_33",
+      "seq": "33",
+      "type": "run.finished",
+      "occurred_at": "2026-09-11T08:00:00.033Z",
+      "recorded_at": "2026-09-11T08:00:00.033Z",
+      "data": {
+        "status": "completed"
+      }
+    },
+    {
+      "trajectory_id": "trj_fixture",
+      "user_id": "user_a",
+      "session_id": "session_a",
+      "source_session_id": "session_a",
+      "version": 1,
+      "turn_id": "turn_a",
+      "run_id": "run_a",
+      "agent_id": "agent_a",
+      "event_id": "evt_fixture_34",
+      "seq": "34",
+      "type": "turn.finished",
+      "occurred_at": "2026-09-11T08:00:00.034Z",
+      "recorded_at": "2026-09-11T08:00:00.034Z",
+      "data": {
+        "status": "completed"
+      }
+    }
+  ],
+  "expected_state": {
+    "projector_version": 1,
+    "through_seq": "34",
+    "records": {
+      "baseline:trj_fixture": {
+        "record_id": "baseline:trj_fixture",
+        "kind": "baseline",
+        "title": "baseline",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "1",
+        "end_seq": "2",
+        "as_of_seq": "2",
+        "started_at": "2026-09-11T08:00:00.001Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "existing_session": true,
+          "coverage_start": "2026-09-11T08:00:00.001Z",
+          "history": [
+            {
+              "role": "user",
+              "content": "历史只在基线"
+            }
+          ],
+          "configuration": {
+            "model": "fixture"
+          }
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "user:msg_user": {
+        "record_id": "user:msg_user",
+        "kind": "user",
+        "title": "user",
+        "preview": "检查日志",
+        "result_preview": null,
+        "status": "accepted",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": "msg_user",
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "3",
+        "end_seq": null,
+        "as_of_seq": "3",
+        "started_at": "2026-09-11T08:00:00.003Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "text": "检查日志",
+          "source_kind": "web"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "turn:turn_a": {
+        "record_id": "turn:turn_a",
+        "kind": "turn",
+        "title": "turn",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "4",
+        "end_seq": "34",
+        "as_of_seq": "34",
+        "started_at": "2026-09-11T08:00:00.004Z",
+        "finished_at": "2026-09-11T08:00:00.034Z",
+        "duration_ms": 30.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "status": "completed"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "run:run_a": {
+        "record_id": "run:run_a",
+        "kind": "run",
+        "title": "run",
+        "preview": null,
+        "result_preview": null,
+        "status": "waiting",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "5",
+        "end_seq": "23",
+        "as_of_seq": "23",
+        "started_at": "2026-09-11T08:00:00.005Z",
+        "finished_at": "2026-09-11T08:00:00.023Z",
+        "duration_ms": 18.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "status": "waiting"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "step:step_a": {
+        "record_id": "step:step_a",
+        "kind": "step",
+        "title": "step",
+        "preview": null,
+        "result_preview": null,
+        "status": "running",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": "step_a",
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "6",
+        "end_seq": null,
+        "as_of_seq": "6",
+        "started_at": "2026-09-11T08:00:00.006Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {},
+        "blocks": [],
+        "usage": {}
+      },
+      "system:req_a": {
+        "record_id": "system:req_a",
+        "kind": "system",
+        "title": "System state",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_a",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "7",
+        "end_seq": "7",
+        "as_of_seq": "7",
+        "started_at": "2026-09-11T08:00:00.007Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "system": [],
+          "tools": [
+            {
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ],
+          "before": null,
+          "source_request_id": "req_a",
+          "capture_level": "adapter_input"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "request:req_a": {
+        "record_id": "request:req_a",
+        "kind": "request",
+        "title": "fixture",
+        "preview": "先检查我来读取",
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_a",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "7",
+        "end_seq": "12",
+        "as_of_seq": "12",
+        "started_at": "2026-09-11T08:00:00.008Z",
+        "finished_at": "2026-09-11T08:00:00.012Z",
+        "duration_ms": 28,
+        "timing_source": "producer_monotonic",
+        "data": {
+          "input": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "检查日志"
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            ]
+          },
+          "capture_level": "adapter_input",
+          "model": "fixture",
+          "purpose": "chat",
+          "status": "completed",
+          "duration_ms": 28
+        },
+        "blocks": [
+          {
+            "block_id": "reasoning:0",
+            "type": "reasoning",
+            "text": "先检查",
+            "chunk_index": 0
+          },
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "text": "我来读取",
+            "chunk_index": 1
+          }
+        ],
+        "usage": {
+          "input_tokens": 40,
+          "output_tokens": 8
+        }
+      },
+      "assistant:req_a": {
+        "record_id": "assistant:req_a",
+        "kind": "assistant",
+        "title": "assistant",
+        "preview": "先检查我来读取",
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_a",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "9",
+        "end_seq": "12",
+        "as_of_seq": "12",
+        "started_at": "2026-09-11T08:00:00.009Z",
+        "finished_at": "2026-09-11T08:00:00.012Z",
+        "duration_ms": 28,
+        "timing_source": "producer_monotonic",
+        "data": {
+          "status": "completed",
+          "duration_ms": 28
+        },
+        "blocks": [
+          {
+            "block_id": "reasoning:0",
+            "type": "reasoning",
+            "text": "先检查",
+            "chunk_index": 0
+          },
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "text": "我来读取",
+            "chunk_index": 1
+          }
+        ],
+        "usage": {}
+      },
+      "tool:call_a": {
+        "record_id": "tool:call_a",
+        "kind": "tool",
+        "title": "read",
+        "preview": "{\"path\":\"log.txt\"}",
+        "result_preview": "one two",
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_a",
+        "call_id": "call_a",
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "13",
+        "end_seq": "19",
+        "as_of_seq": "19",
+        "started_at": "2026-09-11T08:00:00.016Z",
+        "finished_at": "2026-09-11T08:00:00.019Z",
+        "duration_ms": 17,
+        "timing_source": "producer_monotonic",
+        "data": {
+          "name": "read",
+          "requested_arguments": {
+            "path": "log.txt"
+          },
+          "schema": {
+            "name": "read",
+            "parameters": {
+              "type": "object"
+            }
+          },
+          "requested_at": "2026-09-11T08:00:00.013Z",
+          "effective_arguments": {
+            "path": "log.txt"
+          },
+          "output": "one two",
+          "output_chunk_index": 1,
+          "status": "completed",
+          "duration_ms": 17
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "permission:perm_a": {
+        "record_id": "permission:perm_a",
+        "kind": "permission",
+        "title": "permission",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": "read permission",
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": "call_a",
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "14",
+        "end_seq": "15",
+        "as_of_seq": "15",
+        "started_at": "2026-09-11T08:00:00.014Z",
+        "finished_at": "2026-09-11T08:00:00.015Z",
+        "duration_ms": 1.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "permission_id": "perm_a",
+          "reason": "read permission",
+          "status": "completed",
+          "decision": "allow"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "question:q_a": {
+        "record_id": "question:q_a",
+        "kind": "question",
+        "title": "question",
+        "preview": "[{\"question\":\"继续？\",\"options\":[\"继续\",\"结束\"]}]",
+        "result_preview": "[\"继续\"]",
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_a",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "20",
+        "end_seq": "22",
+        "as_of_seq": "22",
+        "started_at": "2026-09-11T08:00:00.020Z",
+        "finished_at": "2026-09-11T08:00:00.022Z",
+        "duration_ms": 2.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "question_id": "q_a",
+          "questions": [
+            {
+              "question": "继续？",
+              "options": [
+                "继续",
+                "结束"
+              ]
+            }
+          ],
+          "draft": {
+            "answer": "继续"
+          },
+          "answers": [
+            "继续"
+          ]
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "run:run_b": {
+        "record_id": "run:run_b",
+        "kind": "run",
+        "title": "run",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "24",
+        "end_seq": "33",
+        "as_of_seq": "33",
+        "started_at": "2026-09-11T08:00:00.024Z",
+        "finished_at": "2026-09-11T08:00:00.033Z",
+        "duration_ms": 9.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "resume_of_run_id": "run_a",
+          "status": "completed"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "resume:run_b": {
+        "record_id": "resume:run_b",
+        "kind": "resume",
+        "title": "resume",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_a",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "24",
+        "end_seq": "24",
+        "as_of_seq": "24",
+        "started_at": "2026-09-11T08:00:00.024Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "resume_of_run_id": "run_a"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "agent:agent_child": {
+        "record_id": "agent:agent_child",
+        "kind": "agent",
+        "title": "子 Agent",
+        "preview": "整理输出",
+        "result_preview": "完成",
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_child",
+        "parent_agent_id": "agent_a",
+        "step_id": null,
+        "request_id": null,
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "25",
+        "end_seq": "32",
+        "as_of_seq": "32",
+        "started_at": "2026-09-11T08:00:00.025Z",
+        "finished_at": "2026-09-11T08:00:00.032Z",
+        "duration_ms": 7.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "name": "子 Agent",
+          "prompt": "整理输出",
+          "status": "completed",
+          "output": "完成"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "request:req_child": {
+        "record_id": "request:req_child",
+        "kind": "request",
+        "title": "fixture",
+        "preview": null,
+        "result_preview": null,
+        "status": "failed",
+        "status_reason": "fixture timeout",
+        "source_session_id": "session_child",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_child",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_child",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "26",
+        "end_seq": "27",
+        "as_of_seq": "27",
+        "started_at": "2026-09-11T08:00:00.026Z",
+        "finished_at": "2026-09-11T08:00:00.027Z",
+        "duration_ms": 1.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "model": "fixture",
+          "status": "failed",
+          "error": "fixture timeout"
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "retry:evt_fixture_28": {
+        "record_id": "retry:evt_fixture_28",
+        "kind": "retry",
+        "title": "retry",
+        "preview": null,
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_child",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_child",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "28",
+        "end_seq": "28",
+        "as_of_seq": "28",
+        "started_at": "2026-09-11T08:00:00.028Z",
+        "finished_at": null,
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "attempt": 2,
+          "next_request_id": "req_retry",
+          "wait_ms": 5
+        },
+        "blocks": [],
+        "usage": {}
+      },
+      "request:req_retry": {
+        "record_id": "request:req_retry",
+        "kind": "request",
+        "title": "fallback",
+        "preview": "完成",
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_child",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_retry",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "29",
+        "end_seq": "31",
+        "as_of_seq": "31",
+        "started_at": "2026-09-11T08:00:00.029Z",
+        "finished_at": "2026-09-11T08:00:00.031Z",
+        "duration_ms": 2.0,
+        "timing_source": "session_timestamps",
+        "data": {
+          "model": "fallback",
+          "provider": "fixture",
+          "status": "completed",
+          "usage": {
+            "input_tokens": 5,
+            "output_tokens": 2
+          }
+        },
+        "blocks": [
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "text": "完成",
+            "chunk_index": 0
+          }
+        ],
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 2
+        }
+      },
+      "assistant:req_retry": {
+        "record_id": "assistant:req_retry",
+        "kind": "assistant",
+        "title": "assistant",
+        "preview": "完成",
+        "result_preview": null,
+        "status": "completed",
+        "status_reason": null,
+        "source_session_id": "session_a",
+        "turn_id": "turn_a",
+        "run_id": "run_b",
+        "generation": null,
+        "agent_id": "agent_child",
+        "parent_agent_id": null,
+        "step_id": null,
+        "request_id": "req_retry",
+        "call_id": null,
+        "parent_call_id": null,
+        "message_id": null,
+        "part_id": null,
+        "caused_by_event_id": null,
+        "start_seq": "30",
+        "end_seq": "31",
+        "as_of_seq": "31",
+        "started_at": "2026-09-11T08:00:00.030Z",
+        "finished_at": "2026-09-11T08:00:00.031Z",
+        "duration_ms": null,
+        "timing_source": null,
+        "data": {
+          "status": "completed",
+          "usage": {
+            "input_tokens": 5,
+            "output_tokens": 2
+          }
+        },
+        "blocks": [
+          {
+            "block_id": "text:0",
+            "type": "text",
+            "text": "完成",
+            "chunk_index": 0
+          }
+        ],
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 2
+        }
+      }
+    },
+    "unsupported_events": [],
+    "coverage_start": "2026-09-11T08:00:00.001Z"
+  },
+  "expected_statistics": {
+    "request_count": 3,
+    "tool_count": 1,
+    "error_count": 1,
+    "unknown_count": 0,
+    "input_tokens": 45,
+    "output_tokens": 10,
+    "usage_complete": false,
+    "duration_ms": 27.0,
+    "through_seq": "34",
+    "coverage_start": "2026-09-11T08:00:00.001Z"
+  },
+  "expected_agents": [
+    {
+      "agent_id": "agent_child",
+      "parent_agent_id": "agent_a",
+      "source_session_id": "session_a",
+      "name": "子 Agent",
+      "status": "completed",
+      "record_id": "agent:agent_child"
+    }
+  ],
+  "historical": {
+    "through_seq": "17",
+    "state": {
+      "projector_version": 1,
+      "through_seq": "17",
+      "records": {
+        "baseline:trj_fixture": {
+          "record_id": "baseline:trj_fixture",
+          "kind": "baseline",
+          "title": "baseline",
+          "preview": null,
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "1",
+          "end_seq": "2",
+          "as_of_seq": "2",
+          "started_at": "2026-09-11T08:00:00.001Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "existing_session": true,
+            "coverage_start": "2026-09-11T08:00:00.001Z",
+            "history": [
+              {
+                "role": "user",
+                "content": "历史只在基线"
+              }
+            ],
+            "configuration": {
+              "model": "fixture"
+            }
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "user:msg_user": {
+          "record_id": "user:msg_user",
+          "kind": "user",
+          "title": "user",
+          "preview": "检查日志",
+          "result_preview": null,
+          "status": "accepted",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": "msg_user",
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "3",
+          "end_seq": null,
+          "as_of_seq": "3",
+          "started_at": "2026-09-11T08:00:00.003Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "text": "检查日志",
+            "source_kind": "web"
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "turn:turn_a": {
+          "record_id": "turn:turn_a",
+          "kind": "turn",
+          "title": "turn",
+          "preview": null,
+          "result_preview": null,
+          "status": "running",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "4",
+          "end_seq": null,
+          "as_of_seq": "4",
+          "started_at": "2026-09-11T08:00:00.004Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {},
+          "blocks": [],
+          "usage": {}
+        },
+        "run:run_a": {
+          "record_id": "run:run_a",
+          "kind": "run",
+          "title": "run",
+          "preview": null,
+          "result_preview": null,
+          "status": "running",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "5",
+          "end_seq": null,
+          "as_of_seq": "5",
+          "started_at": "2026-09-11T08:00:00.005Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {},
+          "blocks": [],
+          "usage": {}
+        },
+        "step:step_a": {
+          "record_id": "step:step_a",
+          "kind": "step",
+          "title": "step",
+          "preview": null,
+          "result_preview": null,
+          "status": "running",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": "step_a",
+          "request_id": null,
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "6",
+          "end_seq": null,
+          "as_of_seq": "6",
+          "started_at": "2026-09-11T08:00:00.006Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {},
+          "blocks": [],
+          "usage": {}
+        },
+        "system:req_a": {
+          "record_id": "system:req_a",
+          "kind": "system",
+          "title": "System state",
+          "preview": null,
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req_a",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "7",
+          "end_seq": "7",
+          "as_of_seq": "7",
+          "started_at": "2026-09-11T08:00:00.007Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "system": [],
+            "tools": [
+              {
+                "name": "read",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            ],
+            "before": null,
+            "source_request_id": "req_a",
+            "capture_level": "adapter_input"
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "request:req_a": {
+          "record_id": "request:req_a",
+          "kind": "request",
+          "title": "fixture",
+          "preview": "先检查我来读取",
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req_a",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "7",
+          "end_seq": "12",
+          "as_of_seq": "12",
+          "started_at": "2026-09-11T08:00:00.008Z",
+          "finished_at": "2026-09-11T08:00:00.012Z",
+          "duration_ms": 28,
+          "timing_source": "producer_monotonic",
+          "data": {
+            "input": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "检查日志"
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "parameters": {
+                    "type": "object"
+                  }
+                }
+              ]
+            },
+            "capture_level": "adapter_input",
+            "model": "fixture",
+            "purpose": "chat",
+            "status": "completed",
+            "duration_ms": 28
+          },
+          "blocks": [
+            {
+              "block_id": "reasoning:0",
+              "type": "reasoning",
+              "text": "先检查",
+              "chunk_index": 0
+            },
+            {
+              "block_id": "text:0",
+              "type": "text",
+              "text": "我来读取",
+              "chunk_index": 1
+            }
+          ],
+          "usage": {
+            "input_tokens": 40,
+            "output_tokens": 8
+          }
+        },
+        "assistant:req_a": {
+          "record_id": "assistant:req_a",
+          "kind": "assistant",
+          "title": "assistant",
+          "preview": "先检查我来读取",
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req_a",
+          "call_id": null,
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "9",
+          "end_seq": "12",
+          "as_of_seq": "12",
+          "started_at": "2026-09-11T08:00:00.009Z",
+          "finished_at": "2026-09-11T08:00:00.012Z",
+          "duration_ms": 28,
+          "timing_source": "producer_monotonic",
+          "data": {
+            "status": "completed",
+            "duration_ms": 28
+          },
+          "blocks": [
+            {
+              "block_id": "reasoning:0",
+              "type": "reasoning",
+              "text": "先检查",
+              "chunk_index": 0
+            },
+            {
+              "block_id": "text:0",
+              "type": "text",
+              "text": "我来读取",
+              "chunk_index": 1
+            }
+          ],
+          "usage": {}
+        },
+        "tool:call_a": {
+          "record_id": "tool:call_a",
+          "kind": "tool",
+          "title": "read",
+          "preview": "{\"path\":\"log.txt\"}",
+          "result_preview": "one",
+          "status": "running",
+          "status_reason": null,
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": "req_a",
+          "call_id": "call_a",
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "13",
+          "end_seq": null,
+          "as_of_seq": "17",
+          "started_at": "2026-09-11T08:00:00.016Z",
+          "finished_at": null,
+          "duration_ms": null,
+          "timing_source": null,
+          "data": {
+            "name": "read",
+            "requested_arguments": {
+              "path": "log.txt"
+            },
+            "schema": {
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            },
+            "requested_at": "2026-09-11T08:00:00.013Z",
+            "effective_arguments": {
+              "path": "log.txt"
+            },
+            "output": "one",
+            "output_chunk_index": 0
+          },
+          "blocks": [],
+          "usage": {}
+        },
+        "permission:perm_a": {
+          "record_id": "permission:perm_a",
+          "kind": "permission",
+          "title": "permission",
+          "preview": null,
+          "result_preview": null,
+          "status": "completed",
+          "status_reason": "read permission",
+          "source_session_id": "session_a",
+          "turn_id": "turn_a",
+          "run_id": "run_a",
+          "generation": null,
+          "agent_id": "agent_a",
+          "parent_agent_id": null,
+          "step_id": null,
+          "request_id": null,
+          "call_id": "call_a",
+          "parent_call_id": null,
+          "message_id": null,
+          "part_id": null,
+          "caused_by_event_id": null,
+          "start_seq": "14",
+          "end_seq": "15",
+          "as_of_seq": "15",
+          "started_at": "2026-09-11T08:00:00.014Z",
+          "finished_at": "2026-09-11T08:00:00.015Z",
+          "duration_ms": 1.0,
+          "timing_source": "session_timestamps",
+          "data": {
+            "permission_id": "perm_a",
+            "reason": "read permission",
+            "status": "completed",
+            "decision": "allow"
+          },
+          "blocks": [],
+          "usage": {}
+        }
+      },
+      "unsupported_events": [],
+      "coverage_start": "2026-09-11T08:00:00.001Z"
+    }
+  }
+}

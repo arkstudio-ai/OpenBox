@@ -93,6 +93,7 @@ async def execute(args: WebFetchArgs, ctx: ToolContext) -> ToolResult:
                 content = _html_to_text(content)
 
         # Truncate to reasonable size
+        ctx._trajectory_full_tool_output = content
         if len(content) > 50000:
             content = content[:50000] + "\n\n... (content truncated at 50KB)"
 

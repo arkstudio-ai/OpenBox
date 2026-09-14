@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from core.log import create_logger
 from tool.tool import ToolInfo, ToolResult, ToolContext
+from trajectory.types import TrajectoryError
 
 log = create_logger("tool.mcp")
 
@@ -230,9 +231,9 @@ def _canonical_resource_id(server: object, uri: object) -> str:
 def _bounded_resource_contents(contents: object) -> tuple[str, bool]:
     """Render only MCP resource body fields, within the shared output cap.
 
-    The full body is deliberately not copied to host storage. Resource data
-    may contain credentials, so truncation leaves only a bounded in-context
-    preview and a notice rather than a path to a second ungoverned copy.
+    This renderer creates the bounded model preview. Enabled trajectory
+    recording retains the public body through its credential-redacted,
+    authorized payload store, never an ungoverned host output file.
     """
 
     from tool.truncation import MAX_BYTES, MAX_LINES
@@ -989,6 +990,7 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
             # If truncated, save full output ONLY to container (not host).
             import json as _json
             raw_output = _json.dumps(result, ensure_ascii=False, default=str)
+            ctx._trajectory_full_tool_output = raw_output
             from tool.truncation import MAX_BYTES, MAX_LINES
             raw_bytes = len(raw_output.encode("utf-8"))
             raw_lines = raw_output.count("\n") + 1
@@ -1018,7 +1020,7 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
                         is_error=bool(result.get("isError")),
                     ),
                     output=preview + hint,
-                    metadata={"truncated": True},
+                    metadata={"truncated": True, "error": bool(result.get("isError"))},
                 )
 
             return ToolResult(
@@ -1027,7 +1029,10 @@ def _make_mcp_executor(server_name: str, tool_name: str, canonical_id: str):
                     is_error=bool(result.get("isError")),
                 ),
                 output=raw_output,
+                metadata={"error": bool(result.get("isError"))},
             )
+        except TrajectoryError:
+            raise
         except Exception as e:
             # Exception messages from remote clients can embed full URLs or
             # rejected argument values. The model receives a bounded actionable
@@ -1390,6 +1395,7 @@ def _create_meta_tools(
             )
             import json as _json
             raw_output = _json.dumps(result, ensure_ascii=False, default=str)
+            ctx._trajectory_full_tool_output = raw_output
 
             # Truncate large MCP results to prevent context explosion.
             # Save full output ONLY to container (not host) so LLM can read it.
@@ -1425,7 +1431,7 @@ def _create_meta_tools(
                         is_error=bool(result.get("isError")),
                     ),
                     output=preview + hint,
-                    metadata={"truncated": True},
+                    metadata={"truncated": True, "error": bool(result.get("isError"))},
                 )
 
             return ToolResult(
@@ -1434,7 +1440,10 @@ def _create_meta_tools(
                     is_error=bool(result.get("isError")),
                 ),
                 output=raw_output,
+                metadata={"error": bool(result.get("isError"))},
             )
+        except TrajectoryError:
+            raise
         except Exception as e:
             log.error(
                 "MCP tool %s failed: %s",
@@ -1595,12 +1604,20 @@ def create_mcp_resource_tool() -> ToolInfo:
             ).model_dump()
             result = await ctx.sandbox.read_mcp_resource(params["server"], params["uri"])
             contents = result.get("contents", []) if isinstance(result, dict) else []
+            from trajectory import enabled
+            if enabled(getattr(ctx, "user_id", None)) and isinstance(contents, list):
+                ctx._trajectory_full_tool_output = json.dumps([
+                    {key: value for key, value in item.items() if key in {"text", "blob", "mimeType", "uri"}}
+                    for item in contents if isinstance(item, dict) and ("text" in item or "blob" in item)
+                ], ensure_ascii=False, default=str)
             output, truncated = _bounded_resource_contents(contents)
             return ToolResult(
                 title=f"Resource: {_bounded_meta_text(params['uri'], MCP_RESOURCE_TITLE_CHARS)}",
                 output=output,
                 metadata={"truncated": truncated},
             )
+        except TrajectoryError:
+            raise
         except Exception as e:
             log.error("MCP resource read failed error_type=%s", type(e).__name__)
             return ToolResult(

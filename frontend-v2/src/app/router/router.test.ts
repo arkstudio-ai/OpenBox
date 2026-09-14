@@ -27,6 +27,10 @@ describe("admin console routes", () => {
     [paths.adminBilling(), "billing/:tab?"],
     [paths.adminBilling("orders"), "billing/:tab?"],
     [paths.adminWorkspace("ws-1"), "billing/workspaces/:workspaceId"],
+    [paths.adminTrajectories(), "trajectories"],
+    [paths.adminTrajectories("sort=last_activity_asc").split("?")[0], "trajectories"],
+    [paths.adminTrajectorySession("session_user_a"), "trajectories/sessions/:sessionId"],
+    [paths.adminTrajectorySession("ses/with?odd#chars"), "trajectories/sessions/:sessionId"],
   ])("%s resolves to %s", (pathname, leaf) => {
     const branch = claimedBy(pathname)
     expect(branch).toContain("admin")
@@ -37,9 +41,7 @@ describe("admin console routes", () => {
   // Router ranks two static segments above one dynamic one, so the detail page
   // wins regardless of the order the children are declared in.
   it("prefers the workspace detail over the billing tab", () => {
-    expect(claimedBy(paths.adminWorkspace("ws-1")).at(-1)).toBe(
-      "billing/workspaces/:workspaceId",
-    )
+    expect(claimedBy(paths.adminWorkspace("ws-1")).at(-1)).toBe("billing/workspaces/:workspaceId")
   })
 
   it("keeps the console behind /app so RequireAuth still wraps it", () => {

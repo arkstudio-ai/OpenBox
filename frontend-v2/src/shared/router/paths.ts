@@ -32,6 +32,11 @@ export const paths = {
   adminSkills: (tab?: string) => (tab ? `/app/admin/skills/${tab}` : "/app/admin/skills"),
   adminBilling: (tab?: string) => (tab ? `/app/admin/billing/${tab}` : "/app/admin/billing"),
   adminWorkspace: (workspaceId: string) => `/app/admin/billing/workspaces/${encodeURIComponent(workspaceId)}`,
+  /** `search` is an already-encoded query string without the leading "?". */
+  adminTrajectories: (search?: string) =>
+    search ? `/app/admin/trajectories?${search}` : "/app/admin/trajectories",
+  adminTrajectorySession: (sessionId: string, search?: string) =>
+    `/app/admin/trajectories/sessions/${encodeURIComponent(sessionId)}${search ? `?${search}` : ""}`,
 } as const
 
 /** Query params a chat URL may carry to open a workbench panel on arrival. */
@@ -69,4 +74,6 @@ export const routePatterns = {
   adminSkills: "skills/:tab?",
   adminBilling: "billing/:tab?",
   adminWorkspace: "billing/workspaces/:workspaceId",
+  adminTrajectories: "trajectories",
+  adminTrajectorySession: "trajectories/sessions/:sessionId",
 } as const

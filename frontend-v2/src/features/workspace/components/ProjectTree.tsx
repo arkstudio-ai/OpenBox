@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { useNavigate, useParams } from "react-router"
+import { useMatch, useNavigate } from "react-router"
 import { Clock, MessageSquare } from "lucide-react"
 import type { Project, Session } from "@/shared/types/api"
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "@/shared/ui/Dialog"
-import { paths } from "@/shared/router/paths"
+import { paths, routePatterns } from "@/shared/router/paths"
 import { cn } from "@/shared/lib/cn"
 import { useDeleteProject } from "../api/projects"
 import { useDeleteSession } from "../api/sessions"
@@ -68,7 +68,9 @@ const UNSORTED = "unsorted"
 export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
-  const { sessionId: activeSessionId } = useParams()
+  // A trajectory detail URL also carries a `:sessionId`, but it names another
+  // user's session; only the chat route marks a row of this tree as active.
+  const activeSessionId = useMatch(`${paths.app}/${routePatterns.chat}`)?.params.sessionId
   const deleteProject = useDeleteProject()
   const deleteSession = useDeleteSession()
   const sessionFilter = useWorkspaceUi((s) => s.sessionFilter)
@@ -98,7 +100,11 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
     deleteProject.mutate(confirmProject.id)
     const ui = useWorkspaceUi.getState()
     if (ui.selectedProject === confirmProject.id) ui.selectProject(null)
-    if (groups.some((g) => g.project?.id === confirmProject.id && g.sessions.some((s) => s.id === activeSessionId))) {
+    if (
+      groups.some(
+        (g) => g.project?.id === confirmProject.id && g.sessions.some((s) => s.id === activeSessionId),
+      )
+    ) {
       navigate(paths.app)
     }
     setConfirmProject(null)
@@ -145,7 +151,7 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
                 />
               ))}
               {visible.length === 0 && (
-                <div className="ps-7.5 pe-3 py-1 text-md text-n600">{t("noChats")}</div>
+                <div className="text-md text-n600 py-1 ps-7.5 pe-3">{t("noChats")}</div>
               )}
             </ProjectRow>
           </div>
@@ -156,16 +162,12 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
         <DialogTitle>{t("delTitle", { name: confirmProject?.name ?? "" })}</DialogTitle>
         <DialogBody>{t("delBody")}</DialogBody>
         <DialogActions>
-          <button
-            type="button"
-            className="text-base text-n700"
-            onClick={() => setConfirmProject(null)}
-          >
+          <button type="button" className="text-n700 text-base" onClick={() => setConfirmProject(null)}>
             {t("common:action.cancel", { ns: "common" })}
           </button>
           <button
             type="button"
-            className="rounded-full bg-danger px-4.5 py-2 text-base text-bg"
+            className="bg-danger text-bg rounded-full px-4.5 py-2 text-base"
             onClick={onDeleteProject}
           >
             {t("common:action.delete", { ns: "common" })}
@@ -177,12 +179,12 @@ export function ProjectTree({ projects, sessions, searching }: ProjectTreeProps)
         <DialogTitle>{t("delChatTitle")}</DialogTitle>
         <DialogBody>{t("delChatBody")}</DialogBody>
         <DialogActions>
-          <button type="button" className="text-base text-n700" onClick={() => setConfirmSession(null)}>
+          <button type="button" className="text-n700 text-base" onClick={() => setConfirmSession(null)}>
             {t("common:action.cancel", { ns: "common" })}
           </button>
           <button
             type="button"
-            className="rounded-full bg-danger px-4.5 py-2 text-base text-bg"
+            className="bg-danger text-bg rounded-full px-4.5 py-2 text-base"
             onClick={onDeleteSession}
           >
             {t("common:action.delete", { ns: "common" })}

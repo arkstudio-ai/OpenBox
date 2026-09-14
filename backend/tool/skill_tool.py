@@ -218,6 +218,15 @@ async def execute(args: SkillArgs, ctx: ToolContext) -> ToolResult:
         output_parts.append("")
         output_parts.append(await _browser_readiness(ctx))
 
+    from trajectory import current, record
+    trace = ctx.trace_context or current()
+    if trace:
+        import hashlib
+        await record("skill.loaded", {"name": args.skill, "content": content,
+            "effective_content": "\n".join(output_parts),
+            "sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "source": "backend_host" if host_only else "sandbox", "files": files,
+            "status": "completed"}, context=trace)
     return ToolResult(
         title=f"Loaded skill: {args.skill}",
         output="\n".join(output_parts),

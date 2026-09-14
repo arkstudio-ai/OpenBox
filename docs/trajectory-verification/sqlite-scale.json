@@ -1,0 +1,125 @@
+{
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "processor": "arm64",
+    "python": "3.12.14",
+    "database": "sqlite",
+    "storage": "durable database staging; no Blob network",
+    "concurrent_writers": 1
+  },
+  "workload": {
+    "events": 100001,
+    "records": 10001,
+    "requests": 5000,
+    "events_per_batch": 200,
+    "delta_characters_approx": 95,
+    "initial_input_characters_approx": 840,
+    "agent_identities": 4
+  },
+  "measurements_ms": {
+    "capture_batch_p50": 32.97462550108321,
+    "capture_batch_p95": 44.151041001896374,
+    "header_p95": 25.342375003674533,
+    "record_page_p95": 18.541958001151215,
+    "seek_p95": 712.7681249985471,
+    "seek_samples": [
+      405.7872090052115,
+      455.06766700418666,
+      459.96670800377615,
+      469.7982080033398,
+      548.6404999974184,
+      511.9542079992243,
+      712.7681249985471,
+      502.4892090004869,
+      506.6781669956981,
+      459.9982919971808
+    ],
+    "header_samples": [
+      25.342375003674533,
+      20.497332996455953,
+      18.728040995483752,
+      20.03129100194201,
+      20.098458997381385,
+      23.00950000062585,
+      21.172875000047497,
+      20.022625001729466,
+      19.808249999186955,
+      20.938375004334375
+    ],
+    "record_page_samples": [
+      12.800666001567151,
+      13.837916994816624,
+      12.26541700452799,
+      12.507791994721629,
+      12.173666997114196,
+      14.127292000921443,
+      12.740666003082879,
+      12.818666000384837,
+      12.81816599657759,
+      18.541958001151215
+    ]
+  },
+  "write_seconds_including_checkpoints": 21.5048310830025,
+  "checkpoint_builds": [
+    {
+      "through_seq": "10001",
+      "ms": 81.41458399768453
+    },
+    {
+      "through_seq": "20001",
+      "ms": 156.10354200180154
+    },
+    {
+      "through_seq": "30001",
+      "ms": 196.72254200122552
+    },
+    {
+      "through_seq": "40001",
+      "ms": 268.4560420020716
+    },
+    {
+      "through_seq": "50001",
+      "ms": 372.4467080028262
+    },
+    {
+      "through_seq": "60001",
+      "ms": 487.7228749974165
+    },
+    {
+      "through_seq": "70001",
+      "ms": 616.2228749963106
+    },
+    {
+      "through_seq": "80001",
+      "ms": 752.5847919969237
+    },
+    {
+      "through_seq": "90001",
+      "ms": 679.8545829951763
+    },
+    {
+      "through_seq": "100001",
+      "ms": 766.0348750068806
+    }
+  ],
+  "retained_payload_bytes": 31819106,
+  "retained_payload_count": 110,
+  "verified_head": "100001",
+  "statistics": {
+    "request_count": 5000,
+    "tool_count": 0,
+    "error_count": 0,
+    "unknown_count": 0,
+    "input_tokens": 1200000,
+    "output_tokens": 600000,
+    "usage_complete": true,
+    "duration_ms": null,
+    "through_seq": "100001",
+    "coverage_start": "2026-09-11T08:52:50.334Z"
+  },
+  "limitations": [
+    "One local writer; distributed network latency and remote Blob archival are not represented.",
+    "Capture latency is batch commit receipt, not browser paint.",
+    "Checkpoint schedule in this benchmark is 10,000 events; production worker defaults to an eligible interval of 1,000 events."
+  ]
+}

@@ -5,6 +5,10 @@ Handles overflow checking, compaction before injection, and BUSY queueing.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+
+_injection_run: ContextVar[str | None] = ContextVar("cron_injection_run", default=None)
 
 from core.log import create_logger
 
@@ -35,7 +39,8 @@ async def try_inject_result(run_id: str, job: dict, result_text: str) -> bool:
         return False
 
     # Session is IDLE, inject directly
-    return await _do_inject(run_id, job, result_text, session_id, user_id)
+    async with _result_trace(run_id, session_id, user_id):
+        return await _do_inject(run_id, job, result_text, session_id, user_id)
 
 
 async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
@@ -86,28 +91,32 @@ async def flush_pending_cron_results(session_id: str, user_id: str) -> int:
             job_name = job.name if job else "unknown"
             summary = run.summary_text
 
-            # Check overflow before injection
-            await _check_and_compact_if_needed(session_id, user_id, job_name, summary)
+            async with _result_trace(run.id, session_id, user_id):
+                # Check overflow before injection
+                await _check_and_compact_if_needed(session_id, user_id, job_name, summary)
 
-            # Inject the messages
-            await _inject_messages(session_id, user_id, run.job_id, job_name, run.task_prompt or "", summary)
+                # Inject the messages
+                await _inject_messages(session_id, user_id, run.job_id, job_name, run.task_prompt or "", summary)
 
-            # Mark as injected
-            await _mark_injected(run.id)
-            injected_count += 1
+                # Mark as injected
+                await _mark_injected(run.id)
+                injected_count += 1
 
-            # Publish injection event
-            from bus import bus
-            from bus.events import CRON_JOB_INJECTED
-            bus.publish(CRON_JOB_INJECTED, {
-                "userId": user_id,
-                "sessionId": session_id,
-                "jobId": run.job_id,
-                "runId": run.id,
-                "jobName": job_name,
-            })
+                # Publish injection event
+                from bus import bus
+                from bus.events import CRON_JOB_INJECTED
+                bus.publish(CRON_JOB_INJECTED, {
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "jobId": run.job_id,
+                    "runId": run.id,
+                    "jobName": job_name,
+                })
 
         except Exception as e:
+            from trajectory import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             log.error(f"Failed to inject cron result {run.id}: {e}")
 
     return injected_count
@@ -147,6 +156,9 @@ async def _do_inject(run_id: str, job: dict, result_text: str, session_id: str, 
         return True
 
     except Exception as e:
+        from trajectory import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         log.error(f"Failed to inject cron result {run_id}: {e}")
         return False
 
@@ -180,6 +192,9 @@ async def _check_and_compact_if_needed(
             model_id = session.model or get_config().model
             await process_compaction(session_id, messages, model_id, auto=True, user_id=user_id)
         except Exception as e:
+            from trajectory import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             log.warning(f"Pre-injection compaction failed: {e}")
 
 
@@ -194,6 +209,10 @@ async def _inject_messages(
     from cron.i18n import resolve_locale, text
 
     locale = await resolve_locale(user_id)
+    from trajectory import current, enabled
+    if enabled(user_id) and current() is not None and _injection_run.get() is not None:
+        await _inject_recorded_messages(session_id, user_id, job_id, job_name, task_prompt, result_text, locale)
+        return
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     # Synthetic user message: the task
@@ -238,8 +257,104 @@ async def _mark_injected(run_id: str) -> None:
     now = datetime.now(timezone.utc)
 
     async with get_db_session() as db:
-        await db.execute(
-            update(CronRun)
-            .where(CronRun.id == run_id)
-            .values(injected=True, injected_at=now)
-        )
+        run = await db.get(CronRun, run_id)
+        if run is None or run.injected:
+            return
+        run.injected = True
+        run.injected_at = now
+        if run.trace_context:
+            from trajectory import TraceContext, record
+            await record("job.progress", {"job_id": run_id, "stage": "result_injected", "callback_index": 1},
+                context=TraceContext.from_dict(run.trace_context), db=db, event_id=f"cron:{run_id}:injected")
+
+
+@asynccontextmanager
+async def _result_trace(run_id: str, session_id: str, user_id: str):
+    """A queued callback always restores its persisted owner/turn, not its caller's."""
+    from trajectory import TraceContext, bind, context_for_session, enabled
+    from db.base import get_db_session
+    from db.models.cron import CronRun
+    from db.models.session import Session
+    trace = None
+    if enabled(user_id):
+        with bind(None):
+            from session.session import capture_trajectory_baseline_in_tx, prepare_trajectory_baseline_assets
+            prepared_assets = await prepare_trajectory_baseline_assets(session_id, user_id,
+                                                                         root_session_id=session_id)
+            async with get_db_session() as db:
+                run = await db.get(CronRun, run_id)
+                if run is None or run.user_id != user_id or run.session_id != session_id:
+                    raise ValueError("Cron callback does not match its recorded owner/session")
+                if run.trace_context:
+                    trace = TraceContext.from_dict(run.trace_context)
+                    if trace.user_id != user_id or trace.session_id != session_id:
+                        raise ValueError("Cron callback trajectory ownership mismatch")
+                    trace = trace.derive(source_session_id=session_id, run_id=None, generation=None,
+                                         step_id=None, request_id=None, call_id=None, part_id=None, message_id=None)
+                else:
+                    trace = (await context_for_session(db, user_id, session_id)).derive(turn_id=run_id)
+                    await capture_trajectory_baseline_in_tx(db, trace, await db.get(Session, session_id),
+                                                              prepared_assets=prepared_assets)
+                    run.trace_context = trace.to_dict()
+    with bind(trace):
+        token = _injection_run.set(run_id)
+        try:
+            yield trace
+        finally:
+            _injection_run.reset(token)
+
+
+async def _inject_recorded_messages(session_id, user_id, job_id, job_name, task_prompt, result_text, locale):
+    """Commit callback consumption, both chat messages and facts atomically."""
+    from cron.i18n import text
+    from core.identifier import ascending
+    from question import runtime
+    from db.models.cron import CronRun
+    from db.models.message import Message as MessageORM
+    from db.models.part import Part as PartORM
+    from models.message import TextPart, MessageWithParts, id_to_iso
+    from session.session import record_projection_in_tx
+    from trajectory import current, record
+    from bus import bus
+    from bus.events import MESSAGE_CREATED
+
+    run_id = _injection_run.get()
+    stamp = datetime.now(timezone.utc)
+    user_text = f"[{text(locale, 'scheduled_task')}: {job_name} | job_id: {job_id} | {stamp:%Y-%m-%d %H:%M UTC}]\n{task_prompt}"
+    user_message_id = ascending("message")
+    assistant_message_id = ascending("message")
+    user_part = TextPart(text=user_text, synthetic=True, session_id=session_id, message_id=user_message_id)
+    answer_part = TextPart(text=result_text, channel="final", session_id=session_id, message_id=assistant_message_id)
+    async with runtime.transaction(session_id, user_id) as (db, _, _execution):
+        run = await db.get(CronRun, run_id)
+        if run is None or run.user_id != user_id or run.session_id != session_id:
+            raise ValueError("Cron callback owner changed")
+        if run.injected:
+            return
+        db.add(MessageORM(id=user_message_id, session_id=session_id, user_id=user_id, role="user",
+                          summary=False, client_message_id=f"cron:{run_id}", created_at=stamp))
+        db.add(MessageORM(id=assistant_message_id, session_id=session_id, user_id=user_id, role="assistant",
+                          summary=False, parent_id=user_message_id, agent="cron", finish="stop", created_at=stamp))
+        for part in (user_part, answer_part):
+            db.add(PartORM(id=part.id, message_id=part.message_id, session_id=session_id, user_id=user_id,
+                          type="text", data=part.model_dump(), created_at=stamp))
+        await record("input.injected", {"text": user_text, "synthetic": True, "source": "cron",
+            "job_id": run_id}, context=current(), db=db, message_id=user_message_id, part_id=user_part.id,
+            event_id=f"cron:{run_id}:input")
+        for message_id, role, parent_id, part in ((user_message_id, "user", None, user_part),
+                (assistant_message_id, "assistant", user_message_id, answer_part)):
+            await record_projection_in_tx(db, session_id, user_id, "message.committed", {"message": {
+                "id": message_id, "role": role, "parent_id": parent_id, "finish": "stop" if role == "assistant" else None},
+                "operation": "created"}, message_id=message_id)
+            await record_projection_in_tx(db, session_id, user_id, "part.committed", {
+                "part": part.model_dump(), "operation": "created"}, message_id=message_id, part_id=part.id)
+        run.injected = True
+        run.injected_at = stamp
+        await record("job.progress", {"job_id": run_id, "stage": "result_injected", "callback_index": 1,
+            "message_id": assistant_message_id}, context=current(), db=db, event_id=f"cron:{run_id}:injected")
+    for message_id, role, parent_id, part in ((user_message_id, "user", None, user_part),
+            (assistant_message_id, "assistant", user_message_id, answer_part)):
+        message = MessageWithParts(id=message_id, session_id=session_id, role=role, parts=[part],
+            created_at=id_to_iso(message_id), parent_id=parent_id, agent="cron" if role == "assistant" else None,
+            finish="stop" if role == "assistant" else None)
+        bus.publish(MESSAGE_CREATED, {"userId": user_id, "sessionId": session_id, "message": message.model_dump()})

@@ -52,11 +52,19 @@ async def state(tmp_path, monkeypatch):
         from alembic.operations import Operations
         # Exercise the shipped migration, not just the ORM's create_all.
         existing = [t for t in database.Base.metadata.sorted_tables
-                    if t.name not in {"question_checkpoints", "session_executions"}]
+                    if t.name not in {"question_checkpoints", "session_executions", "session_trajectories"}
+                    and not t.name.startswith("trajectory_")]
         database.Base.metadata.create_all(connection, tables=existing)
         migration = importlib.import_module("db.migrations.versions.d9e1f3a5b7c2_durable_questions")
+        trajectory_migration = importlib.import_module(
+            "db.migrations.versions.f6a8c0e2b4d6_session_trajectories")
         with Operations.context(MigrationContext.configure(connection)):
+            # Reconstruct the pre-trajectory cron table before exercising the
+            # additive migration. No fixture rows have been inserted yet.
+            from alembic import op
+            op.drop_column("cron_runs", "trace_context")
             migration.upgrade()
+            trajectory_migration.upgrade()
         for model in (QuestionCheckpoint, SessionExecution):
             assert {c["name"] for c in inspect(connection).get_columns(model.__tablename__)} == set(model.__table__.columns.keys())
     async with engine.begin() as connection:

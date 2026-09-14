@@ -1,0 +1,226 @@
+{
+  "passed": true,
+  "steps": [
+    {
+      "step": "before",
+      "snapshot": {
+        "trajectoryQueries": 4,
+        "queriesWithData": 2,
+        "payloadQueries": [],
+        "activeSyncs": 1,
+        "denied": null,
+        "viewTarget": "admin session_user_a"
+      }
+    },
+    {
+      "step": "demote",
+      "result": {
+        "action": "admin_role",
+        "role": "user"
+      }
+    },
+    {
+      "step": "after",
+      "refusalVisibleMs": 1241.629375,
+      "snapshot": {
+        "trajectoryQueries": 1,
+        "queriesWithData": 0,
+        "payloadQueries": [],
+        "activeSyncs": 0,
+        "denied": {
+          "reason": "forbidden",
+          "status": 403
+        },
+        "viewTarget": null
+      },
+      "shot": "frontend-v2/test-results/trajectory-claude/native-role-revocation.png"
+    }
+  ],
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/records",
+      "query": [
+        [
+          "through_seq",
+          "35"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/records",
+      "query": [
+        [
+          "through_seq",
+          "35"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/events",
+      "query": [
+        [
+          "after_seq",
+          "0"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/records/tool%3Acall_a",
+      "query": [
+        [
+          "through_seq",
+          "19"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/records/tool%3Acall_a",
+      "query": [
+        [
+          "through_seq",
+          "19"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_a/events",
+      "query": [
+        [
+          "after_seq",
+          "35"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_user_a"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "failedResponses": [
+    {
+      "path": "/api/admin/trajectories/sessions/session_user_a/events",
+      "status": 403
+    }
+  ]
+}

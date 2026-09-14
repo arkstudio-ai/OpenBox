@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolContext, ToolResult, define_tool
 from video import ims_client
@@ -176,6 +177,8 @@ async def _execute_validate(args: VideoComposeArgs, ctx: ToolContext) -> ToolRes
         oss = _oss_or_refuse()
         timeline = await _resolve_shot_assets(_parse_timeline(args.timeline or {}), ctx, oss)
         compiled = _compile(timeline, output_url=f"https://{oss.host}/assets/{ctx.user_id}/validate/preview.mp4")
+    except TrajectoryError:
+        raise
     except Exception as exc:
         return ToolResult(title="Timeline rejected", output=_public(exc), metadata={"valid": False})
     from billing.media import quote_compose
@@ -206,6 +209,8 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         from billing.media import precheck_compose
 
         await precheck_compose(ctx.session_id)
+    except TrajectoryError:
+        raise
     except Exception as exc:
         return ToolResult(title="Composition refused", output=_public(exc))
 
@@ -229,6 +234,8 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
 
     try:
         compiled = _compile(timeline, output_url=f"https://{oss.host}/{asset.oss_key}")
+    except TrajectoryError:
+        raise
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")
@@ -241,6 +248,8 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         _price = _quote_compose(timeline.canvas.width, timeline.canvas.height, compiled.duration_sec)
         _autopilot.guard_paid_step(ctx.session_id, kind="compose", credits=_price.credits if _price.credits is not None else 0,
                                    note=f"{compiled.duration_sec}s {_price.tier}")
+    except TrajectoryError:
+        raise
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")
@@ -255,12 +264,17 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
         "duration_sec": compiled.duration_sec,
     })
     try:
-        provider_job_id = await ims_client.submit_media_producing_job(
-            timeline=json.dumps(compiled.timeline, ensure_ascii=False, separators=(",", ":")),
-            output_media_config=json.dumps(compiled.output_media_config, separators=(",", ":")),
-            client_token=compiled.client_token,
-            user_data=json.dumps({"openbox_job": job.id})[:512],
-        )
+        from agent.trajectory import service_scope, register_owned_media_inputs
+        asset_urls = await register_owned_media_inputs(ctx, [shot.asset for shot in timeline.shots])
+        async with service_scope(ctx, job=job, asset_urls=asset_urls):
+            provider_job_id = await ims_client.submit_media_producing_job(
+                timeline=json.dumps(compiled.timeline, ensure_ascii=False, separators=(",", ":")),
+                output_media_config=json.dumps(compiled.output_media_config, separators=(",", ":")),
+                client_token=compiled.client_token,
+                user_data=json.dumps({"openbox_job": job.id})[:512],
+            )
+    except TrajectoryError:
+        raise
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())
         await vp._mark_asset(asset.id, status="failed")
@@ -302,6 +316,8 @@ async def _execute_job_action(args: VideoComposeArgs, ctx: ToolContext) -> ToolR
             break
         try:
             job = await poll_compose_job(job)
+        except TrajectoryError:
+            raise
         except Exception as exc:
             return ToolResult(title="Composition status unavailable", output=_public(exc),
                               metadata={"job_id": job.id, "status": job.status})
@@ -324,7 +340,10 @@ async def poll_compose_job(job):
 
     if not job.provider_task_id:
         return job
-    state = await ims_client.get_media_producing_job(job.provider_task_id)
+    from agent.trajectory import service_scope
+    from video.job_recovery import _recovery_context
+    async with service_scope(_recovery_context(job), job=job):
+        state = await ims_client.get_media_producing_job(job.provider_task_id)
     if state.status == "completed":
         asset = await vp._job_asset(job)
         size = None
@@ -332,6 +351,8 @@ async def poll_compose_job(job):
             try:
                 head = await get_oss().head(asset.oss_key)
                 size = int(head.get("size") or head.get("content_length") or 0) if head else None
+            except TrajectoryError:
+                raise
             except Exception as exc:  # the object is there per IMS; size is a nicety
                 log.info(f"compose {job.id}: head after IMS success failed: {type(exc).__name__}")
             await vp._mark_asset(asset.id, status="ready", size=size)
@@ -343,6 +364,8 @@ async def poll_compose_job(job):
             canvas = ((job.request_data or {}).get("timeline") or {}).get("canvas") or {}
             credits = await settle_compose(job, asset, width=int(canvas.get("width") or 720),
                                            height=int(canvas.get("height") or 1280), duration_sec=duration)
+        except TrajectoryError:
+            raise
         except Exception as exc:  # billing must never strand a finished video
             log.warning(f"compose {job.id}: settlement failed: {type(exc).__name__}: {exc}")
         await vp._update_job(job.id, status="completed", completed_at=_now(),

@@ -238,6 +238,8 @@ def _bind_portable_commit(
     """Install the same typed commit boundary that ``run_loop`` installs."""
 
     async def commit(ids: tuple[str, ...], generation: str, digests: dict[str, str]):
+        from agent.hooks import current_tool_context
+        call_context = current_tool_context() or ctx
         if generation != runtime.eligible_catalog.generation:
             raise ValueError("stale capability catalogue generation")
         if any(tool_id not in runtime.provider_plan.discovery_ids for tool_id in ids):
@@ -251,7 +253,7 @@ def _bind_portable_commit(
                     session_id=session_id,
                     user_id=user_id,
                     message_id=message_id,
-                    origin_part_id=ctx.part_id,
+                    origin_part_id=call_context.part_id,
                     agent_id="build",
                     canonical_tool_id=tool_id,
                     schema_digest=entry.schema_digest,

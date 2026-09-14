@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from core.identifier import ascending
+from trajectory.types import TrajectoryError
 from core.log import create_logger
 from tool.tool import ToolResult, ToolContext, define_tool
 
@@ -67,6 +68,8 @@ async def execute(args: ViewImageArgs, ctx: ToolContext) -> ToolResult:
             relation_role="evidence",
             relation_label=name,
         )
+    except TrajectoryError:
+        raise
     except Exception as e:
         return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])
 

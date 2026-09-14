@@ -3,9 +3,9 @@
 
 Ported from the server-side gate that used to REFUSE a submit. Here it advises:
 run it, read what it says, then decide. The rules encode what was measured to
-matter for this kind of video — the exact line after @, one consistent visual
-base, a locked camera, a stated tone, and "no subtitles" so captions stay a
-post step — but a shot that breaks one on purpose is allowed to.
+matter for this kind of video — the exact line after 口播台词：, one consistent
+visual base, a locked camera, a stated tone, and "no subtitles" so captions
+stay a post step — but a shot that breaks one on purpose is allowed to.
 
     lint_prompt.py --script "本段台词" --prompt-file seg1.txt --anchor "画面基底"
     lint_prompt.py --broll --prompt-file broll.txt --anchor "画面基底"
@@ -24,6 +24,14 @@ from typing import Any
 _PUNCT = re.compile(r"[\s。！？；：，、,.!?;:…·~—\-\"\'“”‘’（）()《》<>【】\[\]]+")
 _FILLERS = "嗯呃唔诶哦噢喔呀啊吧呢啦嘛"
 
+#: The spoken line follows this label and ends its line. It used to follow a
+#: bare `@`, but the prompt reaches the model verbatim and the model reads the
+#: `@` aloud — production STT on 2026-09-14 heard "艾博南宁的姐妹…" for a prompt
+#: ending "@南宁的姐妹…" — so no prompt carries an `@` at all.
+_DIALOGUE_LABEL = re.compile(
+    r"(?:口播台词|spoken line)\s*[:：]\s*(?P<line>[^\n]*)", re.IGNORECASE
+)
+
 
 def normalize_spoken_text(value: str) -> str:
     compact = _PUNCT.sub("", value or "")
@@ -33,13 +41,22 @@ def normalize_spoken_text(value: str) -> str:
 PROMPT_LINT_RULES = {
     "dialogue_exact": {
         "requirement": (
-            "The prompt must contain @ immediately followed by the exact segment dialogue."
+            "The prompt must contain 口播台词： immediately followed by the exact segment "
+            "dialogue, ending that line."
         ),
-        "accepted_examples": ["@<本段逐字台词>", "Speak exactly: @<exact segment dialogue>"],
+        "accepted_examples": ["口播台词：<本段逐字台词>", "Spoken line: <exact segment dialogue>"],
     },
     "dialogue_mismatch": {
-        "requirement": "Text after @ should match the segment dialogue; differences are warnings.",
-        "accepted_examples": ["@<本段逐字台词>"],
+        "requirement": (
+            "Text after 口播台词： should match the segment dialogue; differences are warnings."
+        ),
+        "accepted_examples": ["口播台词：<本段逐字台词>"],
+    },
+    "dialogue_at_sign": {
+        "requirement": (
+            "Keep @ out of the prompt: the model reads it aloud, so it never marks dialogue."
+        ),
+        "accepted_examples": ["口播台词：<本段逐字台词>"],
     },
     "visual_continuity": {
         "requirement": "Declare one consistent visual base/anchor for the whole video.",
@@ -149,7 +166,8 @@ def lint_prompt(
     ``speech=False`` (a b-roll shot) drops the rules that only make sense for
     a person delivering lines — exact dialogue, framing of that person, their
     gestures and tone. What stays is what holds for any shot in the film:
-    visual continuity, no burned-in subtitles, and honest asset references.
+    visual continuity, no burned-in subtitles, no `@` for the model to read
+    aloud, and honest asset references.
     """
     failures: list[str] = []
     issues: list[dict[str, str]] = []
@@ -159,16 +177,20 @@ def lint_prompt(
         failures.append(message)
         issues.append(lint_issue(code, message))
 
+    if "@" in prompt:
+        fail(
+            "dialogue_at_sign",
+            "prompt 不能出现 @：模型会把它念成“艾特”，台词写在「口播台词：」后",
+        )
     if speech:
         spoken_length = len(normalize_spoken_text(script_text))
         if spoken_length > 40:
             warnings.append(f"台词 {spoken_length} 字，建议压到 40 字以内")
-        if "@" not in prompt:
-            fail("dialogue_exact", "prompt 必须用 @ 紧接本段逐字台词")
-        else:
-            prompted_dialogue = prompt.split("@", 1)[1].splitlines()[0].strip()
-            if normalize_spoken_text(prompted_dialogue) != normalize_spoken_text(script_text):
-                warnings.append("[dialogue_mismatch] @ 后台词与台词字段不一致")
+        labelled = _DIALOGUE_LABEL.search(prompt)
+        if labelled is None:
+            fail("dialogue_exact", "prompt 必须用「口播台词：」紧接本段逐字台词")
+        elif normalize_spoken_text(labelled.group("line")) != normalize_spoken_text(script_text):
+            warnings.append("[dialogue_mismatch] 口播台词后的台词与台词字段不一致")
 
     anchor = visual_anchor.strip()
     anchor_is_literal = bool(anchor) and anchor.casefold() in prompt.casefold()

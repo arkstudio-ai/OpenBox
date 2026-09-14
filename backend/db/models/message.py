@@ -26,7 +26,7 @@ class Message(Base):
     tokens: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     cost: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
     finish: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    summary: Mapped[bool | None] = mapped_column(Boolean, server_default="false")
+    summary: Mapped[bool | None] = mapped_column(Boolean, default=False, server_default=text("false"))
     error: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     reaction: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "up" | "down"
     structured: Mapped[dict | None] = mapped_column(JSONType, nullable=True)  # StructuredOutput payload

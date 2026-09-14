@@ -445,6 +445,16 @@ async def process_step(
     `doom_loop_history` is read, never written — new parts come back on the
     result so the caller stays the only writer.
     """
+    from trajectory import bind as bind_trace, record as record_trace
+
+    async def persist_part(*args, **kwargs):
+        with bind_trace(getattr(ctx, "trace_context", None)):
+            return await save_part(*args, **kwargs)
+
+    async def persist_message(*args, **kwargs):
+        with bind_trace(getattr(ctx, "trace_context", None)):
+            return await update_message_info(*args, **kwargs)
+
     collected_text = ""
     collected_reasoning = ""
     text_part_id = None
@@ -504,6 +514,8 @@ async def process_step(
             tool_choice=tool_choice,
         )
         async for event in _iter_until_abort(llm_stream, abort):
+            if event.get("trajectory_context") is not None:
+                ctx.trace_context = event["trajectory_context"]
             # Once any provider event has crossed the stream boundary, this
             # response may already have visible text, persisted native state,
             # or a pending tool card. Replaying the whole request after a
@@ -521,7 +533,7 @@ async def process_step(
                         session_id=session_id,
                         message_id=assistant_info.id,
                     )
-                    await save_part(reasoning_part, is_new=True, user_id=user_id)
+                    await persist_part(reasoning_part, is_new=True, user_id=user_id)
                     reasoning_checkpoint_at = time.monotonic()
                 else:
                     from bus.events import PART_DELTA
@@ -534,7 +546,7 @@ async def process_step(
                     })
                     now = time.monotonic()
                     if now - reasoning_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
-                        await save_part(
+                        await persist_part(
                             ReasoningPart(
                                 id=reasoning_part_id,
                                 text=collected_reasoning,
@@ -557,7 +569,7 @@ async def process_step(
                         session_id=session_id,
                         message_id=assistant_info.id,
                     )
-                    await save_part(text_part, is_new=True, user_id=user_id)
+                    await persist_part(text_part, is_new=True, user_id=user_id)
                     text_checkpoint_at = time.monotonic()
                 else:
                     bus.publish(MESSAGE_TEXT_DELTA, {
@@ -569,7 +581,7 @@ async def process_step(
                     })
                     now = time.monotonic()
                     if now - text_checkpoint_at >= STREAM_CHECKPOINT_INTERVAL:
-                        await save_part(
+                        await persist_part(
                             TextPart(
                                 id=text_part_id,
                                 text=collected_text,
@@ -721,7 +733,7 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await save_part(tool_part, is_new=True, user_id=user_id)
+                await persist_part(tool_part, is_new=True, user_id=user_id)
 
             elif event["type"] == "tool_call_args_delta":
                 # Stream argument chunks to the frontend for live preview.
@@ -797,7 +809,22 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await save_part(
+                rejected_trace = getattr(ctx, "trace_context", None)
+                if rejected_trace is not None:
+                    rejected_trace = rejected_trace.derive(call_id=tool_part.id, part_id=tool_part.id,
+                                                          message_id=assistant_info.id)
+                from agent.trajectory import public_value, requested_tool_schema
+                wire_name = tc_event.get("tool", "")
+                schema, schema_source = requested_tool_schema(ctx, wire_name,
+                    execution_tools.get(wire_to_canonical.get(wire_name, wire_name)))
+                await record_trace("tool.requested", {"tool": wire_name,
+                    "provider_call_id": tc_event.get("call_id"), "arguments_raw": tc_event.get("arguments_raw"),
+                    "requested_arguments": public_value(tc_event.get("args") or {}),
+                    "schema": schema, "schema_source": schema_source}, context=rejected_trace)
+                await record_trace("tool.finished", {"tool": wire_name, "status": "denied",
+                    "reason": "conflicting_provider_call_id", "duration_ms": None,
+                    "model_output": tool_part.error}, context=rejected_trace)
+                await persist_part(
                     tool_part,
                     is_new=not bool(existing_part_id),
                     user_id=user_id,
@@ -839,7 +866,7 @@ async def process_step(
                     session_id=session_id,
                     message_id=assistant_info.id,
                 )
-                await save_part(duplicate_part, is_new=False, user_id=user_id)
+                await persist_part(duplicate_part, is_new=False, user_id=user_id)
 
         # Execute tool calls after the stream completes. Calls explicitly
         # marked parallel-safe run together; an unsafe call is a barrier before
@@ -899,7 +926,28 @@ async def process_step(
                 session_id=session_id,
                 message_id=assistant_info.id,
             )
-            await save_part(
+            tool_info = execution_tools.get(str(canonical_tool_id))
+            call_trace = getattr(ctx, "trace_context", None)
+            if call_trace is not None:
+                call_trace = call_trace.derive(call_id=tool_part.id, part_id=tool_part.id,
+                                               message_id=assistant_info.id)
+            from agent.trajectory import public_value, requested_tool_schema
+            schema, schema_source = requested_tool_schema(ctx, tool_name, tool_info)
+            await record_trace("tool.requested", {
+                "tool": str(canonical_tool_id or tool_name), "wire_tool": tool_name,
+                "provider_call_id": tc_event.get("call_id"),
+                "arguments_raw": tc_event.get("arguments_raw"),
+                "requested_arguments": public_value(tool_args),
+                "schema": schema,
+                "schema_source": schema_source, "request_schema_ref": getattr(call_trace, "request_id", None),
+            }, context=call_trace)
+
+            async def record_rejection():
+                await record_trace("tool.finished", {"tool": str(canonical_tool_id or tool_name),
+                    "status": "denied", "reason": tool_part.error, "title": tool_part.title,
+                    "metadata": public_value(tool_part.metadata)}, context=call_trace)
+
+            await persist_part(
                 tool_part,
                 is_new=not bool(existing_part_id),
                 user_id=user_id,
@@ -923,7 +971,8 @@ async def process_step(
                         f"Tool '{tool_name}' is not materialized for this step. "
                         f"Available: {', '.join(visible_wire_names)}"
                     )
-                await save_part(tool_part, user_id=user_id)
+                await persist_part(tool_part, user_id=user_id)
+                await record_rejection()
                 return None
 
             # A durable ask returns immediately, but that is not permission
@@ -938,7 +987,8 @@ async def process_step(
                 tool_part.title = "Waiting for user input"
                 tool_part.error = "Not executed: answer the pending questions first, then re-evaluate this operation. No approval was granted."
                 tool_part.metadata = {"blocked": True}
-                await save_part(tool_part, user_id=user_id)
+                await persist_part(tool_part, user_id=user_id)
+                await record_rejection()
                 return None
 
             # Repeating a handled validation error with unchanged arguments
@@ -965,7 +1015,8 @@ async def process_step(
                     "blocked": True,
                     "failure_code": prior_failure,
                 }
-                await save_part(tool_part, user_id=user_id)
+                await persist_part(tool_part, user_id=user_id)
+                await record_rejection()
                 return None
 
             if is_repeat_of_recent(doom_loop_history, tool_name, tool_args):
@@ -979,19 +1030,25 @@ async def process_step(
                     f"consecutive times with identical arguments. Breaking the loop. "
                     f"Please try a different approach."
                 )
-                await save_part(tool_part, user_id=user_id)
+                await persist_part(tool_part, user_id=user_id)
+                await record_rejection()
                 return None
 
             tool_info = execution_tools.get(str(canonical_tool_id))
             if not tool_info:
+                tool_part.error = "No executor registered"
+                await record_rejection()
                 return None
 
             # Stateful/barrier tools keep the original context because some
             # capability commits intentionally observe their bound part_id
             # after execution. Parallel-safe calls must be isolated from one
             # another because hooks mutate per-call fields on the context.
-            call_ctx = copy.copy(ctx) if supports_parallel(tc_event) else ctx
+            call_ctx = copy.copy(ctx)
+            if hasattr(ctx, "_capability_revealed_ids"):
+                call_ctx._capability_revealed_ids = set(ctx._capability_revealed_ids)
             call_ctx.message_id = assistant_info.id
+            call_ctx.trace_context = call_trace
             exec_task = asyncio.create_task(
                 hooks.wrap_execute(
                     str(canonical_tool_id),
@@ -999,6 +1056,9 @@ async def process_step(
                     tool_args,
                     call_ctx,
                     part_id=tool_part.id,
+                    **({"tool_info": tool_info, "provider_call_id": tc_event.get("call_id"),
+                        "arguments_raw": tc_event.get("arguments_raw"), "requested_recorded": True}
+                       if isinstance(hooks, ToolHooks) else {}),
                 )
             )
             abort_task = asyncio.create_task(abort.wait())
@@ -1017,6 +1077,10 @@ async def process_step(
             from question.question import QuestionSuspended
             try:
                 result = exec_task.result()
+                if not supports_parallel(tc_event):
+                    for name, value in vars(call_ctx).items():
+                        if name.startswith("_capability_"):
+                            setattr(ctx, name, value)
             except QuestionSuspended as suspended:
                 questions_waiting = True
                 tool_part.status = ToolStatus.WAITING_INPUT
@@ -1036,7 +1100,8 @@ async def process_step(
             tool_part.title = result.title
             tool_part.error = result.output if result.metadata.get("error") else None
             tool_part.metadata = persisted_tool_metadata(result.metadata)
-            await save_part(tool_part, user_id=user_id)
+            with bind_trace(call_trace):
+                await save_part(tool_part, user_id=user_id)
             return tool_part, result
 
         tool_outcomes = await _run_parallel_safe_groups(
@@ -1079,12 +1144,15 @@ async def process_step(
                                         model_id=model_id)
         finish_reason = "compact"
     except Exception as e:
+        from trajectory.types import TrajectoryError
+        if isinstance(e, TrajectoryError):
+            raise
         # Preserve partial prose as process narration before returning early;
         # the normal final-save block below is skipped by both retry and error
         # outcomes, and leaving channel unset makes a legacy client guess.
         if text_part_id and collected_text:
             try:
-                await save_part(
+                await persist_part(
                     TextPart(
                         id=text_part_id,
                         text=collected_text,
@@ -1094,7 +1162,10 @@ async def process_step(
                     ),
                     user_id=user_id,
                 )
-            except Exception:
+            except Exception as checkpoint_error:
+                from trajectory import TrajectoryError
+                if isinstance(checkpoint_error, TrajectoryError):
+                    raise
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)
         if retry_msg and not provider_event_received:
@@ -1115,7 +1186,7 @@ async def process_step(
             "error": {"message": str(e)},
         })
         assistant_info.error = {"message": str(e)}
-        await update_message_info(assistant_info, user_id=user_id)
+        await persist_message(assistant_info, user_id=user_id)
         return StepResult(
             outcome=StepOutcome.ERROR,
             error=str(e),
@@ -1130,7 +1201,7 @@ async def process_step(
             session_id=session_id,
             message_id=assistant_info.id,
         )
-        await save_part(final_reasoning, user_id=user_id)
+        await persist_part(final_reasoning, user_id=user_id)
 
     # Save final text part (full text)
     if text_part_id and collected_text:
@@ -1144,7 +1215,7 @@ async def process_step(
             session_id=session_id,
             message_id=assistant_info.id,
         )
-        await save_part(final_text, user_id=user_id)
+        await persist_part(final_text, user_id=user_id)
 
     return StepResult(
         outcome=StepOutcome.COMPACT if finish_reason == "compact" else StepOutcome.CONTINUE,

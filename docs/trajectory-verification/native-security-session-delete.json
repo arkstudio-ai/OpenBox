@@ -1,0 +1,236 @@
+{
+  "passed": true,
+  "steps": [
+    {
+      "step": "before",
+      "snapshot": {
+        "trajectoryQueries": 4,
+        "queriesWithData": 2,
+        "payloadQueries": [],
+        "activeSyncs": 1,
+        "denied": null,
+        "viewTarget": "admin session_user_b"
+      }
+    },
+    {
+      "step": "deleteSession",
+      "result": {
+        "action": "session_delete",
+        "deleted": true
+      }
+    },
+    {
+      "step": "after",
+      "snapshot": {
+        "trajectoryQueries": 1,
+        "queriesWithData": 0,
+        "payloadQueries": [],
+        "activeSyncs": 0,
+        "denied": null,
+        "viewTarget": null
+      },
+      "shot": "frontend-v2/test-results/trajectory-claude/native-session-deleted.png"
+    }
+  ],
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "0"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records/tool%3Acall_a",
+      "query": [
+        [
+          "through_seq",
+          "19"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records/tool%3Acall_a",
+      "query": [
+        [
+          "through_seq",
+          "19"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_user_b"
+        },
+        {
+          "type": "unsubscribe",
+          "session_id": "session_user_b"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failedResponses": [
+    {
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "status": 404
+    },
+    {
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "status": 404
+    }
+  ]
+}

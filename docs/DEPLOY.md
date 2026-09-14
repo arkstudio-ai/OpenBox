@@ -5,6 +5,45 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
+## 当前阿里云后端：2026-09-14 视频口播台词不再用 `@`（后端叠加镜像 + 14 台桌面技能）
+
+- 现象：视频配音开头多念“艾特”。`video-production` 技能让 agent 把台词写成 `说出@<台词>`，提示词原样发给模型，模型把 `@` 念了出来：
+  `session_7YBXH4R6PT5SD9YHJ2N3EPD519` 两段 STT 为“艾博南宁的姐妹…”“IPN 来银庄…”，同段改用 `口播台词：` 重生后正常。
+  近 14 天 121/371 段提示词含 `@`，134 条转写中 4 条开头念出了 `@`。
+- 修复 PR [#33](https://github.com/arkstudio-ai/OpenBox/pull/33)（`6f90252`，发布时未合并）：台词放在 `口播台词：` 后单独成行；`lint_prompt.py` 新增 `dialogue_at_sign`，
+  单段落提示词里也能识别标签；SKILL.md、prompt-recipes、quality 同步修改。视频技能相关 91 项测试通过。
+- 后端：以线上 `20260912-videourl-961075e-hotfix-714a30b` 为底，只叠加 4 个技能文件，在 gw2 本机构建
+  `openbox-backend:20260914-video-dialogue-6f90252-on-961075e-714a30b`（`9564637b0747`，比底镜像只多一层 COPY，label `com.bossip.skillfix.commit=6f90252`）；
+  镜像内技能目录 13 个文件的 sha256 与 `6f90252` 一致。
+- gw2：首次切换尝试时守门检查到 2 个活动会话，顺延重试；11:45（北京时间）两次检查均为 0 后只切换 backend，22s healthy，无迁移（仍 `f6a8c0e2b4d6`）。
+  frontend、postgres、redis 未动。备份 `backups/20260914-video-dialogue-6f90252-on-961075e-714a30b/activation-20260914T034541Z/`
+  （配置、compose、原容器 inspect、`preflight.dump` 43M 经 `pg_restore -l` 校验）。容器内技能清单与 `6f90252` 一致，启动后无错误日志；
+  公网 `/`、`/app`、`/api/environment`、`/api/auth/logto/config` 均 200。
+- 桌面：技能的 references 与 scripts 由 agent 在云桌面 `/opt/openbox/skills/video-production` 读取和执行，后端发布不会更新它们。
+  先于后端切换推送到生产库全部 14 台（12 台已分配 + 2 台 prewarm）：上传到 /tmp、解压并核对清单后整目录替换，14/14 清单一致；
+  prewarm 002 实测带 `@` 的提示词报 `dialogue_at_sign`，`口播台词：` 写法通过。推送前 14 台的 SKILL.md 都停在 09-10 之前的版本，
+  且缺 `references/compose-timeline.md`，本次一并补齐。
+- 待办：金镜像 v3/v4 内仍是旧技能，新建桌面要重新推送或重做镜像；PR #33 合并后下次全量构建即可去掉叠加层。AWS 本次未发布。
+- 回滚：gw2 override backend 改回 `20260912-videourl-961075e-hotfix-714a30b`，`up -d --no-deps backend`；桌面技能需要回退时，用 `origin/main` 的技能目录重新推送。
+
+## 当前两边发布：2026-09-12 17:00 `20260912-videourl-961075e`（backend + frontend）；gw2 backend 为 `…-hotfix-714a30b`
+
+- 源码 `main@961075e` = PR #32（ark 渠道视频解析器读 `metadata.url`）+ PR #31（设置页/控制台重排，前端）+ `872ae32` 会话轨迹监控（新迁移）。
+  背景：09-10 注册表同步给 Seedance 加了 `wire_shape: metadata` 后，请求以自身模型名进自有 new-api 的火山直连渠道 120，
+  其 `GET /v1/videos/{id}` 只在 `metadata.url` 给结果，ark 解析器不读 → 6 条已付费任务卡 `in_progress`（09-11 06:39Z–09-12 01:31Z）。
+  09-12 08:15Z 先从 gw2 `openbox.json` 下架两条 ark Seedance 条目止血，本次发布时从备份原样加回。
+- EC2 `/opt/openbox/build-main` 构建，`docker save|gzip`→scp 到 gw2 `releases/20260912-videourl-961075e/`，SHA-256 `fdcc5758…` 两边一致。
+  AWS 08:56Z、gw2 08:57Z 各 backend→frontend 串行切换，backend 12s/18s healthy，frontend 12s；迁移 `e4f6a8b0c2d4 → f6a8c0e2b4d6` 两边自动跑完。
+  备份 AWS `backups/20260912-videourl-961075e/activation-20260912T085554Z/`、gw2 `…/activation-20260912T085709Z/`（含 preflight.dump）。
+- 新后端启动时 `video.recovery` 把 5 条卡住的 Seedance 任务直接落成 completed；09-11 06:39Z 那条火山链接已过期 → `transfer_failed`（HTTP 403）。
+- **并发部署修正**：切换前 gw2 backend 实际是 `20260912-publish-risk-714a30b-on-19cfdeb`（08:21Z 发的热修，`714a30b` 属 PR #28，未入 main），
+  被本次 main 部署顶掉。已按同样套路重建 `20260912-videourl-961075e-hotfix-714a30b`（`main@961075e` + cherry-pick `714a30b`，无冲突，
+  `test_desktop_publish`+`test_video_production` 54 项通过，镜像 label `com.bossip.hotfix.base/commit`），09:02Z 仅换 gw2 backend，18s healthy。
+  AWS 保持纯 `20260912-videourl-961075e`（此前也未带该热修）。PR #28 合并后下次全量构建即可去掉 hotfix 后缀。
+- 公网 `/`、`/api/environment`、`/api/auth/logto/config` 200；`index.html` app-build 为 `20260912-videourl-961075e`。
+- 回滚：gw2 override backend 改回 `20260912-publish-risk-714a30b-on-19cfdeb`、frontend `20260911-suggestion-scroll-617f77e`；
+  AWS 两行改回 `20260911-takeover-fix-a5fa703`；均需先 `alembic downgrade e4f6a8b0c2d4`，再 `up -d --no-deps backend`/`frontend`。
+
 ## 当前阿里云后端：2026-09-11 后台通知状态竞态修复
 
 - 本地 Docker 构建并发布 `openbox-backend:20260911-push-background-19cfdeb`；保留生产源码基线 `57830f8`，只修改通知发送前复核的延期处理，避免后台状态重复上报时永久取消通知。

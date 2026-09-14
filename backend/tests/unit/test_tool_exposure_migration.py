@@ -34,6 +34,17 @@ def _previous_head_fixture(database_path: Path) -> None:
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)")
+        # These tables already existed at PREVIOUS_HEAD. Later migrations in
+        # the real head chain alter them, so the old fixture cannot omit them.
+        connection.exec_driver_sql(
+            "CREATE TABLE audit_logs (id VARCHAR(64) PRIMARY KEY, "
+            "resource_id VARCHAR(64), created_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE cron_jobs (id VARCHAR(64) PRIMARY KEY, "
+            "user_id VARCHAR(64) NOT NULL, is_deleted BOOLEAN NOT NULL DEFAULT 0)"
+        )
+        connection.exec_driver_sql("CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY)")
         connection.exec_driver_sql("CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY)")
         connection.exec_driver_sql(
             "CREATE TABLE video_material_groups ("
@@ -153,6 +164,12 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     assert state == "{}"
     assert version == _current_head()
     assert "internal_parts" in inspector.get_table_names()
+    assert {"session_trajectories", "trajectory_events", "trajectory_payloads",
+            "trajectory_records", "trajectory_session_summaries", "trajectory_checkpoints",
+            "trajectory_exports"} <= set(inspector.get_table_names())
+    assert "trace_context" in {column["name"] for column in inspector.get_columns("session_executions")}
+    assert "trace_context" in {column["name"] for column in inspector.get_columns("cron_runs")}
+    assert next(column["type"].length for column in inspector.get_columns("audit_logs") if column["name"] == "resource_id") == 128
     assert "video_material_groups" not in inspector.get_table_names()
     assert "video_material_assets" not in inspector.get_table_names()
     assert not {
@@ -193,6 +210,8 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
             "SELECT version_num FROM alembic_version"
         ).scalar_one() == PREVIOUS_HEAD
     assert "internal_parts" not in inspector.get_table_names()
+    assert "session_trajectories" not in inspector.get_table_names()
+    assert "trace_context" not in {column["name"] for column in inspector.get_columns("cron_runs")}
     assert "video_material_groups" in inspector.get_table_names()
     assert "video_material_assets" in inspector.get_table_names()
     assert {

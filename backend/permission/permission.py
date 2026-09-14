@@ -47,12 +47,48 @@ class PendingPermission:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     result: PermissionAction | None = None
     error_message: str | None = None
+    trace_context: dict | None = None
 
 
 # State
 _pending: dict[str, PendingPermission] = {}
 _approved: dict[str, Ruleset] = {}  # user_id -> rules (per-user isolation)
 _loaded_users: set[str] = set()
+
+
+async def _trace_permission(request: PermissionRequest, event_type: str, data: dict | None = None,
+                            *, saved: dict | None = None) -> dict | None:
+    from trajectory import enabled, record
+    if not enabled(request.user_id):
+        return None
+    from db.base import get_db_session
+    from trajectory.producers import activity_context
+    async with get_db_session() as db:
+        context = await activity_context(db, request.user_id, request.session_id, saved=saved)
+        if context is None:
+            return None
+        await record(event_type, {
+            "permission_id": request.id, "tool": request.tool,
+            "requested_arguments": request.input, "patterns": request.patterns,
+            "requested_at": request.created_at, "timing_source": "session_timestamps",
+            **(data or {}),
+        }, context=context, db=db, event_id=f"{event_type}:{request.id}")
+        return context.to_dict()
+
+
+async def _trace_rule(session_id: str, user_id: str, permission: str, pattern: str,
+                      input_data: dict, action: str):
+    from trajectory import enabled
+    if not enabled(user_id):
+        return
+    request = PermissionRequest(id=generate_id(), user_id=user_id, session_id=session_id,
+                                tool=permission, input=input_data, patterns=[pattern],
+                                created_at=datetime.now(timezone.utc).isoformat())
+    context = await _trace_permission(request, "permission.requested", {"source_kind": "policy"})
+    await _trace_permission(request, "permission.resolved", {
+        "decision": action, "source_kind": "policy",
+        "status": "completed" if action == "allow" else "denied",
+    }, saved=context)
 
 
 def _get_user_approved(user_id: str) -> Ruleset:
@@ -162,6 +198,8 @@ async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
     await pubsub.subscribe(channel_name)
     try:
         while True:
+            if pending.event.is_set():
+                return
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True, timeout=1.0
             )
@@ -174,6 +212,8 @@ async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
                 except (json.JSONDecodeError, KeyError, TypeError) as e:
                     log.warning(f"Invalid permission reply message: {e}")
             else:
+                if await _read_recorded_reply(request_id, pending):
+                    return
                 await asyncio.sleep(0.01)
     finally:
         try:
@@ -181,6 +221,30 @@ async def _wait_via_redis(request_id: str, pending: PendingPermission) -> None:
             await pubsub.aclose()
         except Exception:
             pass
+
+
+async def _read_recorded_reply(request_id: str, pending: PendingPermission) -> bool:
+    """A committed approval survives loss of its Redis wake-up notification."""
+    from trajectory import enabled
+    if not pending.trace_context or not enabled(pending.request.user_id):
+        return False
+    from db.base import get_db_session
+    from db.models.trajectory import TrajectoryEvent
+    from trajectory.payload import expand
+    async with get_db_session() as db:
+        event = await db.get(TrajectoryEvent, f"permission.resolved:{request_id}")
+        if event is None or event.user_id != pending.request.user_id:
+            return False
+        if event.source_session_id != pending.request.session_id:
+            return False
+        if event.context.get("call_id") != pending.trace_context.get("call_id"):
+            return False
+        data = await expand(db, event.trajectory_id, event.data, through_seq=event.seq)
+        action = data.get("decision")
+        if action not in {"once", "always", "reject"}:
+            return False
+        pending.result, pending.error_message = action, data.get("message")
+        return True
 
 
 async def _push_waiting(request):
@@ -233,8 +297,10 @@ async def ask(
         rule = evaluate(permission, pattern, *rulesets)
 
         if rule.action == "allow":
+            await _trace_rule(session_id, user_id, permission, pattern, input_data, "allow")
             continue
         elif rule.action == "deny":
+            await _trace_rule(session_id, user_id, permission, pattern, input_data, "deny")
             raise PermissionDeniedError(permission, pattern)
         else:
             # Need to ask user
@@ -252,7 +318,8 @@ async def ask(
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
 
-            pending = PendingPermission(request=request)
+            trace = await _trace_permission(request, "permission.requested", {"source_kind": "user"})
+            pending = PendingPermission(request=request, trace_context=trace)
             _pending[request_id] = pending
 
             redis_client = _get_redis_client()
@@ -263,7 +330,7 @@ async def ask(
                     await redis_client.setex(
                         f"perm_req:{request_id}",
                         300,  # TTL 300s
-                        json.dumps(request.model_dump()),
+                        json.dumps({**request.model_dump(), "trace_context": trace}),
                     )
                 except Exception as e:
                     log.warning(f"Failed to store permission request in Redis: {e}")
@@ -281,6 +348,11 @@ async def ask(
                         await pending.event.wait()
                 else:
                     await pending.event.wait()
+            except asyncio.CancelledError:
+                await _trace_permission(request, "permission.expired", {
+                    "status": "cancelled", "reason": "run_cancelled",
+                }, saved=trace)
+                raise
             finally:
                 _pending.pop(request_id, None)
                 await _push_resolved(request_id, user_id)
@@ -305,12 +377,11 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
             raw = await redis_client.get(f"perm_req:{request_id}")
             if raw:
                 request_data = json.loads(raw)
-                await redis_client.delete(f"perm_req:{request_id}")
         except Exception as e:
             log.warning(f"Failed to read permission request from Redis: {e}")
 
     # Check local pending dict
-    pending = _pending.pop(request_id, None)
+    pending = _pending.get(request_id)
 
     # Enforce per-user ownership (works for local + cross-worker request data).
     owner_id = pending.request.user_id if pending is not None else (request_data or {}).get("user_id")
@@ -321,6 +392,17 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
         raise PermissionError("Permission request does not belong to current user")
     if pending is None and request_data is None:
         raise KeyError("Permission request not found")
+
+    request = pending.request if pending else PermissionRequest.model_validate(request_data)
+    trace = pending.trace_context if pending else request_data.get("trace_context")
+    await _trace_permission(request, "permission.resolved", {
+        "decision": action, "message": message, "source_kind": "user",
+        "status": "denied" if action == "reject" else "completed",
+        "correction": message if action == "reject" and message else None,
+    }, saved=trace)
+    _pending.pop(request_id, None)
+    if redis_client is not None and request_data is not None:
+        await redis_client.delete(f"perm_req:{request_id}")
 
     await _push_resolved(request_id, user_id)
 
@@ -352,6 +434,10 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
                     for pat in p.request.patterns
                 )
                 if all_ok:
+                    await _trace_permission(p.request, "permission.resolved", {
+                        "decision": "always", "source_kind": "policy",
+                        "status": "completed", "caused_by_permission_id": request_id,
+                    }, saved=p.trace_context)
                     p.result = "always"
                     _pending.pop(rid, None)
                     p.event.set()
@@ -361,6 +447,10 @@ async def reply(request_id: str, action: PermissionAction, message: str | None =
             session_id = pending.request.session_id
             for rid, p in list(_pending.items()):
                 if p.request.session_id == session_id:
+                    await _trace_permission(p.request, "permission.resolved", {
+                        "decision": "reject", "source_kind": "user",
+                        "status": "denied", "caused_by_permission_id": request_id,
+                    }, saved=p.trace_context)
                     p.result = "reject"
                     _pending.pop(rid, None)
                     p.event.set()

@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router"
 import { AdminNav } from "./AdminNav"
-import { activeAdminSection, ADMIN_SECTION_PATHS } from "./sections"
+import { activeAdminSection, adminLayout, ADMIN_SECTION_PATHS } from "./sections"
 
 vi.mock("react-i18next", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-i18next")>()
@@ -39,8 +39,24 @@ describe("activeAdminSection", () => {
     expect(activeAdminSection("/app/admin/billing/workspaces/ws-1")).toBe("billing")
   })
 
+  it("keeps a trajectory session detail under its column", () => {
+    expect(activeAdminSection("/app/admin/trajectories")).toBe("trajectories")
+    expect(activeAdminSection("/app/admin/trajectories/sessions/ses-1")).toBe("trajectories")
+  })
+
   it("falls back to fleet, the way the index route redirects", () => {
     expect(activeAdminSection("/app/admin")).toBe("fleet")
     expect(activeAdminSection("/app/admin/")).toBe("fleet")
+  })
+})
+
+describe("adminLayout", () => {
+  it("keeps the heading for ordinary columns", () => {
+    expect(adminLayout("/app/admin/billing/orders")).toEqual({ heading: true })
+  })
+
+  it("gives the session detail no column heading — it carries its own", () => {
+    expect(adminLayout("/app/admin/trajectories")).toEqual({ heading: true })
+    expect(adminLayout("/app/admin/trajectories/sessions/ses-1")).toEqual({ heading: false })
   })
 })

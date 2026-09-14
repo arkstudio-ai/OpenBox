@@ -26,7 +26,12 @@ import { UserRow } from "./UserRow"
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 import { useSidebarLayout } from "../hooks/useSidebarLayout"
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Passed to the user row; observation-only pages omit the (period-settling) balance read. */
+  showCredits?: boolean
+}
+
+export function Sidebar({ showCredits = true }: SidebarProps) {
   const { t } = useTranslation("workspace")
   const navigate = useNavigate()
   const width = useWorkspaceUi((s) => s.sidebarWidth)
@@ -249,7 +254,7 @@ export function Sidebar() {
             />
           </div>
 
-          <UserRow sessionCount={(sessions.data ?? []).length} />
+          <UserRow sessionCount={(sessions.data ?? []).length} showCredits={showCredits} />
         </div>
         {!compact && (
           <button

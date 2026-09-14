@@ -242,6 +242,10 @@ ws_manager = WSConnectionManager()
 
 async def _on_bus_event(event: dict):
     """Forward bus events to the appropriate user's WebSocket connections."""
+    # Trace ownership is the executed user's identity, not a viewing grant.
+    # Only the separate super-admin subscription endpoint consumes these.
+    if event.get("type", "").startswith("trajectory."):
+        return
     data = event.get("data", {})
     user_id = data.get("userId")
     if user_id:

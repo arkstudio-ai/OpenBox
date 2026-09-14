@@ -106,6 +106,60 @@ def _event(row: QuestionCheckpoint) -> dict:
             "id": row.id, "request_id": row.id, "status": row.status}
 
 
+async def checkpoint_context(db, row: QuestionCheckpoint, execution: SessionExecution, *, adopt=True):
+    """Carry the original call/task through saved answers and worker changes."""
+    from trajectory import enabled, record
+    from trajectory.producers import activity_context
+    if not enabled(row.user_id):
+        return None
+    stored = row.continuation.get("trace_context")
+    context = await activity_context(
+        db, row.user_id, row.session_id, saved=stored or execution.trace_context,
+        message_id=row.message_id, part_id=row.part_id,
+    )
+    if context is None:
+        return None
+    if not context.turn_id:
+        context = context.derive(turn_id=f"question:{row.id}")
+    if not context.call_id and row.part_id:
+        context = context.derive(call_id=generate_id())
+    if not stored:
+        if adopt:
+            await record("baseline.captured", {
+                "origin": "preexisting_question", "preexisting": True,
+                "pending_questions": [_request(row).model_dump()],
+            }, db=db, context=context, event_id=f"question_adopt:{row.id}")
+        row.continuation = {**row.continuation, "trace_context": context.to_dict()}
+    if not execution.trace_context:
+        execution.trace_context = context.derive(call_id=None, part_id=None, request_id=None,
+                                                 step_id=None).to_dict()
+    return context
+
+
+async def record_checkpoint(db, row: QuestionCheckpoint, execution: SessionExecution,
+                            event_type: str, data: dict | None = None):
+    from trajectory import record
+    context = await checkpoint_context(db, row, execution, adopt=event_type != "question.asked")
+    if context is not None:
+        await record(event_type, {
+            "question_id": row.id, "questions": row.questions,
+            "status": row.status, "draft_revision": row.draft_revision,
+            "expires_at": runtime.utc(row.expires_at).isoformat() if row.expires_at else None,
+            **(data or {}),
+        }, db=db, context=context,
+            event_id=f"{event_type}:{row.id}:{row.draft_revision}")
+        takeover = next((q.get("detail") for q in row.questions
+                         if (q.get("detail") or {}).get("kind") == "desktop_takeover"), None)
+        if takeover and event_type in {"question.asked", "question.resolved", "question.cancelled"}:
+            terminal = event_type != "question.asked"
+            await record("takeover.finished" if terminal else "takeover.requested", {
+                "takeover_id": row.id, "question_id": row.id, "detail": takeover,
+                "answers": row.answers if terminal else None,
+                "status": row.status, "source_kind": "user_report" if terminal else "agent",
+            }, db=db, context=context, event_id=f"takeover:{event_type}:{row.id}")
+    return context
+
+
 def validate_answers(questions: list[Question], answers: list[list[str]], *, partial: bool = False) -> list[list[str]]:
     if not isinstance(answers, list) or any(
         not isinstance(values, list) or any(not isinstance(value, str) for value in values)
@@ -183,11 +237,15 @@ async def ask(
             )
             db.add(row)
             await db.flush()
+            trace = await record_checkpoint(db, row, execution, "question.asked")
             if part:
                 part.data = {**part.data, "status": "waiting_input", "title": "Waiting for your answer",
                              "metadata": {**(part.data.get("metadata") or {}),
                                  "question_id": row.id, "question_status": "pending",
                                  "questions": [q.question for q in questions]}}
+                if trace:
+                    from trajectory import record
+                    await record("part.committed", {"part": part.data}, db=db, context=trace)
             if not runtime.is_live(execution):
                 session.status = "waiting_input"
             request = _request(row)
@@ -248,7 +306,10 @@ async def _resolve(request_id: str, user_id: str, answers: list[list[str]] | Non
                 raise QuestionConflict("An answer has already been accepted")
             return {"ok": True, "status": row.status, "session_id": row.session_id}
         _check_pending(row, execution)
+        await checkpoint_context(db, row, execution)
         row.status, row.answers, row.updated_at = status, clean, runtime.now()
+        await record_checkpoint(db, row, execution, "question.resolved",
+                                {"answers": clean, "decision": status, "source_kind": "user"})
         from notifications.events import cancel_event
         await cancel_event(db, user_id, f"question:{row.id}")
         execution.resume_pending = True
@@ -278,9 +339,11 @@ async def save_draft(request_id: str, draft: list[DraftAnswer], revision: int, u
             if item.custom and not question.custom:
                 raise ValueError("Free text is not allowed for this question")
             validate_answers([question.model_copy(update={"custom": False})], [item.selected], partial=True)
+        await checkpoint_context(db, row, execution)
         row.draft = [item.model_dump() for item in draft]
         row.draft_revision += 1
         row.updated_at = runtime.now()
+        await record_checkpoint(db, row, execution, "question.draft_saved", {"draft": row.draft})
         request = _request(row)
     bus.publish("question.updated", {**request.model_dump(), "userId": user_id})
     return request

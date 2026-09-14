@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-11",
+  "scope": "all backend unit tests and all trajectory integration tests",
+  "command": "python -m pytest tests/unit tests/integration/test_trajectory_*.py -q --tb=short",
+  "passed": 2289,
+  "failed": 1,
+  "warnings": 51,
+  "seconds": 72.83,
+  "python": "3.12.14",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "known_baseline_failure": {
+    "test": "tests/unit/test_internal_tunnel_keys.py::test_desktop_preflight_has_stable_503_code",
+    "reason": "ImportError: api.sessions has no _desktop_route_preflight",
+    "reproduced_in_unchanged_main": true
+  },
+  "external_services": "deterministic fixtures; no paid model or live cloud desktop calls",
+  "stream_redaction_final_boundaries_included": true
+}

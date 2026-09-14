@@ -1,0 +1,415 @@
+{
+  "passed": true,
+  "steps": [
+    {
+      "step": "beforeArtifactH35",
+      "passed": true
+    },
+    {
+      "step": "freshAvailableDownload",
+      "snapshot": {
+        "trajectoryQueries": 5,
+        "queriesWithData": 3,
+        "payloadQueries": [
+          {
+            "availability": "available",
+            "hasBlob": true
+          }
+        ],
+        "activeSyncs": 1,
+        "denied": null,
+        "viewTarget": "admin session_user_b",
+        "createdUrls": 3,
+        "revokedUrls": 2
+      },
+      "shot": "frontend-v2/test-results/trajectory-claude/native-media-available.png"
+    },
+    {
+      "step": "afterDeletionAtHistoricalH",
+      "deleted": {
+        "action": "payload_delete",
+        "payload_id": "pld_11fee374aa3143da88db27a52ac7c0de",
+        "availability": "deleted"
+      },
+      "snapshot": {
+        "trajectoryQueries": 5,
+        "queriesWithData": 3,
+        "payloadQueries": [
+          {
+            "availability": "deleted",
+            "hasBlob": false
+          }
+        ],
+        "activeSyncs": 1,
+        "denied": null,
+        "viewTarget": "admin session_user_b",
+        "createdUrls": 3,
+        "revokedUrls": 3
+      },
+      "effectiveSeq": "37",
+      "shot": "frontend-v2/test-results/trajectory-claude/native-media-deleted.png"
+    }
+  ],
+  "network": [
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "0"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/project",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/session",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/environment",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me/preferences",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "100"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/checkpoint",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/trajectories/ticket",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "0"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records/artifact%3Aacceptance-pixel",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/records/artifact%3Aacceptance-pixel",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/events",
+      "query": [
+        [
+          "after_seq",
+          "37"
+        ],
+        [
+          "limit",
+          "500"
+        ],
+        [
+          "include_data",
+          "true"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/payloads/pld_11fee374aa3143da88db27a52ac7c0de",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/payloads/pld_11fee374aa3143da88db27a52ac7c0de",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/payloads/pld_11fee374aa3143da88db27a52ac7c0de",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/trajectories/sessions/session_user_b/payloads/pld_11fee374aa3143da88db27a52ac7c0de",
+      "query": [
+        [
+          "through_seq",
+          "37"
+        ]
+      ]
+    }
+  ],
+  "sockets": [
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_user_b"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    },
+    {
+      "path": "/",
+      "sent": [],
+      "receivedTypes": [
+        "connected"
+      ]
+    },
+    {
+      "path": "/ws/admin/trajectories",
+      "sent": [
+        {
+          "type": "subscribe",
+          "session_id": "session_user_b"
+        }
+      ],
+      "receivedTypes": [
+        "subscribed"
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 410 (Gone)"
+  ],
+  "failedResponses": [
+    {
+      "path": "/api/admin/trajectories/sessions/session_user_b/payloads/pld_11fee374aa3143da88db27a52ac7c0de",
+      "status": 410
+    }
+  ]
+}

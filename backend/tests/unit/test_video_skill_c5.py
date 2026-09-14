@@ -1,6 +1,7 @@
 """C5 contract tests for the advisory spoken-video skill."""
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -64,20 +65,36 @@ def test_lint_allows_deliberate_tracking_camera():
     prompt = (
         "全片一致的画面基底：同一人物、同一街道\n"
         "镜头跟随人物走动，保持半身构图。自然肢体动作：轻轻抬手。\n"
-        "语气：轻快自然。\n面对镜头说出@今天看三个细节\n无字幕。"
+        "语气：轻快自然。\n口播台词：今天看三个细节\n无字幕。"
     )
     assert _lint(prompt)["ok"] is True
 
 
-def test_lint_warns_instead_of_blocking_when_at_dialogue_differs():
+def test_lint_warns_instead_of_blocking_when_dialogue_differs():
     prompt = (
         "全片一致的画面基底：同一人物、同一街道\n"
         "固定镜头半身。自然肢体动作：轻轻抬手。语气：自然。\n"
-        "面对镜头说出@今天看四个细节\n无字幕。"
+        "口播台词：今天看四个细节\n无字幕。"
     )
     report = _lint(prompt)
     assert report["ok"] is True
     assert any("dialogue_mismatch" in warning for warning in report["warnings"])
+
+
+def test_every_recipe_prompt_passes_lint_without_an_at_sign():
+    """The recipes are what the agent copies; an `@` in one is read aloud as "艾特"."""
+    text = (SKILL / "references" / "prompt-recipes.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```text\n(.*?)```", text, flags=re.S)
+    spoken = [block for block in blocks if "口播台词：" in block]
+
+    assert len(spoken) >= 6
+    assert not [block for block in blocks if "@" in block]
+    for block in spoken:
+        line = block.split("口播台词：", 1)[1].splitlines()[0]
+        report = lint_prompt.lint_prompt(
+            script_text=line, prompt=block, visual_anchor="", image_count=2, video_count=1,
+        )
+        assert report["ok"] is True, (block, report["failures"])
 
 
 def _confirmed_state() -> dict:

@@ -92,8 +92,22 @@ async def _rpc(action: str, params: dict[str, str]) -> dict[str, Any]:
     request = open_api_models.OpenApiRequest(query={k: v for k, v in params.items() if v is not None})
     runtime = util_models.RuntimeOptions(read_timeout=30_000, connect_timeout=10_000)
     try:
-        response = await client.call_api_async(call, request, runtime)
+        from agent.trajectory import capture_service_dispatch, observe_service_response
+        if action == "SubmitMediaProducingJob":
+            async with capture_service_dispatch(purpose="media_composition", provider="aliyun_ims", model="ims",
+                    operation=action, body=request.query, profile="media_composition",
+                    capture_level="adapter_input") as capture:
+                response = await client.call_api_async(call, request, runtime)
+                body = response.get("body") if isinstance(response, dict) else None
+                await capture.chunk({"response": {"output": body if isinstance(body, dict) else response}})
+        else:
+            response = await client.call_api_async(call, request, runtime)
+            body = response.get("body") if isinstance(response, dict) else None
+            await observe_service_response(body if isinstance(body, dict) else response, operation=action)
     except Exception as exc:  # TeaException carries code/message/statusCode
+        from trajectory.types import TrajectoryError
+        if isinstance(exc, TrajectoryError):
+            raise
         code = str(getattr(exc, "code", "") or type(exc).__name__)
         message = str(getattr(exc, "message", "") or exc)
         status_code = getattr(exc, "statusCode", None) or getattr(getattr(exc, "data", None) or {}, "get", lambda *_: None)("statusCode")

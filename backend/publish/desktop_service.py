@@ -163,6 +163,8 @@ async def _create_job(caller: Caller, spec: PublishSpec, account: PlatformAccoun
         )
         db.add(job)
         await db.flush()
+        from trajectory.jobs import record_job_in_tx
+        await record_job_in_tx(db, job, submitted=True, session_id=caller.session_id)
         db.expunge(job)
         return job
 
@@ -182,6 +184,8 @@ async def _finish_job(job_id: str, *, status: str, error: str | None = None, ite
         if published:
             job.published_at = _now()
         job.updated_at = _now()
+        from trajectory.jobs import record_job_in_tx
+        await record_job_in_tx(db, job)
 
 
 async def run_script_on_desktop(caller: Caller, record: dict, params: dict, *, timeout_s: int) -> dict:
@@ -193,6 +197,7 @@ async def run_script_on_desktop(caller: Caller, record: dict, params: dict, *, t
         summary=f"desktop_publish {'dry-run ' if params.get('dry_run') else ''}{params.get('title', '')[:30]}",
         operation="publish", lease=True, timeout=timeout_s + 30, lease_ttl=float(timeout_s + 60),
         span_kind="platform.publish", session_id=caller.session_id or "desktop-publish", tool_call_id=caller.tool_call_id,
+        allow_script_error=True,
     )
 
 

@@ -48,3 +48,6 @@ __all__ = [
 ]
 
 from db.models.push import MobilePresence, MobileSession, PushDevice, PushMessage, PushDelivery
+
+from db.models.trajectory import (SessionTrajectory, TrajectoryEvent, TrajectoryPayload,
+    TrajectoryRecord, TrajectorySessionSummary, TrajectoryCheckpoint, TrajectoryExport)

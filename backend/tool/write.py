@@ -31,17 +31,30 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
     except Exception:
         pass
 
+    from trajectory.files import captures_files, record_file_change
+    before = None
+    if captures_files(ctx):
+        try:
+            from tool.edit import _strip_line_numbers
+            before = _strip_line_numbers(await ctx.sandbox.read_file(args.file_path, offset=0, limit=100000))
+        except Exception:
+            # An unobservable previous version stays explicitly unavailable.
+            pass
     try:
         await ctx.sandbox.write_file(path=args.file_path, content=args.content)
     except Exception as e:
         return ToolResult(
             title=f"Error writing {args.file_path}",
             output=str(e),
+            metadata={"error": True},
         )
+
+    await record_file_change(ctx, args.file_path, operation="write", before=before, after=args.content)
 
     output = f"{stale_warning}File written successfully ({len(args.content)} bytes)"
 
     # F6: Auto-format (best-effort)
+    formatter = None
     try:
         from core.config import get_config
         if getattr(get_config(), "auto_format", True):
@@ -51,6 +64,12 @@ async def execute(args: WriteArgs, ctx: ToolContext) -> ToolResult:
                 output += f"\n(auto-formatted with {formatter})"
     except Exception:
         pass
+
+    if formatter and captures_files(ctx):
+        from tool.edit import _strip_line_numbers
+        after = _strip_line_numbers(await ctx.sandbox.read_file(args.file_path, offset=0, limit=100000))
+        if after != args.content:
+            await record_file_change(ctx, args.file_path, operation="format", before=args.content, after=after)
 
     # F5: LSP diagnostics (best-effort)
     try:

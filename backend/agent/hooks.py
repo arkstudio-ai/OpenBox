@@ -1,7 +1,10 @@
 """Tool execution hooks: permission checks, doom loop detection, SSE events."""
+import asyncio
 import json
 import time
 from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from agent.doom_loop import DOOM_LOOP_THRESHOLD, is_repeatable_poll
 from bus import bus
@@ -11,6 +14,22 @@ from tool.tool import ToolResult, ToolContext
 from core.log import create_logger
 
 log = create_logger("agent.hooks")
+
+_execution_context: ContextVar[ToolContext | None] = ContextVar("tool_execution_context", default=None)
+
+
+def current_tool_context() -> ToolContext | None:
+    """The isolated executor identity, also available when recording is disabled."""
+    return _execution_context.get()
+
+
+@contextmanager
+def _bind_tool_context(context: ToolContext):
+    token = _execution_context.set(context)
+    try:
+        yield context
+    finally:
+        _execution_context.reset(token)
 
 
 class ToolHooks:
@@ -38,6 +57,69 @@ class ToolHooks:
         return rules
 
     async def wrap_execute(
+        self, tool_id: str, execute_fn: Any, args: dict, ctx: ToolContext,
+        part_id: str = "", *, tool_info=None, provider_call_id: str | None = None,
+        arguments_raw: str | None = None, requested_recorded: bool = False,
+    ) -> ToolResult:
+        from agent.trajectory import context_for_tool, public_value, requested_tool_schema
+        from trajectory import bind, record
+        from core.identifier import ascending
+        context = await context_for_tool(ctx)
+        if context is not None:
+            context = context.derive(
+                call_id=part_id or ascending("call"), part_id=part_id or None,
+                message_id=ctx.message_id or context.message_id,
+            )
+            ctx.trace_context = context
+        ctx._trajectory_execute_started = None
+        ctx._trajectory_full_tool_output = None
+        from trajectory.stream_redaction import StreamTextRedactor
+        ctx._trajectory_output_redactor = StreamTextRedactor()
+        started = time.monotonic()
+        with bind(context), _bind_tool_context(ctx):
+            if not requested_recorded:
+                schema, schema_source = requested_tool_schema(ctx, tool_id, tool_info)
+                await record("tool.requested", {
+                    "tool": tool_id, "provider_call_id": provider_call_id,
+                    "arguments_raw": arguments_raw, "requested_arguments": public_value(args),
+                    "schema": schema, "schema_source": schema_source,
+                }, context=context)
+            try:
+                result = await self._wrap_execute_impl(tool_id, execute_fn, args, ctx, part_id)
+            except BaseException as exc:
+                from trajectory.types import TrajectoryError
+                if isinstance(exc, TrajectoryError):
+                    raise
+                from question.question import QuestionSuspended
+                status = "waiting" if isinstance(exc, QuestionSuspended) else (
+                    "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed")
+                await record("tool.finished", {
+                    "tool": tool_id, "status": status,
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                    "total_duration_ms": (time.monotonic() - started) * 1000,
+                    "duration_ms": (time.monotonic() - ctx._trajectory_execute_started) * 1000 if ctx._trajectory_execute_started is not None else None,
+                    "result_availability": "pending" if status == "waiting" else "unknown",
+                    "timing_source": "producer_monotonic",
+                }, context=context)
+                raise
+            execution_duration = result.metadata.get("duration")
+            if execution_duration is None and ctx._trajectory_execute_started is not None:
+                execution_duration = time.monotonic() - ctx._trajectory_execute_started
+            status = "denied" if result.metadata.get("blocked") or result.metadata.get("rejected") else (
+                "failed" if result.metadata.get("error") else "completed")
+            recorded_model_output = ctx._trajectory_output_redactor.redact(
+                result.output, mode="replace", final=True)
+            await record("tool.finished", {
+                "tool": tool_id, "status": status, "title": result.title,
+                "model_output": recorded_model_output["output"], "metadata": public_value(result.metadata),
+                "model_output_redaction": recorded_model_output.get("redaction"),
+                "duration_ms": execution_duration * 1000 if execution_duration is not None else None,
+                "total_duration_ms": (time.monotonic() - started) * 1000,
+                "timing_source": "producer_monotonic",
+            }, context=context)
+            return result
+
+    async def _wrap_execute_impl(
         self,
         tool_id: str,
         execute_fn: Any,
@@ -49,7 +131,7 @@ class ToolHooks:
         from question.runtime import still_current
         if not await still_current():
             return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
-        start_time = time.time()
+        start_time = None
         blocked = await self.authorize_tool(tool_id, args)
         if blocked is not None:
             return blocked
@@ -83,6 +165,12 @@ class ToolHooks:
 
         async def _on_output(output: str) -> None:
             """Push incremental tool output to frontend via part.updated."""
+            from trajectory import record
+            recorded_output = ctx._trajectory_output_redactor.redact(output, mode="replace")
+            await record("tool.output", {"tool": tool_id, **recorded_output,
+                "stage": "executor_stream", "chunk_index": _last_output.get("index", 0)},
+                context=getattr(ctx, "trace_context", None))
+            _last_output["index"] = _last_output.get("index", 0) + 1
             if output == _last_output["text"]:
                 return
             _last_output["text"] = output
@@ -106,6 +194,14 @@ class ToolHooks:
         try:
             if not await still_current(progress=True):
                 return ToolResult(title="Superseded", output="This run was replaced by a new user message.", metadata={"blocked": True})
+            from trajectory import record
+            from agent.trajectory import public_value
+            if not getattr(execute_fn, "_trajectory_validates", False):
+                await record("tool.started", {"tool": tool_id, "effective_arguments": public_value(args),
+                             "timing_source": "producer_monotonic"}, context=getattr(ctx, "trace_context", None))
+            start_time = time.monotonic()
+            if not getattr(execute_fn, "_trajectory_validates", False):
+                ctx._trajectory_execute_started = start_time
             request_context = getattr(ctx.sandbox, "request_context", None)
             if request_context is not None:
                 async with request_context(
@@ -117,6 +213,9 @@ class ToolHooks:
             else:
                 result = await execute_fn(args, ctx)
         except Exception as e:
+            from trajectory.types import TrajectoryError
+            if isinstance(e, TrajectoryError):
+                raise
             from question.question import QuestionSuspended
             if isinstance(e, QuestionSuspended):
                 raise
@@ -166,7 +265,7 @@ class ToolHooks:
             ctx._authorized_tool_id = previous_authorized_id
             ctx._authorized_tool_args_key = previous_authorized_args
 
-        duration = time.time() - start_time
+        duration = time.monotonic() - start_time if start_time is not None else None
         bus.publish(TOOL_COMPLETED, {
             "userId": self.user_id,
             "sessionId": self.session_id,
@@ -175,7 +274,15 @@ class ToolHooks:
             "title": result.title,
         })
 
-        result.metadata["duration"] = duration
+        if not getattr(execute_fn, "_trajectory_validates", False):
+            result.metadata["duration"] = duration
+            recorded_output = ctx._trajectory_output_redactor.redact(
+                ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output,
+                mode="replace", final=True)
+            await record("tool.output", {"tool": tool_id, **recorded_output, "title": result.title,
+                "metadata": public_value(result.metadata), "stage": "executor_result",
+                "duration_ms": duration * 1000 if duration is not None else None},
+                context=getattr(ctx, "trace_context", None))
         return result
 
     async def authorize_tool(self, tool_id: str, args: dict) -> ToolResult | None:

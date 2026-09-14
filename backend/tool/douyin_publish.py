@@ -110,8 +110,7 @@ async def _pin_png(ctx: ToolContext, png: bytes, *, name: str, label: str, capti
     size = await _upload_bytes(oss, key, "image/png", png)
     now = datetime.now(timezone.utc)
     async with get_db_session() as db:
-        db.add(
-            FileAsset(
+        asset = FileAsset(
                 id=asset_id,
                 user_id=ctx.user_id,
                 workspace_id=ctx.workspace_id,
@@ -127,8 +126,10 @@ async def _pin_png(ctx: ToolContext, png: bytes, *, name: str, label: str, capti
                 # resource worth keeping in the resource centre.
                 transient=True,
                 created_at=now,
-            )
         )
+        db.add(asset)
+        from trajectory.artifacts import capture_result_asset_in_tx
+        await capture_result_asset_in_tx(db, ctx, asset, content=png)
         await db.commit()
     await save_part(
         FilePart(
@@ -236,7 +237,10 @@ async def _authorize(ctx: ToolContext) -> ToolResult:
             caption="用手机扫码，或在电脑上打开链接后用抖音 App 扫描页面上的二维码。",
             kind="qr_code",
         )
-    except Exception:
+    except Exception as exc:
+        from trajectory.types import TrajectoryError
+        if isinstance(exc, TrajectoryError):
+            raise
         log.warning("could not attach the Douyin authorize QR code", exc_info=True)
     output = (
         "已生成抖音授权链接，10 分钟内有效。请用户二选一：\n"
@@ -301,7 +305,10 @@ async def _publish(args: DouyinPublishArgs, ctx: ToolContext) -> ToolResult:
             caption=f"标题：{public['title'] or '（无）'}；话题：{'、'.join(public['hashtags']) or '（无）'}",
             kind="qr_code",
         )
-    except Exception:
+    except Exception as exc:
+        from trajectory.types import TrajectoryError
+        if isinstance(exc, TrajectoryError):
+            raise
         log.warning("could not attach the Douyin publish QR code", exc_info=True)
     output = (
         "投稿二维码已生成，一小时内有效。请用户打开抖音 App 扫描二维码：抖音会下载视频并进入发布页，"

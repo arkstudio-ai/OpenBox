@@ -22,32 +22,66 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
     from tool.registry import get_tool
 
     async def run_one(inv: Invocation) -> str:
-        if inv.tool == "batch":
-            return "[batch] Error: Cannot recursively call batch tool."
-        if ctx.available_tools is not None and inv.tool not in ctx.available_tools:
-            return f"[{inv.tool}] Error: Tool is not available to the current agent."
+        import copy
+        from agent.hooks import ToolHooks
+        from agent.trajectory import context_for_tool, public_value, tool_schema
+        from core.identifier import ascending
+        from trajectory import bind, record
+        child = copy.copy(ctx)
+        child._capability_revealed_ids = set(ctx._capability_revealed_ids)
+        child.part_id = ascending("call")
+        child._on_output = None
+        child._authorized_tool_id = ""
+        child._authorized_tool_args_key = ""
+        trace = await context_for_tool(ctx)
+        if trace is not None:
+            trace = trace.derive(parent_call_id=trace.call_id, call_id=child.part_id, part_id=None)
+        child.trace_context = trace
         tool = get_tool(inv.tool)
-        if not tool:
-            return f"[{inv.tool}] Error: Tool not found"
-        if not tool.parallel_safe:
-            guidance = (
-                " Use computer(action='batch', actions=[...]) for ordered desktop actions."
-                if inv.tool == "computer" else ""
-            )
-            return f"[{inv.tool}] Error: Tool is not safe for parallel execution.{guidance}"
-        if ctx._authorize_tool is not None:
-            blocked = await ctx._authorize_tool(inv.tool, inv.parameters)
-            if blocked is not None:
-                return f"[{inv.tool}] {blocked.title}\n{blocked.output}"
-        try:
-            result = await tool.execute(inv.parameters, ctx)
-            return f"[{inv.tool}] {result.title}\n{result.output}"
-        except Exception as e:
-            return f"[{inv.tool}] Error: {e}"
+        with bind(trace):
+            await record("tool.requested", {
+                "tool": inv.tool, "requested_arguments": public_value(inv.parameters),
+                "schema": tool_schema(tool, inv.tool),
+                "schema_source": "executor_registry",
+            }, context=trace)
+            rejection = None
+            if inv.tool == "batch":
+                rejection = "Cannot recursively call batch tool."
+            elif ctx.available_tools is not None and inv.tool not in ctx.available_tools:
+                rejection = "Tool is not available to the current agent."
+            elif not tool:
+                rejection = "Tool not found"
+            elif not tool.parallel_safe:
+                rejection = "Tool is not safe for parallel execution."
+                if inv.tool == "computer":
+                    rejection += " Use computer(action='batch', actions=[...]) for ordered desktop actions."
+            if rejection:
+                await record("tool.finished", {"tool": inv.tool, "status": "denied", "reason": rejection}, context=trace)
+                return f"[{inv.tool}] Error: {rejection}"
+            hooks = getattr(ctx._authorize_tool, "__self__", None)
+            if not isinstance(hooks, ToolHooks):
+                hooks = ToolHooks(session_id=ctx.session_id, user_id=ctx.user_id)
+                if ctx._authorize_tool is not None:
+                    hooks.authorize_tool = ctx._authorize_tool
+            try:
+                result = await hooks.wrap_execute(inv.tool, tool.execute, inv.parameters, child,
+                    part_id=child.part_id, tool_info=tool, requested_recorded=True)
+                return f"[{inv.tool}] {result.title}\n{result.output}"
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                from trajectory.types import TrajectoryError
+                if isinstance(e, TrajectoryError):
+                    raise
+                return f"[{inv.tool}] Error: {e}"
 
     tasks = [run_one(inv) for inv in args.invocations]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    from trajectory.types import TrajectoryError
+    for result in results:
+        if isinstance(result, TrajectoryError):
+            raise result
     output_parts = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):

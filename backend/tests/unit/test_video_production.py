@@ -1266,6 +1266,29 @@ async def test_bossip_relay_submit_and_status_use_v1_videos(monkeypatch, video_g
     assert _provider_video_url(status) == "https://result.test/out.mp4"
 
 
+def test_ark_channel_reads_gateway_metadata_url():
+    """The self-hosted gateway hides the ark result under `metadata.url`.
+
+    Observed 2026-09-11 on gw2: Seedance 2.0 declared on the ark channel with
+    the metadata wire shape is served by the direct volcengine channel, and a
+    completed `GET /v1/videos/{id}` carries nothing but `metadata.url`. The
+    upstream task had already been paid for, so an empty parse stranded the
+    job in in_progress with "completed without a video URL".
+    """
+    status = {
+        "id": "task_x",
+        "object": "video",
+        "status": "completed",
+        "progress": 100,
+        "metadata": {"url": "https://tos.test/seedance.mp4?sig=1"},
+    }
+    assert _provider_video_url(status) == "https://tos.test/seedance.mp4?sig=1"
+    assert _provider_video_url(status, _bossip_target()) == "https://tos.test/seedance.mp4?sig=1"
+    # The older adapter shape still wins where present.
+    assert _provider_video_url({"data": {"url": "https://a.test/1.mp4"}, "metadata": {"url": "https://b.test/2.mp4"}}) == "https://a.test/1.mp4"
+    assert _provider_video_url({"status": "completed", "metadata": {}}) == ""
+
+
 def test_video_skill_teaches_craft_and_leaves_enforcement_to_the_tools():
     """The skill is knowledge now, so it must read like knowledge.
 

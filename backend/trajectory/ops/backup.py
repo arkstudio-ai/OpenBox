@@ -31,6 +31,8 @@ from trajectory.ops.oss import OpsStorageError, describe_error, http_client, oss
 BACKUP_PREFIX = "backups/"
 SHA256_HEADER = "x-oss-meta-sha256"
 CHUNK_BYTES = 1024 * 1024
+# One PutObject stores at most 5 GiB; a larger dump needs a multipart upload, which this helper lacks.
+MAX_PUT_BYTES = 5 * 1024**3
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -115,6 +117,10 @@ async def upload(
     _check_digest(sha256)
     if size < 0:
         raise BackupError("--size must not be negative")
+    if size > MAX_PUT_BYTES:
+        raise BackupError(
+            f"{size} bytes exceed the {MAX_PUT_BYTES} bytes one OSS PUT stores; multipart uploads are not supported"
+        )
     signed_headers = {SHA256_HEADER: sha256} if sha256 else {}
     # Content-Type and x-oss-* headers are part of the V1 signature; the request
     # must send exactly these values.

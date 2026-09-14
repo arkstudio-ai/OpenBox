@@ -25,6 +25,8 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 need_value() { [ "$2" -ge 2 ] || die "$1 needs a value"; }
 valid_identifier() { [[ ${1:-} =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; }
 positive_integer() { [[ ${1:-} =~ ^[1-9][0-9]{0,8}$ ]]; }
+# number_greater A B: 0 when the number A is greater than the number B (worker metrics print as 3 or 3.0).
+number_greater() { awk -v a="${1:-}" -v b="${2:-}" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
 # These names are quoted into SQL identifiers.
 for identifier in "$OPENBOX_PG_USER" "$OPENBOX_BUSINESS_DB" "$OPENBOX_TRACE_DB"; do
@@ -121,9 +123,13 @@ wait_healthy() {
 psql_run() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$OPENBOX_PG_USER" -d "$1" -c "$2"; }
 psql_scalar() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$OPENBOX_PG_USER" -d "$1" -tAc "$2"; }
 
+# database_exists NAME: 0 when the database exists, 1 when it does not, 2 when PostgreSQL cannot be
+# queried. A failed query must never read as a missing database (backups would be skipped silently).
 database_exists() {
-  valid_identifier "$1" || return 1
-  [ "$(psql_scalar postgres "SELECT 1 FROM pg_database WHERE datname = '$1'")" = 1 ]
+  local found
+  valid_identifier "$1" || return 2
+  found=$(psql_scalar postgres "SELECT 1 FROM pg_database WHERE datname = '$1'") || return 2
+  [ "$found" = 1 ]
 }
 
 # Runs holding a live execution lease (the release gate of docs/DEPLOY.md).

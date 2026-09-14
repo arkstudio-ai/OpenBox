@@ -148,13 +148,23 @@ spec:
             periodSeconds: 30
         # Same image as the backend; one pod, one writer. Never call it openbox-backend-worker:
         # `make k8s-apply-aks` deletes the Deployment of that name.
+        # No readiness or liveness probe: a pod is Ready only while all of its containers are, and a
+        # NotReady pod also leaves the openbox-backend Service, so a probe here would let the worker or
+        # the trace database take the business API down. For the same reason the command retries the
+        # trace migrations instead of exiting. A worker process that exits still restarts inside the
+        # pod and makes it NotReady for a moment; only a separate Deployment avoids that.
         - name: trajectory-worker
           image: YOUR_ACR_NAME.azurecr.io/openbox-backend:latest
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -ec
-            - alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker
+            - |
+              until alembic -c alembic_trajectory.ini upgrade head; do
+                echo "trace database migrations failed; retrying in 30 s" >&2
+                sleep 30
+              done
+              exec python -m trajectory.worker
           ports:
             - containerPort: 8090
           envFrom:
@@ -182,18 +192,6 @@ spec:
             limits:
               cpu: 1000m
               memory: 1Gi
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8090
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8090
-            initialDelaySeconds: 30
-            periodSeconds: 30
       volumes:
         # Pod-local: spool files the worker has not ingested yet are lost with the pod.
         - name: trajectory-spool

@@ -2,7 +2,8 @@
 # Remove old Docker images from the host (SPEC §12). Keeps every image used by a container
 # (running or stopped), every image the compose project references, and the newest --keep tags of
 # each repository by image creation time; dangling images are pruned too. Dry run unless
-# --execute; the weekly timer passes --execute.
+# --execute; the weekly timer passes --execute. With --execute nothing is removed when the compose
+# files in OPENBOX_DIR cannot be read, because the images they pin could not be protected.
 #
 #   prune-images.sh [--keep 3] [--execute]
 set -euo pipefail
@@ -41,10 +42,15 @@ if [ -n "$containers" ]; then
 fi
 # A stopped or removed service must still be able to start from its pinned image.
 if [ -d "$OPENBOX_DIR" ]; then
-  referenced=$(compose config --images 2>/dev/null) || referenced=
-  for image in $referenced; do
-    docker image inspect --format '{{.Id}}' "$image" >>"$work/protected" 2>/dev/null || true
-  done
+  if referenced=$(compose config --images 2>/dev/null); then
+    for image in $referenced; do
+      docker image inspect --format '{{.Id}}' "$image" >>"$work/protected" 2>/dev/null || true
+    done
+  elif [ "$EXECUTE" = 1 ]; then
+    die "docker compose config failed in $OPENBOX_DIR, so the images it pins cannot be protected; nothing was removed"
+  else
+    warn "docker compose config failed in $OPENBOX_DIR: images pinned only by the compose files are not protected in this listing"
+  fi
 fi
 
 docker image ls --no-trunc --format '{{.Repository}} {{.Tag}} {{.ID}}' >"$work/images"

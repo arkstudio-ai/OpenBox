@@ -1202,9 +1202,9 @@ trajectory-worker ──► postgres 的 openbox_trace 库、OSS <桶>/trajector
 
 | 项 | 内容 |
 |---|---|
-| `openbox-trajectory-metrics.timer` | 每分钟：宿主机磁盘、spool 大小与最老文件年龄、近 1 小时 OOM kill、轨迹库大小，加上 worker 的 `/health`、`/metrics`，经云监控 `PutCustomMetric` 上报（维度 `instance=gw2`） |
-| `openbox-pg-backup.timer` | 每天 03:30（北京时间）：`openbox`、`openbox_trace` 的 `pg_dump -Fc` 经预签名 PUT 上传到 OSS `backups/postgres/<日期>/`，校验大小与 sha256 后删除本地文件 |
-| `openbox-prune-images.timer` | 每周日 04:30（北京时间）：保留容器在用、compose 引用及每个仓库最新 3 个 tag 的镜像，其余删除 |
-| 告警（`setup-alarms.sh`，联系人组 `云账号报警联系人`） | 磁盘 ≥ 80%、spool ≥ 1 GiB、最老 spool 文件 ≥ 60 s、worker 健康检查失败、近 1 小时出现录制缺口、投影积压 ≥ 5000 事件、5 分钟内 blob 上传失败 ≥ 10、轨迹库 ≥ 20 GiB、OOM kill > 0 |
-| OSS 生命周期（`oss-lifecycle.xml`） | `trajectories/`（不含 `_exports/`）30 天转低频；`trajectories/_exports/` 与 `backups/postgres/` 30 天过期；两个前缀的未完成分片 7 天清理。桶与用户资产共用且 PUT 会覆盖全部规则，脚本先读现有规则按 ID 合并，默认 dry run |
+| `openbox-trajectory-metrics.timer` | 每分钟：宿主机磁盘、spool 大小与最老文件年龄、近 1 小时 OOM kill、轨迹库大小，加上 worker 的 `/health`、`/metrics`，经云监控 `PutCustomMetric` 上报（维度 `instance=gw2`；其他主机如 AWS 开发机要用 `install-timers.sh --instance <名称>` 安装，否则会触发 gw2 的告警） |
+| `openbox-pg-backup.timer` | 每天 03:30（北京时间）：`openbox`、`openbox_trace` 的 `pg_dump -Fc` 经预签名 PUT 上传到 OSS `backups/postgres/<日期>/`，校验大小与 sha256 后删除本地文件；PostgreSQL 查询失败、导出或上传失败都会让本次运行失败；单次 PUT 上限 5 GiB |
+| `openbox-prune-images.timer` | 每周日 04:30（北京时间）：保留容器在用、compose 引用及每个仓库最新 3 个 tag 的镜像，其余删除；读不出 compose 配置时不删除任何镜像 |
+| 告警（`setup-alarms.sh`，联系人组 `云账号报警联系人`） | 磁盘 ≥ 80%、spool ≥ 1 GiB、最老 spool 文件 ≥ 60 s、worker 健康检查失败、近 1 小时出现录制缺口、投影积压 ≥ 5000 事件、5 分钟内 blob 上传失败 ≥ 10、轨迹库 ≥ 20 GiB、OOM kill > 0；`--instance`、`--group-id` 要与指标上报一致 |
+| OSS 生命周期（`oss-lifecycle.xml`） | `trajectories/`（不含 `_exports/`）30 天转低频（按最后修改时间，小于 64 KB 的对象也会转，并按 64 KB 计费）；`trajectories/_exports/` 与 `backups/postgres/` 30 天过期；两个前缀的未完成分片 7 天清理。桶与用户资产共用且 PUT 会覆盖全部规则，脚本先读现有规则按 ID 合并，默认 dry run |
 | 演练（默认 dry run，`--execute` 执行） | `drill-worker-stop.sh`（停 worker，业务不受影响、spool 可排空）、`drill-blob-outage.sh`（OSS 故障注入）、`drill-spool-full.sh`（spool 预算耗尽只产生缺口）、`rebuild-trace-db.sh`（用 OSS 段恢复到临时库并比对摘要） |

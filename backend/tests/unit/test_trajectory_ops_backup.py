@@ -140,6 +140,14 @@ async def test_oss_errors_name_code_and_request_without_the_signed_url():
     assert "Signature=" not in message and SECRET not in message
 
 
+async def test_dumps_above_the_single_put_limit_are_refused_before_any_request():
+    bucket = FakeBucket()
+    with pytest.raises(backup.BackupError, match="one OSS PUT stores"):
+        await run_upload(bucket, b"", backup.MAX_PUT_BYTES + 1)
+    assert bucket.requests == []
+    assert backup.MAX_PUT_BYTES == 5 * 1024**3
+
+
 async def test_verify_rejects_a_stored_size_that_differs():
     bucket = FakeBucket(head_size=3)
     with pytest.raises(backup.BackupError, match="has 3 bytes, expected 4"):

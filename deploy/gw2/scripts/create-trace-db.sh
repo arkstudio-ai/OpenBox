@@ -42,12 +42,16 @@ sql() {
 
 service_running postgres || die "the postgres service is not running in $OPENBOX_DIR"
 
-if database_exists "$database"; then
-  log "database $database exists"
-else
-  # CREATE DATABASE cannot run in a transaction; psql -c runs it on its own.
-  sql postgres "CREATE DATABASE \"$database\" OWNER \"$OPENBOX_PG_USER\""
-fi
+status=0
+database_exists "$database" || status=$?
+case "$status" in
+  0) log "database $database exists" ;;
+  1)
+    # CREATE DATABASE cannot run in a transaction; psql -c runs it on its own.
+    sql postgres "CREATE DATABASE \"$database\" OWNER \"$OPENBOX_PG_USER\""
+    ;;
+  *) die "cannot query PostgreSQL in $OPENBOX_DIR; nothing was changed" ;;
+esac
 sql "$database" "CREATE EXTENSION IF NOT EXISTS pg_trgm"
 
 preload=$(psql_scalar postgres "SHOW shared_preload_libraries" | tr -d ' ')

@@ -3,8 +3,9 @@
 # (default put:1.0, every blob upload fails) for --minutes: ingest must retry with backoff while the
 # backend passes every health probe. The worker is then recreated without the fault and the spool
 # must drain. Content that could not be stored for 10 attempts is recorded as blob_store_unavailable
-# with a gap, so run the drill against internal test traffic. Interrupting the drill recreates the
-# worker without the fault. Dry run unless --execute.
+# with a gap, so run the drill against internal test traffic; without a failed blob upload during the
+# fault the drill cannot pass. Interrupting the drill recreates the worker without the fault.
+# Dry run unless --execute.
 #
 #   drill-blob-outage.sh [--minutes 10] [--fault put:1.0] [--drain-timeout 1800] [--execute]
 set -euo pipefail
@@ -80,14 +81,18 @@ while [ "$(date +%s)" -lt "$end" ]; do
     failures=$((failures + 1))
     warn "backend health probe failed"
   fi
-  put_failures=$(worker_value blob_put_failures)
+  # Keep the last reading: one unreadable sample must not hide the failures counted so far.
+  sample=$(worker_value blob_put_failures)
+  if [ -n "$sample" ]; then
+    put_failures=$sample
+  fi
   lag=$(worker_value ingest_lag_seconds)
   spool=unknown
   if stats=$(spool_stats); then
     read -r bytes files _ age _ <<<"$stats"
     spool="$bytes bytes in $files file(s), oldest $age s"
   fi
-  log "blob_put_failures=${put_failures:-unknown} ingest_lag_seconds=${lag:-unknown} spool: $spool"
+  log "blob_put_failures=${sample:-unknown} ingest_lag_seconds=${lag:-unknown} spool: $spool"
   sleep 30
 done
 
@@ -99,7 +104,7 @@ wait_drained "$drain_timeout" || die "the spool did not drain within $drain_time
 gaps=$(worker_value gaps_recorded)
 log "report: backend probes failed $failures of $probes; blob_put_failures during the fault=${put_failures:-unknown}; drained $(($(date +%s) - restarted)) s after the fault ended; gaps_recorded since then=${gaps:-unknown}"
 [ "$failures" = 0 ] || die "the backend failed health probes during the blob outage"
-case "${put_failures:-0}" in
-  0 | 0.0) warn "no blob upload was attempted during the fault: repeat the drill while test traffic records content" ;;
-esac
-log "drill finished"
+[ -n "$put_failures" ] || die "blob_put_failures could not be read from the worker's /metrics during the fault: the drill is inconclusive"
+number_greater "$put_failures" 0 ||
+  die "no blob upload failed during the fault: repeat the drill while an internal test account records content"
+log "drill passed"

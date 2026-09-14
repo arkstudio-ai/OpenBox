@@ -199,12 +199,24 @@ spec:
             periodSeconds: 30
         # Same image as the backend; one pod, one writer. Never call it openbox-backend-worker:
         # `make k8s-apply` deletes the Deployment of that name.
+        # No readiness or liveness probe: a pod is Ready only while all of its containers are, and a
+        # NotReady pod also leaves the openbox-backend Service, so a probe here would let the worker or
+        # the trace database take the business API down. For the same reason the command retries the
+        # trace migrations instead of exiting. The load balancer checks the worker's /health through
+        # the openbox-trajectory-worker-config BackendConfig. A worker process that exits still
+        # restarts inside the pod and makes it NotReady for a moment; only a separate Deployment
+        # avoids that.
         - name: trajectory-worker
           image: gcr.io/PROJECT_ID/openbox-backend:latest
           command:
             - /bin/sh
             - -ec
-            - alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker
+            - |
+              until alembic -c alembic_trajectory.ini upgrade head; do
+                echo "trace database migrations failed; retrying in 30 s" >&2
+                sleep 30
+              done
+              exec python -m trajectory.worker
           ports:
             - containerPort: 8090
           env:
@@ -252,18 +264,6 @@ spec:
             limits:
               cpu: 1000m
               memory: 1Gi
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8090
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8090
-            initialDelaySeconds: 30
-            periodSeconds: 30
       volumes:
         # Pod-local: spool files the worker has not ingested yet are lost with the pod.
         - name: trajectory-spool
@@ -293,7 +293,7 @@ metadata:
   name: openbox-trajectory-worker
   namespace: openbox
   annotations:
-    cloud.google.com/backend-config: '{"default": "openbox-backend-config"}'
+    cloud.google.com/backend-config: '{"default": "openbox-trajectory-worker-config"}'
 spec:
   type: ClusterIP
   selector:
@@ -301,6 +301,23 @@ spec:
   ports:
     - port: 8090
       targetPort: 8090
+
+---
+# Load balancer settings of the worker: the WebSocket timeout of openbox-backend-config and an explicit
+# health check, because the sidecar has no readiness probe for GKE to derive one from.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: openbox-trajectory-worker-config
+  namespace: openbox
+spec:
+  timeoutSec: 3600
+  connectionDraining:
+    drainingTimeoutSec: 60
+  healthCheck:
+    type: HTTP
+    requestPath: /health
+    port: 8090
 
 ---
 apiVersion: apps/v1

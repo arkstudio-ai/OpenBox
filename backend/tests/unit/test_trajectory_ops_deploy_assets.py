@@ -1,4 +1,5 @@
 """Deployment assets of the trajectory worker topology: compose overlay, scripts, systemd units, k8s manifests."""
+import hashlib
 import json
 import os
 import re
@@ -6,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
 from configparser import ConfigParser
 from pathlib import Path
 
@@ -132,6 +134,7 @@ def test_help_touches_neither_docker_nor_the_cloud(sandbox, script):
         ("pg-backup.sh", ["--database", "Openbox"]),
         ("pg-backup.sh", ["--bogus"]),
         ("push-metrics.sh", ["--instance", "gw2 prod"]),
+        ("install-timers.sh", ["--instance", "gw2 prod"]),
         ("setup-alarms.sh", ["--group-id", "abc"]),
         ("apply-oss-lifecycle.sh", ["--region", "cn-shanghai"]),
         ("drill-blob-outage.sh", ["--fault", "drop everything"]),
@@ -155,6 +158,19 @@ def test_drills_only_describe_themselves_without_execute(sandbox, script):
     assert sandbox.calls() == []
 
 
+@needs_bash
+def test_drills_compare_worker_metrics_as_numbers(sandbox):
+    checks = (
+        '. "$1"; number_greater 3.0 2 && number_greater 1 0 && ! number_greater 2 2.0 && ! number_greater 0 0 '
+        '&& ! number_greater "" 0'
+    )
+    result = subprocess.run(
+        [BASH, "-c", checks, "checks", str(SCRIPTS_DIR / "lib.sh")], env=sandbox.env, capture_output=True, text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 PRUNE_RESPONDER = """
 import json, os, sys
 from pathlib import Path
@@ -172,6 +188,9 @@ def respond(name, args):
             print(DATA["containers"][container])
         return 0
     if args == ["compose", "config", "--images"]:
+        if DATA.get("compose_fails"):
+            print("service trajectory-worker refers to undefined volume blob-data", file=sys.stderr)
+            return 1
         print("\\n".join(DATA["compose_images"]))
         return 0
     if args[:4] == ["image", "inspect", "--format", "{{.Id}}"]:
@@ -244,6 +263,290 @@ def test_prune_images_keeps_used_pinned_and_newest_tags(sandbox):
     sandbox.forget()
     assert sandbox.run(script, "--keep", "6", "--execute").returncode == 0
     assert not [call for call in sandbox.calls() if call[1:3] == ["image", "rm"]]
+
+
+@needs_bash
+def test_prune_images_removes_nothing_when_the_compose_files_cannot_be_read(sandbox):
+    sandbox.stub(PRUNE_RESPONDER, "docker")
+    (sandbox.bin / "images.json").write_text(json.dumps({
+        "images": [["openbox-backend", f"t{day}", image(str(day)), f"2026-09-0{day + 1}T00:00:00Z"] for day in range(5)],
+        "containers": {},
+        "compose_images": [],
+        "compose_fails": True,
+    }))
+    script = SCRIPTS_DIR / "prune-images.sh"
+
+    executed = sandbox.run(script, "--execute")
+    assert executed.returncode == 1 and "nothing was removed" in executed.stderr
+    assert not [call for call in sandbox.calls() if call[1:3] in (["image", "rm"], ["image", "prune"])]
+
+    dry = sandbox.run(script)
+    assert dry.returncode == 0, dry.stderr
+    assert "not protected in this listing" in dry.stderr
+    assert re.findall(r"would remove (\S+)", dry.stderr) == ["openbox-backend:t1", "openbox-backend:t0"]
+
+
+# Fake gw2 host: docker compose (postgres, worker), docker inspect/info, sha256sum and journalctl. Answers
+# come from server.json; what the scripts changed or sent is appended to server.jsonl.
+SERVER_RESPONDER = """
+import hashlib, json, os, sys
+from pathlib import Path
+
+STUB = Path(os.environ["STUB_DIR"])
+STATE = json.loads((STUB / "server.json").read_text())
+
+
+def note(kind, **fields):
+    with (STUB / "server.jsonl").open("a") as log:
+        log.write(json.dumps({"kind": kind, **fields}) + "\\n")
+
+
+def worker_python(args):
+    module, command, options = args[1], args[2], args[3:]
+    data = sys.stdin.buffer.read()
+    if module == "trajectory.ops.backup" and command == "upload":
+        values = dict(zip(options[::2], options[1::2]))
+        note("upload", key=values["--key"], size=int(values["--size"]), sha256=values["--sha256"],
+             received=len(data), received_sha256=hashlib.sha256(data).hexdigest())
+        return STATE.get("upload_status", 0)
+    if module == "trajectory.ops.cms" and command == "push":
+        note("cms", options=options, stdin=data.decode())
+        print(json.dumps({"version": 1, "pushed_at": 1}))
+        return STATE.get("cms_status", 0)
+    return 99
+
+
+def psql(args):
+    if STATE.get("postgres_down"):
+        print("psql: error: connection to server on socket failed", file=sys.stderr)
+        return 2
+    database, sql = args[args.index("-d") + 1], args[-1]
+    if sql.startswith("SELECT 1 FROM pg_database"):
+        if sql.split("'")[1] in STATE["databases"]:
+            print(1)
+    elif sql.startswith("SELECT pg_database_size"):
+        print(STATE.get("trace_db_bytes", 0))
+    elif sql == "SHOW shared_preload_libraries":
+        print(STATE.get("preload", ""))
+    elif sql.startswith("SELECT string_agg"):
+        print("pg_trgm 1.6")
+    else:
+        note("sql", database=database, sql=sql)
+    return 0
+
+
+def respond(name, args):
+    if name == "sha256sum":
+        print(hashlib.sha256(Path(args[0]).read_bytes()).hexdigest() + "  " + args[0])
+        return 0
+    if name == "journalctl":
+        print("\\n".join(STATE.get("kernel", [])))
+        return 0
+    if args[:1] == ["info"]:
+        print("/")
+        return 0
+    if args[:2] == ["inspect", "-f"]:
+        template, target = args[2], args[3]
+        if ".State.Running" in template:
+            print("true" if target.removesuffix("-id") in STATE["running"] else "false")
+        elif ".Mounts" in template:
+            print(STATE.get("spool_dir", ""))
+        elif template == "{{.Id}}":
+            print(target + "-full")
+        return 0
+    if args[:1] != ["compose"]:
+        return 99
+    args = args[1:]
+    if args == ["config", "--services"]:
+        print("backend\\nfrontend\\npostgres\\nredis\\ntrajectory-worker")
+        return 0
+    if args[:2] == ["ps", "-q"]:
+        print(args[2] + "-id")
+        return 0
+    if args[:4] == ["exec", "-T", "postgres", "psql"]:
+        return psql(args[4:])
+    if args[:4] == ["exec", "-T", "postgres", "pg_dump"]:
+        if STATE.get("dump_fails"):
+            return 1
+        note("pg_dump", args=args[4:])
+        sys.stdout.buffer.write(b"PGDMP" + args[-1].encode())
+        return 0
+    if args[:4] == ["exec", "-T", "postgres", "pg_restore"]:
+        sys.stdin.buffer.read()
+        return 0
+    if args[:4] == ["exec", "-T", "trajectory-worker", "python"]:
+        return worker_python(args[4:])
+    if args[:7] == ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "trajectory-worker"]:
+        note("one-off")
+        return worker_python(args[7:])
+    print("unexpected docker call: " + " ".join(args), file=sys.stderr)
+    return 99
+"""
+
+
+def server(sandbox: Sandbox, **state) -> Path:
+    sandbox.stub(SERVER_RESPONDER, "docker", "sha256sum", "journalctl")
+    defaults = {"databases": ["openbox", "openbox_trace"], "running": ["backend", "postgres", "trajectory-worker"]}
+    (sandbox.bin / "server.json").write_text(json.dumps({**defaults, **state}))
+    record = sandbox.bin / "server.jsonl"
+    record.write_text("")
+    return record
+
+
+def notes(record: Path, kind: str) -> list[dict]:
+    return [entry for entry in map(json.loads, record.read_text().splitlines()) if entry["kind"] == kind]
+
+
+@needs_bash
+def test_pg_backup_uploads_existing_databases_and_expires_only_its_own_dumps(sandbox):
+    record = server(sandbox, databases=["openbox"])
+    local = sandbox.root / "dumps"
+    local.mkdir()
+    ten_days_ago = time.time() - 10 * 86400
+    for name in ("preflight.dump", "openbox-20260901T193000Z.dump", "openbox_trace-20260901T193000Z.dump.partial"):
+        (local / name).write_bytes(b"old")
+        os.utime(local / name, (ten_days_ago, ten_days_ago))
+
+    result = sandbox.run(SCRIPTS_DIR / "pg-backup.sh", "--local-dir", str(local))
+
+    assert result.returncode == 0, result.stderr
+    assert "skipping openbox_trace: the database does not exist" in result.stderr
+    assert [entry["args"] for entry in notes(record, "pg_dump")] == [["-U", "openbox", "-Fc", "openbox"]]
+    (upload,) = notes(record, "upload")
+    assert re.fullmatch(r"backups/postgres/\d{8}/openbox-\d{8}T\d{6}Z\.dump", upload["key"])
+    dump = b"PGDMPopenbox"
+    assert upload["size"] == upload["received"] == len(dump)
+    assert upload["sha256"] == upload["received_sha256"] == hashlib.sha256(dump).hexdigest()
+    assert notes(record, "one-off") == []
+    # The uploaded dump and this script's expired dumps are gone; a foreign dump in the directory stays.
+    assert sorted(path.name for path in local.iterdir()) == ["preflight.dump"]
+
+
+@needs_bash
+def test_pg_backup_of_the_legacy_tables_passes_the_pattern_to_pg_dump(sandbox):
+    record = server(sandbox)
+    result = sandbox.run(
+        SCRIPTS_DIR / "pg-backup.sh", "--legacy-trajectory-tables", "--local-dir", str(sandbox.root / "dumps")
+    )
+    assert result.returncode == 0, result.stderr
+    assert [entry["args"] for entry in notes(record, "pg_dump")] == [
+        ["-U", "openbox", "-Fc", "--table=public.legacy_trajectory_*", "openbox"]
+    ]
+    (upload,) = notes(record, "upload")
+    assert "/openbox-legacy-trajectory-" in upload["key"]
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    ("state", "message"),
+    [
+        ({"postgres_down": True}, "cannot query PostgreSQL for openbox"),
+        ({"databases": []}, "no database was backed up"),
+        ({"dump_fails": True}, "pg_dump of openbox failed"),
+    ],
+)
+def test_pg_backup_fails_instead_of_skipping_silently(sandbox, state, message):
+    record = server(sandbox, **state)
+    result = sandbox.run(SCRIPTS_DIR / "pg-backup.sh", "--local-dir", str(sandbox.root / "dumps"))
+    assert result.returncode == 1
+    assert message in result.stderr and "backups complete" not in result.stderr
+    assert notes(record, "upload") == []
+
+
+@needs_bash
+def test_pg_backup_keeps_the_dump_when_the_upload_in_a_one_off_worker_fails(sandbox):
+    record = server(sandbox, databases=["openbox"], running=["backend", "postgres"], upload_status=1)
+    local = sandbox.root / "dumps"
+    result = sandbox.run(SCRIPTS_DIR / "pg-backup.sh", "--local-dir", str(local))
+    assert result.returncode == 1 and "the local copy is kept" in result.stderr
+    assert len(notes(record, "one-off")) == 1 and len(notes(record, "upload")) == 1
+    (kept,) = local.iterdir()
+    assert kept.read_bytes() == b"PGDMPopenbox" and kept.stat().st_mode & 0o777 == 0o600
+
+
+@needs_bash
+def test_create_trace_db_is_idempotent_and_stops_when_postgres_cannot_be_queried(sandbox):
+    script = SCRIPTS_DIR / "create-trace-db.sh"
+    record = server(sandbox, databases=["openbox"], preload="pg_stat_statements")
+    dry = sandbox.run(script, "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    assert 'dry-run (postgres): CREATE DATABASE "openbox_trace" OWNER "openbox"' in dry.stderr
+    assert notes(record, "sql") == []
+
+    created = sandbox.run(script)
+    assert created.returncode == 0, created.stderr
+    assert [(entry["database"], entry["sql"]) for entry in notes(record, "sql")] == [
+        ("postgres", 'CREATE DATABASE "openbox_trace" OWNER "openbox"'),
+        ("openbox_trace", "CREATE EXTENSION IF NOT EXISTS pg_trgm"),
+        ("openbox", "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"),
+        ("openbox_trace", "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"),
+    ]
+
+    record = server(sandbox)
+    existing = sandbox.run(script)
+    assert existing.returncode == 0, existing.stderr
+    assert "database openbox_trace exists" in existing.stderr
+    assert [entry["sql"] for entry in notes(record, "sql")] == ["CREATE EXTENSION IF NOT EXISTS pg_trgm"]
+
+    record = server(sandbox, postgres_down=True)
+    down = sandbox.run(script)
+    assert down.returncode == 1 and "cannot query PostgreSQL" in down.stderr
+    assert notes(record, "sql") == []
+
+
+OOM_LINES = [
+    "oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/system.slice/docker-backend-id-full.scope,task=python,pid=11",
+    "oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/system.slice/docker-sandbox.scope,task=chrome,pid=12",
+    "Memory cgroup out of memory: Killed process 11 (python)",
+]
+
+
+@needs_bash
+def test_push_metrics_measures_the_host_and_keeps_the_counter_state(sandbox):
+    spool = sandbox.root / "spool"
+    (spool / "producers").mkdir(parents=True)
+    record = server(sandbox, spool_dir=str(spool), trace_db_bytes=4096, kernel=OOM_LINES)
+    state_dir = sandbox.root / "ops"
+    state_dir.mkdir()
+    (state_dir / "cms-state.json").write_text('{"version":1,"last":{}}\n')
+
+    result = sandbox.run(SCRIPTS_DIR / "push-metrics.sh", OPENBOX_OPS_STATE_DIR=str(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    (push,) = notes(record, "cms")
+    assert push["options"] == ["--instance", "gw2"]
+    host_line, state_line = push["stdin"].splitlines()
+    host = json.loads(host_line)
+    assert set(host) == set(cms.HOST_METRICS)
+    assert (host["oom_kills_1h"], host["backend_oom_kills_1h"], host["trace_db_bytes"]) == (2, 1, 4096)
+    assert (host["spool_bytes"], host["spool_files"], host["spool_quarantined_files"]) == (0, 0, 0)
+    assert 0 <= host["host_disk_used_percent"] <= 100
+    assert json.loads(state_line) == {"version": 1, "last": {}}
+    assert json.loads((state_dir / "cms-state.json").read_text()) == {"version": 1, "pushed_at": 1}
+    assert notes(record, "one-off") == []
+
+
+@needs_bash
+def test_push_metrics_uses_a_one_off_worker_and_saves_the_state_when_the_report_fails(sandbox):
+    record = server(sandbox, running=["backend", "postgres"], cms_status=1)
+    state_dir = sandbox.root / "ops"
+    script = SCRIPTS_DIR / "push-metrics.sh"
+
+    failed = sandbox.run(script, "--instance", "aws-dev", OPENBOX_OPS_STATE_DIR=str(state_dir))
+
+    assert failed.returncode == 1
+    assert len(notes(record, "one-off")) == 1
+    (push,) = notes(record, "cms")
+    assert push["options"] == ["--instance", "aws-dev"]
+    assert json.loads((state_dir / "cms-state.json").read_text()) == {"version": 1, "pushed_at": 1}
+
+    (state_dir / "cms-state.json").write_text('{"version":1,"kept":true}')
+    record = server(sandbox)
+    dry = sandbox.run(script, "--dry-run", OPENBOX_OPS_STATE_DIR=str(state_dir))
+    assert dry.returncode == 0, dry.stderr
+    (push,) = notes(record, "cms")
+    assert push["options"] == ["--instance", "gw2", "--dry-run"]
+    assert json.loads((state_dir / "cms-state.json").read_text()) == {"version": 1, "kept": True}
 
 
 LIFECYCLE_RESPONDER = """
@@ -367,6 +670,8 @@ def test_setup_alarms_creates_the_spec_rules(sandbox):
     assert option(worker, "--Resources") == '[{"groupId":0,"dimension":"instance=gw2"}]'
     assert option(worker, "--ContactGroups") == "云账号报警联系人"
     assert (option(worker, "--region"), option(worker, "--Webhook")) == ("cn-shanghai", "https://hooks.example.invalid/cms")
+    # Average is the statistic the PutCustomMetricRule reference documents.
+    assert {option(call, "--Statistics") for call in calls} == {"Average"}
     assert {option(call, "--MetricName"): (option(call, "--ComparisonOperator"), option(call, "--Threshold")) for call in calls} == {
         "host_disk_used_percent": (">=", "80"),
         "spool_bytes": (">=", str(1024**3)),
@@ -391,17 +696,57 @@ def test_alarm_rules_only_use_metrics_that_the_push_reports():
 
 
 @needs_bash
-def test_install_timers_dry_run_lists_the_units(sandbox):
-    result = sandbox.run(SCRIPTS_DIR / "install-timers.sh", "--dry-run")
+def test_install_timers_dry_run_lists_the_units_and_the_metrics_instance(sandbox):
+    script = SCRIPTS_DIR / "install-timers.sh"
+    result = sandbox.run(script, "--dry-run")
     assert result.returncode == 0, result.stderr
     installs = re.findall(r"dry-run: install -m 0644 \S+/systemd/(\S+) ", result.stderr)
     assert sorted(installs) == sorted(path.name for path in UNITS_DIR.iterdir())
     assert "systemctl enable --now openbox-trajectory-metrics.timer openbox-pg-backup.timer openbox-prune-images.timer" in result.stderr
+    assert (
+        "/etc/systemd/system/openbox-trajectory-metrics.service.d/instance.conf: [Service]\n"
+        "Environment=OPENBOX_CMS_INSTANCE=gw2\n"
+    ) in result.stderr
     assert sandbox.calls() == []
+
+    other = sandbox.run(script, "--dry-run", "--instance", "aws-dev")
+    assert other.returncode == 0, other.stderr
+    assert "Environment=OPENBOX_CMS_INSTANCE=aws-dev\n" in other.stderr
+
+    removed = sandbox.run(script, "--dry-run", "--uninstall")
+    assert removed.returncode == 0, removed.stderr
+    assert "dry-run: rm -rf /etc/systemd/system/openbox-trajectory-metrics.service.d" in removed.stderr
 
 
 def compose_available() -> bool:
     return DOCKER is not None and subprocess.run([DOCKER, "compose", "version"], capture_output=True).returncode == 0
+
+
+def compose_environment(**values: str) -> dict:
+    environment = {key: value for key, value in os.environ.items() if not key.startswith(("COMPOSE_", "OPENBOX_"))}
+    return {**environment, **values}
+
+
+@pytest.mark.skipif(not compose_available(), reason="docker compose is not installed")
+def test_overlay_validates_in_place_against_the_examples():
+    result = subprocess.run(
+        [DOCKER, "compose", "-f", "deploy/gw2/docker-compose.base.example.yml", "-f",
+         "deploy/gw2/docker-compose.trajectory.yml", "config", "--format", "json"],
+        cwd=REPO, env=compose_environment(OPENBOX_IMAGE_TAG="20260915-trajectory-example", OPENBOX_DB_PASSWORD="change-me"),
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    assert services["trajectory-worker"]["environment"]["INTERNAL_API_TOKEN"] == "placeholder"
+
+
+def test_the_validation_placeholder_stays_out_of_the_release_bundle():
+    assert {"config export-ignore", "config/** export-ignore"} <= set((DEPLOY / ".gitattributes").read_text().splitlines())
+    values = [
+        line.partition("=")[2] for line in (DEPLOY / "config" / "backend.env").read_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert values and set(values) <= {"placeholder", "example-bucket", "cn-shanghai", "false"}
 
 
 @pytest.mark.skipif(not compose_available(), reason="docker compose is not installed")
@@ -420,10 +765,9 @@ def test_overlay_validates_against_the_sanitized_production_compose(tmp_path):
     (project / "config" / "backend.env").write_text("JWT_SECRET=placeholder\nINTERNAL_API_TOKEN=placeholder\n")
     (project / "config" / "openbox.json").write_text("{}")
     (project / "secrets" / "aliyun-config.json").write_text("{}")
-    environment = {key: value for key, value in os.environ.items() if not key.startswith(("COMPOSE_", "OPENBOX_"))}
 
     result = subprocess.run(
-        [DOCKER, "compose", "config", "--format", "json"], cwd=project, env=environment, capture_output=True,
+        [DOCKER, "compose", "config", "--format", "json"], cwd=project, env=compose_environment(), capture_output=True,
         text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr
@@ -542,8 +886,16 @@ def test_k8s_runs_the_worker_as_a_sidecar_with_routes(manifest):
     for container in (backend, worker):
         assert {"name": "trajectory-spool", "mountPath": "/var/lib/openbox/trajectory-spool"} in container["volumeMounts"]
     assert worker["image"] == backend["image"]
-    assert worker["command"][-1] == "alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker"
-    assert worker["readinessProbe"]["httpGet"] == {"path": "/health", "port": 8090}
+    # A pod is Ready only while every container is: a probe on the sidecar would take the business backend out of
+    # its Service whenever the worker or the trace database is unhealthy, so the sidecar has none and keeps
+    # retrying its migrations instead of crash-looping.
+    assert not {"readinessProbe", "livenessProbe", "startupProbe"} & set(worker)
+    assert backend["readinessProbe"]["httpGet"] == {"path": "/health", "port": 8080}
+    assert worker["command"][:2] == ["/bin/sh", "-ec"]
+    script = worker["command"][2]
+    assert "until alembic -c alembic_trajectory.ini upgrade head; do" in script
+    assert script.rstrip().endswith("exec python -m trajectory.worker")
+    subprocess.run(["/bin/sh", "-n", "-c", script], check=True)
 
     backend_env = container_environment(backend, documents)
     assert (backend_env["TRAJECTORY_SINK"], backend_env["TRAJECTORY_WORKER_MODE"]) == ("spool", "external")
@@ -555,6 +907,14 @@ def test_k8s_runs_the_worker_as_a_sidecar_with_routes(manifest):
     service = next(doc for doc in documents if doc["kind"] == "Service" and doc["metadata"]["name"] == "openbox-trajectory-worker")
     assert service["spec"]["selector"] == {"app": "openbox-backend"}
     assert service["spec"]["ports"][0]["targetPort"] == 8090
+    if manifest == "base.yaml":
+        # GKE health-checks the worker through its own BackendConfig; nothing is derived from a probe.
+        annotation = json.loads(service["metadata"]["annotations"]["cloud.google.com/backend-config"])
+        backend_config = next(
+            doc for doc in documents if doc["kind"] == "BackendConfig" and doc["metadata"]["name"] == annotation["default"]
+        )
+        assert backend_config["spec"]["healthCheck"] == {"type": "HTTP", "requestPath": "/health", "port": 8090}
+        assert backend_config["spec"]["timeoutSec"] == 3600
     ingress = next(doc for doc in documents if doc["kind"] == "Ingress")
     routes = {
         path["path"]: path["backend"]["service"] for rule in ingress["spec"]["rules"] for path in rule["http"]["paths"]

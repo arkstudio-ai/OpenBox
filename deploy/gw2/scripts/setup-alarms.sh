@@ -61,16 +61,18 @@ if [ "$EXECUTE" = 1 ]; then
 fi
 
 # name|metric|operator|threshold|statistics|period seconds|evaluations|level|subject
+# Statistics: Average is the only value the PutCustomMetricRule reference documents. push-metrics.sh
+# reports one sample per minute, so the average of a period is the reported value.
 RULES='
-host-disk|host_disk_used_percent|>=|80|Maximum|60|3|CRITICAL|host disk usage >= 80%
-spool-bytes|spool_bytes|>=|1073741824|Maximum|60|2|CRITICAL|trajectory spool >= 1 GiB
-spool-age|spool_oldest_age_seconds|>=|60|Maximum|60|3|WARN|oldest trajectory spool file >= 60 s
-worker-down|worker_up|<|1|Maximum|60|3|CRITICAL|trajectory worker health check down
-recording-gaps|gaps_recorded_1h|>|0|Maximum|60|1|WARN|trajectory recording gaps in the last hour
-projection-lag|projection_lag_events|>=|5000|Minimum|60|5|WARN|trajectory projection lag >= 5000 events
-blob-put-failures|blob_put_failures_5m|>=|10|Maximum|60|1|WARN|trajectory blob put failures >= 10 in 5 min
-trace-db-size|trace_db_bytes|>=|21474836480|Maximum|300|1|WARN|trace database >= 20 GiB
-oom-kill|oom_kills_1h|>|0|Maximum|60|1|CRITICAL|kernel OOM kill on the host'
+host-disk|host_disk_used_percent|>=|80|Average|60|3|CRITICAL|host disk usage >= 80%
+spool-bytes|spool_bytes|>=|1073741824|Average|60|2|CRITICAL|trajectory spool >= 1 GiB
+spool-age|spool_oldest_age_seconds|>=|60|Average|60|3|WARN|oldest trajectory spool file >= 60 s
+worker-down|worker_up|<|1|Average|60|3|CRITICAL|trajectory worker health check down
+recording-gaps|gaps_recorded_1h|>|0|Average|60|1|WARN|trajectory recording gaps in the last hour
+projection-lag|projection_lag_events|>=|5000|Average|60|5|WARN|trajectory projection lag >= 5000 events
+blob-put-failures|blob_put_failures_5m|>=|10|Average|60|1|WARN|trajectory blob put failures >= 10 in 5 min
+trace-db-size|trace_db_bytes|>=|21474836480|Average|300|1|WARN|trace database >= 20 GiB
+oom-kill|oom_kills_1h|>|0|Average|60|1|CRITICAL|kernel OOM kill on the host'
 
 count=0
 while IFS='|' read -r name metric operator threshold statistics period evaluations level subject; do

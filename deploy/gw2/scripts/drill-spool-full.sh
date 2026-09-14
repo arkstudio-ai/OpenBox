@@ -95,7 +95,9 @@ sleep 60
 gaps_after=$(worker_value gaps_recorded)
 log "report: backend probes failed $failures of $probes; gaps_recorded ${gaps_before:-unknown} -> ${gaps_after:-unknown}"
 [ "$failures" = 0 ] || die "the backend failed health probes while the spool was full"
-if [ -n "$gaps_before" ] && [ "$gaps_before" = "$gaps_after" ]; then
-  warn "no recording gap was reported: was there any traffic during the window?"
+if [ -z "$gaps_before" ] || [ -z "$gaps_after" ]; then
+  die "gaps_recorded could not be read from the worker's /metrics: the drill is inconclusive"
 fi
-log "drill finished"
+number_greater "$gaps_after" "$gaps_before" ||
+  die "gaps_recorded did not increase ($gaps_before -> $gaps_after): repeat the drill while an internal test account uses the product"
+log "drill passed"

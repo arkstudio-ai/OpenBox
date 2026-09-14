@@ -83,8 +83,8 @@ gaps=$(worker_value gaps_recorded)
 loss=$(worker_value producer_loss_events)
 log "report: backend probes failed $failures of $probes; spool peak $peak_bytes bytes; drained $drain_seconds s after the restart; since the restart gaps_recorded=${gaps:-unknown} producer_loss_events=${loss:-unknown}"
 [ "$failures" = 0 ] || die "the backend failed health probes while the worker was stopped"
-case "${loss:-0}" in
-  0 | 0.0) ;;
-  *) die "the worker reported producer loss after the restart" ;;
-esac
+[ -n "$loss" ] || die "producer_loss_events could not be read from the worker's /metrics: the drill is inconclusive"
+if number_greater "$loss" 0; then
+  die "the worker reported producer loss after the restart"
+fi
 log "drill passed"

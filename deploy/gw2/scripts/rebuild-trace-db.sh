@@ -49,7 +49,13 @@ fi
 
 require_overlay
 service_running postgres || die "the postgres service is not running"
-database_exists "$OPENBOX_TRACE_DB" || die "$OPENBOX_TRACE_DB does not exist"
+status=0
+database_exists "$OPENBOX_TRACE_DB" || status=$?
+case "$status" in
+  0) ;;
+  1) die "$OPENBOX_TRACE_DB does not exist" ;;
+  *) die "cannot query PostgreSQL in $OPENBOX_DIR" ;;
+esac
 password=$(env_value OPENBOX_DB_PASSWORD)
 [ -n "$password" ] || die "OPENBOX_DB_PASSWORD is not set in $OPENBOX_DIR/.env"
 # Exported and handed to docker by name, so the password stays out of process arguments.

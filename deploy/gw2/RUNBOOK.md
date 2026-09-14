@@ -38,14 +38,14 @@ What `docker-compose.trajectory.yml` changes:
 | File | Where it runs | Purpose |
 |---|---|---|
 | `docker-compose.trajectory.yml` | gw2 | The overlay above. |
-| `docker-compose.base.example.yml`, `docker-compose.override.example.yml`, `env.example` | developer machine | Sanitized reconstruction of the server's compose files; `backend/tests/unit/test_trajectory_ops_deploy_assets.py` validates the overlay against them with `docker compose config`. Compare them with the real server files before a release. |
+| `docker-compose.base.example.yml`, `docker-compose.override.example.yml`, `env.example`, `config/backend.env` | developer machine | Sanitized reconstruction of the server's compose files. `config/backend.env` is a placeholder so that `docker compose -f deploy/gw2/docker-compose.base.example.yml -f deploy/gw2/docker-compose.trajectory.yml config` works in a checkout; `.gitattributes` keeps it out of the release bundle. `backend/tests/unit/test_trajectory_ops_deploy_assets.py` validates the overlay against these files with `docker compose config`. Compare them with the real server files before a release. |
 | `oss-lifecycle.xml` | operator machine | OpenBox-managed lifecycle rules (§9). |
 | `scripts/lib.sh` | both | Shared helpers (sourced). |
 | `scripts/create-trace-db.sh` | gw2 | `openbox_trace`, `pg_trgm`, `pg_stat_statements` (idempotent). |
 | `scripts/push-metrics.sh` | gw2, minute timer | Host metrics + worker metrics → CloudMonitor (§8). |
 | `scripts/pg-backup.sh` | gw2, daily timer | `pg_dump -Fc` of `openbox` and `openbox_trace` → OSS (§10). |
 | `scripts/prune-images.sh` | gw2, weekly timer | Image cleanup, dry run unless `--execute`. |
-| `scripts/install-timers.sh` | gw2 | Installs the systemd units in `systemd/`. |
+| `scripts/install-timers.sh` | gw2 | Installs the systemd units in `systemd/` and the metrics instance (§7). |
 | `scripts/apply-oss-lifecycle.sh` | operator machine | Merges `oss-lifecycle.xml` into the bucket's rules, dry run unless `--execute`. |
 | `scripts/setup-alarms.sh` | operator machine | CloudMonitor alarm rules, dry run unless `--execute`. |
 | `scripts/drill-*.sh`, `scripts/rebuild-trace-db.sh` | gw2 | Drills (§11), dry run unless `--execute`. |
@@ -130,7 +130,9 @@ real name) before continuing.
      "SELECT count(*) FROM session_executions WHERE run_id IS NOT NULL AND lease_until > now()"
    ```
 
-8. The overlay validates on a developer machine: `cd backend && uv run pytest tests/unit/test_trajectory_ops_deploy_assets.py -q`.
+8. The overlay validates on a developer machine:
+   `docker compose -f deploy/gw2/docker-compose.base.example.yml -f deploy/gw2/docker-compose.trajectory.yml config --quiet`
+   and `cd backend && uv run pytest tests/unit/test_trajectory_ops_deploy_assets.py -q`.
 
 ## 5. Release procedure (SPEC §12.1)
 
@@ -147,8 +149,13 @@ Keep a terminal probing the public site during every switch, as in previous rele
 
    ```bash
    cd /opt/openbox
-   cp .env .env.bak-$(date +%Y%m%d%H%M%S)
-   echo 'COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml' >> .env
+   cp -p .env ".env.bak-$(date +%Y%m%d%H%M%S)"
+   # Append COMPOSE_FILE once, on a line of its own even when .env does not end with a newline.
+   if ! grep -q '^COMPOSE_FILE=' .env; then
+     [ -z "$(tail -c 1 .env)" ] || echo >> .env
+     echo 'COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml' >> .env
+   fi
+   grep '^COMPOSE_FILE=' .env                          # exactly the value above, once
    docker compose config --services | grep -x trajectory-worker
    docker compose up -d --no-deps postgres            # recreates postgres with the tuning
    docker compose ps postgres                          # wait for healthy
@@ -182,20 +189,21 @@ Keep a terminal probing the public site during every switch, as in previous rele
    ```
 
    Rollback before step 7 finishes: see §6.
-7. **Legacy conversion** (worker container; the password stays out of process arguments):
+7. **Legacy conversion** (worker container). The database URL carries no password: asyncpg reads it from
+   `PGPASSWORD`, which `docker compose exec -e` passes by name, so the password appears in no process's arguments:
 
    ```bash
-   export LEGACY_DATABASE_URL="postgresql+asyncpg://openbox:$(grep '^OPENBOX_DB_PASSWORD=' .env | cut -d= -f2-)@postgres:5432/openbox"
+   export PGPASSWORD="$(grep '^OPENBOX_DB_PASSWORD=' .env | tail -n 1 | cut -d= -f2-)"
    convert() {
-     docker compose exec -T -e LEGACY_DATABASE_URL trajectory-worker sh -c \
-       'exec python -m trajectory.tools.migrate_legacy --business-database-url "$LEGACY_DATABASE_URL" --legacy-blob-path /legacy-blobs "$@"' sh "$@"
+     docker compose exec -T -e PGPASSWORD trajectory-worker python -m trajectory.tools.migrate_legacy \
+       --business-database-url postgresql+asyncpg://openbox@postgres:5432/openbox --legacy-blob-path /legacy-blobs "$@"
    }
    convert --dry-run
    convert
    convert --verify                                     # must exit 0
    deploy/gw2/scripts/pg-backup.sh --legacy-trajectory-tables
    convert --finalize-drop                              # point of no return for the legacy tables
-   unset LEGACY_DATABASE_URL
+   unset PGPASSWORD
    ```
 
 8. **Frontend**: pin the new frontend tag, `docker compose up -d --no-deps frontend`, wait for healthy. Check routing:
@@ -237,18 +245,22 @@ Keep a terminal probing the public site during every switch, as in previous rele
 ## 7. Timers
 
 ```bash
-/opt/openbox/deploy/gw2/scripts/install-timers.sh            # installs /etc/systemd/system/openbox-*.{service,timer}
+/opt/openbox/deploy/gw2/scripts/install-timers.sh                  # gw2: installs /etc/systemd/system/openbox-*.{service,timer}
+/opt/openbox/deploy/gw2/scripts/install-timers.sh --instance aws   # any other host, such as the AWS development host
 systemctl list-timers 'openbox-*'
 journalctl -u openbox-trajectory-metrics.service -n 20
-systemctl start openbox-pg-backup.service                     # run a backup now
+systemctl start openbox-pg-backup.service                          # run a backup now
 /opt/openbox/deploy/gw2/scripts/install-timers.sh --uninstall
 ```
 
+A host installed with the default instance reports its metrics as `instance=gw2` and raises the production alarms, so
+every host other than gw2 needs its own `--instance`.
+
 | Timer | Schedule | Script | State |
 |---|---|---|---|
-| `openbox-trajectory-metrics.timer` | every minute | `push-metrics.sh` | `/var/lib/openbox-ops/cms-state.json` (counter samples) |
-| `openbox-pg-backup.timer` | daily 03:30 Asia/Shanghai, catches up after downtime | `pg-backup.sh` | `/var/backups/openbox/postgres` (only failed uploads stay; removed after 3 days) |
-| `openbox-prune-images.timer` | Sunday 04:30 Asia/Shanghai | `prune-images.sh --execute` | — |
+| `openbox-trajectory-metrics.timer` | every minute | `push-metrics.sh` | `/var/lib/openbox-ops/cms-state.json` (counter samples); instance in `/etc/systemd/system/openbox-trajectory-metrics.service.d/instance.conf` |
+| `openbox-pg-backup.timer` | daily 03:30 Asia/Shanghai, catches up after downtime | `pg-backup.sh` | `/var/backups/openbox/postgres` (dumps of failed uploads and `--keep-local` runs; removed after 3 days) |
+| `openbox-prune-images.timer` | Sunday 04:30 Asia/Shanghai | `prune-images.sh --execute` | — (removes nothing when the compose files cannot be read) |
 
 Overlapping runs are skipped through `/run/lock/openbox-<name>.lock`. Re-run `install-timers.sh` after a bundle update.
 
@@ -257,7 +269,7 @@ Overlapping runs are skipped through `/run/lock/openbox-<name>.lock`. Re-run `in
 `push-metrics.sh` pipes host measurements into `python -m trajectory.ops.cms push` in the worker container (a
 one-off container while the worker is stopped), which adds the worker's `/health` and `/metrics` and reports with
 CloudMonitor `PutCustomMetric` (API 2019-01-01, endpoint `metrics.cn-shanghai.aliyuncs.com`, 21 entries per call),
-group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=gw2`.
+group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=<instance>` (§7; `gw2` in production).
 
 | Metric | Source |
 |---|---|
@@ -270,11 +282,15 @@ group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=gw2`.
 | `<counter>_delta` for `ingest_lines`, `ingest_events`, `duplicates`, `idempotency_conflicts`, `deleted_drops`, `ownership_drops`, `gaps_recorded`, `producer_loss_events`, `quarantined_files`, `blob_puts`, `blob_put_bytes`, `blob_put_failures`, `segment_uploads`, `segment_failures`, `gc_deleted`, `gc_failures`, `exports_built` | worker counters, increase since the previous minute (restarts handled) |
 | `gaps_recorded_1h`, `blob_put_failures_5m` | trailing sums of the counters above |
 
-Alarm rules (operator machine; IDs `openbox-<instance>-<name>`, re-running updates them):
+Alarm rules (operator machine; IDs `openbox-<instance>-<name>`, re-running updates them). Give the rules the metrics'
+own dimension and group: `--instance` as installed on the host (default `gw2`) and `--group-id` equal to
+`TRAJECTORY_CMS_GROUP_ID` in `config/backend.env` (0 when unset); a rule on another group or instance never sees the
+metrics. Every rule uses the `Average` statistic, the only value the PutCustomMetricRule reference documents; with one
+sample per minute it is the reported value.
 
 ```bash
-deploy/gw2/scripts/setup-alarms.sh                       # dry run: prints the nine PutCustomMetricRule calls
-deploy/gw2/scripts/setup-alarms.sh --execute [--webhook URL]
+deploy/gw2/scripts/setup-alarms.sh                                         # dry run: prints the nine PutCustomMetricRule calls
+deploy/gw2/scripts/setup-alarms.sh --execute [--group-id <id>] [--webhook URL]
 ```
 
 | Rule | Condition | First response |
@@ -289,7 +305,7 @@ deploy/gw2/scripts/setup-alarms.sh --execute [--webhook URL]
 | `trace-db-size` | `trace_db_bytes` ≥ 20 GiB | `archive_lag_events`, `stale_hot_partitions`, retention settings. |
 | `oom-kill` | `oom_kills_1h` > 0 | `journalctl -k \| grep oom-kill`; which container; memory limits. |
 
-Testing a rule: `oom-kill` evaluates the maximum of one minute, so
+Testing a rule: `oom-kill` alarms when the average of one minute is above 0, so
 `docker compose exec -T trajectory-worker python -m trajectory.ops.cms put --metric oom_kills_1h=1` raises it once
 (the next timer run reports the real value 0 again). Metrics that stop arriving do not alarm: check
 `systemctl list-timers 'openbox-*'` during the weekly review, or add a no-data alert in the CloudMonitor console.
@@ -300,7 +316,7 @@ Testing a rule: `oom-kill` evaluates the maximum of one minute, so
 
 | Rule | Prefix | Action |
 |---|---|---|
-| `openbox-trajectories-ia-30d` | `trajectories/` except `trajectories/_exports/` | Transition to IA after 30 days (objects under 64 KB stay Standard) |
+| `openbox-trajectories-ia-30d` | `trajectories/` except `trajectories/_exports/` | Transition to IA after 30 days. The rule uses the last modified time, so objects of every size move; IA bills an object under 64 KB as 64 KB. |
 | `openbox-trajectory-exports-expire-30d` | `trajectories/_exports/` | Expire after 30 days |
 | `openbox-trajectories-abort-multipart-7d` | `trajectories/` | Abort incomplete multipart uploads after 7 days |
 | `openbox-postgres-backups-expire-30d` | `backups/postgres/` | Expire after 30 days; abort incomplete multipart uploads after 7 days |
@@ -327,7 +343,11 @@ OSS loads new rules within 24 hours and runs them daily at 08:00 (UTC+8).
 PUT (internal endpoint, signed with `secrets/aliyun-config.json`) with exact `Content-Length` and
 `x-oss-meta-sha256`, then a signed HEAD that checks size and digest. Objects:
 `backups/postgres/<YYYYMMDD Asia/Shanghai>/<database>-<UTC stamp>.dump`, expired by the lifecycle rule after 30 days.
-A database that does not exist yet is skipped.
+A database that does not exist yet is skipped. The run fails (systemd marks the unit failed) when PostgreSQL cannot be
+queried, a dump or upload fails, or nothing was backed up; the dump of a failed upload stays in
+`/var/backups/openbox/postgres` for 3 days. One presigned PUT stores at most 5 GiB, so `trajectory.ops.backup` refuses
+a larger dump before sending it: add multipart uploads before a dump approaches that size (the `openbox` dump was
+162 MB on 2026-09-14).
 
 ```bash
 deploy/gw2/scripts/pg-backup.sh                                  # openbox and openbox_trace
@@ -355,7 +375,7 @@ and starts the services one at a time.
 
 Run after release step 10 and then quarterly, in a quiet period, with an internal test account producing traffic.
 Every drill is a dry run without `--execute`, restores the service when interrupted (Ctrl-C), and exits non-zero when a
-pass criterion fails.
+pass criterion fails or cannot be verified (worker metrics unreadable, or no test traffic during the window).
 
 | Drill | Command | Proves | Pass criteria | Impact |
 |---|---|---|---|---|
@@ -376,7 +396,7 @@ Record the output of each drill in the release log.
 | Exports | 30 days (`TRAJECTORY_EXPORT_RETENTION_DAYS`) | worker retention, lifecycle rule as backstop |
 | Trajectory objects in OSS | IA after 30 days | lifecycle rule |
 | Deleted sessions and assets | removed when the deletion reaches the worker (GC queue with retries) | worker retention |
-| PostgreSQL backups | 30 days in OSS; failed local dumps 3 days | lifecycle rule, `pg-backup.sh` |
+| PostgreSQL backups | 30 days in OSS; local dumps of failed uploads 3 days | lifecycle rule, `pg-backup.sh` |
 | Docker images | in use, pinned, and the newest 3 tags per repository | `prune-images.sh` weekly |
 | Spool | consumed files deleted after ingest; budget 2 GiB (`TRAJECTORY_SPOOL_MAX_BYTES`) | worker, emitter |
 | Worker logs | 5 × 50 MB | compose logging options |

@@ -6,9 +6,10 @@
   bucket, so the script reads the existing rules and merges these in by ID; never PUT this
   file directly.
 
-  * Trajectory blobs and segments move to IA after 30 days. Objects under 64 KB stay
-    Standard (AllowSmallFile is not set). Exports are excluded by a Not filter because they
-    expire on the same day.
+  * Trajectory blobs and segments move to IA after 30 days. A rule on the last modified time
+    transitions objects of every size (AllowSmallFile only applies to rules on the last access
+    time), and IA bills an object under 64 KB as 64 KB. Exports are excluded by a Not filter
+    because they expire on the same day.
   * Exports and PostgreSQL backups expire after 30 days.
   * Incomplete multipart uploads are aborted after 7 days. OSS allows no part policy in a
     rule with a Not filter and no two part policies on overlapping prefixes, hence the

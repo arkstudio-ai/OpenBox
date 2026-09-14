@@ -21,6 +21,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "Upgrade")
             self.send_header("Sec-WebSocket-Accept", accept)
             self.send_header("X-Fixture-Path", self.path)
+            self.send_header("X-Fixture-Instance", os.environ["QA_INSTANCE"])
             self.end_headers()
             self.close_connection = True
             return
@@ -41,4 +42,4 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
 
-HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+HTTPServer(("0.0.0.0", int(os.environ.get("QA_PORT", "8080"))), Handler).serve_forever()

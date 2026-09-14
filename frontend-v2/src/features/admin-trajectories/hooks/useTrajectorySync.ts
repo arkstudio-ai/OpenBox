@@ -50,26 +50,38 @@ export function useTrajectorySync(sessionId: string, enabled: boolean): Trajecto
   useEffect(() => {
     if (!sync) return
     let timer: number | null = null
+    let polling = false
     let cancelled = false
-    const schedule = () => {
-      if (cancelled) return
+    // The next read is due an interval after the previous one ended. The socket
+    // and the tab decide that interval, so a change of either moves the due
+    // time — measured from the last read, never from the change itself: a
+    // socket that keeps opening and dropping cannot postpone the poll forever.
+    let last = Date.now()
+    const arm = () => {
+      if (cancelled || polling) return
       if (timer !== null) window.clearTimeout(timer)
       const delay = eventPollDelay(trajectorySocket.connected, document.visibilityState === "hidden")
-      timer = window.setTimeout(() => {
-        timer = null
-        void sync.poll().finally(schedule)
-      }, delay)
+      timer = window.setTimeout(poll, Math.max(0, last + delay - Date.now()))
+    }
+    const poll = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+      polling = true
+      void sync.poll().finally(() => {
+        polling = false
+        last = Date.now()
+        arm()
+      })
     }
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void sync.poll()
-      schedule()
+      if (document.visibilityState !== "visible") arm()
+      // A read already on its way is followed by another one (the engine coalesces them).
+      else if (polling) void sync.poll()
+      else poll()
     }
     // The socket opening or dropping changes how soon a missed commit must be noticed.
-    const offs = [
-      trajectorySocket.on("__connected", schedule),
-      trajectorySocket.on("__disconnected", schedule),
-    ]
-    schedule()
+    const offs = [trajectorySocket.on("__connected", arm), trajectorySocket.on("__disconnected", arm)]
+    arm()
     document.addEventListener("visibilitychange", onVisibility)
     return () => {
       cancelled = true

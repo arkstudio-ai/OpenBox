@@ -45,27 +45,35 @@ function pick(data: Record<string, unknown> | undefined, fields: readonly string
  * object. Otherwise it is ready once every reference — references inside
  * referenced content included — has been read. Answers are cached by digest,
  * so another render, panel or record needing the same content reads nothing.
+ *
+ * Only a server with `capabilities.refs` leaves references in a detail. For any
+ * other server the value is fully expanded and is handed back untouched: a
+ * captured object that merely looks like a reference is data, and there is no
+ * blob endpoint to ask.
  */
 export function useResolvedValue<T>(value: T): Resolved<T> {
-  const { sessionId, throughSeq } = useInspector()
+  const { sessionId, throughSeq, refs } = useInspector()
   const { viewer, allowed } = useAccessScope()
   const client = useQueryClient()
   // What the answers cached now can reach; every new answer re-renders and may reach further.
-  const reached = reachableRefs(value, (sha) =>
-    client.getQueryData<BlobAnswer>(trajectoryKeys.blob(viewer, sessionId, sha)),
-  )
+  const reached = refs
+    ? reachableRefs(value, (sha) =>
+        client.getQueryData<BlobAnswer>(trajectoryKeys.blob(viewer, sessionId, sha)),
+      )
+    : []
   const answers = useQueries({
     queries: reached.map((sha) => blobQuery({ viewer, sessionId, throughSeq }, sha, allowed)),
     combine: collectAnswers,
   })
   const resolution = useMemo((): Resolution<T> => {
+    if (!refs) return { status: "ready", value }
     const tree = resolveTree(value, (sha) => answers.content.get(sha))
     if (tree.overflow) return { status: "unavailable", availability: "unsupported" }
     if (tree.unavailable) return { status: "unavailable", availability: tree.unavailable }
     if (answers.failed) return { status: "error" }
     if (tree.missing.length) return { status: "loading" }
     return { status: "ready", value: tree.value as T }
-  }, [answers, value])
+  }, [answers, refs, value])
   const retry = useCallback(() => {
     void client.refetchQueries({
       queryKey: trajectoryKeys.blobs(viewer, sessionId),

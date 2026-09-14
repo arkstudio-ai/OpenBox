@@ -210,4 +210,21 @@ describe("resolving for copy and save", () => {
     expect((failure as UnresolvedContentError).availability).toBe("deleted")
     client.clear()
   })
+
+  it("asks once more about a cached answer without content before giving up", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const key = (digest: string) => trajectoryKeys.blob(TARGET.viewer, TARGET.sessionId, digest)
+    client.setQueryData<BlobAnswer>(key(sha(4)), { sha256: sha(4), availability: "pending" })
+    blob.mockResolvedValueOnce("visible now")
+    await expect(resolveValue(client, TARGET, [ref(sha(4))])).resolves.toEqual(["visible now"])
+    expect(blob).toHaveBeenCalledTimes(1)
+
+    client.setQueryData<BlobAnswer>(key(sha(5)), { sha256: sha(5), availability: "pending" })
+    blob.mockRejectedValueOnce(new ApiError(410, "trajectory_content_deleted", "deleted"))
+    const failure = await resolveValue(client, TARGET, [ref(sha(5))]).catch((error: unknown) => error)
+    expect((failure as UnresolvedContentError).availability).toBe("deleted")
+    // Asked exactly once more, not in a loop.
+    expect(blob).toHaveBeenCalledTimes(2)
+    client.clear()
+  })
 })

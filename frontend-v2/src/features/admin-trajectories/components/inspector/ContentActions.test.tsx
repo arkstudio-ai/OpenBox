@@ -75,6 +75,28 @@ describe("copy and save", () => {
     expect(blob).not.toHaveBeenCalled()
   })
 
+  it("copies a captured look-alike as it is where the server offers no references", () => {
+    render(
+      withInspector(
+        <ContentActions value={MESSAGES} name="request-messages" format="json" />,
+        inspectorEnv([], { throughSeq: "37", refs: false }),
+        new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+      ),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "common.copyJson" }))
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(MESSAGES, null, 2))
+    fireEvent.click(screen.getByRole("button", { name: /^common\.download/ }))
+    expect(saveBlob).toHaveBeenCalledTimes(1)
+    expect(blob).not.toHaveBeenCalled()
+    cleanup()
+
+    // Outside an inspector there is no server to ask either.
+    render(<ContentActions value={MESSAGES} name="request-messages" format="json" />)
+    fireEvent.click(screen.getByRole("button", { name: "common.copyJson" }))
+    expect(writeText).toHaveBeenLastCalledWith(JSON.stringify(MESSAGES, null, 2))
+    expect(blob).not.toHaveBeenCalled()
+  })
+
   it("reads references before copying or saving, each digest once, at the shown watermark", async () => {
     blob.mockResolvedValue({ role: "system", content: "Be precise" })
     show(MESSAGES)

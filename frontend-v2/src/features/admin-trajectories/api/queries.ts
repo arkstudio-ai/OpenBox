@@ -16,9 +16,10 @@ import {
   PAYLOAD_REVALIDATE_MS,
 } from "../constants/polling"
 import { currentAccessEpoch, useTrajectoryAccess } from "../stores/access"
-import type { ExportJob, RecordExpand, Seq } from "../types/protocol"
+import type { ExportJob, RecordExpand, Seq, SessionHeader } from "../types/protocol"
 import { serializeListParams, toApiParams, type ListParams } from "../utils/params"
 import { saveBlob } from "../utils/download"
+import { lteSeq, toSeq } from "../utils/seq"
 import { retryUnlessDenied, trackRequest } from "./access"
 import { trajectoryApi } from "./endpoints"
 import { LIVE, trajectoryKeys } from "./keys"
@@ -115,13 +116,20 @@ export function useSessionHeader(sessionId: string) {
   })
 }
 
+/** What a watermark hint (TrajectoryWatermark) tells the live header. */
+export interface HeaderHint {
+  committed_seq?: string | null
+  deleted?: boolean
+}
+
 /**
  * Refresh the live header when the watermark socket reports a commit for the
- * target. A streaming run announces every commit, so the header is read at
- * most once per HEADER_HINT_MIN_MS since its last answer, and a trailing read
- * always covers the latest hint. A deletion is read at once.
+ * target. A hint the header already covers — the answer to a (re)subscription,
+ * a duplicate — reads nothing. A streaming run announces every commit, so the
+ * header is read at most once per HEADER_HINT_MIN_MS since its last answer,
+ * and a trailing read always covers the latest hint. A deletion is read at once.
  */
-export function useHeaderHintRefresh(sessionId: string): (hint: { deleted?: boolean }) => void {
+export function useHeaderHintRefresh(sessionId: string): (hint: HeaderHint) => void {
   const { viewer } = useAccessScope()
   const client = useQueryClient()
   const timer = useRef<number | null>(null)
@@ -135,7 +143,7 @@ export function useHeaderHintRefresh(sessionId: string): (hint: { deleted?: bool
   )
 
   return useCallback(
-    (hint: { deleted?: boolean }) => {
+    (hint: HeaderHint) => {
       const queryKey = trajectoryKeys.header(viewer, sessionId, LIVE)
       const read = (cancelRefetch: boolean) => {
         timer.current = null
@@ -147,6 +155,9 @@ export function useHeaderHintRefresh(sessionId: string): (hint: { deleted?: bool
         return
       }
       if (timer.current !== null) return
+      const shown = toSeq(client.getQueryData<SessionHeader>(queryKey)?.committed_seq)
+      const hinted = toSeq(hint.committed_seq)
+      if (shown !== null && hinted !== null && lteSeq(hinted, shown)) return
       const state = client.getQueryState(queryKey)
       const wait = HEADER_HINT_MIN_MS - (Date.now() - (state?.dataUpdatedAt ?? 0))
       // An answer already on its way may predate this hint: read again once that one is old enough.
@@ -321,7 +332,12 @@ export async function loadPayloadMeta(
 ): Promise<PayloadAvailability> {
   try {
     const meta = await trajectoryApi.payloadMeta(sessionId, payloadId, throughSeq, signal)
-    return META_AVAILABILITY[meta.availability] ?? "deleted"
+    const availability: unknown = meta?.availability
+    // Own keys only: "constructor" or "__proto__" must not pass for an answer.
+    return typeof availability === "string" &&
+      Object.prototype.hasOwnProperty.call(META_AVAILABILITY, availability)
+      ? META_AVAILABILITY[availability]
+      : "deleted"
   } catch (error) {
     const availability = error instanceof ApiError ? UNAVAILABLE[error.status] : undefined
     if (availability) return availability

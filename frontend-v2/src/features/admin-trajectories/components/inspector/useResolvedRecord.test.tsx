@@ -54,6 +54,25 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
+describe("without capabilities.refs", () => {
+  it("hands every record back untouched and reads nothing, even one holding a look-alike", () => {
+    const env = inspectorEnv([], { throughSeq: "10", refs: false })
+    const wrapper = ({ children }: { children: ReactNode }) => <>{withInspector(children, env, client)}</>
+    const record = makeRecord({
+      record_id: "request:req_1",
+      kind: "request",
+      data: { input: { system: ref(sha(11)), messages: [ref(sha(12))] } },
+    })
+    const whole = renderHook(() => useResolvedRecord(record), { wrapper })
+    expect(whole.result.current.resolution).toEqual({ status: "ready", value: record })
+    expect(valueOf(whole.result.current.resolution)).toBe(record)
+    const shown = renderHook(() => useResolvedRecord(record, ["input"]), { wrapper })
+    expect(valueOf(shown.result.current.resolution)).toBe(record)
+    expect(blob).not.toHaveBeenCalled()
+    expect(client.getQueryCache().getAll()).toHaveLength(0)
+  })
+})
+
 describe("resolving references", () => {
   it("hands a value without references back at once, as the same object, reading nothing", () => {
     const value = { input: { messages: [{ role: "user", content: "hi" }] } }

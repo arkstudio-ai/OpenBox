@@ -123,6 +123,22 @@ describe("event catch-up polling", () => {
     expect(engine.poll).toHaveBeenCalledTimes(3)
   })
 
+  it("keeps polling while the socket keeps opening and dropping", async () => {
+    mount()
+    // For 10 s the socket opens every 500 ms and drops again 100 ms later.
+    for (let cycle = 0; cycle < 20; cycle += 1) {
+      await advance(400)
+      socket.connected = true
+      act(() => socket.emit("__connected"))
+      await advance(100)
+      socket.connected = false
+      act(() => socket.emit("__disconnected"))
+    }
+    await advance(0)
+    // Each change of state re-plans the next read from the previous one, never from the change.
+    expect(engine.poll.mock.calls.length).toBeGreaterThanOrEqual(4)
+  })
+
   it("stops polling and listening once the page closes", async () => {
     const { unmount } = mount()
     expect(socket.handlers.get("__connected")?.size).toBe(1)

@@ -233,7 +233,8 @@ export function containsRefs(value: unknown): boolean {
 
 /**
  * Every reference in `value` read, for a one-off use such as copy or save:
- * what the cache lacks is fetched round by round, nested references included.
+ * what the cache lacks is fetched round by round, nested references included,
+ * and a cached answer without content is asked once more before giving up.
  * Throws `UnresolvedContentError` when the value cannot be completed.
  */
 export async function resolveValue(
@@ -243,12 +244,20 @@ export async function resolveValue(
 ): Promise<unknown> {
   const lookup: BlobLookup = (sha) =>
     client.getQueryData<BlobAnswer>(trajectoryKeys.blob(target.viewer, target.sessionId, sha))
+  const asked = new Set<string>()
   for (let round = 0; round <= MAX_REF_NESTING; round += 1) {
     const tree = resolveTree(value, lookup)
     if (tree.overflow) throw new UnresolvedContentError("unsupported")
-    if (tree.unavailable) throw new UnresolvedContentError(tree.unavailable)
-    if (!tree.missing.length) return tree.value
-    await Promise.all(tree.missing.map((sha) => client.fetchQuery(blobQuery(target, sha))))
+    // Answers without content that this call has not asked for itself yet.
+    const stale = tree.refs.filter((sha) => {
+      const answer = lookup(sha)
+      return answer !== undefined && answer.availability !== "available" && !asked.has(sha)
+    })
+    if (tree.unavailable && !stale.length) throw new UnresolvedContentError(tree.unavailable)
+    const reads = [...tree.missing, ...stale]
+    if (!reads.length) return tree.value
+    for (const sha of reads) asked.add(sha)
+    await Promise.all(reads.map((sha) => client.fetchQuery(blobQuery(target, sha))))
   }
   throw new UnresolvedContentError("unsupported")
 }

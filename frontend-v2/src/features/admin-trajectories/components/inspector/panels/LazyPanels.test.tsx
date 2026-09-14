@@ -12,6 +12,7 @@ import type { RefEnvelope, TrajectoryRecord } from "../../../types/protocol"
 import { inspectorEnv, makeRecord, withInspector } from "../../testing/harness"
 import { TabPanel } from "../TabPanel"
 import { RequestInputPanel } from "./RequestInputPanel"
+import { SummaryPanel } from "./SummaryPanel"
 import { SystemDiffPanel } from "./SystemDiffPanel"
 import { SystemPromptPanel } from "./SystemPromptPanel"
 import { ToolCatalogPanel } from "./ToolCatalogPanel"
@@ -210,5 +211,30 @@ describe("panels reading content references", () => {
     const view = show(<ToolCatalogPanel record={SYSTEM_REFS} />)
     await waitFor(() => expect(view.container.querySelector("[data-availability=deleted]")).not.toBeNull())
     expect(view.container.textContent).not.toContain("sha256")
+  })
+})
+
+describe("without capabilities.refs", () => {
+  // Such a server expands every detail, so an object that merely looks like a
+  // reference is captured data: each panel renders the record it is given at
+  // once, as before, and nothing is read.
+  const legacy = (element: ReactElement) =>
+    render(withInspector(element, inspectorEnv([], { throughSeq: "10", refs: false }), client))
+
+  it.each(CASES)("$name renders the record as given and reads nothing", (entry) => {
+    const view = legacy(entry.panel(entry.refs))
+    expect(view.queryByTestId("trajectory-content-loading")).toBeNull()
+    expect(view.queryByTestId("trajectory-content-failed")).toBeNull()
+    expect(blob).not.toHaveBeenCalled()
+    expect(client.getQueryCache().getAll()).toHaveLength(0)
+  })
+
+  it("puts nothing between a tab and its panel", () => {
+    const direct = legacy(<SummaryPanel record={REQUEST_REFS} />)
+    const expected = markup(direct.container)
+    direct.unmount()
+    const tab = legacy(<TabPanel record={REQUEST_REFS} tab="summary" />)
+    expect(markup(tab.container)).toBe(expected)
+    expect(blob).not.toHaveBeenCalled()
   })
 })

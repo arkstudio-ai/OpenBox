@@ -1,4 +1,4 @@
-// Ordered catch-up for one target session. The socket and the 1 s poll only
+// Ordered catch-up for one target session. The socket and the periodic poll only
 // say "something may be committed"; every fact arrives through REST event
 // pages, applied strictly in seq order. Duplicates and stale watermarks are
 // ignored, a hole in the sequence is reported instead of skipped, and any

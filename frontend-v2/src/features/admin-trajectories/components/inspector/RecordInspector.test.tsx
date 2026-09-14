@@ -53,12 +53,17 @@ afterEach(() => {
 
 describe("record details", () => {
   it("are read expanded unless the header offers references", async () => {
-    api.record.mockResolvedValue(detail(REQUEST))
+    // Expanded details hold no references: captured data shaped like one is shown, never read.
+    const lookalike = { $ref: { sha256: SHA } }
+    api.record.mockResolvedValue(
+      detail({ ...REQUEST, data: { ...REQUEST.data, input: { system: lookalike } } }),
+    )
     render(inspect("10"))
     await waitFor(() => expect(screen.getByTestId("trajectory-summary")).toBeTruthy())
     expect(api.record).toHaveBeenCalledWith("ses_test", "request:req_1", "10", expect.any(AbortSignal))
     expect(api.recordRefs).not.toHaveBeenCalled()
     expect(api.blob).not.toHaveBeenCalled()
+    expect(screen.queryByTestId("trajectory-content-loading")).toBeNull()
   })
 
   it("keep references where the header offers them, and the panel shown reads them", async () => {

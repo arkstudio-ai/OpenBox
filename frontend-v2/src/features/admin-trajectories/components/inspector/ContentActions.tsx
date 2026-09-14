@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from "react"
+import { useContext, useMemo, useState, type MouseEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { Check, Copy, Download } from "lucide-react"
@@ -8,7 +8,7 @@ import { trackRequest } from "../../api/access"
 import { useAccessScope } from "../../api/queries"
 import { containsRefs, resolveValue } from "../../api/refs"
 import { saveBlob } from "../../utils/download"
-import { useInspector } from "./context"
+import { InspectorContext, useInspector } from "./context"
 import { CopyButton } from "./CopyButton"
 import { NS } from "./types"
 
@@ -121,7 +121,10 @@ function ReadingActions({ value, format, filename }: ReadingActionsProps) {
  */
 export function ContentActions({ value, name, format }: ContentActionsProps) {
   const { t } = useTranslation(NS)
-  const referenced = useMemo(() => containsRefs(value), [value])
+  // Only a server with `capabilities.refs` leaves `$ref` envelopes in a detail;
+  // for any other server a look-alike is captured data and is copied as it is.
+  const refs = useContext(InspectorContext)?.refs === true
+  const referenced = useMemo(() => refs && containsRefs(value), [refs, value])
   const text = useMemo(() => (referenced ? "" : serialise(value, format)), [format, referenced, value])
   const [extension, mediaType] = EXTENSIONS[format]
   const filename = `${name.replace(/[^\w.-]+/g, "_").slice(0, 120) || "trajectory"}.${extension}`

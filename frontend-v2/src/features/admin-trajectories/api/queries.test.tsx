@@ -195,6 +195,19 @@ describe("shown content revalidation", () => {
     expect(result.current.data?.availability).toBe("deleted")
     expect(api.payload).toHaveBeenCalledTimes(1)
   })
+
+  it("hides the content for an availability it does not know, even an inherited object key", async () => {
+    vi.useFakeTimers()
+    api.payload.mockImplementation(async () => png())
+    api.payloadMeta.mockResolvedValue(meta("constructor"))
+    const { result } = renderHook(() => usePayload("ses_b", "12", "pay_1", "meta"), { wrapper })
+    await advance(0)
+    expect(result.current.data?.availability).toBe("available")
+    act(() => void document.dispatchEvent(new Event("visibilitychange")))
+    await settle()
+    expect(api.payloadMeta).toHaveBeenCalledTimes(1)
+    expect(result.current.data?.availability).toBe("deleted")
+  })
 })
 
 describe("live reads", () => {
@@ -246,6 +259,25 @@ describe("live reads", () => {
     act(() => result.current.hint({ deleted: true }))
     await advance(0)
     expect(api.header).toHaveBeenCalledTimes(4)
+  })
+
+  it("skip hints the shown header already covers, such as the answer to a subscription", async () => {
+    vi.useFakeTimers()
+    api.header.mockResolvedValue({ ...HEADER, committed_seq: "40" } as SessionHeader)
+    const { result } = renderHook(
+      () => ({ header: useSessionHeader("ses_b"), hint: useHeaderHintRefresh("ses_b") }),
+      { wrapper },
+    )
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(1)
+    act(() => result.current.hint({ committed_seq: "40" }))
+    act(() => result.current.hint({ committed_seq: "039" }))
+    await advance(10_000)
+    expect(api.header).toHaveBeenCalledTimes(1)
+
+    act(() => result.current.hint({ committed_seq: "41" }))
+    await advance(0)
+    expect(api.header).toHaveBeenCalledTimes(2)
   })
 
   it("read the header again after an answer that was already on its way when a hint arrived", async () => {

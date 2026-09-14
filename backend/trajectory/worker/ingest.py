@@ -1411,18 +1411,23 @@ class _Transaction:
             return
         occurred = meta.parse_time(control.get("at")) or item.t
         event_id = gap_event_id(self.producer_id, str(item.n), session_id)
+        # Producers suppress repeated pause and resume controls per process only, and the control carries
+        # no epoch, so several processes report the same transition. The trajectory's own state makes the
+        # controls idempotent: a pause applies only to a recording that is not paused, and a resume only
+        # ends a pause, so a duplicate adds no second gap and no second epoch.
+        paused = state.recording_status == "paused"
         if value == "paused":
-            if state.recording_status == "paused":
+            if paused:
                 return
             if await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
                                               occurred_at=occurred, gap=True,
                                               data={"phase": "paused", "reason": "recording_disabled",
                                                     "last_recorded_seq": str(state.committed_seq)}):
                 state.recording_status = "paused"
-        elif await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
-                                            occurred_at=occurred, gap=True,
-                                            data={"phase": "resumed", "reason": "recording_reenabled",
-                                                  "previous_committed_seq": str(state.committed_seq)}):
+        elif paused and await self.append_worker_event(state, event_id=event_id, event_type="recording.gap",
+                                                       occurred_at=occurred, gap=True,
+                                                       data={"phase": "resumed", "reason": "recording_reenabled",
+                                                             "previous_committed_seq": str(state.committed_seq)}):
             state.recording_status = "gap"
             state.recording_epoch += 1
 

@@ -5,7 +5,8 @@ import hashlib
 from bus import bus
 from trajectory.store.models import (SessionTrajectory, TrajectoryGcQueue, TrajectoryMetaSession, TrajectoryMetaUser,
     TrajectoryPayload)
-from tests.unit.test_worker_ingest import AT, event, events_of, harness, rows, settings, trace_db  # noqa: F401
+from tests.unit.test_worker_ingest import (AT, SpoolWriter, event, events_of, harness, rows, settings,  # noqa: F401
+    trace_db)
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(200))
 GIF = b"GIF89a" + bytes(40)
@@ -212,3 +213,41 @@ async def test_recording_state_pauses_and_resumes(harness):
     assert paused.event_id == f"gap:{harness.writer.producer_id}:2:ses_1"
     [row] = await rows(SessionTrajectory)
     assert row.id == trajectory.id
+
+
+async def test_duplicate_recording_state_controls_from_several_processes_apply_once(harness):
+    """Producers deduplicate resumes per process only (trajectory/producers.py): two processes resuming the
+    same period both emit ``resumed``, and a pause can be reported twice. The control carries no epoch, so
+    the trajectory's own state decides: a resume ends only a pause, a pause only a live recording."""
+    harness.writer.events(event())
+    await harness.run()
+    other = SpoolWriter(harness.settings.spool_dir, "20260914080005-other-7-dddddddd")
+    state = {"type": "recording.state", "user_id": "u1", "session_id": "ses_1", "reason": "recording_disabled",
+             "at": "2026-09-14T08:01:00.000Z"}
+    resumed = {**state, "state": "resumed", "reason": "recording_reenabled", "at": "2026-09-14T08:02:00.000Z"}
+    # Oldest file first across producers: pause, duplicate pause, resume, duplicate resume.
+    harness.writer.controls({**state, "state": "paused"}, age=50)
+    other.controls({**state, "state": "paused"}, age=40)
+    harness.writer.controls(resumed, age=30)
+    other.controls(resumed, age=20)
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    gaps = [(row.data["phase"], row.event_id) for row in stored if row.type == "recording.gap"]
+    assert gaps == [("paused", f"gap:{harness.writer.producer_id}:2:ses_1"),
+                    ("resumed", f"gap:{harness.writer.producer_id}:3:ses_1")]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 1)
+    # The next period pauses and resumes once more, whatever the duplicates.
+    harness.writer.controls({**state, "state": "paused", "at": "2026-09-14T08:03:00.000Z"}, resumed, resumed,
+                            {**state, "state": "resumed", "at": "2026-09-14T08:04:00.000Z"})
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [
+        "paused", "resumed", "paused", "resumed"]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 2)
+    # A resume without a pause (a trajectory that never paused) changes nothing.
+    harness.writer.events(event(session="ses_2"))
+    harness.writer.controls({**resumed, "session_id": "ses_2"})
+    await harness.run()
+    trajectory, stored = await events_of("ses_2")
+    assert [row.type for row in stored] == ["trajectory.started", "input.accepted"]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("recording", 0)

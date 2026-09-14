@@ -147,7 +147,7 @@ def validate_event(event: dict) -> str | None:
 def parse_batch(lines) -> ParsedBatch:
     """Decode the lines of one batch and run steps 1-4 of SPEC §8.4 up to media extraction.
 
-    Stops at the first line that is not spool format v1; the lines before it stay ingestible.
+    Stops at the first line that is not a supported spool line; the lines before it stay ingestible.
     """
     items: list[Item] = []
     now = datetime.now(timezone.utc)
@@ -158,7 +158,7 @@ def parse_batch(lines) -> ParsedBatch:
             return ParsedBatch(items, line.start, "unsupported_version", type(exc).__name__)
         except spool.SpoolFormatError as exc:
             return ParsedBatch(items, line.start, "unparsable_line", type(exc).__name__)
-        item = Item(n=record["n"], t=meta.parse_time(record["t"]) or now, size=line.end - line.start,
+        item = Item(n=record["n"], t=meta.parse_time(record["t"]) or now, size=line.size,
                     end=line.end, kind=record["k"])
         if item.kind == spool.KIND_CONTROL:
             item.control = record["control"]

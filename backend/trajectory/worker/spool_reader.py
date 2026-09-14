@@ -7,12 +7,20 @@ ready blocks the producer. Across producers the oldest ready file goes first.
 Offsets are tracked under the closed name, so a ``.part`` renamed while it was
 being consumed keeps its progress.
 
+Version 2 event lines reference values stored in ``blobs/<sha256>``.
+``read_batch`` returns them with those values in place, so ingest sees the
+line a writer without blobs would have written; a line whose blob is missing
+or corrupt comes back as a ``gap`` control and the file goes on. ``scan_spool``
+sweeps the blob files that no data file can still reference.
+
 Everything here is blocking file I/O; the ingest service calls it through
 ``asyncio.to_thread``. Lines are read in chunks and a batch stops at its line
-and byte limits, so memory stays bounded by one batch plus one line.
+and byte limits (resolved bytes), so memory stays bounded by one batch plus
+one line.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -22,10 +30,25 @@ from pathlib import Path
 
 import orjson
 
+from core.log import create_logger
 from trajectory import spool
 
+log = create_logger("trajectory.worker.spool_reader")
+
 READ_CHUNK_BYTES = 1024 * 1024
+#: Blob files are swept at most this often; the mtime of ``blobs/.swept`` records the last sweep.
+BLOB_SWEEP_SECONDS = 60.0
+SWEEP_MARKER = ".swept"
+SWEEP_SUFFIX = ".sweep"
+#: ``gap`` reasons of event lines whose blob cannot be used.
+BLOB_MISSING = "spool_blob_missing"
+BLOB_CORRUPT = "spool_blob_corrupt"
+IDENTITY_MAX_CHARS = 128
+LOG_INTERVAL_SECONDS = 60.0
 _LINE_COUNTER = re.compile(rb'^\{"v":\d+,"k":"(?:event|control)","n":(\d+),')
+_SHA256 = re.compile(rb"[0-9a-f]{64}")
+#: Gap reason -> monotonic time before which it is not logged again.
+_logged: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -60,13 +83,21 @@ class SpoolScan:
     files: int = 0
     bytes: int = 0
     oldest_mtime: float | None = None
+    #: False when a producer directory or a data file could not be listed; blobs are not swept then.
+    complete: bool = True
 
 
 @dataclass(frozen=True)
 class RawLine:
+    #: The line without its newline; a version 2 event line comes with its blob values resolved.
     data: bytes
     start: int
     end: int
+
+    @property
+    def size(self) -> int:
+        """Bytes of the line as ingested: ``end - start`` unless blob values were resolved into it."""
+        return len(self.data) + 1
 
 
 @dataclass
@@ -92,22 +123,29 @@ def read_producer_document(path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
-def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = None) -> SpoolScan:
+def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = None,
+               sweep: bool = True) -> SpoolScan:
     """Producers and their data files (sorted by counter), with size totals.
 
-    ``documents`` caches parsed ``producer.json`` files between scans.
+    ``documents`` caches parsed ``producer.json`` files between scans. With ``sweep`` a complete
+    scan also removes the blob files older than every listed data file (``sweep_blobs``), at most
+    once per ``BLOB_SWEEP_SECONDS``.
     """
+    started = time.time()
     scan = SpoolScan(producers={})
     try:
         entries = list(os.scandir(producers_dir(spool_dir)))
     except FileNotFoundError:
-        return scan
+        entries = []
     for entry in entries:
         try:
             if not entry.is_dir(follow_symlinks=False):
                 continue
             children = list(os.scandir(entry.path))
+        except FileNotFoundError:
+            continue  # a finished producer directory removed since the listing
         except OSError:
+            scan.complete = False
             continue
         producer_id = entry.name
         if documents is not None and documents.get(producer_id) is not None:
@@ -124,7 +162,11 @@ def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = No
                 continue
             try:
                 status = child.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                # Consumed and deleted, or just renamed from .part: that file was written to moments ago.
+                continue
             except OSError:
+                scan.complete = False
                 continue
             counter, closed = parsed
             item = SpoolFile(producer_id, counter, Path(child.path), closed, status.st_size, status.st_mtime)
@@ -138,6 +180,8 @@ def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = No
                 scan.oldest_mtime = status.st_mtime
         producer.files = [by_counter[counter] for counter in sorted(by_counter)]
         scan.producers[producer_id] = producer
+    if sweep and scan.complete:
+        _sweep_when_due(spool_dir, scan.oldest_mtime, started)
     return scan
 
 
@@ -160,14 +204,19 @@ def select_ready(scan: SpoolScan, done: set[tuple[str, str]], *, now: float,
 
 
 def read_batch(path: Path, offset: int, *, max_lines: int, max_bytes: int,
-               chunk_size: int = READ_CHUNK_BYTES) -> BatchRead:
-    """Complete lines from ``offset``: at most ``max_lines`` and, after the first, ``max_bytes``."""
+               chunk_size: int = READ_CHUNK_BYTES, blob_dir: Path | None = None) -> BatchRead:
+    """Complete lines from ``offset``: at most ``max_lines`` and, after the first, ``max_bytes``.
+
+    Version 2 event lines are resolved (``resolve_line``) against ``blob_dir``, by default the
+    ``blobs/`` directory of the spool holding ``path``; their resolved size counts against ``max_bytes``.
+    """
     lines: list[RawLine] = []
     consumed = 0
     line_start = offset
     pieces: list[bytes] = []
     eof = False
     limited = False
+    blobs: dict[bytes, bytes | str] = {}
     with open(path, "rb") as handle:
         handle.seek(offset)
         while not limited:
@@ -188,11 +237,16 @@ def read_batch(path: Path, offset: int, *, max_lines: int, max_bytes: int,
                     body = b"".join(pieces)
                     pieces = []
                 length = len(body) + 1
-                if lines and consumed + length > max_bytes:
+                if body.startswith(spool.BLOB_EVENT_PREFIX):
+                    if blob_dir is None:
+                        # <spool>/producers/<producer_id>/<file>
+                        blob_dir = spool.blobs_dir(Path(path).parent.parent.parent)
+                    body = resolve_line(body, blob_dir, blobs, source=path)
+                if lines and consumed + len(body) + 1 > max_bytes:
                     limited = True
                     break
                 lines.append(RawLine(body, line_start, line_start + length))
-                consumed += length
+                consumed += len(body) + 1
                 line_start += length
                 index = newline + 1
                 if len(lines) >= max_lines:
@@ -200,6 +254,181 @@ def read_batch(path: Path, offset: int, *, max_lines: int, max_bytes: int,
                     break
         tail = handle.tell() - line_start if eof else 0
     return BatchRead(lines, line_start, eof, tail)
+
+
+def resolve_line(body: bytes, blob_dir: Path, cache: dict[bytes, bytes | str] | None = None, *,
+                 source=None) -> bytes:
+    """A version 2 event line with every ``{"$blob": sha256}`` replaced by the content of that blob.
+
+    A blob holds the compact JSON of the value it replaced, and a version 2 line contains those
+    bytes only as references, so the result is the line with every value inline: its event hashes
+    and addresses its content exactly like the inline line. A missing or corrupt blob turns the
+    line into a ``gap`` control; any other line is returned unchanged. ``cache`` keeps the blobs
+    read for one batch.
+    """
+    if not body.startswith(spool.BLOB_EVENT_PREFIX):
+        return body
+    cache = {} if cache is None else cache
+    marker = spool.BLOB_REFERENCE
+    parts: list[bytes] = []
+    position = 0
+    while True:
+        found = body.find(marker, position)
+        if found < 0:
+            break
+        start = found + len(marker)
+        sha = body[start:start + 64]
+        if body[start + 64:start + 66] != b'"}' or not _SHA256.fullmatch(sha):
+            return _gap_line(body, BLOB_CORRUPT, source)
+        content = _blob(blob_dir, sha, cache)
+        if isinstance(content, str):
+            return _gap_line(body, content, source)
+        parts.append(body[position:found])
+        parts.append(content)
+        position = start + 66
+    if not parts:
+        return body
+    parts.append(body[position:])
+    return b"".join(parts)
+
+
+def _blob(blob_dir: Path, sha: bytes, cache: dict[bytes, bytes | str]) -> bytes | str:
+    """The content of a blob checked against its name, or the gap reason when it cannot be used."""
+    found = cache.get(sha)
+    if found is None:
+        try:
+            with open(Path(blob_dir) / sha.decode("ascii"), "rb") as handle:
+                content = handle.read()
+        except OSError:
+            found = BLOB_MISSING
+        else:
+            found = content if hashlib.sha256(content).hexdigest().encode("ascii") == sha else BLOB_CORRUPT
+        cache[sha] = found
+    return found
+
+
+def _listable(value) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= IDENTITY_MAX_CHARS
+
+
+def _gap_line(body: bytes, reason: str, source) -> bytes:
+    """The ``gap`` control, with the same ``n`` and ``t``, that stands for an event line whose blob is unusable."""
+    try:
+        record = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return body  # not a spool line at all: decode_line rejects it
+    event = record.get("event") if isinstance(record, dict) else None
+    if not isinstance(event, dict):
+        return body
+    n, t = record.get("n"), record.get("t")
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1 or not isinstance(t, str):
+        return body
+    sessions = []
+    if _listable(event.get("user_id")) and _listable(event.get("session_id")):
+        sessions.append({"user_id": event["user_id"], "session_id": event["session_id"],
+                         "run_ids": [event["run_id"]] if _listable(event.get("run_id")) else [],
+                         "request_ids": [event["request_id"]] if _listable(event.get("request_id")) else []})
+    moment = time.monotonic()
+    if moment >= _logged.get(reason, 0.0):
+        # One line per reason per minute: a lost blobs directory must not flood the log.
+        _logged[reason] = moment + LOG_INTERVAL_SECONDS
+        log.warning("Spool event line recorded as a gap reason=%s file=%s n=%s", reason, source, n)
+    control = {"type": "gap", "reason": reason, "dropped_events": 1, "dropped_bytes": len(body) + 1,
+               "first_dropped_at": t, "last_dropped_at": t, "sessions": sessions}
+    return orjson.dumps({"v": spool.VERSION, "k": spool.KIND_CONTROL, "n": n, "t": t, "control": control})
+
+
+def _sweep_when_due(spool_dir: Path, oldest_mtime: float | None, now: float) -> None:
+    marker = spool.blobs_dir(spool_dir) / SWEEP_MARKER
+    try:
+        if 0 <= now - os.stat(marker).st_mtime < BLOB_SWEEP_SECONDS:
+            return
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return
+    try:
+        # The marker first: a sweep that keeps failing is retried once per interval, not on every scan.
+        os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), spool.FILE_MODE))
+        os.utime(marker)
+    except FileNotFoundError:
+        return  # no blobs directory: no line was ever written with blobs
+    except OSError as exc:
+        log.warning("Spool blob sweep skipped error_type=%s", type(exc).__name__)
+        return
+    try:
+        files, size = sweep_blobs(spool_dir, oldest_mtime=oldest_mtime, now=now)
+    except OSError as exc:
+        log.warning("Spool blob sweep failed error_type=%s", type(exc).__name__)
+        return
+    if files:
+        log.info("Swept spool blobs files=%s bytes=%s", files, size)
+
+
+def sweep_blobs(spool_dir: Path, *, oldest_mtime: float | None, now: float | None = None,
+                margin: float = spool.BLOB_MARGIN_SECONDS) -> tuple[int, int]:
+    """Delete the blob files older than every data file by ``margin``: ``(files, bytes)`` deleted.
+
+    ``oldest_mtime`` is the oldest mtime among the data files that exist, consumed or not (``None``
+    when there are none). A writer refreshes the mtime of every blob a line references when it
+    writes the line, or at most ``spool.BLOB_REFRESH_SECONDS`` earlier, so no blob of an existing
+    or later line is older than the cutoff. A candidate is renamed aside before its mtime is read
+    again: a writer that refreshed it in between keeps it (it is put back), and a writer that looks
+    for it afterwards finds it missing and stores it again. Temporary files of writers that died
+    and entries left by an interrupted sweep are cleaned up too.
+    """
+    now = time.time() if now is None else now
+    cutoff = min(now, now if oldest_mtime is None else oldest_mtime) - margin
+    directory = spool.blobs_dir(spool_dir)
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return 0, 0
+    files = size = 0
+    for entry in entries:
+        name = entry.name
+        try:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            status = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if spool.is_blob_name(name):
+            if status.st_mtime >= cutoff:
+                continue
+            aside = directory / f".{name}.{uuid.uuid4().hex[:8]}{SWEEP_SUFFIX}"
+            try:
+                os.rename(entry.path, aside)
+            except OSError:
+                continue
+            deleted = _settle(aside, directory / name, cutoff)
+        elif name.startswith(".") and name.endswith(SWEEP_SUFFIX) and spool.is_blob_name(name[1:65]):
+            # Left by a sweep that stopped between its rename and the unlink.
+            deleted = _settle(Path(entry.path), directory / name[1:65], cutoff)
+        elif name.startswith(".") and name.endswith(".tmp") and status.st_mtime < now - margin:
+            deleted = status.st_size if remove_file(entry.path) else None
+        else:
+            continue
+        if deleted is not None:
+            files += 1
+            size += deleted
+    return files, size
+
+
+def _settle(aside: Path, path: Path, cutoff: float) -> int | None:
+    """Delete a blob renamed aside, or put it back when a writer refreshed it: bytes deleted, else ``None``."""
+    try:
+        status = os.stat(aside)
+        if status.st_mtime < cutoff:
+            os.unlink(aside)
+            return status.st_size
+        if os.path.exists(path):
+            os.unlink(aside)  # the writer has stored it again
+        else:
+            os.replace(aside, path)
+    except OSError:
+        pass
+    return None
 
 
 def counter_range(path: Path, offset: int) -> tuple[int | None, int | None]:

@@ -60,6 +60,17 @@ def wait_for(predicate, timeout=5.0):
     return True
 
 
+def start_idle(emitter):
+    """Start the writer and wait until it sleeps: the next batch is then exactly what a flush finds queued."""
+    emitter.start()
+
+    def idle():
+        with emitter._lock:
+            return emitter._waiting
+
+    assert wait_for(idle)
+
+
 def test_size_rotation_fsyncs_then_renames_complete_files(make_emitter):
     emitter = make_emitter(file_bytes=2 * KIB)
     calls = []
@@ -125,8 +136,9 @@ def test_spool_budget_drops_new_lines_until_usage_falls_then_reports_the_gap(mak
     (other / spool.file_name(1)).write_bytes(b"x" * 40 * KIB)
     emitter = make_emitter(spool_max_bytes=48 * KIB)
     emitter.WAIT_SECONDS = 10
-    emitter.SPOOL_SAMPLE_SECONDS = 0.05
-    emitter.start()
+    # Usage is sampled on every writer cycle, so no cycle works from a stale sample.
+    emitter.SPOOL_SAMPLE_SECONDS = 0
+    start_idle(emitter)
     size = len(event(0, pad=900))
     for index in range(20):
         assert emit(emitter, index, pad=900)
@@ -136,10 +148,12 @@ def test_spool_budget_drops_new_lines_until_usage_falls_then_reports_the_gap(mak
     assert 0 < len(written) < 20 and len(written) + dropped == 20
     assert spool.spool_usage_bytes(tmp_path / "spool") <= 48 * KIB
     (other / spool.file_name(1)).unlink()
-    # Usage is re-sampled on a timer, so each flush wakes the writer until it has noticed.
-    assert wait_for(lambda: emitter.flush(1) and emitter.stats()["spool_bytes"] < 20 * KIB)
-    assert emit(emitter, 100, pad=900)
+    # Every cycle samples the usage, so the flush's cycle sees the smaller spool.
+    assert emitter.flush(5)
+    assert emitter.stats()["spool_bytes"] < 20 * KIB
+    # A gap line that did not fit before is written within one gap interval.
     assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
+    assert emit(emitter, 100, pad=900)
     assert emitter.flush(5)
     everything = records(emitter)
     gaps = [record["control"] for record in everything if record["k"] == "control"]
@@ -260,7 +274,7 @@ def test_torn_tail_that_cannot_be_truncated_stays_in_an_abandoned_part_file(make
         raise OSError(errno.EIO, "Input/output error")
 
     emitter._write, emitter._truncate = failing_write, failing_truncate
-    emitter.start()
+    start_idle(emitter)
     for index in range(4):
         assert emit(emitter, index)
     assert emitter.flush(5) is False

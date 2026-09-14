@@ -55,7 +55,9 @@ nginx (frontend container): /api/admin/trajectories/*, /ws/admin/trajectories �
 
 ---
 
-## 3. Spool format v1
+## 3. Spool format v2
+
+Version 2 adds blob values (§3.5) to version 1. Workers read files with version 1 and version 2 lines; a writer emits version 2 only for event lines that reference blobs, so deploy workers before backends.
 
 ### 3.1 Directory layout (`TRAJECTORY_SPOOL_DIR`)
 
@@ -65,6 +67,9 @@ nginx (frontend container): /api/admin/trajectories/*, /ws/admin/trajectories �
       producer.json                      # {"version":1,"producer_id","boot_id","hostname","pid","role","started_at"}
       00000000000000000001.jsonl         # closed file (safe to consume)
       00000000000000000002.jsonl.part    # open file (never consumed unless abandoned, §8.2)
+  blobs/
+      <sha256>                           # a value moved out of an event line (§3.5); shared by all producers
+      .swept                             # mtime = the worker's last blob sweep
   control/
       budgets.json                       # written by the worker (atomic rename), read by producers
       worker.json                        # worker heartbeat {"version":1,"pid","hostname","updated_at","ingest_lag_seconds"}
@@ -74,7 +79,8 @@ nginx (frontend container): /api/admin/trajectories/*, /ws/admin/trajectories �
 - `producer_id` = `{UTC yyyymmddHHMMSS}-{hostname}-{pid}-{8 hex}`; lexical order equals start order.
 - File names are 20-digit zero-padded counters per producer, starting at 1.
 - Permissions: directories `0700`, files `0600`. The spool may contain unredacted data (generic redaction runs in the worker, §8.4); it must only be mounted into the backend and worker containers.
-- Consumed files are deleted by the worker after the consuming transaction commits.
+- Consumed files are deleted by the worker after the consuming transaction commits. Blob files are deleted by the worker's sweep (§3.5).
+- The JSON documents (`producer.json`, `budgets.json`, `worker.json`, `.reason`) keep `"version": 1`.
 
 ### 3.2 Line format
 
@@ -82,10 +88,11 @@ One JSON object per line, UTF-8, `\n` terminated, no pretty printing:
 
 ```json
 {"v":1,"k":"event","n":42,"t":"2026-09-14T08:00:00.123Z","event":{...}}
-{"v":1,"k":"control","n":43,"t":"2026-09-14T08:00:00.130Z","control":{"type":"gap", ...}}
+{"v":2,"k":"event","n":43,"t":"2026-09-14T08:00:00.125Z","event":{..."data":{"input":{"system":{"$blob":"<sha256>"}, ...}}}}
+{"v":1,"k":"control","n":44,"t":"2026-09-14T08:00:00.130Z","control":{"type":"gap", ...}}
 ```
 
-- `v`: spool format version, `1`. Readers must reject unknown versions (quarantine the file).
+- `v`: spool format version of the line: `1` when every value is inline, `2` for an event line that holds `{"$blob": "<sha256>"}` values (§3.5). Controls are always `1`. Readers accept exactly the integers 1 and 2 and must reject other versions (quarantine the file).
 - `k`: `event` or `control`.
 - `n`: producer-local counter, contiguous from 1 for every line the producer writes (events and controls). Dropped events do not consume a counter value; drops are reported with a `gap` control. A missing `n` observed by the worker means data loss (crash, disk error).
 - `t`: enqueue time (ISO-8601 UTC, milliseconds, `Z`).
@@ -121,7 +128,7 @@ Shape equals today's `trajectory.types.prepare()` output:
 
 | type | fields | producer | worker action |
 |---|---|---|---|
-| `gap` | `reason` (`queue_overflow`,`spool_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
+| `gap` | `reason` (`queue_overflow`,`spool_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`; the worker's reader adds `spool_blob_missing`,`spool_blob_corrupt`, §3.5), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
 | `producer.goodbye` | `last_n` | emitter on graceful close | mark producer closed |
 | `session.meta` | `session`: `{id,user_id,workspace_id,project_id,parent_id,kind,title,status,model,agent,is_deleted,deleted_at,created_at,updated_at}` | meta sync | upsert `trajectory_meta_sessions` |
 | `user.meta` | `user`: `{id,username,email,role,is_active,is_deleted,updated_at}` | meta sync | upsert `trajectory_meta_users` |
@@ -132,6 +139,19 @@ Shape equals today's `trajectory.types.prepare()` output:
 | `recording.state` | `user_id`,`session_id` (root),`state` (`paused`/`resumed`),`reason`,`at` | session write path (§5.6) | pause/resume bookkeeping and gap events |
 
 Controls are content-free and are written even when recording is disabled for the user.
+
+### 3.5 Blob values (version 2)
+
+Repeated prompt content (system prompts, tool lists, conversation history) is written once per content instead of once per request.
+
+- **What moves** (writer thread only; `emit()` stays a non-blocking queue put):
+  - `request.prepared`: `data.input.system`, `instructions` and `tools`, and each item of `data.input.messages` or of a list-valued `data.input.input`, when its compact JSON is larger than `TRAJECTORY_SPOOL_BLOB_MIN_BYTES` (1024).
+  - Any other value inside `data` of any event (depth 1-6, leaves first) whose compact JSON is larger than 16 KiB. A value that already holds a reference stays inline, so blob content never contains references.
+  - An event whose serialized bytes contain `"$blob"` is written inline as version 1: in a version 2 line every `{"$blob": ...}` object is a reference.
+- **Blob file**: `blobs/<sha256>` holds the value's compact JSON (the exact bytes it has inline); the name is the sha256 of the content. Written as a temp file (`.<sha256>.<8 hex>.tmp`), fsynced, then renamed; the blobs directory is fsynced before a data file that references a new blob is closed. A blob that already exists gets its mtime refreshed instead, at most every 60 s per writer. Blobs are written before the line that references them; if a blob cannot be stored the event is written inline.
+- **Spool budget**: `spool_max_bytes` (§5.2) counts `blobs/` as well as `producers/`; a line is dropped with `spool_full` when the line plus its new blob bytes do not fit.
+- **Reading**: the worker's `read_batch` replaces every reference of a version 2 event line with the blob content before decoding, so sanitize, the event hash, previews and content addressing (§8.4) see the same event as for the inline line, and the resolved size counts against `TRAJECTORY_INGEST_BATCH_BYTES` and the user byte budget. A blob that is missing or whose content does not match its sha256 turns the line into a `gap` control with the same `n` and `t` (`reason` `spool_blob_missing` or `spool_blob_corrupt`, `dropped_events` 1, the event's user, root session, run and request ids); the rest of the file is ingested normally.
+- **Sweep**: at most once a minute, after a complete scan of the producer directories, the worker deletes blob files whose mtime is older than the oldest remaining data file (consumed or not; the scan time when there is none) minus 600 s. A candidate is renamed aside and its mtime checked again, so a writer that refreshed it meanwhile keeps it. Orphaned temp files older than the margin are deleted too.
 
 ---
 

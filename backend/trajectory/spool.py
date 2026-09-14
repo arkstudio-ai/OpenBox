@@ -1,8 +1,8 @@
-"""Spool format v1 shared by the backend emitter and the worker reader.
+"""Spool format shared by the backend emitter and the worker reader.
 
-Directory layout, line encoding, file naming, ``producer.json`` and the
-``control/budgets.json`` schema (docs/trajectory-rearch/SPEC.md §3, §5.7).
-Nothing here performs I/O at import time.
+Directory layout, line encoding (versions 1 and 2), blob files, file naming,
+``producer.json`` and the ``control/budgets.json`` schema
+(docs/trajectory-rearch/SPEC.md §3, §5.7). Nothing here performs I/O at import time.
 """
 from __future__ import annotations
 
@@ -16,10 +16,15 @@ from pathlib import Path
 
 import orjson
 
+#: Version 1 lines and the JSON documents (``producer.json``, ``budgets.json``, ``worker.json``).
 VERSION = 1
+#: Event lines whose values include ``{"$blob": sha256}`` references; every other line stays version 1.
+BLOB_VERSION = 2
+LINE_VERSIONS = (VERSION, BLOB_VERSION)
 PRODUCERS_DIR = "producers"
 CONTROL_DIR = "control"
 QUARANTINE_DIR = "quarantine"
+BLOBS_DIR = "blobs"
 PRODUCER_FILE = "producer.json"
 BUDGETS_FILE = "budgets.json"
 WORKER_FILE = "worker.json"
@@ -40,16 +45,35 @@ GAP_MAX_SESSIONS = 200
 GAP_MAX_RUN_IDS = 20
 GAP_MAX_REQUEST_IDS = 50
 
+BLOB_KEY = "$blob"
+#: The serialized reference as the writer emits it; version 2 lines contain these bytes only as references.
+BLOB_REFERENCE = b'{"$blob":"'
+#: Any value inside event data whose compact JSON is larger than this moves to a blob.
+BLOB_VALUE_BYTES = 16 * 1024
+#: Default of ``TRAJECTORY_SPOOL_BLOB_MIN_BYTES``: ``request.prepared`` inputs larger than this move to blobs.
+BLOB_MIN_BYTES = 1024
+#: A writer refreshes the mtime of a blob it references at most this often.
+BLOB_REFRESH_SECONDS = 60.0
+#: The worker deletes a blob only when its mtime is older than every data file by this much. It must exceed
+#: ``BLOB_REFRESH_SECONDS`` plus the longest time a writer keeps a data file open.
+BLOB_MARGIN_SECONDS = 600.0
+
 BUDGET_LEVELS = ("normal", "degraded", "blocked")
 
 _FILE_NAME = re.compile(r"^(\d{20})\.jsonl(\.part)?$")
+_BLOB_NAME = re.compile(r"[0-9a-f]{64}")
 _HOST_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 _EVENT_PREFIX = b'{"v":1,"k":"event","n":'
 _CONTROL_PREFIX = b'{"v":1,"k":"control","n":'
+BLOB_EVENT_PREFIX = b'{"v":2,"k":"event","n":'
 
 
 def _is_version(value) -> bool:
     return type(value) is int and value == VERSION
+
+
+def _is_line_version(value) -> bool:
+    return type(value) is int and value in LINE_VERSIONS
 
 
 class SpoolFormatError(ValueError):
@@ -79,8 +103,10 @@ def timestamp(epoch: float | None = None) -> str:
     return timestamp_bytes(time.time() if epoch is None else epoch).decode()
 
 
-def encode_event_line(n: int, t: bytes, event_json: bytes) -> bytes:
-    return b"".join((_EVENT_PREFIX, b"%d" % n, b',"t":"', t, b'","event":', event_json, b"}\n"))
+def encode_event_line(n: int, t: bytes, event_json: bytes, *, version: int = VERSION) -> bytes:
+    """A version 1 line, or version 2 (``BLOB_VERSION``) for an event holding blob references."""
+    prefix = BLOB_EVENT_PREFIX if version == BLOB_VERSION else _EVENT_PREFIX
+    return b"".join((prefix, b"%d" % n, b',"t":"', t, b'","event":', event_json, b"}\n"))
 
 
 def encode_control_line(n: int, t: bytes, control_json: bytes) -> bytes:
@@ -88,15 +114,19 @@ def encode_control_line(n: int, t: bytes, control_json: bytes) -> bytes:
 
 
 def decode_line(line: bytes) -> dict:
-    """Validate one complete line; unknown top-level keys are kept and ignored."""
+    """Validate one complete line; unknown top-level keys are kept and ignored.
+
+    A version 2 event still holds its blob references; ``spool_reader.read_batch``
+    returns lines with them resolved.
+    """
     try:
         record = orjson.loads(line)
     except orjson.JSONDecodeError as exc:
         raise SpoolFormatError("Spool line is not JSON") from exc
     if not isinstance(record, dict):
         raise SpoolFormatError("Spool line must be an object")
-    # Exact integer 1: true and 1.0 compare equal to 1 but are not version 1.
-    if not _is_version(record.get("v")):
+    # Exact integers only: true and 1.0 compare equal to 1 but are not version 1.
+    if not _is_line_version(record.get("v")):
         raise UnsupportedSpoolVersion("Unsupported spool format version")
     kind, n = record.get("k"), record.get("n")
     if kind not in (KIND_EVENT, KIND_CONTROL):
@@ -123,6 +153,15 @@ def parse_file_name(name: str) -> tuple[int, bool] | None:
     if match is None:
         return None
     return int(match.group(1)), match.group(2) is None
+
+
+def blobs_dir(spool_dir: Path) -> Path:
+    return Path(spool_dir) / BLOBS_DIR
+
+
+def is_blob_name(name: str) -> bool:
+    """A blob file name: the sha256 of the file's content, 64 lowercase hex digits."""
+    return _BLOB_NAME.fullmatch(name) is not None
 
 
 def producer_id(started: float, hostname: str, pid: int, token: str) -> str:
@@ -194,25 +233,34 @@ def write_json_atomic(path: Path, value, *, mode: int = FILE_MODE) -> None:
 
 
 def spool_usage_bytes(spool_dir: Path) -> int:
-    """Sum of file sizes under ``producers/`` (one directory per producer)."""
-    total = 0
+    """Sum of file sizes under ``producers/`` (one directory per producer) and ``blobs/``."""
+    try:
+        total = _file_bytes(blobs_dir(spool_dir))
+    except FileNotFoundError:
+        total = 0
     try:
         producers = list(os.scandir(Path(spool_dir) / PRODUCERS_DIR))
     except FileNotFoundError:
-        return 0
+        return total
     for producer in producers:
         try:
             if not producer.is_dir(follow_symlinks=False):
                 continue
-            entries = list(os.scandir(producer.path))
+            total += _file_bytes(producer.path)
         except OSError:
             continue
-        for entry in entries:
-            try:
-                if entry.is_file(follow_symlinks=False):
-                    total += entry.stat(follow_symlinks=False).st_size
-            except OSError:
-                continue
+    return total
+
+
+def _file_bytes(directory) -> int:
+    """Sizes of the regular files directly inside ``directory``; raises when it cannot be listed."""
+    total = 0
+    for entry in list(os.scandir(directory)):
+        try:
+            if entry.is_file(follow_symlinks=False):
+                total += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
     return total
 
 

@@ -475,6 +475,7 @@ def summary_rules(events: list[dict], running_status: str, model: str | None) ->
 
 SUMMARY_RULE_FAMILIES = frozenset({"run", "permission", "question"})
 
+
 def _row_metadata(session, trajectory, summary, owner, workspace) -> dict:
     stats = dict(summary.statistics) if summary else contribution(None)
     for key in HIDDEN_STATISTICS:

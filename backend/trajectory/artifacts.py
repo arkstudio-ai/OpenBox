@@ -14,7 +14,7 @@ import httpx
 
 from trajectory.config import enabled
 from trajectory.context import TraceContext, current
-from trajectory.emitter import emit_control
+from trajectory.emitter import emit, emit_after_commit, emit_control
 from trajectory.types import iso, now
 
 
@@ -47,6 +47,27 @@ def _reference(context: TraceContext, *, asset_id: str, oss_key: str, media_type
     return reference, data, event_id
 
 
+async def _record_use(db, context: TraceContext, data: dict, event_id: str) -> None:
+    """Enqueue the first use of an asset in a trajectory; later uses add no fact.
+
+    All uses share one event id, so a later use (another turn, role or period
+    baseline) only reached the worker as a keep-first conflict, and the first
+    fact stays what the worker projects. A use counts once its transaction
+    commits, or once the emitter accepts it without ``db``. Across processes
+    the worker still keeps the first copy.
+    """
+    from trajectory.producers import claim_once, release_claim
+    key = ("artifact.recorded", event_id)
+    if not claim_once(db, key):
+        return
+    if db is None:
+        enqueued = emit("artifact.recorded", data, context=context, event_id=event_id)
+    else:
+        enqueued = emit_after_commit(db, "artifact.recorded", data, context=context, event_id=event_id)
+    if enqueued is None:
+        release_claim(db, key)
+
+
 def _unavailable(context: TraceContext, asset) -> dict | None:
     """The reference of an asset use that is not recorded, or None when it is."""
     if asset.user_id != context.user_id and not (
@@ -66,11 +87,10 @@ async def capture_asset_in_tx(db, context: TraceContext | None, asset, *, role: 
     skipped = _unavailable(context, asset)
     if skipped is not None:
         return skipped
-    from trajectory import record
     reference, data, event_id = _reference(context, asset_id=asset.id, oss_key=asset.oss_key,
                                            media_type=asset.mime, size_bytes=asset.size,
                                            name=asset.name, role=role)
-    await record("artifact.recorded", data, context=context, db=db, event_id=event_id)
+    await _record_use(db, context, data, event_id)
     return reference
 
 
@@ -81,11 +101,10 @@ async def capture_asset(context: TraceContext | None, asset, *, role: str = "inp
     skipped = _unavailable(context, asset)
     if skipped is not None:
         return skipped
-    from trajectory import record
     reference, data, event_id = _reference(context, asset_id=asset.id, oss_key=asset.oss_key,
                                            media_type=asset.mime, size_bytes=asset.size,
                                            name=asset.name, role=role)
-    await record("artifact.recorded", data, context=context, event_id=event_id)
+    await _record_use(None, context, data, event_id)
     return reference
 
 
@@ -95,10 +114,9 @@ async def capture_asset_reference(context: TraceContext | None, *, asset_id: str
     """Record one use of an owned, ready asset whose row the caller already checked."""
     if context is None or not enabled(context.user_id):
         return None
-    from trajectory import record
     reference, data, event_id = _reference(context, asset_id=asset_id, oss_key=oss_key, media_type=media_type,
                                            size_bytes=size_bytes, name=name, role=role)
-    await record("artifact.recorded", data, context=context, event_id=event_id)
+    await _record_use(None, context, data, event_id)
     return reference
 
 

@@ -27,10 +27,11 @@ async def _begin_restore(session_id: str, user_id: str, *, operation: str,
     from trajectory.producers import baseline_candidate_in_tx, session_context
     if _engine is None:
         return None, None
+    recording = enabled(user_id)
     async with get_db_session() as db:
-        context = await session_context(db, user_id, session_id) if enabled(user_id) else None
+        context = await session_context(db, user_id, session_id) if recording else None
         await baseline_candidate_in_tx(db, user_id=user_id, session_id=session_id,
-                                       context=context, pause=context is None)
+                                       context=context, pause=not recording)
     if context is None:
         return None, None
     from core.identifier import ascending

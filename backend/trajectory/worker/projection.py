@@ -46,6 +46,7 @@ _CHUNK = 500
 _REF_SIZE = len(canonical({"$ref": {"sha256": "0" * 64, "size_bytes": 0, "media_type": JSON_MEDIA_TYPE,
                                     "kind": "value", "payload_id": "pld_" + "0" * 32}}))
 _LOG_EVERY_SECONDS = 60.0
+_LOGGED_LIMIT = 1000
 
 
 def _setting(settings, name: str, env: str, default: int) -> int:
@@ -212,6 +213,8 @@ class ProjectionService:
     def _log_failure(self, trajectory_id: str, exc: Exception) -> None:
         key, at = (trajectory_id, type(exc).__name__), time.monotonic()
         if at - self._logged.get(key, -_LOG_EVERY_SECONDS) >= _LOG_EVERY_SECONDS:
+            if len(self._logged) >= _LOGGED_LIMIT:
+                self._logged = {item: logged for item, logged in self._logged.items() if at - logged < _LOG_EVERY_SECONDS}
             self._logged[key] = at
             # Type only: messages of storage and database errors can carry content.
             log.warning("Trajectory projection failed trajectory_id=%s error_type=%s", trajectory_id, type(exc).__name__)

@@ -30,6 +30,7 @@ from trajectory.storage import MemoryBlobStore
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine
 from trajectory.worker import embedded
 from trajectory.worker.app import check_schema, database_ok
+from trajectory.worker.metrics import trace_db_bytes
 
 URL = os.environ.get("TRAJECTORY_TRACE_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(not URL, reason="TRAJECTORY_TRACE_TEST_DATABASE_URL is not set")
@@ -66,6 +67,14 @@ async def trace_engine(trace_url):
 def migrations_env(monkeypatch):
     monkeypatch.setenv("TRAJECTORY_DATABASE_URL", URL)
     monkeypatch.delenv("DATABASE_URL", raising=False)
+
+
+async def test_trace_db_size_is_the_postgresql_database_size(trace_engine):
+    async with trace_engine.connect() as connection:
+        reported = await connection.scalar(text("SELECT pg_database_size(current_database())"))
+    size = await trace_db_bytes(trace_engine)
+    assert isinstance(size, int) and size > 0
+    assert abs(size - reported) < 1024 * 1024  # the same measure, a moment apart
 
 
 async def test_embedded_worker_migrates_postgresql_outside_the_event_loop(migrations_env, monkeypatch):

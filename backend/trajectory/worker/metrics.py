@@ -3,15 +3,23 @@
 The names are the contract with ``trajectory.ops.cms`` and the gw2 drills, so a
 snapshot always lists every one of them. The registry is process-wide and
 thread-safe (blob uploads and file scans may report from worker threads), and
-recording a value never raises.
+recording a value never raises. The worker services set the gauges of their
+own loops; ``TraceDbSizeSampler`` samples ``trace_db_bytes`` every 5 minutes.
 """
+import asyncio
 import math
+import os
 import threading
 import time
+
+from sqlalchemy import text
 
 from core.log import create_logger
 
 log = create_logger("trajectory.worker.metrics")
+
+#: SPEC §8.13: ``trace_db_bytes`` is sampled every 5 minutes.
+TRACE_DB_SAMPLE_SECONDS = 300.0
 
 COUNTERS = (
     "ingest_lines", "ingest_events", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
@@ -95,3 +103,66 @@ def reset_metrics_for_tests() -> None:
     global _metrics
     with _metrics_lock:
         _metrics = None
+
+
+def _sqlite_bytes(database: str) -> int:
+    """The SQLite database file together with its WAL and shared-memory files."""
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += os.stat(database + suffix).st_size
+        except FileNotFoundError:
+            continue
+    return total
+
+
+async def trace_db_bytes(engine) -> int | None:
+    """Bytes the trace database occupies: ``pg_database_size`` on PostgreSQL, its files on SQLite.
+
+    None when there is nothing on disk to measure (an in-memory SQLite database).
+    """
+    if engine.dialect.name == "postgresql":
+        async with engine.connect() as connection:
+            return int(await connection.scalar(text("SELECT pg_database_size(current_database())")))
+    database = engine.url.database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return None
+    return await asyncio.to_thread(_sqlite_bytes, database)
+
+
+class TraceDbSizeSampler:
+    """Keeps the ``trace_db_bytes`` gauge current: one sample at start, then one per interval."""
+
+    def __init__(self, *, interval: float = TRACE_DB_SAMPLE_SECONDS, metrics: Metrics | None = None):
+        self._interval = interval
+        self._metrics = metrics
+        self._task: asyncio.Task | None = None
+
+    async def sample_once(self) -> int | None:
+        from trajectory.store.database import get_trace_engine
+        size = await trace_db_bytes(get_trace_engine())
+        if size is not None:
+            (self._metrics or get_metrics()).set_gauge("trace_db_bytes", size)
+        return size
+
+    def start(self) -> asyncio.Task:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run(), name="trajectory-trace-db-size")
+        return self._task
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.sample_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("Trace database size sample failed error_type=%s", type(exc).__name__)
+            await asyncio.sleep(self._interval)

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from core.log import create_logger
 from trajectory.config import BACKEND_DIR, integer, spool_dir
 from trajectory.worker import routes, ws
-from trajectory.worker.metrics import get_metrics
+from trajectory.worker.metrics import TraceDbSizeSampler, get_metrics
 
 log = create_logger("trajectory.worker.app")
 
@@ -135,6 +135,9 @@ def _auth_stores():
     from core.config import get_config
     config = get_config()
     if not config.jwt_secret:
+        # Every request is then the single-user desktop administrator "default";
+        # a server worker must share JWT_SECRET (and REDIS_URL) with the backend.
+        log.warning("JWT_SECRET is not set: the trajectory worker serves the single-user desktop identity")
         from cache.memory_cache import MemoryCache
         cache = MemoryCache()
         init_ticket_store(cache)
@@ -186,6 +189,9 @@ def create_app(*, database_url: str | None = None, blob_store=None,
             delivery = AuditDelivery(client)
             delivery.start()
             stack.push_async_callback(delivery.stop)
+            sampler = TraceDbSizeSampler()
+            sampler.start()
+            stack.push_async_callback(sampler.stop)
             app.state.worker = WorkerRuntime(services=services, blob_store=store, spool_dir=spool_dir())
             stack.callback(setattr, app.state, "worker", None)
             log.info("Trajectory worker serving writer=%s", getattr(services, "is_writer", False))

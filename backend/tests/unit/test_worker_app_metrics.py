@@ -1,9 +1,15 @@
 """Worker metrics registry: the exact SPEC §8.13 names, counters, gauges and the /metrics snapshot."""
+import asyncio
+import os
 import threading
 
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from tests.unit.test_worker_app_harness import trace_engine, trace_url  # noqa: F401
 from trajectory.ops import cms
 from trajectory.worker import metrics as metrics_module
-from trajectory.worker.metrics import COUNTERS, GAUGES, Metrics, get_metrics, reset_metrics_for_tests
+from trajectory.worker.metrics import (COUNTERS, GAUGES, TRACE_DB_SAMPLE_SECONDS, Metrics, TraceDbSizeSampler,
+    get_metrics, reset_metrics_for_tests, trace_db_bytes)
 
 
 def test_names_are_exactly_the_spec_and_cover_the_cloudmonitor_push():
@@ -81,3 +87,47 @@ def test_process_registry_is_shared_until_reset():
     assert get_metrics() is first and get_metrics().snapshot()["counters"]["exports_built"] == 1
     reset_metrics_for_tests()
     assert get_metrics() is not first and get_metrics().snapshot()["counters"]["exports_built"] == 0
+
+
+async def test_trace_db_size_counts_the_sqlite_database_files(trace_engine):
+    registry = Metrics()
+    size = await TraceDbSizeSampler(metrics=registry).sample_once()
+    database = trace_engine.url.database
+    on_disk = sum(os.stat(database + suffix).st_size for suffix in ("", "-wal", "-shm")
+                  if os.path.exists(database + suffix))
+    assert size == on_disk and size > 0
+    assert registry.snapshot()["gauges"]["trace_db_bytes"] == size
+
+
+async def test_an_in_memory_trace_database_has_nothing_to_measure():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        assert await trace_db_bytes(engine) is None
+    finally:
+        await engine.dispose()
+
+
+async def test_the_size_sampler_runs_every_interval_survives_failures_and_stops(monkeypatch):
+    registry = Metrics()
+    answers = [RuntimeError("database restarting"), 4096]
+
+    async def measured(engine):
+        answer = answers.pop(0) if answers else 8192
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(metrics_module, "trace_db_bytes", measured)
+    monkeypatch.setattr("trajectory.store.database.get_trace_engine", lambda: "engine")
+    sampler = TraceDbSizeSampler(metrics=registry, interval=0.01)
+    task = sampler.start()
+    assert sampler.start() is task
+    for _ in range(300):
+        if registry.snapshot()["gauges"]["trace_db_bytes"] == 8192:
+            break
+        await asyncio.sleep(0.01)
+    assert registry.snapshot()["gauges"]["trace_db_bytes"] == 8192 and not answers
+    await sampler.stop()
+    assert task.cancelled()
+    await sampler.stop()
+    assert TRACE_DB_SAMPLE_SECONDS == 300.0 and TraceDbSizeSampler()._interval == 300.0

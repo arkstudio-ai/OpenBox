@@ -55,11 +55,14 @@ async def test_route_table_is_the_admin_contract_plus_additive_routes():
 
 async def test_authorization_wins_over_validation_and_every_answer_is_no_store(worker, monkeypatch):
     async with _client(worker) as anonymous:
-        for path in ("/sessions?limit=invalid", "/sessions/session_a_1/events?until_seq=invalid"):
+        for path in ("/sessions?limit=invalid", "/sessions/session_a_1/events?until_seq=invalid",
+                     "/sessions/session_a_1/blobs/NOT-A-SHA", "/sessions/session_a_1/records/x?expand=none"):
             response = await anonymous.get(PREFIX + path)
             assert response.status_code == 401 and response.headers["cache-control"] == "no-store"
     async with _client(worker, {"Authorization": f"Bearer {token('a', 'admin')}"}) as member:
         for method, path in (("GET", "/sessions?limit=0"), ("GET", "/sessions/session_a_1"),
+                             ("GET", "/sessions/session_a_1/blobs/NOT-A-SHA"),
+                             ("GET", "/sessions/session_a_1/payloads/pld_media?meta=1"),
                              ("POST", "/sessions/session_a_1/export"), ("POST", "/ticket")):
             response = await member.request(method, PREFIX + path)
             assert response.status_code == 403, response.text

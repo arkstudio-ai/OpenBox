@@ -114,6 +114,12 @@ async def test_lifespan_owns_services_backend_and_engine(trace_url, internal_bac
 
     app = create_app(database_url=trace_url, blob_store=blob, services_factory=factory, backend=http_backend,
                      cache=auth_stores)
+    reset_metrics_for_tests()
+    import asyncio
+
+    def sampler_tasks():
+        return [task for task in asyncio.all_tasks() if task.get_name() == "trajectory-trace-db-size"]
+
     async with app.router.lifespan_context(app):
         assert built == [blob] and (services.started, services.stopped) == (1, 0)
         assert trajectory_auth.get_backend() is http_backend
@@ -122,7 +128,15 @@ async def test_lifespan_owns_services_backend_and_engine(trace_url, internal_bac
                                      headers={"Authorization": f"Bearer {token()}"}) as client:
             assert (await client.get(PREFIX + "/sessions")).status_code == 200
             assert (await client.get("/health")).json()["writer"] is False
+            # SPEC §8.13: the worker samples the trace database size itself.
+            for _ in range(300):
+                if (await client.get("/metrics")).json()["gauges"]["trace_db_bytes"] > 0:
+                    break
+                await asyncio.sleep(0.01)
+            assert (await client.get("/metrics")).json()["gauges"]["trace_db_bytes"] > 0
+        assert len(sampler_tasks()) == 1
     assert (services.started, services.stopped) == (1, 1)
+    assert sampler_tasks() == []
     with pytest.raises(RuntimeError):
         get_trace_engine()
     assert trajectory_auth._backend is None and app.state.worker is None

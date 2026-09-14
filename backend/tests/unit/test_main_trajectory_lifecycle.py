@@ -139,6 +139,20 @@ def test_admin_trajectory_routes_are_mounted_only_in_embedded_mode(monkeypatch, 
     assert app.state.trajectory_worker_mode == (mode or ("external" if secret else "embedded"))
 
 
+@pytest.mark.parametrize("failure", ["raises", "missing"])
+def test_admin_routes_that_cannot_be_mounted_never_keep_the_business_app_from_building(monkeypatch, failure):
+    monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(jwt_secret=""))
+    monkeypatch.delenv("TRAJECTORY_WORKER_MODE", raising=False)
+    if failure == "missing":
+        monkeypatch.setitem(sys.modules, "trajectory.worker.embedded", None)
+    else:
+        from trajectory.worker import embedded
+        monkeypatch.setattr(embedded, "mount_admin_routers", MagicMock(side_effect=ImportError("zstandard")))
+    app = main.create_app()
+    assert app.state.trajectory_worker_mode == "embedded" and admin_routes(app) == []
+    assert "/api/internal/trajectory/viewer" in {route.path for route in app.routes}
+
+
 async def test_embedded_lifespan_runs_emitter_meta_sync_and_worker(quiet_backend, recording, events, monkeypatch):
     from trajectory.worker import embedded
     monkeypatch.setattr("core.config.get_config", lambda: OpenBoxConfig(jwt_secret=""))

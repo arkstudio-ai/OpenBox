@@ -376,8 +376,13 @@ def create_app() -> FastAPI:
     if application.state.trajectory_worker_mode == "embedded":
         # Otherwise the trajectory worker serves the admin trajectory API and
         # socket, and nothing here may import the worker or the trace store.
-        from trajectory.worker.embedded import mount_admin_routers
-        mount_admin_routers(application)
+        try:
+            from trajectory.worker.embedded import mount_admin_routers
+            mount_admin_routers(application)
+        except Exception as e:
+            # Trajectory administration is fail-open like recording: it never
+            # keeps the business app from being built.
+            log.warning(f"Admin trajectory routes are unavailable: {type(e).__name__}: {e}")
 
     from api.billing import router as billing_router
     application.include_router(billing_router)

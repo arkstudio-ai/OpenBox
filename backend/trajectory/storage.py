@@ -322,6 +322,8 @@ class LocalBlobStore:
             yield key
 
     def _write(self, path: Path, data: bytes, if_absent: bool) -> None:
+        # Check-then-write is enough here: if_absent keys are content addressed
+        # (a racing duplicate writes the same bytes) and one worker writes (§8.1).
         if if_absent and path.is_file():
             return
         fd, temp = _temp_file(path.parent)

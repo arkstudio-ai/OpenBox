@@ -559,7 +559,7 @@ async def ensure_payload_rows(db, trajectory_id: str, blobs: list[dict], *,
     if not missing:
         return rows, 0
     at = now()
-    created = {blob["dedupe_key"]: f"pld_{uuid4().hex}" for blob in missing}
+    created = {blob["dedupe_key"]: blob.get("payload_id") or f"pld_{uuid4().hex}" for blob in missing}
     for chunk in _chunks(missing):
         statement = _insert(db, TrajectoryPayload).values([
             {"payload_id": created[blob["dedupe_key"]], "trajectory_id": trajectory_id, "dedupe_key": blob["dedupe_key"],

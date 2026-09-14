@@ -94,10 +94,11 @@ def _has_reference(value) -> bool:
 
 
 def _field_preview(data, field, hints):
-    # The trace worker stores large values as references; hints.preview keeps
-    # the preview the original value had (computed before externalization).
+    # The trace worker stores large values as references, and JSONB or JSON
+    # blobs do not keep key order; hints.preview holds the preview of the
+    # original value (computed before storage), so a structured value uses it.
     value = data.get(field)
-    if hints and _has_reference(value):
+    if hints and (not isinstance(value, str) or _has_reference(value)):
         preview = (hints.get("preview") or {}).get(field)
         if isinstance(preview, str):
             return preview

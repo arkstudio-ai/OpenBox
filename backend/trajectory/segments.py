@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import zstandard
 
 from trajectory.storage import ZSTD_LEVEL, decode_blob
-from trajectory.types import CorruptContent, canonical
+from trajectory.types import CorruptContent
 
 #: Keys of one segment line, in the order of SPEC 8.10.
 SEGMENT_FIELDS = (
@@ -33,6 +33,12 @@ def _timestamp(value) -> str:
     if isinstance(value, str) and value:
         return value
     raise ValueError(f"Invalid segment timestamp: {value!r}")
+
+
+def _line(row: dict) -> bytes:
+    # Compact JSON in SEGMENT_FIELDS order that keeps the stored key order of
+    # context, data and hints: reducers preview structured values as stored.
+    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
 
 def segment_row(event) -> dict:
@@ -68,7 +74,7 @@ def encode_segment(rows: list[dict]) -> tuple[bytes, dict]:
         if row["trajectory_id"] != trajectory_id:
             raise ValueError("A segment holds events of one trajectory")
         line["occurred_at"], line["recorded_at"] = _timestamp(row["occurred_at"]), _timestamp(row["recorded_at"])
-        lines.append(canonical(line))
+        lines.append(_line(line))
     raw = b"\n".join(lines) + b"\n"
     stored = zstandard.ZstdCompressor(level=ZSTD_LEVEL).compress(raw)
     return stored, {"sha256": hashlib.sha256(raw).hexdigest(), "raw_bytes": len(raw), "stored_bytes": len(stored),

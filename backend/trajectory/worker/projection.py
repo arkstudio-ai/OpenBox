@@ -16,6 +16,7 @@ the trajectory row and gives up when the trajectory was deleted, expired or
 projected by someone else in the meantime.
 """
 import asyncio
+import hashlib
 import time
 from datetime import datetime, timezone
 
@@ -79,15 +80,36 @@ def search_doc(record: dict) -> str:
     return text.replace("\x00", "")[:SEARCH_DOC_CHARS]
 
 
-class _Externalizer:
-    """Replaces large values inside records by ``$ref`` envelopes whose payload
-    ids are filled in once the payload rows exist."""
+def reference_id(trajectory_id: str, dedupe_key: str) -> str:
+    """Payload id of a record value stored by projection, derived from its content.
 
-    def __init__(self, trajectory_id: str, inline_bytes: int):
+    A container that holds a reference is serialized (and hashed) with that
+    reference's payload id, so the id must be known before any row exists.
+    """
+    return "pld_" + hashlib.sha256(f"{trajectory_id}:{dedupe_key}".encode()).hexdigest()[:32]
+
+
+class _ReferenceRace(Exception):
+    """Another writer stored a record value under a different payload id meanwhile."""
+
+
+#: Rounds of re-serializing records after finding values already stored under
+#: other payload ids; each round settles one more level of nesting.
+_REFERENCE_ROUNDS = EXTERNALIZE_DEPTH + 2
+
+
+class _Externalizer:
+    """Replaces large values inside records by ``$ref`` envelopes.
+
+    ``known`` maps the dedupe keys of values already stored under another
+    payload id (by ingest, for example); every other value uses reference_id.
+    """
+
+    def __init__(self, trajectory_id: str, inline_bytes: int, known: dict[str, str]):
         self.trajectory_id = trajectory_id
         self.inline_bytes = inline_bytes
+        self.known = known
         self.blobs: dict[str, dict] = {}
-        self.pending: dict[str, list[dict]] = {}
 
     def record(self, record: dict) -> dict:
         result = dict(record)
@@ -127,16 +149,10 @@ class _Externalizer:
 
     def _reference(self, value) -> dict:
         blob = json_blob(self.trajectory_id, value)
+        blob["payload_id"] = self.known.get(blob["dedupe_key"]) or reference_id(self.trajectory_id, blob["dedupe_key"])
         self.blobs.setdefault(blob["dedupe_key"], blob)
-        info = {"sha256": blob["sha256"], "size_bytes": blob["size_bytes"], "media_type": JSON_MEDIA_TYPE,
-                "kind": "value", "payload_id": None}
-        self.pending.setdefault(blob["dedupe_key"], []).append(info)
-        return {"$ref": info}
-
-    def resolve(self, rows: dict) -> None:
-        for key, infos in self.pending.items():
-            for info in infos:
-                info["payload_id"] = rows[key].payload_id
+        return {"$ref": {"sha256": blob["sha256"], "size_bytes": blob["size_bytes"], "media_type": JSON_MEDIA_TYPE,
+                         "kind": "value", "payload_id": blob["payload_id"]}}
 
 
 def _summary_rules(events: list[dict], running_status: str, model: str | None) -> tuple[str, str | None, bool]:
@@ -241,28 +257,45 @@ class ProjectionService:
             links.update((record_id, int(event["seq"])) for record_id, value in state["records"].items()
                          if previous.get(record_id) is not value)
         touched = sorted({record_id for record_id, _ in links})
-        externalizer = _Externalizer(trajectory_id, self.record_inline_bytes)
-        prepared = [externalizer.record(state["records"][record_id]) for record_id in touched]
-        if externalizer.blobs:
-            async with trace_session() as db:
-                present = await existing_payloads(db, trajectory_id, externalizer.blobs)
-            await upload_json_blobs(self.blob_store, [blob for key, blob in externalizer.blobs.items() if key not in present],
-                                    metrics=self.metrics)
+        prepared, blobs = await self._externalize(trajectory_id, [state["records"][record_id] for record_id in touched])
         events = [event for event, _ in batch]
-        async with trace_session() as db:
-            locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
-            if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
-                    or locked.projected_seq != base):
-                return 0
-            inserted = 0
-            if externalizer.blobs:
-                payloads, inserted = await ensure_payload_rows(db, trajectory_id, list(externalizer.blobs.values()), first_seq=until)
-                externalizer.resolve(payloads)
-            await self._write_records(db, trajectory_id, prepared, links)
-            await self._write_summary(db, locked, events, state, before, until)
-            locked.projected_seq = until
-            locked.stored_bytes = (locked.stored_bytes or 0) + inserted
+        try:
+            async with trace_session() as db:
+                locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).with_for_update())
+                if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
+                        or locked.projected_seq != base):
+                    return 0
+                inserted = 0
+                if blobs:
+                    payloads, inserted = await ensure_payload_rows(db, trajectory_id, list(blobs.values()), first_seq=until)
+                    if any(payloads[key].payload_id != blob["payload_id"] for key, blob in blobs.items()):
+                        raise _ReferenceRace()
+                await self._write_records(db, trajectory_id, prepared, links)
+                await self._write_summary(db, locked, events, state, before, until)
+                locked.projected_seq = until
+                locked.stored_bytes = (locked.stored_bytes or 0) + inserted
+        except _ReferenceRace:
+            # Rolled back; the next pass serializes the records with that row's id.
+            return 0
         return len(events)
+
+    async def _externalize(self, trajectory_id: str, records: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+        """(records with large values as ``$ref``, their blobs by dedupe key), every new blob uploaded."""
+        known: dict[str, str] = {}
+        for _ in range(_REFERENCE_ROUNDS):
+            externalizer = _Externalizer(trajectory_id, self.record_inline_bytes, known)
+            prepared = [externalizer.record(record) for record in records]
+            if not externalizer.blobs:
+                return prepared, {}
+            async with trace_session() as db:
+                rows = await existing_payloads(db, trajectory_id, externalizer.blobs)
+            stale = {key: row.payload_id for key, row in rows.items() if row.payload_id != externalizer.blobs[key]["payload_id"]}
+            if not stale:
+                await upload_json_blobs(self.blob_store, [blob for key, blob in externalizer.blobs.items() if key not in rows],
+                                        metrics=self.metrics)
+                return prepared, externalizer.blobs
+            known.update(stale)
+        raise CorruptContent("Record value references did not settle")
 
     async def _affected(self, db, trajectory_id: str, events: list[dict]) -> set[str]:
         ids, message_ids, system_keys, run_ids = set(), set(), set(), set()

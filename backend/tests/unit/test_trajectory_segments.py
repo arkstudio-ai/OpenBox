@@ -1,5 +1,6 @@
 """Cold event segments (SPEC 8.10): canonical JSONL lines, zstd, sha256 of the raw lines, verified loads."""
 import hashlib
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -45,13 +46,22 @@ def test_round_trip_keeps_every_field_and_reports_its_metadata():
     assert encode_segment(rows) == (stored, meta)
     lines = raw.split(b"\n")
     assert lines[-1] == b"" and len(lines) == 5
-    # Canonical lines: sorted keys, compact separators, UTF-8 text.
-    assert lines[0] == canonical({**_row(5), "occurred_at": "2026-09-14T08:00:00.123456Z",
-                                  "recorded_at": "2026-09-14T08:00:00.123456Z"})
+    # Compact UTF-8 lines in SEGMENT_FIELDS order.
+    expected = {field: _row(5)[field] for field in SEGMENT_FIELDS}
+    expected.update(occurred_at="2026-09-14T08:00:00.123456Z", recorded_at="2026-09-14T08:00:00.123456Z")
+    assert lines[0] == json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()
     decoded = decode_segment(stored, expected_sha256=meta["sha256"])
     assert [row["seq"] for row in decoded] == [5, 6, 7, 8]
     assert all(set(row) == set(SEGMENT_FIELDS) for row in decoded)
     assert decoded[1]["data"] == {"text": "你好 6"} and decoded[0]["hints"] == {"preview": {"text": "你好"}}
+
+
+def test_nested_objects_keep_their_stored_key_order():
+    # Reducers preview structured values as stored, so a segment must not sort them.
+    stored, _ = encode_segment([_row(1, data={"zeta": {"b": 1, "a": 2}, "alpha": [{"y": 1, "x": 2}]})])
+    [row] = decode_segment(stored)
+    assert list(row["data"]) == ["zeta", "alpha"] and list(row["data"]["zeta"]) == ["b", "a"]
+    assert list(row["data"]["alpha"][0]) == ["y", "x"]
 
 
 def test_timestamps_strings_and_naive_datetimes_are_utc_instants():

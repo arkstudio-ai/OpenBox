@@ -23,8 +23,9 @@ def test_partition_names_round_trip_on_utc_days():
     assert partitions.partition_name_for(datetime(2026, 9, 15, 1, 30, tzinfo=shanghai)) == "trajectory_events_p20260914"
     assert partitions.partition_name_for(datetime(2026, 9, 14, 23, 59)) == "trajectory_events_p20260914"
     for name in ("trajectory_events_default", "trajectory_events_p2026091", "trajectory_events_p20261301",
-                 "other_events_p20260914", "trajectory_events_p20260914; DROP TABLE trajectory_events"):
-        assert partitions.partition_date(name) is None, name
+                 "other_events_p20260914", "trajectory_events_p20260914; DROP TABLE trajectory_events",
+                 "trajectory_events_p20260914\n", " trajectory_events_p20260914", "trajectory_events_p20260914x"):
+        assert partitions.partition_date(name) is None, repr(name)
 
 
 async def test_invalid_arguments_fail_before_any_database_work():
@@ -32,6 +33,8 @@ async def test_invalid_arguments_fail_before_any_database_work():
         await partitions.drop_partition_if_empty(Untouchable(), partitions.DEFAULT_PARTITION)
     with pytest.raises(ValueError):
         await partitions.drop_partition_if_empty(Untouchable(), "trajectory_events")
+    with pytest.raises(ValueError):
+        await partitions.drop_partition_if_empty(Untouchable(), "trajectory_events_p20260914\n")
     with pytest.raises(ValueError):
         await partitions.ensure_partitions(Untouchable(), date(2026, 9, 14), -1)
 

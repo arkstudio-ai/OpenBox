@@ -13,6 +13,12 @@ deadlock with them, so the helpers first take every lock inside a savepoint
 with a short ``lock_timeout``, release everything and retry when any lock is
 busy, and run DDL only once all locks are held. Call them in a short
 transaction of their own; the caller commits.
+
+That transaction must be READ COMMITTED (the engine default). The helpers
+decide from what their statements see whether a partition is empty and which
+default-partition rows must move; a REPEATABLE READ or SERIALIZABLE snapshot
+misses rows committed after it was taken, and dropping a partition on that
+evidence would destroy those rows. The helpers refuse to run at those levels.
 """
 import asyncio
 import re
@@ -29,19 +35,24 @@ log = create_logger("trajectory.store.partitions")
 EVENTS_TABLE = "trajectory_events"
 DEFAULT_PARTITION = "trajectory_events_default"
 PARTITION_PREFIX = "trajectory_events_p"
-_PARTITION_NAME = re.compile(r"^trajectory_events_p(\d{8})$")
+_PARTITION_NAME = re.compile(r"trajectory_events_p([0-9]{8})")
 
 #: Wait per lock, far below PostgreSQL's 1 s deadlock_timeout.
 LOCK_TIMEOUT_MS = 100
 LOCK_ATTEMPTS = 20
 LOCK_RETRY_SECONDS = 0.1
 _LOCK_NOT_AVAILABLE = "55P03"
+_READ_COMMITTED = "read committed"
 
 T = TypeVar("T")
 
 
 class PartitionLockUnavailable(RuntimeError):
     """The locks needed for partition DDL stayed busy for every attempt."""
+
+
+class PartitionIsolationError(RuntimeError):
+    """Partition DDL was called in a transaction that cannot see rows committed after its snapshot."""
 
 
 def _utc_day(value: date) -> date:
@@ -57,7 +68,7 @@ def partition_name_for(day: date) -> str:
 
 def partition_date(name: str) -> date | None:
     """The day covered by a daily partition name, or None for any other name."""
-    match = _PARTITION_NAME.match(name)
+    match = _PARTITION_NAME.fullmatch(name)
     if match is None:
         return None
     try:
@@ -70,6 +81,13 @@ def _is_postgresql(conn) -> bool:
     """``conn`` is an ``AsyncConnection`` or an ``AsyncSession``."""
     dialect = getattr(conn, "dialect", None) or conn.get_bind().dialect
     return dialect.name == "postgresql"
+
+
+async def _require_read_committed(conn) -> None:
+    isolation = (await conn.execute(text("SELECT current_setting('transaction_isolation')"))).scalar_one()
+    if isolation != _READ_COMMITTED:
+        raise PartitionIsolationError(
+            f"{EVENTS_TABLE} partition maintenance needs a READ COMMITTED transaction, not {isolation.upper()}")
 
 
 async def list_partitions(conn) -> list[str]:
@@ -91,12 +109,14 @@ async def ensure_partitions(conn, today: date, days_ahead: int) -> list[str]:
 
     Rows of a new partition's day that already sit in the default partition
     are moved into the new partition in the same transaction. Returns the
-    created names, oldest first. SQLite: ``[]``.
+    created names, oldest first. Raises ``PartitionIsolationError`` outside
+    READ COMMITTED. SQLite: ``[]``.
     """
     if days_ahead < 0:
         raise ValueError("days_ahead must not be negative")
     if not _is_postgresql(conn):
         return []
+    await _require_read_committed(conn)
     first = _utc_day(today)
     days = [first + timedelta(days=offset) for offset in range(days_ahead + 1)]
     existing = set(await list_partitions(conn))
@@ -128,12 +148,14 @@ async def drop_partition_if_empty(conn, name: str) -> bool:
 
     Returns False when it still has rows or is not an attached partition, and
     raises ValueError for anything but a daily partition name (the default
-    partition is never dropped). SQLite: ``False``.
+    partition is never dropped) and ``PartitionIsolationError`` outside READ
+    COMMITTED. SQLite: ``False``.
     """
     if partition_date(name) is None:
         raise ValueError(f"Not a daily trajectory event partition: {name!r}")
     if not _is_postgresql(conn):
         return False
+    await _require_read_committed(conn)
     if name not in await list_partitions(conn) or await _has_rows(conn, name):
         return False
 

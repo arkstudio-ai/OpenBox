@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f7f8f3" />
+    <meta
+      name="description"
+      content="BossIP is a cloud AI workspace for business owners, covering marketing, operations, finance, management, customer service, and analytics."
+    />
+    <meta
+      name="keywords"
+      content="BossIP, AI workspace, business operations AI, marketing AI, finance AI, management AI"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BossIP" />
+    <meta
+      property="og:title"
+      content="BossIP | Cloud AI workspace for business operations"
+    />
+    <meta
+      property="og:description"
+      content="A cloud AI workspace that helps business teams turn daily work into clear plans, actions, and decisions."
+    />
+    <meta property="og:image" content="./bossip-app-icon.svg" />
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="BossIP | Cloud AI workspace for business operations"
+    />
+    <meta
+      name="twitter:description"
+      content="Marketing, operations, finance, management, customer service, and analytics in one cloud AI workspace."
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="canonical" href="/" data-bossip-canonical />
+    <link rel="stylesheet" href="./landing.css" />
+    <title>BossIP | Cloud AI workspace for business operations</title>
+  </head>
+  <body>
+    <header class="site-header" aria-label="BossIP">
+      <a class="brand" href="/" aria-label="BossIP home">
+        <img
+          class="brand-mark"
+          src="./favicon.svg"
+          alt=""
+          width="32"
+          height="32"
+        />
+        <span>BossIP</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#capabilities" data-i18n="nav.capabilities">能力</a>
+        <a href="#workflow" data-i18n="nav.workflow">工作流</a>
+        <a href="#use-cases" data-i18n="nav.useCases">场景</a>
+        <a href="#faq" data-i18n="nav.faq">FAQ</a>
+      </nav>
+      <div class="header-actions">
+        <button
+          class="language-toggle"
+          type="button"
+          data-language-toggle
+          aria-label="Switch language"
+        >
+          EN
+        </button>
+        <a
+          class="ghost-link"
+          href="/"
+          data-config-link="consoleUrl"
+          data-i18n="nav.signIn"
+          >登录</a
+        >
+        <a
+          class="solid-link"
+          href="/"
+          data-config-link="ctaUrl"
+          data-i18n="nav.cta"
+          >立刻开始</a
+        >
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow" data-i18n="hero.eyebrow">
+            给夫妻店和成长型团队的云端 AI 工作台
+          </p>
+          <h1 id="hero-title" data-i18n="hero.title">
+            把经营、运营和管理，交给一个随时在线的 AI 搭档。
+          </h1>
+          <p class="hero-lede" data-i18n="hero.lede">
+            BossIP
+            帮老板把营销、订单、客户、财务和团队管理串在一个工作空间里，从想法到执行都有清晰下一步。
+          </p>
+          <div class="hero-actions">
+            <a
+              class="solid-link large"
+              href="/"
+              data-config-link="ctaUrl"
+              data-i18n="hero.primaryCta"
+              >立刻开始</a
+            >
+            <a
+              class="ghost-link large"
+              href="#capabilities"
+              data-i18n="hero.secondaryCta"
+              >查看能力</a
+            >
+          </div>
+          <dl class="trust-strip" aria-label="Product highlights">
+            <div>
+              <dt data-i18n="hero.metricOneValue">全天候</dt>
+              <dd data-i18n="hero.metricOneLabel">云端可用</dd>
+            </div>
+            <div>
+              <dt data-i18n="hero.metricTwoValue">经营全链路</dt>
+              <dd data-i18n="hero.metricTwoLabel">从获客到复盘</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="product-stage" aria-label="BossIP product preview">
+          <div class="window-shell">
+            <div class="window-topbar">
+              <div class="traffic" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="workspace-title">
+                <img src="./favicon.svg" alt="" width="20" height="20" />
+                <span data-i18n="preview.title">今日经营工作台</span>
+              </div>
+              <span class="status-pill" data-i18n="preview.status"
+                >AI 在线</span
+              >
+            </div>
+            <div class="workspace-grid">
+              <aside class="rail" aria-label="Workspace modules">
+                <span class="rail-item active" data-i18n="preview.railPlan"
+                  >计划</span
+                >
+                <span class="rail-item" data-i18n="preview.railMarket"
+                  >营销</span
+                >
+                <span class="rail-item" data-i18n="preview.railFinance"
+                  >财务</span
+                >
+                <span class="rail-item" data-i18n="preview.railTeam">团队</span>
+              </aside>
+              <section class="work-panel" aria-label="Daily operating plan">
+                <div class="panel-heading">
+                  <div>
+                    <p data-i18n="preview.panelKicker">下一步建议</p>
+                    <h2 data-i18n="preview.panelTitle">周末套餐上线前检查</h2>
+                  </div>
+                  <span data-i18n="preview.panelTime">今天 16:30</span>
+                </div>
+                <div class="task-list">
+                  <article>
+                    <span class="task-dot done"></span>
+                    <div>
+                      <h3 data-i18n="preview.taskOneTitle">
+                        生成三条本地生活投放文案
+                      </h3>
+                      <p data-i18n="preview.taskOneBody">
+                        按客单价、时段和库存自动拆分卖点。
+                      </p>
+                    </div>
+                  </article>
+                  <article>
+                    <span class="task-dot"></span>
+                    <div>
+                      <h3 data-i18n="preview.taskTwoTitle">复核毛利和备货量</h3>
+                      <p data-i18n="preview.taskTwoBody">
+                        把原料成本、预估销量和人员排班放到同一张表里。
+                      </p>
+                    </div>
+                  </article>
+                  <article>
+                    <span class="task-dot"></span>
+                    <div>
+                      <h3 data-i18n="preview.taskThreeTitle">
+                        同步客服回复口径
+                      </h3>
+                      <p data-i18n="preview.taskThreeBody">
+                        自动整理常见问题，并标记需要人工确认的边界。
+                      </p>
+                    </div>
+                  </article>
+                </div>
+              </section>
+              <section class="insight-panel" aria-label="Business signals">
+                <div>
+                  <p data-i18n="preview.signalKicker">经营信号</p>
+                  <strong data-i18n="preview.signalValue">+18%</strong>
+                  <span data-i18n="preview.signalBody"
+                    >午市转化率较上周提升</span
+                  >
+                </div>
+                <div class="bars" aria-hidden="true">
+                  <span style="height: 44%"></span>
+                  <span style="height: 58%"></span>
+                  <span style="height: 49%"></span>
+                  <span style="height: 72%"></span>
+                  <span style="height: 64%"></span>
+                  <span style="height: 83%"></span>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="logo-band" aria-label="Brand promise">
+        <p data-i18n="band.copy">
+          一个账号连接每天的经营判断、执行任务和团队协作。
+        </p>
+      </section>
+
+      <section
+        class="section"
+        id="capabilities"
+        aria-labelledby="capabilities-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="capabilities.eyebrow">核心能力</p>
+          <h2 id="capabilities-title" data-i18n="capabilities.title">
+            不只做营销，也能接住经营里的琐碎重活。
+          </h2>
+        </div>
+        <div class="capability-grid">
+          <article>
+            <span class="capability-index">01</span>
+            <h3 data-i18n="capabilities.marketingTitle">营销增长</h3>
+            <p data-i18n="capabilities.marketingBody">
+              生成活动方案、投放文案、社媒内容和渠道复盘，让获客动作更快闭环。
+            </p>
+          </article>
+          <article>
+            <span class="capability-index">02</span>
+            <h3 data-i18n="capabilities.operationsTitle">门店与运营</h3>
+            <p data-i18n="capabilities.operationsBody">
+              整理订单、库存、排班、客服和供应商事项，把日常动作拆成可执行清单。
+            </p>
+          </article>
+          <article>
+            <span class="capability-index">03</span>
+            <h3 data-i18n="capabilities.financeTitle">财务与报表</h3>
+            <p data-i18n="capabilities.financeBody">
+              汇总流水、成本、毛利和现金流，用老板看得懂的方式解释关键变化。
+            </p>
+          </article>
+          <article>
+            <span class="capability-index">04</span>
+            <h3 data-i18n="capabilities.managementTitle">企业管理</h3>
+            <p data-i18n="capabilities.managementBody">
+              把会议、制度、目标和项目推进变成结构化记录，帮助团队对齐责任人和截止时间。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section
+        class="section workflow-section"
+        id="workflow"
+        aria-labelledby="workflow-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="workflow.eyebrow">工作方式</p>
+          <h2 id="workflow-title" data-i18n="workflow.title">
+            从一句话开始，落到可追踪的业务动作。
+          </h2>
+        </div>
+        <ol class="workflow-list">
+          <li>
+            <span>1</span>
+            <div>
+              <h3 data-i18n="workflow.stepOneTitle">说清目标</h3>
+              <p data-i18n="workflow.stepOneBody">
+                例如“下周做一个堂食复购活动”或“帮我看本月利润为什么下降”。
+              </p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <h3 data-i18n="workflow.stepTwoTitle">拆解资料和任务</h3>
+              <p data-i18n="workflow.stepTwoBody">
+                AI 会询问缺失信息，整理表格、文档和历史记录，形成可执行步骤。
+              </p>
+            </div>
+          </li>
+          <li>
+            <span>3</span>
+            <div>
+              <h3 data-i18n="workflow.stepThreeTitle">执行并复盘</h3>
+              <p data-i18n="workflow.stepThreeBody">
+                把结果沉淀为模板、报表和下一轮建议，减少每次从零开始。
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section
+        class="section use-cases"
+        id="use-cases"
+        aria-labelledby="use-cases-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="useCases.eyebrow">适用场景</p>
+          <h2 id="use-cases-title" data-i18n="useCases.title">
+            老板每天会遇到的事，都可以先交给 BossIP 整理一遍。
+          </h2>
+        </div>
+        <div class="case-grid">
+          <article>
+            <h3 data-i18n="useCases.storeTitle">夫妻店和连锁门店</h3>
+            <p data-i18n="useCases.storeBody">
+              新品上架、团购活动、差评处理、排班备货、日报周报。
+            </p>
+          </article>
+          <article>
+            <h3 data-i18n="useCases.brandTitle">本地生活与品牌团队</h3>
+            <p data-i18n="useCases.brandBody">
+              渠道内容、达人 brief、活动预算、线索跟进和投放复盘。
+            </p>
+          </article>
+          <article>
+            <h3 data-i18n="useCases.companyTitle">成长型公司</h3>
+            <p data-i18n="useCases.companyBody">
+              经营分析、会议纪要、项目推进、客户方案和管理制度。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section faq-section" id="faq" aria-labelledby="faq-title">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="faq.eyebrow">FAQ</p>
+          <h2 id="faq-title" data-i18n="faq.title">
+            开始前，老板通常会问这些。
+          </h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary data-i18n="faq.oneQuestion">
+              BossIP 更像聊天工具还是业务系统？
+            </summary>
+            <p data-i18n="faq.oneAnswer">
+              它更像可以持续工作的云端业务助手：既能对话，也能围绕任务、资料和结果持续推进。
+            </p>
+          </details>
+          <details>
+            <summary data-i18n="faq.twoQuestion">
+              页面会自动切换语言吗？
+            </summary>
+            <p data-i18n="faq.twoAnswer">
+              会。BossIP 会优先读取浏览器语言，也支持通过右上角按钮或 URL
+              参数切换中文和英文。
+            </p>
+          </details>
+          <details>
+            <summary data-i18n="faq.threeQuestion">
+              CTA 和联系方式能换成正式环境吗？
+            </summary>
+            <p data-i18n="faq.threeAnswer">
+              可以。部署时通过运行时配置设置演示预约、登录入口、联系地址和站点
+              URL。
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="final-cta" aria-labelledby="final-cta-title">
+        <p class="eyebrow" data-i18n="final.eyebrow">Ready when you are</p>
+        <h2 id="final-cta-title" data-i18n="final.title">
+          让 AI 先帮你把今天的经营事项理顺。
+        </h2>
+        <a
+          class="solid-link large"
+          href="/"
+          data-config-link="ctaUrl"
+          data-i18n="final.cta"
+          >立刻开始</a
+        >
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>BossIP</span>
+      <span data-i18n="footer.copy"
+        >Cloud AI workspace for business operations.</span
+      >
+      <a
+        href="mailto:hello@bossip.ai"
+        data-config-link="contactUrl"
+        data-i18n="footer.contact"
+        >联系团队</a
+      >
+    </footer>
+
+    <script type="application/ld+json" data-structured-data>
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "BossIP",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "description": "Cloud AI workspace for business operations.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
+    <script src="./landing.config.js"></script>
+    <script src="./landing.js"></script>
+  </body>
+</html>

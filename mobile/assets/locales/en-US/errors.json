@@ -23,6 +23,7 @@
   "SANDBOX_SUBSCRIPTION_REQUIRED": "Ordinary LLM conversations can continue. Sandbox and cloud desktop access require an active paid plan.",
   "runFailed": "The reply failed. Please try again.",
   "LLM_UNAVAILABLE": "The model service is unavailable. Try again shortly, or pick another model.",
+  "CONTEXT_STALLED": "This conversation stopped picking up new context, so the run was stopped to avoid repeat charges. Send a message to continue; if it happens again, contact us.",
   "AUTH_MOBILE_SESSION_REPLACED": "Your account was signed in on another phone. Please sign in again.",
   "AUTH_MOBILE_LOGIN_REQUIRED": "Your session needs to be updated. Please sign in again on this phone.",
   "PUSH_DEVICE_NOT_READY": "Enable and connect notifications on this phone first.",

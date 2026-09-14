@@ -1,4 +1,4 @@
-"""Worker metrics registry: the exact SPEC §8.13 names, counters, gauges and the /metrics snapshot."""
+"""Worker metrics registry: the exact SPEC §8.13 and wave-3 names, counters, gauges and the /metrics snapshot."""
 import asyncio
 import os
 import threading
@@ -16,10 +16,12 @@ def test_names_are_exactly_the_spec_and_cover_the_cloudmonitor_push():
     assert COUNTERS == ("ingest_lines", "ingest_events", "duplicates", "idempotency_conflicts", "deleted_drops",
                         "ownership_drops", "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts",
                         "blob_put_bytes", "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted",
-                        "gc_failures", "exports_built")
+                        "gc_failures", "exports_built", "blob_put_raw_bytes", "audit_dead_letters",
+                        "analytics_exports", "analytics_export_failures", "failed_batches")
     assert GAUGES == ("spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds",
                       "projection_lag_events", "archive_lag_events", "gc_queue_depth", "trace_db_bytes",
-                      "hot_events_rows", "trajectories_degraded", "trajectories_blocked", "stale_hot_partitions")
+                      "hot_events_rows", "trajectories_degraded", "trajectories_blocked", "stale_hot_partitions",
+                      "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users")
     assert set(cms.COUNTERS) <= set(COUNTERS)
     assert set(cms.GAUGES) <= set(GAUGES)
 

@@ -1,10 +1,12 @@
 """Worker counters and gauges, served as JSON by ``GET /metrics`` (SPEC §8.13).
 
 The names are the contract with ``trajectory.ops.cms`` and the gw2 drills, so a
-snapshot always lists every one of them. The registry is process-wide and
-thread-safe (blob uploads and file scans may report from worker threads), and
-recording a value never raises. The worker services set the gauges of their
-own loops; ``TraceDbSizeSampler`` samples ``trace_db_bytes`` every 5 minutes.
+snapshot always lists every one of them: those of SPEC §8.13, then those wave 3
+added (docs/trajectory-rearch/WAVE3.md, shared contract 5). The registry is
+process-wide and thread-safe (blob uploads and file scans may report from
+worker threads), and recording a value never raises. The worker services set
+the gauges of their own loops; ``TraceDbSizeSampler`` samples
+``trace_db_bytes`` every 5 minutes.
 """
 import asyncio
 import math
@@ -25,11 +27,15 @@ COUNTERS = (
     "ingest_lines", "ingest_events", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
     "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts", "blob_put_bytes",
     "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted", "gc_failures", "exports_built",
+    # Wave 3 (shared contract 5).
+    "blob_put_raw_bytes", "audit_dead_letters", "analytics_exports", "analytics_export_failures", "failed_batches",
 )
 GAUGES = (
     "spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds", "projection_lag_events",
     "archive_lag_events", "gc_queue_depth", "trace_db_bytes", "hot_events_rows", "trajectories_degraded",
     "trajectories_blocked", "stale_hot_partitions",
+    # Wave 3 (shared contract 5).
+    "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
 )
 
 

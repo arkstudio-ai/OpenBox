@@ -131,6 +131,23 @@ async def test_backend_facts_decide_and_role_claims_never_grant(fake_backend):
     assert ("phone", "mobile", "s1", None) in fake_backend.calls
 
 
+async def test_the_mobile_session_claim_is_checked_before_account_state_role_and_allowlist(fake_backend):
+    """The order of the in-process API: authentication (with its mobile claims) refused before assert_admin ran."""
+    everything_wrong = {"role": "user", "is_active": False, "is_deleted": True, "mobile_session_valid": False,
+                        "admin_enabled": False}
+    fake_backend.facts.update({
+        "phone": everything_wrong,
+        "retired": {**everything_wrong, "mobile_session_valid": True},
+        "member": {**ADMIN_FACTS, "role": "user", "admin_enabled": False},
+    })
+    error = await refused(assert_admin("phone", client="mobile", sid="s1"))
+    assert error.status_code == 401 and error.detail["code"] == "AUTH_MOBILE_SESSION_REPLACED"
+    error = await refused(assert_admin("retired"))
+    assert (error.status_code, error.detail) == (401, "Account is inactive or deleted")
+    error = await refused(assert_admin("member"))
+    assert (error.status_code, error.detail) == (403, "Platform administrator access required")
+
+
 @pytest.mark.parametrize("answer,status", [
     (ConnectionError("backend down"), 503),
     ("not an object", 503),

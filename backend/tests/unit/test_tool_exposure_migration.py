@@ -164,12 +164,9 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     assert state == "{}"
     assert version == _current_head()
     assert "internal_parts" in inspector.get_table_names()
-    from db.base import LEGACY_TABLE_NAMES
-    tables = set(inspector.get_table_names())
-    # Trajectory data moved to the trace database: the business schema keeps
-    # the retired tables only under their legacy names, for the converter.
-    assert set(LEGACY_TABLE_NAMES.values()) <= tables
-    assert not set(LEGACY_TABLE_NAMES) & tables
+    from db.base import RETIRED_TRAJECTORY_TABLES
+    # Trajectory data lives in the trace database and old recordings are not kept.
+    assert not set(RETIRED_TRAJECTORY_TABLES) & set(inspector.get_table_names())
     for table in ("sessions", "users", "workspaces"):
         assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
     assert "trace_context" in {column["name"] for column in inspector.get_columns("session_executions")}

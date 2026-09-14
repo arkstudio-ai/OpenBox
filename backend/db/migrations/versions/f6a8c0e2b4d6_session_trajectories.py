@@ -140,10 +140,7 @@ def upgrade():
 def downgrade():
     op.drop_column("cron_runs", "trace_context")
     op.drop_column("session_executions", "trace_context")
-    op.drop_table('trajectory_exports')
-    op.drop_table('trajectory_checkpoints')
-    op.drop_table('trajectory_session_summaries')
-    op.drop_table('trajectory_records')
-    op.drop_table('trajectory_payloads')
-    op.drop_table('trajectory_events')
-    op.drop_table('session_trajectories')
+    # Migration d3b5f7a9c1e2 drops these tables on upgrade, so they may already be gone.
+    for table in ("trajectory_exports", "trajectory_checkpoints", "trajectory_session_summaries",
+                  "trajectory_records", "trajectory_payloads", "trajectory_events", "session_trajectories"):
+        op.execute(f'DROP TABLE IF EXISTS "{table}"')

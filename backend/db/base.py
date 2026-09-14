@@ -137,8 +137,9 @@ def _upgrade_desktop_trajectory_columns(connection) -> None:
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
 
 
-#: Retired business trajectory tables (SPEC §6.9): original name -> the name
-#: migration d3b5f7a9c1e2 gives them. The legacy converter reads these tables.
+#: Retired business trajectory tables (SPEC §6.9): original name -> the name an
+#: earlier revision of migration d3b5f7a9c1e2 renamed them to. Old recordings are
+#: not kept, so both names are dropped.
 LEGACY_TABLE_NAMES = {
     "session_trajectories": "legacy_trajectory_sessions",
     "trajectory_events": "legacy_trajectory_events",
@@ -149,17 +150,25 @@ LEGACY_TABLE_NAMES = {
     "trajectory_exports": "legacy_trajectory_exports",
 }
 
+#: Drop order: children before session_trajectories, since SQLite has no CASCADE.
+RETIRED_TRAJECTORY_TABLES = tuple(
+    name
+    for original in ("trajectory_exports", "trajectory_checkpoints", "trajectory_session_summaries",
+                     "trajectory_records", "trajectory_payloads", "trajectory_events", "session_trajectories")
+    for name in (original, LEGACY_TABLE_NAMES[original])
+)
+
 
 def _retire_desktop_trajectory_tables(connection) -> None:
-    """Rename the retired trajectory tables the way migration d3b5f7a9c1e2 does.
+    """Drop the retired trajectory tables the way migration d3b5f7a9c1e2 does.
 
     Desktop databases never run Alembic. Trajectory data now lives in the
-    trace database; the renamed tables stay only for the legacy converter.
+    trace database and old recordings are not kept.
     """
     tables = set(sa.inspect(connection).get_table_names())
-    for original, legacy in LEGACY_TABLE_NAMES.items():
-        if original in tables and legacy not in tables:
-            connection.exec_driver_sql(f'ALTER TABLE "{original}" RENAME TO "{legacy}"')
+    for table in RETIRED_TRAJECTORY_TABLES:
+        if table in tables:
+            connection.exec_driver_sql(f'DROP TABLE "{table}"')
 
 
 #: The metadata sync cursor indexes of migration e5c7a9b1d3f4.

@@ -95,32 +95,26 @@ def _legacy_tables(connection) -> None:
         next_seq=1, committed_seq=0, projected_seq=0, schema_version=1, recording_status="recording"))
 
 
-def test_the_retirement_migration_renames_the_tables_with_their_rows_and_back(tmp_path):
-    from db.base import LEGACY_TABLE_NAMES
+def test_the_retirement_migration_drops_the_tables_and_renamed_copies(tmp_path):
+    from db.base import RETIRED_TRAJECTORY_TABLES
     retirement = importlib.import_module("db.migrations.versions.d3b5f7a9c1e2_retire_session_trajectories")
-    assert dict(retirement.TABLES) == LEGACY_TABLE_NAMES
+    assert set(retirement.TABLES) == set(RETIRED_TRAJECTORY_TABLES)
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'business.db'}")
     with engine.begin() as connection:
         _legacy_tables(connection)
+        # A database migrated by the earlier revision holds renamed copies.
+        connection.exec_driver_sql('ALTER TABLE "trajectory_exports" RENAME TO "legacy_trajectory_exports"')
         with Operations.context(MigrationContext.configure(connection)):
             retirement.upgrade()
-            retirement.upgrade()  # Nothing left to rename the second time.
+            retirement.upgrade()  # Nothing left to drop the second time.
+            retirement.downgrade()  # Old recordings are not restored.
     with engine.connect() as connection:
-        tables = set(sa.inspect(connection).get_table_names())
-        assert set(LEGACY_TABLE_NAMES.values()) <= tables and not set(LEGACY_TABLE_NAMES) & tables
-        assert connection.exec_driver_sql("SELECT id FROM legacy_trajectory_sessions").scalars().all() == ["trj_kept"]
-    with engine.begin() as connection:
-        with Operations.context(MigrationContext.configure(connection)):
-            retirement.downgrade()
-    with engine.connect() as connection:
-        tables = set(sa.inspect(connection).get_table_names())
-        assert set(LEGACY_TABLE_NAMES) <= tables and not set(LEGACY_TABLE_NAMES.values()) & tables
-        assert connection.exec_driver_sql("SELECT id FROM session_trajectories").scalars().all() == ["trj_kept"]
+        assert not set(RETIRED_TRAJECTORY_TABLES) & set(sa.inspect(connection).get_table_names())
     engine.dispose()
 
 
-def test_desktop_databases_retire_the_tables_and_index_the_sync_cursors_repeatably():
-    from db.base import LEGACY_TABLE_NAMES, _index_desktop_metadata_sync, _retire_desktop_trajectory_tables
+def test_desktop_databases_drop_the_tables_and_index_the_sync_cursors_repeatably():
+    from db.base import RETIRED_TRAJECTORY_TABLES, _index_desktop_metadata_sync, _retire_desktop_trajectory_tables
     engine = sa.create_engine("sqlite:///:memory:")
     with engine.begin() as connection:
         _legacy_tables(connection)
@@ -130,11 +124,9 @@ def test_desktop_databases_retire_the_tables_and_index_the_sync_cursors_repeatab
             _retire_desktop_trajectory_tables(connection)
             _index_desktop_metadata_sync(connection)
         inspector = sa.inspect(connection)
-        assert set(LEGACY_TABLE_NAMES.values()) <= set(inspector.get_table_names())
-        assert not set(LEGACY_TABLE_NAMES) & set(inspector.get_table_names())
+        assert not set(RETIRED_TRAJECTORY_TABLES) & set(inspector.get_table_names())
         for table in ("sessions", "users", "workspaces"):
             assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
-        assert connection.exec_driver_sql("SELECT count(*) FROM legacy_trajectory_sessions").scalar_one() == 1
     engine.dispose()
 
 

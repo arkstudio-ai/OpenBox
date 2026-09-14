@@ -36,9 +36,6 @@ services:
     volumes:
       - trajectory-spool:/var/lib/openbox/trajectory-spool
       - ./secrets/aliyun-config.json:/run/secrets/aliyun-config.json:ro
-      # Legacy local blob files for `trajectory.tools.migrate_legacy --legacy-blob-path /legacy-blobs`
-      # (read-only; RUNBOOK.md §5 step 7 mounts it writable for --purge-legacy-blobs only).
-      - blob-data:/legacy-blobs:ro
     depends_on:
       postgres:
         condition: service_healthy

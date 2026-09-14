@@ -1,47 +1,38 @@
-"""Retire the business-database trajectory tables.
+"""Drop the business-database trajectory tables.
 
-Trajectory data moves to its own database (openbox_trace). The seven tables are
-renamed, keeping their rows, indexes and constraints, until the legacy
-converter has copied and verified them; its finalize step drops them.
+Trajectory data now lives in its own database (openbox_trace) and old recordings
+are not kept, so the seven tables are dropped. The legacy_trajectory_* names are
+the ones an earlier revision of this migration renamed them to; they are dropped
+too.
 
 Revision ID: d3b5f7a9c1e2
 Revises: c7e9b1d3f5a7
 """
 from alembic import op
-import sqlalchemy as sa
 
 revision = "d3b5f7a9c1e2"
 down_revision = "c7e9b1d3f5a7"
 branch_labels = None
 depends_on = None
 
-#: Original name -> retired name (db.models.trajectory.LEGACY_TABLE_NAMES).
+#: Children before session_trajectories, so SQLite without CASCADE drops them in order.
 TABLES = (
-    ("session_trajectories", "legacy_trajectory_sessions"),
-    ("trajectory_events", "legacy_trajectory_events"),
-    ("trajectory_payloads", "legacy_trajectory_payloads"),
-    ("trajectory_records", "legacy_trajectory_records"),
-    ("trajectory_session_summaries", "legacy_trajectory_session_summaries"),
-    ("trajectory_checkpoints", "legacy_trajectory_checkpoints"),
-    ("trajectory_exports", "legacy_trajectory_exports"),
+    "trajectory_exports", "legacy_trajectory_exports",
+    "trajectory_checkpoints", "legacy_trajectory_checkpoints",
+    "trajectory_session_summaries", "legacy_trajectory_session_summaries",
+    "trajectory_records", "legacy_trajectory_records",
+    "trajectory_payloads", "legacy_trajectory_payloads",
+    "trajectory_events", "legacy_trajectory_events",
+    "session_trajectories", "legacy_trajectory_sessions",
 )
 
 
-def _tables() -> set[str]:
-    return set(sa.inspect(op.get_bind()).get_table_names())
-
-
 def upgrade():
-    existing = _tables()
-    for original, legacy in TABLES:
-        # A finalized conversion (or a database that never had them) leaves
-        # nothing to rename.
-        if original in existing and legacy not in existing:
-            op.rename_table(original, legacy)
+    cascade = " CASCADE" if op.get_bind().dialect.name == "postgresql" else ""
+    for table in TABLES:
+        op.execute(f'DROP TABLE IF EXISTS "{table}"{cascade}')
 
 
 def downgrade():
-    existing = _tables()
-    for original, legacy in reversed(TABLES):
-        if legacy in existing and original not in existing:
-            op.rename_table(legacy, original)
+    # Old recordings are not restored.
+    pass

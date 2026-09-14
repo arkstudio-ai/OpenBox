@@ -1130,7 +1130,8 @@ def test_overlay_validates_against_the_sanitized_production_compose(tmp_path):
     mounts = {volume["target"]: volume for volume in worker["volumes"]}
     assert mounts["/var/lib/openbox/trajectory-spool"]["source"] == "trajectory-spool"
     assert mounts["/run/secrets/aliyun-config.json"]["read_only"] is True
-    assert (mounts["/legacy-blobs"]["source"], mounts["/legacy-blobs"]["read_only"]) == ("blob-data", True)
+    # Old local trajectory blob files are not converted, so the worker does not mount the blob volume.
+    assert "/legacy-blobs" not in mounts
     assert {name: dependency["condition"] for name, dependency in worker["depends_on"].items()} == {
         "postgres": "service_healthy", "redis": "service_healthy",
     }

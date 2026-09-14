@@ -64,3 +64,9 @@ docs/LOCAL_CREDENTIALS.md
 # Single-user SQLite store (created at runtime; was committed by mistake)
 backend/.openbox/skill_jobs.db
 backend/.openbox/skill_jobs.db-*
+
+# Session trajectory local stores (spool, blobs, embedded trace DB; created at runtime)
+backend/.openbox/trajectory-blobs/
+backend/.openbox/trajectory-spool/
+backend/.openbox/trajectory.db*
+.openbox/trajectory-spool/

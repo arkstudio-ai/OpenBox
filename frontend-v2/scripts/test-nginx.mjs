@@ -231,6 +231,55 @@ try {
     /location = \/ws\/admin\/trajectories \{[^}]*proxy_read_timeout 3600s;[^}]*proxy_send_timeout 3600s;/,
   )
 
+  // Host scripts call the backend's internal endpoints on 127.0.0.1:8080. Through
+  // the proxy nginx answers them itself, however the path is spelled.
+  for (const [path, init] of [
+    ["/api/internal/anything", {}],
+    ["/api/internal/tunnel-keys?user=fixture", {}],
+    ["/api/internal/anything", { method: "POST", body: "fixture-only" }],
+    ["/api//internal/anything", {}],
+    ["/api/%69nternal/anything", {}],
+  ]) {
+    const refused = await get(path, init)
+    assert.equal(refused.status, 404, `${path} must be refused by nginx`)
+    assert.doesNotMatch(await refused.text(), /"instance"/, `${path} must never reach the fixture backend`)
+  }
+
+  // The access log format is the image's own `main` followed by the request and
+  // upstream times, so every existing field keeps its position.
+  const logFormat = (name) => {
+    const declared = new RegExp(`log_format\\s+${name}\\s+((?:'[^']*'\\s*)+);`).exec(rendered)
+    assert(declared, `log_format ${name} must be in the rendered config`)
+    return [...declared[1].matchAll(/'([^']*)'/g)].map((part) => part[1]).join("")
+  }
+  assert.equal(logFormat("openbox_timing"), `${logFormat("main")} rt=$request_time urt=$upstream_response_time`)
+  assert.match(rendered, /access_log \/var\/log\/nginx\/access\.log openbox_timing;/)
+  const accessLine =
+    /^\S+ - \S+ \[[^\]]+\] "(?<request>[^"]*)" (?<status>\d{3}) \d+ "[^"]*" "[^"]*" "(?<forwardedFor>[^"]*)" rt=(?<rt>\S+) urt=(?<urt>\S+)$/
+  const clientIp = "203.0.113.7"
+  await (await get("/api/echo?timing=1", { headers: { "X-Forwarded-For": clientIp } })).json()
+  await (await get("/api/internal/timing")).text()
+  const logged = await until(() => {
+    const lines = docker("logs", proxy.id).split("\n")
+    const entry = (request) => {
+      const line = lines.find((text) => text.includes(`"${request}"`))
+      assert(line, `No access log line for ${request}`)
+      const fields = accessLine.exec(line)
+      assert(fields, `Access log line in an unexpected format: ${line}`)
+      return fields.groups
+    }
+    return {
+      proxied: entry("GET /api/echo?timing=1 HTTP/1.1"),
+      refused: entry("GET /api/internal/timing HTTP/1.1"),
+    }
+  })
+  assert.equal(logged.proxied.status, "200")
+  assert.equal(logged.proxied.forwardedFor, clientIp, "The client IP must stay the last quoted field")
+  assert.match(logged.proxied.rt, /^\d+\.\d{3}$/)
+  assert.match(logged.proxied.urt, /^\d+\.\d{3}$/)
+  assert.equal(logged.refused.status, "404")
+  assert.equal(logged.refused.urt, "-", "An internal path must never reach an upstream")
+
   // Started without TRAJECTORY_HOST, the frontend comes up and keeps every
   // trajectory path on the backend.
   const plain = frontend("plain", {})
@@ -251,7 +300,7 @@ try {
   assert.equal((await (await get("/api/admin/trajectories/sessions")).json()).instance, "worker")
   assert.equal(JSON.parse(docker("inspect", proxy.id))[0].Id, proxy.id, "Frontend must not be restarted")
   console.log(
-    "PASS: SPA no-store, immutable JS/CSS, public asset contents and permissions, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, admin trajectory HTTP/ticket/WebSocket routed to TRAJECTORY_HOST with neighbours on the backend, frontend without TRAJECTORY_HOST routes them to the backend, backend IP rotation without frontend restart",
+    "PASS: SPA no-store, immutable JS/CSS, public asset contents and permissions, missing asset 404/no-store, API URI/body/status, WebSocket upgrade, admin trajectory HTTP/ticket/WebSocket routed to TRAJECTORY_HOST with neighbours on the backend, internal endpoints refused by nginx without reaching an upstream, access log with request and upstream times after the image's main fields, frontend without TRAJECTORY_HOST routes them to the backend, backend IP rotation without frontend restart",
   )
 } finally {
   for (const id of containers.reverse()) {

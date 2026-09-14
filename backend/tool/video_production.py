@@ -766,6 +766,38 @@ async def _update_job(job_id: str, **values) -> None:
         await record_job_in_tx(db, job)
 
 
+#: Job states reserved for a paid call that has not reached the provider yet.
+_PRE_SUBMIT_STATUSES = {"submitting", "dispatching", "transcribing"}
+
+
+async def _close_refused_submit(job_id: str, exc: BaseException, *, status: str = "cancelled") -> None:
+    """Close a job whose paid call the run fence refused before any provider I/O.
+
+    capture_service_dispatch refuses a revoked run ahead of the request, so no
+    task exists: a pre-submit row left behind would read as an ambiguous paid
+    submit (or an in-flight duplicate) forever.
+    """
+    if not isinstance(exc, RunRevoked) or exc.boundary != "service":
+        return
+    from db.base import get_db_session
+    from db.models.video_job import VideoJob
+
+    try:
+        async with get_db_session() as db:
+            job = await db.get(VideoJob, job_id)
+        if job is None or job.provider_task_id or job.status not in _PRE_SUBMIT_STATUSES:
+            return
+        await _update_job(
+            job_id,
+            status=status,
+            error="not submitted: the run was stopped or replaced before the provider was called",
+            completed_at=datetime.now(timezone.utc),
+        )
+        await _mark_asset(job.output_asset_id, status="failed")
+    except Exception:
+        log.warning("could not close the refused submit of %s", job_id, exc_info=True)
+
+
 async def _mark_asset(asset_id: str | None, *, status: str, size: int | None = None) -> None:
     if not asset_id:
         return
@@ -2391,7 +2423,10 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
                     "retry_after_seconds": 5,
                 },
             )
-        except (RunRevoked, TrajectoryError):
+        except (RunRevoked, TrajectoryError) as exc:
+            if "job" in locals() and created:
+                # A refused dispatch never reached the provider: close the job.
+                await _close_refused_submit(job.id, exc)
             raise
         except Exception as exc:
             if "job" in locals() and created:
@@ -2848,7 +2883,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                     "text": transcript.get("text", ""),
                 },
             )
-        except (RunRevoked, TrajectoryError):
+        except (RunRevoked, TrajectoryError) as exc:
+            if created:
+                await _close_refused_submit(job.id, exc)
             raise
         except Exception as exc:
             if created:
@@ -2905,7 +2942,9 @@ async def execute_transcribe(args: VideoTranscribeArgs, ctx: ToolContext) -> Too
                 error=None,
                 completed_at=datetime.now(timezone.utc),
             )
-        except (RunRevoked, TrajectoryError):
+        except (RunRevoked, TrajectoryError) as exc:
+            # The retry never reached the provider: the job stays failed.
+            await _close_refused_submit(job.id, exc, status="failed")
             raise
         except Exception as exc:
             await _update_job(

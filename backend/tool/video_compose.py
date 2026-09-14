@@ -266,7 +266,9 @@ async def _execute_submit(args: VideoComposeArgs, ctx: ToolContext) -> ToolResul
                 client_token=compiled.client_token,
                 user_data=json.dumps({"openbox_job": job.id})[:512],
             )
-    except (RunRevoked, TrajectoryError):
+    except (RunRevoked, TrajectoryError) as exc:
+        # A refused dispatch never reached IMS: close the job, keep the refusal.
+        await vp._close_refused_submit(job.id, exc)
         raise
     except Exception as exc:
         await vp._update_job(job.id, status="failed", error=_public(exc), completed_at=_now())

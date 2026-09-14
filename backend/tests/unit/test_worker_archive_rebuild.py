@@ -2,6 +2,7 @@
 import asyncio
 import io
 import json
+from datetime import datetime
 
 import zstandard
 from sqlalchemy import select
@@ -119,3 +120,21 @@ async def test_rebuild_rejects_segment_objects_that_no_longer_match_their_rows(t
     assert detail["segment_errors"][0].startswith("1-3: the object has") and "stored bytes" in detail["segment_errors"][0]
     assert detail["segment_errors"][1].startswith("4-6: ") and "zstd" in detail["segment_errors"][1]
     assert (detail["missing_seqs"], detail["first_missing_seqs"]) == (6, [1, 2, 3, 4, 5, 6])
+
+
+async def test_the_drill_digest_notices_a_rebuild_that_drops_microseconds(tmp_path, monkeypatch):
+    environ, _ = await archived_source(tmp_path)
+    restore = rebuild._column_value
+
+    def truncating(column, value):
+        restored = restore(column, value)
+        if isinstance(restored, datetime):
+            return restored.replace(microsecond=restored.microsecond // 1000 * 1000)
+        return restored
+
+    # A scratch copy that keeps milliseconds only is not the stored stream.
+    monkeypatch.setattr(rebuild, "_column_value", truncating)
+    code, report = await drill(environ)
+    detail = {item["trajectory_id"]: item for item in report["reports"]}["trj_a"]
+    assert code == 1 and not report["ok"]
+    assert detail["source_digest"] != detail["scratch_digest"]

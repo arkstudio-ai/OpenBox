@@ -45,7 +45,7 @@ from sqlalchemy.sql import sqltypes
 from core.aliyun import AliyunCredentialsError
 from trajectory.ops.oss import OpsStorageError, blob_provider, describe_error, http_client, local_blob_root, oss_client
 from trajectory.storage import decode_blob
-from trajectory.types import canonical, iso
+from trajectory.types import canonical
 
 SCRATCH_PREFIX = "openbox_trace_rebuild_"
 SOURCE_TABLES = ("session_trajectories", "trajectory_segments", "trajectory_events", "trajectory_event_keys")
@@ -172,7 +172,8 @@ def fingerprint(event: dict) -> bytes:
         value = event.get(key)
         if value is not None:
             if key in ("occurred_at", "recorded_at"):
-                value = iso(_datetime(value))
+                # Microseconds: the digest must notice a rebuild that loses stored precision.
+                value = _datetime(value).isoformat(timespec="microseconds").replace("+00:00", "Z")
             elif key in ("context", "data", "hints"):
                 value = _json(value)
             elif key in ("seq", "version"):

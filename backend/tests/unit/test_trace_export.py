@@ -16,7 +16,7 @@ from tests.unit.test_worker_archive_support import (AT, FakeMetrics, add_events,
 from trajectory import export
 from trajectory.export import (ExportService, build_export, create_export, export_status, read_export, resume_exports,
     stop_exports)
-from trajectory.lifecycle import expire_trajectory_content, tombstone_trajectory, utc
+from trajectory.lifecycle import expire_trajectory_content, revoke_asset, tombstone_trajectory, utc
 from trajectory.projector import replay, statistics
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob, export_key, get_blob_store
 from trajectory.store.database import close_trace_engine, trace_session
@@ -74,16 +74,16 @@ def admins(monkeypatch):
 
 
 async def store_payload(db, blob_store, trajectory_id: str, payload_id: str, content: bytes, *, media_type: str,
-                        first_seq: int, availability: str = "available") -> dict:
+                        first_seq: int, availability: str = "available", source_asset_id: str | None = None) -> dict:
     sha = hashlib.sha256(content).hexdigest()
     stored, encoding = encode_blob(content, media_type)
     key = blob_key(trajectory_id, sha)
     await blob_store.put(key, stored, content_type=media_type)
-    db.add(TrajectoryPayload(payload_id=payload_id, trajectory_id=trajectory_id,
-                             dedupe_key=hashlib.sha256(f"{sha}:{media_type}::blob".encode()).hexdigest(), sha256=sha,
+    dedupe_key = hashlib.sha256(f"{sha}:{media_type}:{source_asset_id or ''}:blob".encode()).hexdigest()
+    db.add(TrajectoryPayload(payload_id=payload_id, trajectory_id=trajectory_id, dedupe_key=dedupe_key, sha256=sha,
                              size_bytes=len(content), stored_bytes=len(stored), media_type=media_type,
                              encoding=encoding, storage_kind="blob", storage_key=key, availability=availability,
-                             first_seq=first_seq, created_at=now()))
+                             source_asset_id=source_asset_id, first_seq=first_seq, created_at=now()))
     return {"payload_id": payload_id, "sha256": sha, "size_bytes": len(content), "media_type": media_type,
             "availability": availability}
 
@@ -526,3 +526,186 @@ async def test_resuming_exports_without_a_trace_database_does_nothing():
     await close_trace_engine()
     await resume_exports()
     assert not export._tasks
+
+
+async def test_an_export_across_segments_and_hot_rows_reports_a_deleted_asset(trace_db, blob_store, payload_reader,
+                                                                              admins):
+    await add_trajectory("trj_a", committed=14)
+    thumbnail = b"\x89PNG\r\n\x1a\nthumbnail-copy"
+    async with trace_session() as db:
+        system = await store_payload(db, blob_store, "trj_a", "pld_system", canonical(SYSTEM),
+                                     media_type="application/json", first_seq=3)
+        thumb = await store_payload(db, blob_store, "trj_a", "pld_thumb", thumbnail, media_type="image/png",
+                                    first_seq=5, source_asset_id="asset_photo")
+        finished = await store_payload(db, blob_store, "trj_a", "pld_finished", canonical(FINISHED),
+                                       media_type="application/json", first_seq=11)
+        await store_payload(db, blob_store, "trj_a", "pld_note", b"a note", media_type="text/plain", first_seq=9)
+        db.add(TrajectoryPayload(payload_id="pld_photo", trajectory_id="trj_a",
+                                 dedupe_key=hashlib.sha256(b"photo").hexdigest(), size_bytes=len(ASSET_BYTES),
+                                 media_type="image/png", storage_kind="asset", storage_key="assets/user_a/photo.png",
+                                 source_asset_id="asset_photo", first_seq=5, created_at=now()))
+        db.add(TrajectoryMetaAsset(id="asset_photo", user_id="user_a", oss_key="assets/user_a/photo.png",
+                                   mime="image/png", size=len(ASSET_BYTES), status="ready", updated_at=now(),
+                                   synced_at=now()))
+    photo = {"payload_id": "pld_photo", "sha256": None, "size_bytes": len(ASSET_BYTES), "media_type": "image/png",
+             "availability": "available"}
+    system_ref = {key: system[key] for key in ("sha256", "size_bytes", "media_type", "payload_id")}
+    rows = [
+        event_values("trj_a", 1, type="trajectory.started", event_id="evt_start_trj_a",
+                     data={"existing_session": False, "schema_version": 2}),
+        event_values("trj_a", 2, type="request.started", request_id="req_1", data={"model": "gpt-test"}),
+        event_values("trj_a", 3, type="request.prepared", request_id="req_1",
+                     data={"input": {"messages": [{"$ref": {**system_ref, "kind": "message"}}]}}),
+        event_values("trj_a", 4, type="request.finished", request_id="req_1",
+                     data={"status": "completed", "usage": {"input_tokens": 2, "output_tokens": 4}}),
+        event_values("trj_a", 5, type="artifact.recorded",
+                     data={"artifact_id": "asset_photo", "payload": photo,
+                           "thumbnail": {"$media": thumb, "source_kind": "asset", "source_asset_id": "asset_photo"}}),
+        event_values("trj_a", 6, type="tool.requested", call_id="call_1", data={"tool": "bash", "arguments": {"cmd": "ls"}}),
+        event_values("trj_a", 7, type="tool.output", call_id="call_1", data={"output": "a\n", "chunk_index": 0}),
+        event_values("trj_a", 8, type="tool.finished", call_id="call_1", data={"status": "completed", "output": "a\n"}),
+        event_values("trj_a", 9, type="input.accepted", data={"text": "see the note"}),
+        event_values("trj_a", 10, type="request.started", request_id="req_2", data={"model": "gpt-test"}),
+        event_values("trj_a", 11, type="request.finished", request_id="req_2", data={"$payload": finished}),
+        event_values("trj_a", 12, type="tool.requested", call_id="call_2", data={"tool": "read", "arguments": {"path": "a"}}),
+        event_values("trj_a", 13, type="tool.finished", call_id="call_2", data={"status": "failed", "error": "missing"}),
+        event_values("trj_a", 14, type="input.accepted", data={"text": "thanks"}),
+    ]
+    await add_events(rows)
+    archive = ArchiveService(worker_settings(segment_events=4), blob_store=blob_store, metrics=FakeMetrics())
+    assert await archive.archive_trajectory("trj_a") == 12
+    before = await new_export("trj_a", 14)
+    assert await worker(blob_store).run_once() == 1
+    assert (await export_row(before)).status == "completed"
+
+    # The asset is deleted: ingest revokes its payloads and appends artifact.removed (a hot row).
+    async with trace_session() as db:
+        asset = await db.get(TrajectoryMetaAsset, "asset_photo")
+        asset.is_deleted, asset.deleted_at = True, now()
+        (revocation,) = await revoke_asset(db, "asset_photo")
+    rows.append(event_values("trj_a", 15, type="artifact.removed", event_id=revocation.event_id, data=revocation.data))
+    await add_events(rows[-1:])
+    async with trace_session() as db:
+        trajectory = await db.get(SessionTrajectory, "trj_a")
+        trajectory.committed_seq = trajectory.projected_seq = trajectory.event_count = 15
+    after = await new_export("trj_a", 15)
+    assert await worker(blob_store).run_once() == 1
+
+    async with trace_session() as db:
+        _, content = await read_export(db, await db.get(SessionTrajectory, "trj_a"), after)
+        with pytest.raises(FileNotFoundError, match="invalidated"):
+            await read_export(db, await db.get(SessionTrajectory, "trj_a"), before)
+    manifest, entries = unzip(content)
+    events = [json.loads(line) for line in entries["events.jsonl"].splitlines()]
+    assert events == [expected_event(row) for row in rows]
+    assert [name for name in entries if name.startswith("payloads/")] == [
+        "payloads/pld_system", "payloads/pld_note", "payloads/pld_finished"]
+    assert manifest["missing_payloads"] == [
+        {"payload_id": "pld_photo", "availability": "deleted", "reason": "FileNotFoundError"},
+        {"payload_id": "pld_thumb", "availability": "deleted", "reason": "FileNotFoundError"}]
+    assert (manifest["through_seq"], manifest["complete"], manifest["gaps"]) == ("15", False, [])
+    expanded = [{**event, "data": FINISHED} if event["seq"] == "11" else event for event in events]
+    stats = json.loads(entries["statistics.json"])
+    assert stats == json.loads(canonical(statistics(replay(expanded))))
+    assert (stats["request_count"], stats["tool_count"], stats["error_count"]) == (2, 2, 1)
+    assert (stats["input_tokens"], stats["output_tokens"]) == (5, 9)
+    assert ("key", blob_key("trj_a", thumb["sha256"]), "asset_deleted") in await gc_entries()
+
+
+async def test_a_copy_bound_to_an_asset_the_replica_has_not_seen_still_downloads(trace_db, blob_store,
+                                                                                payload_reader, admins):
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    async with trace_session() as db:
+        await store_payload(db, blob_store, "trj_a", "pld_copy", b"derived media", media_type="image/png",
+                            first_seq=1, source_asset_id="asset_unsynced")
+    export_id = await new_export("trj_a", 1)
+    assert await worker(blob_store).run_once() == 1
+
+    async def download():
+        async with trace_session() as db:
+            return await read_export(db, await db.get(SessionTrajectory, "trj_a"), export_id)
+
+    _, content = await download()
+    assert unzip(content)[1]["payloads/pld_copy"] == b"derived media"
+    # Once the replica knows the asset was deleted, the export is invalidated.
+    async with trace_session() as db:
+        db.add(TrajectoryMetaAsset(id="asset_unsynced", user_id="user_a", is_deleted=True, deleted_at=now(),
+                                   updated_at=now(), synced_at=now()))
+    with pytest.raises(FileNotFoundError, match="invalidated"):
+        await download()
+
+
+async def test_the_statistics_replay_lets_other_tasks_run(trace_db, blob_store, payload_reader, admins, monkeypatch):
+    await add_trajectory("trj_a", committed=1200)
+    await add_events([event_values("trj_a", seq) for seq in range(1, 1201)])
+    export_id = await new_export("trj_a", 1200)
+    ticks, seen, stop = [0], [], asyncio.Event()
+
+    async def ticker():
+        while not stop.is_set():
+            ticks[0] += 1
+            await asyncio.sleep(0)
+
+    replay_step = export.reduce
+
+    def observed(state, event):
+        seen.append(ticks[0])
+        return replay_step(state, event)
+
+    monkeypatch.setattr(export, "reduce", observed)
+    running = asyncio.create_task(ticker())
+    try:
+        assert await worker(blob_store).run_once() == 1
+    finally:
+        stop.set()
+        await running
+    assert (await export_row(export_id)).status == "completed"
+    # Other tasks ran at least every REPLAY_YIELD_EVENTS events, not only between database pages.
+    changes = sum(1 for before, after in zip(seen, seen[1:]) if after != before)
+    assert changes >= 1200 // export.REPLAY_YIELD_EVENTS - 1
+
+
+async def test_a_payload_larger_than_its_declared_size_is_listed_as_missing(trace_db, blob_store, payload_reader,
+                                                                           admins):
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    payload_reader["assets/user_a/video.mp4"] = os.urandom(80_000)
+    async with trace_session() as db:
+        db.add(TrajectoryPayload(payload_id="pld_video", trajectory_id="trj_a",
+                                 dedupe_key=hashlib.sha256(b"video").hexdigest(), size_bytes=10,
+                                 media_type="video/mp4", storage_kind="asset", storage_key="assets/user_a/video.mp4",
+                                 source_asset_id="asset_video", first_seq=1, created_at=now()))
+        db.add(TrajectoryMetaAsset(id="asset_video", user_id="user_a", oss_key="assets/user_a/video.mp4",
+                                   mime="video/mp4", size=10, status="ready", updated_at=now(), synced_at=now()))
+    export_id = await new_export("trj_a", 1)
+    assert await worker(blob_store, export_max_bytes=60_000).run_once() == 1
+    row = await export_row(export_id)
+    assert (row.status, row.error) == ("completed", None)
+    manifest, entries = unzip(blob_store.objects[row.storage_key])
+    assert "payloads/pld_video" not in entries
+    assert manifest["missing_payloads"] == [{"payload_id": "pld_video", "availability": "available",
+                                             "reason": "ExportTooLarge"}]
+
+
+async def test_a_backend_build_never_takes_over_a_build_of_its_own_process(trace_db, blob_store, payload_reader,
+                                                                          admins):
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    export_id = await new_export("trj_a", 1)
+    entered, release, uploads = asyncio.Event(), asyncio.Event(), []
+
+    async def slow_first_upload(key):
+        if key.startswith("trajectories/_exports/"):
+            uploads.append(key)
+            if len(uploads) == 1:
+                entered.set()
+                await release.wait()
+
+    blob_store.faults["put"] = slow_first_upload
+    building = asyncio.create_task(build_export(export_id))
+    await asyncio.wait_for(entered.wait(), 5)
+    assert await build_export(export_id) == "running"
+    release.set()
+    assert await asyncio.wait_for(building, 5) == "completed"
+    assert len(uploads) == 1

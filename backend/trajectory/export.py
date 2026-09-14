@@ -35,7 +35,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 
 from core.log import create_logger
 from trajectory.auth import assert_admin
@@ -57,6 +57,12 @@ LEASE_SECONDS = 120
 EXPORTS_PER_PASS = 4
 EVENT_PAGE = 1000
 WRITE_CHUNK_BYTES = 1024 * 1024
+#: The statistics replay is CPU bound: give the event loop back this often (lease heartbeat, other worker loops).
+REPLAY_YIELD_EVENTS = 200
+#: What one ZIP entry adds besides its data: local header, data descriptor and central directory, ZIP64 fields.
+ENTRY_OVERHEAD_BYTES = 512
+#: Room kept for the manifest entry beyond the manifest text itself.
+MANIFEST_RESERVE_BYTES = 4096
 #: Owner id of builds started by this process outside a worker service.
 PROCESS_OWNER = f"{socket.gethostname()[:32]}-{os.getpid()}-{uuid4().hex[:8]}"
 
@@ -112,12 +118,16 @@ async def validate_export(db, trajectory, row) -> None:
     visible = (TrajectoryPayload.trajectory_id == trajectory.id, TrajectoryPayload.first_seq <= row.through_seq)
     deleted = await db.scalar(select(TrajectoryPayload.payload_id).where(
         *visible, TrajectoryPayload.deleted_at > row.created_at).limit(1))
+    # As for payload reads (SPEC §8.9): an asset reference owns no bytes and
+    # needs its replica row; a copy bound to an asset goes only with a deletion
+    # the replica knows about, not because the replica has not seen the asset.
     removed_source = await db.scalar(
         select(TrajectoryPayload.payload_id)
         .outerjoin(TrajectoryMetaAsset, TrajectoryMetaAsset.id == TrajectoryPayload.source_asset_id)
         .where(*visible, TrajectoryPayload.source_asset_id.is_not(None), TrajectoryPayload.availability == "available",
-               or_(TrajectoryMetaAsset.id.is_(None), TrajectoryMetaAsset.is_deleted.is_(True),
-                   TrajectoryMetaAsset.deleted_at.is_not(None), TrajectoryMetaAsset.status == "deleted"))
+               or_(and_(TrajectoryPayload.storage_kind == "asset", TrajectoryMetaAsset.id.is_(None)),
+                   TrajectoryMetaAsset.is_deleted.is_(True), TrajectoryMetaAsset.deleted_at.is_not(None),
+                   TrajectoryMetaAsset.status == "deleted"))
         .limit(1))
     if deleted or removed_source:
         raise FileNotFoundError("Export invalidated by explicit content deletion; create a new export")
@@ -346,33 +356,60 @@ class ExportService:
         state = empty_state()
         async with _ZipWriter(path, self.max_bytes) as archive:
             async with archive.entry("events.jsonl") as entry:
+                replayed = 0
                 async for event in self._events(trajectory.id, through):
                     await entry.write(canonical(event) + b"\n")
                     state = reduce(state, await self._expanded(trajectory.id, event, through))
+                    replayed += 1
+                    if replayed % REPLAY_YIELD_EVENTS == 0:
+                        # Without awaiting anything else the replay would hold the loop for the whole
+                        # trajectory: no lease renewal, ingest, projection or admin API meanwhile.
+                        await asyncio.sleep(0)
             manifest["files"].append(entry.describe())
             manifest["files"].append(await archive.write("statistics.json", canonical(statistics(state))))
+            gaps = [{"record_id": record["record_id"], "seq": record["start_seq"], "data": record["data"]}
+                    for record in state["records"].values() if record["kind"] == "gap"]
+            manifest.update(user_id=trajectory.user_id, session_id=trajectory.session_id,
+                            coverage_start=iso(trajectory.started_at), recording_status=trajectory.recording_status,
+                            gaps=gaps, unsupported_events=state["unsupported_events"], complete=False)
+            # Room the manifest entry needs at the end, kept current as payload entries are added.
+            reserve = len(canonical(manifest)) + MANIFEST_RESERVE_BYTES
+
+            def note(section: str, item: dict) -> None:
+                nonlocal reserve
+                manifest[section].append(item)
+                reserve += len(canonical(item)) + 1
+
             for payload in await self._visible_payloads(trajectory.id, through):
+                name = f"payloads/{payload.payload_id}"
                 missing = {"payload_id": payload.payload_id, "availability": payload.availability}
-                if archive.size + payload.size_bytes > self.max_bytes:
-                    manifest["missing_payloads"].append({**missing, "reason": ExportTooLarge.__name__})
+                if not self._fits(archive, name, payload.size_bytes, reserve):
+                    note("missing_payloads", {**missing, "reason": ExportTooLarge.__name__})
                     continue
                 try:
                     async with trace_session() as db:
                         _, content = await read_payload(db, trajectory.id, payload.payload_id, through_seq=through)
                 except (FileNotFoundError, LookupError) as exc:
-                    manifest["missing_payloads"].append({**missing, "reason": type(exc).__name__})
+                    note("missing_payloads", {**missing, "reason": type(exc).__name__})
                     continue
-                described = await archive.write(f"payloads/{payload.payload_id}", content)
-                manifest["files"].append({**described, "payload_id": payload.payload_id,
-                                          "media_type": payload.media_type})
-            gaps = [{"record_id": record["record_id"], "seq": record["start_seq"], "data": record["data"]}
-                    for record in state["records"].values() if record["kind"] == "gap"]
-            manifest.update(user_id=trajectory.user_id, session_id=trajectory.session_id,
-                            coverage_start=iso(trajectory.started_at), recording_status=trajectory.recording_status,
-                            gaps=gaps, unsupported_events=state["unsupported_events"],
-                            complete=not manifest["missing_payloads"] and not state["unsupported_events"] and not gaps)
+                if not self._fits(archive, name, len(content), reserve):
+                    # The declared size (an asset reference's, for one) understated the content.
+                    note("missing_payloads", {**missing, "reason": ExportTooLarge.__name__})
+                    continue
+                described = await archive.write(name, content)
+                note("files", {**described, "payload_id": payload.payload_id, "media_type": payload.media_type})
+            manifest["complete"] = not manifest["missing_payloads"] and not state["unsupported_events"] and not gaps
             await archive.write("manifest.json", canonical(manifest))
         return manifest
+
+    def _fits(self, archive: _ZipWriter, name: str, size: int, reserve: int) -> bool:
+        """Whether an entry of ``size`` bytes still fits under the cap, leaving ``reserve`` for the manifest.
+
+        Deflate can expand incompressible data slightly; the entry's headers
+        and central directory record come on top.
+        """
+        worst = size + size // 1000 + ENTRY_OVERHEAD_BYTES + 2 * len(name.encode())
+        return archive.size + worst + reserve <= self.max_bytes
 
     async def _events(self, trajectory_id: str, through: int):
         """Stored events 1..through in order: segments for archived ranges, hot rows for the rest.
@@ -568,6 +605,9 @@ async def build_export(export_id: str, *, settings=None, blob_store=None, metric
     try:
         service = ExportService(settings, blob_store=blob_store or get_blob_store(), metrics=metrics or _NullMetrics(),
                                 owner_id=owner_id or PROCESS_OWNER)
+        # Only resume_exports takes over rows of this owner id: another task of
+        # this process may be building this very export under a live lease.
+        service._resumed = True
         return await service.build(export_id)
     finally:
         if task is not None:

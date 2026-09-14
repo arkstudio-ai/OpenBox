@@ -45,24 +45,35 @@ DEFAULT_REGION = "cn-shanghai"
 DEFAULT_INSTANCE = "gw2"
 STATE_VERSION = 1
 
-# Worker /metrics names (SPEC §8.13).
+# Worker /metrics names (SPEC §8.13, plus the wave-3 names of contract 5). A name
+# the worker does not serve is simply not reported.
 COUNTERS = (
     "ingest_lines", "ingest_events", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
     "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts", "blob_put_bytes",
     "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted", "gc_failures", "exports_built",
+    "blob_put_raw_bytes", "audit_dead_letters", "analytics_exports", "analytics_export_failures", "failed_batches",
 )
 GAUGES = (
     "spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds", "projection_lag_events",
     "archive_lag_events", "gc_queue_depth", "trace_db_bytes", "hot_events_rows", "trajectories_degraded",
     "trajectories_blocked", "stale_hot_partitions",
+    "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
 )
 # Measured on the host by push-metrics.sh. They replace the worker's view of the
 # same quantity because they keep flowing while the worker is down.
+# backend_cpu_percent and backend_mem_percent come from `docker stats` (CPU as a
+# percentage of one core, memory of the container limit);
+# business_trajectory_statements counts pg_stat_statements entries of the
+# business database that mention trajectory_ tables other than legacy_trajectory_*.
 HOST_METRICS = (
     "host_disk_used_percent", "docker_disk_used_percent", "spool_bytes", "spool_files",
     "spool_oldest_age_seconds", "spool_quarantined_files", "oom_kills_1h", "backend_oom_kills_1h",
-    "trace_db_bytes",
+    "trace_db_bytes", "backend_cpu_percent", "backend_mem_percent", "business_trajectory_statements",
 )
+# Reported with ``put`` by jobs other than the minute timer (setup-alarms.sh has
+# rules on them): analytics-export.sh sends 1 after a failed export and 0 after a
+# successful one.
+JOB_METRICS = ("analytics_export_failed",)
 # Alarm windows used by setup-alarms.sh: counter increments summed over the
 # trailing number of seconds.
 WINDOWS = {"gaps_recorded_1h": ("gaps_recorded", 3600), "blob_put_failures_5m": ("blob_put_failures", 300)}

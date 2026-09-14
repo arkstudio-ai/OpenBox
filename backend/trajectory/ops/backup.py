@@ -13,6 +13,10 @@ TRAJECTORY_OSS_INTERNAL is false) with an exact Content-Length and the sha256 as
 x-oss-meta-sha256. The helper hashes what it actually sent, deletes the object
 when that differs from the declared size or digest, and finally checks size and
 digest with a signed HEAD. The dump never touches the worker's disk.
+
+``download`` streams a stored backup to stdout (deploy/gw2/scripts/restore-check.sh
+writes it to a host file) and fails when the bytes differ from the recorded
+x-oss-meta-sha256, or from --sha256 for objects stored without it.
 """
 import argparse
 import asyncio
@@ -160,6 +164,43 @@ async def upload(
     return await verify(oss, http, key, size, sha256=sha256, internal=internal)
 
 
+async def download(
+    oss: OssClient, http: httpx.AsyncClient, key: str, sink: BinaryIO, *, sha256: str | None = None,
+    internal: bool = True,
+) -> dict:
+    """Stream a stored backup into ``sink`` and check its length and sha256 (the recorded one unless given)."""
+    check_key(key)
+    _check_digest(sha256)
+    url = oss.presign_get(key, 3600, internal=internal)
+    digest = hashlib.sha256()
+    received = 0
+    try:
+        # identity: a content-encoded answer would not match Content-Length or the recorded digest.
+        async with http.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
+            if response.status_code != 200:
+                await response.aread()
+                if response.status_code == 404:
+                    raise BackupError(f"{key} does not exist")
+                raise BackupError(f"GET {key} failed: {describe_error(response)}")
+            declared = response.headers.get("content-length")
+            recorded = response.headers.get(SHA256_HEADER) or None
+            async for chunk in response.aiter_bytes(CHUNK_BYTES):
+                digest.update(chunk)
+                received += len(chunk)
+                await asyncio.to_thread(sink.write, chunk)
+    except httpx.HTTPError as exc:
+        raise BackupError(f"GET {key} failed: {type(exc).__name__}") from None
+    await asyncio.to_thread(sink.flush)
+    if declared is not None and declared.isdigit() and int(declared) != received:
+        raise BackupError(f"{key}: received {received} bytes, the response declared {declared}")
+    expected = sha256 or recorded
+    if expected is None:
+        raise BackupError(f"{key} records no {SHA256_HEADER}; pass --sha256")
+    if digest.hexdigest() != expected:
+        raise BackupError(f"{key}: the downloaded bytes have sha256 {digest.hexdigest()}, expected {expected}")
+    return {"bucket": oss.bucket, "key": key, "size_bytes": received, "sha256": expected}
+
+
 def _parser() -> argparse.ArgumentParser:
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--key", required=True, help=f"object key under {BACKUP_PREFIX}")
@@ -177,13 +218,24 @@ def _parser() -> argparse.ArgumentParser:
     presign_command = commands.add_parser("presign-put", parents=[shared], help="print a presigned PUT URL for a manual upload")
     presign_command.add_argument("--content-type", default="application/octet-stream")
     presign_command.add_argument("--expires", type=int, default=3600)
+    download_command = commands.add_parser(
+        "download", parents=[shared], help="stream a stored backup to stdout (or --output) and check its sha256"
+    )
+    download_command.add_argument("--sha256", help="expected digest when the object records none")
+    download_command.add_argument("--output", help="write to this file instead of stdout")
     return parser
 
 
-async def _run(args, oss: OssClient, internal: bool, stdin, transport) -> dict:
+async def _run(args, oss: OssClient, internal: bool, stdin, transport, sink=None) -> dict:
     async with http_client(transport, timeout=600.0) as http:
         if args.command == "verify":
             return await verify(oss, http, args.key, args.size, sha256=args.sha256, internal=internal)
+        if args.command == "download":
+            if args.output:
+                with open(args.output, "wb") as target:
+                    return await download(oss, http, args.key, target, sha256=args.sha256, internal=internal)
+            target = sink if sink is not None else sys.stdout.buffer
+            return await download(oss, http, args.key, target, sha256=args.sha256, internal=internal)
         options = {"sha256": args.sha256, "content_type": args.content_type, "internal": internal}
         if args.file:
             with open(args.file, "rb") as source:
@@ -192,7 +244,8 @@ async def _run(args, oss: OssClient, internal: bool, stdin, transport) -> dict:
         return await upload(oss, http, args.key, source, args.size, **options)
 
 
-def main(argv: list[str] | None = None, *, stdin=None, stdout=None, transport=None) -> int:
+def main(argv: list[str] | None = None, *, stdin=None, stdout=None, sink=None, transport=None) -> int:
+    """``sink`` receives the bytes of ``download`` without --output (default: binary stdout)."""
     args = _parser().parse_args(argv)
     stdout = sys.stdout if stdout is None else stdout
     try:
@@ -202,11 +255,13 @@ def main(argv: list[str] | None = None, *, stdin=None, stdout=None, transport=No
             url = oss.presign_put(check_key(args.key), args.content_type, args.expires, internal=internal)
             print(url, file=stdout)
             return 0
-        result = asyncio.run(_run(args, oss, internal, stdin, transport))
+        result = asyncio.run(_run(args, oss, internal, stdin, transport, sink))
     except (BackupError, OpsStorageError, AliyunCredentialsError, OSError) as exc:
         print(f"backup: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps(result, ensure_ascii=False), file=stdout)
+    # A download to stdout owns stdout: the summary goes to stderr.
+    summary = sys.stderr if args.command == "download" and not args.output else stdout
+    print(json.dumps(result, ensure_ascii=False), file=summary)
     return 0
 
 

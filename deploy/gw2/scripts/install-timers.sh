@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Install and enable the operations timers (SPEC §12): trajectory metrics every minute, PostgreSQL
-# backups daily at 03:30 Asia/Shanghai, Docker image prune weekly. Idempotent. The units run the
-# scripts from /opt/openbox/deploy/gw2, so copy the deploy/gw2 directory there first. --instance sets
-# the CloudMonitor instance dimension of the metrics through a drop-in of the metrics service: keep
-# the default gw2 on the production host and give every other host (the AWS development host) its
-# own name, or its metrics raise the gw2 alarms.
+# backups daily at 03:30 Asia/Shanghai, trajectory analytics export daily at 04:00 Asia/Shanghai,
+# Docker image prune weekly. Idempotent. The units run the scripts from /opt/openbox/deploy/gw2, so
+# copy the deploy/gw2 directory there first. --instance sets the CloudMonitor instance dimension of the
+# metrics and of the analytics failure report through drop-ins of both services: keep the default gw2
+# on the production host and give every other host (the AWS development host) its own name, or its
+# metrics raise the gw2 alarms.
 #
 #   install-timers.sh [--instance gw2] [--uninstall] [--dry-run]
 set -euo pipefail
@@ -12,8 +13,9 @@ set -euo pipefail
 
 UNIT_DIR=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 INSTALL_DIR=/opt/openbox/deploy/gw2
-TIMERS="openbox-trajectory-metrics.timer openbox-pg-backup.timer openbox-prune-images.timer"
-DROPIN_DIR=$UNIT_DIR/openbox-trajectory-metrics.service.d
+TIMERS="openbox-trajectory-metrics.timer openbox-pg-backup.timer openbox-trajectory-analytics.timer openbox-prune-images.timer"
+# Services that report to CloudMonitor and therefore need the instance dimension.
+INSTANCE_SERVICES="openbox-trajectory-metrics.service openbox-trajectory-analytics.service"
 instance=${OPENBOX_CMS_INSTANCE:-gw2}
 uninstall=0
 dry_run=0
@@ -73,7 +75,9 @@ if [ "$uninstall" = 1 ]; then
   for timer in $TIMERS; do
     step rm -f "$UNIT_DIR/$timer" "$UNIT_DIR/${timer%.timer}.service"
   done
-  step rm -rf "$DROPIN_DIR"
+  for service in $INSTANCE_SERVICES; do
+    step rm -rf "$UNIT_DIR/$service.d"
+  done
   step systemctl daemon-reload
   exit 0
 fi
@@ -85,7 +89,7 @@ if [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
   warn "this copy is $DEPLOY_DIR; the units expect $INSTALL_DIR"
 fi
 
-for script in push-metrics.sh pg-backup.sh prune-images.sh; do
+for script in push-metrics.sh pg-backup.sh analytics-export.sh prune-images.sh; do
   if [ ! -x "$DEPLOY_DIR/scripts/$script" ]; then
     step chmod 0755 "$DEPLOY_DIR/scripts/$script"
   fi
@@ -99,8 +103,10 @@ for timer in $TIMERS; do
   done
 done
 log "metrics instance: $instance"
-step install -d -m 0755 "$DROPIN_DIR"
-write_file "$DROPIN_DIR/instance.conf" "$(printf '[Service]\nEnvironment=OPENBOX_CMS_INSTANCE=%s' "$instance")"
+for service in $INSTANCE_SERVICES; do
+  step install -d -m 0755 "$UNIT_DIR/$service.d"
+  write_file "$UNIT_DIR/$service.d/instance.conf" "$(printf '[Service]\nEnvironment=OPENBOX_CMS_INSTANCE=%s' "$instance")"
+done
 step systemctl daemon-reload
 # shellcheck disable=SC2086 # one argument per timer
 step systemctl enable --now $TIMERS

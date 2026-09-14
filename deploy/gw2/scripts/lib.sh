@@ -8,6 +8,8 @@ OPENBOX_DIR=${OPENBOX_DIR:-/opt/openbox}
 OPENBOX_PG_USER=${OPENBOX_PG_USER:-openbox}
 OPENBOX_BUSINESS_DB=${OPENBOX_BUSINESS_DB:-openbox}
 OPENBOX_TRACE_DB=${OPENBOX_TRACE_DB:-openbox_trace}
+# Login role of the trajectory worker (TRAJECTORY_DATABASE_URL in docker-compose.trajectory.yml).
+OPENBOX_TRACE_ROLE=${OPENBOX_TRACE_ROLE:-openbox_trace}
 SPOOL_MOUNT=/var/lib/openbox/trajectory-spool
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 EXECUTE=0
@@ -29,7 +31,7 @@ positive_integer() { [[ ${1:-} =~ ^[1-9][0-9]{0,8}$ ]]; }
 number_greater() { awk -v a="${1:-}" -v b="${2:-}" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
 # These names are quoted into SQL identifiers.
-for identifier in "$OPENBOX_PG_USER" "$OPENBOX_BUSINESS_DB" "$OPENBOX_TRACE_DB"; do
+for identifier in "$OPENBOX_PG_USER" "$OPENBOX_BUSINESS_DB" "$OPENBOX_TRACE_DB" "$OPENBOX_TRACE_ROLE"; do
   valid_identifier "$identifier" || die "invalid database identifier in the environment: $identifier"
 done
 
@@ -122,6 +124,20 @@ wait_healthy() {
 
 psql_run() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$OPENBOX_PG_USER" -d "$1" -c "$2"; }
 psql_scalar() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$OPENBOX_PG_USER" -d "$1" -tAc "$2"; }
+# psql_stdin DATABASE: runs the SQL read from stdin, so values such as passwords stay out of every
+# process's arguments (docker passes stdin through its API stream).
+psql_stdin() { compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U "$OPENBOX_PG_USER" -d "$1"; }
+
+# trace_db_password: OPENBOX_TRACE_DB_PASSWORD from $OPENBOX_DIR/.env. It is embedded in
+# TRAJECTORY_DATABASE_URL and quoted into SQL, so only URL- and SQL-safe characters are accepted.
+trace_db_password() {
+  local password
+  password=$(env_value OPENBOX_TRACE_DB_PASSWORD)
+  [ -n "$password" ] || die "OPENBOX_TRACE_DB_PASSWORD is not set in $OPENBOX_DIR/.env (generate one with: openssl rand -hex 32)"
+  [[ $password =~ ^[A-Za-z0-9._~-]{16,128}$ ]] ||
+    die "OPENBOX_TRACE_DB_PASSWORD in $OPENBOX_DIR/.env must be 16 to 128 letters, digits, '.', '_', '~' or '-'"
+  printf '%s' "$password"
+}
 
 # database_exists NAME: 0 when the database exists, 1 when it does not, 2 when PostgreSQL cannot be
 # queried. A failed query must never read as a missing database (backups would be skipped silently).

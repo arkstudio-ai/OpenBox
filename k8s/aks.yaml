@@ -1,6 +1,7 @@
 # Legacy AKS manifest: frozen, not the production path (README.md). The trajectory worker sidecar,
 # its Service and the admin trajectory ingress paths (SPEC §12) are untested; openbox-secrets must
-# also provide TRAJECTORY_DATABASE_URL and INTERNAL_API_TOKEN for them.
+# also provide INTERNAL_API_TOKEN and TRAJECTORY_DATABASE_URL for them, the latter with the dedicated
+# role: postgresql+asyncpg://openbox_trace:<password>@<host>:5432/openbox_trace (create-trace-db.sh).
 ---
 apiVersion: v1
 kind: Namespace
@@ -173,6 +174,9 @@ spec:
             - secretRef:
                 name: openbox-secrets
           env:
+            # Blank on purpose: the business DATABASE_URL of openbox-secrets must not reach the worker.
+            - name: DATABASE_URL
+              value: ""
             # No OSS here: blobs live in the pod until a persistent volume backs this path.
             - name: TRAJECTORY_BLOB_PROVIDER
               value: "local"

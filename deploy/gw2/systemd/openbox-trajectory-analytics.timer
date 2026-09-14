@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily OpenBox trajectory analytics export at 04:00 Asia/Shanghai
+Documentation=file:/opt/openbox/deploy/gw2/RUNBOOK.md
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Asia/Shanghai
+Persistent=true
+Unit=openbox-trajectory-analytics.service
+
+[Install]
+WantedBy=timers.target

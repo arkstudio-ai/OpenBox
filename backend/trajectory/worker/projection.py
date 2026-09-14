@@ -8,8 +8,9 @@ loads every record it can touch: explicit targets, the assistants of committed
 messages, the latest system record of each (agent_id, source_session_id) and,
 for interruptions and gaps, every open tool/request/assistant/step record of
 the run. Each touched record is written once per batch, values above
-TRAJECTORY_RECORD_INLINE_BYTES as content-addressed ``$ref`` blobs, together
-with its (record, event) links and the session summary.
+TRAJECTORY_RECORD_INLINE_BYTES as content-addressed ``$ref`` blobs (streamed
+blocks and tool output once their record closes), together with its (record,
+event) links and the session summary.
 
 Blob uploads run outside database transactions. The write transaction locks
 the trajectory row and gives up when the trajectory was deleted, expired or
@@ -128,10 +129,24 @@ class _Externalizer:
         self.blobs: dict[str, dict] = {}
 
     def record(self, record: dict) -> dict:
+        """The record with its large values as references.
+
+        Streamed blocks and tool output grow in every batch until their record
+        closes. As references they would leave one blob per intermediate
+        version, each counted in the trajectory's stored bytes and budget, so
+        an open record keeps them inline; they are stored once it closes.
+        """
         result = dict(record)
-        for field in ("data", "blocks"):
-            if isinstance(record.get(field), (dict, list)):
-                result[field] = self._container(record[field], 1)[0]
+        status = record.get("status")
+        is_open = not (isinstance(status, str) and status in TERMINAL)
+        blocks, data = record.get("blocks"), record.get("data")
+        if isinstance(blocks, (dict, list)) and not is_open:
+            result["blocks"] = self._container(blocks, 1)[0]
+        if isinstance(data, dict) and is_open and "output" in data:
+            rest = self._container({key: value for key, value in data.items() if key != "output"}, 1)[0]
+            result["data"] = {key: value if key == "output" else rest[key] for key, value in data.items()}
+        elif isinstance(data, (dict, list)):
+            result["data"] = self._container(data, 1)[0]
         return result
 
     def _value(self, value, depth: int):

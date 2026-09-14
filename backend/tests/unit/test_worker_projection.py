@@ -198,6 +198,42 @@ async def test_large_record_values_become_references_that_reuse_stored_content(t
     assert (await _head(events))[1] == replay(events)
 
 
+async def test_streamed_values_are_stored_once_when_their_record_closes(trajectory, blobs):
+    # One batch per event: streamed text and tool output grow past the inline limit while open.
+    request, tool = {"request_id": "req_1", **RUN}, {"call_id": "call_1", **RUN}
+    events = [_event(1, "request.started", {"model": "model-1"}, **request),
+              *[_event(2 + index, "request.delta", {"chunk_index": index, "delta": f"{index:02d}" + "t" * 48}, **request)
+                for index in range(20)],
+              _event(22, "request.finished", {"status": "completed"}, **request),
+              _event(23, "tool.requested", {"name": "bash"}, **tool),
+              _event(24, "tool.started", {}, **tool),
+              *[_event(25 + index, "tool.output", {"chunk_index": index, "output": f"{index:02d}" + "o" * 48}, **tool)
+                for index in range(20)],
+              _event(45, "tool.finished", {"status": "completed"}, **tool)]
+    await Ingest(blobs).append(TRAJECTORY, events)
+    service = _service(blobs, record_inline_bytes=512)
+    for seq in range(1, len(events) + 1):
+        assert await service.project(TRAJECTORY, max_events=1) == 1
+        async with trace_session() as db:
+            rows = (await db.scalars(select(TrajectoryRecord).where(TrajectoryRecord.trajectory_id == TRAJECTORY))).all()
+            payloads = await db.scalar(select(func.count()).select_from(TrajectoryPayload))
+        records = {row.record_id: row.data for row in rows}
+        open_values = [records["request:req_1"]["blocks"]] if seq < 22 else []
+        open_values += [records["tool:call_1"]["data"].get("output")] if 25 <= seq < 45 else []
+        # Open records keep their growing values inline: no intermediate versions are stored.
+        assert not any(_contains_ref(value) for value in open_values), seq
+        assert payloads == (0 if seq < 22 else 1 if seq < 45 else 2), seq
+    async with trace_session() as db:
+        request_row = await db.get(TrajectoryRecord, (TRAJECTORY, "request:req_1"))
+        assistant_row = await db.get(TrajectoryRecord, (TRAJECTORY, "assistant:req_1"))
+        tool_row = await db.get(TrajectoryRecord, (TRAJECTORY, "tool:call_1"))
+    # Closed: each value is one blob, shared by the request and assistant records.
+    assert is_ref(request_row.data["blocks"][0]["text"]) and request_row.data["blocks"] == assistant_row.data["blocks"]
+    assert is_ref(tool_row.data["data"]["output"])
+    trajectory_row, state = await _head(events)
+    assert state == replay(events) and trajectory_row.projected_seq == len(events)
+
+
 async def test_a_value_claimed_meanwhile_under_another_id_rolls_the_batch_back(trajectory, blobs, monkeypatch):
     value = "z" * 300
     events = [_event(1, "input.accepted", {"text": "hello", "notes": value}, message_id="msg_1")]
@@ -429,28 +465,30 @@ async def test_a_checkpoint_row_stored_elsewhere_moves_checkpoint_seq(trajectory
 
 
 async def test_record_values_equal_to_values_ingested_later_are_visible_where_projected(trajectory, blobs):
-    # The output chunks add up to the value that tool.finished carries at seq 4, which ingest
-    # stored first; a record projected through seq 3 references that row.
-    full = "a" * 30 + "b" * 30
+    # The streamed reply equals the output a later event carries, which ingest stored first
+    # (at seq 5); the request and assistant records projected through seq 4 reference that row.
+    text = "a" * 300 + "b" * 300
+    request = {"request_id": "req_1", **RUN}
     events = [
-        _event(1, "tool.requested", {"name": "bash"}, call_id="call_1", **RUN),
-        _event(2, "tool.output", {"chunk_index": 0, "output": full[:30]}, call_id="call_1", **RUN),
-        _event(3, "tool.output", {"chunk_index": 1, "output": full[30:]}, call_id="call_1", **RUN),
-        _event(4, "tool.finished", {"status": "completed", "output": full}, call_id="call_1", **RUN),
+        _event(1, "request.started", {"model": "model-1"}, **request),
+        _event(2, "request.delta", {"chunk_index": 0, "delta": text[:300]}, **request),
+        _event(3, "request.delta", {"chunk_index": 1, "delta": text[300:]}, **request),
+        _event(4, "request.finished", {"status": "completed"}, **request),
+        _event(5, "operation.late_result", {"output": text}, **RUN),
     ]
-    await Ingest(blobs, inline_bytes=40).append(TRAJECTORY, events)
-    service = _service(blobs, record_inline_bytes=48, checkpoint_interval=3)
-    assert await service.project(TRAJECTORY, max_events=3) == 3
+    await Ingest(blobs, inline_bytes=400).append(TRAJECTORY, events)
+    service = _service(blobs, record_inline_bytes=512, checkpoint_interval=4)
+    assert await service.project(TRAJECTORY, max_events=4) == 4
     async with trace_session() as db:
-        [row] = (await db.scalars(select(TrajectoryPayload))).all()
-        record = await db.get(TrajectoryRecord, (TRAJECTORY, "tool:call_1"))
-        assert record.data["data"]["output"]["$ref"]["payload_id"] == row.payload_id and row.first_seq == 3
+        row = await db.scalar(select(TrajectoryPayload).where(TrajectoryPayload.size_bytes == len(canonical(text))))
+        record = await db.get(TrajectoryRecord, (TRAJECTORY, "assistant:req_1"))
+        assert record.data["blocks"][0]["text"]["$ref"]["payload_id"] == row.payload_id and row.first_seq == 4
         trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
-        assert await state_at(db, trajectory_row, 3) == replay(events[:3])
+        assert await state_at(db, trajectory_row, 4) == replay(events[:4])
     assert await service.maybe_checkpoint(TRAJECTORY) is True
     assert await service.project(TRAJECTORY) == 1
     async with trace_session() as db:
         trajectory_row = await db.get(SessionTrajectory, TRAJECTORY)
-        assert (await get_checkpoint(db, trajectory_row, 3))["state"] == replay(events[:3])
+        assert (await get_checkpoint(db, trajectory_row, 4))["state"] == replay(events[:4])
         for through in range(len(events) + 1):
             assert await state_at(db, trajectory_row, through) == replay(events[:through]), through

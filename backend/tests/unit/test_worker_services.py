@@ -214,3 +214,31 @@ async def test_spool_dir_override_and_default_wiring(trace_db, settings, tmp_pat
     for name in ("ProjectionService", "ArchiveService", "RetentionService"):
         assert built[name] == {"blob_store": store, "metrics": metrics}
     assert built["ExportService"]["owner_id"] == services.owner_id and built["ExportService"]["blob_store"] is store
+
+
+@pytest.mark.parametrize("name", ["retention", "ingest"])
+async def test_a_loop_always_lets_other_tasks_run(trace_db, settings, name):
+    """Steps that report work without suspending (a fake, a quick dict result) must not hold the event loop."""
+    services = _services(settings)
+    services._stop, services._projection_wake = asyncio.Event(), asyncio.Event()
+    ticks = 0
+    seen = []
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    async def step():
+        seen.append(ticks)
+        if len(seen) == 3:
+            services._stop.set()
+        return {"expired": 0}
+
+    background = asyncio.create_task(ticker())
+    try:
+        await asyncio.wait_for(services._loop(name, 0.001, step), timeout=5)
+    finally:
+        background.cancel()
+    assert len(seen) == 3 and seen[0] < seen[1] < seen[2]

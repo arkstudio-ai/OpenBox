@@ -177,7 +177,12 @@ class WorkerServices:
                 if await self._sleep(ERROR_BACKOFF_SECONDS):
                     return
                 continue
-            if not busy and await self._sleep(interval, wake):
+            if busy and name in CONTINUOUS_STEPS:
+                # More work may be waiting: go again, but let the other loops run first
+                # (a step that finished without suspending would otherwise hold the event loop).
+                await asyncio.sleep(0)
+                continue
+            if await self._sleep(interval, wake):
                 return
 
     async def _sequential(self, steps) -> None:

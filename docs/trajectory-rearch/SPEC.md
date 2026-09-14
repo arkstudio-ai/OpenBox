@@ -687,7 +687,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 - `vite.config.ts`: dev proxy entries for the two paths before `/api` and `/ws`, target from `VITE_TRAJECTORY_PROXY_TARGET` (default the backend target).
 
 ### 11.2 Admin UI (`frontend-v2/src/features/admin-trajectories/`)
-- Polling: events poll 10 s while the socket is connected, 2 s while disconnected, immediate on visibility; header refetch on WS hint and every 30 s; list probe 30 s; record detail throttle 2 s; payload revalidation uses `?meta=1` every 60 s instead of re-downloading bytes every 15 s.
+- Polling (plan 4.3: an idle session page with a healthy socket makes at most 4 requests per minute): events poll 30 s while the socket is connected, 2 s while disconnected, immediate on visibility; header refetch on a WS hint and 60 s after its last answer while connected (30 s while disconnected); list probe 30 s on the list page, which opens no socket; record detail throttle 2 s; payload `?meta=1` revalidation only while the payload is on screen, with an overdue check when it scrolls back into view, instead of re-downloading bytes every 15 s.
 - Lazy request input: RequestInputPanel, SystemPromptPanel, SystemDiffPanel, ToolCatalogPanel and ContentActions request the record with `expand=refs` and resolve `$ref` values on demand through `/blobs/{sha256}?through_seq=H` (cached by sha256, immutable); rendering after resolution is identical to today. The local projection path (`/events`, `/checkpoint`) is unchanged.
 - Protocol types: add `$ref` envelope, `expand` param, blob endpoint, `capabilities.refs`.
 - Vitest coverage for polling constants, lazy resolution, meta revalidation, and nginx tests.

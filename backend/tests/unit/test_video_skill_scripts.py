@@ -161,7 +161,8 @@ GOOD = (
     "固定镜头。构图：竖屏 9:16 半身中景。\n"
     "自然肢体动作：抬手示意。\n"
     "语气：自然清晰。\n"
-    "面对镜头说出@今天教你三招\n"
+    "人物面对镜头开口说话。\n"
+    "口播台词：今天教你三招\n"
     "无字幕，字幕只能后期合成。"
 )
 
@@ -171,10 +172,30 @@ def test_a_complete_spoken_prompt_passes():
 
 
 def test_a_missing_verbatim_line_is_caught():
-    report = _lint(GOOD.replace("@今天教你三招", "说点什么"))
+    report = _lint(GOOD.replace("口播台词：今天教你三招", "说点什么"))
 
     assert report["ok"] is False
     assert any(issue["code"] == "dialogue_exact" for issue in report["issues"])
+
+
+def test_an_at_sign_is_caught_because_the_model_reads_it_aloud():
+    """Production STT heard "艾博南宁的姐妹…" for a prompt ending "@南宁的姐妹…"."""
+    report = _lint(GOOD.replace("口播台词：", "面对镜头说出@"))
+
+    assert report["ok"] is False
+    assert {"dialogue_at_sign", "dialogue_exact"} <= {issue["code"] for issue in report["issues"]}
+
+
+def test_the_label_is_found_in_a_one_paragraph_prompt():
+    """Agents often write the whole prompt on one line, the label last."""
+    paragraph = (
+        "全片一致的画面基底：同一主播、同一背景。固定镜头，半身中景。"
+        "自然肢体动作：抬手示意。语气：自然清晰。无字幕。口播台词：今天教你三招"
+    )
+    report = _lint(paragraph)
+
+    assert report["ok"] is True
+    assert report["warnings"] == []
 
 
 def test_broll_drops_the_performance_rules_but_keeps_continuity():

@@ -71,13 +71,13 @@ The splitter emits `plan_shots_args`. Forty characters is advice, not a universa
 
 Use `person`, `scene`, `outfit`, `prop`; see `references/prompt-recipes.md`. Video anchors are generally steadier than single images. Number images and videos separately and list which shot receives each. With zero assets, use the exact same textual base in every segment and do not call `image_gen`. Incompatibility requires a disclosed user choice, not an improvised anchor or silent model change.
 
-Write every prompt in full. Put the exact line immediately after `@`, use tone not speed, restrain scene decoration, and require `无字幕`:
+Write every prompt in full. Put the exact line after `口播台词：` and end the line there, use tone not speed, restrain scene decoration, and require `无字幕`. Never write `@` in a prompt: the model reads it aloud (production STT heard “艾特” before the line), so it marks nothing:
 
 ```bash
 python3 "$S/lint_prompt.py" --prompt-file shot1.txt --script "<逐字台词>" --anchor "<逐字基底>" --images <N> --videos <N>
 ```
 
-Read the zero-exit advice. `镜头跟随` is valid for a deliberate walking shot; mismatched text after `@` is a warning to fix or disclose. Record top-level model/resolution and each shot's full script, prompt, planned seconds, assets, model, and resolution with `$S/state.py set/shot` before confirmation.
+Read the zero-exit advice. `镜头跟随` is valid for a deliberate walking shot; mismatched text after `口播台词：` is a warning to fix or disclose; `dialogue_at_sign` never is — remove the `@`. Record top-level model/resolution and each shot's full script, prompt, planned seconds, assets, model, and resolution with `$S/state.py set/shot` before confirmation.
 
 ### 5. Estimate and show complete shots + price — card 2
 
@@ -132,6 +132,7 @@ Captions use the accepted actual transcript, never the written line. Two paths:
 
 - Presenter/hair changes: reuse original material and exact base; prefer video; a stable model seed may help when supported.
 - Words change: always STT; one-character substitutions can keep high similarity and invert meaning.
+- An extra “艾特” before the line: an `@` reached the model. The line belongs after `口播台词：` with no `@` anywhere; fix the prompt before a paid retry, since an unchanged one repeats it.
 - Background changes: anchor it and avoid decorative overload.
 - Generated text is wrong: require `无字幕`; burn accepted STT words later.
 - Captions overflow or joins drift: use `$S/build_ass.py` and `$S/compose.sh`, not an ad-hoc concat.

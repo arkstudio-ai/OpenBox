@@ -81,7 +81,8 @@ class SessionTrajectory(TraceBase):
     checkpoint_seq: Mapped[int] = _defaulted(BigInteger, 0)  # through_seq of the latest checkpoint
     schema_version: Mapped[int] = _defaulted(Integer, 2)
     recording_status: Mapped[str] = _defaulted(String(32), "recording")  # recording|gap|paused|deleted|expired
-    recording_epoch: Mapped[int] = _defaulted(Integer, 0)
+    # Epoch of the last applied resume; producers name periods by millisecond epochs (t0002: BIGINT).
+    recording_epoch: Mapped[int] = _defaulted(BigInteger().with_variant(Integer(), "sqlite"), 0)
     event_count: Mapped[int] = _defaulted(BigInteger, 0)
     stored_bytes: Mapped[int] = _defaulted(BigInteger, 0)  # compressed bytes in blobs + segments
     budget_level: Mapped[str] = _defaulted(String(16), "normal")  # normal|degraded|blocked

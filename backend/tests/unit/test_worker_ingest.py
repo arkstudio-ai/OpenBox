@@ -17,6 +17,7 @@ from sqlalchemy import delete, select, update
 
 from bus import bus
 from trajectory import spool
+from trajectory.lifecycle import publish_after_commit
 from trajectory.projector import _preview
 from trajectory.redaction import sanitize
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob
@@ -44,7 +45,11 @@ class FakeMetrics:
 
 
 class FakeRetention:
-    """The tombstone of RetentionService (SPEC §8.11), reduced to what ingest relies on."""
+    """The tombstone of RetentionService (SPEC §8.11), reduced to what ingest relies on.
+
+    Like ``lifecycle.tombstone_trajectory`` it publishes the deleted notification once the caller's
+    transaction commits.
+    """
 
     def __init__(self):
         self.calls = []
@@ -59,6 +64,7 @@ class FakeRetention:
         db.add(TrajectoryGcQueue(kind="prefix", storage_key=f"trajectories/{trajectory.id}/", reason=reason,
                                  attempts=0, next_attempt_at=now, created_at=now))
         await db.flush()
+        publish_after_commit(db, trajectory, deleted=True)
 
 
 class SpoolWriter:

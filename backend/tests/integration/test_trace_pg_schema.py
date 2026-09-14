@@ -12,6 +12,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -89,7 +90,8 @@ async def _placement(connection) -> list[tuple[int, str]]:
 
 async def test_migration_creates_extension_partitioned_events_and_trigram_index(migrated):
     async with migrated.connect() as connection:
-        assert (await connection.execute(text("SELECT version_num FROM trajectory_alembic_version"))).scalar_one() == "t0001_initial"
+        head = ScriptDirectory(str(BACKEND / "trajectory" / "store" / "migrations")).get_current_head()
+        assert (await connection.execute(text("SELECT version_num FROM trajectory_alembic_version"))).scalar_one() == head
         assert (await connection.execute(text("SELECT to_regclass('alembic_version')"))).scalar() is None
         assert (await connection.execute(text("SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'"))).scalar() == "pg_trgm"
         strategy, key = (await connection.execute(text(

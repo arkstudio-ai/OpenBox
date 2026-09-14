@@ -142,5 +142,6 @@ def test_cli_exits_non_zero_without_trace_url_and_migrates_with_it(tmp_path):
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM trajectory_alembic_version").scalar_one()
     engine.dispose()
-    assert version == "t0001_initial"
+    from alembic.script import ScriptDirectory
+    assert version == ScriptDirectory.from_config(_config()).get_current_head()
     assert not business.exists()

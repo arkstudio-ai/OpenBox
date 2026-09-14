@@ -209,7 +209,7 @@ async def test_recording_state_pauses_and_resumes(harness):
     assert len(stored) == 4
     assert paused.data == {"phase": "paused", "reason": "recording_disabled", "last_recorded_seq": "2"}
     assert resumed.data == {"phase": "resumed", "reason": "recording_reenabled", "previous_committed_seq": "3"}
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 1)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
     assert paused.event_id == f"gap:{harness.writer.producer_id}:2:ses_1"
     [row] = await rows(SessionTrajectory)
     assert row.id == trajectory.id
@@ -235,7 +235,7 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     gaps = [(row.data["phase"], row.event_id) for row in stored if row.type == "recording.gap"]
     assert gaps == [("paused", f"gap:{harness.writer.producer_id}:2:ses_1"),
                     ("resumed", f"gap:{harness.writer.producer_id}:3:ses_1")]
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 1)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
     # The next period pauses and resumes once more, whatever the duplicates.
     harness.writer.controls({**state, "state": "paused", "at": "2026-09-14T08:03:00.000Z"}, resumed, resumed,
                             {**state, "state": "resumed", "at": "2026-09-14T08:04:00.000Z"})
@@ -243,7 +243,7 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     trajectory, stored = await events_of("ses_1")
     assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [
         "paused", "resumed", "paused", "resumed"]
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 2)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
     # A resume without a pause (a trajectory that never paused) changes nothing.
     harness.writer.events(event(session="ses_2"))
     harness.writer.controls({**resumed, "session_id": "ses_2"})
@@ -251,3 +251,69 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     trajectory, stored = await events_of("ses_2")
     assert [row.type for row in stored] == ["trajectory.started", "input.accepted"]
     assert (trajectory.recording_status, trajectory.recording_epoch) == ("recording", 0)
+
+
+async def test_recording_state_epochs_apply_each_transition_once(harness):
+    """Contract 6: a resume carries the epoch R of the period it opens and a pause R - 1. A control applies only
+    when its epoch is greater than the last applied one, whichever producer or file it comes from; the epoch (a
+    millisecond timestamp) is kept as the trajectory's recording epoch."""
+    harness.writer.events(event())
+    await harness.run()
+    other = SpoolWriter(harness.settings.spool_dir, "20260914080005-other-7-dddddddd")
+    first, second = 1_789_000_000_000, 1_789_000_060_000
+    state = {"type": "recording.state", "user_id": "u1", "session_id": "ses_1", "at": "2026-09-14T08:01:00.000Z"}
+    pause = {**state, "state": "paused", "reason": "recording_disabled"}
+    resume = {**state, "state": "resumed", "reason": "recording_reenabled"}
+    # Oldest file first: the pause reported twice, its resume twice, then that pause once more (a crashed
+    # producer's abandoned file ingested after the resume).
+    harness.writer.controls({**pause, "epoch": first - 1}, age=50)
+    other.controls({**pause, "epoch": first - 1}, age=45)
+    harness.writer.controls({**resume, "epoch": first}, age=40)
+    other.controls({**resume, "epoch": first}, age=35)
+    other.controls({**pause, "epoch": first - 1}, age=30)
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    gaps = [(row.data["phase"], row.event_id) for row in stored if row.type == "recording.gap"]
+    assert gaps == [("paused", f"gap:{harness.writer.producer_id}:2:ses_1"),
+                    ("resumed", f"gap:{harness.writer.producer_id}:3:ses_1")]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", first)
+    # The next period, with a late resume of the previous one in between.
+    harness.writer.controls({**pause, "epoch": second - 1}, {**resume, "epoch": first}, {**resume, "epoch": second})
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [
+        "paused", "resumed", "paused", "resumed"]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", second)
+    # Without an epoch the status rule still applies: this resume ends no pause.
+    harness.writer.controls(resume, {**pause, "epoch": "not a number"})
+    await harness.run()
+    trajectory, stored = await events_of("ses_1")
+    assert [row.data["phase"] for row in stored if row.type == "recording.gap"][4:] == ["paused"]
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("paused", second)
+
+
+async def test_a_session_deletion_publishes_its_deleted_notification_once(trace_db, settings):
+    from tests.unit.test_worker_ingest import FakeMetrics
+    from trajectory.storage import MemoryBlobStore
+    from trajectory.worker.ingest import IngestService
+    from trajectory.worker.retention import RetentionService
+
+    store, metrics = MemoryBlobStore(), FakeMetrics()
+    retention = RetentionService(settings, blob_store=store, metrics=metrics)
+    service = IngestService(settings, blob_store=store, metrics=metrics, retention=retention)
+    writer = SpoolWriter(settings.spool_dir)
+    received = []
+    unsubscribe = bus.subscribe("trajectory.available", received.append)
+    try:
+        writer.events(event(), event())
+        await service.run_once()
+        trajectory, _ = await events_of("ses_1")
+        writer.controls({"type": "session.deleted", "session_id": "ses_1", "user_id": "u1", "deleted_at": AT})
+        result = await service.run_once()
+    finally:
+        unsubscribe()
+    assert [item["data"] for item in received if item["data"].get("deleted")] == [
+        {"user_id": "u1", "owner_user_id": "u1", "session_id": "ses_1", "trajectory_id": trajectory.id,
+         "committed_seq": "3", "deleted": True}]
+    assert result["deleted_trajectories"] == {trajectory.id}
+    assert (await events_of("ses_1"))[0].deleted_at is not None

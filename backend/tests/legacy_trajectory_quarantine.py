@@ -6,13 +6,14 @@ trajectory tables or the old in-process admin API. A module id skips every
 test in it (the module is not imported); a parametrized test may be listed
 without its parameters. tests/conftest.py applies the skips. Wave 3 ports or
 rewrites these tests and must leave this registry empty.
+
+Every wave-2 package kept its own registry; ``QUARANTINE`` is their union, and
+a test listed by several packages keeps each package's reason.
 """
 
 _BUSINESS_EVENTS = "asserts facts read from the business trajectory_events table, retired in wave 2 (w2-producers)"
-_WORKER_API = "admin HTTP/WS API moved to the trajectory worker (SPEC 8.12); covered by tests/unit/test_worker_*"
-_READ_RACES = "read-race matrix reproduced against the worker app in tests/unit/test_worker_routes_read_races.py"
 
-QUARANTINE: dict[str, str] = {
+_PRODUCERS: dict[str, str] = {
     # w2-producers: the in-transaction recorder and the business trajectory tables are gone.
     "tests/integration/test_trajectory_agent_loop.py":
         "reads business trajectory tables and the legacy recorder (w2-producers)",
@@ -64,6 +65,12 @@ QUARANTINE: dict[str, str] = {
         _BUSINESS_EVENTS,
     "tests/unit/test_run_fencing_execution.py::test_superseded_run_gets_no_auth_prompt_and_its_late_job_result_is_flagged":
         _BUSINESS_EVENTS,
+}
+
+_WORKER_API = "admin HTTP/WS API moved to the trajectory worker (SPEC 8.12); covered by tests/unit/test_worker_*"
+_READ_RACES = "read-race matrix reproduced against the worker app in tests/unit/test_worker_routes_read_races.py"
+
+_SERVICE: dict[str, str] = {
     # w2-service: the admin HTTP/WS API, exports and the archive task moved to the trajectory worker.
     "tests/integration/test_trajectory_boundaries.py::test_scoped_tickets_are_atomic_and_cannot_authenticate_execute_socket": _WORKER_API,
     "tests/integration/test_trajectory_boundaries.py::test_readonly_socket_has_no_execution_side_effect_and_rechecks_live_role": _WORKER_API,
@@ -84,3 +91,103 @@ QUARANTINE: dict[str, str] = {
     **{f"tests/integration/test_trajectory_read_races.py::test_record_detail_accepts_encoded_path_identity[{artifact_id.encode('unicode_escape').decode()}]": _READ_RACES
        for artifact_id in ("file:/workspace/report.md", "file:/workspace/100%/literal%2Fname.md", "file:/workspace/报告 ?draft#1.md")},
 }
+
+_PAYLOAD_ROWS = "reads business-database payload rows through payload reads that now serve the trace database"
+_REPOSITORY_ROWS = "passes business-database trajectory rows to repository reads, which now read the trace database"
+_ADMIN_READS = "drives the old in-process admin API over business tables; admin reads now serve the trace database"
+
+_PROJECTION: dict[str, str] = {
+    # w2-projection: payload and repository reads serve the trace database.
+    "tests/integration/test_trajectory_agent_loop.py::test_pause_resume_captures_new_baseline_and_reads_attachments_before_write_lock":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_agent_loop.py::test_real_compaction_prunes_effective_context_but_preserves_replay":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_agent_loop.py::test_user_input_through_application_agent_loop_and_auxiliary_request":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_auxiliary.py::test_image_edit_captures_actual_parameters_owned_versions_and_existing_bill":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_boundaries.py::test_late_job_callbacks_use_submission_identity_and_cannot_revive_deleted_trace":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_boundaries.py::test_readonly_socket_has_no_execution_side_effect_and_rechecks_live_role":
+        _ADMIN_READS,
+    "tests/integration/test_trajectory_boundaries.py::test_retained_attachment_reuse_and_explicit_delete":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_deletion.py::test_inline_and_derived_media_have_no_independent_copy_after_source_deletion[False]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_deletion.py::test_inline_and_derived_media_have_no_independent_copy_after_source_deletion[True]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_dispatch.py::test_derived_media_remains_revocable_with_original_video":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_dispatch.py::test_video_dispatch_captures_final_wire_and_poll_does_not_create_request[ark]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_dispatch.py::test_video_dispatch_captures_final_wire_and_poll_does_not_create_request[bossip]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_dispatch.py::test_video_dispatch_captures_final_wire_and_poll_does_not_create_request[sd2]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_media_dispatch.py::test_video_dispatch_captures_final_wire_and_poll_does_not_create_request[task]":
+        _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_process_crash.py::test_sigkill_preserves_committed_tool_output_and_never_reexecutes":
+        "crash benchmark replays business-database trajectory tables through repository.state_at",
+    "tests/integration/test_trajectory_read_races.py::test_admin_json_and_ticket_are_not_cacheable": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[asset_deleted-410-export]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[asset_deleted-410-payload]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[payload_deleted-410-export]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[payload_deleted-410-payload]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[revoked-401-export]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[revoked-401-payload]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[role-403-export]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[role-403-payload]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[root_deleted-404-export]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_download_rechecks_during_blob_read[root_deleted-404-payload]": _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_record_detail_accepts_encoded_path_identity[file:/workspace/100%/literal%2Fname.md]":
+        _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_record_detail_accepts_encoded_path_identity[file:/workspace/\\u62a5\\u544a ?draft#1.md]":
+        _ADMIN_READS,
+    "tests/integration/test_trajectory_read_races.py::test_record_detail_accepts_encoded_path_identity[file:/workspace/report.md]":
+        _ADMIN_READS,
+    "tests/integration/test_trajectory_responses_title.py::test_responses_native_and_fallback_persist_actual_dispatches[fallback]":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_responses_title.py::test_responses_native_and_fallback_persist_actual_dispatches[native]":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_storage.py::test_admin_read_paths_live_role_and_target": _ADMIN_READS,
+    "tests/integration/test_trajectory_storage.py::test_checkpoint_pages_reuse_unchanged_history": _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_storage.py::test_child_ownership_deleted_session_unknown_result": _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_storage.py::test_durable_payload_staging_archives_without_transaction_lock": _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_storage.py::test_export_shutdown_resumes_and_deletion_wins":
+        "old in-process export task over business trajectory tables; exports move to the trajectory worker",
+    "tests/integration/test_trajectory_storage.py::test_historical_checkpoint_and_stream": _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_storage.py::test_malformed_cursors_are_validation_errors": _ADMIN_READS,
+    "tests/integration/test_trajectory_storage.py::test_pause_resume_baseline_and_export_gaps": _ADMIN_READS,
+    "tests/integration/test_trajectory_storage.py::test_payload_history_export_deletion": _ADMIN_READS,
+    "tests/integration/test_trajectory_storage.py::test_read_committed_cache_race_does_not_leak_future": _REPOSITORY_ROWS,
+    **{f"tests/integration/test_trajectory_stream_redaction.py::test_fragmented_request_credentials_never_enter_retained_views[{case}-{storage}]":
+       _REPOSITORY_ROWS if storage == "inline" else _PAYLOAD_ROWS
+       for case in ("litellm_arguments", "litellm_reasoning", "litellm_text", "responses_arguments", "responses_text")
+       for storage in ("inline", "payload")},
+    "tests/integration/test_trajectory_stream_redaction.py::test_redaction_state_is_not_shared_between_requests": _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_stream_redaction.py::test_tool_cumulative_output_redaction_resets_for_each_call": _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_tool_output.py::test_bash_redaction_spans_chunks_after_chat_preview_budget": _PAYLOAD_ROWS,
+    "tests/integration/test_trajectory_tool_output.py::test_bash_stream_over_preview_limit_is_replayable_before_and_after_finish":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_tool_output.py::test_mcp_internal_truncation_preserves_full_observed_public_body[False]":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_tool_output.py::test_mcp_internal_truncation_preserves_full_observed_public_body[True]":
+        _REPOSITORY_ROWS,
+    "tests/integration/test_trajectory_tool_output.py::test_web_fetch_retains_processed_body_before_tool_truncation": _REPOSITORY_ROWS,
+}
+
+
+def _union(*registries: dict[str, str]) -> dict[str, str]:
+    """One registry; a node id listed by several packages keeps every distinct reason."""
+    merged: dict[str, str] = {}
+    for registry in registries:
+        for node_id, reason in registry.items():
+            previous = merged.get(node_id)
+            if previous is None:
+                merged[node_id] = reason
+            elif reason not in previous:
+                merged[node_id] = f"{previous}; {reason}"
+    return merged
+
+
+QUARANTINE: dict[str, str] = _union(_PRODUCERS, _SERVICE, _PROJECTION)

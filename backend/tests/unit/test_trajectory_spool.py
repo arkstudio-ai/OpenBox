@@ -60,7 +60,7 @@ def test_readers_reject_unknown_versions_and_malformed_lines_but_ignore_unknown_
     good = {"v": 1, "k": "control", "n": 1, "t": "2026-09-14T08:00:00.000Z", "control": {"type": "gap"}}
     assert spool.decode_line(orjson.dumps({**good, "future": {"x": 1}}))["future"] == {"x": 1}
     # true and 1.0 compare equal to 1 in Python but are not format version 1.
-    for version in (2, True, 1.0, "1", None):
+    for version in (3, True, 1.0, 2.0, "1", None):
         with pytest.raises(spool.UnsupportedSpoolVersion):
             spool.decode_line(orjson.dumps({**good, "v": version}))
     malformed = [{**good, "k": "other"}, {**good, "n": 0}, {**good, "n": True}, {**good, "n": "1"},

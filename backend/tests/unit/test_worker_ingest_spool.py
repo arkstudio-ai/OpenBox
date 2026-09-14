@@ -113,7 +113,7 @@ async def test_unparsable_file_is_quarantined_after_its_good_lines(harness):
     assert [row.event_id for row in stored[1:]] == ["good", f"gap:{writer.producer_id}:2-3:ses_1:run_q"]
     assert result["quarantined_files"] == 1 and harness.metrics.counters["quarantined_files"] == 1
     assert await rows(TrajectoryIngestFile) == []
-    newer = writer.file([b'{"v":2,"k":"event","n":4,"t":"2026-09-14T08:00:00.000Z","event":{}}\n'])
+    newer = writer.file([b'{"v":3,"k":"event","n":4,"t":"2026-09-14T08:00:00.000Z","event":{}}\n'])
     await harness.run()
     assert not newer.exists()
     assert spool_reader.read_producer_document(harness.settings.spool_dir / "quarantine" /

@@ -23,6 +23,11 @@ import { ToolOutput } from "./tool/ToolOutput"
 function Row({ part }: { part: ToolPart | SubtaskPart }) {
   const { t } = useTranslation("chat")
   const [open, setOpen] = useState(false)
+  // Arguments and output run to a screenful per call, and every folded row of
+  // every rendered turn used to build them anyway. Build them the first time
+  // the row opens, then keep them so closing still animates.
+  const [opened, setOpened] = useState(false)
+  if (open && !opened) setOpened(true)
 
   const subtask = part.type === "subtask"
   const glyph = subtask ? null : describeTool(part.tool)
@@ -95,9 +100,11 @@ function Row({ part }: { part: ToolPart | SubtaskPart }) {
       {part.type === "tool" && part.tool === "task" && <SubagentLine part={part} />}
       <div className="fold" data-open={open}>
         <div>
-          <div className="ps-9 pt-0.5 pb-2">
-            <ToolOutput part={part} />
-          </div>
+          {opened && (
+            <div className="ps-9 pt-0.5 pb-2">
+              <ToolOutput part={part} />
+            </div>
+          )}
         </div>
       </div>
     </li>

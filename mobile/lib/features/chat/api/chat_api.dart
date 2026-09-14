@@ -1,12 +1,31 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../shared/api/api_error.dart';
 import '../../../shared/api/providers.dart';
 import '../../../shared/models/app_config.dart';
 import '../../../shared/models/interaction.dart';
+import '../../../shared/models/json.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/session.dart';
 import '../utils/reasoning.dart';
+
+/// One slice of a conversation from `GET …/history`, oldest message first.
+class HistoryPage {
+  const HistoryPage({this.messages = const [], this.hasMore = false});
+
+  final List<ChatMessage> messages;
+
+  /// Older messages exist before the first one here. Always false for a
+  /// catch-up read (`after`), which says nothing about what precedes it.
+  final bool hasMore;
+}
+
+/// The message a history read was anchored to is gone — regenerate, dismiss
+/// or revert deleted it — so what the client holds for that session no
+/// longer lines up with the server.
+bool isHistoryCursorGone(Object error) =>
+    apiErrorOf(error)?.code == 'HISTORY_CURSOR_GONE';
 
 /// Chat REST calls (web `features/chat/api/*`). Everything the client sends
 /// goes over REST; streaming arrives via WS.
@@ -15,37 +34,30 @@ class ChatApi {
 
   final Dio _dio;
 
-  /// Publish only a complete snapshot: the first 200 messages may not contain
-  /// the current turn or its persisted suggestions in a long conversation.
-  Future<List<ChatMessage>> messageSnapshot(String sessionId) async {
-    const limit = 200;
-    final messages = <String, ChatMessage>{};
-    for (var offset = 0; ; offset += limit) {
-      final page = await listMessages(sessionId, offset: offset, limit: limit);
-      final before = messages.length;
-      for (final message in page) {
-        messages[message.id] = message;
-      }
-      if (page.length < limit) return messages.values.toList();
-      if (messages.length == before) {
-        throw StateError('Message pagination made no progress');
-      }
-    }
-  }
-
-  Future<List<ChatMessage>> listMessages(
+  /// A slice of the conversation for the chat view: with no cursor the newest
+  /// [turns] turns, with [before] the [turns] turns preceding that message,
+  /// with [after] that message and everything newer. A turn runs from one
+  /// user message to the next and is never split across pages.
+  ///
+  /// This replaced walking the whole history 200 messages at a time on every
+  /// refresh — about a megabyte a second during a run in a long chat.
+  Future<HistoryPage> history(
     String sessionId, {
-    int offset = 0,
-    int limit = 200,
+    int? turns,
+    String? before,
+    String? after,
   }) async {
-    final resp = await _dio.get<List<dynamic>>(
-      '/api/agent/session/$sessionId/message',
-      queryParameters: {'offset': offset, 'limit': limit},
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/agent/session/$sessionId/history',
+      queryParameters: {'turns': ?turns, 'before': ?before, 'after': ?after},
     );
-    return (resp.data ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .map(ChatMessage.fromJson)
-        .toList();
+    final data = resp.data ?? const <String, dynamic>{};
+    return HistoryPage(
+      messages: asList(
+        data['messages'],
+      ).whereType<Map<String, dynamic>>().map(ChatMessage.fromJson).toList(),
+      hasMore: asBool(data['has_more']) ?? false,
+    );
   }
 
   Future<Session> getSession(String sessionId) async {

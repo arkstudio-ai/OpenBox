@@ -15,7 +15,6 @@ import {
   mergeTurns,
   useAbortSession,
   useChatEvents,
-  useMessagesQuery,
   usePendingStore,
   usePermissionsQuery,
   useQuestionsQuery,
@@ -23,6 +22,7 @@ import {
   useStreamStore,
 } from "@/features/chat"
 import { useSessionQuery } from "@/features/chat/api/message-actions"
+import { useChatHistory } from "@/features/chat/hooks/useChatHistory"
 import { useChatAgents, type ChatAgent } from "@/features/chat/api/agents"
 import { useResourceMention } from "@/features/resources"
 import { usePanelStore } from "@/features/workbench"
@@ -90,15 +90,12 @@ export default function ChatRoute() {
   const retry = useStreamStore((s) => s.retry.get(sessionId))
   const runError = useStreamStore((s) => s.runError.get(sessionId))
   const recoveredStatus = liveStatus ?? session.data?.status
-  const messagesQ = useMessagesQuery(sessionId, isBusyStatus(recoveredStatus))
+  const chatHistory = useChatHistory(sessionId, isBusyStatus(recoveredStatus))
+  const messagesQ = chatHistory.messagesQ
   const permsQ = usePermissionsQuery()
   const questionsQ = useQuestionsQuery()
   const errorMessage = useApiErrorMessage()
 
-  // Snapshot → stream store. setMessages merges so it never clobbers live deltas.
-  useEffect(() => {
-    if (messagesQ.data) useStreamStore.getState().setMessages(sessionId, messagesQ.data)
-  }, [messagesQ.data, sessionId])
   useEffect(() => {
     if (permsQ.data) usePendingStore.getState().setPermissions(permsQ.data)
   }, [permsQ.data])
@@ -197,7 +194,10 @@ export default function ChatRoute() {
         <ChatFlow key={sessionId} turns={turns} sessionId={sessionId} busy={busy}
           historyScrollRef={historyScrollRef}
           awaitingInput={isAwaitingInput(recoveredStatus)}
-          footer={footer} onStop={stop} retry={retry} />
+          footer={footer} onStop={stop} retry={retry}
+          hasMore={chatHistory.hasMore}
+          loadingOlder={chatHistory.loadingOlder}
+          onLoadOlder={chatHistory.loadOlder} />
       )}
       {/* One line, and it must survive until the next send, so it stays
           above the composer rather than scrolling away with the transcript. */}

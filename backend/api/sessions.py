@@ -336,6 +336,41 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, curre
     return [m.model_dump() for m in messages]
 
 
+@router.get("/session/{session_id}/history")
+async def get_history(
+    session_id: str,
+    before: str | None = None,
+    after: str | None = None,
+    turns: int = 20,
+    current_user: dict = Depends(get_current_user),
+):
+    """Chat-view history, newest turns first: see ``get_message_window``.
+
+    ``/message`` keeps its oldest-first offset pages for app versions that
+    still walk every page.
+    """
+    if before and after:
+        raise HTTPException(400, "Pass before or after, not both")
+    session = await session_mod.get_session_in_workspace(
+        session_id, current_user["workspace_id"]
+    )
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    try:
+        window = await session_mod.get_message_window(
+            session_id, user_id=session.user_id, before=before, after=after, turns=turns,
+        )
+    except session_mod.HistoryCursorGone:
+        raise HTTPException(409, detail={
+            "code": "HISTORY_CURSOR_GONE",
+            "message": "That part of the conversation changed; reload the latest messages.",
+        })
+    return {
+        "messages": [m.model_dump() for m in window.messages],
+        "has_more": window.has_more,
+    }
+
+
 @router.post("/session/{session_id}/message")
 async def send_message(
     session_id: str,

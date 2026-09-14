@@ -5,7 +5,6 @@ import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/features/chat/state/pending_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
-import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/session.dart';
 import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
@@ -39,11 +38,12 @@ class _Api extends ChatApi {
       Session.fromJson({'id': sessionId, 'status': 'waiting_input'});
 
   @override
-  Future<List<ChatMessage>> listMessages(
+  Future<HistoryPage> history(
     String sessionId, {
-    int offset = 0,
-    int limit = 200,
-  }) async => [];
+    int? turns,
+    String? before,
+    String? after,
+  }) async => const HistoryPage();
 
   @override
   Future<List<PermissionRequest>> listPermissions() async => [];

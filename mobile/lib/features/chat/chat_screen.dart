@@ -43,6 +43,12 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _historyController = ScrollController();
+
+  /// The user message the transcript opened on. Rows above it are history
+  /// loaded by scrolling up, which [ChatFlow] lays out upwards from it so a
+  /// page landing does not move the screen.
+  String? _anchorId;
+
   String get sessionId => widget.sessionId;
   ComposerResourceSlot? get resources => widget.resources;
 
@@ -52,23 +58,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     super.dispose();
   }
 
+  /// How many rows sit above the opening row. The anchor is a user row
+  /// because a user message always starts a row of its own, while an
+  /// assistant turn at a page edge can absorb messages from the page before.
+  int _olderCount(List<ChatRow> rows, {required bool canLoadOlder}) {
+    final anchor = _anchorId;
+    if (anchor != null) {
+      final index = rows.indexWhere(
+        (row) => row is UserRowData && row.message.id == anchor,
+      );
+      if (index >= 0) return index;
+      _anchorId = null;
+    }
+    // Nothing older can arrive, so there is nothing to anchor against — and
+    // rows above an anchor start out of view.
+    if (!canLoadOlder) return 0;
+    final index = rows.indexWhere((row) => row is UserRowData);
+    if (index < 0) return 0;
+    _anchorId = (rows[index] as UserRowData).message.id;
+    return index;
+  }
+
   @override
   Widget build(BuildContext context) {
     final sessionState = ref.watch(chatSessionProvider(sessionId));
-    final stream = ref.watch(chatStreamProvider);
+    // Only this conversation's slice: watching the whole store rebuilt the
+    // screen, and re-assembled every row, on a delta in any session.
+    final messages = ref.watch(
+      chatStreamProvider.select((s) => s.messagesOf(sessionId)),
+    );
+    final liveStatus = ref.watch(
+      chatStreamProvider.select((s) => s.statusOf(sessionId)),
+    );
+    final retry = ref.watch(
+      chatStreamProvider.select((s) => s.retryOf(sessionId)),
+    );
+    final runError = ref.watch(
+      chatStreamProvider.select((s) => s.runErrorOf(sessionId)),
+    );
     final pending = ref.watch(pendingProvider);
-    final messages = stream.messagesOf(sessionId);
-    final liveStatus = stream.statusOf(sessionId);
     final status = liveStatus ?? sessionState.session?.status;
     final busy = isBusyStatus(status);
-    final retry = stream.retryOf(sessionId);
-    final runError = stream.runErrorOf(sessionId);
     final currentUserId = ref.watch(authProvider).user?.id;
     final ownerId = sessionState.session?.userId;
     final readOnly =
         ownerId != null && currentUserId != null && ownerId != currentUserId;
 
     final rows = buildChatRows(messages);
+    final olderCount = _olderCount(rows, canLoadOlder: sessionState.hasMore);
     final permissions = pending.permissionsOf(sessionId);
     final questions = pending.questionsOf(sessionId);
 
@@ -183,8 +220,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               : ChatFlow(
                   key: ValueKey(sessionId),
                   rows: widgets,
+                  olderCount: olderCount,
                   forceScrollToken: lastUserId,
                   controller: _historyController,
+                  onNearTop: sessionState.hasMore
+                      ? () => ref
+                            .read(chatSessionProvider(sessionId).notifier)
+                            .loadOlder()
+                      : null,
+                  loadingOlder:
+                      sessionState.hasMore && sessionState.loadingOlder,
                 ),
         ),
         // One line, and it must survive until the next send, so it stays

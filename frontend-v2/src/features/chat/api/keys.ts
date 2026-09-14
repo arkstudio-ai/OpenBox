@@ -2,6 +2,9 @@
 // switching accounts can never serve another user's cache (§7.2).
 export const chatKeys = {
   messages: (userId: string, sessionId: string) => ["messages", userId, sessionId] as const,
+  /** Live catch-up polls. Kept out of "messages" so invalidating a session's
+   *  newest turns never cancels or restarts the poll. */
+  liveHistory: (userId: string, sessionId: string) => ["messages-live", userId, sessionId] as const,
   todo: (userId: string, sessionId: string) => ["todo", userId, sessionId] as const,
   config: (userId: string) => ["config", userId] as const,
   permissions: (userId: string) => ["permissions", userId] as const,

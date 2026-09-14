@@ -10,6 +10,7 @@ import '../../../shared/models/session.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
+import 'message_equality.dart';
 
 /// Streaming chat state — a 1:1 port of frontend-v2
 /// `features/chat/stores/stream.ts` reducers plus the `useChatEvents` WS
@@ -40,6 +41,25 @@ class ChatStreamState {
 
   String? runErrorOf(String sessionId) => runError[sessionId];
 
+  /// The newest message the server has confirmed for [sessionId] — where a
+  /// live catch-up reads on from. Optimistic echoes are skipped: their ids
+  /// mean nothing to the server.
+  String? newestHistoryId(String sessionId) => _historyEdge(sessionId, 1);
+
+  /// The oldest confirmed message held — where the next older page ends.
+  String? oldestHistoryId(String sessionId) => _historyEdge(sessionId, -1);
+
+  String? _historyEdge(String sessionId, int direction) {
+    String? edge;
+    for (final message in messagesOf(sessionId)) {
+      if (isOptimisticMessage(message)) continue;
+      if (edge == null || message.id.compareTo(edge).sign == direction) {
+        edge = message.id;
+      }
+    }
+    return edge;
+  }
+
   ChatStreamState copyWith({
     Map<String, List<ChatMessage>>? messages,
     Map<String, SessionStatus>? status,
@@ -59,6 +79,13 @@ bool isBusyStatus(SessionStatus? status) =>
     status == SessionStatus.finalizing ||
     status == SessionStatus.retry ||
     status == SessionStatus.compacting;
+
+/// An echo `send` shows before the server confirms the message. Its id is
+/// `tmp-<client message id>` and exists only in this store; the server's copy
+/// replaces it by client message id, over the socket
+/// ([ChatStreamStore.addMessage]) or in a history read
+/// ([ChatStreamStore.mergeHistory]).
+bool isOptimisticMessage(ChatMessage message) => message.id.startsWith('tmp-');
 
 int _toolRank(ToolStatus s) => switch (s) {
   ToolStatus.pending => 0,
@@ -164,33 +191,58 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     }
   }
 
-  /// Snapshot refetch landed — merge without moving the UI backward
-  /// (web `mergeSnapshotMessages`, commit dc1ce84).
-  void setMessages(String sessionId, List<ChatMessage> snapshot) {
-    final live = state.messagesOf(sessionId);
-    final liveById = {for (final m in live) m.id: m};
-    final liveByCmid = {
-      for (final m in live)
-        if (m.clientMessageId != null) m.clientMessageId!: m,
-    };
-    final used = <String>{};
-    final merged = <ChatMessage>[];
-    for (final snap in snapshot) {
-      final liveMsg =
-          liveById[snap.id] ??
-          (snap.clientMessageId != null
-              ? liveByCmid[snap.clientMessageId]
-              : null);
-      if (liveMsg == null) {
-        merged.add(snap);
-      } else {
-        used.add(liveMsg.id);
-        merged.add(_mergeMessage(liveMsg, snap));
-      }
+  /// A contiguous stretch of the server's history landed — the newest
+  /// window, a catch-up from the newest held message, or an older page —
+  /// oldest message first (web `mergeSnapshotMessages`, made range-aware).
+  ///
+  /// Ids ascend with creation time, so the first and last incoming ids bound
+  /// the stretch the read speaks for:
+  /// - held messages older than the first stay exactly as they are, which is
+  ///   how pages loaded by scrolling up survive every refresh;
+  /// - held messages inside the bounds merge with their incoming copy by id
+  ///   ([_mergeMessage]: streamed state never moves backwards). One the read
+  ///   lacks was deleted on the server, and goes;
+  /// - held messages newer than the last — socket arrivals after the read
+  ///   started — stay after it, and so do optimistic echoes the read does not
+  ///   confirm. One it does confirm is matched by client message id and
+  ///   replaced where the server put it, as snapshots always did.
+  ///
+  /// A message the read left unchanged keeps its instance, and a read that
+  /// changed nothing publishes nothing, so a poll that finds nothing new
+  /// rebuilds nothing.
+  void mergeHistory(String sessionId, List<ChatMessage> incoming) {
+    // No bounds to speak for; an empty snapshot never removed anything either.
+    if (incoming.isEmpty) return;
+    final held = state.messagesOf(sessionId);
+    final first = incoming.first.id;
+    final last = incoming.last.id;
+    bool isOlder(ChatMessage m) =>
+        !isOptimisticMessage(m) && m.id.compareTo(first) < 0;
+    bool isNewer(ChatMessage m) =>
+        isOptimisticMessage(m) || m.id.compareTo(last) > 0;
+
+    final byId = <String, ChatMessage>{};
+    final byClientId = <String, ChatMessage>{};
+    for (final m in held) {
+      if (isOlder(m)) continue;
+      byId[m.id] = m;
+      final clientId = m.clientMessageId;
+      if (clientId != null) byClientId[clientId] = m;
     }
-    for (final m in live) {
-      if (!used.contains(m.id)) merged.add(m);
+    final used = Set<ChatMessage>.identity();
+    final merged = [...held.where(isOlder)];
+    for (final message in incoming) {
+      final clientId = message.clientMessageId;
+      final match =
+          byId[message.id] ?? (clientId == null ? null : byClientId[clientId]);
+      merged.add(
+        match != null && used.add(match)
+            ? _mergeMessage(match, message)
+            : message,
+      );
     }
+    merged.addAll(held.where((m) => !used.contains(m) && isNewer(m)));
+    if (_sameInstances(merged, held)) return;
     _setSessionMessages(sessionId, merged);
   }
 
@@ -205,12 +257,25 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
         continue;
       }
       usedParts.add(livePart.id);
-      parts.add(_mergePart(livePart, snapPart));
+      final part = _mergePart(livePart, snapPart);
+      // A fresh copy of what is already held keeps the held instance.
+      parts.add(samePart(part, livePart) ? livePart : part);
     }
     for (final p in live.parts) {
       if (!usedParts.contains(p.id)) parts.add(p);
     }
+    if (_sameInstances(parts, live.parts) && sameMessageFields(live, snap)) {
+      return live;
+    }
     return snap.copyWith(parts: parts);
+  }
+
+  static bool _sameInstances<T>(List<T> a, List<T> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
   }
 
   MessagePart _mergePart(MessagePart live, MessagePart snap) {
@@ -380,17 +445,27 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
     final next = list
         .where(
           (m) =>
-              !(m.id.startsWith('tmp-') &&
-                  m.clientMessageId == clientMessageId),
+              !(isOptimisticMessage(m) && m.clientMessageId == clientMessageId),
         )
         .toList();
     if (next.length == list.length) return;
     _setSessionMessages(sessionId, next);
   }
 
-  void clearMessages(String sessionId) {
-    final messages = Map<String, List<ChatMessage>>.of(state.messages)
-      ..remove(sessionId);
+  /// Forget what the server said about a session — regenerate or dismiss
+  /// deleted part of it, or a history read's anchor vanished — so the next
+  /// window starts clean. Optimistic echoes stay: they are not the server's
+  /// to take back, and the next read confirms or keeps them as usual.
+  void resetHistory(String sessionId) {
+    final list = state.messagesOf(sessionId);
+    final kept = list.where(isOptimisticMessage).toList();
+    if (kept.length == list.length) return;
+    final messages = Map<String, List<ChatMessage>>.of(state.messages);
+    if (kept.isEmpty) {
+      messages.remove(sessionId);
+    } else {
+      messages[sessionId] = kept;
+    }
     state = state.copyWith(messages: messages);
   }
 

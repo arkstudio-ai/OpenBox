@@ -18,15 +18,22 @@ import 'config_providers.dart';
 import 'pending_store.dart';
 import 'stream_store.dart';
 
+/// Turns in each history read: the window a chat opens on and re-reads at
+/// every consistency barrier, and each older page scrolling up brings in.
+const chatHistoryTurns = 8;
+
 /// Per-session orchestration (web `ChatRoute` + `useChatEvents` + the
-/// polling queries): initial snapshot, 1s polling while busy, WS-reconnect
-/// refetch, send/stop/regenerate. Streaming frames land in
-/// [chatStreamProvider]; this controller only converges snapshots.
+/// polling queries): the newest history window on open, a 1s catch-up while
+/// busy, window refreshes on reconnect/terminal status/questions/stop, older
+/// pages on demand, send/stop/regenerate. Streaming frames land in
+/// [chatStreamProvider]; this controller only converges history reads.
 class ChatSessionState {
   const ChatSessionState({
     this.loading = true,
     this.session,
     this.failed = false,
+    this.hasMore = false,
+    this.loadingOlder = false,
   });
 
   final bool loading;
@@ -36,12 +43,25 @@ class ChatSessionState {
   /// an error state with retry when there's nothing cached to render.
   final bool failed;
 
-  ChatSessionState copyWith({bool? loading, Session? session, bool? failed}) =>
-      ChatSessionState(
-        loading: loading ?? this.loading,
-        session: session ?? this.session,
-        failed: failed ?? this.failed,
-      );
+  /// The server holds messages older than the oldest one loaded here.
+  final bool hasMore;
+
+  /// The page before the oldest loaded message is being fetched.
+  final bool loadingOlder;
+
+  ChatSessionState copyWith({
+    bool? loading,
+    Session? session,
+    bool? failed,
+    bool? hasMore,
+    bool? loadingOlder,
+  }) => ChatSessionState(
+    loading: loading ?? this.loading,
+    session: session ?? this.session,
+    failed: failed ?? this.failed,
+    hasMore: hasMore ?? this.hasMore,
+    loadingOlder: loadingOlder ?? this.loadingOlder,
+  );
 }
 
 String makeClientId() {
@@ -54,8 +74,24 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   Timer? _poll;
   StreamSubscription<WsEvent>? _wsSub;
   StreamSubscription<AppEvent>? _appSub;
+
+  /// Bumped when a read starts and when held history is thrown away. A read
+  /// that finishes under another number answers for a history that is gone,
+  /// and changes nothing.
   int _fetchSequence = 0;
   bool _disposed = false;
+
+  /// The one history read allowed in flight for this session. Unguarded
+  /// full-history reads of a long chat used to start faster than they
+  /// finished, and overlapped.
+  Future<void>? _inFlight;
+
+  /// A window refresh asked for while [_inFlight] ran: however many asked,
+  /// one read runs after it, and every asker waits for that one.
+  Completer<void>? _latestQueued;
+
+  /// An older page asked for while [_inFlight] ran.
+  bool _olderQueued = false;
 
   String get _sessionId => arg;
 
@@ -76,7 +112,7 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_isBusy || state.session?.status == SessionStatus.queued) {
-        unawaited(_refetch());
+        _catchUp();
       }
     });
     ref.onDispose(() {
@@ -145,28 +181,176 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     await ref.read(pendingProvider.notifier).refreshAll();
   }
 
-  Future<void> _refetch() async {
+  /// Re-read the newest window and merge it over what is held, so older
+  /// pages already loaded stay. Waits behind a read already in flight.
+  Future<void> _refetch() {
+    if (_inFlight == null) return _start(_loadLatest);
+    return (_latestQueued ??= Completer<void>()).future;
+  }
+
+  /// The busy poll: everything from the newest held message on. Skipped
+  /// while another read is in flight or waiting — the next tick is a second
+  /// away, and the waiting read brings the news anyway.
+  void _catchUp() {
+    if (_inFlight != null || _latestQueued != null || _olderQueued) return;
+    unawaited(_start(_loadNewer));
+  }
+
+  /// Fetch the page before the oldest held message, if the server has one.
+  Future<void> loadOlder() {
+    if (_disposed || !state.hasMore || state.loadingOlder) {
+      return Future.value();
+    }
+    state = state.copyWith(loadingOlder: true);
+    if (_inFlight == null) return _start(_loadOlder);
+    _olderQueued = true;
+    return Future.value();
+  }
+
+  Future<void> _start(Future<void> Function(int sequence) read) {
+    final future = read(++_fetchSequence);
+    _inFlight = future;
+    return future.whenComplete(() {
+      _inFlight = null;
+      _drain();
+    });
+  }
+
+  /// Start whatever queued up behind the read that just finished.
+  void _drain() {
+    final latest = _latestQueued;
+    _latestQueued = null;
+    if (_disposed) {
+      _olderQueued = false;
+      latest?.complete();
+      return;
+    }
+    if (latest != null) {
+      unawaited(_start(_loadLatest).whenComplete(latest.complete));
+      return;
+    }
+    if (_olderQueued) {
+      _olderQueued = false;
+      unawaited(_start(_loadOlder));
+    }
+  }
+
+  /// Throw away the history held for this session and read the newest window
+  /// again: regenerate and dismiss deleted messages, or a read's anchor
+  /// vanished. A read still in flight answers for the old history and is
+  /// ignored when it lands.
+  Future<void> _resetHistory() {
+    if (_disposed) return Future.value();
+    _fetchSequence++;
+    _olderQueued = false;
+    ref.read(chatStreamProvider.notifier).resetHistory(_sessionId);
+    state = state.copyWith(hasMore: false, loadingOlder: false);
+    return _refetch();
+  }
+
+  Future<void> _loadLatest(int sequence) async {
     final api = ref.read(chatApiProvider);
-    final sequence = ++_fetchSequence;
     final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
     try {
-      final results = await Future.wait<dynamic>([
-        api.messageSnapshot(_sessionId),
+      final results = await Future.wait<Object>([
+        api.history(_sessionId, turns: chatHistoryTurns),
         api.getSession(_sessionId),
       ]);
       if (_disposed || sequence != _fetchSequence) return;
-      final messages = results[0] as List<ChatMessage>;
-      final session = results[1] as Session;
-      ref.read(chatStreamProvider.notifier).setMessages(_sessionId, messages);
-      if (ref.read(chatStreamProvider).statusOf(_sessionId) == statusAtStart) {
-        ref
-            .read(chatStreamProvider.notifier)
-            .setStatus(_sessionId, session.status);
-      }
-      state = state.copyWith(session: session, loading: false, failed: false);
+      _applyWindow(results[0] as HistoryPage);
+      _applySession(results[1] as Session, statusAtStart);
     } catch (_) {
-      if (!_disposed) state = state.copyWith(loading: false, failed: true);
+      if (!_disposed && sequence == _fetchSequence) {
+        state = state.copyWith(loading: false, failed: true);
+      }
     }
+  }
+
+  Future<void> _loadNewer(int sequence) async {
+    final after = ref.read(chatStreamProvider).newestHistoryId(_sessionId);
+    // Nothing confirmed to read on from: the newest window is the catch-up.
+    if (after == null) return _loadLatest(sequence);
+    final api = ref.read(chatApiProvider);
+    final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
+    try {
+      final results = await Future.wait<Object>([
+        api.history(_sessionId, after: after),
+        api.getSession(_sessionId),
+      ]);
+      if (_disposed || sequence != _fetchSequence) return;
+      ref
+          .read(chatStreamProvider.notifier)
+          .mergeHistory(_sessionId, (results[0] as HistoryPage).messages);
+      _applySession(results[1] as Session, statusAtStart);
+    } catch (error) {
+      if (_disposed || sequence != _fetchSequence) return;
+      if (isHistoryCursorGone(error)) {
+        // Not awaited: the reset's read queues behind this one.
+        unawaited(_resetHistory());
+        return;
+      }
+      state = state.copyWith(loading: false, failed: true);
+    }
+  }
+
+  Future<void> _loadOlder(int sequence) async {
+    final before = ref.read(chatStreamProvider).oldestHistoryId(_sessionId);
+    if (before == null) {
+      if (!_disposed) state = state.copyWith(loadingOlder: false);
+      return;
+    }
+    try {
+      final page = await ref
+          .read(chatApiProvider)
+          .history(_sessionId, before: before, turns: chatHistoryTurns);
+      if (_disposed || sequence != _fetchSequence) return;
+      ref
+          .read(chatStreamProvider.notifier)
+          .mergeHistory(_sessionId, page.messages);
+      state = state.copyWith(hasMore: page.hasMore, loadingOlder: false);
+    } catch (error) {
+      if (_disposed || sequence != _fetchSequence) return;
+      if (isHistoryCursorGone(error)) {
+        unawaited(_resetHistory());
+        return;
+      }
+      // hasMore stands, so reaching the top again retries.
+      state = state.copyWith(loadingOlder: false);
+    }
+  }
+
+  /// Merge a newest window. Its `has_more` describes what precedes the
+  /// window, so it only counts when nothing older than the window is held:
+  /// older pages already loaded carry their own answer.
+  void _applyWindow(HistoryPage page) {
+    final store = ref.read(chatStreamProvider.notifier);
+    final held = ref.read(chatStreamProvider);
+    final first = page.messages.firstOrNull?.id;
+    final newestHeld = held.newestHistoryId(_sessionId);
+    final oldestHeld = held.oldestHistoryId(_sessionId);
+    var takeHasMore =
+        first == null || oldestHeld == null || oldestHeld.compareTo(first) >= 0;
+    if (first != null &&
+        newestHeld != null &&
+        newestHeld.compareTo(first) < 0) {
+      // Nothing held reaches the window: more turns went by than one window
+      // holds since this view last caught up (a long disconnect, another
+      // device). Merging would leave a silent hole between the two, so start
+      // from the window; scrolling up loads the rest back.
+      store.resetHistory(_sessionId);
+      takeHasMore = true;
+    }
+    store.mergeHistory(_sessionId, page.messages);
+    if (takeHasMore) state = state.copyWith(hasMore: page.hasMore);
+  }
+
+  void _applySession(Session session, SessionStatus? statusAtStart) {
+    if (ref.read(chatStreamProvider).statusOf(_sessionId) == statusAtStart) {
+      ref
+          .read(chatStreamProvider.notifier)
+          .setStatus(_sessionId, session.status);
+    }
+    state = state.copyWith(session: session, loading: false, failed: false);
   }
 
   /// Optimistic send (web `useSendChat`): tmp message + busy + prompt_async.
@@ -302,14 +486,12 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     await ref
         .read(chatApiProvider)
         .regenerate(_sessionId, messageId, model: model);
-    ref.read(chatStreamProvider.notifier).clearMessages(_sessionId);
-    await _refetch();
+    await _resetHistory();
   }
 
   Future<void> dismiss(String messageId) async {
     await ref.read(chatApiProvider).dismissMessage(_sessionId, messageId);
-    ref.read(chatStreamProvider.notifier).clearMessages(_sessionId);
-    await _refetch();
+    await _resetHistory();
   }
 }
 

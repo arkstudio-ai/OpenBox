@@ -9,8 +9,8 @@
 // So this reads them. No new endpoint, no polling — the store already has it.
 import { useEffect, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { http } from "@/shared/api/http"
-import type { MessageWithParts, ToolPart } from "@/shared/types/api"
+import type { ToolPart } from "@/shared/types/api"
+import { fetchHistory } from "../api/messages"
 import { useStreamStore } from "../stores/stream"
 import { toolDuration } from "../lib/turn-view"
 
@@ -52,7 +52,8 @@ export function useSubagentProgress(part: ToolPart): SubagentProgress {
   const empty = Boolean(sessionId) && !messages?.length
   const { data: fetched } = useQuery({
     queryKey: ["subagent-messages", sessionId],
-    queryFn: () => http.get<MessageWithParts[]>(`/api/agent/session/${sessionId}/message`),
+    // A child is a single turn; the paged list used to return its oldest 200 messages.
+    queryFn: async () => (await fetchHistory(sessionId!, { turns: 1 })).messages,
     enabled: empty,
     staleTime: Infinity,
   })

@@ -4,9 +4,10 @@ The worker keeps its own copies of sessions, users, workspaces and file assets
 so that its admin views and ownership checks never read the business
 database. This task feeds them from the backend process as content-free
 ``*.meta`` controls: a snapshot paged by primary key when it starts, then the
-rows changed since a cursor. Every cycle sends at most one small indexed,
-paged query per table; a table with more rows pending continues on the next
-cycle, which then follows shortly instead of after the full interval.
+rows changed since a cursor. Each interval sends at most four small indexed,
+paged queries, also while a snapshot, a rescan or a backlog is pending: every
+table with work gets one, and the ones left over continue the tables that
+sent a full page.
 """
 from __future__ import annotations
 
@@ -26,11 +27,17 @@ log = logging.getLogger(__name__)
 PAGE_ROWS = 500
 #: file_assets has no updated_at column, so it is rescanned in full instead.
 RESCAN_SECONDS = 600
-#: Delay before the next cycle while a snapshot, rescan or backlog is pending.
-CATCH_UP_SECONDS = 1.0
+#: Business database queries per TRAJECTORY_META_SYNC_SECONDS interval (SPEC §5.8).
+QUERIES_PER_INTERVAL = 4
 #: Incremental reads skip rows younger than this: a transaction that stamped
 #: updated_at may still be committing, and the cursor must not pass it.
 SETTLE_SECONDS = 10
+
+# Outcomes of one table query.
+_IDLE = "idle"  # Caught up.
+_MORE = "more"  # A full page went out, so more rows are likely pending.
+_REFUSED = "refused"  # The emitter refused a row; the rest waits for the next interval.
+_FAILED = "failed"
 
 
 def _utcnow() -> datetime:
@@ -83,11 +90,12 @@ def _tables() -> list[_Table]:
 
 class MetaSync:
     def __init__(self, *, page_rows: int = PAGE_ROWS, rescan_seconds: float = RESCAN_SECONDS,
-                 clock=time.monotonic, now=_utcnow):
+                 clock=time.monotonic, now=_utcnow, sleep=asyncio.sleep):
         self.page_rows = page_rows
         self.rescan_seconds = rescan_seconds
         self.clock = clock
         self.now = now
+        self.sleep = sleep
         self.tables = _tables()
 
     @staticmethod
@@ -97,43 +105,60 @@ class MetaSync:
     async def run(self) -> None:
         while True:
             try:
-                pending = await self.cycle()
+                await self.cycle()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("Trajectory metadata sync failed error_type=%s", type(exc).__name__)
-                pending = False
-            await asyncio.sleep(CATCH_UP_SECONDS if pending else self.interval())
+            # Pending rows wait for the next interval too: the query bound holds while catching up.
+            await self.sleep(self.interval())
 
     async def cycle(self) -> bool:
-        """One query per table at most; True while any table has rows pending."""
+        """One interval's queries, at most ``QUERIES_PER_INTERVAL``; True while rows are pending."""
         from trajectory.emitter import get_emitter
         emitter = get_emitter()
         if emitter is None:
             return False
-        pending = False
+        budget = QUERIES_PER_INTERVAL
+        outcomes: dict[str, str] = {}
+        # Every table with work gets a query first, so a snapshot or a long
+        # rescan never holds back the changed rows of the other tables.
         for table in self.tables:
-            try:
-                pending = await self._sync(table, emitter) or pending
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                # One unreadable table (say an old desktop schema) must not
-                # stall the others; its position is kept for the next cycle.
-                log.warning("Trajectory metadata sync of %s failed error_type=%s",
-                            table.name, type(exc).__name__)
-        return pending
+            if budget and self._due(table):
+                budget -= 1
+                outcomes[table.name] = await self._sync(table, emitter)
+        # Queries left over continue the tables that sent a full page.
+        while budget:
+            behind = [table for table in self.tables if outcomes.get(table.name) == _MORE]
+            if not behind:
+                break
+            for table in behind[:budget]:
+                budget -= 1
+                outcomes[table.name] = await self._sync(table, emitter)
+        return any(outcome in (_MORE, _REFUSED) for outcome in outcomes.values())
 
-    async def _sync(self, table: _Table, emitter) -> bool:
-        if table.scan_after is None and not table.incremental:
-            if table.scan_started is not None and self.clock() - table.scan_started < self.rescan_seconds:
-                return False
-            table.scan_after = ""
-        if table.scan_after is not None:
-            return await self._scan_page(table, emitter)
-        return await self._changed_page(table, emitter)
+    def _due(self, table: _Table) -> bool:
+        """Incremental tables and running scans query every interval; file_assets when its rescan is due."""
+        if table.incremental or table.scan_after is not None:
+            return True
+        return table.scan_started is None or self.clock() - table.scan_started >= self.rescan_seconds
 
-    async def _scan_page(self, table: _Table, emitter) -> bool:
+    async def _sync(self, table: _Table, emitter) -> str:
+        try:
+            if table.scan_after is None and not table.incremental:
+                table.scan_after = ""
+            if table.scan_after is not None:
+                return await self._scan_page(table, emitter)
+            return await self._changed_page(table, emitter)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # One unreadable table (say an old desktop schema) must not
+            # stall the others; its position is kept for the next interval.
+            log.warning("Trajectory metadata sync of %s failed error_type=%s", table.name, type(exc).__name__)
+            return _FAILED
+
+    async def _scan_page(self, table: _Table, emitter) -> str:
         from db.base import get_db_session
         model = table.model()
         if table.scan_after == "":
@@ -145,17 +170,17 @@ class MetaSync:
                                      .order_by(model.id).limit(self.page_rows))).all()
         for row in rows:
             if not self._emit(table, emitter, row._mapping, read_at):
-                return True
+                return _REFUSED
             table.scan_after = row.id
         if len(rows) == self.page_rows:
-            return True
+            return _MORE
         table.scan_after = None
         if table.incremental and table.cursor is None:
             # Rows changed while the snapshot was paging are sent again.
             table.cursor = (table.scan_started_at - timedelta(seconds=SETTLE_SECONDS), "")
-        return False
+        return _IDLE
 
-    async def _changed_page(self, table: _Table, emitter) -> bool:
+    async def _changed_page(self, table: _Table, emitter) -> str:
         from db.base import get_db_session
         model = table.model()
         horizon = self.now() - timedelta(seconds=SETTLE_SECONDS)
@@ -166,9 +191,9 @@ class MetaSync:
                                      .order_by(model.updated_at, model.id).limit(self.page_rows))).all()
         for row in rows:
             if not self._emit(table, emitter, row._mapping, None):
-                return True
+                return _REFUSED
             table.cursor = (row.updated_at, row.id)
-        return len(rows) == self.page_rows
+        return _MORE if len(rows) == self.page_rows else _IDLE
 
     @staticmethod
     def _emit(table: _Table, emitter, row, read_at: datetime | None) -> bool:

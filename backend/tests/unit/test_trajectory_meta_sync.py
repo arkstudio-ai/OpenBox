@@ -81,7 +81,7 @@ def _meta(spool, kind: str, key: str) -> list[dict]:
 
 
 def test_defaults_follow_the_spec(monkeypatch):
-    assert (meta_sync.PAGE_ROWS, meta_sync.RESCAN_SECONDS) == (500, 600)
+    assert (meta_sync.PAGE_ROWS, meta_sync.RESCAN_SECONDS, meta_sync.QUERIES_PER_INTERVAL) == (500, 600, 4)
     monkeypatch.delenv("TRAJECTORY_META_SYNC_SECONDS", raising=False)
     assert meta_sync.MetaSync.interval() == 30
     monkeypatch.setenv("TRAJECTORY_META_SYNC_SECONDS", "5")
@@ -240,3 +240,97 @@ async def test_the_loop_survives_a_failed_cycle_and_retries_after_the_interval(m
     with suppress(asyncio.CancelledError):
         await task
     assert len(calls) >= 3
+
+
+async def test_a_backlog_waits_for_the_next_interval_and_no_interval_sends_more_than_four_queries(
+        state, recording_spool, selects, monkeypatch):
+    await _seed(sessions=tuple(f"s{index}" for index in range(3, 13)), assets=tuple(f"a{index}" for index in range(9)))
+    monkeypatch.setenv("TRAJECTORY_META_SYNC_SECONDS", "30")
+    start, marks, sleeps = len(selects), [], []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        marks.append(len(selects))
+        if len(sleeps) == 3:
+            raise asyncio.CancelledError
+    sync = meta_sync.MetaSync(page_rows=2, clock=Clock(), now=Now(), sleep=sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await sync.run()
+
+    # The snapshot is far from done, yet every cycle is a full interval apart.
+    assert sleeps == [30, 30, 30]
+    assert [after - before for before, after in zip([start, *marks], marks)] == [4, 4, 4]
+    assert len(_meta(recording_spool, "session.meta", "session")) == 6
+    assert len(_meta(recording_spool, "asset.meta", "asset")) == 6
+
+
+async def test_queries_idle_tables_leave_continue_a_backlog_in_the_same_interval(state, recording_spool, selects):
+    clock, now = Clock(), Now()
+    start = now.value
+    await _seed(sessions=("s3", "s4", "s5", "s6"), updated_at=start - timedelta(hours=1))
+    sync = meta_sync.MetaSync(page_rows=2, clock=clock, now=now)
+    await _sync_until_idle(sync)
+    snapshot = len(recording_spool.controls())
+
+    async with database.get_db_session() as db:
+        await db.execute(update(Session).values(title="Renamed", updated_at=start + timedelta(seconds=5)))
+    now.value = start + timedelta(seconds=60)
+    before = len(selects)
+    assert await sync.cycle()
+    # Users and workspaces had nothing new and no rescan was due: sessions got the fourth query.
+    assert len(selects) - before == meta_sync.QUERIES_PER_INTERVAL
+    assert [control["session"]["title"] for control in recording_spool.controls()[snapshot:]] == ["Renamed"] * 4
+    assert not await sync.cycle()
+    assert len(recording_spool.controls()[snapshot:]) == 6
+
+
+async def test_a_long_rescan_leaves_every_other_table_its_query_each_interval(state, recording_spool, selects):
+    clock, now = Clock(), Now()
+    start = now.value
+    await _seed(assets=tuple(f"a{index}" for index in range(6)), updated_at=start - timedelta(hours=1))
+    sync = meta_sync.MetaSync(page_rows=2, clock=clock, now=now)
+    await _sync_until_idle(sync)
+    snapshot = len(recording_spool.controls())
+
+    clock.value += meta_sync.RESCAN_SECONDS
+    async with database.get_db_session() as db:
+        await db.execute(update(Session).where(Session.id == "s1").values(
+            title="Renamed", updated_at=start + timedelta(seconds=5)))
+    now.value = start + timedelta(seconds=60)
+    before = len(selects)
+    assert await sync.cycle()
+    assert len(selects) - before == meta_sync.QUERIES_PER_INTERVAL
+    assert [control["type"] for control in recording_spool.controls()[snapshot:]] == [
+        "session.meta", "asset.meta", "asset.meta"]
+
+
+async def test_a_refused_row_waits_for_the_next_interval_without_another_query(state, recording_spool, selects,
+                                                                              monkeypatch):
+    from trajectory.emitter import get_emitter
+    clock, now = Clock(), Now()
+    start = now.value
+    await _seed(updated_at=start - timedelta(hours=1))
+    sync = meta_sync.MetaSync(clock=clock, now=now)
+    await _sync_until_idle(sync)
+    snapshot = len(recording_spool.controls())
+    emitter = get_emitter()
+    real = emitter.emit_control
+    refusals = {"count": 1}
+
+    def full_queue(control):
+        if refusals["count"]:
+            refusals["count"] -= 1
+            return False
+        return real(control)
+    monkeypatch.setattr(emitter, "emit_control", full_queue)
+    async with database.get_db_session() as db:
+        await db.execute(update(Session).where(Session.id == "s1").values(
+            title="Renamed", updated_at=start + timedelta(seconds=5)))
+    now.value = start + timedelta(seconds=60)
+    before = len(selects)
+    assert await sync.cycle()
+    # The spare query of the interval is not spent on a queue that just refused a row.
+    assert len(selects) - before == 3
+    assert recording_spool.controls()[snapshot:] == []
+    assert not await sync.cycle()
+    assert [control["session"]["title"] for control in recording_spool.controls()[snapshot:]] == ["Renamed"]

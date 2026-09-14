@@ -10,7 +10,6 @@ import '../../../shared/models/project.dart';
 import '../../../shared/models/session.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/brand_mark.dart';
-import '../../inbox/api/inbox_api.dart';
 import '../state/workspace_store.dart';
 import 'session_row.dart';
 import 'user_row.dart';
@@ -147,18 +146,6 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                   context.push(
                     Paths.resources(ref.read(selectedProjectProvider)),
                   );
-                },
-              ),
-              // Message centre sits above the authorization centre (web
-              // sidebar order); the badge is the cross-workspace unread total.
-              _NavRow(
-                key: const ValueKey('nav-inbox'),
-                icon: Icons.notifications_none,
-                label: i18n.t('workspace:inbox'),
-                badge: ref.watch(inboxUnreadProvider).valueOrNull?.total ?? 0,
-                onTap: () {
-                  Navigator.pop(context);
-                  context.push(Paths.inbox);
                 },
               ),
               _NavRow(
@@ -590,20 +577,11 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
 /// A drawer nav row: icon column + label, the shape the web sidebar uses for
 /// everything above the project tree.
 class _NavRow extends StatelessWidget {
-  const _NavRow({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.badge = 0,
-  });
+  const _NavRow({required this.icon, required this.label, required this.onTap});
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-
-  /// Unread count; hidden at zero, capped at 99+.
-  final int badge;
 
   @override
   Widget build(BuildContext context) {
@@ -626,28 +604,6 @@ class _NavRow extends StatelessWidget {
                 label,
                 style: TextStyle(fontSize: FontSizes.base, color: t.ink),
               ),
-              if (badge > 0) ...[
-                const SizedBox(width: 8),
-                Container(
-                  key: ValueKey('nav-badge-$label'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: t.accent,
-                    borderRadius: BorderRadius.circular(Radii.full),
-                  ),
-                  child: Text(
-                    badge > 99 ? '99+' : '$badge',
-                    style: TextStyle(
-                      fontSize: FontSizes.xs2,
-                      fontWeight: FontWeight.w600,
-                      color: t.bg,
-                    ),
-                  ),
-                ),
-              ],
             ],
           ),
         ),

@@ -36,9 +36,6 @@ TODO_UPDATED = "todo.updated"
 # Toast notifications (F10)
 TOAST = "toast"
 
-# Message centre: unread counts changed for `userId`; clients refetch.
-INBOX_UPDATED = "inbox.updated"
-
 # Cron events
 CRON_JOB_CREATED = "cron.job.created"
 CRON_JOB_UPDATED = "cron.job.updated"

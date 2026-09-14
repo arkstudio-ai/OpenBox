@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router"
 import {
-  Bell,
   Blocks,
   Clock,
   CreditCard,
@@ -13,7 +12,6 @@ import {
   Plus,
   Search,
 } from "lucide-react"
-import { useInboxUnread } from "@/shared/api/inbox"
 import { cn } from "@/shared/lib/cn"
 import { BrandMark } from "@/shared/ui/BrandMark"
 import { paths } from "@/shared/router/paths"
@@ -43,7 +41,6 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
 
   const projects = useProjectsQuery()
   const sessions = useSessionsQuery()
-  const inboxUnread = useInboxUnread()
   const createProject = useCreateProject()
   const selectedProject = useWorkspaceUi((s) => s.selectedProject)
   // A stale selection (deleted project) must not point the resource centre
@@ -230,9 +227,6 @@ export function Sidebar({ showCredits = true }: SidebarProps) {
             pattern={paths.resources()}
             className="mt-2.5"
           />
-          {/* Message centre above the authorization centre; the badge is the
-            cross-workspace unread total. */}
-          <NavRow icon={Bell} label={t("inbox")} to={paths.inbox} badge={inboxUnread.data?.total ?? 0} />
           {/* Sits right under the resource centre: the files live there, the
             accounts they get posted from live here. */}
           <NavRow icon={KeyRound} label={t("authCenter")} to={paths.authCenter} />

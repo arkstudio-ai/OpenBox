@@ -58,8 +58,7 @@
     "skills": "Skills",
     "billing": "Subscriptions",
     "trajectories": "Trajectories",
-    "notifications": "Notifications",
-    "messages": "Messages"
+    "notifications": "Notifications"
   },
   "section": {
     "fleet": {
@@ -81,10 +80,6 @@
     "notifications": {
       "title": "Notification tests",
       "subtitle": "Check phone notifications, delivery status and business copy."
-    },
-    "messages": {
-      "title": "Messages",
-      "subtitle": "Write and publish announcements and topic pages."
     }
   },
   "confirm": {

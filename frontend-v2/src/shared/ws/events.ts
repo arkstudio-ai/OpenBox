@@ -33,8 +33,6 @@ export interface WsEventMap extends WsLifecycleEvents {
   "session.compaction.start": { sessionId: string }
   "session.compaction.complete": { sessionId: string; summary?: string }
   toast: { userId: string; level: "info" | "error" | "warning"; message: string }
-  /** Message centre: unread counts changed for `userId`; refetch, no body carried. */
-  "inbox.updated": { userId: string }
 
   "message.created": { sessionId: string; message: MessageWithParts }
   "message.updated": { sessionId: string; message: MessageWithParts }

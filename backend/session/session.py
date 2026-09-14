@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select, tuple_, update
 
 from bus import bus
 from bus.events import SESSION_STATUS, SESSION_TITLE
@@ -979,12 +979,15 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_
         )
         all_parts = parts_result.scalars().all()
 
-    # Group parts by message_id
+    return _assemble(session_id, messages, all_parts)
+
+
+def _assemble(session_id: str, messages, parts) -> list[MessageWithParts]:
+    """Attach each message's public part data, keeping both orders as given."""
     parts_by_msg: dict[str, list[dict]] = {}
-    for p in all_parts:
+    for p in parts:
         parts_by_msg.setdefault(p.message_id, []).append(public_part_data(p.data))
 
-    # Build result
     from models.message import id_to_iso
     result = []
     for m in messages:
@@ -1013,6 +1016,98 @@ async def get_messages(session_id: str, offset: int = 0, limit: int = 200, user_
         ))
 
     return result
+
+
+class HistoryCursorGone(LookupError):
+    """The message a history page was anchored to is gone (regenerate, revert, delete)."""
+
+
+class MessageWindow(BaseModel):
+    messages: list[MessageWithParts]
+    #: Older messages exist before this window; fetch them with ``before``.
+    has_more: bool = False
+
+
+#: Message ids per parts query, far below any driver's bind-parameter limit.
+_PART_QUERY_CHUNK = 1_000
+
+
+async def get_message_window(
+    session_id: str,
+    *,
+    user_id: str | None = None,
+    before: str | None = None,
+    after: str | None = None,
+    turns: int = 20,
+) -> MessageWindow:
+    """A slice of a session's history for chat views, oldest first within it.
+
+    With no cursor, the newest ``turns`` turns; with ``before``, the ``turns``
+    turns preceding that message. A turn starts at a user message, so a long
+    run of tool steps never straddles two pages. With ``after``, that message
+    and everything newer: a live view's catch-up, which re-reads the anchor
+    because its parts may still be changing.
+
+    Opening a long chat used to download every message on every poll —
+    about 1 MB a second for a 350-message session during a run (2026-09-14).
+
+    Raises HistoryCursorGone when the anchor message no longer exists.
+    """
+    turns = max(1, min(turns, 100))
+    key = tuple_(MessageORM.created_at, MessageORM.id)
+    async with get_db_session() as db:
+        if user_id:
+            owned = await db.scalar(select(SessionORM.id).where(
+                SessionORM.id == session_id,
+                SessionORM.user_id == user_id,
+                SessionORM.is_deleted == False,
+            ))
+            if not owned:
+                return MessageWindow(messages=[])
+
+        in_session = MessageORM.session_id == session_id
+        anchor = None
+        if before or after:
+            anchor = (await db.execute(
+                select(MessageORM.created_at, MessageORM.id)
+                .where(in_session, MessageORM.id == (after or before))
+            )).first()
+            if anchor is None:
+                raise HistoryCursorGone(after or before)
+
+        has_more = False
+        if after:
+            conditions = [in_session, key >= tuple(anchor)]
+        else:
+            conditions = [in_session, *([key < tuple(anchor)] if anchor else [])]
+            starts = (await db.execute(
+                select(MessageORM.created_at, MessageORM.id)
+                .where(*conditions, MessageORM.role == "user")
+                .order_by(MessageORM.created_at.desc(), MessageORM.id.desc())
+                .limit(turns)
+            )).all()
+            # Fewer turns than asked for means this page reaches the start,
+            # including anything said before the first user message.
+            if len(starts) == turns:
+                first = tuple(starts[-1])
+                conditions.append(key >= first)
+                has_more = await db.scalar(
+                    select(MessageORM.id).where(in_session, key < first).limit(1)
+                ) is not None
+
+        messages = (await db.execute(
+            select(MessageORM).where(*conditions)
+            .order_by(MessageORM.created_at, MessageORM.id)
+        )).scalars().all()
+        ids = [m.id for m in messages]
+        parts = []
+        for start in range(0, len(ids), _PART_QUERY_CHUNK):
+            parts += (await db.execute(
+                select(PartORM).where(PartORM.message_id.in_(ids[start:start + _PART_QUERY_CHUNK]))
+                .order_by(PartORM.created_at, PartORM.id)
+            )).scalars().all()
+
+    return MessageWindow(messages=_assemble(session_id, messages, parts), has_more=has_more)
 
 
 async def delete_messages_from(

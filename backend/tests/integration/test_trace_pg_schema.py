@@ -235,6 +235,32 @@ async def test_partition_ddl_backs_off_instead_of_queueing_behind_busy_locks(mig
         assert (await connection.execute(text("SELECT current_setting('lock_timeout')"))).scalar() == "7s"
 
 
+async def test_partition_ddl_never_deadlocks_with_an_ingest_transaction(migrated, monkeypatch):
+    monkeypatch.setattr(partitions, "LOCK_RETRY_SECONDS", 0.05)
+    async with migrated.begin() as connection:
+        await _trajectory(connection)
+    ingest = await migrated.connect()
+    try:
+        # Ingest order: lock and advance the trajectory row, then append its events.
+        await ingest.execute(text("UPDATE session_trajectories SET next_seq = next_seq + 1 WHERE id = 'trj_a'"))
+
+        async def maintain() -> list[str]:
+            async with migrated.begin() as connection:
+                return await partitions.ensure_partitions(connection, date(2026, 9, 14), 0)
+
+        maintenance = asyncio.create_task(maintain())
+        await asyncio.sleep(0.3)
+        assert not maintenance.done()
+        # DDL already holding the parent lock while waiting on session_trajectories would deadlock here.
+        await _events(ingest, ("trj_a", 1, date(2026, 9, 14)))
+        await ingest.commit()
+        assert await asyncio.wait_for(maintenance, 10) == [_p("20260914")]
+    finally:
+        await ingest.close()
+    async with migrated.connect() as connection:
+        assert await _placement(connection) == [(1, _p("20260914"))]
+
+
 async def test_deleting_a_trajectory_cascades_to_its_child_rows(migrated):
     tables = models.TraceBase.metadata.tables
     async with migrated.begin() as connection:

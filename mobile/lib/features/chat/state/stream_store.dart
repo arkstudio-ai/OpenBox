@@ -205,7 +205,7 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   /// - held messages newer than the last — socket arrivals after the read
   ///   started — stay after it, and so do optimistic echoes the read does not
   ///   confirm. One it does confirm is matched by client message id and
-  ///   replaced where the server put it, as snapshots always did.
+  ///   replaced where the server put it, by the server's copy as it stands.
   ///
   /// A message the read left unchanged keeps its instance, and a read that
   /// changed nothing publishes nothing, so a poll that finds nothing new
@@ -235,8 +235,12 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       final clientId = message.clientMessageId;
       final match =
           byId[message.id] ?? (clientId == null ? null : byClientId[clientId]);
+      // Found by client id, the held copy is another message — the send's
+      // echo — not an earlier state of this one, so it is used up but not
+      // merged. Merging kept the echo's part, whose id only this store knows,
+      // beside the server's own, and the bubble said everything twice.
       merged.add(
-        match != null && used.add(match)
+        match != null && used.add(match) && match.id == message.id
             ? _mergeMessage(match, message)
             : message,
       );
@@ -315,13 +319,37 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       list[tmpIndex] = message;
     } else {
       final existing = list.indexWhere((m) => m.id == message.id);
-      if (existing != -1) {
-        list[existing] = message;
-      } else {
+      if (existing == -1) {
         list.add(message);
+      } else {
+        // Already held: a history read got there first, or the frame came
+        // twice. Put in place of the held copy, the frame took back text
+        // streamed and tools finished since it was sent.
+        final held = list[existing];
+        final merged = _mergeLate(held, message);
+        if (identical(merged, held)) return;
+        list[existing] = merged;
       }
     }
     _setSessionMessages(sessionId, list);
+  }
+
+  /// [frame] is an older copy of [held]. Its parts merge as a history read's
+  /// do, so streamed text and tool state never move backwards, and a field it
+  /// leaves empty was not known yet rather than cleared.
+  ChatMessage _mergeLate(ChatMessage held, ChatMessage frame) {
+    final parts = _mergeMessage(held, frame).parts;
+    final merged = held.copyWith(
+      parts: parts,
+      tokens: frame.tokens,
+      finish: frame.finish,
+      error: frame.error,
+      model: frame.model,
+      reaction: frame.reaction,
+    );
+    return _sameInstances(parts, held.parts) && sameMessageFields(merged, held)
+        ? held
+        : merged;
   }
 
   /// `message.updated` — shallow-merge partial fields, parts untouched.

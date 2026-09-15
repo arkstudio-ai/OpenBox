@@ -35,7 +35,7 @@ def test_template_defaults_and_strictness():
 
 def test_tiers_map_to_models_and_reference_prices():
     d = {x["tier"]: x for x in tiers.describe_tiers()}
-    assert d["high"]["model_id"] == "video-sd-720p-proⅠ" and d["medium"]["model_id"] == "wan3.0-video" and d["low"]["model_id"] == "MiniMax-H3"
+    assert d["high"]["model_id"] == "video-sd-1080p-pro" and d["medium"]["model_id"] == "wan3.0-video" and d["low"]["model_id"] == "MiniMax-H3"
     assert d["low"]["resolution"] == "768p" and all(x["reference_credits"] for x in d.values())
     assert tiers.minimum_credits_per_video("medium") > Decimal("9")
     with pytest.raises(KeyError):

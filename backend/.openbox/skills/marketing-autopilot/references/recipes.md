@@ -4,7 +4,7 @@
 以及 `structure[]`（分段秒数与内容）、`script_text`、`on_screen_text[]`、`recreate_elements{presenter, scene, pace, caption_style, music}`。
 技能按 `form` 查下表决定怎么复刻。口径按拍板：**复刻到「能看、像那个类型」即可**，预算与条数优先。
 
-模型档位由模版 `model_tier` 固定（`autopilot/tiers.py`：高 `video-sd-720p-proⅠ`@720p / 中 `wan3.0-video`@720p / 低 `MiniMax-H3`@768p），
+模型档位由模版 `model_tier` 固定（`autopilot/tiers.py`：高 `video-sd-1080p-pro`@1080p / 中 `wan3.0-video`@720p / 低 `MiniMax-H3`@768p），
 画幅统一 9:16，不许换模型。每段先 `video_generate(action="estimate")` 累加预算，超模版 `credits_cap_per_run` 即停。
 
 | form | 段数 × 时长 | 生成方式 | 台词 / 声音 | 字幕 | 合成 | 质检（tolerances） |

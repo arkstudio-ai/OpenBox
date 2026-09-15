@@ -272,6 +272,15 @@
         },
         "source": "docs/BILLING_PLAN.md §5.1 火山 token 价折算"
       },
+      "doubao-seedance-2-0-fast-260128": {
+        "vendor": "volcengine",
+        "currency": "CNY",
+        "per_second": {
+          "480p": "0.23",
+          "720p": "0.48"
+        },
+        "source": "火山官方 doubao-seedance-2-0-fast 纯生成 ¥23/百万 token（seedance-2.0 的一半），按 §5.1 同一 token 公式折算，2026-09-12"
+      },
       "seedance-2.0-480-fastⅠ": {
         "vendor": "tokenspace",
         "currency": "CNY",

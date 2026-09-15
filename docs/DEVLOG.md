@@ -508,3 +508,19 @@ App 控制台加第五个底部入口，公告全量可编辑（SegmentedButton/
 「消息中心」行在授权中心之上，`WorkspaceLayout` 挂 `useInboxLiveEvents` 订阅 WS `inbox.updated`。`npm run check` 全过，
 新增 16 项测试。未在浏览器对真实后端联调，随 M5 验收。
 
+## 视频模型选择器精简：Seedance 系列 5 条减到 3 条，Fast 补计费（2026-09-12）
+
+用户看到选择器里 Seedance 2.0 / Seedance 2.0 Fast / Seedance 2.0 Fast (480p) / SD 720p Pro / SD 1080p Pro 五条，问哪些真能用。
+在 gw2 backend 容器里用 `resolve_route`/`build_payload`/`submit`/`status` 本身对五条各发 4s、9:16 最小任务，五条全部
+completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1920），链接都落在火山同一个
+`doubao-seedance-2-0` TOS 桶：上游只有 Seedance 2.0 与 Seedance 2.0 Fast 两个模型，后三条是 tokenspace 中转（ch113）
+按分辨率拆出的别名。补测 ark 渠道 Seedance 2.0 在 480p 也能出片。
+决定（用户拍板，方案 1）：保留 Seedance 2.0（ark，分辨率补 480p）、Seedance 2.0 Fast（ark）、SD 1080p Pro（sd2，中转
+一口价 ¥0.5/s，比直连 ¥2.25/s 便宜 4.5 倍，所以留）；下架 Fast (480p) 与 720p Pro。这是运行时 `openbox.json` 的改动，
+仓库只改示例注释。顺带：
+- `autopilot/tiers.py` 高档原写死 `video-sd-720p-proⅠ`，删配置会让高档 resolve_route 报未声明；改为 `video-sd-1080p-pro`@1080p
+  （同一中转、每秒更便宜、成片 1080p）。recipes.md 同步。
+- `billing/rates.json` 给 `doubao-seedance-2-0-fast-260128` 补价：火山官方纯生成 ¥23/百万 token，是 seedance-2.0 的一半，
+  按 §5.1 同公式折算 480p 0.23 / 720p 0.48 每秒。此前该模型无条目，线上一直"记录不扣费"。
+- 已下架模型的 rates 条目保留，历史任务结算不受影响；`SD2_MODELS` 名字推断常量不动。
+观察：sd2 flat 形状请求体不带 `generate_audio`，那三条成片一律带音轨；ark 渠道关音频生效。

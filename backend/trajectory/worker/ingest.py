@@ -334,12 +334,15 @@ class RecentSessions:
 class _Backoff:
     attempts: int = 0
     next_at: float = 0.0
-    #: Line counters whose new content is replaced by a not-recorded marker.
-    unavailable: set[int] = field(default_factory=set)
+    #: Object keys the blob store kept failing to store: references to them become not-recorded markers.
+    unavailable: set[str] = field(default_factory=set)
     #: Objects already stored by an earlier attempt of this batch.
     uploaded: set[str] = field(default_factory=set)
     #: Objects that had a queued GC entry in any attempt: stored again on every attempt, never reused.
     queued: set[str] = field(default_factory=set)
+    #: Ids of new payloads by (trajectory id, dedupe key), reused by later attempts: blobs that embed references keep
+    #: the keys that ``unavailable`` names.
+    payload_ids: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 @dataclass
@@ -655,7 +658,8 @@ class IngestService:
 
     async def _prepare(self, items: list[Item], backoff: _Backoff | None) -> PreparedBatch:
         """Lookups, media binding, content addressing and payload ids (SPEC §8.4) outside the transaction."""
-        planner = content.ContentPlanner(inline_bytes=self.settings.inline_bytes, blob_key=blob_key)
+        planner = content.ContentPlanner(inline_bytes=self.settings.inline_bytes, blob_key=blob_key,
+                                         payload_ids=dict(backoff.payload_ids) if backoff is not None else None)
         cache = meta.MetaCache()
         events = [(index, item) for index, item in enumerate(items) if item.event is not None and item.invalid is None]
         if not events:
@@ -703,7 +707,7 @@ class IngestService:
                 merged = {row.payload_id: row for row in found.get(tid, [])}
                 merged.update({row.payload_id: row for row in extra})
                 contents[tid] = content.TrajectoryContent.from_rows(merged.values())
-        unavailable = backoff.unavailable if backoff is not None else set()
+        unavailable = frozenset(backoff.unavailable) if backoff is not None else frozenset()
         queued = frozenset(backoff.queued) if backoff is not None else frozenset()
         await asyncio.to_thread(self._assign_all, events, planner, contents, unavailable, queued)
         return PreparedBatch(items, planner, cache)
@@ -724,12 +728,12 @@ class IngestService:
                 assets=assets, owner_user_id=event["user_id"], workspace_id=workspace)
 
     @staticmethod
-    def _assign_all(events, planner, contents, unavailable, queued=frozenset()) -> None:
+    def _assign_all(events, planner, contents, unavailable=frozenset(), queued=frozenset()) -> None:
         for index, item in events:
             if item.plan is not None:
                 planner.assign(item.plan, index=index, trajectory_id=item.trajectory_id,
                                lookup=contents.get(item.trajectory_id) or content.TrajectoryContent(),
-                               unavailable=item.n in unavailable, size_hint=item.size, queued=queued)
+                               unavailable=unavailable, size_hint=item.size, queued=queued)
 
     async def _trajectory_rows(self, db, sessions, *, lock: bool = False) -> dict[str, SessionTrajectory]:
         found = {}
@@ -795,12 +799,13 @@ class IngestService:
         planner.release_reused()
 
     async def _upload(self, prepared: PreparedBatch, key, result) -> None:
-        uploads = prepared.planner.uploads
+        planner = prepared.planner
+        uploads = planner.uploads
         if not uploads:
             return
         backoff = self._backoff.get(key)
         uploaded = backoff.uploaded if backoff is not None else set()
-        failed: set[int] = set()
+        failed: set[str] = set()
         semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
         async def put(upload: content.Upload) -> None:
@@ -811,7 +816,7 @@ class IngestService:
                     await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type,
                                               if_absent=upload.if_absent)
                 except Exception as exc:
-                    failed.update(upload.events)
+                    failed.add(upload.key)
                     result["blob_put_failures"] += 1
                     self._inc("blob_put_failures")
                     log.warning("Trajectory blob upload failed error_type=%s", type(exc).__name__)
@@ -830,13 +835,14 @@ class IngestService:
             return
         backoff = self._backoff.setdefault(key, _Backoff())
         backoff.uploaded |= uploaded
+        # Later attempts give new payloads the same ids, so the blobs that embed them keep their keys.
+        backoff.payload_ids.update(planner.new_payload_ids())
         backoff.attempts += 1
         if backoff.attempts < MAX_UPLOAD_ATTEMPTS:
-            backoff.next_at = time.monotonic() + min(BACKOFF_MAX_SECONDS,
-                                                     BACKOFF_FIRST_SECONDS * 2 ** (backoff.attempts - 1))
+            backoff.next_at = time.monotonic() + backoff_seconds(backoff.attempts)
             raise UploadsDeferred()
-        # Out of attempts: the affected events keep a not-recorded marker instead of their content.
-        backoff.unavailable |= {prepared.items[index].n for index in failed}
+        # Out of attempts: references to the objects that could not be stored become not-recorded markers.
+        backoff.unavailable |= failed
         raise RetryBatch("replan")
 
     # Metrics ------------------------------------------------------------------------

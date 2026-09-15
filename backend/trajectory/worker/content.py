@@ -387,9 +387,13 @@ class ContentPlanner:
     resolves them (``nested`` marks the ones whose ids are baked into a blob).
     """
 
-    def __init__(self, *, inline_bytes: int, blob_key: Callable[[str, str], str]):
+    def __init__(self, *, inline_bytes: int, blob_key: Callable[[str, str], str],
+                 payload_ids: dict[tuple[str, str], str] | None = None):
         self.inline_bytes = inline_bytes
         self.blob_key = blob_key
+        #: Ids an earlier attempt of the batch gave new payloads (``new_payload_ids``): reusing them keeps the bytes,
+        #: and so the keys, of the blobs that embed references.
+        self.payload_ids = payload_ids or {}
         self._planned: dict[tuple[str, str], _Planned] = {}
         self._objects: dict[str, tuple[str, int]] = {}
         self._candidates: dict[tuple[str, str], set[str]] = {}
@@ -399,7 +403,8 @@ class ContentPlanner:
 
     def plan(self, *, index: int, trajectory_id: str, event_type: str, data: dict, media: list[MediaItem],
              helpers: dict, lookup: TrajectoryContent, assets: dict[str, AssetView], owner_user_id: str,
-             workspace_id: str | None, unavailable: bool = False, size_hint: int | None = None) -> ContentPlan:
+             workspace_id: str | None, unavailable: frozenset[str] | set[str] = frozenset(),
+             size_hint: int | None = None) -> ContentPlan:
         """``bind`` and ``assign`` with one lookup for both."""
         plan = self.bind(trajectory_id=trajectory_id, event_type=event_type, data=data, media=media, helpers=helpers,
                          lookup=lookup, assets=assets, owner_user_id=owner_user_id, workspace_id=workspace_id)
@@ -426,14 +431,16 @@ class ContentPlanner:
         return ContentPlan(data, refs, candidates)
 
     def assign(self, plan: ContentPlan, *, index: int, trajectory_id: str, lookup: TrajectoryContent,
-               unavailable: bool = False, size_hint: int | None = None,
+               unavailable: frozenset[str] | set[str] = frozenset(), size_hint: int | None = None,
                queued: frozenset[str] | set[str] = frozenset()) -> ContentPlan:
         """Payload ids, steps 6-7 and blob encoding.
 
-        ``unavailable`` stores no new bytes for this event (the blob store kept
-        failing), and then also reuses no object whose key is in ``queued``
-        (keys with GC entries, which must be stored again); ``size_hint`` (the
-        spool line length) lets small events skip the size checks.
+        ``unavailable`` names object keys the blob store kept failing to store:
+        a reference that needs the bytes of one of them becomes a not-recorded
+        marker, also when it would reuse an object whose key is in ``queued``
+        (keys with GC entries, which must be stored again). Other references of
+        the event keep their content. ``size_hint`` (the spool line length)
+        lets small events skip the size checks.
         """
         for ref in plan.refs:
             self._plan_ref(ref, index, trajectory_id, lookup, unavailable, queued)
@@ -589,14 +596,15 @@ class ContentPlanner:
     # Payload ids and uploads -------------------------------------------------
 
     def _plan_ref(self, ref: PendingRef, index: int, trajectory_id: str, lookup: TrajectoryContent,
-                  unavailable: bool, queued: frozenset[str] | set[str] = frozenset()) -> None:
+                  unavailable: frozenset[str] | set[str] = frozenset(),
+                  queued: frozenset[str] | set[str] = frozenset()) -> None:
         key = (trajectory_id, ref.dedupe_key)
         planned = self._planned.get(key)
         blob = ref.storage_kind == "blob"
         object_key = self.blob_key(trajectory_id, ref.sha256) if blob else None
         if planned is None:
             existing = lookup.rows.get(ref.dedupe_key)
-            if blob and unavailable and object_key not in self._objects and self._needs_bytes(
+            if blob and object_key in unavailable and object_key not in self._objects and self._needs_bytes(
                     ref, existing, lookup, object_key in queued):
                 ref.mark_unavailable()
                 return
@@ -606,7 +614,7 @@ class ContentPlanner:
                 blocked = lookup.blocked[ref.sha256]
                 planned = _Planned(blocked.payload_id, blocked.availability, existing=True, blocked=True)
             else:
-                planned = _Planned(new_payload_id(), ref.availability, existing=False)
+                planned = _Planned(self.payload_ids.get(key) or new_payload_id(), ref.availability, existing=False)
             self._planned[key] = planned
         ref.existing, ref.blocked = planned.existing, planned.blocked
         ref.fill(planned.payload_id, planned.availability)
@@ -651,6 +659,10 @@ class ContentPlanner:
     def object_keys(self) -> set[str]:
         """Blob keys this batch stores or reuses: the keys a GC delete must not remove under it."""
         return set(self.uploads) | set(self.reused)
+
+    def new_payload_ids(self) -> dict[tuple[str, str], str]:
+        """Ids given to new payloads, by (trajectory id, dedupe key): ``payload_ids`` for a later attempt."""
+        return {key: planned.payload_id for key, planned in self._planned.items() if not planned.existing}
 
     def store_again(self, key: str) -> bool:
         """Overwrite ``key`` when uploading: a queued GC entry may already have deleted the object.

@@ -1,6 +1,7 @@
 """ContentPlanner phases: bind, lookup keys, assign, and which references end up nested in blobs."""
 import base64
 import hashlib
+import json
 
 from trajectory.storage import decode_blob
 from trajectory.types import canonical
@@ -27,11 +28,11 @@ def test_reused_objects_can_be_stored_again_for_a_queued_gc_entry():
     assert decode_blob(upload.data, "zstd") == canonical(system)
     planner.release_reused()
     assert planner.object_keys() == {key} and planner.reused[key].content == b""
-    # An event whose new bytes cannot be stored (blob store outage) keeps no reference to a queued key.
+    # A queued key the blob store kept failing to store again is not referenced.
     for queued, expected in ((frozenset({key}), BLOB_UNAVAILABLE), (frozenset(), "pld_system")):
         planner = ContentPlanner(inline_bytes=65536, blob_key=_key)
         plan, _ = _bind(planner, {"input": {"system": system}})
-        planner.assign(plan, index=0, trajectory_id=TID, lookup=lookup, unavailable=True, queued=queued)
+        planner.assign(plan, index=0, trajectory_id=TID, lookup=lookup, unavailable={key}, queued=queued)
         stored = plan.data["input"]["system"]
         assert (stored if expected is BLOB_UNAVAILABLE else stored["$ref"]["payload_id"]) == expected
 
@@ -100,3 +101,33 @@ def test_small_events_skip_size_checks_with_a_size_hint():
     assert plan.data["text"]["$ref"]["kind"] == "value"
     sha = hashlib.sha256(b'"' + b"x" * 5000 + b'"').hexdigest()
     assert plan.refs[0].sha256 == sha and plan.refs[0].dedupe_key == dedupe_key(sha, "application/json", None, "blob")
+
+
+def test_only_failed_objects_become_markers_and_reused_payload_ids_keep_blob_keys():
+    system, tools = "S" * 3000, [{"name": "t", "description": "D" * 3000}]
+    fields = {f"k{index}": "v" * 90 for index in range(60)}
+
+    def attempt(unavailable=frozenset(), payload_ids=None):
+        planner = ContentPlanner(inline_bytes=4096, blob_key=_key, payload_ids=payload_ids)
+        plan, _ = _bind(planner, {"input": {"system": system, "tools": tools}, **fields})
+        planner.assign(plan, index=0, trajectory_id=TID, lookup=TrajectoryContent(), unavailable=unavailable)
+        return planner, plan
+
+    first, plan = attempt()
+    system_ref, tools_ref, whole = plan.refs
+    assert whole.style == "payload" and system_ref.nested and tools_ref.nested
+    # The whole-data blob embeds the new payload ids: with fresh ids its key changes from plan to plan...
+    assert attempt()[1].refs[-1].storage_key != whole.storage_key
+    # ...and with the ids of the earlier attempt it does not.
+    ids = first.new_payload_ids()
+    again, same = attempt(payload_ids=ids)
+    assert [ref.payload_id for ref in same.refs] == [ref.payload_id for ref in plan.refs]
+    assert set(again.uploads) == set(first.uploads) == {system_ref.storage_key, tools_ref.storage_key, whole.storage_key}
+    # Once the tools object kept failing, only its reference becomes a marker.
+    degraded, marked = attempt(unavailable={tools_ref.storage_key}, payload_ids=ids)
+    kept, failed, rewritten = marked.refs
+    assert failed.failed and not kept.failed and not rewritten.failed and kept.payload_id == system_ref.payload_id
+    assert set(degraded.uploads) == {system_ref.storage_key, rewritten.storage_key}
+    stored = json.loads(decode_blob(degraded.uploads[rewritten.storage_key].data, rewritten.encoding))
+    assert stored["input"]["tools"] == BLOB_UNAVAILABLE
+    assert stored["input"]["system"]["$ref"]["payload_id"] == system_ref.payload_id

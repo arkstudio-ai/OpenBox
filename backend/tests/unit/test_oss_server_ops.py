@@ -568,6 +568,21 @@ async def test_list_objects_error_answer_raises():
     assert (caught.value.status, caught.value.code, caught.value.request_id) == (403, "AccessDenied", "req-l")
 
 
+async def test_list_objects_starts_after_a_key_that_stays_out_of_the_signature():
+    fake = FakeOss(httpx.Response(200, content=listing(["trajectories/trj_1/blobs/c"])))
+    objects, token = await client_for(fake).list_objects(
+        "trajectories/", start_after="trajectories/trj_1/blobs/a b", max_keys=5)
+    assert [item["key"] for item in objects] == ["trajectories/trj_1/blobs/c"] and token is None
+    [request] = fake.requests
+    assert dict(parse_qsl(request.url.query.decode())) == {
+        "list-type": "2", "max-keys": "5", "encoding-type": "url", "prefix": "trajectories/",
+        "start-after": "trajectories/trj_1/blobs/a b",
+    }
+    assert b"start-after=trajectories%2Ftrj_1%2Fblobs%2Fa%20b" in request.url.query
+    # Not a sub-resource: the reference signature leaves it out of the canonical resource.
+    assert_signed(request)
+
+
 # -- Transport --
 
 @pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ReadTimeout])

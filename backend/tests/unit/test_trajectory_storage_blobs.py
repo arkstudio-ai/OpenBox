@@ -476,6 +476,87 @@ async def test_memory_store_get_hook_runs_between_read_and_return(asynchronous):
     assert calls == ["t/a"]
 
 
+# -- Listing pages --
+
+async def test_memory_store_lists_pages_after_a_key_with_put_times():
+    store = MemoryBlobStore()
+    store.clock = lambda: 1000.0
+    for name in ("t/b", "t/a", "t/d", "u/a"):
+        await store.put(name, b"x", content_type="text/plain")
+    store.clock = lambda: 2000.0
+    await store.put("t/c", b"x", content_type="text/plain")
+    await store.put("t/a", b"kept", content_type="text/plain")  # if_absent keeps the object and its time
+    store.objects["t/e"] = b"stored around put"
+    assert await store.list_objects("t/", limit=2) == [("t/a", 1000.0), ("t/b", 1000.0)]
+    assert await store.list_objects("t/", start_after="t/b", limit=2) == [("t/c", 2000.0), ("t/d", 1000.0)]
+    assert await store.list_objects("t/", start_after="t/bz", limit=5) == [("t/c", 2000.0), ("t/d", 1000.0),
+                                                                          ("t/e", None)]
+    assert await store.list_objects("t/", start_after="t/e", limit=5) == []
+    await store.delete("t/c")
+    assert await store.delete_prefix("t/") == 4
+    assert store.modified == {"u/a": 1000.0}
+    with pytest.raises(ValueError):
+        await store.list_objects("t/", limit=0)
+    store.fail("list", OSError("listing down"))
+    with pytest.raises(OSError, match="listing down"):
+        await store.list_objects("u/", limit=1)
+
+
+async def test_local_store_lists_pages_with_file_mtimes(tmp_path):
+    store = LocalBlobStore(tmp_path)
+    for name in ("t/x/2", "t/x/1", "t/y", "u/1"):
+        await store.put(name, b"x", content_type="text/plain")
+    os.utime(tmp_path / "t" / "x" / "1", (1000, 1000))
+    (tmp_path / "t" / ".tmp-in-flight").write_bytes(b"partial")
+    assert await store.list_objects("t/", limit=2) == [("t/x/1", 1000.0),
+                                                       ("t/x/2", (tmp_path / "t" / "x" / "2").stat().st_mtime)]
+    assert [key for key, _ in await store.list_objects("t/", start_after="t/x/1", limit=5)] == ["t/x/2", "t/y"]
+    assert await store.list_objects("t/", start_after="t/y", limit=5) == []
+    assert await store.list_objects("missing/", limit=5) == []
+    with pytest.raises(ValueError):
+        await store.list_objects("../", limit=1)
+
+
+async def test_fault_injection_wraps_listing_pages():
+    inner = MemoryBlobStore()
+    await inner.put("t/a", b"x", content_type="text/plain")
+    await inner.put("t/b", b"x", content_type="text/plain")
+    store = FaultInjectingBlobStore(inner, "list:1.0", seed=1)
+    with pytest.raises(BlobFaultInjected):
+        await store.list_objects("t/", limit=1)
+    assert store.injected["list"] == 1
+    store.probabilities.clear()
+    assert await store.list_objects("t/", start_after="t/a", limit=5) == [("t/b", inner.modified["t/b"])]
+
+
+async def test_oss_blob_store_pages_listings_through_the_client_after_a_key():
+    from datetime import datetime, timezone
+
+    calls = []
+
+    class Client:
+        async def list_objects(self, prefix, *, continuation_token=None, start_after=None, max_keys=1000,
+                               internal=False):
+            calls.append((prefix, continuation_token, start_after, max_keys, internal))
+            if continuation_token is None:
+                return [{"key": f"t/{index:04d}", "last_modified": "2026-09-14T08:00:00.000Z"}
+                        for index in range(max_keys)], "token-1"
+            return [{"key": "t/last", "last_modified": ""}], None
+
+    store = OssBlobStore("bucket", "cn-shanghai", credentials=lambda: {"access_key_id": "ak", "access_key_secret": "sk"})
+    store._client = Client
+    listed = await store.list_objects("t/", start_after="t/-", limit=1001)
+    # start-after positions the first request only; the continuation token carries the position after it.
+    assert calls == [("t/", None, "t/-", 1000, True), ("t/", "token-1", None, 1, True)]
+    modified = datetime(2026, 9, 14, 8, tzinfo=timezone.utc).timestamp()
+    assert len(listed) == 1001 and listed[0] == ("t/0000", modified) and listed[-1] == ("t/last", None)
+    calls.clear()
+    assert [key for key, _ in await store.list_objects("t/", limit=3)] == ["t/0000", "t/0001", "t/0002"]
+    assert calls == [("t/", None, None, 3, True)]
+    with pytest.raises(ValueError):
+        await store.list_objects("t/", limit=0)
+
+
 # -- FaultInjectingBlobStore --
 
 def test_parse_blob_faults():

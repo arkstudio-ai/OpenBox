@@ -32,6 +32,8 @@ LEASE_SECONDS = 60
 VERIFIED_REUSE_SECONDS = 2.0
 #: Remembered run and turn identities per process (revocations, terminal facts).
 _MEMORY_LIMIT = 4096
+#: Start times of this process's runs, kept for their terminal facts; beyond this the oldest go first.
+_RUN_STARTS_LIMIT = 10_000
 _AFTER_COMMIT = "question_runtime_after_commit"
 _PENDING_CLAIMS = "question_runtime_pending_claims"
 
@@ -102,7 +104,7 @@ class _Recent:
 current_run: ContextVar[RunTicket | None] = ContextVar("question_current_run", default=None)
 auxiliary_run: ContextVar[AuxiliaryTicket | None] = ContextVar("question_auxiliary_run", default=None)
 _verified: ContextVar[tuple[str, float] | None] = ContextVar("question_run_verified", default=None)
-_trace_run_started: dict[str, float] = {}
+_trace_run_started: OrderedDict[str, float] = OrderedDict()
 _revoked = _Recent()
 _terminal_runs = _Recent()
 _finished_turns = _Recent()
@@ -357,12 +359,23 @@ async def _record_run_started(db, session, execution, ticket, *, resumed: bool):
         "resume_reason": "question" if resumed else None,
         "timing_source": "producer_monotonic",
     }, context=context, db=db, event_id=f"run_start:{ticket.run_id}")
-    _trace_run_started[ticket.run_id] = time.monotonic()
+    _remember_run_start(ticket.run_id)
+
+
+def _remember_run_start(run_id: str) -> None:
+    """Keep a run's start time for its terminal fact (``_record_run_terminal``)."""
+    _trace_run_started[run_id] = time.monotonic()
+    _trace_run_started.move_to_end(run_id)
+    while len(_trace_run_started) > _RUN_STARTS_LIMIT:
+        # Runs that never reached a terminal path in this process (a failed start, a crashed loop).
+        _trace_run_started.popitem(last=False)
 
 
 async def _record_run_terminal(db, execution, ticket, *, status: str, reason: str | None = None,
                                event_type: str = "run.finished"):
     from trajectory import TraceContext, enabled, record
+    # The first terminal path takes the start time, whether or not it records a fact.
+    started = _trace_run_started.pop(ticket.run_id, None)
     if not enabled(ticket.user_id) or not execution.trace_context:
         return
     context = TraceContext.parse(execution.trace_context)
@@ -372,7 +385,6 @@ async def _record_run_terminal(db, execution, ticket, *, status: str, reason: st
     # commits first; a repeat under the same id could carry a different payload.
     if not _claim_once(db, _terminal_runs, ticket.run_id):
         return
-    started = _trace_run_started.pop(ticket.run_id, None)
     await record(event_type, {
         "status": status, "reason": reason,
         "duration_ms": round((time.monotonic() - started) * 1000, 3) if started is not None else None,
@@ -550,6 +562,8 @@ async def finish_run(ticket: RunTicket, *, failed: bool = False, interrupted: bo
                      completed: bool = False, aborted: bool = False) -> None:
     async with transaction(ticket.session_id, ticket.user_id, fence=False) as (db, session, execution):
         if not owns(execution, ticket):
+            # Invalidation or recovery ends this run, often in another process.
+            _trace_run_started.pop(ticket.run_id, None)
             return
         if interrupted and execution.run_origin == "question" and not execution.run_progress:
             # Shutdown between claiming an answer and making any progress is
@@ -615,6 +629,8 @@ async def invalidate_locked(db, execution: SessionExecution, status: str = "supe
         if execution.run_generation == execution.generation:
             await _record_run_terminal(db, execution, superseded, status="cancelled", reason=status,
                                        event_type="run.interrupted")
+        else:
+            _trace_run_started.pop(superseded.run_id, None)
         # The superseded run no longer holds the row: recovery never mistakes it
         # for a crashed run, and its late finish cannot claim the session.
         execution.run_id = None
@@ -660,6 +676,7 @@ async def _recover_expired_run(session_id: str, user_id: str) -> None:
             # session's status belong to that invalidation. Only release the row.
             execution.run_id = None
             execution.lease_until = None
+            _trace_run_started.pop(expired.run_id, None)
             _after_commit(db, lambda: revoke(expired.run_id, "superseded"))
             return
         if execution.run_origin == "question" and not execution.run_progress:

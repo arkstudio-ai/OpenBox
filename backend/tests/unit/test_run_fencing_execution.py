@@ -240,6 +240,55 @@ async def test_every_ordering_records_exactly_one_terminal_fact_per_run(state, r
         facts = [event_id for event_id in terminals if event_id.endswith(ticket.run_id)]
         assert len(facts) == (1 if recording else 0), (order, facts)
         assert (await read(SessionExecution, session_id)).run_id is None, order
+        # Whichever path ended the run, this process no longer keeps its start time.
+        assert ticket.run_id not in runtime._trace_run_started, order
+
+
+async def test_a_run_whose_setup_fails_leaves_no_run_or_trace_binding_in_its_task(monkeypatch):
+    from agent import loop
+    from trajectory import TraceContext, current
+
+    ticket = runtime.RunTicket("s1", "u1", 0, uuid4().hex)
+    trace = TraceContext(user_id="u1", session_id="s1", run_id=ticket.run_id)
+
+    async def get_session(session_id, user_id=None):
+        return SimpleNamespace(id=session_id)
+
+    async def start_run(session_id, user_id, expected_generation=None):
+        return ticket
+
+    async def get_run_trace(_ticket):
+        return trace
+
+    def register_run(session_id, run_id=None):
+        assert runtime.current_run.get() is ticket and current() is trace
+        raise RuntimeError("abort slots unavailable")
+
+    monkeypatch.setattr(loop, "get_session", get_session)
+    monkeypatch.setattr(runtime, "start_run", start_run)
+    monkeypatch.setattr(runtime, "get_run_trace", get_run_trace)
+    monkeypatch.setattr(loop, "register_run", register_run)
+    assert runtime.current_run.get() is None and current() is None
+    with pytest.raises(RuntimeError, match="abort slots unavailable"):
+        await loop.run_loop("s1", user_id="u1")
+    assert runtime.current_run.get() is None and current() is None
+
+
+async def test_run_start_times_are_bounded_and_taken_by_terminal_paths_that_record_nothing(monkeypatch):
+    from collections import OrderedDict
+
+    starts = OrderedDict()
+    monkeypatch.setattr(runtime, "_trace_run_started", starts)
+    for index in range(runtime._RUN_STARTS_LIMIT + 2):
+        runtime._remember_run_start(f"run-{index}")
+    assert len(starts) == runtime._RUN_STARTS_LIMIT == 10_000
+    assert next(iter(starts)) == "run-2"  # the oldest went first
+    runtime._remember_run_start("run-2")
+    assert next(reversed(starts)) == "run-2" and next(iter(starts)) == "run-3"
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await runtime._record_run_terminal(None, SimpleNamespace(trace_context=None),
+                                       runtime.RunTicket("s1", "u1", 0, "run-5"), status="failed")
+    assert "run-5" not in starts and len(starts) == runtime._RUN_STARTS_LIMIT - 1
 
 
 async def test_poisoned_lease_is_released_quietly_by_recovery_and_by_new_input(state, emitted, monkeypatch):

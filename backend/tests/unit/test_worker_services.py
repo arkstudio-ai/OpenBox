@@ -65,6 +65,10 @@ class FakeRetentionService(FakeRetention):
         self.calls.append(("process_gc_queue", limit))
         return 0
 
+    async def sweep_orphans(self):
+        self.calls.append(("sweep_orphans",))
+        return 0
+
 
 class FakeExports:
     def __init__(self):
@@ -268,3 +272,57 @@ async def test_gc_deletes_go_through_the_object_guard_that_ingest_shares(trace_d
     assert key not in store.objects
     await guarded.put(key, b"y", content_type="application/octet-stream")
     assert await guarded.get(key) == b"y"
+
+
+async def test_the_orphan_sweep_is_a_writer_step_every_ten_minutes(trace_db, settings):
+    services = _services(settings)
+    steps = {name: (interval, step) for name, interval, step in services._steps()}
+    assert steps["orphans"][0] == 600.0
+    await steps["orphans"][1]()
+    assert services.retention.calls == [("sweep_orphans",)]
+
+
+async def test_stop_waits_for_writer_tasks_the_supervisor_is_still_stopping(trace_db, settings, monkeypatch):
+    """The lock was lost and the supervisor is stopping the loops when stop() cancels it: stop() still waits for
+    their unwinding, which that cancellation must not interrupt, before it releases the lock."""
+    order = []
+    blocked, unwinding, unwound = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class LostLock:
+        held = False
+
+        async def acquire(self):
+            self.held = True
+            return True
+
+        async def verify(self):
+            await blocked.wait()
+            self.held = False
+            return False
+
+        async def release(self):
+            order.append("lock released")
+
+    async def step():
+        blocked.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            unwinding.set()
+            await unwound.wait()  # a rollback still in flight, say
+            order.append("writer unwound")
+            raise
+
+    monkeypatch.setattr(services_module, "LOCK_VERIFY_SECONDS", 0.01)
+    monkeypatch.setattr(services_module, "LOCK_RETRY_SECONDS", 3600)
+    services = _services(settings, lock=LostLock())
+    services._steps = lambda: [("blocking", 0.01, step)]
+    await services.start()
+    await asyncio.wait_for(unwinding.wait(), 5)
+    stopping = asyncio.create_task(services.stop())
+    await asyncio.sleep(0.05)
+    assert not stopping.done() and order == []
+    unwound.set()
+    await asyncio.wait_for(stopping, 5)
+    assert order == ["writer unwound", "lock released"]
+    assert services._writer_tasks == [] and services._stopping == set()

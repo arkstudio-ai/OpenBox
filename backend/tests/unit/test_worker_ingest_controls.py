@@ -317,3 +317,5 @@ async def test_a_session_deletion_publishes_its_deleted_notification_once(trace_
          "committed_seq": "3", "deleted": True}]
     assert result["deleted_trajectories"] == {trajectory.id}
     assert (await events_of("ses_1"))[0].deleted_at is not None
+    # Counted once, after the commit, for the retention service's daily report.
+    assert retention.report.counters["tombstones_processed"] == 1

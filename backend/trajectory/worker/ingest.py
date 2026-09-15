@@ -22,12 +22,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from core.log import create_logger
 from trajectory import spool
-from trajectory.lifecycle import revoke_asset
+from trajectory.lifecycle import revoke_asset, worker_setting
 from trajectory.storage import blob_key
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
@@ -43,6 +43,11 @@ log = create_logger("trajectory.worker.ingest")
 MAX_UPLOAD_ATTEMPTS = 10
 BACKOFF_FIRST_SECONDS = 1.0
 BACKOFF_MAX_SECONDS = 60.0
+#: After a failed file batch the trace database is probed this long: a failure while it does not answer is an
+#: outage and never counts towards TRAJECTORY_INGEST_MAX_BATCH_FAILURES.
+DB_PROBE_SECONDS = 5.0
+#: Characters of the last error a quarantined batch records in its ``.reason`` file.
+ERROR_TEXT_LIMIT = 1000
 #: Immediate re-preparations of one batch when the transaction finds changed state.
 MAX_PREPARE_RETRIES = 3
 UPLOAD_CONCURRENCY = 8
@@ -202,6 +207,19 @@ def _chunks(values, size: int = QUERY_CHUNK):
         yield values[offset:offset + size]
 
 
+async def trace_db_available(timeout: float = DB_PROBE_SECONDS) -> bool:
+    """Whether a trivial query succeeds in a fresh trace session within ``timeout`` seconds; never raises."""
+    async def probe() -> None:
+        async with trace_session() as db:
+            await db.execute(text("SELECT 1"))
+
+    try:
+        await asyncio.wait_for(probe(), timeout)
+    except Exception:
+        return False
+    return True
+
+
 @dataclass(eq=False)
 class TrajectoryState:
     """A trajectory row locked by the ingest transaction, with the counters it changes."""
@@ -308,6 +326,19 @@ class _Backoff:
 
 
 @dataclass
+class _FileFailure:
+    """A spool file whose batch failed: its backoff, and how often the batch at ``offset`` failed in a row."""
+    #: Monotonic time before which the file is not retried.
+    next_at: float
+    #: Failed attempts in a row, trace database outages included: they set the backoff.
+    attempts: int
+    #: Committed offset of the batch that failed.
+    offset: int
+    #: Failures in a row while the trace database answered; TRAJECTORY_INGEST_MAX_BATCH_FAILURES quarantines the file.
+    failures: int
+
+
+@dataclass
 class PreparedBatch:
     items: list[Item]
     planner: content.ContentPlanner | None
@@ -339,17 +370,48 @@ class IngestService:
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
-        #: (producer_id, file name) -> (monotonic time before which the file is not retried, failures in a row).
-        self._failures: dict[tuple[str, str], tuple[float, int]] = {}
+        #: (producer_id, file name) of files whose batch failed -> backoff and failures in a row.
+        self._failures: dict[tuple[str, str], _FileFailure] = {}
+        #: (producer_id, file name) -> committed offset of the batch being ingested (the one a failure is about).
+        self._positions: dict[tuple[str, str], int] = {}
+        self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
+                                                 "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
 
-    def _failed(self, key: tuple[str, str], failure, exc: Exception, result: dict) -> None:
-        attempts = (failure[1] if failure is not None else 0) + 1
-        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
-        self._failures[key] = (time.monotonic() + delay, attempts)
+    async def _failed(self, spool_file, scan, exc: Exception, result: dict) -> bool:
+        """Back off a file whose batch failed; True when the batch failed too often and the file was quarantined.
+
+        Only failures while the trace database answers a probe (``trace_db_available``) count: an outage keeps
+        backing off without bringing any file closer to quarantine. A batch that fails
+        TRAJECTORY_INGEST_MAX_BATCH_FAILURES times in a row goes to ``quarantine/`` like a file with an
+        unparsable line (reason ``batch_failed`` with the last error), so the producer's later files proceed.
+        """
+        key = (spool_file.producer_id, spool_file.name)
         result["failed_batches"] += 1
-        # The error type only: database messages can carry event content.
+        self._inc("failed_batches")
+        offset = self._positions.get(key, 0)
+        previous = self._failures.get(key)
+        if previous is not None and previous.offset != offset:
+            previous = None  # an earlier batch of the file committed since: this one fails for the first time
+        attempts = (previous.attempts if previous is not None else 0) + 1
+        failures = previous.failures if previous is not None else 0
+        available = await trace_db_available()
+        if available:
+            failures += 1
+        # The error type only in the log: database messages can carry event content.
+        error_type = type(exc).__name__
+        if failures >= self.max_batch_failures:
+            path = spool_reader.locate(spool_file)
+            parsed = ParsedBatch([], offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
+            if path is not None and await self._quarantine(spool_file, scan, path, offset, parsed, result):
+                self._failures.pop(key, None)
+                self._positions.pop(key, None)
+                return True
+        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
+        self._failures[key] = _FileFailure(time.monotonic() + delay, attempts, offset, failures)
         log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
-                    "error_type=%s", delay, key[0], key[1], attempts, type(exc).__name__)
+                    "failures=%s trace_db_available=%s error_type=%s", delay, key[0], key[1], attempts, failures,
+                    available, error_type)
+        return False
 
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
@@ -382,7 +444,7 @@ class IngestService:
                     waiting[key] = spool_file.mtime
                     continue
                 failure = self._failures.get(key)
-                if failure is not None and time.monotonic() < failure[0]:
+                if failure is not None and time.monotonic() < failure.next_at:
                     result["deferred_batches"] += 1
                     waiting[key] = spool_file.mtime
                     continue
@@ -390,9 +452,13 @@ class IngestService:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
                 except Exception as exc:
                     # One file's failure (a purge that times out, a value the database rejects, a bug) must
-                    # not stop the other producers: the file retries from its committed offset after a backoff.
-                    self._failed(key, failure, exc, result)
-                    waiting[key] = spool_file.mtime
+                    # not stop the other producers: the file retries from its committed offset after a backoff,
+                    # and a batch that keeps failing is quarantined so the producer's later files proceed.
+                    if await self._failed(spool_file, scan, exc, result):
+                        consumed.add(key)
+                        progressed = True
+                    else:
+                        waiting[key] = spool_file.mtime
                     continue
                 self._failures.pop(key, None)
                 if remaining is not None:
@@ -404,6 +470,7 @@ class IngestService:
                     waiting[key] = spool_file.mtime
         listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
         self._failures = {key: value for key, value in self._failures.items() if key in listed}
+        self._positions = {key: value for key, value in self._positions.items() if key in listed}
         await self._finish_producers(scan, result)
         await self._save_recent()
         self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)
@@ -419,6 +486,8 @@ class IngestService:
         offset = row["bytes_consumed"] if row else 0
         consumed = 0
         while True:
+            # The committed offset of the batch that follows: a failure of this file is about that batch.
+            self._positions[key] = offset
             held = self._backoff.get((spool_file.producer_id, spool_file.name, offset))
             if held is not None and time.monotonic() < held.next_at:
                 # Waiting for the blob store: skip reading and preparing the batch again.
@@ -734,6 +803,7 @@ class IngestService:
             result["blob_put_bytes"] += len(upload.data)
             self._inc("blob_puts")
             self._inc("blob_put_bytes", len(upload.data))
+            self._inc("blob_put_raw_bytes", upload.raw_bytes)
 
         await asyncio.gather(*(put(upload) for upload in uploads.values()))
         for upload in uploads.values():
@@ -789,8 +859,12 @@ class IngestService:
             log.info("Ignored the torn last line of abandoned spool file producer_id=%s file=%s",
                      spool_file.producer_id, spool_file.name)
 
-    async def _quarantine(self, spool_file, scan, path, offset, parsed: ParsedBatch, result) -> None:
-        """Move a file with an unparsable line aside and report the lines it held as lost (SPEC §8.2)."""
+    async def _quarantine(self, spool_file, scan, path, offset, parsed: ParsedBatch, result) -> bool:
+        """Move a file aside and report the lines it held from ``offset`` as lost (SPEC §8.2).
+
+        Used for a file with an unparsable line and for a batch that failed too often (``_failed``). False
+        when the file could not be moved.
+        """
         low, high = await asyncio.to_thread(spool_reader.counter_range, path, offset)
         moved = await asyncio.to_thread(
             spool_reader.quarantine_file, self.spool_dir, spool_reader.SpoolFile(
@@ -801,7 +875,7 @@ class IngestService:
         if moved is None:
             log.warning("Could not quarantine spool file producer_id=%s file=%s", spool_file.producer_id,
                         spool_file.name)
-            return
+            return False
         log.warning("Quarantined spool file producer_id=%s file=%s reason=%s", spool_file.producer_id,
                     spool_file.name, parsed.bad_reason)
         tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=spool_file.producer_id)
@@ -816,10 +890,11 @@ class IngestService:
                 await tx.finish(db, end_offset=offset, finished=True)
         except Exception as exc:
             log.warning("Quarantine bookkeeping failed error_type=%s", type(exc).__name__)
-            return
+            return True
         tx.counters["quarantined_files"] += 1
         tx.after_commit(result)
         await self._forget_files([(spool_file.producer_id, spool_file.name)])
+        return True
 
     async def _finish_producers(self, scan, result) -> None:
         """Remove finished producer directories; declare dead producers without goodbye abandoned once."""
@@ -838,7 +913,7 @@ class IngestService:
                 if await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path):
                     await self._forget_producer(producer.producer_id)
                 continue
-            if not self._dead(producer, scan):
+            if not self._dead(producer):
                 continue
             tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=producer.producer_id)
             try:
@@ -863,19 +938,22 @@ class IngestService:
         except Exception as exc:
             log.warning("Ingest producer bookkeeping cleanup failed error_type=%s", type(exc).__name__)
 
-    def _dead(self, producer, scan) -> bool:
-        document = producer.document if isinstance(producer.document, dict) else None
-        if document is None:
-            return False
+    def _dead(self, producer) -> bool:
+        """Whether an idle producer without goodbye has ended (SPEC §8.2).
+
+        A running emitter refreshes the mtime of its producer.json every few seconds
+        (``Emitter.HEARTBEAT_SECONDS``), so one unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS belongs to a
+        process that is gone, wherever it ran: a recreated container never comes back under its old hostname.
+        A producer of this host and boot is dead as soon as its pid is gone, and never while it is this process.
+        """
         try:
-            if time.time() - os.stat(producer.path).st_mtime < self.settings.spool_abandon_seconds:
-                return False
+            age = time.time() - os.stat(producer.path / spool.PRODUCER_FILE).st_mtime
         except OSError:
             return False
-        hostname, boot, pid = document.get("hostname"), document.get("boot_id"), document.get("pid")
-        if not isinstance(pid, int) or isinstance(pid, bool):
-            return False
-        if hostname == self.hostname and boot == self.boot_id:
+        document = producer.document if isinstance(producer.document, dict) else {}
+        pid = document.get("pid")
+        if (document.get("hostname") == self.hostname and document.get("boot_id") == self.boot_id
+                and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0):
             if pid == os.getpid():
                 return False
             try:
@@ -883,13 +961,8 @@ class IngestService:
             except ProcessLookupError:
                 return True
             except OSError:
-                return False
-            return False
-        # Another host (a separate container): a later producer with the same
-        # host, boot and pid means this process was replaced.
-        return any(other.producer_id > producer.producer_id and isinstance(other.document, dict)
-                   and other.document.get("hostname") == hostname and other.document.get("boot_id") == boot
-                   and other.document.get("pid") == pid for other in scan.producers.values())
+                pass  # alive, owned by another user
+        return age >= self.settings.spool_abandon_seconds
 
     # Worker state ------------------------------------------------------------------
 
@@ -930,6 +1003,12 @@ class IngestService:
     async def flush_state(self) -> None:
         """Persist in-memory producer bookkeeping (worker shutdown)."""
         await self._save_recent(force=True)
+
+    def _tombstones_committed(self, count: int) -> None:
+        """Committed ``session.deleted`` tombstones, for the retention service's daily report."""
+        counted = getattr(self.retention, "tombstones_committed", None)
+        if counted is not None:
+            counted(count)
 
     def retention_service(self):
         if self.retention is None:
@@ -1082,14 +1161,18 @@ class _Transaction:
                 result[name] += value
                 if name in METRICS:
                     service._inc(METRICS[name], value)
+        tombstones = 0
         for state in self.states.values():
             if state.tombstoned:
                 # The tombstone published the deleted notification as this transaction committed
                 # (lifecycle.publish_after_commit); publishing it here as well announced it twice.
                 result["deleted_trajectories"].add(state.id)
+                tombstones += 1
             elif state.committed_seq > state.initial_committed:
                 result["trajectories"].add(state.id)
                 publish_available(state)
+        if tombstones:
+            service._tombstones_committed(tombstones)
         for session_id in self.created:
             service._provisional.pop(session_id, None)
         if service._recent is not None:

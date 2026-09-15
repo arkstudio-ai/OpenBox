@@ -349,6 +349,16 @@ async def test_references_lower_first_seq_to_the_earliest_position_without_resur
     assert row.first_seq == 3
 
 
+async def test_blob_puts_count_stored_and_uncompressed_bytes(harness):
+    system = "S" * 3000
+    harness.writer.events(event("request.prepared", request_id="r1", data={"model": "m", "input": {"system": system}}))
+    await harness.run()
+    counters = harness.metrics.counters
+    assert counters["blob_puts"] == 1
+    # blob_put_bytes counts what was stored (compressed), blob_put_raw_bytes the content itself.
+    assert counters["blob_put_raw_bytes"] == len(canonical(system)) > counters["blob_put_bytes"] > 0
+
+
 async def test_blob_upload_is_idempotent_across_trajectories(harness):
     body = {"model": "m", "input": {"system": "S" * 2000}}
     harness.writer.events(event("request.prepared", request_id="r1", data=body),

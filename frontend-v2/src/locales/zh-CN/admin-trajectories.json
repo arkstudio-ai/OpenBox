@@ -649,8 +649,7 @@
   "events": {
     "count_one": "截至 #{{seq}} 共 {{count}} 个事件",
     "count_other": "截至 #{{seq}} 共 {{count}} 个事件",
-    "seq": "#{{seq}}",
-    "streamReferenceNote": "此处原始分片字段引用同一事件中的内容块，流式文本只保留一份，见这些内容块。"
+    "seq": "#{{seq}}"
   },
   "session": {
     "loading": "正在加载会话…",

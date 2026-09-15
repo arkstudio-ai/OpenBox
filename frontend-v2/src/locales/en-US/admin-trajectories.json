@@ -649,8 +649,7 @@
   "events": {
     "count_one": "{{count}} event through #{{seq}}",
     "count_other": "{{count}} events through #{{seq}}",
-    "seq": "#{{seq}}",
-    "streamReferenceNote": "Raw chunk fields here point to the blocks shown for the same event; the streamed text is kept once, in those blocks."
+    "seq": "#{{seq}}"
   },
   "session": {
     "loading": "Loading session…",

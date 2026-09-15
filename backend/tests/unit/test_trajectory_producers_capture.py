@@ -93,10 +93,10 @@ async def test_request_capture_opens_no_transaction_and_records_each_chunk_verba
     assert [item["blocks"] for item in deltas] == [[{"type": "text", "block_id": "0:text", "delta": "Hello "}],
                                                    [{"type": "text", "block_id": "0:text",
                                                      "delta": "token sk-FIXTURE_SECRET_VALUE"}]]
-    # The raw chunk names the block instead of repeating its text; nothing is masked.
-    assert deltas[1]["raw"]["choices"][0]["delta"]["content"] == {"$stream_blocks": ["0:text"],
-                                                                  "availability": "stream_reference"}
-    assert {item["raw_content_mode"] for item in deltas} == {"stream_references"}
+    # Each raw chunk is the provider's chunk as delivered, its text included; nothing is masked.
+    assert [item["raw"] for item in deltas] == [_chunk(text).model_dump(mode="json")
+                                                for text in ("Hello ", "token sk-FIXTURE_SECRET_VALUE")]
+    assert not [item for item in deltas if "raw_content_mode" in item]
     assert "REDACTED" not in json.dumps(events)
     assert {item["request_id"] for item in events} == {capture.context.request_id}
     assert ctx.trace_context == capture.context
@@ -148,12 +148,17 @@ async def test_owned_media_are_asset_references_without_downloads_or_hidden_asse
     async with service_scope(ctx, asset_urls={video: "asset_video"}, retained_media=derived):
         async with capture_service_dispatch(purpose="video_generation", provider="fixture", model="model",
                                             operation="submit", profile="video_generation",
-                                            body={"prompt": "clip", "content": [video, frame]}):
+                                            body={"prompt": "clip", "content": [video, frame], "seed": 7,
+                                                  "callback_url": "https://fixture.invalid/hook",
+                                                  "api_key": "never-recorded"}):
             pass
     [prepared] = recording_spool.events("request.prepared")
     business_body = prepared["data"]["input"]["input"]["business_body"]
     assert business_body["content"] == ["trajectory-media:asset_video",
                                         f"trajectory-media:{derived[frame]['media_id']}"]
+    # The body is recorded verbatim apart from its transport settings and credentials.
+    assert business_body["seed"] == 7 and business_body["callback_url"] == "https://fixture.invalid/hook"
+    assert prepared["data"]["input"]["input"]["omitted_fields"] == ["api_key"]
     assert "never-recorded" not in json.dumps(prepared)
     [artifact] = recording_spool.events("artifact.recorded")
     assert artifact["data"]["role"] == "input" and artifact["data"]["asset_ref"]["oss_key"] == "assets/u1/asset_video/clip.mp4"

@@ -1,94 +1,67 @@
-"""Raw chunk slots that repeat a block delta become references; everything else is recorded verbatim."""
-from copy import deepcopy
+"""Provider chunks are recorded verbatim: ``raw`` is the chunk exactly as the adapter received it."""
 import json
 
-from trajectory.stream_capture import ChunkCapture, block_ids, raw_references
+from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 
-REFERENCE = {"$stream_blocks": ["0:text"], "availability": "stream_reference"}
-
-
-def capture(raw, blocks, **fields):
-    data = {"chunk_index": 1, "mode": "delta", "blocks": blocks, "raw": raw, **fields}
-    original = deepcopy(data)
-    result = ChunkCapture().capture(data)
-    assert data == original
-    return result
+from agent.trajectory import RequestCapture, litellm_chunk_blocks, responses_chunk_blocks
+from tests.unit.trajectory_producer_support import recording_spool  # noqa: F401
+from tool.tool import ToolContext
+from trajectory import TraceContext
 
 
-def test_openai_delta_content_reasoning_and_tool_arguments_reference_their_blocks():
-    raw = {"id": "chatcmpl-1", "model": "m", "object": "chat.completion.chunk", "choices": [{"index": 0, "finish_reason": None,
-            "delta": {"role": "assistant", "content": "Hello ", "reasoning_content": "thinking",
-                      "tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "read", "arguments": '{"path":'}}]}}],
-           "usage": {"prompt_tokens": 3}}
-    blocks = [{"type": "text", "block_id": "0:text", "delta": "Hello "},
-              {"type": "reasoning", "block_id": "0:reasoning", "delta": "thinking"},
-              {"type": "tool_arguments", "block_id": "tool:0", "tool": "read", "delta": '{"path":'}]
-    result = capture(raw, blocks, purpose="chat")
-    delta = result["raw"]["choices"][0]["delta"]
-    assert delta["content"] == REFERENCE
-    assert delta["reasoning_content"] == {"$stream_blocks": ["0:reasoning"], "availability": "stream_reference"}
-    assert delta["tool_calls"][0]["function"]["arguments"] == {"$stream_blocks": ["tool:0"], "availability": "stream_reference"}
-    assert delta["tool_calls"][0]["function"]["name"] == "read" and delta["role"] == "assistant"
-    assert {key: value for key, value in result["raw"].items() if key != "choices"} == {
-        "id": "chatcmpl-1", "model": "m", "object": "chat.completion.chunk", "usage": {"prompt_tokens": 3}}
-    assert result["blocks"] == blocks and result["blocks"] is blocks
-    assert result["raw_content_mode"] == "stream_references" and result["purpose"] == "chat"
-    assert result["chunk_index"] == 1 and result["mode"] == "delta"
+def _capture() -> RequestCapture:
+    return RequestCapture(TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"), None,
+                          "chat", "provider/model", "adapter_input")
 
 
-def test_responses_delta_events_reference_the_item_or_the_single_block():
-    named = capture({"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "delta": "Hi"},
-                    [{"type": "text", "block_id": "msg_1", "delta": "Hi"}])
-    assert named["raw"]["delta"] == {"$stream_blocks": ["msg_1"], "availability": "stream_reference"}
-    assert named["raw"]["type"] == "response.output_text.delta" and named["raw"]["item_id"] == "msg_1"
-    single = capture({"type": "response.function_call_arguments.delta", "delta": "{}"},
-                     [{"type": "tool_arguments", "block_id": "fc_1", "delta": "{}"}])
-    assert single["raw"]["delta"] == {"$stream_blocks": ["fc_1"], "availability": "stream_reference"}
-    ambiguous = capture({"type": "response.output_text.delta", "item_id": "other", "delta": "Hi"},
-                        [{"block_id": "a", "delta": "Hi"}, {"block_id": "b", "delta": ""}])
-    assert ambiguous["raw"]["delta"] == "Hi"
+def test_a_litellm_chunk_keeps_every_provider_field_and_its_text():
+    chunk = ModelResponseStream(
+        id="chatcmpl-1", created=1757900000, model="m", object="chat.completion.chunk", system_fingerprint="fp_1",
+        choices=[StreamingChoices(index=0, delta=Delta(
+            content="Hello", reasoning_content="why",
+            thinking_blocks=[{"type": "thinking", "thinking": "why", "signature": "sig-1"}],
+            provider_specific_fields={"citations": ["https://fixture.invalid"]}))])
+    data = _capture().chunk_data(chunk, blocks=litellm_chunk_blocks(chunk))
+
+    assert data["raw"] == chunk.model_dump(mode="json")
+    delta = data["raw"]["choices"][0]["delta"]
+    assert data["raw"]["system_fingerprint"] == "fp_1"
+    assert delta["thinking_blocks"][0]["signature"] == "sig-1"
+    assert delta["provider_specific_fields"] == {"citations": ["https://fixture.invalid"]}
+    # The raw text stays in the chunk next to the block built from it.
+    assert delta["content"] == "Hello" and data["blocks"][0]["delta"] == "Hello"
+    assert set(data) == {"chunk_index", "mode", "blocks", "purpose", "raw", "elapsed_ms"}
+    assert "$stream_blocks" not in json.dumps(data)
 
 
-def test_completed_response_items_reference_their_replace_blocks():
-    raw = {"type": "response.completed", "response": {"status": "completed", "output": [
-        {"type": "message", "id": "msg_1", "content": [{"type": "output_text", "text": "answer"}]},
-        {"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "why"}]},
-        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "read", "arguments": "{}"},
-        {"type": "function_call", "id": "fc_2", "name": "unknown", "arguments": "{}"}]}}
-    blocks = [{"type": "text", "block_id": "msg_1", "delta": "answer", "mode": "replace"},
-              {"type": "reasoning", "block_id": "rs_1", "delta": "why", "mode": "replace"},
-              {"type": "tool_arguments", "block_id": "fc_1", "delta": "{}", "mode": "replace"}]
-    output = capture(raw, blocks)["raw"]["response"]["output"]
-    assert output[0]["content"][0]["text"] == {"$stream_blocks": ["msg_1"], "availability": "stream_reference"}
-    assert output[1]["summary"][0]["text"] == {"$stream_blocks": ["rs_1"], "availability": "stream_reference"}
-    assert output[2]["arguments"] == {"$stream_blocks": ["fc_1"], "availability": "stream_reference"}
-    assert output[2]["call_id"] == "call_1" and output[3]["arguments"] == "{}"
+def test_a_responses_event_is_recorded_as_it_arrived_without_a_copy():
+    event = {"type": "response.output_item.done", "sequence_number": 7, "output_index": 0,
+             "item": {"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAAAB-fixture",
+                      "summary": [{"type": "summary_text", "text": "why"}]}}
+    data = _capture().chunk_data(event, blocks=responses_chunk_blocks(event))
+    assert data["raw"] is event
+    assert data["raw"]["item"]["encrypted_content"] == "gAAAAB-fixture"
 
 
-def test_unrelated_fields_and_secret_looking_text_pass_through_unchanged():
-    raw = {"type": "http.response", "response": {"status": "completed", "output": {
-        "task_id": "local_task_123", "url": "https://fixture.invalid/asset?Signature=FIXTURE_SIGNATURE",
-        "secret": "sk-FIXTURE_SECRET_VALUE", "authorization": "Bearer FIXTURE_BEARER"}}}
-    blocks = [{"type": "text", "block_id": "0:text", "delta": 'api_key="sk-FIXTURE_SECRET_VALUE"'}]
-    result = capture(raw, blocks)
-    assert result["raw"] == raw and result["raw"] is not raw
-    assert result["blocks"][0]["delta"] == 'api_key="sk-FIXTURE_SECRET_VALUE"'
-    assert "REDACTED" not in json.dumps(result) and "redaction" not in json.dumps(result)
+async def test_a_chunk_is_encoded_when_recorded_so_later_changes_do_not_reach_the_trace(recording_spool):
+    ctx = ToolContext(session_id="s1", user_id="u1", workspace_id="w1", message_id="m1",
+                      trace_context=TraceContext("u1", "s1", turn_id="turn", run_id="run", step_id="step"))
+    capture = await RequestCapture.start(ctx, purpose="chat", model_id="provider/model",
+                                         payload={"model": "provider/model"}, capture_level="provider_wire")
+    event = {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "Hi", "sequence_number": 3,
+             "obfuscation": "x1Y2", "logprobs": [], "blob": b"\x00\x01", "sdk": object()}
 
+    async def provider():
+        yield event
+        event["delta"] = "changed by the adapter"
+    delivered = [chunk async for chunk in capture.stream_chunks(provider(), responses_chunk_blocks)]
+    await capture.finish("completed")
 
-def test_a_content_slot_without_a_matching_block_keeps_its_text():
-    raw = {"choices": [{"index": 1, "delta": {"content": "text", "tool_calls": [{"function": {"arguments": "{}"}}]}},
-                       "not a choice"]}
-    result = raw_references(raw, [{"type": "text", "delta": "text"}])
-    assert result["choices"][0]["delta"]["content"] == "text"
-    assert result["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == "{}"
-    assert result["choices"][1] == "not a choice"
-    # Blocks without an id are named the way the projector names them.
-    assert block_ids([{"type": "text", "delta": "text"}, {"block_id": 7}, "junk"]) == {"text:0", "7"}
-
-
-def test_non_object_raw_chunks_and_missing_blocks_are_untouched():
-    assert raw_references(None, []) is None
-    assert raw_references(["a"], [{"block_id": "x"}]) == ["a"]
-    result = ChunkCapture().capture({"chunk_index": 2, "raw": {"created": 1, "model": "image"}})
-    assert result == {"chunk_index": 2, "raw": {"created": 1, "model": "image"}, "raw_content_mode": "stream_references"}
+    assert delivered == [event]
+    [delta] = recording_spool.events("request.delta")
+    raw = delta["data"]["raw"]
+    assert raw["delta"] == "Hi" and raw["obfuscation"] == "x1Y2" and raw["sequence_number"] == 3
+    # Only values JSON cannot hold are replaced, by a marker.
+    assert raw["blob"] == {"availability": "not_recorded", "reason": "binary_value"}
+    assert raw["sdk"] == {"availability": "not_recorded", "reason": "unsupported_value"}
+    assert "raw_content_mode" not in delta["data"]

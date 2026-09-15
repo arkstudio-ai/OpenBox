@@ -1,5 +1,6 @@
 """Production adapter/executor boundaries, independent of external providers."""
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -30,18 +31,31 @@ def context():
                                    run_id="run", step_id="step", agent_id="agent"))
 
 
-def test_request_snapshot_uses_allowlist_and_omits_private_provider_state():
+def test_request_snapshot_keeps_the_complete_body_without_transport_settings_and_credentials():
+    class Part(BaseModel):
+        type: str
+        text: str
+        provider_specific_fields: dict
+
     snapshot = request_snapshot({
-        "model": "provider/model", "api_key": "never-persist", "headers": {"Authorization": "secret"},
-        "messages": [{"role": "assistant", "content": "visible", "encrypted_content": "hidden",
-                      "_responses_input_items": [{"secret": "private"}]}],
-        "extra_body": {"reasoning_effort": "high", "access_token": "never-persist"},
-        "custom_auth_option": "never-persist", "_hidden_params": {"key": "secret"},
+        "model": "provider/model", "api_key": "sk-never-recorded", "api_base": "https://proxy.invalid/v1",
+        "extra_headers": {"Authorization": "Bearer never-recorded"}, "timeout": 30,
+        "previous_response_id": "resp_1", "include": ["reasoning.encrypted_content"],
+        "messages": [{"role": "assistant", "encrypted_content": "gAAAAB-fixture",
+                      "_responses_input_items": [{"type": "reasoning", "id": "rs_1"}],
+                      "content": [{"type": "thinking", "thinking": "why", "signature": "sig-1"},
+                                  Part(type="text", text="visible", provider_specific_fields={"cache": "hit"})]}],
+        "extra_body": {"enable_thinking": True, "top_k": 20},
     })
-    assert snapshot["messages"] == [{"role": "assistant", "content": "visible"}]
-    assert snapshot["extra_body"] == {"reasoning_effort": "high"}
-    assert "never-persist" not in str(snapshot)
-    assert "custom_auth_option" in snapshot["omitted_fields"]
+    assert snapshot["omitted_fields"] == ["api_base", "api_key", "extra_headers", "timeout"]
+    assert "never-recorded" not in json.dumps(snapshot) and "proxy.invalid" not in json.dumps(snapshot)
+    assert snapshot["previous_response_id"] == "resp_1" and snapshot["include"] == ["reasoning.encrypted_content"]
+    assert snapshot["extra_body"] == {"enable_thinking": True, "top_k": 20}
+    assert snapshot["messages"] == [{"role": "assistant", "encrypted_content": "gAAAAB-fixture",
+                                     "_responses_input_items": [{"type": "reasoning", "id": "rs_1"}],
+                                     "content": [{"type": "thinking", "thinking": "why", "signature": "sig-1"},
+                                                 {"type": "text", "text": "visible",
+                                                  "provider_specific_fields": {"cache": "hit"}}]}]
 
 
 @pytest.mark.asyncio

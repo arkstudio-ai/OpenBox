@@ -1,9 +1,10 @@
 """Explicit trajectory capture at model and executor boundaries.
 
-Only public request fields are copied. Provider credentials and private replay
-state are never passed to the recorder, even when its storage policy changes.
-Capture is fail-open: it opens no database transaction, retains no media bytes
-and never makes a provider call or a delivered chunk wait for the recorder.
+Provider request bodies and response chunks are recorded verbatim, so a prompt
+can be debugged from its trace; only the transport settings and credentials among
+a call's keyword arguments are left out, by name. Capture is fail-open: it opens
+no database transaction, retains no media bytes and never makes a provider call
+or a delivered chunk wait for the recorder.
 """
 from __future__ import annotations
 
@@ -22,14 +23,16 @@ from core.log import create_logger
 
 log = create_logger("agent.trajectory")
 
-REQUEST_FIELDS = frozenset({
-    "model", "messages", "input", "instructions", "tools", "tool_choice",
-    "parallel_tool_calls", "stream", "stream_options", "temperature", "top_p",
-    "max_tokens", "max_completion_tokens", "max_output_tokens", "stop", "seed",
-    "reasoning", "reasoning_effort", "thinking", "response_format", "text",
-    "frequency_penalty", "presence_penalty", "logprobs", "top_logprobs",
-    "prompt", "n", "size", "quality", "output_format", "output_compression", "background",
+#: Transport settings and credentials among a provider call's keyword arguments
+#: (and a service body's top-level fields): left out of the recorded request,
+#: which names them in ``omitted_fields``.
+TRANSPORT_FIELDS = frozenset({
+    "api_key", "api_base", "base_url", "organization", "headers", "extra_headers", "default_headers",
+    "extra_query", "timeout", "max_retries", "client", "http_client",
+    "authorization", "cookie", "cookies", "access_token", "refresh_token", "security_token",
+    "credential", "credentials",
 })
+#: Names ``public_value`` leaves out of tool arguments, metadata and usage; provider bodies keep them.
 PRIVATE_FIELDS = frozenset({
     "api_key", "authorization", "headers", "extra_headers", "cookie", "cookies",
     "access_token", "refresh_token", "security_token", "password", "secret",
@@ -74,34 +77,49 @@ def _public(value: Any, *, schema: bool) -> Any:
     return {"availability": "not_recorded", "reason": "unsupported_public_value"}
 
 
+def _transport(key: Any) -> bool:
+    return str(key).lower() in TRANSPORT_FIELDS
+
+
+def provider_body(value: Any) -> Any:
+    """A provider request body as JSON values, verbatim at any depth: an SDK model becomes its JSON dump.
+
+    A value JSON cannot hold becomes a ``not_recorded`` marker when the event is encoded (SPEC §5.4).
+    """
+    if hasattr(value, "model_dump"):
+        try:
+            value = value.model_dump(mode="json")
+        except Exception:
+            return {"availability": "not_recorded", "reason": "unsupported_value"}
+    if isinstance(value, Mapping):
+        return {key: provider_body(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [provider_body(item) for item in value]
+    return value
+
+
 def request_snapshot(kwargs: Mapping[str, Any]) -> dict:
-    snapshot = {key: public_value(value) for key, value in kwargs.items() if key in REQUEST_FIELDS}
-    extra = kwargs.get("extra_body")
-    if isinstance(extra, Mapping):
-        snapshot["extra_body"] = {
-            key: public_value(value) for key, value in extra.items() if key in REQUEST_FIELDS
-        }
-    omitted = sorted(set(kwargs) - REQUEST_FIELDS - {"extra_body"})
+    """The complete body a provider call sends, without its transport settings and credentials."""
+    snapshot = {key: provider_body(value) for key, value in kwargs.items() if not _transport(key)}
+    omitted = sorted(str(key) for key in kwargs if _transport(key))
     if omitted:
         snapshot["omitted_fields"] = omitted
     return snapshot
 
 
 def provider_output_snapshot(value: Any) -> Any:
+    """A provider chunk or response exactly as it arrived: an SDK model's JSON dump, anything else as it is.
+
+    Nothing is filtered or copied. Events are encoded when they are recorded
+    (SPEC §5.3), so an adapter changing the chunk afterwards cannot change the
+    recorded one; a value JSON cannot hold becomes a ``not_recorded`` marker (§5.4).
+    """
     if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")
-    if not isinstance(value, Mapping):
-        return public_value(value)
-    fields = {"id", "object", "created", "model", "choices", "usage", "type", "delta",
-              "item", "item_id", "output_index", "content_index", "summary_index",
-              "sequence_number", "response", "error", "code", "message", "param"}
-    output = {key: public_value(item) for key, item in value.items() if key in fields}
-    response = value.get("response")
-    if isinstance(response, Mapping):
-        response_fields = {"id", "object", "model", "created_at", "completed_at", "status", "output",
-                           "usage", "error", "incomplete_details"}
-        output["response"] = {key: public_value(item) for key, item in response.items() if key in response_fields}
-    return output
+        try:
+            return value.model_dump(mode="json")
+        except Exception:
+            return {"availability": "not_recorded", "reason": "unsupported_value"}
+    return value
 
 
 _warned: set[str] = set()
@@ -124,18 +142,6 @@ class _ServiceScope:
 
 _service_scope: ContextVar[_ServiceScope | None] = ContextVar("trajectory_service_scope", default=None)
 _service_request: ContextVar[Any] = ContextVar("trajectory_service_request", default=None)
-
-# These are business bodies assembled by the named adapters. Credentials,
-# transport/SDK objects and unrestricted provider kwargs never enter them.
-SERVICE_FIELDS = {
-    "video_generation": frozenset({"model", "prompt", "content", "resolution", "ratio", "duration",
-        "generate_audio", "watermark", "return_last_frame", "seed", "metadata", "images", "image_url",
-        "extra_images", "extra_videos", "size"}),
-    "audio_transcription": frozenset({"model", "input", "parameters", "audio_url", "response_format"}),
-    "media_composition": frozenset({"Timeline", "OutputMediaTarget", "OutputMediaConfig", "ClientToken",
-        "Source", "UserData"}),
-}
-
 
 def _owned_key(url: str, user_id: str, prefixes: tuple[str, ...]) -> str | None:
     """The object key of a URL in the configured bucket under one of the owner's prefixes."""
@@ -291,6 +297,9 @@ async def service_scope(ctx, *, job=None, asset_urls: Mapping[str, str] | None =
 
 
 def _service_body(value, media):
+    """A service body verbatim, each retained media URL replaced by its asset reference."""
+    if hasattr(value, "model_dump"):
+        value = provider_body(value)
     if isinstance(value, Mapping):
         return {str(key): _service_body(item, media) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -305,7 +314,7 @@ def _service_body(value, media):
                 return json.dumps(_service_body(json.loads(value), media), ensure_ascii=False, separators=(",", ":"))
             except ValueError:
                 pass
-    return public_value(value)
+    return value
 
 
 async def _link_service_job(scope, capture):
@@ -335,7 +344,11 @@ async def _link_service_job(scope, capture):
 async def capture_service_dispatch(*, purpose: str, provider: str, model: str, operation: str,
                                    body: Mapping, profile: str, capture_level="provider_wire",
                                    accepted=True):
-    """Capture one observed submit, with later job polls kept out of request counts."""
+    """Capture one observed submit, with later job polls kept out of request counts.
+
+    The adapter's ``body`` is recorded verbatim except for top-level transport
+    settings and credentials; ``profile`` names the adapter.
+    """
     import copy
     from question.runtime import assert_current
     from trajectory import current
@@ -351,8 +364,8 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
             ctx = ToolContext(user_id=trace.user_id, session_id=trace.source_session_id,
                               workspace_id=trace.workspace_id or "", trace_context=trace)
         scope = _ServiceScope(copy.copy(ctx), None, {}) if ctx is not None else None
-    fields = SERVICE_FIELDS[profile]
-    visible = _service_body({key: item for key, item in body.items() if key in fields}, scope.media if scope else {})
+    visible = _service_body({key: item for key, item in body.items() if not _transport(key)},
+                            scope.media if scope else {})
     manifest = {_media_id(item): item for item in scope.media.values()} if scope else {}
     dispatch_ctx = copy.copy(scope.ctx) if scope else None
     if dispatch_ctx is not None:
@@ -361,7 +374,7 @@ async def capture_service_dispatch(*, purpose: str, provider: str, model: str, o
     capture = await RequestCapture.start(dispatch_ctx,
         purpose=purpose, model_id=f"{provider}/{model}", capture_level=capture_level,
         payload={"model": model, "input": {"operation": operation, "business_body": visible,
-            "omitted_fields": sorted(set(body) - fields), "media_inputs": manifest,
+            "omitted_fields": sorted(str(key) for key in body if _transport(key)), "media_inputs": manifest,
             "media_url_representation": "retained_asset_reference" if manifest else "no_retained_media",
             "job_id": scope.job_id if scope else None}})
     try:
@@ -400,7 +413,7 @@ async def observe_service_response(body, *, operation: str):
     if trace is None:
         return
     await record("job.progress", {"job_id": scope.job_id, "operation": operation,
-        "request_id": trace.request_id, "provider_response": public_value(body)}, context=trace)
+        "request_id": trace.request_id, "provider_response": provider_output_snapshot(body)}, context=trace)
 
 
 def tool_schema(tool_info, name: str) -> dict:
@@ -480,8 +493,6 @@ class RequestCapture:
         self.usage: dict | None = None
         self.usage_index = 0
         self.response_ended: float | None = None
-        from trajectory.stream_capture import ChunkCapture
-        self._chunks = ChunkCapture()
 
     @classmethod
     async def start(cls, ctx, *, purpose: str, model_id: str, payload: Mapping,
@@ -532,7 +543,10 @@ class RequestCapture:
         return capture
 
     def chunk_data(self, raw: Any, *, blocks: list[dict] | None = None):
-        """One recorded delta, or None when this chunk cannot be captured; the request goes on."""
+        """One recorded delta: the adapter's blocks and the provider's chunk verbatim.
+
+        None when the chunk cannot be captured; the request goes on.
+        """
         self.chunk_index += 1
         observed = time.monotonic()
         blocks = blocks or []
@@ -544,10 +558,8 @@ class RequestCapture:
             ):
                 self.first_text = observed
         try:
-            return self._chunks.capture({
-                "chunk_index": self.chunk_index, "mode": "delta", "blocks": blocks, "purpose": self.purpose,
-                "raw": provider_output_snapshot(raw), "elapsed_ms": (observed - self.started) * 1000,
-            })
+            return {"chunk_index": self.chunk_index, "mode": "delta", "blocks": blocks, "purpose": self.purpose,
+                    "raw": provider_output_snapshot(raw), "elapsed_ms": (observed - self.started) * 1000}
         except Exception as exc:
             _not_recorded("response chunk could not be captured", exc)
             return None

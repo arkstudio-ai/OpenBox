@@ -7,7 +7,6 @@ import { ContentActions } from "../ContentActions"
 import { JsonTree } from "../JsonTree"
 import { useInspector } from "../context"
 import { NS, type PanelProps } from "../types"
-import { hasStreamReferences } from "./eventNotes"
 
 const PAGE = 200
 
@@ -27,9 +26,6 @@ export function EventsPanel({ record }: PanelProps) {
         </p>
         <ContentActions value={events} name={`${record.record_id}-events`} format="jsonl" />
       </div>
-      {hasStreamReferences(events) && (
-        <p className="bg-hairsoft text-n700 rounded-lg px-3 py-2 text-xs">{t("events.streamReferenceNote")}</p>
-      )}
       <ol className="flex flex-col">
         {events.slice(0, limit).map((event) => {
           const chunk = typeof event.data?.chunk_index === "number" ? event.data.chunk_index : null

@@ -3,6 +3,7 @@
 Facts are read back from the spool files the emitter wrote. No business write
 may touch a trajectory table or wait on the recorder.
 """
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -193,7 +194,9 @@ async def test_first_activity_detection_adds_no_query_for_callers_without_the_ex
     from storage import storage
     await storage.write(["todo", "s1"], {"items": [{"id": "t1", "content": "Plan", "status": "pending"}]})
     assert [item["type"] for item in recording_spool.events()] == ["todo.changed"]
-    assert not [statement for statement in business_statements if "session_executions" in statement]
+    # The one read is the pause check of a write without the session lock (SPEC §5.6).
+    assert [statement.split()[0] for statement in business_statements if "session_executions" in statement] == [
+        "SELECT"]
 
 
 async def test_child_session_writes_leave_the_recording_markers_to_the_root(state, recording_spool):
@@ -356,6 +359,42 @@ async def test_todo_writes_take_no_session_lock_and_their_fact_waits_for_commit(
     changes = recording_spool.events("todo.changed")
     assert [item["data"]["before"] for item in changes] == [None, pending]
     assert changes[1]["turn_id"] == "turn-1" and changes[1]["data"]["items"][0]["status"] == "completed"
+
+
+async def test_todo_writes_record_nothing_until_a_locked_write_resumes(state, recording_spool, monkeypatch):
+    from storage import storage
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+    saved = identity((await read(SessionExecution, "s1")).trace_context)
+
+    # Recording is on again, but no locked write has resumed the period yet.
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await storage.write(["todo", "s1"], {"items": [{"id": "t1", "content": "Plan", "status": "pending"}]})
+    while_paused = {"items": [{"id": "t1", "content": "Plan", "status": "in_progress"}]}
+    with bind(TraceContext.from_dict(saved)):
+        await storage.write(["todo", "s1"], while_paused)
+    assert recording_spool.events("todo.changed") == []
+
+    await create_user_message("s1", "On", user_id="u1")
+    await storage.write(["todo", "s1"], {"items": [{"id": "t1", "content": "Plan", "status": "completed"}]})
+    assert [item["data"]["before"] for item in recording_spool.events("todo.changed")] == [while_paused]
+
+
+@pytest.mark.parametrize(("dialect", "query"), [
+    ("postgresql", "SELECT value FROM kv_store WHERE key = :key FOR UPDATE"),
+    ("sqlite", "SELECT value FROM kv_store WHERE key = :key"),
+])
+async def test_the_previous_todo_list_is_read_under_the_row_lock_on_postgresql_only(recording_spool, dialect, query):
+    from storage.storage import _todo_trace
+    previous = SimpleNamespace(scalar_one_or_none=lambda: '{"items": []}')
+    # A business session of that dialect for a session that stores no recording markers.
+    business = SimpleNamespace(bind=SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
+                               get=AsyncMock(return_value=None), execute=AsyncMock(return_value=previous))
+    with bind(TraceContext("u1", "s1", turn_id="turn-1")):
+        trace, before = await _todo_trace(business, "s1", "todo/s1")
+    assert (trace.turn_id, before) == ("turn-1", {"items": []})
+    assert [str(call.args[0]) for call in business.execute.await_args_list] == [query]
 
 
 async def test_every_recording_state_carries_an_epoch_that_grows_with_each_transition(state, recording_spool,

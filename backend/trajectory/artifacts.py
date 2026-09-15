@@ -68,7 +68,12 @@ def _unavailable(context: TraceContext, asset) -> dict | None:
 
 
 async def capture_asset_in_tx(db, context: TraceContext | None, asset, *, role: str = "result") -> dict | None:
-    """Record one use of an asset when ``db`` commits."""
+    """Record one use of an asset when ``db`` commits.
+
+    The pause of SPEC §5.6 is checked by the caller, not here: a resume
+    baseline captures its assets while the pause flag is still stored. A
+    writer without the session row lock checks ``paused_in_tx`` first.
+    """
     if context is None or not enabled(context.user_id):
         return None
     skipped = _unavailable(context, asset)
@@ -124,13 +129,20 @@ async def capture_asset_ids_in_tx(db, context: TraceContext | None, asset_ids: l
 
 
 async def capture_result_asset_in_tx(db, ctx, asset, *, request_id: str | None = None):
-    """A tool output keeps the exact producer identity, including callbacks."""
+    """A tool output keeps the exact producer identity, including callbacks.
+
+    Tool outputs are written without the session row lock, and their saved
+    identity carries no recording markers, so they never resume: nothing is
+    recorded while the session's markers report a pause (SPEC §5.6).
+    """
     if not getattr(ctx, "session_id", None) or not enabled(ctx.user_id):
         return None
-    from trajectory.producers import activity_context, saved_context
+    from trajectory.producers import activity_context, paused_in_tx, saved_context
     trace = await activity_context(db, ctx.user_id, ctx.session_id,
                                    saved=saved_context(getattr(ctx, "trace_context", None)))
-    if trace is not None and request_id is not None:
+    if trace is None or await paused_in_tx(db, trace):
+        return None
+    if request_id is not None:
         trace = trace.derive(request_id=request_id)
     return await capture_asset_in_tx(db, trace, asset)
 

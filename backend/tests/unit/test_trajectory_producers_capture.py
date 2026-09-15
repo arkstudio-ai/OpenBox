@@ -191,6 +191,41 @@ async def test_asset_upload_and_delete_record_references_and_revocations_without
     assert _no_trajectory_sql(business_statements)
 
 
+async def test_asset_uses_without_the_session_lock_record_nothing_until_a_locked_write_resumes(
+        state, recording_spool, monkeypatch):
+    from api import assets
+    from db.models.part import Part
+    from trajectory.artifacts import capture_result_asset_in_tx
+    oss = SimpleNamespace(head=AsyncMock(return_value={"size": 12}),
+                          presign_get=lambda key, **_kwargs: f"https://oss.example/{key}")
+    monkeypatch.setattr(assets, "_oss_or_503", lambda: oss)
+    prompt = await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+
+    # Recording is on again, but no write holding the session lock has resumed the period yet.
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    await _file_asset("asset_upload", status="pending", size=0)
+    await _file_asset("asset_output")
+    await assets.complete_asset("asset_upload", current_user={"user_id": "u1", "workspace_id": "w1"}, _workspace={})
+    async with database.get_db_session() as db:
+        assert await capture_result_asset_in_tx(db, _tool_ctx(), await db.get(FileAsset, "asset_output")) is None
+    assert recording_spool.events("artifact.recorded") == []
+
+    async with database.get_db_session() as db:
+        db.add(Part(id="p-upload", session_id="s1", message_id=prompt.id, user_id="u1", type="file",
+                    data={"id": "p-upload", "type": "file", "asset_id": "asset_upload", "path": "upload.mp4"},
+                    created_at=runtime.now()))
+    await create_user_message("s1", "On", user_id="u1")
+    async with database.get_db_session() as db:
+        await capture_result_asset_in_tx(db, _tool_ctx(), await db.get(FileAsset, "asset_output"))
+    # The resume baseline captures its assets while the pause flag is still stored, so the
+    # pause check stays with the writers that hold no session lock, not in capture_asset_in_tx.
+    artifacts = recording_spool.events("artifact.recorded")
+    assert [(item["data"]["artifact_id"], item["data"]["role"]) for item in artifacts] == [
+        ("asset_upload", "baseline_input"), ("asset_output", "result")]
+
+
 async def test_job_facts_wait_for_the_job_commit_and_flag_a_late_result(state, recording_spool):
     from trajectory.jobs import CONTEXT_KEY, record_job_in_tx
     await create_user_message("s1", "Make a clip", user_id="u1")

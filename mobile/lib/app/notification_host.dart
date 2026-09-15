@@ -62,8 +62,7 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
       // has not said yet, which is not the same as backgrounded.
       final launched = WidgetsBinding.instance.lifecycleState;
       if (launched != null) {
-        ref.read(appResumedProvider.notifier).state =
-            launched == AppLifecycleState.resumed;
+        ref.read(appVisibleProvider.notifier).state = appIsOnScreen(launched);
       }
       _syncIdentity();
       await native.refresh();
@@ -115,10 +114,9 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycle = state;
-    // A live chat stops its catch-up poll behind the home screen; its first
-    // tick after resuming catches up.
-    ref.read(appResumedProvider.notifier).state =
-        state == AppLifecycleState.resumed;
+    // A live chat stops its catch-up once the app is off screen; its first
+    // tick back on screen catches up.
+    ref.read(appVisibleProvider.notifier).state = appIsOnScreen(state);
     final push = ref.read(pushControllerProvider);
     push.setLifecycle(state.name);
     _routeChanged();

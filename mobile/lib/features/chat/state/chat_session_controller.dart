@@ -11,6 +11,7 @@ import '../../../shared/models/json.dart';
 import '../../../shared/models/message.dart';
 import '../../../shared/models/message_part.dart';
 import '../../../shared/models/session.dart';
+import '../../../shared/models/token_usage.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/toast.dart';
 import '../../../shared/ws/ws_client.dart';
@@ -26,8 +27,9 @@ const chatHistoryTurns = 8;
 
 /// Per-session orchestration (web `ChatRoute` + `useChatEvents` + the
 /// polling queries): the newest history window on open, a 1s catch-up while
-/// busy, window refreshes on reconnect/terminal status/questions/stop, older
-/// pages on demand, send/stop/regenerate. Streaming frames land in
+/// busy with the session record as the safety net for lost frames, window
+/// refreshes on reconnect/terminal status/questions/stop, older pages on
+/// demand, send/stop/regenerate. Streaming frames land in
 /// [chatStreamProvider]; this controller only converges history reads.
 class ChatSessionState {
   const ChatSessionState({
@@ -73,6 +75,20 @@ String makeClientId() {
 }
 
 class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
+  /// Live or queued ticks per session read while the socket is up.
+  static const _sessionEvery = 5;
+
+  /// What a `session.updated` frame carries besides changed fields of the
+  /// record: whom it is for, and the two changes that need no read.
+  static const _sessionFrameKeys = {
+    'userId',
+    'user_id',
+    'sessionId',
+    'session_id',
+    'token_usage',
+    'planUpdated',
+  };
+
   Timer? _poll;
   StreamSubscription<WsEvent>? _wsSub;
   StreamSubscription<AppEvent>? _appSub;
@@ -92,6 +108,14 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   /// after a newer one was applied is stale and changes nothing.
   int _sessionReads = 0;
   int _sessionApplied = 0;
+
+  /// Session reads out right now, from any path, and whether a changed record
+  /// asked for another meanwhile: one runs after them, however many asked.
+  int _sessionInFlight = 0;
+  bool _sessionQueued = false;
+
+  /// Live or queued ticks since a session read last went out.
+  int _ticksSinceSession = 0;
 
   /// The one history read allowed in flight for this session. Unguarded
   /// full-history reads of a long chat used to start faster than they
@@ -151,19 +175,43 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
 
   void _startPolling() {
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 1), (_) {
-      // Nobody reads a backgrounded app; the first tick after it resumes
-      // catches up.
-      if (_isLive && ref.read(appResumedProvider)) _catchUp();
-    });
+    _poll = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
-  /// Web ChatRoute's `live`: the socket's status, else the session record's,
-  /// is a busy one. A queued run has nothing to catch up on until the socket
-  /// says it started.
-  bool get _isLive => isBusyStatus(
-    ref.read(chatStreamProvider).statusOf(_sessionId) ?? state.session?.status,
-  );
+  /// A second of a watched chat. Web re-reads the session every second while
+  /// its record says live or queued, because frames get lost — a socket dead
+  /// without closing, a dropped event — and a run's end with them. The
+  /// socket's watchdog now catches the first within a minute, so with it up
+  /// the record is read every fifth tick; with it down, every tick.
+  void _tick() {
+    // Nobody sees an app that is off screen; the first tick back catches up.
+    if (!ref.read(appVisibleProvider)) return;
+    final status = _status;
+    final live = isBusyStatus(status);
+    if (!live && status != SessionStatus.queued) return;
+    _ticksSinceSession++;
+    final sessionDue =
+        _sessionInFlight == 0 &&
+        (!ref.read(wsClientProvider).connected ||
+            _ticksSinceSession >= _sessionEvery);
+    if (live) {
+      // Skipped behind another read, the count stands: the next tick is due.
+      _catchUp(withSession: sessionDue);
+    } else if (sessionDue) {
+      // Queued: nothing to catch up on, only whether the run has started.
+      unawaited(_refreshSession());
+    }
+  }
+
+  /// The socket's status, else the session record's (web ChatRoute's
+  /// `recoveredStatus`).
+  SessionStatus? get _status =>
+      ref.read(chatStreamProvider).statusOf(_sessionId) ??
+      state.session?.status;
+
+  /// Work is running or waiting its turn.
+  static bool _running(SessionStatus? status) =>
+      isBusyStatus(status) || status == SessionStatus.queued;
 
   void _onWsEvent(WsEvent event) {
     // Off screen nothing is fetched; coming back converges once.
@@ -194,10 +242,33 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
             status == SessionStatus.queued) {
           unawaited(_refetch());
         }
+      case 'session.title':
+        // The frame carries the title itself: patched, not read.
+        final title = asString(event.data['title']);
+        final session = state.session;
+        if (title != null && session != null && title != session.title) {
+          state = state.copyWith(session: session.copyWith(title: title));
+        }
       case 'session.updated':
-        // Agent, mode or title. Polls no longer read the session while the
-        // socket is up; this is what keeps the mode picker current.
-        unawaited(_refreshSession());
+        _onSessionUpdated(event.data);
+    }
+  }
+
+  /// `session.updated` comes with token usage on every step and on plan
+  /// writes, and reading the record for each was a read per step. Usage,
+  /// which the composer's context ring shows, is patched from the frame; a
+  /// plan arrives as parts. Anything else — agent, model, variant, title — is
+  /// a changed field of the record: read, coalesced.
+  void _onSessionUpdated(Map<String, dynamic> data) {
+    final usage = data['token_usage'];
+    final session = state.session;
+    if (usage is Map<String, dynamic> && session != null) {
+      state = state.copyWith(
+        session: session.copyWith(tokenUsage: TokenUsage.fromJson(usage)),
+      );
+    }
+    if (data.keys.any((key) => !_sessionFrameKeys.contains(key))) {
+      unawaited(_refreshSession());
     }
   }
 
@@ -222,12 +293,15 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     return (_latestQueued ??= Completer<void>()).future;
   }
 
-  /// The busy poll: everything from the newest held message on. Skipped
-  /// while another read is in flight or waiting — the next tick is a second
-  /// away, and the waiting read brings the news anyway.
-  void _catchUp() {
+  /// The busy poll: everything from the newest held message on, carrying the
+  /// session read when one is due. Skipped while another read is in flight
+  /// or waiting — the next tick is a second away, and the waiting read brings
+  /// the news anyway.
+  void _catchUp({required bool withSession}) {
     if (_inFlight != null || _latestQueued != null || _olderQueued) return;
-    unawaited(_start(_loadNewer));
+    unawaited(
+      _start((sequence) => _loadNewer(sequence, withSession: withSession)),
+    );
   }
 
   /// Fetch the page before the oldest held message, if the server has one.
@@ -289,10 +363,11 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     try {
       final results = await Future.wait<Object>([
         api.history(_sessionId, turns: chatHistoryTurns),
-        api.getSession(_sessionId),
+        _readSession(),
       ]);
       if (_disposed || sequence != _fetchSequence) return;
       _applyWindow(results[0] as HistoryPage);
+      // No end-of-run reload here: this window is that reload.
       _applySession(results[1] as Session, statusAtStart, sessionRead);
       _loaded();
     } catch (_) {
@@ -302,29 +377,26 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     }
   }
 
-  Future<void> _loadNewer(int sequence) async {
+  Future<void> _loadNewer(int sequence, {required bool withSession}) async {
     final after = ref.read(chatStreamProvider).newestHistoryId(_sessionId);
     // Nothing confirmed to read on from: the newest window is the catch-up.
     if (after == null) return _loadLatest(sequence);
     final api = ref.read(chatApiProvider);
-    // While the socket is up it brings status and session changes, and
-    // reading the session on every tick as well doubled a live run's
-    // requests. While it is down, this tick is the only news there is.
-    final sessionRead = ref.read(wsClientProvider).connected
-        ? null
-        : ++_sessionReads;
+    final sessionRead = withSession ? ++_sessionReads : null;
     final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
     try {
       final results = await Future.wait<Object>([
         api.history(_sessionId, after: after),
-        if (sessionRead != null) api.getSession(_sessionId),
+        if (withSession) _readSession(),
       ]);
       if (_disposed || sequence != _fetchSequence) return;
       ref
           .read(chatStreamProvider.notifier)
           .mergeHistory(_sessionId, (results[0] as HistoryPage).messages);
-      if (sessionRead != null) {
-        _applySession(results[1] as Session, statusAtStart, sessionRead);
+      if (sessionRead != null &&
+          _applySession(results[1] as Session, statusAtStart, sessionRead)) {
+        // The run ended and no frame said so: reload once, as it would have.
+        unawaited(_refetch());
       }
       _loaded();
     } catch (error) {
@@ -392,16 +464,20 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
   /// A session read landed. One that started before a read already applied
   /// is stale: it would put back an agent or status the newer one replaced.
   /// The status moves only if the socket left it alone while the read was
-  /// out (web `useSessionQuery`).
-  void _applySession(Session session, SessionStatus? statusAtStart, int read) {
-    if (read < _sessionApplied) return;
+  /// out (web `useSessionQuery`). Returns whether that move ended a run: from
+  /// live or queued to neither.
+  bool _applySession(Session session, SessionStatus? statusAtStart, int read) {
+    if (read < _sessionApplied) return false;
     _sessionApplied = read;
+    var ended = false;
     if (ref.read(chatStreamProvider).statusOf(_sessionId) == statusAtStart) {
+      ended = _running(_status) && !_running(session.status);
       ref
           .read(chatStreamProvider.notifier)
           .setStatus(_sessionId, session.status);
     }
     state = state.copyWith(session: session);
+    return ended;
   }
 
   /// A history read landed. Publishes only a change: a poll that found
@@ -412,17 +488,40 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
     }
   }
 
-  /// The socket said the session record changed: read it once. History, and
-  /// the loading and error states that belong to it, stay as they are.
+  /// Every session read goes out through here, so the safety net's count
+  /// starts over and a changed record's read can see one is already out.
+  Future<Session> _readSession() {
+    _ticksSinceSession = 0;
+    _sessionInFlight++;
+    return ref.read(chatApiProvider).getSession(_sessionId).whenComplete(() {
+      _sessionInFlight--;
+      if (_sessionInFlight > 0 || !_sessionQueued) return;
+      _sessionQueued = false;
+      // Asked for while reads were out that may have left before the change.
+      // Off screen, coming back reads the record anyway.
+      if (!_disposed && _watched) unawaited(_refreshSession());
+    });
+  }
+
+  /// Read the session record by itself: a changed field, or the queued
+  /// safety net. With a read already out, one more follows it.
   Future<void> _refreshSession() async {
-    final api = ref.read(chatApiProvider);
+    if (_disposed) return;
+    if (_sessionInFlight > 0) {
+      _sessionQueued = true;
+      return;
+    }
     final sessionRead = ++_sessionReads;
     final statusAtStart = ref.read(chatStreamProvider).statusOf(_sessionId);
     try {
-      final session = await api.getSession(_sessionId);
-      if (!_disposed) _applySession(session, statusAtStart, sessionRead);
+      final session = await _readSession();
+      if (_disposed) return;
+      if (_applySession(session, statusAtStart, sessionRead)) {
+        // The run ended and no frame said so: reload once, as it would have.
+        unawaited(_refetch());
+      }
     } catch (_) {
-      // The next window read brings the record along.
+      // The next tick or window read brings the record along.
     }
   }
 

@@ -293,6 +293,24 @@ void main() {
       expect(_ids(container), ['m00', 'm01', 'm02']);
       expect([for (final p in held()[2].parts) p.id], ['m02-text']);
     });
+
+    test('a late message.created merges into what a read already brought', () {
+      store.mergeHistory('s1', [
+        _user(_id(0)),
+        _reply(_id(1), text: 'reply, streamed in full', finish: 'stop'),
+      ]);
+      final brought = held()[1];
+
+      // Its creation frame, sent before any of that streamed.
+      store.addMessage(
+        's1',
+        _reply(_id(1), text: 'rep', tool: ToolStatus.running),
+      );
+      expect(held()[1], same(brought));
+      expect((held()[1].parts[0] as TextPart).text, 'reply, streamed in full');
+      expect((held()[1].parts[1] as ToolPart).status, ToolStatus.completed);
+      expect(held()[1].finish, 'stop');
+    });
   });
 
   testWidgets(
@@ -452,29 +470,124 @@ void main() {
     }
   });
 
-  testWidgets('a live tick reads the session only while the socket is down', (
+  testWidgets(
+    'a live chat reads its session every fifth tick with the socket up',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        server.sessionReads = 0;
+        await tester.pump(const Duration(seconds: 4));
+        expect(server.reads, hasLength(4));
+        expect(server.sessionReads, 0);
+
+        // The fifth carries it: web's recovery for frames that never came.
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(5));
+        expect(server.sessionReads, 1);
+
+        // Down, every tick carries one.
+        ws.open = false;
+        await tester.pump(const Duration(seconds: 2));
+        expect(server.reads, hasLength(7));
+        expect(server.sessionReads, 3);
+      });
+    },
+  );
+
+  testWidgets(
+    'a tick skipped behind a read in flight leaves its session read due',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        server.sessionReads = 0;
+        server.hold = true;
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(1));
+
+        // Ticks two to five find that read still out; the fifth was due.
+        await tester.pump(const Duration(seconds: 4));
+        expect(server.reads, hasLength(1));
+        expect(server.sessionReads, 0);
+
+        server.hold = false;
+        server.release();
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(2));
+        expect(server.sessionReads, 1);
+      });
+    },
+  );
+
+  testWidgets(
+    'a lost end of run is found by the session read, which reloads once',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        // The run ends, and its session.status frame never arrives.
+        server.status = 'idle';
+        await tester.pump(const Duration(seconds: 5));
+
+        expect(
+          container.read(chatStreamProvider).statusOf('s1'),
+          SessionStatus.idle,
+        );
+        expect(server.reads.skip(3), [
+          (turns: null, before: null, after: 'm05'),
+          (turns: null, before: null, after: 'm05'),
+          (turns: chatHistoryTurns, before: null, after: null),
+        ]);
+
+        // Over: nothing more to poll.
+        await tester.pump(const Duration(seconds: 5));
+        expect(server.reads, hasLength(6));
+      });
+    },
+  );
+
+  testWidgets('a queued chat reads only its session until its run starts', (
     tester,
   ) async {
     final server = _Server()
       ..messages = _turns(3)
-      ..status = 'busy';
+      ..status = 'queued';
     await _withController(tester, server, (container, ws) async {
-      server.sessionReads = 0;
-      await tester.pump(const Duration(seconds: 1));
-      expect(server.reads.last, (turns: null, before: null, after: 'm05'));
-      expect(server.sessionReads, 1);
-
-      // Up, the socket brings status and session changes itself.
       ws.open = true;
-      await tester.pump(const Duration(seconds: 2));
-      expect(server.reads, hasLength(4));
+      server.reads.clear();
+      server.sessionReads = 0;
+      await tester.pump(const Duration(seconds: 5));
       expect(server.sessionReads, 1);
+      expect(server.reads, isEmpty);
 
-      // Down again, the tick is the only news there is.
+      // Down, every tick asks.
       ws.open = false;
+      await tester.pump(const Duration(seconds: 2));
+      expect(server.sessionReads, 3);
+      expect(server.reads, isEmpty);
+
+      // Its run starts and that frame is lost too: the next read finds it,
+      // and the tick after that polls history.
+      server.status = 'busy';
       await tester.pump(const Duration(seconds: 1));
-      expect(server.reads, hasLength(5));
-      expect(server.sessionReads, 2);
+      expect(
+        container.read(chatStreamProvider).statusOf('s1'),
+        SessionStatus.busy,
+      );
+      expect(server.reads, isEmpty);
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads, [(turns: null, before: null, after: 'm05')]);
     });
   });
 
@@ -495,7 +608,12 @@ void main() {
         ..agent = 'plan'
         ..sessionGate = Completer<void>();
       ws.frames
-        ..add(const WsEvent('session.updated', {'sessionId': 's1'}))
+        ..add(
+          const WsEvent('session.updated', {
+            'sessionId': 's1',
+            'agent': 'plan',
+          }),
+        )
         ..add(
           const WsEvent('session.status', {
             'sessionId': 's1',
@@ -515,6 +633,100 @@ void main() {
       );
     });
   });
+
+  testWidgets('a session.updated read that finds the run over reloads once', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'busy';
+    await _withController(tester, server, (container, ws) async {
+      ws.open = true;
+      server.reads.clear();
+      server
+        ..status = 'idle'
+        ..agent = 'plan';
+      ws.frames.add(
+        const WsEvent('session.updated', {'sessionId': 's1', 'agent': 'plan'}),
+      );
+      await tester.pump();
+
+      expect(
+        container.read(chatStreamProvider).statusOf('s1'),
+        SessionStatus.idle,
+      );
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+      ]);
+    });
+  });
+
+  testWidgets('session.updated reads coalesce: one out, one waiting', (
+    tester,
+  ) async {
+    final server = _Server()..messages = _turns(3);
+    await _withController(tester, server, (container, ws) async {
+      server
+        ..sessionReads = 0
+        ..sessionGate = Completer<void>();
+      for (final agent in ['plan', 'build', 'plan']) {
+        ws.frames.add(
+          WsEvent('session.updated', {'sessionId': 's1', 'agent': agent}),
+        );
+      }
+      await tester.pump();
+      expect(server.sessionReads, 1);
+
+      final gate = server.sessionGate!;
+      server
+        ..agent = 'plan'
+        ..sessionGate = null;
+      gate.complete();
+      await tester.pump();
+      expect(server.sessionReads, 2);
+      expect(container.read(chatSessionProvider('s1')).session?.agent, 'plan');
+    });
+  });
+
+  testWidgets(
+    'title and usage frames patch the record; plan frames read nothing',
+    (tester) async {
+      final server = _Server()..messages = _turns(3);
+      await _withController(tester, server, (container, ws) async {
+        server.sessionReads = 0;
+        ws.frames
+          ..add(
+            const WsEvent('session.title', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'title': 'Renamed',
+            }),
+          )
+          ..add(
+            const WsEvent('session.updated', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'token_usage': {'context': 4200, 'limit': 200000},
+            }),
+          )
+          ..add(
+            const WsEvent('session.updated', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'planUpdated': true,
+            }),
+          );
+        await tester.pump();
+
+        final session = container.read(chatSessionProvider('s1')).session;
+        expect(session?.title, 'Renamed');
+        // The composer's context ring reads it.
+        expect(session?.tokenUsage?.context, 4200);
+        expect(server.sessionReads, 0);
+        expect(server.reads, hasLength(1));
+      });
+    },
+  );
 
   for (final storeFirst in [false, true]) {
     testWidgets(
@@ -612,7 +824,7 @@ void main() {
     });
   });
 
-  testWidgets('a backgrounded app skips its ticks and catches up on the next', (
+  testWidgets('an app off screen skips its ticks and catches up on the next', (
     tester,
   ) async {
     final server = _Server()
@@ -620,14 +832,14 @@ void main() {
       ..status = 'busy';
     await _withController(tester, server, (container, ws) async {
       server.reads.clear();
-      final resumed = container.read(appResumedProvider.notifier);
+      final visible = container.read(appVisibleProvider.notifier);
 
-      resumed.state = false;
+      visible.state = false;
       await tester.pump(const Duration(seconds: 3));
       expect(server.reads, isEmpty);
 
-      // In front again: no burst on the way back, the next tick reads on.
-      resumed.state = true;
+      // On screen again: no burst on the way back, the next tick reads on.
+      visible.state = true;
       await tester.pump();
       expect(server.reads, isEmpty);
       await tester.pump(const Duration(seconds: 1));

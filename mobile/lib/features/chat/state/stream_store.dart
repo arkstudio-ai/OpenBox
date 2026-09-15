@@ -319,13 +319,37 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       list[tmpIndex] = message;
     } else {
       final existing = list.indexWhere((m) => m.id == message.id);
-      if (existing != -1) {
-        list[existing] = message;
-      } else {
+      if (existing == -1) {
         list.add(message);
+      } else {
+        // Already held: a history read got there first, or the frame came
+        // twice. Put in place of the held copy, the frame took back text
+        // streamed and tools finished since it was sent.
+        final held = list[existing];
+        final merged = _mergeLate(held, message);
+        if (identical(merged, held)) return;
+        list[existing] = merged;
       }
     }
     _setSessionMessages(sessionId, list);
+  }
+
+  /// [frame] is an older copy of [held]. Its parts merge as a history read's
+  /// do, so streamed text and tool state never move backwards, and a field it
+  /// leaves empty was not known yet rather than cleared.
+  ChatMessage _mergeLate(ChatMessage held, ChatMessage frame) {
+    final parts = _mergeMessage(held, frame).parts;
+    final merged = held.copyWith(
+      parts: parts,
+      tokens: frame.tokens,
+      finish: frame.finish,
+      error: frame.error,
+      model: frame.model,
+      reaction: frame.reaction,
+    );
+    return _sameInstances(parts, held.parts) && sameMessageFields(merged, held)
+        ? held
+        : merged;
   }
 
   /// `message.updated` — shallow-merge partial fields, parts untouched.

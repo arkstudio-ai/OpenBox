@@ -360,10 +360,12 @@ void main() {
             state == AppLifecycleState.resumed ||
                 state == AppLifecycleState.inactive,
           );
-          // A live chat's catch-up runs only in front, where it has a reader.
+          // A live chat's catch-up runs while the app is on screen, which
+          // inactive still is: a pulled-down notification centre, a dialog.
           expect(
-            container.read(appResumedProvider),
-            state == AppLifecycleState.resumed,
+            container.read(appVisibleProvider),
+            state == AppLifecycleState.resumed ||
+                state == AppLifecycleState.inactive,
           );
           expect(native.localShows, 0);
         }

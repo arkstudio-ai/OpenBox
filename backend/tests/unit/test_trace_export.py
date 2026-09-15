@@ -58,6 +58,11 @@ def payload_reader(monkeypatch):
         return row, content
 
     monkeypatch.setattr(export, "read_payload", read_payload)
+    async def read_asset(key):
+        return assets[key]
+
+    from trajectory import payload
+    monkeypatch.setattr(payload, "_asset_reader", read_asset)
     return assets
 
 
@@ -720,6 +725,147 @@ async def test_the_archive_is_uploaded_from_its_file_and_verified_by_a_chunked_r
     assert store.uploads == [(row.storage_key, row.size_bytes, False)]
     assert store.chunked_reads == [(row.storage_key, export.WRITE_CHUNK_BYTES)]
     assert hashlib.sha256(store.objects[row.storage_key]).hexdigest() == row.sha256
+
+
+async def test_cancelling_a_zip_write_drains_its_thread_before_closing(tmp_path, monkeypatch):
+    import threading
+
+    entered, finish = threading.Event(), threading.Event()
+    original = zipfile._ZipWriteFile.write
+
+    def slow_write(handle, data):
+        entered.set()
+        assert finish.wait(5)
+        assert not handle.closed
+        return original(handle, data)
+
+    monkeypatch.setattr(zipfile._ZipWriteFile, "write", slow_write)
+
+    async def write():
+        async with export._ZipWriter(str(tmp_path / "cancelled.zip"), 10_000_000) as archive:
+            await archive.write("payload", b"x" * export.WRITE_CHUNK_BYTES)
+
+    task = asyncio.create_task(write())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_understated_streaming_asset_stops_at_the_export_cap(trace_db, blob_store, admins, monkeypatch):
+    from trajectory import payload
+
+    class Reader:
+        chunks_read = 0
+
+        async def chunks(self, key, *, chunk_bytes):
+            for _ in range(100):
+                self.chunks_read += 1
+                yield b"x" * chunk_bytes
+
+    reader = Reader()
+    monkeypatch.setattr(payload, "_asset_reader", reader)
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    async with trace_session() as db:
+        db.add(TrajectoryMetaAsset(id="large", user_id="user_a", status="ready", updated_at=now(), synced_at=now()))
+        db.add(TrajectoryPayload(payload_id="pld_large", trajectory_id="trj_a", dedupe_key="large", size_bytes=1,
+            media_type="video/mp4", storage_kind="asset", storage_key="assets/large", source_asset_id="large",
+            first_seq=1, created_at=now()))
+    export_id = await new_export("trj_a", 1)
+    assert await worker(blob_store, export_max_bytes=3 * 1024 * 1024).build(export_id) == "completed"
+    assert reader.chunks_read == 3
+    manifest, entries = unzip(blob_store.objects[(await export_row(export_id)).storage_key])
+    assert "payloads/pld_large" not in entries
+    assert manifest["missing_payloads"][0]["reason"] == "ExportTooLarge"
+
+
+@pytest.mark.parametrize("kind", ["asset", "zstd"])
+async def test_200_mib_payloads_are_exported_with_bounded_memory(trace_db, admins, tmp_path, monkeypatch, kind):
+    import tracemalloc
+    import zstandard
+    from trajectory import payload
+    from trajectory.storage import LocalBlobStore
+
+    class ChunkOnlyStore(LocalBlobStore):
+        async def get(self, key):
+            raise AssertionError("export payloads must never be fetched whole")
+
+    # Video-like incompressible bytes exercise the large ZIP upload/read-back as
+    # well. The zstd case exercises a small frame expanding into 200 MiB.
+    block = os.urandom(export.WRITE_CHUNK_BYTES) if kind == "asset" else b"a" * export.WRITE_CHUNK_BYTES
+    blocks = 200
+    digest = hashlib.sha256()
+    for _ in range(blocks):
+        digest.update(block)
+    sha, size = digest.hexdigest(), len(block) * blocks
+    store = ChunkOnlyStore(tmp_path / "objects")
+    key = "assets/user_a/video.mp4" if kind == "asset" else blob_key("trj_a", sha)
+
+    class AssetReader:
+        async def __call__(self, key):
+            raise AssertionError("assets must never be fetched whole")
+
+        async def chunks(self, key, *, chunk_bytes):
+            assert chunk_bytes == len(block)
+            for _ in range(blocks):
+                yield block
+
+    monkeypatch.setattr(payload, "_asset_reader", AssetReader())
+    if kind == "zstd":
+        path = tmp_path / "source.zst"
+        with path.open("wb") as file, zstandard.ZstdCompressor().stream_writer(file) as compressor:
+            for _ in range(blocks):
+                compressor.write(block)
+        await store.put_file(key, path, content_type="application/octet-stream")
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    async with trace_session() as db:
+        if kind == "asset":
+            db.add(TrajectoryMetaAsset(id="large", user_id="user_a", oss_key=key, status="ready",
+                                       updated_at=now(), synced_at=now()))
+        db.add(TrajectoryPayload(payload_id="pld_large", trajectory_id="trj_a", dedupe_key=sha,
+            sha256=sha, size_bytes=size, media_type="video/mp4", storage_kind="asset" if kind == "asset" else "blob",
+            storage_key=key, encoding="identity" if kind == "asset" else "zstd",
+            source_asset_id="large" if kind == "asset" else None, first_seq=1, created_at=now()))
+    export_id = await new_export("trj_a", 1)
+    tracemalloc.start()
+    try:
+        assert await worker(store).build(export_id) == "completed"
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 24 * 1024 * 1024, f"peak Python allocations: {peak}"
+    row = await export_row(export_id)
+    with zipfile.ZipFile(tmp_path / "objects" / row.storage_key) as archive:
+        description = next(item for item in json.loads(archive.read("manifest.json"))["files"]
+                           if item.get("payload_id") == "pld_large")
+        assert (description["sha256"], description["size_bytes"]) == (sha, size)
+        actual = hashlib.sha256()
+        with archive.open("payloads/pld_large") as file:
+            while chunk := file.read(len(block)):
+                actual.update(chunk)
+        assert actual.hexdigest() == sha
+
+
+async def test_repeated_worker_crashes_exhaust_the_export_attempt_limit(trace_db, blob_store, admins):
+    await add_trajectory("trj_a", committed=1)
+    await add_events([event_values("trj_a", 1)])
+    export_id = await new_export("trj_a", 1)
+    for attempt in range(export.MAX_BUILD_ATTEMPTS):
+        service = worker(blob_store, owner_id=f"crashed-{attempt}")
+        assert await service._claim(export_id) == export_id
+        async with trace_session() as db:
+            await db.execute(update(TrajectoryExport).where(TrajectoryExport.id == export_id)
+                             .values(lease_until=now() - timedelta(seconds=1)))
+    assert await worker(blob_store).build(export_id) == "failed"
+    assert (await export_row(export_id)).error == "ExportAttemptsExceeded"
+    assert await worker(blob_store).run_once() == 0
 
 
 def test_stale_export_temp_files_are_removed_from_the_build_temp_directory(tmp_path, monkeypatch):

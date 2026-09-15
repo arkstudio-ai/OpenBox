@@ -361,6 +361,14 @@ async def test_todo_writes_take_no_session_lock_and_their_fact_waits_for_commit(
     assert changes[1]["turn_id"] == "turn-1" and changes[1]["data"]["items"][0]["status"] == "completed"
 
 
+async def test_todo_recording_reuses_the_session_lookup(state, recording_spool, business_statements):
+    from storage import storage
+    await storage.write(["todo", "s1"], {"items": []})
+    lookups = [sql for sql in business_statements if "FROM sessions" in sql]
+    assert len(lookups) == 1
+    assert len(recording_spool.events("todo.changed")) == 1
+
+
 async def test_todo_writes_record_nothing_until_a_locked_write_resumes(state, recording_spool, monkeypatch):
     from storage import storage
     await create_user_message("s1", "First", user_id="u1")

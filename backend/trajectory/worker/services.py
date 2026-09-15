@@ -68,12 +68,13 @@ class GuardedGcBlobStore:
 
     Content-addressed blob keys are reused, and ``process_gc_queue`` checks that no available payload row
     references a key before it deletes the object, with no lock between the check and the delete. Here the
-    delete of a trajectory blob key takes ``ObjectGuard.exclusive()`` and checks again right before
-    deleting. An ingest batch holds ``ObjectGuard.shared()`` from its look at the GC queue through its
+    delete of a trajectory blob key registers ``ObjectGuard.exclusive(key)`` and checks again right before
+    deleting. An ingest batch registers ``ObjectGuard.shared(keys)`` from its look at the GC queue through its
     commit, and stores again (overwriting) every key that has a queued entry; its transaction cancels those
     entries for the keys it references. Either the delete sees the committed reference and keeps the object
     (the GC entry completes), or it runs while no batch is in flight and every later batch uploads the key
-    again. Segment, export and prefix deletes pass through: ingest never reuses those keys, and a deleted or
+    again. The registration affects only overlapping keys: OSS deletion holds no global lock.
+    Segment, export and prefix deletes pass through: ingest never reuses those keys, and a deleted or
     expired trajectory takes no events. Projection batches and checkpoints hold ``shared()`` from their look at
     stored values through the commit of their rows. Every other operation is the wrapped store's.
     """
@@ -94,7 +95,7 @@ class GuardedGcBlobStore:
             await self.store.delete(key)
             return
         trajectory_id, sha256 = reference
-        async with self.guard.exclusive():
+        async with self.guard.exclusive(key):
             async with trace_session() as db:
                 used = await db.scalar(select(TrajectoryPayload.payload_id).where(
                     TrajectoryPayload.trajectory_id == trajectory_id, TrajectoryPayload.sha256 == sha256,
@@ -120,7 +121,7 @@ class WorkerServices:
         self.blob_store, self.metrics = blob_store, metrics
         self.owner_id = f"{socket.gethostname()[:32]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         common = {"blob_store": blob_store, "metrics": metrics}
-        #: GC deletes of blob keys and ingest batches that store or reuse blobs exclude each other.
+        #: A GC delete excludes only batches that may use the same blob key.
         self.object_guard = getattr(ingest, "object_guard", None) or ObjectGuard()
         self.retention = retention or RetentionService(settings, **common)
         # The GC queue deletes through the retention service's store (RetentionService.blob_store).

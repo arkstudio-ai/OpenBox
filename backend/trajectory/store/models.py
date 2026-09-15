@@ -11,7 +11,7 @@ on ``trajectory_records.search_doc``. SQLite gets plain tables.
 from datetime import date, datetime
 
 from sqlalchemy import (DDL, BigInteger, Boolean, Date, ForeignKey, Index, Integer, PrimaryKeyConstraint,
-    String, Text, UniqueConstraint, event, false, text, true)
+    String, Text, UniqueConstraint, event, false, func, text, true)
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,13 @@ def _defaulted(type_, value):
 
 def _trajectory_fk():
     return ForeignKey("session_trajectories.id", ondelete="CASCADE")
+
+
+def _live_index(name, *columns, condition=None):
+    predicate = "deleted_at IS NULL AND content_expired_at IS NULL"
+    if condition:
+        predicate += " AND " + condition
+    return Index(name, *columns, postgresql_where=text(predicate), sqlite_where=text(predicate))
 
 
 class PartitionedPrimaryKey(PrimaryKeyConstraint):
@@ -93,6 +100,16 @@ class SessionTrajectory(TraceBase):
         UniqueConstraint("session_id", name="uq_session_trajectories_session"),
         UniqueConstraint("user_id", "session_id", name="uq_session_trajectories_owner_session"),
         Index("ix_session_trajectories_last_activity", "last_activity_at"),
+        _live_index("ix_trajectories_projection_pending", "id", condition="projected_seq < committed_seq"),
+        # A full expression index gives PG selectivity statistics for the configurable
+        # threshold; a partial one can make an idle poll walk the primary key instead.
+        Index("ix_trajectories_checkpoint_backlog", text("(projected_seq - checkpoint_seq)"), "id")
+            .ddl_if(dialect="postgresql"),
+        _live_index("ix_trajectories_archive_pending", "id", condition="archived_seq < projected_seq"),
+        _live_index("ix_trajectories_hot_pending", "id", condition="archived_seq < committed_seq"),
+        _live_index("ix_trajectories_budget_events", "event_count"),
+        _live_index("ix_trajectories_budget_bytes", "stored_bytes"),
+        _live_index("ix_trajectories_budget_abnormal", "id", condition="budget_level <> 'normal'"),
     )
 
 
@@ -248,6 +265,7 @@ class TrajectoryExport(TraceBase):
     viewer_id: Mapped[str] = mapped_column(String(64), nullable=False)
     through_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    attempts: Mapped[int] = _defaulted(Integer, 0)
     storage_key: Mapped[str | None] = mapped_column(Text)
     sha256: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)
@@ -279,8 +297,16 @@ class TrajectoryMetaSession(TraceBase):
     deleted_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime | None] = mapped_column()
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Copy of the live summary's timestamp. Keeping the fallback in this table
+    # lets list ordering use an expression index without a cross-table COALESCE.
+    projected_activity_at: Mapped[datetime | None] = mapped_column()
     synced_at: Mapped[datetime] = mapped_column(nullable=False)
     __table_args__ = (
+        Index("ix_trajectory_meta_sessions_activity", func.coalesce(projected_activity_at, updated_at), "id"),
+        Index("ix_trajectory_meta_sessions_owner_activity", "user_id",
+              func.coalesce(projected_activity_at, updated_at), "id"),
+        Index("ix_trajectory_meta_sessions_workspace_activity", "workspace_id",
+              func.coalesce(projected_activity_at, updated_at), "id"),
         Index("ix_trajectory_meta_sessions_updated", "updated_at", "id"),
         Index("ix_trajectory_meta_sessions_owner", "user_id", "updated_at"),
         Index("ix_trajectory_meta_sessions_workspace", "workspace_id", "updated_at"),

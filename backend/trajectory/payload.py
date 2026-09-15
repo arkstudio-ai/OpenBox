@@ -452,21 +452,23 @@ async def _blob_chunks(store, key: str):
         raise CorruptContent("Retained trajectory blob is missing") from exc
 
 
-async def spool_payload(row: TrajectoryPayload, *, blob_store=None) -> Spooled:
+async def spool_payload(row: TrajectoryPayload, *, blob_store=None, consume=None) -> Spooled:
     """The bytes of a row ``validate_payload`` returned, spooled to a temporary file and digest-verified.
 
     The errors are those of ``read_payload``; the object is never held whole.
+    Optional ``consume`` receives each decoded chunk's size before it is kept,
+    so exports can enforce their remaining capacity even if the row understates it.
     """
     if row.storage_kind == "asset":
         try:
             return await _spool(read_asset_chunks(row.storage_key), encoding="identity", sha256=row.sha256,
-                                mismatch="Trajectory content digest mismatch")
+                                mismatch="Trajectory content digest mismatch", consume=consume)
         except FileNotFoundError as exc:
             raise FileNotFoundError("Source attachment is unavailable") from exc
     if row.storage_kind != "blob" or row.sha256 is None:
         raise CorruptContent("Unsupported trajectory payload storage")
     return await _spool(_blob_chunks(blob_store, row.storage_key), encoding=row.encoding, sha256=row.sha256,
-                        mismatch="Trajectory content digest mismatch")
+                        mismatch="Trajectory content digest mismatch", consume=consume)
 
 
 async def spool_blob(row: TrajectoryPayload, *, blob_store=None) -> Spooled:

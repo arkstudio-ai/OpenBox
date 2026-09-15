@@ -14,7 +14,7 @@ import base64
 import hashlib
 import json
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, tuple_
 
 from trajectory.config import enabled, integer, selected_user_ids
 from trajectory.payload import (LruCache, Resolver, ensure_payload_rows, expand_all, expand_pages, json_blob, reference,
@@ -653,7 +653,7 @@ async def list_sessions(db, *, user_id=None, user_query=None, q=None, workspace_
     filters = digest([user_id, user_query, q, workspace_id, status, recording_status,
         iso(activity_from), iso(activity_to), include_unrecorded, sort])
     Session, User, Workspace = TrajectoryMetaSession, TrajectoryMetaUser, TrajectoryMetaWorkspace
-    activity = func.coalesce(TrajectorySessionSummary.last_activity_at, Session.updated_at)
+    activity = func.coalesce(Session.projected_activity_at, Session.updated_at)
     # Replicas of users and workspaces can lag their sessions: outer joins keep
     # such rows listed (owner and workspace names read as null until synced).
     statement = select(Session, SessionTrajectory, TrajectorySessionSummary, User, Workspace)
@@ -699,8 +699,9 @@ async def list_sessions(db, *, user_id=None, user_query=None, q=None, workspace_
             raise TrajectoryError("Invalid session cursor timestamp") from exc
         if not isinstance(cursor_session, str):
             raise TrajectoryError("Invalid session cursor identity")
-        statement = statement.where(or_(activity > timestamp, and_(activity == timestamp, Session.id > cursor_session)) if ascending else
-            or_(activity < timestamp, and_(activity == timestamp, Session.id < cursor_session)))
+        position = tuple_(activity, Session.id)
+        statement = statement.where(position > (timestamp, cursor_session) if ascending else
+                                    position < (timestamp, cursor_session))
     rows = (await db.execute(statement.order_by(activity.asc() if ascending else activity.desc(),
         Session.id.asc() if ascending else Session.id.desc()).limit(limit + 1))).all()
     items = [_row_metadata(session, trajectory, summary, owner, workspace)
@@ -709,7 +710,7 @@ async def list_sessions(db, *, user_id=None, user_query=None, q=None, workspace_
     if len(rows) > limit and items:
         session, _, summary, _, _ = rows[limit - 1]
         # Keep database microseconds in cursor; display timestamps use ms.
-        exact_time = summary.last_activity_at if summary else session.updated_at
+        exact_time = session.projected_activity_at or session.updated_at
         next_cursor = cursor_encode([filters, exact_time.isoformat(), session.id])
     return {"items": items, "next_cursor": next_cursor, "has_more": len(rows) > limit}
 

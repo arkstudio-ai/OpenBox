@@ -104,8 +104,11 @@ async def _todo_trace(session, session_id: str, db_key: str):
         user_id = inherited.user_id
     else:
         from db.models.session import Session
-        user_id = await session.scalar(select(Session.user_id).where(
+        # Keep the ORM row alive through activity_context: context_for_session's get()
+        # then reuses this identity instead of selecting the same session a second time.
+        source = await session.scalar(select(Session).where(
             Session.id == session_id, Session.is_deleted.is_(False)))
+        user_id = source.user_id if source is not None else None
     if user_id is None or not enabled(user_id):
         return None, None
     trace = await activity_context(session, user_id, session_id)

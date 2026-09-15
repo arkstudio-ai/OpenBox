@@ -42,7 +42,7 @@ PRIMARY_KEYS = {
     "trajectory_audit_outbox": ["id"],
 }
 INDEXES = {
-    "session_trajectories": {("last_activity_at",)},
+    "session_trajectories": {("last_activity_at",), ("id",), ("event_count",), ("stored_bytes",)},
     # t0003 dropped (trajectory_id, seq), a prefix of the primary key, and (trajectory_id, call_id, seq): no reader.
     "trajectory_events": {("trajectory_id", "request_id", "seq")},
     "trajectory_event_keys": {("recorded_at",)},
@@ -156,6 +156,36 @@ def test_sqlite_schema_has_spec_keys_indexes_and_cascades(tmp_path, monkeypatch)
         assert schema[table]["fks"] == [(("trajectory_id",), "session_trajectories", ("id",), "CASCADE")], table
     assert schema["trajectory_records"]["columns"]["search_doc"][:2] == ("TEXT", False)
     assert schema["trajectory_events"]["columns"]["recorded_on"][:2] == ("DATE", False)
+
+
+def test_worker_migration_backfills_activity_and_builds_expression_indexes(tmp_path, monkeypatch):
+    path = tmp_path / "trace.db"
+    config = _upgrade(path, monkeypatch)
+    command.downgrade(config, "t0003_event_indexes_gc_key")
+    engine = sa.create_engine(f"sqlite:///{path}")
+    at = "2026-09-15 10:00:00.000000"
+    activity = "2026-09-15 09:00:00.000000"
+    with engine.begin() as db:
+        for identity, deleted, owner in (("live", None, "u"), ("gone", at, "u"), ("foreign", None, "other")):
+            db.exec_driver_sql("INSERT INTO session_trajectories "
+                "(id, user_id, session_id, workspace_id, started_at, updated_at, last_activity_at, deleted_at) "
+                "VALUES (?, 'u', ?, 'w', ?, ?, ?, ?)", (identity, identity, at, at, at, deleted))
+            db.exec_driver_sql("INSERT INTO trajectory_meta_sessions "
+                "(id, user_id, updated_at, synced_at) VALUES (?, ?, ?, ?)", (identity, owner, at, at))
+            db.exec_driver_sql("INSERT INTO trajectory_session_summaries "
+                "(trajectory_id, user_id, session_id, workspace_id, last_activity_at, running_status, "
+                "recording_status, applied_seq, statistics) VALUES (?, 'u', ?, 'w', ?, 'idle', 'recording', 1, '{}')",
+                (identity, identity, activity))
+    command.upgrade(config, "head")
+    with engine.connect() as db:
+        assert dict(db.exec_driver_sql("SELECT id, projected_activity_at FROM trajectory_meta_sessions").all()) == {
+            "live": activity, "gone": None, "foreign": None}
+        # SQLite's SQLAlchemy inspector skips expression indexes; inspect their actual DDL as well.
+        indexes = db.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type = 'index' "
+                                    "AND name LIKE 'ix_trajectory_meta_sessions%activity'").scalars().all()
+        assert len(indexes) == 3
+        assert all("coalesce(projected_activity_at, updated_at)" in sql for sql in indexes)
+    engine.dispose()
 
 
 def test_migrated_defaults_and_autoincrement_ids(tmp_path, monkeypatch):

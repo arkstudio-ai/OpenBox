@@ -313,3 +313,149 @@ async def test_http_backend_request_shape_and_failure_classes(monkeypatch):
     default = HttpBackend.from_env()
     assert str(default._client.base_url) == "http://backend:8080"
     await default.close()
+
+
+@pytest.mark.parametrize("error", [httpx.ReadError, httpx.WriteError, httpx.ConnectError, httpx.RemoteProtocolError])
+async def test_http_viewer_retries_one_transient_connection_failure(error):
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers["x-internal-token"], json.loads(request.content)))
+        if len(seen) == 1:
+            raise error("Connection closed", request=request)
+        return httpx.Response(200, json={"user_id": "admin", **ADMIN_FACTS})
+
+    backend = HttpBackend("http://backend:8080", "test-token", transport=httpx.MockTransport(handler))
+    try:
+        assert await backend.viewer("admin", client="mobile", sid="s", jti="j") == {
+            "user_id": "admin", **ADMIN_FACTS}
+        assert len(seen) == 2 and seen[0] == seen[1]
+    finally:
+        await backend.close()
+
+
+async def test_http_viewer_retry_recovers_from_a_reused_connection_closing():
+    calls, tasks = [], set()
+    connections = 0
+
+    async def handle(reader, writer):
+        nonlocal connections
+        connections += 1
+        connection = connections
+        tasks.add(asyncio.current_task())
+        try:
+            while True:
+                head = await reader.readuntil(b"\r\n\r\n")
+                headers = dict(line.split(b": ", 1) for line in head.split(b"\r\n")[1:] if line)
+                length = next(int(value) for key, value in headers.items() if key.lower() == b"content-length")
+                await reader.readexactly(length)
+                calls.append(connection)
+                if len(calls) == 2:
+                    # The peer closes a reused connection as the next request arrives.
+                    return
+                body = json.dumps({"user_id": "admin", **ADMIN_FACTS}).encode()
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                             + str(len(body)).encode() + b"\r\n\r\n" + body)
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    backend = HttpBackend(f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}", "test-token")
+    try:
+        for _ in range(2):
+            assert (await backend.viewer("admin", client="web", sid=None, jti=None))["role"] == "admin"
+        assert calls == [1, 1, 2]
+    finally:
+        await backend.close()
+        server.close()
+        await server.wait_closed()
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 1)
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+async def test_http_viewer_does_not_retry_http_refusals(status):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json={"detail": "Refused"})
+
+    backend = HttpBackend("http://backend:8080", "test-token", transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as caught:
+            await backend.viewer("admin", client="web", sid=None, jti=None)
+        assert caught.value.response.status_code == status
+        assert len(calls) == 1
+    finally:
+        await backend.close()
+
+
+@pytest.mark.parametrize("outcome,expected", [("revoked", 403), ("unreachable", 503)])
+async def test_http_viewer_retry_never_falls_back_to_cached_admin_facts(monkeypatch, outcome, expected):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2 or (calls > 2 and outcome == "unreachable"):
+            raise httpx.ReadError("Connection reset", request=request)
+        facts = ADMIN_FACTS if calls == 1 else {**ADMIN_FACTS, "role": "user"}
+        return httpx.Response(200, json={"user_id": "admin", **facts})
+
+    backend = HttpBackend("http://backend:8080", "test-token", transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(trajectory_auth, "_backend", backend)
+    monkeypatch.setattr(trajectory_auth, "_facts", {})
+    try:
+        assert await assert_admin("admin") == {"user_id": "admin", "role": "admin"}
+        assert (await refused(assert_admin("admin", fresh=True))).status_code == expected
+        assert calls == 3
+    finally:
+        await backend.close()
+
+
+async def test_http_viewer_attempts_share_one_deadline():
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(0.02)
+            raise httpx.ReadError("Connection reset", request=request)
+        await asyncio.Event().wait()
+
+    backend = HttpBackend("http://backend:8080", "test-token", transport=httpx.MockTransport(handler), timeout=0.05)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(backend.viewer("admin", client="web", sid=None, jti=None), 1)
+        assert calls == 2
+        assert time.monotonic() - started < 0.5
+    finally:
+        await backend.close()
+
+
+async def test_http_viewer_does_not_retry_cancellation():
+    called = asyncio.Event()
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        called.set()
+        await asyncio.Event().wait()
+
+    backend = HttpBackend("http://backend:8080", "test-token", transport=httpx.MockTransport(handler))
+    task = asyncio.create_task(backend.viewer("admin", client="web", sid=None, jti=None))
+    try:
+        await called.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert calls == 1
+    finally:
+        await backend.close()

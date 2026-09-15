@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from trajectory.store.models import (TrajectoryMetaAsset, TrajectoryMetaSession, TrajectoryMetaUser,
-    TrajectoryMetaWorkspace)
+from trajectory.store.models import (SessionTrajectory, TrajectoryMetaAsset, TrajectoryMetaSession, TrajectoryMetaUser,
+    TrajectoryMetaWorkspace, TrajectorySessionSummary)
 from trajectory.worker.content import AssetView
 
 MAX_ANCESTRY_HOPS = 100
@@ -221,6 +221,12 @@ async def apply_meta(db, cache: MetaCache, control_type: str, control: dict, *, 
     updated_at = parse_time(record.get("updated_at")) or line_time
     row = await db.get(model, identifier)
     if row is None:
+        if control_type == "session.meta":
+            # An absent metadata row cannot serialize with the projector's UPDATE.
+            # Take the trajectory lock before inserting it, in the same order as
+            # ingest/projection, so an in-flight first summary cannot be missed.
+            await db.scalar(select(SessionTrajectory.id).where(SessionTrajectory.session_id == identifier)
+                            .with_for_update(key_share=True))
         row = model(id=identifier, updated_at=updated_at, synced_at=now, **values)
         db.add(row)
     else:
@@ -234,6 +240,12 @@ async def apply_meta(db, cache: MetaCache, control_type: str, control: dict, *, 
         row.updated_at, row.synced_at = updated_at, now
     await db.flush()
     if control_type == "session.meta":
+        # Metadata can arrive after projection, or change ownership. The row is
+        # already written/locked, so a concurrent projection updates it afterwards.
+        row.projected_activity_at = await db.scalar(select(TrajectorySessionSummary.last_activity_at)
+            .join(SessionTrajectory, SessionTrajectory.id == TrajectorySessionSummary.trajectory_id)
+            .where(SessionTrajectory.session_id == row.id, SessionTrajectory.user_id == row.user_id,
+                   SessionTrajectory.deleted_at.is_(None)))
         cache.sessions[identifier] = _session_view(row)
     elif control_type == "asset.meta":
         cache.assets[identifier] = _asset_view(row)

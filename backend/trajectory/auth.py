@@ -84,8 +84,12 @@ class HttpBackend:
     def __init__(self, base_url: str, token: str, *, transport: httpx.AsyncBaseTransport | None = None,
                  timeout: float = 5.0):
         self._headers = {"X-Internal-Token": token}
+        self._timeout = timeout
+        # Viewer refreshes and uvicorn's idle close both default to five
+        # seconds. Retire idle connections earlier to avoid that boundary race.
         self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), transport=transport,
-                                         timeout=timeout, trust_env=False)
+                                         timeout=timeout, trust_env=False,
+                                         limits=httpx.Limits(keepalive_expiry=2.0))
 
     @classmethod
     def from_env(cls) -> "HttpBackend":
@@ -94,10 +98,21 @@ class HttpBackend:
         return cls(url, get_config().internal_api_token)
 
     async def viewer(self, user_id: str, *, client: str | None, sid: str | None, jti: str | None) -> dict:
-        response = await self._client.post(VIEWER_PATH, headers=self._headers,
-                                           json={"user_id": user_id, "client": client, "sid": sid, "jti": jti})
-        response.raise_for_status()
-        return response.json()
+        # This POST only reads authority facts. A connection closed during
+        # reuse can be retried once; both attempts share the original deadline.
+        # Refusals, timeouts and invalid facts still reach the fail-closed caller.
+        async with asyncio.timeout(self._timeout):
+            for attempt in range(2):
+                try:
+                    response = await self._client.post(VIEWER_PATH, headers=self._headers,
+                        json={"user_id": user_id, "client": client, "sid": sid, "jti": jti})
+                except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                    if attempt:
+                        raise
+                    log.debug("Retrying trajectory viewer connection error_type=%s", type(exc).__name__)
+                    continue
+                response.raise_for_status()
+                return response.json()
 
     async def audit(self, entries: list[dict]) -> None:
         response = await self._client.post(AUDIT_PATH, headers=self._headers, json={"entries": entries})

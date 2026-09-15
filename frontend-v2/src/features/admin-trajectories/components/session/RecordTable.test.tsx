@@ -61,8 +61,8 @@ const records = [
   }),
 ]
 
-function setup(selectedId: string | null, collapsed: Record<string, true> = {}) {
-  const tree = buildTree(records)
+function setup(selectedId: string | null, collapsed: Record<string, true> = {}, items = records) {
+  const tree = buildTree(items)
   const rows = flattenTree(tree, collapsed)
   const context: RowContext = {
     ordinals: buildOrdinals(tree.nodes.values()),
@@ -124,5 +124,23 @@ describe("RecordTable", () => {
   it("hides collapsed children", () => {
     setup(null, { "request:req_a": true })
     expect(screen.getAllByTestId("trajectory-record-row")).toHaveLength(1)
+  })
+
+  it("shows an 80-character user input excerpt beside a collapsed Turn with its longer preview on hover", () => {
+    const excerpt = `${"查".repeat(79)}🔍`
+    setup(null, { "turn:turn_a": true }, [
+      makeRecord({ record_id: "turn:turn_a", kind: "turn", turn_id: "turn_a" }),
+      makeRecord({
+        record_id: "user:msg_a",
+        kind: "user",
+        turn_id: "turn_a",
+        start_seq: "2",
+        preview: `${excerpt}\n 下一项`,
+      }),
+    ])
+    expect(screen.getAllByTestId("trajectory-record-row")).toHaveLength(1)
+    const preview = screen.getByTitle(`${excerpt} 下一项`)
+    expect(preview.textContent).toBe(`${excerpt}…`)
+    expect(screen.getByTestId("trajectory-record-row").contains(preview)).toBe(true)
   })
 })

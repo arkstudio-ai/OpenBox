@@ -128,17 +128,17 @@ async def track(session_id: str, sandbox=None, user_id: str | None = None) -> st
             if not await _ensure_store(sandbox, store):
                 return None
 
-            result = await sandbox.execute(store.git("add -A"), workdir=store.workdir)
-            if result.exit_code != 0:
-                log.warning(f"git add failed: {result.stderr}")
-                return None
-
             # write-tree, not commit: the tree hash alone is enough to restore
             # from, and skipping the commit keeps the store free of a history
-            # nobody reads.
-            result = await sandbox.execute(store.git("write-tree"), workdir=store.workdir)
+            # nobody reads. Keep both commands in one remote request: a tunnel
+            # can spend seconds establishing a new connection. && preserves
+            # the rule that failed staging must not produce a snapshot.
+            result = await sandbox.execute(
+                f"{store.git('add -A')} && {store.git('write-tree')}",
+                workdir=store.workdir,
+            )
             if result.exit_code != 0:
-                log.warning(f"git write-tree failed: {result.stderr}")
+                log.warning(f"Snapshot staging/write-tree failed: {result.stderr}")
                 return None
 
         tree_hash = result.stdout.strip()

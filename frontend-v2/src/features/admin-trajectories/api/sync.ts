@@ -18,7 +18,7 @@ import { ApiError } from "@/shared/api/http"
 import type { CheckpointResponse, EventPage, ProjectionState, Seq, TrajectoryEvent } from "../types/protocol"
 import { EventShapeError, ingestCheckpoint, validateEvent, type CheckpointRejection } from "../utils/adapter"
 import { emptyState, reduceMany } from "../utils/projector"
-import { addSeq, eqSeq, gtSeq, lastIndexAtOrBefore, lteSeq, ltSeq, maxSeq } from "../utils/seq"
+import { addSeq, eqSeq, gtSeq, lastIndexAtOrBefore, lteSeq, ltSeq, maxSeq, minSeq } from "../utils/seq"
 import type { EventPageParams } from "./endpoints"
 
 export interface SyncTransport {
@@ -476,9 +476,15 @@ export class TrajectorySync {
     return { status: "loading", seq: target }
   }
 
-  ensurePosition(seq: Seq): void {
+  ensurePosition(seq: Seq, { readAhead = false }: { readAhead?: boolean } = {}): void {
     if (this.stateAt(seq).status !== "loading" || !this.main || this.phase !== "live") return
-    void this.loadSide(seq)
+    // Playback consumes nearby events in order. Fetch at most one page ahead,
+    // stopping before the installed checkpoint; stateAt still folds only
+    // through the displayed position. A manual seek reads exactly its target.
+    const until = readAhead
+      ? minSeq(addSeq(seq, this.pageSize - 1), addSeq(this.main.base.through_seq, -1))
+      : seq
+    void this.loadSide(seq, until)
   }
 
   private project(segment: Segment, seq: Seq): ProjectionState {
@@ -491,14 +497,14 @@ export class TrajectorySync {
   }
 
   /**
-   * Events through exactly `seq` — never the history after it, which may be
-   * large and is not needed to show `seq`. A short step forward extends the
+   * Events through `until`: the target for a seek, or a bounded page for
+   * playback. A short step forward extends the
    * installed replay segment on its own base; anything else starts from the
    * checkpoint at or before `seq`. Only the most recent seek may install its
    * result, and it installs a new segment, so a superseded read never touches
    * the one on screen.
    */
-  private async loadSide(seq: Seq): Promise<void> {
+  private async loadSide(seq: Seq, until: Seq): Promise<void> {
     if (this.sideLoading && eqSeq(this.sideLoading, seq)) return
     if (!this.main) return
     const generation = this.generation
@@ -513,7 +519,7 @@ export class TrajectorySync {
         if (!current()) return
         base = segmentFrom(response, seq)
       }
-      const fresh = await this.readThrough(lastSeq(base), seq, current)
+      const fresh = await this.readThrough(lastSeq(base), until, current)
       if (!fresh) return
       const segment: Segment = { ...base, events: base.events.concat(fresh) }
       // Same base and same leading events: the fold so far still holds.

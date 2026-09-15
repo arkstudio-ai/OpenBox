@@ -105,6 +105,40 @@ async def test_get_trajectory_reads_the_session_replica_and_tolerates_its_lag(tr
                 await get_trajectory(db, session_id)
 
 
+async def test_indexed_activity_handles_late_metadata_refresh_and_trajectory_deletion(trace_db, blobs):
+    from trajectory.lifecycle import tombstone_trajectory
+    from trajectory.store.models import TrajectoryMetaSession
+    from trajectory.worker.meta import MetaCache, apply_meta
+
+    await add_trajectory("trj_late", "s_late")
+    await Ingest(blobs).append("trj_late", [
+        _event("trj_late", "s_late", "user_a", 1, "input.accepted", {"text": "hello"},
+               at=AT + timedelta(seconds=10), message_id="m1")])
+    await project_all(ProjectionService(settings(), blob_store=blobs, metrics=Metrics()), "trj_late")
+    await add_meta("s_other", updated_at=AT + timedelta(seconds=20))
+
+    async def sync(seconds):
+        async with trace_session() as db:
+            await apply_meta(db, MetaCache(), "session.meta", {"session": {
+                "id": "s_late", "user_id": "user_a", "updated_at": iso(AT + timedelta(seconds=seconds))}},
+                line_time=AT, now=AT)
+
+    async def order():
+        async with trace_session() as db:
+            return [item["session_id"] for item in
+                    (await list_sessions(db, include_unrecorded=True))["items"]]
+
+    await sync(100)
+    assert await order() == ["s_other", "s_late"]
+    await sync(200)
+    assert await order() == ["s_other", "s_late"]
+    async with trace_session() as db:
+        meta = await db.get(TrajectoryMetaSession, "s_late")
+        assert iso(meta.projected_activity_at) == iso(AT + timedelta(seconds=10))
+        await tombstone_trajectory(db, await db.get(SessionTrajectory, "trj_late"), reason="test", at=AT)
+    assert await order() == ["s_late", "s_other"]
+
+
 async def test_list_sessions_filters_sorts_pages_and_includes_unrecorded_roots(trace_db, blobs, monkeypatch):
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     monkeypatch.delenv("TRAJECTORY_RECORD_USER_IDS", raising=False)

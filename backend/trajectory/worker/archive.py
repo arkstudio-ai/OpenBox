@@ -459,7 +459,8 @@ class ArchiveService:
             projected, committed = (await db.execute(
                 select(func.coalesce(func.sum(SessionTrajectory.projected_seq - SessionTrajectory.archived_seq), 0),
                        func.coalesce(func.sum(SessionTrajectory.committed_seq - SessionTrajectory.archived_seq), 0))
-                .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None))
+                .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
+                       SessionTrajectory.archived_seq < SessionTrajectory.committed_seq)
             )).one()
         self.metrics.set_gauge("archive_lag_events", int(projected))
         # Watermark arithmetic, not a table count: live hot rows are exactly (archived_seq, committed_seq].

@@ -1365,9 +1365,13 @@ def _job_lines(
             [
                 f"asset_id={asset.id}",
                 f"name={asset.name}",
-                f"path=/workspace/generated_videos/{asset.name}",
                 f"download_url={download_url}",
                 f"bytes={asset.size}",
+                (
+                    "workspace_instruction=for bash/share_file use only workspace_path; "
+                    "if absent, call video_generate action=fetch with this asset_id "
+                    "to obtain the actual workspace path"
+                ),
             ]
         )
         if getattr(job, "kind", None) == "render":
@@ -2748,6 +2752,8 @@ async def execute_generate(args: VideoGenerateArgs, ctx: ToolContext) -> ToolRes
         "version": version,
         "retry_after_seconds": round(poll_interval_seconds),
     }
+    if workspace_path:
+        metadata["workspace_path"] = workspace_path
     if polling_paused:
         metadata.update(
             {

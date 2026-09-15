@@ -428,6 +428,47 @@ def _poll(process, log_path: Path, request, ready, timeout: float = 60):
         time.sleep(0.2)
 
 
+async def test_late_metadata_sees_a_summary_committing_at_the_same_time(trace_url):
+    if not trace_url.startswith("postgresql"):
+        pytest.skip("Concurrent row locks are a PostgreSQL behavior")
+    from trajectory.store.database import close_trace_engine, init_trace_engine
+    from trajectory.store.models import TrajectoryMetaSession, TrajectorySessionSummary
+    from trajectory.worker.meta import MetaCache, apply_meta
+    from trajectory.types import now, iso
+
+    init_trace_engine(trace_url)
+    at = now()
+    syncing = None
+
+    async def sync():
+        async with trace_session() as db:
+            await apply_meta(db, MetaCache(), "session.meta", {"session": {
+                "id": "late", "user_id": "u", "updated_at": iso(at)}}, line_time=at, now=at)
+
+    try:
+        async with trace_session() as db:
+            db.add(SessionTrajectory(id="late", session_id="late", user_id="u", workspace_id="w",
+                                     started_at=at, updated_at=at, last_activity_at=at))
+        async with trace_session() as db:
+            await db.get(SessionTrajectory, "late", with_for_update=True)
+            db.add(TrajectorySessionSummary(trajectory_id="late", session_id="late", user_id="u", workspace_id="w",
+                last_activity_at=at, running_status="idle", recording_status="recording", applied_seq=1, statistics={}))
+            await db.flush()
+            # Projection has no metadata row to update yet. Its summary is still uncommitted.
+            syncing = asyncio.create_task(sync())
+            done, _ = await asyncio.wait({syncing}, timeout=0.1)
+            assert not done
+        await asyncio.wait_for(syncing, 5)
+        async with trace_session() as db:
+            row = await db.get(TrajectoryMetaSession, "late")
+            assert row.projected_activity_at == at
+    finally:
+        if syncing is not None and not syncing.done():
+            syncing.cancel()
+            await asyncio.gather(syncing, return_exceptions=True)
+        await close_trace_engine()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_the_worker_process_serves_health_and_metrics_and_stops_on_sigterm(tmp_path):
     database_path = tmp_path / "trace.db"

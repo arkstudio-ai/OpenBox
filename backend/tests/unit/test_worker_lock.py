@@ -51,6 +51,33 @@ async def test_object_guard_keeps_deletes_apart_from_batches():
     assert guard.holders == 0 and order[-1] == "delete"
 
 
+async def test_slow_delete_only_blocks_overlapping_keys_and_cancellation_releases_it():
+    guard = ObjectGuard()
+    entered = asyncio.Event()
+
+    async def deleting():
+        async with guard.exclusive("a/blobs/key"):
+            entered.set()
+            await asyncio.Event().wait()
+
+    async def use(keys):
+        async with guard.shared(keys):
+            return True
+
+    task = asyncio.create_task(deleting())
+    await entered.wait()
+    same = asyncio.create_task(use({"a/blobs/key"}))
+    prefix = asyncio.create_task(use({"a/"}))
+    try:
+        assert await asyncio.wait_for(use({"a/blobs/other", "b/blobs/key"}), 1)
+        assert not same.done() and not prefix.done()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert await asyncio.wait_for(asyncio.gather(same, prefix), 1) == [True, True]
+    assert guard.holders == 0
+
+
 @pytest.fixture
 async def engine(tmp_path):
     await close_trace_engine()

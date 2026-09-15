@@ -414,6 +414,79 @@ describe("seeking into history older than the live base", () => {
   // Live base 30 (head checkpoint), older checkpoint at 5.
   const CHECKPOINTS = [prefix(5), prefix(30)]
 
+  it("plays 1000 older events with two pages while preserving every displayed position", async () => {
+    const events: TrajectoryEvent[] = Array.from({ length: 1002 }, (_, index) => ({
+      ...EVENTS[0],
+      event_id: `settings_${index + 1}`,
+      seq: String(index + 1),
+      type: "session.settings_changed",
+      data: { after: { title: `Title ${index + 1}` } },
+    }))
+    const server = fakeServer({ events, checkpoints: [replay(events.slice(0, 1001))] })
+    const sync = new TrajectorySync(server.transport)
+    await sync.open()
+    await seek(sync, "0")
+    sync.ensurePosition("1", { readAhead: true })
+    await vi.waitFor(() => expect(sync.stateAt("1").status).toBe("ready"))
+    expect(historyReads(server)).toEqual(["0..500"])
+
+    for (let index = 1; index <= 1000; index += 1) {
+      const seq = String(index)
+      sync.ensurePosition(seq, { readAhead: true })
+      if (sync.stateAt(seq).status === "loading")
+        await vi.waitFor(() => expect(sync.stateAt(seq).status).toBe("ready"))
+      const position = sync.stateAt(seq)
+      expect(position).toMatchObject({ status: "ready", seq, state: { through_seq: seq } })
+      if ([1, 499, 500, 501, 999, 1000].includes(index) && position.status === "ready")
+        expect(position.state).toEqual(replay(events.slice(0, index)))
+    }
+    expect(historyReads(server)).toEqual(["0..500", "500..1000"])
+    expect(sync.getSnapshot()).toMatchObject({ baseSeq: "1001", loadedSeq: "1002", headSeq: "1002" })
+    sync.stop()
+  })
+
+  it("discards a playback prefetch when a newer seek replaces it", async () => {
+    const server = fakeServer({ checkpoints: CHECKPOINTS })
+    let release: (() => void) | undefined
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: async (params, signal) => {
+        if (params.untilSeq === "29") await new Promise<void>((resolve) => (release = resolve))
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    await seek(sync, "12")
+    sync.ensurePosition("13", { readAhead: true })
+    await vi.waitFor(() => expect(release).toBeDefined())
+    const at3 = await seek(sync, "3")
+    release!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sync.stateAt("3")).toEqual(at3)
+    expect(sync.stateAt("13").status).toBe("loading")
+    sync.stop()
+  })
+
+  it("drops loaded content if access is revoked during playback prefetch", async () => {
+    const server = fakeServer({ checkpoints: CHECKPOINTS })
+    let denied = false
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: (params, signal) => {
+        if (denied) throw new ApiError(403, "HTTP_403", "Forbidden")
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    await seek(sync, "12")
+    denied = true
+    sync.ensurePosition("13", { readAhead: true })
+    await vi.waitFor(() => expect(sync.getSnapshot().phase).toBe("denied"))
+    expect(sync.getSnapshot()).toMatchObject({ live: null, events: [], loadedSeq: "0" })
+  })
+
   it("reads events only through the target and shows it without the later history", async () => {
     const server = fakeServer({ checkpoints: CHECKPOINTS })
     const transport: SyncTransport = {

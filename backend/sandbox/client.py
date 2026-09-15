@@ -240,6 +240,19 @@ class _CatalogueLoad:
     snapshot: dict
 
 
+class _BorrowedTransport(httpx.AsyncBaseTransport):
+    """Keep an operation's client from closing its owner's connection pool."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport):
+        self.transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return await self.transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        pass  # SandboxClient closes the pool after the last operation exits.
+
+
 class SandboxClient:
     """HTTP client for the Action Server running inside a sandbox container.
 
@@ -258,6 +271,7 @@ class SandboxClient:
         catalogue_ttl_seconds: float = CATALOGUE_CACHE_TTL_SECONDS,
         catalogue_clock: Callable[[], float] | None = None,
         desktop_id: str = "",
+        reuse_connections: bool = False,
     ):
         # base_url wins when set — remote providers (wuying) address the action
         # server through a tunnel endpoint rather than a host/port pair.
@@ -280,6 +294,12 @@ class SandboxClient:
         self._catalogue_cache: _CatalogueCacheEntry | None = None
         self._catalogue_inflight: asyncio.Task[_CatalogueLoad] | None = None
         self._catalogue_epoch = 0
+        # Only lifetime-managed clients opt in. Short-lived admin/diagnostic
+        # clients continue closing their connections at the end of each call.
+        self._reuse_connections = reuse_connections
+        self._transport: httpx.AsyncHTTPTransport | None = None
+        self._transport_users = 0
+        self._closed = False
 
     @staticmethod
     def _header_value(value: str, limit: int = 120) -> str:
@@ -419,8 +439,9 @@ class SandboxClient:
             from sandbox.entitlement import require_sandbox_subscription
             await require_sandbox_subscription(self.workspace_id)
 
-    def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
-        """Create an httpx async client.
+    @asynccontextmanager
+    async def _client(self, timeout: float = 30.0) -> AsyncIterator[httpx.AsyncClient]:
+        """Use this sandbox's pool with operation-local timeouts and cookies.
 
         trust_env=False is deliberate: the sandbox endpoint is always directly
         reachable infrastructure (local container, in-cluster service, or an
@@ -428,13 +449,42 @@ class SandboxClient:
         environment sends those requests through a developer's proxy, which
         typically cannot reach them and fails with an opaque timeout.
         """
-        return httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=self._headers,
-            timeout=timeout,
-            trust_env=False,
-            event_hooks={"request": [self._authorize_request]} if self.workspace_id is not None else None,
-        )
+        if self._closed:
+            raise RuntimeError("Sandbox client is closed")
+        transport = None
+        if self._reuse_connections:
+            if self._transport is None:
+                self._transport = httpx.AsyncHTTPTransport(
+                    trust_env=False,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
+                                       keepalive_expiry=60.0),
+                )
+            transport = _BorrowedTransport(self._transport)
+        self._transport_users += 1
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=self._headers,
+                timeout=timeout,
+                trust_env=False,
+                transport=transport,
+                event_hooks={"request": [self._authorize_request]} if self.workspace_id is not None else None,
+            ) as client:
+                yield client
+        finally:
+            self._transport_users -= 1
+            if self._closed:
+                await self._close_idle_transport()
+
+    async def _close_idle_transport(self) -> None:
+        if self._transport is not None and self._transport_users == 0:
+            transport, self._transport = self._transport, None
+            await transport.aclose()
+
+    async def aclose(self) -> None:
+        """Retire this client; in-flight operations drain before its pool closes."""
+        self._closed = True
+        await self._close_idle_transport()
 
     async def execute(
         self,

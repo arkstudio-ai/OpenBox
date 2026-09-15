@@ -9,7 +9,7 @@ streamed to a temporary file under a size cap:
   with the data as stored (references not expanded);
 - ``statistics.json``: projector statistics of a replay at ``through_seq``;
 - ``payloads/{payload_id}``: every payload visible at the watermark (blobs and
-  asset bytes, through ``trajectory.payload.read_payload``);
+  asset bytes, through ``trajectory.payload.spool_payload``);
 - ``manifest.json``, written last.
 
 The archive is uploaded from the temporary file under ``export_key`` and
@@ -19,8 +19,8 @@ deleted in the meantime: deletion wins, and the uploaded object goes to the GC
 queue. Worker start removes temporary archives that outlived their build
 (``remove_stale_temp_files``).
 Unfinished rows (pending, or running under an expired lease) are resumed by
-the next pass of any worker; a worker's first pass also takes over rows its
-own owner id still holds from a previous run.
+the next pass of any worker, up to MAX_BUILD_ATTEMPTS builds; a worker's first
+pass also takes over rows its own owner id still holds from a previous run.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from sqlalchemy import and_, or_, select, update
 from core.log import create_logger
 from trajectory.auth import assert_admin
 from trajectory.lifecycle import GC_KEY, enqueue_gc, worker_setting
-from trajectory.payload import read_payload
+from trajectory.payload import read_payload, spool_payload, validate_payload
 from trajectory.projector import empty_state, reduce, statistics
 from trajectory.storage import export_key, read_chunks
 from trajectory.store.database import trace_session
@@ -55,6 +55,7 @@ EXPORT_FORMAT = "openbox.session-trajectory"
 EXPORT_CONTENT_TYPE = "application/zip"
 DEFAULT_MAX_BYTES = 256 * 1024 * 1024
 LEASE_SECONDS = 120
+MAX_BUILD_ATTEMPTS = 3
 EXPORTS_PER_PASS = 4
 EVENT_PAGE = 1000
 WRITE_CHUNK_BYTES = 1024 * 1024
@@ -76,6 +77,10 @@ class ExportTooLarge(Exception):
 
 class ExportLeaseLost(Exception):
     """The export was deleted or taken over by another worker while this one built it."""
+
+
+class ExportAttemptsExceeded(Exception):
+    """Repeated worker crashes must not keep rebuilding the same export forever."""
 
 
 # -- Rows and downloads --
@@ -213,14 +218,18 @@ class ExportService:
             candidates = [] if export_id in self._building else [export_id]
         for candidate in candidates:
             async with trace_session() as db:
-                claimed = (await db.execute(
+                attempts = await db.scalar(
                     update(TrajectoryExport)
                     .where(TrajectoryExport.id == candidate, *self._claimable(timestamp))
                     .values(status="running", lease_owner=self.owner_id, lease_until=timestamp + self.lease,
-                            updated_at=timestamp)
+                            updated_at=timestamp, attempts=TrajectoryExport.attempts + 1)
+                    .returning(TrajectoryExport.attempts)
                     .execution_options(synchronize_session=False)
-                )).rowcount
-            if claimed == 1:
+                )
+            if attempts is not None:
+                if attempts > MAX_BUILD_ATTEMPTS:
+                    await self._fail(candidate, ExportAttemptsExceeded())
+                    continue
                 return candidate
         return None
 
@@ -394,15 +403,29 @@ class ExportService:
                     continue
                 try:
                     async with trace_session() as db:
-                        _, content = await read_payload(db, trajectory.id, payload.payload_id, through_seq=through)
-                except (FileNotFoundError, LookupError) as exc:
+                        row = await validate_payload(db, trajectory.id, payload.payload_id, through_seq=through)
+                    downloaded = 0
+
+                    def consume(size: int) -> None:
+                        nonlocal downloaded
+                        downloaded += size
+                        if not self._fits(archive, name, downloaded, reserve):
+                            raise ExportTooLarge()
+
+                    # Verify and measure before opening a ZIP entry: an unavailable or oversized
+                    # source must leave no partial entry. Both the download and the ZIP copy are
+                    # chunked; decoded content lives in an anonymous file, never the blob cache.
+                    content = await spool_payload(row, blob_store=self.blob_store, consume=consume)
+                except (FileNotFoundError, LookupError, ExportTooLarge) as exc:
                     note("missing_payloads", {**missing, "reason": type(exc).__name__})
                     continue
-                if not self._fits(archive, name, len(content), reserve):
-                    # The declared size (an asset reference's, for one) understated the content.
-                    note("missing_payloads", {**missing, "reason": ExportTooLarge.__name__})
-                    continue
-                described = await archive.write(name, content)
+                try:
+                    async with archive.entry(name) as entry:
+                        async for chunk in content.chunks(WRITE_CHUNK_BYTES):
+                            await entry.write(chunk)
+                    described = entry.describe()
+                finally:
+                    content.close()
                 note("files", {**described, "payload_id": payload.payload_id, "media_type": payload.media_type})
             manifest["complete"] = not manifest["missing_payloads"] and not state["unsupported_events"] and not gaps
             await archive.write("manifest.json", canonical(manifest))
@@ -511,6 +534,16 @@ async def _stored_digest(store, key: str) -> str:
     return digest.hexdigest()
 
 
+async def _zip_io(function, *args):
+    """A cancelled build must finish the current chunk before closing its ZIP/file."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except BaseException:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
 class _ZipWriter:
     """A ZIP file written entry by entry from the event loop, with file I/O and deflate in worker threads."""
 
@@ -522,10 +555,17 @@ class _ZipWriter:
 
     async def __aenter__(self) -> _ZipWriter:
         def open_archive():
-            handle = open(self._path, "wb")
-            return handle, zipfile.ZipFile(handle, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True)
+            self._file = open(self._path, "wb")
+            self._zip = zipfile.ZipFile(self._file, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True)
 
-        self._file, self._zip = await asyncio.to_thread(open_archive)
+        try:
+            await _zip_io(open_archive)
+        except BaseException:
+            if self._zip is not None:
+                self._zip.close()
+            if self._file is not None:
+                self._file.close()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:
@@ -541,7 +581,7 @@ class _ZipWriter:
             finally:
                 self._file.close()
 
-        await asyncio.to_thread(close)
+        await _zip_io(close)
         if exc_type is None and os.path.getsize(self._path) > self._max_bytes:
             raise ExportTooLarge(f"Export exceeds {self._max_bytes} bytes")
 
@@ -574,20 +614,33 @@ class _ZipEntry:
     async def __aenter__(self) -> _ZipEntry:
         info = zipfile.ZipInfo(self.name, date_time=time.gmtime()[:6])
         info.compress_type = zipfile.ZIP_DEFLATED
-        self._handle = await asyncio.to_thread(self._archive._zip.open, info, "w", force_zip64=True)
+
+        def open_entry():
+            self._handle = self._archive._zip.open(info, "w", force_zip64=True)
+
+        try:
+            await _zip_io(open_entry)
+        except BaseException:
+            if self._handle is not None:
+                self._handle.close()
+            raise
         return self
 
     async def write(self, data: bytes) -> None:
         self._digest.update(data)
         self.size += len(data)
-        self._buffer += data
-        if len(self._buffer) >= WRITE_CHUNK_BYTES:
-            await self._flush()
+        view = memoryview(data)
+        while view:
+            take = min(len(view), WRITE_CHUNK_BYTES - len(self._buffer))
+            self._buffer.extend(view[:take])
+            view = view[take:]
+            if len(self._buffer) == WRITE_CHUNK_BYTES:
+                await self._flush()
 
     async def _flush(self) -> None:
         chunk, self._buffer = bytes(self._buffer), bytearray()
         if chunk:
-            await asyncio.to_thread(self._handle.write, chunk)
+            await _zip_io(self._handle.write, chunk)
         self._archive.check_size()
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:
@@ -595,7 +648,7 @@ class _ZipEntry:
             if exc_type is None:
                 await self._flush()
         finally:
-            await asyncio.to_thread(self._handle.close)
+            await _zip_io(self._handle.close)
         if exc_type is None:
             self._archive.check_size()
 

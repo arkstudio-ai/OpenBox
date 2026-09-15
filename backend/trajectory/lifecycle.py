@@ -134,6 +134,9 @@ async def tombstone_trajectory(db, trajectory, *, reason: str, at: datetime | No
     trajectory.updated_at = timestamp
     await _purge_content(db, trajectory, availability="deleted", reason=reason, at=timestamp)
     await db.execute(delete(TrajectorySessionSummary).where(TrajectorySessionSummary.trajectory_id == trajectory.id))
+    from trajectory.store.models import TrajectoryMetaSession
+    await db.execute(update(TrajectoryMetaSession).where(TrajectoryMetaSession.id == trajectory.session_id,
+        TrajectoryMetaSession.user_id == trajectory.user_id).values(projected_activity_at=None))
     publish_after_commit(db, trajectory, deleted=True)
     return True
 

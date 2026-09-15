@@ -101,6 +101,44 @@ describe("record hierarchy", () => {
     expect(filtered.find((row) => row.record.record_id === "request:req_a")?.context).toBe(true)
   })
 
+  it("labels and searches collapsed Turns by their own first user input at the current position", () => {
+    const turn = records.find((row) => row.kind === "turn")!
+    const user = records.find((row) => row.kind === "user")!
+    const nextTurn = { ...turn, record_id: "turn:turn_next", turn_id: "turn_next", start_seq: "40" }
+    const injected = {
+      ...user,
+      record_id: "user:injected",
+      turn_id: "turn_next",
+      start_seq: "41",
+      status: "injected",
+      preview: "自动提醒",
+    }
+    const input = {
+      ...user,
+      record_id: "user:next",
+      turn_id: "turn_next",
+      start_seq: "42",
+      preview: "  第二轮\n检查   服务  ",
+    }
+    const beforeInput = [...records, nextTurn, injected]
+    expect(buildTree(beforeInput).nodes.get(nextTurn.record_id)?.inputPreview).toBeNull()
+    const labeled = buildTree([
+      ...beforeInput,
+      { ...input, record_id: "user:later", start_seq: "43", preview: "后续输入" },
+      input,
+    ])
+    const collapsed = { [turn.record_id]: true, [nextTurn.record_id]: true } as const
+    expect(flattenTree(labeled, collapsed).map((row) => row.inputPreview)).toEqual([
+      "检查日志",
+      "第二轮 检查 服务",
+    ])
+    const hits = flattenTree(labeled, collapsed, { ...NO_FILTERS, kinds: ["turn"], text: "检查 服务" })
+    expect(hits.map((row) => row.record.record_id)).toEqual([nextTurn.record_id])
+    expect(hits[0].context).toBe(false)
+    expect(labeled.nodes.get(nextTurn.record_id)?.record).toBe(nextTurn)
+    expect(nextTurn.preview).toBeNull()
+  })
+
   it("scopes to an agent and its descendants", () => {
     const rows = flattenTree(tree, {}, { ...NO_FILTERS, agentId: "agent_child" })
     const matched = rows.filter((row) => !row.context).map((row) => row.record.record_id)

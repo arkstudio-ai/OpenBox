@@ -825,7 +825,8 @@ class IngestService:
                 # A batch that stores or reuses blobs excludes the GC's blob deletes (lock.ObjectGuard,
                 # services.GuardedGcBlobStore) from its look at the GC queue through its commit: keys with
                 # queued entries are uploaded again, overwriting, and the transaction cancels those entries.
-                guard = self.object_guard.shared() if prepared.planner.object_keys() else contextlib.nullcontext()
+                keys = prepared.planner.object_keys()
+                guard = self.object_guard.shared(keys) if keys else contextlib.nullcontext()
                 async with guard:
                     await self._check_queued(prepared, key)
                     await self._upload(prepared, key, result)
@@ -974,7 +975,7 @@ class IngestService:
     async def _check_queued(self, prepared: PreparedBatch, key) -> None:
         """Keys this batch stores or reuses that have queued GC entries are uploaded again, overwriting.
 
-        Runs inside ``ObjectGuard.shared()``: no GC delete is in progress, but an earlier one may have
+        Runs inside ``ObjectGuard.shared(keys)``: no GC delete of these keys is in progress, but an earlier one may have
         removed an object whose entry is still queued (its bookkeeping failed, or it is still in its pass),
         while an available row says the object exists. Keys queued in an earlier attempt of this batch stay
         suspect even when their entries are gone. The transaction cancels the entries of the keys it
@@ -1008,7 +1009,7 @@ class IngestService:
             async with semaphore:
                 try:
                     # A GC entry queued and processed between two attempts may have deleted what an earlier attempt
-                    # stored; an object that still exists stays, as no GC delete runs inside the object guard.
+                    # stored; an object that still exists stays, as the guard excludes deletes of this key.
                     if upload.if_absent and upload.key in earlier and await self.blob_store.exists(upload.key):
                         return
                     await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type,

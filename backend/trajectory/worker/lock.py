@@ -231,47 +231,62 @@ def writer_lock_for(engine: AsyncEngine) -> WriterLock:
 
 
 class ObjectGuard:
-    """Keeps blob deletion by the GC queue apart from ingest batches that store or reuse blobs.
+    """Register in-flight blob uses and deletes in the single writer's event loop.
 
-    ``RetentionService.process_gc_queue`` checks that no available payload row references a key and then
-    deletes the object, without a database lock across the two steps; an ingest batch that stored or reused
-    the object and committed a reference in between would point at a deleted object. The worker therefore
-    deletes a blob key only inside ``exclusive()``, checking again right before the delete
-    (``services.GuardedGcBlobStore``), and an ingest batch holds ``shared()`` from its check of queued GC
-    keys through its commit (``ingest.IngestService``). Each delete then sees either the committed reference
-    or no batch in flight. GC and ingest run only in the process that holds the writer lock, so a
-    process-local guard is enough.
+    A batch registers its keys until commit; a delete registers one key until OSS
+    finishes. Only overlapping uses wait. Registration and removal never await,
+    so no process-wide lock crosses an OSS request, and cancellation releases
+    the registration. Pending deletes take precedence over new overlapping uses.
 
-    ``exclusive()`` waits for the current holders while new ``shared()`` callers wait behind it, so deletes
-    cannot starve; it covers one check and one delete, so a batch waits at most that long. Leaving either
-    side never awaits, so a cancelled holder cannot keep the guard. A task that holds the guard must not
-    enter it again.
+    ``shared`` also accepts prefixes ending in '/' when a projector has not yet
+    computed its output keys. Omitting keys/key protects the whole store (tests
+    and callers that cannot narrow their scope). Holders must not reenter.
     """
 
     def __init__(self):
-        self._gate = asyncio.Lock()
-        self._holders = 0
-        self._idle = asyncio.Event()
-        self._idle.set()
+        self._uses: dict[object, frozenset[str] | None] = {}
+        self._deletes: dict[object, str | None] = {}
+        self._changed = asyncio.Event()
+
+    @staticmethod
+    def _overlaps(keys, key) -> bool:
+        return keys is None or key is None or any(
+            scope == key or (scope.endswith("/") and key.startswith(scope)) for scope in keys)
+
+    def _wake(self) -> None:
+        changed, self._changed = self._changed, asyncio.Event()
+        changed.set()
 
     @property
     def holders(self) -> int:
-        return self._holders
+        return len(self._uses)
 
     @asynccontextmanager
-    async def shared(self):
-        async with self._gate:
-            self._holders += 1
-            self._idle.clear()
+    async def shared(self, keys=None):
+        keys = None if keys is None else frozenset(keys)
+        while any(self._overlaps(keys, key) for key in self._deletes.values()):
+            await self._changed.wait()
+        token = object()
+        self._uses[token] = keys
         try:
             yield
         finally:
-            self._holders -= 1
-            if not self._holders:
-                self._idle.set()
+            del self._uses[token]
+            self._wake()
 
     @asynccontextmanager
-    async def exclusive(self):
-        async with self._gate:
-            await self._idle.wait()
+    async def exclusive(self, key: str | None = None):
+        token = object()
+        self._deletes[token] = key
+        try:
+            while True:
+                earlier = list(self._deletes).index(token)
+                preceding = list(self._deletes.values())[:earlier]
+                if (not any(self._overlaps(keys, key) for keys in self._uses.values())
+                        and not any(key is None or other is None or key == other for other in preceding)):
+                    break
+                await self._changed.wait()
             yield
+        finally:
+            del self._deletes[token]
+            self._wake()

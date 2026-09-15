@@ -144,6 +144,31 @@ async def test_ingest_waits_for_a_gc_delete_in_progress(trace_db, settings):
     assert key in store.objects and await _readable(store, key)
 
 
+async def test_slow_gc_does_not_block_ingest_of_different_content_in_the_same_session(trace_db, settings):
+    store, gc, services, writer, trajectory = await _start(settings)
+    key, stored = _system_object(trajectory.id)
+    await store.put(key, stored, content_type="application/json")
+    await _queue(key)
+    deleting, finish_delete = asyncio.Event(), asyncio.Event()
+
+    async def slow_delete(_key):
+        deleting.set()
+        await finish_delete.wait()
+
+    store.faults["delete"] = slow_delete
+    sweep = asyncio.create_task(services.retention.process_gc_queue())
+    await asyncio.wait_for(deleting.wait(), 5)
+    try:
+        writer.events(event("request.prepared", request_id="other", event_id="other",
+                            data={"model": "m", "input": {"system": "unrelated content " * 200}}))
+        await asyncio.wait_for(services.ingest.run_once(), 5)
+        _, events = await events_of("ses_1")
+        assert events[-1].event_id == "other" and not sweep.done()
+    finally:
+        finish_delete.set()
+        await asyncio.wait_for(sweep, 5)
+
+
 async def test_a_queued_entry_makes_ingest_store_a_reused_object_again(trace_db, settings):
     store, gc, services, writer, trajectory = await _start(settings)
     writer.events(_prepared("r1"))

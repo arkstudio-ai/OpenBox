@@ -33,9 +33,10 @@ from trajectory.payload import JSON_MEDIA_TYPE, Resolver, ensure_payload_rows, e
 from trajectory.projector import TERMINAL, contribution, reduce, targets
 from trajectory.repository import (UNSUPPORTED_EVENTS_LIMIT, checkpoint_blobs, expanded_state, record_key,
     records_for_reduction, reduction_events, store_checkpoint, stored_events, summary_rules)
+from trajectory.storage import trajectory_prefix
 from trajectory.store.database import trace_session
-from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryRecord, TrajectoryRecordEvent,
-    TrajectorySessionSummary)
+from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryMetaSession, TrajectoryRecord,
+    TrajectoryRecordEvent, TrajectorySessionSummary)
 from trajectory.types import EVENT_TYPES, PROJECTOR_VERSION, CorruptContent, canonical
 
 log = create_logger("trajectory.projection")
@@ -232,8 +233,9 @@ class ProjectionService:
         #: Monotonic time of the next ``projection_lag_events`` sample.
         self._lag_due = 0.0
 
-    def _object_guard(self):
-        return self.object_guard.shared() if self.object_guard is not None else contextlib.nullcontext()
+    def _object_guard(self, trajectory_id):
+        return (self.object_guard.shared({trajectory_prefix(trajectory_id)})
+                if self.object_guard is not None else contextlib.nullcontext())
 
     async def run_once(self) -> int:
         """One pass: a batch for each lagging trajectory, then its due checkpoint.
@@ -260,18 +262,26 @@ class ProjectionService:
         return progress
 
     async def _candidates(self) -> list[str]:
-        due = select(SessionTrajectory.id).where(
-            SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
-            (SessionTrajectory.projected_seq < SessionTrajectory.committed_seq)
-            | (SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= self.checkpoint_interval))
+        live = select(SessionTrajectory.id).where(
+            SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None))
+        pending = live.where(SessionTrajectory.projected_seq < SessionTrajectory.committed_seq)
+        checkpoint = live.where(
+            SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= self.checkpoint_interval)
         scan = PASS_TRAJECTORIES * SCAN_FACTOR
+
+        def page(bound, limit):
+            # Each branch has its own usable index. Bound each result before UNION
+            # so a large backlog does not need to be sorted/deduplicated in full.
+            parts = [query.where(bound).order_by(SessionTrajectory.id).limit(limit).subquery()
+                     for query in (pending, checkpoint)]
+            due = select(parts[0].c.id).union(select(parts[1].c.id)).subquery()
+            return select(due.c.id).order_by(due.c.id).limit(limit)
+
         async with trace_session() as db:
-            ids = list((await db.scalars(due.where(SessionTrajectory.id > self._cursor)
-                                         .order_by(SessionTrajectory.id).limit(scan))).all())
+            ids = list((await db.scalars(page(SessionTrajectory.id > self._cursor, scan))).all())
             if len(ids) < scan and self._cursor:
                 # Wrap around to the trajectories up to the cursor.
-                ids.extend((await db.scalars(due.where(SessionTrajectory.id <= self._cursor)
-                                             .order_by(SessionTrajectory.id).limit(scan - len(ids)))).all())
+                ids.extend((await db.scalars(page(SessionTrajectory.id <= self._cursor, scan - len(ids)))).all())
         at, chosen = time.monotonic(), []
         for trajectory_id in ids:
             if len(chosen) >= PASS_TRAJECTORIES:
@@ -314,7 +324,8 @@ class ProjectionService:
         self._lag_due = at + LAG_SAMPLE_SECONDS
         async with trace_session() as db:
             lag = await db.scalar(select(func.coalesce(func.sum(SessionTrajectory.committed_seq - SessionTrajectory.projected_seq), 0))
-                                  .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None)))
+                                  .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
+                                         SessionTrajectory.projected_seq < SessionTrajectory.committed_seq))
         self.metrics.set_gauge("projection_lag_events", int(lag or 0))
 
     async def project(self, trajectory_id: str, max_events: int | None = None) -> int:
@@ -360,7 +371,7 @@ class ProjectionService:
         # From the look at stored values through the commit of their rows the uploads exclude the GC's blob
         # deletes, as ingest batches do: a delete either sees the committed reference or runs before the
         # upload stores the object again.
-        async with self._object_guard():
+        async with self._object_guard(trajectory_id):
             prepared, blobs = await self._externalize(trajectory_id,
                                                       [state["records"][record_id] for record_id in touched])
             try:
@@ -506,6 +517,9 @@ class ProjectionService:
         summary.running_status, summary.model, summary.recording_status = running_status, model, trajectory.recording_status
         summary.statistics = statistics
         summary.applied_seq = through
+        await db.execute(update(TrajectoryMetaSession).where(
+            TrajectoryMetaSession.id == trajectory.session_id, TrajectoryMetaSession.user_id == trajectory.user_id)
+            .values(projected_activity_at=summary.last_activity_at))
 
     async def maybe_checkpoint(self, trajectory_id: str) -> bool:
         """Checkpoint at projected_seq when it is TRAJECTORY_CHECKPOINT_INTERVAL past the latest one.
@@ -552,7 +566,8 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
         await _background(db)
         state = await expanded_state(db, trajectory, through, blob_store=blob_store)
         blobs = checkpoint_blobs(trajectory_id, state)
-    async with object_guard.shared() if object_guard is not None else contextlib.nullcontext():
+    keys = {blob["storage_key"] for blob in blobs}
+    async with object_guard.shared(keys) if object_guard is not None else contextlib.nullcontext():
         async with trace_session() as db:
             present = await existing_payloads(db, trajectory_id, [blob["dedupe_key"] for blob in blobs])
         await upload_json_blobs(blob_store, [blob for blob in blobs if blob["dedupe_key"] not in present],

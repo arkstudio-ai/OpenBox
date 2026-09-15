@@ -20,7 +20,7 @@ from agent.structured_output import (
     requested_schema,
 )
 from agent.tool_resolution import resolve_step_tools
-from project.workspace import ensure_directory, workdir_for_session, slug_for
+from project.workspace import workdir_for_session
 from agent.llm import (
     ensure_fc_id,
     history_has_tool_calls,
@@ -385,8 +385,8 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
             sandbox = None
             sandbox_error = {"code": "DESKTOP_NOT_READY", "state": exc.payload.get("state"),
                 "detail": "无影云正在准备或暂不可用。普通对话可继续，sandbox 准备好后请重试执行。"}
-        # A project created while the sandbox was down has no directory yet.
-        await ensure_directory(sandbox, await slug_for(session.project_id))
+        # get_client already ensures the project's directory on every healthy
+        # acquisition, including the first run after a sandbox outage.
 
         step = 0
         llm_retry_count = 0

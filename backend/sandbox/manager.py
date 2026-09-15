@@ -60,6 +60,9 @@ class SandboxManager:
         import httpx
 
         try:
+            client = self._clients.get(key)
+            if client is not None:
+                return await client.alive()
             # trust_env=False — the sandbox endpoint is direct infrastructure and
             # must not be routed through a developer's HTTP(S)_PROXY.
             async with httpx.AsyncClient(timeout=5.0, trust_env=False) as http:
@@ -103,7 +106,7 @@ class SandboxManager:
             if self._project_map.get(key) is not sandbox:
                 return
             self._project_map.pop(key, None)
-            self._clients.pop(key, None)
+            client = self._clients.pop(key, None)
             stale_sessions = [
                 sid for sid, mapped_key in self._session_project.items() if mapped_key == key
             ]
@@ -112,6 +115,8 @@ class SandboxManager:
             if session_id:
                 self._session_project.pop(session_id, None)
 
+        if client is not None:
+            await client.aclose()
         provider._containers.pop(sandbox.container_id, None)
         provider._api_keys.pop(sandbox.container_id, None)
         if hasattr(provider, "_container_owners"):
@@ -223,10 +228,13 @@ class SandboxManager:
                 or sandbox.api_key != (authoritative.api_key or "")
             )
             if route_changed:
+                stale_client = None
                 async with self._lock:
                     if self._project_map.get(key) is sandbox:
                         self._project_map.pop(key, None)
-                        self._clients.pop(key, None)
+                        stale_client = self._clients.pop(key, None)
+                if stale_client is not None:
+                    await stale_client.aclose()
                 sandbox = None
                 client = None
 
@@ -244,6 +252,7 @@ class SandboxManager:
                         user_scope=user_scope_for(user_id),
                         workspace_id=owner if per_owner_route else None,
                         desktop_id=_desktop_id_of(sandbox.id),
+                        reuse_connections=True,
                     )
                 async with self._lock:
                     if self._project_map.get(key) is not sandbox:
@@ -318,6 +327,7 @@ class SandboxManager:
                 user_scope=user_scope_for(user_id),
                 workspace_id=owner if per_owner_route else None,
                 desktop_id=_desktop_id_of(info.id),
+                reuse_connections=True,
             )
 
             async with self._lock:
@@ -420,11 +430,13 @@ class SandboxManager:
                     return
 
                 self._project_map.pop(key, None)
-                self._clients.pop(key, None)
+                client = self._clients.pop(key, None)
                 log.info(
                     f"Session {session_id} released; retained sandbox "
                     f"{sandbox.container_id} for durable/background work"
                 )
+            if client is not None:
+                await client.aclose()
 
     async def get_client(self, session_id: str, *, user_id: str) -> SandboxClient:
         """Get the SandboxClient for a session. Acquires sandbox if needed."""
@@ -520,10 +532,12 @@ class SandboxManager:
                             f"Error releasing sandbox for {key}: "
                             f"{type(exc).__name__}"
                         )
+        clients = list(self._clients.values())
         self._project_map.clear()
         self._session_project.clear()
         self._clients.clear()
         self._acquire_locks.clear()
+        await asyncio.gather(*(client.aclose() for client in clients))
 
 
 sandbox_manager = SandboxManager()

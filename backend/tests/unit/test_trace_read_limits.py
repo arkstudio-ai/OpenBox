@@ -16,6 +16,7 @@ from trajectory.payload import Resolver, blob_cache, fetch_blob, read_payload, r
 from trajectory.read_budget import ReadTooLarge, current_read_budget, read_budget
 from trajectory.store.database import trace_read_session, trace_session
 from trajectory.store.models import SessionTrajectory
+from trajectory.worker.metrics import get_metrics
 from trajectory.worker.read_limits import AdmittedResponse, BoundedReadRoute, ReadAdmission
 
 
@@ -269,6 +270,56 @@ async def test_a_json_response_releases_its_slot_before_a_slow_client_receives_i
     finally:
         release.set()
         await task
+
+
+async def test_downloads_stream_under_transfer_slots_and_give_their_read_slot_back(monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_READ_CONCURRENCY", "1")
+    monkeypatch.setenv("TRAJECTORY_READ_TRANSFERS", "4")
+    monkeypatch.setenv("TRAJECTORY_READ_WAIT_MS", "10")
+    app, router = FastAPI(), APIRouter(route_class=BoundedReadRoute)
+    release, closed = asyncio.Event(), []
+
+    class Download(StreamingResponse):
+        """A spooled download: streams once the client is ready, closes its content when it never runs."""
+
+        def __init__(self):
+            super().__init__(self.content(), media_type="application/octet-stream")
+
+        async def content(self):
+            yield b"content"
+            await release.wait()
+
+        def close(self):
+            closed.append(True)
+
+    @router.get("/trace/payloads/{name}")
+    async def download(name: str):
+        return Download()
+
+    @router.get("/trace")
+    async def read():
+        return {"ok": True}
+
+    app.include_router(router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        streams = [asyncio.create_task(client.get(f"/trace/payloads/{index}")) for index in range(4)]
+        async with asyncio.timeout(1):
+            while getattr(app.state, "trajectory_read_transfers", None) is None or app.state.trajectory_read_transfers.active < 4:
+                await asyncio.sleep(0)
+        admission, transfers = app.state.trajectory_read_admission, app.state.trajectory_read_transfers
+        # Four streams to slow clients hold no read slot: the one configured answers a JSON read at once.
+        assert (admission.active, transfers.active) == (0, 4)
+        assert get_metrics().snapshot()["gauges"]["read_transfers"] == 4
+        assert (await client.get("/trace")).status_code == 200
+        refused = await client.get("/trace/payloads/5")
+        assert refused.status_code == 429 and refused.headers["retry-after"] == "1"
+        assert refused.json()["detail"]["code"] == "trajectory_read_busy" and closed == [True]
+        assert (admission.active, transfers.active) == (0, 4)
+        release.set()
+        responses = await asyncio.gather(*streams)
+        assert [(response.status_code, response.content) for response in responses] == [(200, b"content")] * 4
+        assert (admission.active, transfers.active) == (0, 0) and closed == [True]
+        assert get_metrics().snapshot()["gauges"]["read_transfers"] == 0
 
 
 async def test_subscription_headers_read_within_the_pool_reserve(trace_db, monkeypatch):

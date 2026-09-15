@@ -39,7 +39,7 @@ GAUGES = (
     "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
     # Spool usage by area: spool_bytes is their total.
     "spool_blob_bytes", "spool_quarantine_bytes", "spool_quarantine_files",
-    "read_active", "read_waiting",
+    "read_active", "read_waiting", "read_transfers",
 )
 
 

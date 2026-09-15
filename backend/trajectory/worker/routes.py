@@ -9,7 +9,8 @@ execution mutator is reachable from here.
 Downloads (payloads, blobs and exports) keep memory bounded: the content is
 spooled to a temporary file in chunks with no trace database session open, the
 viewer and the content's state are revalidated after that read, and only then
-is the file streamed, so a read revoked meanwhile sends no bytes.
+is the file streamed, so a read revoked meanwhile sends no bytes. The stream
+runs under a transfer slot, not the read slot that prepared it (``read_limits``).
 """
 from datetime import datetime
 from functools import wraps
@@ -82,7 +83,8 @@ async def audit(admin, request, action, session_id=None, details=None):
 
 
 class SpooledResponse(StreamingResponse):
-    """Streams spooled content (``trajectory.payload.Spooled``) and releases it however the response ends."""
+    """Streams spooled content (``trajectory.payload.Spooled``) and releases it however the response ends,
+    or unsent through ``close()`` when the read limits refuse the transfer."""
 
     def __init__(self, spooled, *, media_type: str, headers: dict):
         super().__init__(spooled.chunks(), media_type=media_type,
@@ -93,7 +95,10 @@ class SpooledResponse(StreamingResponse):
         try:
             await super().__call__(scope, receive, send)
         finally:
-            self.spooled.close()
+            self.close()
+
+    def close(self) -> None:
+        self.spooled.close()
 
 
 @router.get("/sessions")

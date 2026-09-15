@@ -12,10 +12,19 @@ from trajectory.worker.metrics import get_metrics
 
 
 class ReadAdmission:
+    """The admission slots of admin reads: at most TRAJECTORY_READ_CONCURRENCY prepare an answer at once, at most
+    TRAJECTORY_READ_MAX_WAITING wait for a slot, each for at most TRAJECTORY_READ_WAIT_MS."""
+
     def __init__(self):
-        self.slots = asyncio.Semaphore(integer("TRAJECTORY_READ_CONCURRENCY", 2))
+        self.slots = asyncio.Semaphore(self.limit())
         self.active = 0
         self.waiting = 0
+
+    def limit(self) -> int:
+        return integer("TRAJECTORY_READ_CONCURRENCY", 2)
+
+    def max_waiting(self) -> int | None:
+        return integer("TRAJECTORY_READ_MAX_WAITING", 4)
 
     def metrics(self):
         metrics = get_metrics()
@@ -24,7 +33,8 @@ class ReadAdmission:
 
     async def acquire(self) -> bool:
         if self.slots.locked():
-            if self.waiting >= integer("TRAJECTORY_READ_MAX_WAITING", 4):
+            limit = self.max_waiting()
+            if limit is not None and self.waiting >= limit:
                 return False
             self.waiting += 1
             self.metrics()
@@ -48,12 +58,28 @@ class ReadAdmission:
         self.metrics()
 
 
-class AdmittedResponse(Response):
-    """A streamed response keeps its read slot until the stream ends or the client goes away."""
+class ReadTransfers(ReadAdmission):
+    """The transfer slots of downloads: a download whose content is spooled and revalidated gives its admission
+    slot back and streams under one of TRAJECTORY_READ_TRANSFERS instead, so slow clients hold transfer slots,
+    never the slots JSON reads need. Waiting for one is bounded by TRAJECTORY_READ_WAIT_MS as for admission."""
 
-    def __init__(self, response, admission):
+    def limit(self) -> int:
+        return integer("TRAJECTORY_READ_TRANSFERS", 4)
+
+    def max_waiting(self) -> int | None:
+        # Only an admitted download reaches a transfer wait, once: nothing to cap.
+        return None
+
+    def metrics(self):
+        get_metrics().set_gauge("read_transfers", self.active)
+
+
+class AdmittedResponse(Response):
+    """A streamed response keeps its slot (``slots.release()``) until the stream ends or the client goes away."""
+
+    def __init__(self, response, slots):
         self.response = response
-        self.admission = admission
+        self.slots = slots
         self.status_code = response.status_code
         self.raw_headers = response.raw_headers
         self.background = response.background
@@ -62,7 +88,7 @@ class AdmittedResponse(Response):
         try:
             await self.response(scope, receive, send)
         finally:
-            self.admission.release()
+            self.slots.release()
 
 
 def refused(status: int, code: str, message: str):
@@ -72,6 +98,39 @@ def refused(status: int, code: str, message: str):
     return JSONResponse({"detail": {"code": code, "message": message}}, status_code=status, headers=headers)
 
 
+def busy():
+    get_metrics().inc("read_rejected")
+    return refused(429, "trajectory_read_busy", "Trajectory viewer is busy; try again shortly")
+
+
+def _discard(response) -> None:
+    """Release what a streamed response holds when it will never run (``SpooledResponse.close``)."""
+    close = getattr(response, "close", None)
+    if callable(close):
+        close()
+
+
+async def _transfer(response, transfers: ReadTransfers):
+    """The stream under a transfer slot until it ends; 429 with its content released when none frees up in time."""
+    try:
+        admitted = await transfers.acquire()
+    except BaseException:
+        _discard(response)
+        raise
+    if not admitted:
+        _discard(response)
+        return busy()
+    return AdmittedResponse(response, transfers)
+
+
+def _shared(state, name: str, factory):
+    slots = getattr(state, name, None)
+    if slots is None:
+        slots = factory()
+        setattr(state, name, slots)
+    return slots
+
+
 class BoundedReadRoute(NoStoreRoute):
     def get_route_handler(self):
         original = super().get_route_handler()
@@ -79,14 +138,12 @@ class BoundedReadRoute(NoStoreRoute):
         async def handle(request):
             if request.method != "GET":
                 return await original(request)
-            admission = getattr(request.app.state, "trajectory_read_admission", None)
-            if admission is None:
-                admission = request.app.state.trajectory_read_admission = ReadAdmission()
+            admission = _shared(request.app.state, "trajectory_read_admission", ReadAdmission)
+            transfers = _shared(request.app.state, "trajectory_read_transfers", ReadTransfers)
             metrics = get_metrics()
             if not await admission.acquire():
-                metrics.inc("read_rejected")
-                return refused(429, "trajectory_read_busy", "Trajectory viewer is busy; try again shortly")
-            handed_off = False
+                return busy()
+            released = False
             # Explicit content downloads spool to disk in chunks; allow their
             # full content, while still bounding concurrent transfers and preparation time.
             download = ("/payloads/" in self.path or "/blobs/" in self.path or self.path.endswith("/download"))
@@ -106,8 +163,11 @@ class BoundedReadRoute(NoStoreRoute):
                     # The body is complete in memory: the slot is released before it is sent, so a slow client
                     # cannot hold it.
                     return response
-                handed_off = True
-                return AdmittedResponse(response, admission)
+                # A download: its content is spooled and revalidated, so the slot goes back to the JSON reads
+                # and the stream runs under a transfer slot instead.
+                admission.release()
+                released = True
+                return await _transfer(response, transfers)
             except ReadTooLarge as exc:
                 metrics.inc("read_too_large")
                 return refused(413, "trajectory_read_too_large", str(exc))
@@ -121,7 +181,7 @@ class BoundedReadRoute(NoStoreRoute):
                 metrics.inc("read_timed_out")
                 return refused(503, "trajectory_read_timeout", "Trajectory query timed out; try a smaller range")
             finally:
-                if not handed_off:
+                if not released:
                     admission.release()
 
         return handle

@@ -58,7 +58,7 @@ GAUGES = (
     "archive_lag_events", "gc_queue_depth", "trace_db_bytes", "hot_events_rows", "trajectories_degraded",
     "trajectories_blocked", "stale_hot_partitions",
     "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
-    "read_active", "read_waiting",
+    "read_active", "read_waiting", "read_transfers",
 )
 # Measured on the host by push-metrics.sh. They replace the worker's view of the
 # same quantity because they keep flowing while the worker is down.

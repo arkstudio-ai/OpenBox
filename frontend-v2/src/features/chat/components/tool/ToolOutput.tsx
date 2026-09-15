@@ -16,7 +16,7 @@ import {
 } from "../../lib/tool-parse"
 import { ToolDetailText, ToolMiniLabel, ToolPre, ToolSourceLinks } from "./ToolPrimitives"
 import { DiffRows } from "../DiffRows"
-import { QuestionAnswered } from "./QuestionAnswered"
+import { QuestionAnswered, hasQuestionRecord } from "./QuestionAnswered"
 import { editPreview } from "../../lib/diff-preview"
 
 interface LayoutProps {
@@ -339,7 +339,9 @@ export function ToolOutput({ part }: { part: ToolPart | SubtaskPart }) {
     case "agent":
       return <AgentOutput part={part} failed={failed} />
     case "question":
-      return <QuestionAnswered part={part} />
+      // A question or takeover that failed before it was filed has no record;
+      // what went wrong is in the generic detail.
+      return hasQuestionRecord(part) ? <QuestionAnswered part={part} /> : <GenericOutput part={part} failed={failed} />
     default:
       return <GenericOutput part={part} failed={failed} />
   }

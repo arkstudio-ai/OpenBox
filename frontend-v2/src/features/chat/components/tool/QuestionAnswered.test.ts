@@ -5,10 +5,10 @@
 // nothing about which way they were decided.
 import { describe, expect, it } from "vitest"
 import type { ToolPart } from "@/shared/types/api"
-import { questionPairs } from "./QuestionAnswered"
+import { hasQuestionRecord, questionPairs, questionStateKey } from "./QuestionAnswered"
 
-function part(metadata: Record<string, unknown> | null): ToolPart {
-  return { type: "tool", id: "t1", tool: "question", status: "completed", metadata }
+function part(metadata: Record<string, unknown> | null, overrides: Partial<ToolPart> = {}): ToolPart {
+  return { type: "tool", id: "t1", tool: "question", status: "completed", metadata, ...overrides }
 }
 
 describe("reading a question tool's record", () => {
@@ -43,5 +43,23 @@ describe("reading a question tool's record", () => {
 
   it("ignores a malformed payload instead of throwing", () => {
     expect(questionPairs(part({ questions: "not-a-list", answers: 7 }))).toEqual([])
+  })
+})
+
+describe("whether a question part has a record to show", () => {
+  it("does once the question was filed, answered or not", () => {
+    expect(hasQuestionRecord(part({ questions: ["Cache?"], answers: [] }))).toBe(true)
+  })
+
+  it("does while it waits, and after it was closed unanswered", () => {
+    expect(hasQuestionRecord(part({}, { status: "waiting_input" }))).toBe(true)
+    expect(questionStateKey(part({ question_status: "superseded" }))).toBe("question.superseded")
+    expect(hasQuestionRecord(part({ question_status: "expired" }))).toBe(true)
+  })
+
+  it("does not for a takeover that failed before its question was filed", () => {
+    const failed = part({}, { tool: "desktop_takeover", status: "error", error: "desktop unreachable" })
+    expect(questionStateKey(failed)).toBeNull()
+    expect(hasQuestionRecord(failed)).toBe(false)
   })
 })

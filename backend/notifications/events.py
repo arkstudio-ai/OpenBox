@@ -5,7 +5,7 @@ push. Call transactional helpers from the transaction that commits the result.
 """
 from sqlalchemy import select, update
 
-from auth.mobile import lock_mutation, now, utc
+from auth.mobile import lock_mutation, lock_notification, now, utc
 from db.models.push import PushDelivery, PushDevice, PushMessage
 from db.models.question import QuestionCheckpoint, SessionExecution
 from db.models.session import Session
@@ -24,7 +24,7 @@ async def emit(db, *, user_id, workspace_id, kind, event_key, name="", session_i
         return None
     device = await db.get(PushDevice, user_id)
     title, body = render_template(kind, name, device.locale if device else "zh-CN")
-    await lock_mutation(db)
+    await lock_notification(db, user_id)
     # The inbox row is the durable record; the push only points back at it.
     inbox = await add_inbox(db, user_id=user_id, workspace_id=workspace_id, kind=kind,
         title=title, body=body, source_key=event_key,
@@ -54,7 +54,7 @@ async def question_waiting(db, session, question):
 
 
 async def cancel_event(db, user_id, event_key):
-    await lock_mutation(db)
+    await lock_notification(db, user_id)
     await resolve_inbox(db, user_id, event_key)
     ids = select(PushMessage.id).where(PushMessage.user_id == user_id, PushMessage.event_key == event_key)
     await db.execute(update(PushDelivery).where(PushDelivery.message_id.in_(ids),
@@ -126,6 +126,9 @@ async def publish_result(db, job):
 
 async def auth_blocked(db, account, *, session_id=None, user_id=None):
     from db.models.publish_job import PublishJob
+    # One account can notify several recipients in this transaction. Keep
+    # the exclusive guard so recipient locks cannot be taken in reverse order.
+    await lock_mutation(db)
     # A background token-maintenance sweep alone must not push to a workspace.
     if session_id and user_id:
         session = await db.get(Session, session_id)

@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from auth.mobile import (cancel_deliveries, lock_mutation, mobile_transaction,
+from auth.mobile import (cancel_deliveries, lock_notification, mobile_transaction,
                          now, require_mobile, utc)
 from db.models.push import MobileSession, PushDelivery, PushDevice, PushMessage
 from db.models.session import Session
@@ -98,7 +98,7 @@ async def enqueue_notification(db, *, user_id: str, event_key: str, kind: str,
         raise ValueError("Unsupported notification kind")
     if not event_key or len(event_key) > 255 or not 1 <= ttl_seconds <= 86400:
         raise ValueError("Invalid notification event key or TTL")
-    await lock_mutation(db)
+    await lock_notification(db, user_id)
     existing = await db.scalar(select(PushMessage).where(
         PushMessage.user_id == user_id, PushMessage.event_key == event_key,
     ))

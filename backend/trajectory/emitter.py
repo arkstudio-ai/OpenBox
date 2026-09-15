@@ -603,8 +603,18 @@ class Emitter:
             self._note_error(exc)
 
     def _run_heartbeat(self) -> None:
-        """Heartbeat thread: refresh producer.json every HEARTBEAT_SECONDS until the writer is done."""
+        """Heartbeat thread: refresh producer.json every HEARTBEAT_SECONDS until the writer is done.
+
+        Each beat also restarts a writer thread that died. The worker never takes the open file of a
+        heartbeating producer for abandoned, so without this an idle process whose writer died would keep
+        its last lines unconsumed until the next emit restarted the writer.
+        """
         while True:
+            try:
+                with self._lock:
+                    self._restart_if_dead_locked()
+            except Exception as exc:
+                self._note_error(exc)
             self._heartbeat()
             if self._heartbeat_stop.wait(self.HEARTBEAT_SECONDS):
                 return

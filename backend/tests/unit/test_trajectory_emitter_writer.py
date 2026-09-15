@@ -613,6 +613,29 @@ def test_dead_writer_thread_is_restarted_without_losing_queued_events(make_emitt
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_the_heartbeat_restarts_a_dead_writer_without_an_emit(make_emitter):
+    """The worker never takes a heartbeating producer's open file for abandoned, so the heartbeat itself brings a
+    dead writer back: an idle process would otherwise keep its last lines unconsumed."""
+    emitter = make_emitter()
+    emitter.HEARTBEAT_SECONDS = 0.02
+    emitter.ALIVE_CHECK_SECONDS = 3600.0
+    emitter.start()
+    thread = emitter._thread
+    assert emit(emitter, 0) and emitter.flush(5)  # the one alive check of the first emit happens here
+
+    def die():
+        raise SystemExit
+
+    emitter._iterate = die
+    assert wait_for(lambda: not thread.is_alive())
+    del emitter._iterate
+    assert wait_for(lambda: emitter._thread is not thread and emitter.stats()["writer_alive"])
+    assert emit(emitter, 1) and emitter.flush(5)
+    assert [record["event"]["index"] for record in records(emitter) if "event" in record] == [0, 1]
+    assert emitter.stats()["writer_restarts"] >= 1
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_emits_never_raise_when_a_dead_writer_cannot_be_restarted(make_emitter):
     emitter = make_emitter(queue_bytes=4 * KIB)
     emitter.ALIVE_CHECK_SECONDS = 0.0

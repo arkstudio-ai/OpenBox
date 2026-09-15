@@ -108,9 +108,12 @@ async def test_migration_creates_extension_partitioned_events_and_trigram_index(
         assert "USING gin (search_doc gin_trgm_ops)" in search
         local = (await connection.execute(text(
             f"SELECT indexdef FROM pg_indexes WHERE tablename = '{DEFAULT}'"))).scalars().all()
-        for columns in ("(trajectory_id, seq, recorded_on)", "(trajectory_id, seq)", "(trajectory_id, request_id, seq)",
-                        "(trajectory_id, call_id, seq)"):
-            assert sum(definition.endswith(columns) for definition in local) == 1, columns
+        # t0003 dropped (trajectory_id, seq) and (trajectory_id, call_id, seq) together with their partition indexes.
+        assert sorted(definition[definition.index("("):] for definition in local) == [
+            "(trajectory_id, request_id, seq)", "(trajectory_id, seq, recorded_on)"]
+        gc_key = (await connection.execute(text(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_trajectory_gc_queue_storage_key'"))).scalar()
+        assert gc_key.endswith("ON public.trajectory_gc_queue USING btree (storage_key)")
 
 
 def _shape(sync) -> dict:
@@ -181,8 +184,9 @@ async def test_ensure_moves_default_partition_rows_into_the_new_partition(migrat
         assert await partitions.ensure_partitions(connection, date(2026, 9, 20), 0) == [_p("20260920")]
     async with migrated.connect() as connection:
         assert await _placement(connection) == [(1, _p("20260920")), (2, _p("20260920")), (3, DEFAULT)]
+        # The primary key and the request index; t0003 dropped the other two.
         assert (await connection.execute(text(
-            f"SELECT count(*) FROM pg_indexes WHERE tablename = '{_p('20260920')}'"))).scalar() == 4
+            f"SELECT count(*) FROM pg_indexes WHERE tablename = '{_p('20260920')}'"))).scalar() == 2
         assert (await connection.execute(text(
             f"SELECT count(*) FROM pg_constraint WHERE conrelid = '{_p('20260920')}'::regclass AND contype = 'f'"))).scalar() == 1
 

@@ -76,6 +76,18 @@ def test_events_primary_key_includes_partition_key_only_on_postgresql():
     assert "PRIMARY KEY (trajectory_id, seq, recorded_on)" in str(CreateTable(copied).compile(dialect=postgresql.dialect()))
 
 
+def test_hot_events_keep_only_the_request_index_and_the_gc_queue_is_keyed_by_storage_key():
+    """t0003: (trajectory_id, seq) was a prefix of the primary key and (trajectory_id, call_id, seq) had no reader,
+    while ingest and the orphan sweep probe the GC queue by storage key."""
+    def indexes(table):
+        return {index.name: tuple(column.name for column in index.columns) for index in table.indexes}
+
+    assert indexes(models.TrajectoryEvent.__table__) == {
+        "ix_trajectory_events_request": ("trajectory_id", "request_id", "seq")}
+    assert indexes(models.TrajectoryGcQueue.__table__) == {
+        "ix_trajectory_gc_queue_next_attempt": ("next_attempt_at",), "ix_trajectory_gc_queue_storage_key": ("storage_key",)}
+
+
 def test_postgresql_only_objects_are_skipped_on_sqlite():
     index = next(index for index in models.TrajectoryRecord.__table__.indexes
                  if index.name == "ix_trajectory_records_search_trgm")

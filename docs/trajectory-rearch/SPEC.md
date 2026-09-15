@@ -301,6 +301,7 @@ def trace_dialect() -> str                                  # "postgresql" | "sq
 - `backend/alembic_trajectory.ini`: `script_location = trajectory/store/migrations`, `version_table = trajectory_alembic_version`.
 - `env.py` requires `TRAJECTORY_DATABASE_URL` and exits with an error when it is unset or equals `DATABASE_URL`. Never falls back to `DATABASE_URL`.
 - Revision `t0001_initial`: all tables below. PostgreSQL-only DDL (extension, partitioning, GIN indexes) guarded by dialect checks; SQLite gets plain tables and btree indexes.
+- Revision `t0003_event_indexes_gc_key`: drops `ix_trajectory_events_seq` (a prefix of the primary key) and `ix_trajectory_events_call` (no reader) together with their partition indexes, and adds the `trajectory_gc_queue (storage_key)` index; `IF EXISTS` / `IF NOT EXISTS` on both dialects.
 - A test asserts a single head for this chain (copy of `tests/unit/test_migration_heads.py`).
 
 ### 6.3 Tables
@@ -347,8 +348,8 @@ UNIQUE(user_id, session_id). Index (last_activity_at).
 | hints | json nullable (worker-only: `{"preview": {"<field>": "<≤240 chars>"}}`) |
 | content_hash | String(64) |
 | occurred_at, recorded_at | timestamp |
-- PostgreSQL: `PARTITION BY RANGE (recorded_on)`, PK (trajectory_id, seq, recorded_on), daily partitions `trajectory_events_pYYYYMMDD` plus `trajectory_events_default`. Local indexes: (trajectory_id, seq), (trajectory_id, request_id, seq), (trajectory_id, call_id, seq).
-- SQLite: PK (trajectory_id, seq), same secondary indexes.
+- PostgreSQL: `PARTITION BY RANGE (recorded_on)`, PK (trajectory_id, seq, recorded_on), daily partitions `trajectory_events_pYYYYMMDD` plus `trajectory_events_default`. Local index: (trajectory_id, request_id, seq). `t0003` dropped (trajectory_id, seq), a prefix of the primary key, and (trajectory_id, call_id, seq), which no reader used: together 45 % of the index bytes written per event and deleted again by archival.
+- SQLite: PK (trajectory_id, seq), the same secondary index.
 
 **`trajectory_event_keys`** (idempotency registry; survives archival)
 event_id String(128) PK; trajectory_id str; seq BigInteger; content_hash String(64); recorded_at timestamp. Index (recorded_at).
@@ -396,7 +397,7 @@ trajectory_id; record_id String(256); seq BigInteger. PK (trajectory_id, record_
 **Worker bookkeeping**
 - `trajectory_ingest_producers`: producer_id String(128) PK; hostname; pid Integer; boot_id; role String(32); started_at; last_n BigInteger; last_seen_at; goodbye Boolean; abandoned Boolean.
 - `trajectory_ingest_files`: producer_id String(128); file_name String(64); bytes_consumed BigInteger; lines_consumed BigInteger; done Boolean; updated_at. PK (producer_id, file_name).
-- `trajectory_gc_queue`: id BigInteger PK autoincrement; kind String(16) (`key`,`prefix`); storage_key Text; reason String(64); attempts Integer; next_attempt_at timestamp; last_error Text nullable; created_at. Index (next_attempt_at).
+- `trajectory_gc_queue`: id BigInteger PK autoincrement; kind String(16) (`key`,`prefix`); storage_key Text; reason String(64); attempts Integer; next_attempt_at timestamp; last_error Text nullable; created_at. Indexes (next_attempt_at), (storage_key) (`t0003`: ingest probes queued keys for every batch with uploads, and so does the orphan sweep).
 - `trajectory_worker_state`: key String(64) PK; value json; updated_at.
 - `trajectory_audit_outbox`: id BigInteger PK autoincrement; payload json; attempts Integer; next_attempt_at; created_at.
 

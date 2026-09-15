@@ -43,8 +43,8 @@ PRIMARY_KEYS = {
 }
 INDEXES = {
     "session_trajectories": {("last_activity_at",)},
-    "trajectory_events": {("trajectory_id", "seq"), ("trajectory_id", "request_id", "seq"),
-                          ("trajectory_id", "call_id", "seq")},
+    # t0003 dropped (trajectory_id, seq), a prefix of the primary key, and (trajectory_id, call_id, seq): no reader.
+    "trajectory_events": {("trajectory_id", "request_id", "seq")},
     "trajectory_event_keys": {("recorded_at",)},
     "trajectory_segments": {("trajectory_id", "to_seq")},
     "trajectory_payloads": {("trajectory_id", "sha256"), ("source_asset_id",)},
@@ -57,7 +57,7 @@ INDEXES = {
     "trajectory_meta_sessions": {("updated_at", "id"), ("user_id", "updated_at"), ("workspace_id", "updated_at"),
                                  ("parent_id",)},
     "trajectory_meta_assets": {("session_id",)},
-    "trajectory_gc_queue": {("next_attempt_at",)},
+    "trajectory_gc_queue": {("next_attempt_at",), ("storage_key",)},
 }
 UNIQUES = {
     "session_trajectories": {("session_id",), ("user_id", "session_id")},
@@ -214,7 +214,10 @@ def test_offline_sql_carries_postgresql_only_ddl(monkeypatch):
                      "ON trajectory_records USING gin (search_doc gin_trgm_ops)", f"CREATE TABLE {VERSION_TABLE}",
                      f"INSERT INTO {VERSION_TABLE} (version_num) VALUES ('t0001_initial')",
                      # t0002: producers' millisecond recording epochs need 64 bits.
-                     "ALTER TABLE session_trajectories ALTER COLUMN recording_epoch TYPE BIGINT"):
+                     "ALTER TABLE session_trajectories ALTER COLUMN recording_epoch TYPE BIGINT",
+                     # t0003: the redundant event indexes go (with their partition indexes); GC keys get one.
+                     "DROP INDEX IF EXISTS ix_trajectory_events_seq", "DROP INDEX IF EXISTS ix_trajectory_events_call",
+                     "CREATE INDEX IF NOT EXISTS ix_trajectory_gc_queue_storage_key ON trajectory_gc_queue (storage_key)"):
         assert fragment in postgresql, fragment
 
     monkeypatch.setenv("TRAJECTORY_DATABASE_URL", "sqlite+aiosqlite:///offline-trace.db")

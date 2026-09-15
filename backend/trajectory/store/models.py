@@ -119,9 +119,10 @@ class TrajectoryEvent(TraceBase):
     recorded_at: Mapped[datetime] = mapped_column(nullable=False)
     __table_args__ = (
         PartitionedPrimaryKey("trajectory_id", "seq", partition_columns=("recorded_on",)),
-        Index("ix_trajectory_events_seq", "trajectory_id", "seq"),
+        # The only secondary index: every hot row is written and, after archival, deleted again with its index
+        # entries. t0003 dropped (trajectory_id, seq), a prefix of the primary key, and (trajectory_id, call_id,
+        # seq), which no reader used.
         Index("ix_trajectory_events_request", "trajectory_id", "request_id", "seq"),
-        Index("ix_trajectory_events_call", "trajectory_id", "call_id", "seq"),
         {"postgresql_partition_by": "RANGE (recorded_on)"},
     )
 
@@ -360,7 +361,11 @@ class TrajectoryGcQueue(TraceBase):
     next_attempt_at: Mapped[datetime] = mapped_column(nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
-    __table_args__ = (Index("ix_trajectory_gc_queue_next_attempt", "next_attempt_at"),)
+    __table_args__ = (
+        Index("ix_trajectory_gc_queue_next_attempt", "next_attempt_at"),
+        # Ingest probes the queue by key for every batch with uploads, and so does the orphan sweep (t0003).
+        Index("ix_trajectory_gc_queue_storage_key", "storage_key"),
+    )
 
 
 class TrajectoryWorkerState(TraceBase):

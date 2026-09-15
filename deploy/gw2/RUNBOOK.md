@@ -366,7 +366,7 @@ group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=<instance>
 | Metric | Source |
 |---|---|
 | `host_disk_used_percent`, `docker_disk_used_percent` | `df` of `/` and the Docker root |
-| `spool_bytes`, `spool_files`, `spool_oldest_age_seconds`, `spool_quarantined_files` | spool volume on the host (non-empty `*.jsonl` and `*.jsonl.part`) |
+| `spool_bytes`, `spool_files`, `spool_oldest_age_seconds`, `spool_quarantined_files` | spool volume on the host: `spool_bytes` counts every file under `producers/`, `blobs/` and `quarantine/`; files and age count non-empty `*.jsonl` and `*.jsonl.part` |
 | `oom_kills_1h`, `backend_oom_kills_1h` | `journalctl -k` `oom-kill:` lines of the last hour (backend: its container id in the memory cgroup) |
 | `trace_db_bytes` | `pg_database_size('openbox_trace')` |
 | `backend_cpu_percent`, `backend_mem_percent` | `docker stats --no-stream` of the backend container: CPU in percent of one core (the single uvicorn process saturates near 100), memory in percent of its limit (3 GiB) |

@@ -527,7 +527,9 @@
     "executorOutput": "执行输出",
     "modelOutput": "交给模型的结果",
     "modelOutputSame": "与执行输出相同",
-    "produced": "产生的内容"
+    "produced": "产生的内容",
+    "outputTruncated": "此输出只记录了开头和结尾：共 {{size}}，sha256 {{sha256}}",
+    "streamTruncated": "流式输出已达到记录上限，其余内容随调用的最终结果记录"
   },
   "tools": {
     "catalog_one": "{{count}} 个工具",

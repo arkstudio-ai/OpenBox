@@ -1,6 +1,8 @@
 """Production adapter/executor boundaries, independent of external providers."""
 import asyncio
+import hashlib
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +31,24 @@ def context():
     return ToolContext(session_id="session", user_id="owner", message_id="message",
         trace_context=TraceContext(user_id="owner", session_id="session", turn_id="turn",
                                    run_id="run", step_id="step", agent_id="agent"))
+
+
+def allowing_hooks():
+    from agent.hooks import ToolHooks
+    hooks = ToolHooks("session", "owner")
+
+    async def allow(*args):
+        return None
+    hooks.authorize_tool = allow
+    return hooks
+
+
+def trace_events(recorded, call_id="call"):
+    """The recorded facts as stored events, in the order they were enqueued."""
+    return [{"seq": str(index), "version": 1, "type": event["type"], "data": event["data"],
+             "event_id": f"evt_{index}", "occurred_at": "2026-09-15T00:00:00.000Z", "user_id": "owner",
+             "session_id": "session", "source_session_id": "session", "call_id": call_id}
+            for index, event in enumerate(recorded, 1)]
 
 
 def test_request_snapshot_keeps_the_complete_body_without_transport_settings_and_credentials():
@@ -151,9 +171,12 @@ async def test_custom_executor_full_output_slot_is_cleared_between_calls(recorde
 
 
 @pytest.mark.asyncio
-async def test_cumulative_output_pushes_are_recorded_as_suffixes_and_replay_to_the_final_output(recorded):
+async def test_cumulative_output_pushes_are_recorded_as_suffixes_and_replay_to_the_final_output(monkeypatch, recorded):
     from agent.hooks import ToolHooks
+    from trajectory import tool_output
     from trajectory.projector import replay
+    # Without an interval every change is recorded at once.
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
     hooks = ToolHooks("session", "owner")
 
     async def allow(*args):
@@ -177,14 +200,154 @@ async def test_cumulative_output_pushes_are_recorded_as_suffixes_and_replay_to_t
     assert outputs[-1]["stage"] == "executor_result" and outputs[-1]["final"] is True
     assert all("redaction" not in item for item in outputs)
 
-    events = [{"seq": str(index), "version": 1, "type": event["type"], "data": event["data"],
-               "event_id": f"evt_{index}", "occurred_at": "2026-09-15T00:00:00.000Z", "user_id": "owner",
-               "session_id": "session", "source_session_id": "session", "call_id": "call"}
-              for index, event in enumerate(recorded, 1)]
+    events = trace_events(recorded)
     streamed = [event for event in events if event["type"] != "tool.output" or event["data"].get("stage") == "executor_stream"]
     assert replay(streamed[:5])["records"]["tool:call"]["data"]["output"] == "one two three"
     assert replay(streamed)["records"]["tool:call"]["data"]["output"] == "one two three four"
     assert replay(events)["records"]["tool:call"]["data"]["output"] == "one two three four"
+
+
+@pytest.mark.asyncio
+async def test_hundreds_of_pushes_record_at_most_one_change_a_second_and_replay_to_the_output(monkeypatch, recorded):
+    from agent import hooks as hooks_module
+    from bus.events import PART_UPDATED
+    from trajectory.projector import replay
+    published = []
+    monkeypatch.setattr(hooks_module.bus, "publish", lambda kind, data: published.append(kind))
+    line = "x" * 230 + "\n"
+    span = {}
+
+    async def execute(args, ctx):
+        output = ""
+        span["start"] = time.monotonic()
+        for _ in range(400):
+            output += line
+            await ctx.update_output(output)
+            await asyncio.sleep(0.0025)
+        span["end"] = time.monotonic()
+        # The timer records what the burst left pending, within the interval.
+        await asyncio.sleep(1.05)
+        return ToolResult(output=output)
+    await allowing_hooks().wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    final = line * 400
+    assert len(final) // 1024 == 90
+    assert published.count(PART_UPDATED) == 400  # the chat still gets every push
+    events = trace_events(recorded)
+    stream = [event["data"] for event in events if event["data"].get("stage") == "executor_stream"]
+    assert 2 <= len(stream) <= span["end"] - span["start"] + 2
+    assert [item["chunk_index"] for item in stream] == list(range(len(stream)))
+    assert {item["mode"] for item in stream} == {"delta"}
+    assert events[-2]["data"]["stage"] == "executor_result" and events[-1]["type"] == "tool.finished"
+    streamed = [event for event in events if event["data"].get("stage") != "executor_result"]
+    assert replay(streamed)["records"]["tool:call"]["data"]["output"] == final
+    assert replay(events)["records"]["tool:call"]["data"]["output"] == final
+
+
+@pytest.mark.asyncio
+async def test_the_final_result_stays_the_last_output_while_a_flush_is_pending(monkeypatch, recorded):
+    from trajectory import tool_output
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0.05)
+
+    class Args(BaseModel):
+        value: str
+
+    async def execute(args, ctx):
+        await ctx.update_output("first")
+        await ctx.update_output("first second")  # within the interval: its flush is pending
+        return ToolResult(output="first second third")
+
+    async def custom(args, ctx):
+        return await execute(args, ctx)
+    registered = define_tool("example", description="Example", parameters=Args, execute=execute,
+                             sandbox_required=False)
+    hooks = allowing_hooks()
+    await hooks.wrap_execute("example", registered.execute, {"value": "x"}, context(), part_id="call")
+    await hooks.wrap_execute("custom", custom, {}, context(), part_id="custom")
+    await asyncio.sleep(0.12)  # past the interval: the cancelled flush records nothing
+
+    for call_id in ("call", "custom"):
+        outputs = [(event["data"]["stage"], event["data"]["output"]) for event in recorded
+                   if event["type"] == "tool.output" and event["context"].call_id == call_id]
+        assert outputs == [("executor_stream", "first"), ("executor_result", "first second third")]
+    assert recorded[-1]["type"] == "tool.finished"
+
+
+@pytest.mark.asyncio
+async def test_a_2_mib_output_is_recorded_within_the_cap_with_its_size_and_digest(monkeypatch, recorded):
+    from trajectory import tool_output
+    from trajectory.projector import replay
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
+    offloaded = []
+    to_thread = asyncio.to_thread
+
+    async def spy(function, *args):
+        offloaded.append(function.__name__)
+        return await to_thread(function, *args)
+    monkeypatch.setattr(tool_output.asyncio, "to_thread", spy)
+    block = "".join(f"{index:06d} ✓ output line\n" for index in range(1000))
+    produced = {}
+
+    async def execute(args, ctx):
+        output = ""
+        while len(output.encode()) < 2 * 1024 * 1024:
+            output += block
+            await ctx.update_output(output)
+        produced["output"] = output
+        return ToolResult(output=output)
+    await allowing_hooks().wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    encoded = produced["output"].encode()
+    limit = tool_output.TOOL_OUTPUT_MAX_BYTES
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    stream, final = outputs[:-1], outputs[-1]
+    assert sum(len(item["output"].encode()) for item in stream) <= limit
+    assert stream[-1]["stream_truncated"] is True and not any(item.get("stream_truncated") for item in stream[:-1])
+    assert final["stage"] == "executor_result" and final["output_truncated"] is True
+    assert final["output_bytes"] == len(encoded) >= 2 * 1024 * 1024
+    assert final["output_sha256"] == hashlib.sha256(encoded).hexdigest()
+    head = encoded[:limit // 2].decode("utf-8", "ignore")
+    tail = encoded[len(encoded) - (limit - limit // 2):].decode("utf-8", "ignore")
+    omitted = len(encoded) - len(head.encode()) - len(tail.encode())
+    assert final["output"] == head + tool_output.OMITTED.format(size=omitted) + tail
+    assert offloaded == ["_bounded"]
+    assert replay(trace_events(recorded))["records"]["tool:call"]["data"]["output"] == final["output"]
+
+
+@pytest.mark.asyncio
+async def test_bash_without_an_output_callback_records_each_chunk_once(monkeypatch, recorded):
+    import tool.truncation
+    from tool.bash import MAX_STREAM_OUTPUT, bash_tool
+    from trajectory import tool_output
+
+    async def truncate(text):
+        return SimpleNamespace(content=text[:100], truncated=True)
+    monkeypatch.setattr(tool.truncation, "truncate_output", truncate)
+    # Every chunk is recorded (no interval, no cap), so the recorded bytes show the growth directly.
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
+    monkeypatch.setenv("TRAJECTORY_TOOL_OUTPUT_MAX_BYTES", str(64 * 1024 * 1024))
+    chunks = [f"{index:05d} {'y' * 993}\n" for index in range(300)]
+
+    class Sandbox:
+        async def execute_stream(self, **kwargs):
+            for chunk in chunks:
+                yield SimpleNamespace(content=chunk)
+            yield 0
+    ctx = context()
+    ctx.sandbox = Sandbox()
+    ctx.trace_context = ctx.trace_context.derive(call_id="call")
+    result = await bash_tool.execute({"command": "cat big.log"}, ctx)
+
+    full = "".join(chunks)
+    assert result.metadata["exit_code"] == 0 and len(full) > 2 * MAX_STREAM_OUTPUT
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    stream = [item for item in outputs if item["stage"] == "executor_stream"]
+    # Linear: the output up to the chat budget once, then each later chunk once.
+    assert sum(len(item["output"]) for item in stream) == len(full)
+    assert "".join(item["output"] for item in stream) == full
+    assert len(stream) == len(chunks) - MAX_STREAM_OUTPUT // len(chunks[0])
+    assert {item["tool"] for item in stream} == {"bash"}
+    assert outputs[-1]["stage"] == "executor_result" and outputs[-1]["output"] == full
 
 
 def test_responses_final_only_output_is_a_replace_checkpoint():

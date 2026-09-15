@@ -179,18 +179,11 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                     await ctx.update_output(collected_output)
                 else:
                     # The chat preview has a size budget, but observed stdout
-                    # remains part of the execution history after that point.
-                    from trajectory import record, current
-                    trace = getattr(ctx, "trace_context", None) or current()
-                    if trace is not None:
-                        # Past the chat budget the chunks are recorded here: as
-                        # deltas after the callback's pushes, or as the whole
-                        # output when no callback ran.
-                        await record("tool.output", {
-                            "output": chunk.content if ctx._on_output else collected_output,
-                            "mode": "delta" if ctx._on_output else "replace",
-                            "stage": "executor_stream",
-                        }, context=trace)
+                    # remains part of the execution history after that point:
+                    # the call's output stream records each further chunk as
+                    # appended text, never the whole output again.
+                    from trajectory.tool_output import output_stream
+                    await output_stream(ctx, "bash").append(chunk.content, output=collected_output)
 
         ctx._trajectory_full_tool_output = collected_output
         output = collected_output

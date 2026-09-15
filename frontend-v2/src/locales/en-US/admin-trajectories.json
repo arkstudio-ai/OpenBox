@@ -527,7 +527,9 @@
     "executorOutput": "Execution output",
     "modelOutput": "Result given to the model",
     "modelOutputSame": "Same as the execution output",
-    "produced": "Produced"
+    "produced": "Produced",
+    "outputTruncated": "Only the beginning and end of this output are recorded: {{size}} in total, sha256 {{sha256}}",
+    "streamTruncated": "Streamed output reached the recording limit; the rest is recorded with the call's final result"
   },
   "tools": {
     "catalog_one": "{{count}} tool",

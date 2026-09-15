@@ -5,14 +5,24 @@ import '../../../shared/api/auth_store.dart';
 import '../../../shared/appearance/tokens.dart';
 import '../../../shared/appearance/type_scale.dart';
 import '../../../shared/i18n/i18n.dart';
+import '../../onboarding/widgets/starter_cards.dart';
 
 /// Empty-chat greeting (web `EmptyState.tsx`): time-of-day greeting with
 /// username + clickable suggestion cards.
 class ChatEmptyState extends ConsumerWidget {
-  const ChatEmptyState({super.key, required this.onPick, this.projectName});
+  const ChatEmptyState({
+    super.key,
+    required this.onPick,
+    this.projectName,
+    this.starter = false,
+  });
 
   final void Function(String text) onPick;
   final String? projectName;
+
+  /// First-time accounts see industry starter cards instead of the generic
+  /// suggestions (docs/MOBILE_ONBOARDING_PLAN.md L2).
+  final bool starter;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -49,8 +59,10 @@ class ChatEmptyState extends ConsumerWidget {
           ),
         ],
         const SizedBox(height: 24),
-        for (final suggestion in suggestions)
-          if (suggestion is Map<String, dynamic>)
+        if (starter) StarterCards(onPick: onPick),
+        if (!starter)
+          for (final suggestion in suggestions)
+            if (suggestion is Map<String, dynamic>)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Material(

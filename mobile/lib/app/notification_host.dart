@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/inbox/api/inbox_api.dart';
 import '../features/inbox/state/inbox_navigator.dart';
+import '../features/onboarding/state/onboarding_store.dart';
+import '../features/onboarding/widgets/notify_prepermission_page.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/api/providers.dart';
@@ -64,10 +66,43 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
       if (launched != null) {
         ref.read(appVisibleProvider.notifier).state = appIsOnScreen(launched);
       }
+      ref.read(pushControllerProvider).permissionGate = _permissionGate;
       _syncIdentity();
       await native.refresh();
       if (mounted) unawaited(_openPending());
     });
+  }
+
+  /// Onboarding order: welcome sheet → pre-permission page → OS dialog. Waits
+  /// until the person is inside the app and no other guide is on screen.
+  Future<bool> _permissionGate() async {
+    while (mounted) {
+      final location = ref
+          .read(routerProvider)
+          .routeInformationProvider
+          .value
+          .uri
+          .path;
+      if (location.startsWith('/app')) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (!mounted) return false;
+    await ref.read(onboardingProvider.notifier).whenLoaded();
+    final queue = ref.read(guideQueueProvider.notifier);
+    // A guide may start a frame after we look; settle before claiming.
+    for (var i = 0; i < 20 && mounted; i++) {
+      await queue.whenIdle();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (!queue.busy) break;
+    }
+    final context = ref
+        .read(routerProvider)
+        .routerDelegate
+        .navigatorKey
+        .currentContext;
+    if (!mounted || context == null || !context.mounted) return true;
+    final choice = await showNotifyPrePermission(context, ref);
+    return choice ?? true;
   }
 
   void _syncIdentity() {

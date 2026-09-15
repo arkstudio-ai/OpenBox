@@ -79,6 +79,9 @@ flutter:
   assets:
     - assets/locales/zh-CN/
     - assets/locales/en-US/
+    - assets/locales-mobile/zh-CN/
+    - assets/locales-mobile/en-US/
+    - assets/onboarding/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -1,0 +1,173 @@
+{
+  "intro": {
+    "skip": "Skip",
+    "next": "Next",
+    "signIn": "Sign in",
+    "register": "Create account",
+    "s1": {
+      "title": "An AI partner that's always on",
+      "lede": "Marketing, publishing, the small chores of running a shop: say it once, hand it over."
+    },
+    "s2": {
+      "title": "It works on its own cloud computer",
+      "lede": "Douyin, Laike, Xiaohongshu: it opens the sites on its own cloud desktop to publish and pull numbers. You only see results."
+    },
+    "s3": {
+      "title": "Results and reminders come back to your phone",
+      "lede": "Finished videos, tidy numbers, anything that needs your call: all delivered here."
+    }
+  },
+  "welcome": {
+    "title": "Hi {{name}}.",
+    "lede": "Start with one thing.",
+    "start": "Start",
+    "steps": [
+      {
+        "title": "Say what you want",
+        "body": "For example: a 30-second video for the new-client treatment"
+      },
+      {
+        "title": "It gets it done and asks when it needs you",
+        "body": "With a cloud desktop it can open sites, publish and pull numbers"
+      },
+      {
+        "title": "Results land here",
+        "body": "Review, tweak, then send it out"
+      }
+    ]
+  },
+  "starter": {
+    "label": "Try one of these",
+    "industry": {
+      "beauty": "Beauty",
+      "food": "Food",
+      "retail": "Retail"
+    },
+    "cards": {
+      "beauty": [
+        {
+          "title": "Make a 30-second video for the new-client treatment",
+          "hint": "It drafts the script for your OK, then renders"
+        },
+        {
+          "title": "Turn last week's visits and repeat data into one page",
+          "hint": "Read from your linked platforms, one readable page"
+        },
+        {
+          "title": "Write promo copy for the weekend care bundle",
+          "hint": "Three versions, pick one and post"
+        }
+      ],
+      "food": [
+        {
+          "title": "Make a 30-second video for the new dish",
+          "hint": "It drafts the script for your OK, then renders"
+        },
+        {
+          "title": "Turn last week's table turns and delivery numbers into one page",
+          "hint": "Read from your linked platforms, one readable page"
+        },
+        {
+          "title": "Write promo copy for the weekend family set",
+          "hint": "Three versions, pick one and post"
+        }
+      ],
+      "retail": [
+        {
+          "title": "Make a 30-second video for the bestseller",
+          "hint": "It drafts the script for your OK, then renders"
+        },
+        {
+          "title": "Turn last week's sales and stock into one page",
+          "hint": "Read from your linked platforms, one readable page"
+        },
+        {
+          "title": "Write promo copy for member day",
+          "hint": "Three versions, pick one and post"
+        }
+      ]
+    }
+  },
+  "marks": {
+    "skipAll": "Skip all",
+    "next": "Next",
+    "done": "Got it",
+    "step": "{{current}} / {{total}}",
+    "composer": {
+      "title": "How to be clear",
+      "body": "Type / to add context, @ to reference a file from Resources; \"More\" on the right uploads material or a screenshot."
+    },
+    "drawer": {
+      "projects": {
+        "title": "Projects and chats",
+        "body": "Chats are grouped by project; one project for one ongoing thing."
+      },
+      "resources": {
+        "title": "Resources",
+        "body": "Files it produced and material you uploaded live here."
+      },
+      "inbox": {
+        "title": "Inbox",
+        "body": "Task results, system reminders and official notices."
+      },
+      "authCenter": {
+        "title": "Authorizations",
+        "body": "Once you link Douyin and other accounts it can publish and read your numbers. Status and expiry live here."
+      },
+      "skills": {
+        "title": "Skills",
+        "body": "Give it abilities, like making videos or posting to Douyin."
+      },
+      "cron": {
+        "title": "Scheduled tasks",
+        "body": "Have it do something every day or every week."
+      },
+      "billing": {
+        "title": "Plans",
+        "body": "Credits and plans; check usage here."
+      },
+      "desktop": {
+        "title": "Cloud desktop",
+        "body": "Open this workspace's cloud computer to watch it work; tick \"Allow control\" to take over."
+      }
+    },
+    "panelEntry": {
+      "title": "Work panel",
+      "body": "See its cloud desktop, browser, files and changes waiting for your review."
+    },
+    "desktopControl": {
+      "title": "Taking over is this checkbox",
+      "body": "The computer it uses to work the web for you. On a captcha or login, tick \"Allow control\" to act directly; untick when done to hand it back. Unticked, you only watch."
+    }
+  },
+  "notify": {
+    "title": "Only when you're away",
+    "body": "Finished tasks and things that need your call are pushed when the phone is locked or you're in another app. Never while you're here.",
+    "points": [
+      "A video or a report is ready",
+      "It hit a captcha and needs you",
+      "A platform authorization is expiring"
+    ],
+    "enable": "Turn on reminders",
+    "later": "Later"
+  },
+  "takeover": {
+    "title": "It's stuck and needs you",
+    "body": "It can't solve captchas. Follow the three steps below; it waits the whole time.",
+    "steps": [
+      "Tap \"Open cloud desktop\" below",
+      "Pass the check on the cloud desktop",
+      "Come back here and tap \"Done, continue\""
+    ],
+    "done": "Got it"
+  },
+  "authCenter": {
+    "title": "Link your Douyin account first",
+    "body": "Once linked it can publish videos and read your numbers. Scan → confirm in the Douyin app → come back and see \"Authorized\".",
+    "done": "Got it"
+  },
+  "settings": {
+    "replay": "Replay the guided tour",
+    "replayHint": "Back to home and replay the welcome and every hint"
+  }
+}

@@ -524,3 +524,18 @@ completed 且成片可下载（480p→496x864、720p→720x1280、1080p→1080x1
   按 §5.1 同公式折算 480p 0.23 / 720p 0.48 每秒。此前该模型无条目，线上一直"记录不扣费"。
 - 已下架模型的 rates 条目保留，历史任务结算不受影响；`SD2_MODELS` 名字推断常量不动。
 观察：sd2 flat 形状请求体不带 `generate_audio`，那三条成片一律带音轨；ark 渠道关音频生效。
+
+
+## 移动端新手引导 M1（2026-09-15）
+
+按 [MOBILE_ONBOARDING_PLAN.md](MOBILE_ONBOARDING_PLAN.md) 与设计稿实现 M1，全部在 `mobile/lib/features/onboarding/`，不碰 Web。
+- 三层：L1 首启三屏 `IntroBannerPage`（路由 `/intro`，设备级 `bossip:intro_seen`，未登录首次打开落地页时重定向）；
+  L2 欢迎 sheet + 行业示例卡（`StarterCards` 替换空对话页的建议卡直到首次发送，行业 chip 存 `onboarding.industry`）；
+  L3 蒙层 `CoachAnchor`/`showCoachMarks`（自绘遮罩挖空 + 气泡，pushed 为透明路由，返回键可关，多步 n/N，全部跳过），
+  接在侧栏首次打开（8 步）、会话页工作面板入口、云桌面页「允许操控」勾选框、输入框首次聚焦；接管卡片首次带三步说明行；授权中心首次顶部说明卡；设置 → 账号「重新查看新手引导」。
+- 状态：`OnboardingController`（账号级，`GET/PUT /api/auth/me/preferences` 的 `onboarding` 字段，本地 `bossip:onboarding:<userId>` 只做缓存；`loaded` 前不触发任何引导，避免换机重放）；`GuideQueue` 保证同一时刻只有一个引导在屏。
+- 通知权限顺序：`PushController.permissionGate` 由 `NotificationHost` 接上，进入 `/app` 且引导队列空闲后先出 `NotifyPrePermissionPage`，选「开启提醒」才触发系统弹窗，「稍后」本次启动不再问。此前 App 在落地页未登录时就弹系统权限。
+- 后端：`PreferencesUpdate.onboarding`，仓储把它存进 `extra["onboarding"]`；顺带把 `extra` 改为浅合并（原先 Web 外观页每次整体覆盖，会抹掉 `browser_mode`），`GET` 顶层回 `onboarding`。无迁移。
+- 文案：`mobile/assets/locales-mobile/{zh-CN,en-US}/onboarding.json`，`i18n.dart` 新增只读该目录的 `onboarding` 命名空间，`check_locales.sh` 不改。插画 `mobile/assets/onboarding/*.jpg`。
+- 门禁：`composer.dart` 拆出 `attachment_strip.dart` 回到 800 行内；`GlobalObjectKey` 按同一性比较导致运行时拼名找不到锚点，改为按名字复用 `GlobalKey`。
+- 测试：新增 store/队列 6 项、示例卡与蒙层 2 项、首启页 1 项，后端偏好合并 4 项；移动端整套 390 项通过。未做：真机验收（模拟器已跑通欢迎流程）。

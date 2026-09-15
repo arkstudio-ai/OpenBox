@@ -18,6 +18,8 @@ import '../../../shared/models/json.dart';
 import '../../../shared/models/workspace.dart';
 import '../../../shared/utils/error_text.dart';
 import '../../../shared/widgets/spinner.dart';
+import '../../onboarding/state/onboarding_store.dart';
+import '../../onboarding/widgets/coach_mark.dart';
 import '../../workspace/state/active_workspace_store.dart';
 import 'desktop_bridge.dart';
 import 'desktop_subscription_notice.dart';
@@ -261,6 +263,9 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
               case 'connected':
                 _phase = _Phase.connected;
                 _detail = '';
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => unawaited(_controlGuide()),
+                );
               case 'disconnected':
                 _phase = _Phase.closed;
               case 'error':
@@ -370,6 +375,29 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
     _run(jsSetKeyboard(_keyboard));
   }
 
+  /// L3: the first live desktop explains that control = the checkbox.
+  Future<void> _controlGuide() async {
+    if (!mounted) return;
+    final onboarding = ref.read(onboardingProvider.notifier);
+    await onboarding.whenLoaded();
+    if (!mounted || !onboarding.shouldShow(Guides.desktopControl)) return;
+    final i18n = ref.read(i18nProvider);
+    await showCoachMarks(
+      context,
+      ref,
+      guideKey: Guides.desktopControl,
+      steps: [
+        CoachStep(
+          anchor: 'desktop.control',
+          title: i18n.t('onboarding:marks.desktopControl.title'),
+          body: i18n.t('onboarding:marks.desktopControl.body'),
+          radius: 8,
+          padding: 6,
+        ),
+      ],
+    );
+  }
+
   Future<void> _setFullscreen(bool on) async {
     setState(() => _fullscreen = on);
     widget.onImmersive?.call(on);
@@ -450,10 +478,13 @@ class _DesktopViewerState extends ConsumerState<ScopedDesktopViewer>
                         label: i18n.t('workbench:desktop.fullscreen'),
                         onTap: () => unawaited(_setFullscreen(true)),
                       ),
-                      _ControlCheckbox(
-                        on: _control,
-                        label: i18n.t('workbench:desktop.allowControl'),
-                        onTap: () => _toggleControl(!_control),
+                      CoachAnchor(
+                        name: 'desktop.control',
+                        child: _ControlCheckbox(
+                          on: _control,
+                          label: i18n.t('workbench:desktop.allowControl'),
+                          onTap: () => _toggleControl(!_control),
+                        ),
                       ),
                     ],
                   ),

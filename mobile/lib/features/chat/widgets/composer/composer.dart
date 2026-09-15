@@ -11,12 +11,12 @@ import '../../../../shared/models/app_config.dart';
 import '../../../../shared/models/message_part.dart';
 import '../../../../shared/models/resource.dart';
 import '../../../../shared/models/session.dart';
-import '../../../../shared/utils/format.dart';
 import '../../api/mention_api.dart';
 import '../../state/chat_session_controller.dart';
 import '../../state/config_providers.dart';
 import '../../utils/mention.dart';
 import '../../utils/reasoning.dart';
+import 'attachment_strip.dart';
 import 'context_ring.dart';
 import 'mention_menu.dart';
 import 'picker_sheets.dart';
@@ -33,6 +33,7 @@ class Composer extends ConsumerStatefulWidget {
     required this.sessionKey,
     required this.busy,
     required this.onSend,
+    this.onFocus,
     this.session,
     this.onStop,
     this.autofocus = false,
@@ -52,6 +53,9 @@ class Composer extends ConsumerStatefulWidget {
   /// [attachments] are OSS asset ids the backend pulls into the sandbox
   /// before the run starts.
   final Future<void> Function(String text, List<String> attachments) onSend;
+
+  /// Fires each time the text field gains focus (onboarding composer tip).
+  final VoidCallback? onFocus;
   final VoidCallback? onStop;
   final bool autofocus;
 
@@ -104,6 +108,11 @@ class _ComposerState extends ConsumerState<Composer> {
   void initState() {
     super.initState();
     _controller.addListener(_onComposerChanged);
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) widget.onFocus?.call();
   }
 
   @override
@@ -474,7 +483,7 @@ class _ComposerState extends ConsumerState<Composer> {
                     ),
             ),
           if (_attachments.isNotEmpty || _uploading)
-            _AttachmentStrip(
+            AttachmentStrip(
               attachments: _attachments,
               uploading: _uploading,
               onRemove: (resource) =>
@@ -687,114 +696,3 @@ class _SendButton extends StatelessWidget {
 
 /// Pinned resources above the field (web `AttachmentRow`). These are already
 /// in OSS, so a chip appears the moment one is picked — nothing to transfer.
-class _AttachmentStrip extends StatelessWidget {
-  const _AttachmentStrip({
-    required this.attachments,
-    required this.uploading,
-    required this.onRemove,
-  });
-
-  final List<Resource> attachments;
-  final bool uploading;
-  final ValueChanged<Resource> onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return SizedBox(
-      height: 56,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-        children: [
-          if (uploading)
-            Container(
-              width: 56,
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                border: Border.all(color: t.hair),
-                borderRadius: BorderRadius.circular(Radii.lg),
-              ),
-              child: const Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            ),
-          for (final resource in attachments)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.fromLTRB(8, 0, 4, 0),
-              constraints: const BoxConstraints(maxWidth: 190),
-              decoration: BoxDecoration(
-                color: t.n200,
-                border: Border.all(color: t.hair),
-                borderRadius: BorderRadius.circular(Radii.lg),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (resource.kind == 'image' && resource.url.isNotEmpty)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(Radii.sm),
-                      child: Image.network(
-                        resource.url,
-                        width: 26,
-                        height: 26,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            Icon(Icons.image_outlined, size: 15, color: t.n600),
-                      ),
-                    )
-                  else
-                    Icon(
-                      Icons.insert_drive_file_outlined,
-                      size: 15,
-                      color: t.n600,
-                    ),
-                  const SizedBox(width: 7),
-                  Flexible(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          resource.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: FontSizes.xs,
-                            fontWeight: FontWeight.w500,
-                            color: t.ink,
-                          ),
-                        ),
-                        Text(
-                          formatBytes(resource.size),
-                          style: TextStyle(
-                            fontSize: FontSizes.xs2,
-                            color: t.n600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => onRemove(resource),
-                    icon: Icon(Icons.close, size: 13, color: t.n600),
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 26,
-                      height: 26,
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}

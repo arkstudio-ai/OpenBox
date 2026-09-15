@@ -15,6 +15,10 @@ const supportedLangs = ['zh-CN', 'en-US'];
 const _fallbackLang = 'en-US';
 const _langStorageKey = 'bossip:lang';
 
+/// Mobile-only namespaces live under assets/locales-mobile/ and are NOT
+/// mirrored from the web bundle (scripts/check_locales.sh ignores them).
+const _mobileNamespaces = ['onboarding'];
+
 const _namespaces = [
   'admin',
   'admin-billing',
@@ -50,6 +54,12 @@ class I18nBundle {
       for (final ns in _namespaces) {
         final raw = await rootBundle.loadString(
           'assets/locales/$lang/$ns.json',
+        );
+        byNs[ns] = jsonDecode(raw);
+      }
+      for (final ns in _mobileNamespaces) {
+        final raw = await rootBundle.loadString(
+          'assets/locales-mobile/$lang/$ns.json',
         );
         byNs[ns] = jsonDecode(raw);
       }

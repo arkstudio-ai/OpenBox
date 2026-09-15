@@ -11,6 +11,7 @@ import '../../../shared/models/session.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/widgets/brand_mark.dart';
 import '../../inbox/api/inbox_api.dart';
+import '../../onboarding/widgets/coach_mark.dart';
 import '../state/workspace_store.dart';
 import 'session_row.dart';
 import 'user_row.dart';
@@ -140,6 +141,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               // Resource centre, above the scheduled tasks like the web
               // sidebar; opens on the project the tree is showing.
               _NavRow(
+                anchor: 'drawer.resources',
                 icon: Icons.layers_outlined,
                 label: i18n.t('workspace:resourceCenter'),
                 onTap: () {
@@ -152,6 +154,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               // Message centre sits above the authorization centre (web
               // sidebar order); the badge is the cross-workspace unread total.
               _NavRow(
+                anchor: 'drawer.inbox',
                 key: const ValueKey('nav-inbox'),
                 icon: Icons.notifications_none,
                 label: i18n.t('workspace:inbox'),
@@ -162,6 +165,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 },
               ),
               _NavRow(
+                anchor: 'drawer.authCenter',
                 icon: Icons.key_outlined,
                 label: i18n.t('workspace:authCenter'),
                 onTap: () {
@@ -172,6 +176,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               // 技能中心, between the authorization centre and the scheduled
               // tasks — the same order the web sidebar uses.
               _NavRow(
+                anchor: 'drawer.skills',
                 icon: Icons.extension_outlined,
                 label: i18n.t('workspace:skillCenter'),
                 onTap: () {
@@ -181,6 +186,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               ),
               // Scheduled-tasks entry, same spot as the web sidebar.
               _NavRow(
+                anchor: 'drawer.cron',
                 icon: Icons.schedule,
                 label: i18n.t('workspace:scheduledTasks'),
                 onTap: () {
@@ -189,6 +195,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 },
               ),
               _NavRow(
+                anchor: 'drawer.billing',
                 icon: Icons.toll_outlined,
                 label: i18n.t('workspace:billing'),
                 onTap: () {
@@ -197,6 +204,7 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
                 },
               ),
               _NavRow(
+                anchor: 'drawer.desktop',
                 icon: Icons.desktop_windows_outlined,
                 label: i18n.t('workbench:tabs.desktop'),
                 onTap: () {
@@ -206,11 +214,14 @@ class _SessionDrawerState extends ConsumerState<SessionDrawer> {
               ),
               const SizedBox(height: 4),
               Expanded(
-                child: data == null
-                    ? const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : _buildGroups(i18n, t, data, query),
+                child: CoachAnchor(
+                  name: 'drawer.projects',
+                  child: data == null
+                      ? const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : _buildGroups(i18n, t, data, query),
+                ),
               ),
               Divider(color: t.hair, height: 16),
               UserRow(
@@ -596,7 +607,11 @@ class _NavRow extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.badge = 0,
+    this.anchor,
   });
+
+  /// Coach-mark anchor name (onboarding sidebar walkthrough).
+  final String? anchor;
 
   final IconData icon;
   final String label;
@@ -608,7 +623,7 @@ class _NavRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return InkWell(
+    final row = InkWell(
       borderRadius: BorderRadius.circular(Radii.full),
       onTap: onTap,
       child: SizedBox(
@@ -653,5 +668,6 @@ class _NavRow extends StatelessWidget {
         ),
       ),
     );
+    return anchor == null ? row : CoachAnchor(name: anchor!, child: row);
   }
 }

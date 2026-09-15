@@ -12,6 +12,8 @@ import '../features/cron/cron_screen.dart';
 import '../features/inbox/inbox_screen.dart';
 import '../features/inbox/topic_screen.dart';
 import '../features/landing/landing_page.dart';
+import '../features/onboarding/state/onboarding_store.dart';
+import '../features/onboarding/widgets/intro_banner_page.dart';
 import '../features/resources/resources_screen.dart';
 import '../features/resources/utils/upload_flow.dart';
 import '../features/resources/widgets/resource_mention_section.dart';
@@ -45,6 +47,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       final auth = ref.read(authProvider);
       final location = state.matchedLocation;
       if (auth.isLoading) return null;
+      // Install-level intro (docs/MOBILE_ONBOARDING_PLAN.md L1): once per
+      // device, before the landing page, never for a signed-in account.
+      if (location == Paths.landing &&
+          !auth.isAuthenticated &&
+          !ref.read(introSeenProvider)) {
+        return Paths.intro;
+      }
       final inApp = location.startsWith(Paths.app);
       final invitation = location.startsWith('/invite/');
       if ((inApp || invitation) && !auth.isAuthenticated) {
@@ -61,6 +70,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: Paths.intro,
+        builder: (context, state) => const IntroBannerPage(),
+      ),
       GoRoute(
         path: Paths.landing,
         builder: (context, state) => const LandingPage(),

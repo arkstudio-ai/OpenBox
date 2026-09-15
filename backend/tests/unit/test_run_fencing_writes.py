@@ -1,6 +1,6 @@
 """A revoked run cannot commit chat, session or provider state, recording on or off.
 
-Ported from the recorder-only check in test_trajectory_session_runtime.py: the
+Ported from the retired recorder-only checks: the
 same writes are now refused by question.runtime, for superseded runs and for
 runs whose lease was recovered in this process.
 """

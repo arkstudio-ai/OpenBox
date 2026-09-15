@@ -313,7 +313,6 @@ def test_worker_reads_a_version_2_line_as_the_inline_event(make_emitter):
 
 
 def test_blob_minimum_comes_from_trajectory_spool_blob_min_bytes(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setenv("TRAJECTORY_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.delenv("TRAJECTORY_SPOOL_BLOB_MIN_BYTES", raising=False)
     emitter_module.reset_emitter_for_tests()

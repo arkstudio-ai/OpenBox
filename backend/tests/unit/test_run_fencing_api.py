@@ -126,7 +126,6 @@ def emitted(monkeypatch) -> list[dict]:
         if kind == EVENT:
             events.append(orjson.loads(payload))
         return enqueue_encoded(self, kind, payload, routing)
-    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
     monkeypatch.setattr(Emitter, "emit_bytes", emitted_now)
     monkeypatch.setattr(Emitter, "enqueue_encoded", emitted_after_commit)
     return events

@@ -164,6 +164,39 @@ async def test_owned_media_are_asset_references_without_downloads_or_hidden_asse
     assert artifact["data"]["role"] == "input" and artifact["data"]["asset_ref"]["oss_key"] == "assets/u1/asset_video/clip.mp4"
 
 
+async def test_large_file_versions_are_hashed_off_the_loop_and_too_large_pairs_get_no_diff(recording_spool,
+                                                                                         monkeypatch):
+    import hashlib
+    from trajectory import files
+    offloaded = []
+    to_thread = asyncio.to_thread
+
+    async def spy(function, *args):
+        offloaded.append(function.__name__)
+        return await to_thread(function, *args)
+    monkeypatch.setattr(files.asyncio, "to_thread", spy)
+    ctx = _tool_ctx(call_id="call-files")
+    large_before = "".join(f"line {index}\n" for index in range(20_000))
+    large_after = large_before.replace("line 7\n", "line seven\n", 1)
+    huge = "z" * (2 * 1024 * 1024)
+    await files.record_file_change(ctx, "/workspace/notes.txt", operation="edit", before="状态：草稿\n",
+                                   after="状态：完成\n")
+    await files.record_file_change(ctx, "/workspace/large.txt", operation="edit", before=large_before,
+                                   after=large_after)
+    await files.record_file_change(ctx, "/workspace/huge.txt", operation="edit", before=huge, after=huge + "\n")
+
+    small, large, skipped = (item["data"] for item in recording_spool.events("artifact.recorded"))
+    assert offloaded == ["_change", "_change"]
+    assert small["diff"] == "--- /workspace/notes.txt\n+++ /workspace/notes.txt\n@@ -1 +1 @@\n-状态：草稿\n+状态：完成\n"
+    assert small["after"]["sha256"] == hashlib.sha256("状态：完成\n".encode()).hexdigest()
+    assert small["after"]["size_bytes"] == len("状态：完成\n".encode())
+    assert "-line 7\n+line seven\n" in large["diff"] and "diff_skipped" not in large
+    assert large["after"]["sha256"] == hashlib.sha256(large_after.encode()).hexdigest()
+    # Both versions stay recorded; only the diff of a pair over 4 MiB is skipped.
+    assert skipped["diff"] is None and skipped["diff_skipped"] == "too_large"
+    assert (skipped["before"]["size_bytes"], skipped["after"]["size_bytes"]) == (len(huge), len(huge) + 1)
+
+
 async def test_image_and_vision_requests_refuse_a_revoked_run_before_the_provider(state, monkeypatch):
     import openai
     from tool import image_gen, video_analyze

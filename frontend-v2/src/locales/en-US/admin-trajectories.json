@@ -632,7 +632,8 @@
     "source": "Content source",
     "revision": "Revision {{index}}",
     "revisions_one": "{{count}} revision",
-    "revisions_other": "{{count}} revisions"
+    "revisions_other": "{{count}} revisions",
+    "diffTooLarge": "No diff was made: the two versions are too large to compare. Both versions are recorded."
   },
   "state": {
     "baselineNote": "Recording starts here. Earlier activity only appears in this snapshot or in later request inputs; it is not reconstructed as steps.",

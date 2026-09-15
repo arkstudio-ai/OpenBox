@@ -112,6 +112,38 @@ describe("file change artifacts", () => {
     expect(screen.getByText("artifact.absent")).toBeTruthy()
   })
 
+  it("says no diff was made of two very large versions, which both stay recorded", () => {
+    const record = fileRecord({
+      operation: "write",
+      before: {
+        availability: "available",
+        text: "a\n",
+        sha256: "ee55",
+        size_bytes: 3_000_000,
+        source: "executor_content",
+      },
+      after: {
+        availability: "available",
+        text: "b\n",
+        sha256: "ff66",
+        size_bytes: 3_000_000,
+        source: "executor_content",
+      },
+      diff: null,
+      diff_skipped: "too_large",
+    })
+    const env = inspectorEnv([record])
+    render(withInspector(<ArtifactDiffPanel record={record} />, env))
+    expect(screen.getByTestId("trajectory-diff-skipped").textContent).toBe("artifact.diffTooLarge")
+    expect(screen.queryByText("artifact.noDiff")).toBeNull()
+    cleanup()
+    render(withInspector(<ArtifactVersionsPanel record={record} />, env))
+    expect(screen.getByTestId("trajectory-version-before").getAttribute("data-availability")).toBe(
+      "available",
+    )
+    expect(screen.getByTestId("trajectory-version-after").getAttribute("data-availability")).toBe("available")
+  })
+
   it("lists every recorded write up to the position", () => {
     const first = {
       artifact_type: "file_diff",

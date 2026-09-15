@@ -25,6 +25,8 @@ export interface FileRevision {
   before: FileVersion
   after: FileVersion
   diff: FieldState
+  /** Why no diff was made of two recorded versions ("too_large"). */
+  diffSkipped: string | null
 }
 
 export interface FileDiffArtifact extends Omit<FileRevision, "seq" | "occurredAt"> {
@@ -66,6 +68,7 @@ function revisionFrom(record: ViewRecord, data: Record<string, unknown>) {
     before: version(record, data, "before"),
     after: version(record, data, "after"),
     diff: diffField(record, data),
+    diffSkipped: str(data.diff_skipped),
   }
 }
 

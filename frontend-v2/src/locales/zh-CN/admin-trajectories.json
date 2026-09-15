@@ -632,7 +632,8 @@
     "source": "内容来源",
     "revision": "第 {{index}} 次修改",
     "revisions_one": "{{count}} 次修改",
-    "revisions_other": "{{count}} 次修改"
+    "revisions_other": "{{count}} 次修改",
+    "diffTooLarge": "未生成差异：两个版本过大，无法比较。两个版本均已记录。"
   },
   "state": {
     "baselineNote": "从这里开始记录。更早的活动只出现在此快照或之后请求的输入中，不会补造成执行步骤。",

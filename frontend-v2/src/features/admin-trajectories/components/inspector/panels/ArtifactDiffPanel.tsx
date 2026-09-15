@@ -12,6 +12,8 @@ import { ValueView } from "../ValueView"
 interface DiffBodyProps {
   diff: FieldState
   beforeMissing: boolean
+  /** Why the recorder made no diff of two recorded versions, e.g. "too_large". */
+  skipped: string | null
 }
 
 interface RevisionItemProps {
@@ -19,10 +21,16 @@ interface RevisionItemProps {
   index: number
 }
 
-function DiffBody({ diff, beforeMissing }: DiffBodyProps) {
+function DiffBody({ diff, beforeMissing, skipped }: DiffBodyProps) {
   const { t } = useTranslation(NS)
   if (diff.state === "available" && typeof diff.value === "string")
     return <UnifiedDiffView diff={diff.value} />
+  if (skipped)
+    return (
+      <p className="text-n600 text-xs" data-testid="trajectory-diff-skipped">
+        {t("artifact.diffTooLarge")}
+      </p>
+    )
   return (
     <div className="flex flex-col gap-1">
       <ValueView field={diff} />
@@ -42,7 +50,11 @@ function RevisionItem({ revision, index }: RevisionItemProps) {
         <InstantValue iso={revision.occurredAt} />
       </summary>
       <div className="mt-2">
-        <DiffBody diff={revision.diff} beforeMissing={revision.before.field.state === "not_recorded"} />
+        <DiffBody
+          diff={revision.diff}
+          beforeMissing={revision.before.field.state === "not_recorded"}
+          skipped={revision.diffSkipped}
+        />
       </div>
     </details>
   )
@@ -64,7 +76,11 @@ export function ArtifactDiffPanel({ record }: PanelProps) {
           ) : undefined
         }
       >
-        <DiffBody diff={file.diff} beforeMissing={file.before.field.state === "not_recorded"} />
+        <DiffBody
+          diff={file.diff}
+          beforeMissing={file.before.field.state === "not_recorded"}
+          skipped={file.diffSkipped}
+        />
       </Section>
       {revisions.length > 1 && (
         <Section title={t("artifact.revisions", { count: revisions.length })}>

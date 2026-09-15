@@ -88,11 +88,10 @@ def replace_nul(value):
     return value
 
 
-def redact_data(data: dict, raw: bytes | None = None) -> dict:
+def prepare_data(data: dict, raw: bytes | None = None) -> dict:
     """Step 1: the NUL replacement the databases need; nothing else changes the content.
 
     ``raw`` is the spool line: a NUL can only be present when it has a ``\\u0000`` escape.
-    The name stays until ``ingest.py``, its only caller, is next edited.
     """
     if raw is None or b"\\u0000" in raw:
         data = replace_nul(data)

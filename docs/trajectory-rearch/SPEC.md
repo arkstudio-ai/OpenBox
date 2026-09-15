@@ -533,7 +533,7 @@ Dedupe (keep-first): look up `trajectory_event_keys`. Same trajectory and hash �
 
 ### 8.4 Content preparation (`content.py`)
 Order per event:
-1. Replace U+0000 in strings and keys (`replace_nul`; PostgreSQL text and jsonb cannot store it). Nothing else changes the content: there is no redaction (§5.5).
+1. `prepare_data`: replace U+0000 in strings and keys (`replace_nul`; PostgreSQL text and jsonb cannot store it). Nothing else changes the content: there is no redaction (§5.5).
 2. Compute `hints.preview` for fields the projector previews (`text`, `content`, `input`, `prompt`, `questions`, `requested_arguments`, `arguments`, `summary`, and result fields `output`, `result`, `answers`, `model_output`) using the projector's `_preview` on the unexternalized values.
 3. Strip producer helper keys (`media_sources`, `asset_ref`, `source_root_session_id`) after using them.
 4. Media:

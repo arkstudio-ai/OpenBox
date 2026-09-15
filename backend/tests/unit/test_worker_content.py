@@ -9,7 +9,7 @@ from trajectory.storage import decode_blob
 from trajectory.types import canonical, digest
 from trajectory.worker.content import (BLOB_UNAVAILABLE, AssetView, ContentPlanner, ExistingPayload,
     TrajectoryContent, dedupe_key, extract_media, final_hints, hash_event, has_media_markers, media_sources,
-    normalize_media_type, previews, redact_data, strip_helpers)
+    normalize_media_type, previews, prepare_data, strip_helpers)
 
 TID = "trj_content"
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4
@@ -53,12 +53,12 @@ def test_data_preparation_replaces_nul_and_keeps_secrets_verbatim():
     data = {"api_key": "sk-1234567890abcdef", "text": "Bearer abc.def", "nul\x00key": "a\x00b"}
     raw = json.dumps(data).encode()
     assert b"\\u0000" in raw
-    result = redact_data(data, raw)
+    result = prepare_data(data, raw)
     assert result["api_key"] == "sk-1234567890abcdef"
     assert result["text"] == "Bearer abc.def"
     assert result["nul�key"] == "a�b"
     # Without a \\u0000 escape in the line, the NUL pass is skipped.
-    assert redact_data({"text": "plain"}, b'{"text":"plain"}') == {"text": "plain"}
+    assert prepare_data({"text": "plain"}, b'{"text":"plain"}') == {"text": "plain"}
 
 
 def test_previews_helpers_and_hints():

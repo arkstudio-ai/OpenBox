@@ -2,7 +2,7 @@
 
 A pass scans the spool, takes the next ready file of every producer (oldest
 first) and ingests it in batches. A batch is prepared outside the database:
-decoding, redaction and content preparation (``content.py``) run in a thread,
+decoding and content preparation (``content.py``) run in a thread,
 blob uploads are idempotent (content-addressed keys). The batch is then
 applied in one trace transaction together with the file offset, so a crash
 anywhere replays it from the committed offset, and keep-first event keys
@@ -199,7 +199,7 @@ def parse_batch(lines) -> ParsedBatch:
             event = item.event = record["event"]
             item.invalid = validate_event(event)
             if item.invalid is None:
-                data = event["data"] = content.redact_data(event["data"], line.data)
+                data = event["data"] = content.prepare_data(event["data"], line.data)
                 item.content_hash = content.hash_event(event)
                 item.helpers = content.strip_helpers(data)
                 item.occurred_at = meta.parse_time(event["occurred_at"])

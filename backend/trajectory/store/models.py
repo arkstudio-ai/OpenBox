@@ -112,7 +112,7 @@ class TrajectoryEvent(TraceBase):
     call_id: Mapped[str | None] = mapped_column(String(128))
     agent_id: Mapped[str | None] = mapped_column(String(128))
     context: Mapped[dict] = mapped_column(nullable=False)  # non-null identity fields
-    data: Mapped[dict] = mapped_column(nullable=False)  # sanitized; externalized values replaced by references
+    data: Mapped[dict] = mapped_column(nullable=False)  # as recorded; externalized values replaced by references
     hints: Mapped[dict | None] = mapped_column()  # worker-only {"preview": {field: text}}
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(nullable=False)

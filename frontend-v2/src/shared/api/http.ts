@@ -9,6 +9,8 @@ export class ApiError extends Error {
   readonly code: string
   /** Numbers a quota refusal carries, so the copy can say how far over it is. */
   readonly meta: Record<string, unknown>
+  /** The refusal's Retry-After header (delay-seconds or an HTTP date); null when it sent none. */
+  retryAfter: string | null = null
 
   constructor(status: number, code: string, message: string, meta: Record<string, unknown> = {}) {
     super(message)
@@ -43,7 +45,9 @@ async function toApiError(res: Response): Promise<ApiError> {
   } catch {
     // non-JSON body — keep statusText
   }
-  return new ApiError(res.status, code, detail, meta)
+  const error = new ApiError(res.status, code, detail, meta)
+  error.retryAfter = res.headers.get("Retry-After")
+  return error
 }
 
 async function doFetch(path: string, options: RequestInit, token: string | null): Promise<Response> {

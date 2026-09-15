@@ -6,6 +6,8 @@ import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../../../shared/widgets/fold.dart';
+import '../../../onboarding/state/onboarding_store.dart';
+import '../../../onboarding/widgets/first_seen_hint.dart';
 
 /// Full evidence for video script/segment approvals (web
 /// `VideoApprovalDetail`). Unknown question details intentionally render
@@ -46,6 +48,12 @@ class VideoApprovalDetail extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            FirstSeenHint(
+              guide: Guides.cardVideoReview,
+              title: i18n.t('onboarding:m2.cards.videoReview.title'),
+              body: i18n.t('onboarding:m2.cards.videoReview.body'),
+              compact: true,
+            ),
             if (script != null) ...[
               Text(
                 i18n.t('chat:question.videoApproval.fullScript'),

@@ -21,6 +21,7 @@ class MineList extends ConsumerWidget {
     required this.showMcp,
     required this.actions,
     required this.onBrowseStore,
+    this.onCreateChat,
     required this.onConnect,
     required this.onDisconnect,
     required this.onRemoveServer,
@@ -33,6 +34,9 @@ class MineList extends ConsumerWidget {
   final bool showMcp;
   final SkillGroupActions actions;
   final VoidCallback onBrowseStore;
+
+  /// Onboarding M2: second way out of the empty state.
+  final VoidCallback? onCreateChat;
   final void Function(String name) onConnect;
   final void Function(String name) onDisconnect;
   final void Function(String name) onRemoveServer;
@@ -63,6 +67,16 @@ class MineList extends ConsumerWidget {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
             ),
+            const SizedBox(height: 8),
+            Text(
+              i18n.t('onboarding:m2.skillsEmpty.body'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: FontSizes.sm,
+                color: t.n800,
+                height: 1.5,
+              ),
+            ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: onBrowseStore,
@@ -78,6 +92,17 @@ class MineList extends ConsumerWidget {
                 style: const TextStyle(fontSize: FontSizes.sm),
               ),
             ),
+            if (onCreateChat != null) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                key: const Key('skills-empty-create-chat'),
+                onPressed: onCreateChat,
+                child: Text(
+                  i18n.t('onboarding:m2.skillsEmpty.chat'),
+                  style: TextStyle(fontSize: FontSizes.sm, color: t.a800),
+                ),
+              ),
+            ],
           ],
         ),
       );

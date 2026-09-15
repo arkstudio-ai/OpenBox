@@ -169,5 +169,46 @@
   "settings": {
     "replay": "Replay the guided tour",
     "replayHint": "Back to home and replay the welcome and every hint"
+  },
+  "m2": {
+    "inbox": {
+      "title": "Three kinds of messages land here",
+      "body": "Task results open the conversation; system reminders cover expiring authorizations and takeovers; official notices are features and announcements.",
+      "done": "Got it"
+    },
+    "cronEmpty": {
+      "body": "Say in any chat \"every morning at nine, tidy up yesterday's numbers for me\" and it sets up the schedule; results go back to that chat.",
+      "cta": "Create from chat"
+    },
+    "skillsEmpty": {
+      "body": "Skills are abilities you give it: making short videos, posting to Douyin, reading your numbers.",
+      "chat": "Create from chat"
+    },
+    "resourcesEmpty": {
+      "body": "Files here come from two places: what chats produce (videos, reports, copy) and what you upload. Type @ in a message to reference one."
+    },
+    "credits": {
+      "title": "Credits",
+      "body": "Videos, images and chat all draw credits by usage. Tap here for usage details and plans."
+    },
+    "cards": {
+      "done": "Got it",
+      "question": {
+        "title": "It's waiting for your answer",
+        "body": "It stays paused until you answer. Pick an option or write your own."
+      },
+      "plan": {
+        "title": "Confirm before it runs",
+        "body": "These are the steps it intends to take. Run as planned, ask for a rewrite, or edit."
+      },
+      "permission": {
+        "title": "This step needs your nod",
+        "body": "\"Allow\" lets this one through; \"Always allow\" stops asking. Unsure? Deny."
+      },
+      "videoReview": {
+        "title": "Review the cut before posting",
+        "body": "Watch, change lines, regenerate any segment here; publish when you're happy."
+      }
+    }
   }
 }

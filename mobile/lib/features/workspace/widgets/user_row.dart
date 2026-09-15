@@ -9,6 +9,7 @@ import '../../../shared/i18n/i18n.dart';
 import '../../../shared/router/paths.dart';
 import '../../../shared/utils/format.dart';
 import '../../billing/state/billing_providers.dart';
+import '../../onboarding/widgets/coach_mark.dart';
 
 /// Bottom user row of the drawer (web `UserRow.tsx`): avatar, username,
 /// `role · N sessions`; tap opens Settings / Sign out.
@@ -74,7 +75,9 @@ class UserRow extends ConsumerWidget {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        Text(
+                        CoachAnchor(
+                          name: 'drawer.credits',
+                          child: Text(
                           credits.hasError
                               ? i18n.t('workspace:creditsUnavailable')
                               : i18n.t(
@@ -91,6 +94,7 @@ class UserRow extends ConsumerWidget {
                             fontSize: FontSizes.xs,
                             color: t.n600,
                           ),
+                        ),
                         ),
                       ],
                     ),

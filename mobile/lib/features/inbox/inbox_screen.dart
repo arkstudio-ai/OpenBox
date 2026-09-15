@@ -8,6 +8,8 @@ import '../../shared/i18n/i18n.dart';
 import '../../shared/models/inbox.dart';
 import '../../shared/widgets/section_tabs.dart';
 import '../../shared/widgets/toast.dart';
+import '../onboarding/state/onboarding_store.dart';
+import '../onboarding/widgets/first_seen_hint.dart';
 import '../workspace/state/active_workspace_store.dart';
 import 'api/inbox_api.dart';
 import 'state/inbox_navigator.dart';
@@ -157,6 +159,15 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: FirstSeenHint(
+              guide: Guides.inbox,
+              title: i18n.t('onboarding:m2.inbox.title'),
+              body: i18n.t('onboarding:m2.inbox.body'),
+              margin: EdgeInsets.zero,
+            ),
+          ),
           SectionTabs(
             labels: {
               '': label('all', ''),

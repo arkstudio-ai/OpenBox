@@ -8,6 +8,8 @@ import '../../../../shared/events/bus.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
 import '../../../../shared/widgets/toast.dart';
+import '../../../onboarding/state/onboarding_store.dart';
+import '../../../onboarding/widgets/first_seen_hint.dart';
 import '../../api/chat_api.dart';
 import '../../state/pending_store.dart';
 import '../../state/question_draft.dart';
@@ -165,6 +167,12 @@ class _QuestionDockState extends ConsumerState<QuestionDock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          FirstSeenHint(
+            guide: Guides.cardQuestion,
+            title: i18n.t('onboarding:m2.cards.question.title'),
+            body: i18n.t('onboarding:m2.cards.question.body'),
+            compact: true,
+          ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [

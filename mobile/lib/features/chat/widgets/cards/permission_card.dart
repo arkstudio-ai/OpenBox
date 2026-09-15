@@ -5,6 +5,8 @@ import '../../../../shared/appearance/tokens.dart';
 import '../../../../shared/appearance/type_scale.dart';
 import '../../../../shared/i18n/i18n.dart';
 import '../../../../shared/models/interaction.dart';
+import '../../../onboarding/state/onboarding_store.dart';
+import '../../../onboarding/widgets/first_seen_hint.dart';
 import '../../api/chat_api.dart';
 import '../../utils/tool_map.dart';
 
@@ -33,6 +35,12 @@ class PermissionCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          FirstSeenHint(
+            guide: Guides.cardPermission,
+            title: i18n.t('onboarding:m2.cards.permission.title'),
+            body: i18n.t('onboarding:m2.cards.permission.body'),
+            compact: true,
+          ),
           Text(
             i18n.t('chat:permission.title'),
             style: TextStyle(

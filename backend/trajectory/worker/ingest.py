@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import bindparam, column, insert, select, text, update, values
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as PoolTimeoutError
 
 from core.log import create_logger
@@ -1549,13 +1549,28 @@ class _Transaction:
                 {"kind": "key", "storage_key": key, "reason": "content_not_referenced", "attempts": 0,
                  "next_attempt_at": self.now, "created_at": self.now} for key in garbage])
         self.gc_keys = []
-        for state in self.states.values():
-            if state.dirty and not state.tombstoned:
-                await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == state.id).values(
-                    next_seq=state.next_seq, committed_seq=state.committed_seq, event_count=state.event_count,
-                    stored_bytes=state.stored_bytes, recording_status=state.recording_status,
-                    recording_epoch=state.recording_epoch, last_activity_at=state.last_activity_at,
-                    updated_at=self.now).execution_options(synchronize_session=False))
+        dirty = [state for state in self.states.values() if state.dirty and not state.tombstoned]
+        table = SessionTrajectory.__table__
+        names = ("next_seq", "committed_seq", "event_count", "stored_bytes", "recording_status",
+                 "recording_epoch", "last_activity_at", "updated_at")
+        for chunk in _chunks(dirty):
+            rows = [{"id": state.id, **{name: getattr(state, name) for name in names[:-1]}, "updated_at": self.now}
+                    for state in chunk]
+            if db.bind.dialect.name == "postgresql":
+                # These rows are already locked by begin(). One UPDATE per
+                # bounded group replaces a database round trip per session,
+                # shortening the time ingestion keeps projection waiting.
+                pending = values(*(column(name, table.c[name].type) for name in ("id", *names)),
+                                 name="ingest_states").data([tuple(row[name] for name in ("id", *names)) for row in rows])
+                await db.execute(table.update().where(table.c.id == pending.c.id)
+                                 .values({name: pending.c[name] for name in names}))
+            else:
+                # SQLite has no named VALUES columns in UPDATE FROM. Its local
+                # driver can still apply the group with one executemany call.
+                await db.execute(table.update().where(table.c.id == bindparam("state_id"))
+                                 .values({name: bindparam(name) for name in names}),
+                                 [{"state_id": row["id"], **{name: row[name] for name in names}} for row in rows])
+            for state in chunk:
                 state.mark_written()
 
     # Lines ----------------------------------------------------------------------------

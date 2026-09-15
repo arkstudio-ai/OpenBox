@@ -12,15 +12,17 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select, text
+from sqlalchemy import event as sql_events, func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from trajectory.store.database import close_trace_engine, init_trace_engine, trace_read_session, trace_session
-from trajectory.store.models import SessionTrajectory, TrajectoryEvent, TrajectoryIngestFile, TrajectoryPayload
+from trajectory.store.models import (SessionTrajectory, TrajectoryCheckpoint, TrajectoryEvent, TrajectoryIngestFile,
+    TrajectoryPayload, TrajectoryRecordEvent)
 from trajectory.worker.ingest import IngestService
 from trajectory.worker.lock import PostgresWriterLock
+from trajectory.worker.projection import ProjectionService
 from trajectory.worker.settings import WorkerSettings
 from tests.unit.test_worker_ingest import Harness, SpoolWriter, event, events_of
 from tests.unit.test_worker_services import _services
@@ -207,3 +209,112 @@ async def test_services_run_one_task_per_loop_and_resume_without_duplicates(migr
     assert [row.event_id for row in stored[1:]] == [f"r{index}" for index in range(5)]
     async with trace_session() as db:
         assert await db.scalar(select(func.count()).select_from(TrajectoryIngestFile)) == 0
+
+
+async def test_session_counters_are_batched_and_rollback_with_events_and_offsets(migrated, settings):
+    harness = Harness(settings)
+    sessions = 501  # Cross the 500-row UPDATE boundary.
+    harness.writer.events(*(event(session=f"ses_batch_{i}", event_id=f"seed_{i}") for i in range(sessions)))
+    assert (await harness.run())["events"] == sessions
+    async with trace_session() as db:
+        await db.execute(update(SessionTrajectory).values(projected_seq=1, checkpoint_seq=1))
+
+    statements = []
+    fail_second = False
+
+    def observe(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.startswith("UPDATE session_trajectories SET"):
+            statements.append(statement)
+            if fail_second and len(statements) == 2:
+                raise RuntimeError("batch update interrupted before the second group")
+
+    sql_events.listen(migrated.sync_engine, "before_cursor_execute", observe)
+    try:
+        harness.writer.events(*(event(session=f"ses_batch_{i}", event_id=f"next_{i}_{j}")
+                                for i in range(sessions) for j in range(i % 3 + 1)))
+        assert (await harness.run())["events"] == sum(i % 3 + 1 for i in range(sessions))
+        assert len(statements) == 2 and all("FROM (VALUES" in statement for statement in statements)
+        async with trace_session() as db:
+            rows = {row.session_id: row for row in (await db.scalars(select(SessionTrajectory))).all()}
+            before_events = await db.scalar(select(func.count()).select_from(TrajectoryEvent))
+        for i in range(sessions):
+            row = rows[f"ses_batch_{i}"]
+            assert (row.committed_seq, row.next_seq, row.event_count) == (3 + i % 3, 4 + i % 3, 3 + i % 3)
+            assert (row.projected_seq, row.checkpoint_seq) == (1, 1)
+
+        statements.clear()
+        fail_second = True
+        harness.writer.events(*(event(session=f"ses_batch_{i}", event_id=f"retry_{i}") for i in range(sessions)))
+        assert (await harness.run())["failed_batches"] == 1
+        async with trace_session() as db:
+            assert await db.scalar(select(func.count()).select_from(TrajectoryEvent)) == before_events
+            counters = {row.session_id: row.committed_seq for row in (await db.scalars(select(SessionTrajectory))).all()}
+            assert counters == {key: row.committed_seq for key, row in rows.items()}
+            assert not await db.scalar(select(func.count()).select_from(TrajectoryIngestFile))
+
+        fail_second = False
+        for failure in harness.service._failures.values():
+            failure.next_at = 0
+        assert (await harness.run())["events"] == sessions
+        async with trace_session() as db:
+            assert await db.scalar(select(func.count()).select_from(TrajectoryEvent)) == before_events + sessions
+            for row in (await db.scalars(select(SessionTrajectory))).all():
+                assert row.committed_seq == counters[row.session_id] + 1
+                assert row.next_seq == row.committed_seq + 1
+                assert (row.projected_seq, row.checkpoint_seq) == (1, 1)
+    finally:
+        sql_events.remove(migrated.sync_engine, "before_cursor_execute", observe)
+
+
+async def test_projection_skips_busy_sessions_and_retries_without_duplicate_links(migrated, settings):
+    harness = Harness(settings)
+    harness.writer.events(event(session="ses_busy", event_id="busy"), event(session="ses_free", event_id="free"))
+    await harness.run()
+    service = ProjectionService(settings, blob_store=harness.store, metrics=harness.metrics)
+    async with trace_session() as db:
+        trajectories = (await db.scalars(select(SessionTrajectory).order_by(SessionTrajectory.id))).all()
+    async with trace_session() as blocker:
+        await blocker.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectories[0].id).with_for_update())
+        assert await asyncio.wait_for(service.run_once(), 2) == 2
+        for _ in range(3):
+            assert await asyncio.wait_for(service.run_once(), 2) == 0
+        assert not service._retry  # Lock contention is not a failed projection.
+        async with trace_session() as db:
+            assert (await db.get(SessionTrajectory, trajectories[0].id)).projected_seq == 0
+            assert (await db.get(SessionTrajectory, trajectories[1].id)).projected_seq == 2
+
+    assert await service.run_once() == 2
+    async with trace_session() as db:
+        assert all(row.projected_seq == row.committed_seq == 2
+                   for row in (await db.scalars(select(SessionTrajectory))).all())
+        links = (await db.execute(select(TrajectoryRecordEvent))).all()
+        assert links
+        before_links = await db.scalar(select(func.count()).select_from(TrajectoryRecordEvent))
+    assert await service.run_once() == 0
+    async with trace_session() as db:
+        assert await db.scalar(select(func.count()).select_from(TrajectoryRecordEvent)) == before_links
+
+
+@pytest.mark.parametrize("repair", [False, True])
+async def test_checkpoint_creation_and_repair_skip_busy_rows_then_catch_up(migrated, settings, repair):
+    harness = Harness(settings)
+    harness.writer.events(event(event_id="checkpoint_input"))
+    await harness.run()
+    trajectory, _ = await events_of("ses_1")
+    service = ProjectionService(replace(settings, checkpoint_interval=1),
+                                blob_store=harness.store, metrics=harness.metrics)
+    assert await service.project(trajectory.id) == 2
+    if repair:
+        assert await service.maybe_checkpoint(trajectory.id)
+        async with trace_session() as db:
+            await db.execute(update(SessionTrajectory).values(checkpoint_seq=0))
+    async with trace_session() as blocker:
+        await blocker.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory.id).with_for_update())
+        assert await asyncio.wait_for(service.maybe_checkpoint(trajectory.id), 2) is False
+        assert not service._retry
+        async with trace_session() as db:
+            assert (await db.get(SessionTrajectory, trajectory.id)).checkpoint_seq == 0
+    assert await service.maybe_checkpoint(trajectory.id) is (not repair)
+    async with trace_session() as db:
+        assert (await db.get(SessionTrajectory, trajectory.id)).checkpoint_seq == 2
+        assert await db.scalar(select(func.count()).select_from(TrajectoryCheckpoint)) == 1

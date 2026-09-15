@@ -13,8 +13,9 @@ blocks and tool output once their record closes), together with its (record,
 event) links and the session summary.
 
 Blob uploads run outside database transactions. The write transaction locks
-the trajectory row and gives up when the trajectory was deleted, expired or
-projected by someone else in the meantime.
+the trajectory row without waiting; a busy row is retried on a later rotating
+pass. It gives up when the trajectory was deleted, expired or projected by
+someone else in the meantime.
 """
 import asyncio
 import contextlib
@@ -75,6 +76,18 @@ async def _background(db) -> None:
     """Let this worker transaction outlast the request statement timeout (PostgreSQL only)."""
     if db.bind.dialect.name == "postgresql":
         await db.execute(text(f"SET LOCAL statement_timeout = '{WORKER_STATEMENT_TIMEOUT}'"))
+
+
+async def _lock_trajectory(db, trajectory_id: str):
+    """A live row locked for writing, or None when busy/gone; later passes retry busy rows.
+
+    Projection changes no referenced key, so NO KEY UPDATE also lets inserts
+    check child-row foreign keys. SKIP LOCKED prevents one ingestion batch
+    from holding up the rest of this projection/checkpoint pass.
+    """
+    return await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id,
+        SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None))
+        .with_for_update(key_share=True, skip_locked=True).execution_options(populate_existing=True))
 
 
 def _insert(db, model):
@@ -377,10 +390,8 @@ class ProjectionService:
             try:
                 async with trace_session() as db:
                     await _background(db)
-                    locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id)
-                                             .with_for_update())
-                    if (locked is None or locked.deleted_at is not None or locked.content_expired_at is not None
-                            or locked.projected_seq != base):
+                    locked = await _lock_trajectory(db, trajectory_id)
+                    if locked is None or locked.projected_seq != base:
                         return 0
                     inserted = 0
                     if blobs:
@@ -560,8 +571,9 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
         if await db.get(TrajectoryCheckpoint, (trajectory_id, through)) is not None:
             # Stored without moving checkpoint_seq (a repair, say): record it, or the
             # trajectory would stay a candidate of every pass.
-            await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == trajectory_id,
-                SessionTrajectory.checkpoint_seq < through).values(checkpoint_seq=through))
+            locked = await _lock_trajectory(db, trajectory_id)
+            if locked is not None and locked.checkpoint_seq < through:
+                locked.checkpoint_seq = through
             return False
         await _background(db)
         state = await expanded_state(db, trajectory, through, blob_store=blob_store)
@@ -574,9 +586,8 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
                                 metrics=metrics)
         async with trace_session() as db:
             await _background(db)
-            locked = await db.scalar(select(SessionTrajectory).where(SessionTrajectory.id == trajectory_id)
-                                     .with_for_update())
-            if locked is None or locked.deleted_at is not None or locked.content_expired_at is not None:
+            locked = await _lock_trajectory(db, trajectory_id)
+            if locked is None:
                 return False
             await store_checkpoint(db, locked, state, blobs)
     return True

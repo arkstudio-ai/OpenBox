@@ -1,6 +1,9 @@
 # 会话执行轨迹与回放：超管后台完整实施计划
 
-> 状态：本地代码已实现，M0–M6 与 M7 的本地实现/专项验证已完成。本文件保留完整目标方案与退出条件；实际代码、测试、已知边界和部署操作见 [实现与本地验收记录](SESSION_TRAJECTORY_IMPLEMENTATION_STATUS.md)。尚未部署或全量启用，完整发布验收仍按 M7/M8 的未勾选项执行。
+> **已被取代（2026-09-15）**：本计划的存储与录制设计已由 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md) 取代；旧录制不保留。
+> 下文是原计划的历史记录，业务库轨迹表与事务内记录器相关内容不再适用。
+
+> 状态：本地代码已实现，M0–M6 与 M7 的本地实现/专项验证已完成。本文件保留完整目标方案与退出条件；现行代码与部署步骤见 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md) 与 [deploy/gw2/RUNBOOK.md](../deploy/gw2/RUNBOOK.md)。尚未部署或全量启用，完整发布验收仍按 M7/M8 的未勾选项执行。
 >
 > 日期：2026-09-11。
 >
@@ -499,7 +502,7 @@ Python 后端投影与 TypeScript 前端投影使用同一组协议 fixture 校�
 
 ## 14. 分阶段执行与退出条件
 
-以下勾选表示独立 worktree 中的代码与对应本地验证已经完成，不表示已部署或已通过真实外部服务、移动设备及生产规模验收。逐入口测试、测试替身边界、性能口径和剩余发布步骤见 [实现与本地验收记录](SESSION_TRAJECTORY_IMPLEMENTATION_STATUS.md)。
+以下勾选表示独立 worktree 中的代码与对应本地验证已经完成，不表示已部署或已通过真实外部服务、移动设备及生产规模验收。现行设计与发布步骤见 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md) 与 [deploy/gw2/RUNBOOK.md](../deploy/gw2/RUNBOOK.md)。
 
 ### M0：协议、覆盖清单与实现骨架
 

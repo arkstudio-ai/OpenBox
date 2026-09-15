@@ -162,8 +162,6 @@ spec:
                   name: openbox-secrets
                   key: MAX_CONCURRENT_AGENTS
             # Trajectory events go to the spool shared with the trajectory-worker sidecar.
-            - name: TRAJECTORY_SINK
-              value: "spool"
             - name: TRAJECTORY_WORKER_MODE
               value: "external"
             - name: TRAJECTORY_SPOOL_DIR

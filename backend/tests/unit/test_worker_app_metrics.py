@@ -17,7 +17,7 @@ def test_names_are_exactly_the_spec_and_cover_the_cloudmonitor_push():
                         "ownership_drops", "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts",
                         "blob_put_bytes", "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted",
                         "gc_failures", "exports_built", "blob_put_raw_bytes", "audit_dead_letters",
-                        "analytics_exports", "analytics_export_failures", "failed_batches")
+                        "failed_batches")
     assert GAUGES == ("spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds",
                       "projection_lag_events", "archive_lag_events", "gc_queue_depth", "trace_db_bytes",
                       "hot_events_rows", "trajectories_degraded", "trajectories_blocked", "stale_hot_partitions",

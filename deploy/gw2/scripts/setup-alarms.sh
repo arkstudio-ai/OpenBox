@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # CloudMonitor alarm rules of the trajectory deployment (SPEC §12), created or updated with
 # PutCustomMetricRule on the custom metrics that push-metrics.sh reports (backend/trajectory/ops/cms.py,
-# dimension instance=<instance>) and on analytics_export_failed, which analytics-export.sh reports after
-# each daily export. Run from an operator machine with the aliyun CLI. Rule IDs are fixed
+# dimension instance=<instance>). Run from an operator machine with the aliyun CLI. Rule IDs are fixed
 # (openbox-<instance>-<name>), so re-running updates the rules in place. Dry run unless --execute.
 #
 #   setup-alarms.sh [--instance gw2] [--group-id 0] [--region cn-shanghai]
@@ -79,8 +78,7 @@ hot-partitions|hot_partitions|>|10|Average|300|1|WARN|trajectory hot event parti
 backend-cpu|backend_cpu_percent|>|90|Average|60|5|CRITICAL|backend CPU > 90% of a core for 5 min
 backend-memory|backend_mem_percent|>|90|Average|60|5|CRITICAL|backend memory > 90% of its limit for 5 min
 business-trajectory-statements|business_trajectory_statements|>|0|Average|60|1|CRITICAL|trajectory statements in the business database
-events-ingested-24h|events_ingested_24h|>|1000000|Average|300|1|INFO|trajectory events in 24 h > 1000000 (ClickHouse trigger)
-analytics-export|analytics_export_failed|>|0|Average|60|1|WARN|trajectory analytics export failed'
+events-ingested-24h|events_ingested_24h|>|1000000|Average|300|1|INFO|trajectory events ingested in 24 h > 1000000'
 
 count=0
 while IFS='|' read -r name metric operator threshold statistics period evaluations level subject; do

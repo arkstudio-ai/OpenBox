@@ -6,18 +6,17 @@
 # copy is removed. A database that does not exist yet is skipped. The run exits non-zero when
 # PostgreSQL cannot be queried, a dump or upload fails, or no database was backed up.
 #
-#   pg-backup.sh [--database NAME]... [--legacy-trajectory-tables] [--local-dir DIR] [--keep-local]
+#   pg-backup.sh [--database NAME]... [--local-dir DIR] [--keep-local]
 #
 # Defaults: databases openbox and openbox_trace, local directory /var/backups/openbox/postgres.
 # Local dumps left by failed uploads or --keep-local are deleted by a run 3 days later; only file
-# names this script creates are matched. --legacy-trajectory-tables dumps only
-# public.legacy_trajectory_* of the business database (release step 7, before
-# migrate_legacy --finalize-drop).
+# names this script creates are matched. Old trajectory recordings are not kept: the dump of the
+# business database has the schema but no rows of public.session_trajectories, public.trajectory_*
+# and public.legacy_trajectory_* (once the business migration has dropped them, these match nothing).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 databases=
-legacy=0
 keep_local=0
 local_dir=${OPENBOX_BACKUP_DIR:-/var/backups/openbox/postgres}
 while [ $# -gt 0 ]; do
@@ -26,10 +25,6 @@ while [ $# -gt 0 ]; do
       need_value "$1" $#
       databases="$databases $2"
       shift 2
-      ;;
-    --legacy-trajectory-tables)
-      legacy=1
-      shift
       ;;
     --local-dir)
       need_value "$1" $#
@@ -48,11 +43,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ -z "$databases" ]; then
-  if [ "$legacy" = 1 ]; then
-    databases=$OPENBOX_BUSINESS_DB
-  else
-    databases="$OPENBOX_BUSINESS_DB $OPENBOX_TRACE_DB"
-  fi
+  databases="$OPENBOX_BUSINESS_DB $OPENBOX_TRACE_DB"
 fi
 for database in $databases; do
   valid_identifier "$database" || die "invalid database name: $database"
@@ -69,14 +60,22 @@ find "$local_dir" -maxdepth 1 -type f \
 day=$(TZ=Asia/Shanghai date +%Y%m%d)
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
-# backup DATABASE NAME [TABLE_PATTERN]
+# backup DATABASE
 backup() {
-  local database=$1 name=$2 tables=${3:-} file key size digest
-  file="$local_dir/$name-$stamp.dump"
-  key="backups/postgres/$day/$name-$stamp.dump"
+  local database=$1 schema= file key size digest
+  file="$local_dir/$database-$stamp.dump"
+  key="backups/postgres/$day/$database-$stamp.dump"
+  if [ "$database" = "$OPENBOX_BUSINESS_DB" ]; then
+    schema=public
+  fi
   log "dumping $database to $file"
-  # ${tables:+...} adds the quoted --table option only when a pattern is given (safe with set -u on bash 3.2).
-  if ! (umask 077 && compose exec -T postgres pg_dump -U "$OPENBOX_PG_USER" -Fc ${tables:+"--table=$tables"} "$database" >"$file.partial"); then
+  # ${schema:+...} adds the quoted --exclude-table-data options for the business database only (safe with
+  # set -u on bash 3.2); the trace database keeps every row.
+  if ! (umask 077 && compose exec -T postgres pg_dump -U "$OPENBOX_PG_USER" -Fc \
+    ${schema:+"--exclude-table-data=$schema.session_trajectories"} \
+    ${schema:+"--exclude-table-data=$schema.trajectory_*"} \
+    ${schema:+"--exclude-table-data=$schema.legacy_trajectory_*"} \
+    "$database" >"$file.partial"); then
     rm -f "$file.partial"
     warn "pg_dump of $database failed"
     return 1
@@ -115,13 +114,8 @@ for database in $databases; do
       continue
       ;;
   esac
-  if [ "$legacy" = 1 ]; then
-    result=0
-    backup "$database" "$database-legacy-trajectory" "public.legacy_trajectory_*" || result=$?
-  else
-    result=0
-    backup "$database" "$database" || result=$?
-  fi
+  result=0
+  backup "$database" || result=$?
   if [ "$result" = 0 ]; then
     backed_up=$((backed_up + 1))
   else

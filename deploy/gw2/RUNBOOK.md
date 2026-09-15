@@ -20,15 +20,15 @@ browser → Lighthouse proxy → frontend (nginx :80)
 backend ── JSONL append ──► volume trajectory-spool (backend + worker only) ──► trajectory-worker
 trajectory-worker ──► postgres/openbox_trace (role openbox_trace) · OSS <bucket>/trajectories/ · redis ·
                       backend /api/internal/trajectory/{viewer,audit}
-host systemd timers ──► CloudMonitor custom metrics · OSS backups/postgres/ · analytics export · docker image prune
+host systemd timers ──► CloudMonitor custom metrics · OSS backups/postgres/ · docker image prune
 ```
 
 What `docker-compose.trajectory.yml` changes:
 
 | Service | Change | Why |
 |---|---|---|
-| `trajectory-worker` (new) | backend image, command `alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker`, `env_file: config/backend.env`, `TRAJECTORY_DATABASE_URL=postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace`, `DATABASE_URL=""`, `TRAJECTORY_WORKER_MODE=external`, `TRAJECTORY_BLOB_PROVIDER=oss`, `TRAJECTORY_BACKEND_INTERNAL_URL=http://backend:8080`, `ALIYUN_CLI_CONFIG=/run/secrets/aliyun-config.json`; spool volume, aliyun secret (ro), `blob-data:/legacy-blobs:ro`; starts after healthy postgres and redis; healthcheck on :8090; 1 CPU, 1 GiB; log rotation | Ingest, projection, archive, admin API. The worker connects as the dedicated role `openbox_trace`, which owns only the trace database; the blank `DATABASE_URL` keeps the business connection string of `config/backend.env` out of the worker. The command override is mandatory: the image CMD would run the business migrations and a second uvicorn. One writer only: never `--scale`, never name it `backend-worker` (`make retire-legacy-worker` deletes that service). |
-| `backend` | `TRAJECTORY_SINK=spool`, `TRAJECTORY_WORKER_MODE=external`, spool volume | Business requests only append to the spool. |
+| `trajectory-worker` (new) | backend image, command `alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker`, `env_file: config/backend.env`, `TRAJECTORY_DATABASE_URL=postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace`, `DATABASE_URL=""`, `TRAJECTORY_WORKER_MODE=external`, `TRAJECTORY_BLOB_PROVIDER=oss`, `TRAJECTORY_BACKEND_INTERNAL_URL=http://backend:8080`, `ALIYUN_CLI_CONFIG=/run/secrets/aliyun-config.json`; spool volume, aliyun secret (ro); starts after healthy postgres and redis; healthcheck on :8090; 1 CPU, 1 GiB; log rotation | Ingest, projection, archive, admin API. The worker connects as the dedicated role `openbox_trace`, which owns only the trace database; the blank `DATABASE_URL` keeps the business connection string of `config/backend.env` out of the worker. The command override is mandatory: the image CMD would run the business migrations and a second uvicorn. One writer only: never `--scale`, never name it `backend-worker` (`make retire-legacy-worker` deletes that service). |
+| `backend` | `TRAJECTORY_WORKER_MODE=external`, spool volume | Business requests only append to the spool. `TRAJECTORY_WORKER_MODE=off` switches the whole pipeline off: no emitter, no metadata sync and no worker. |
 | `frontend` | `TRAJECTORY_HOST=trajectory-worker:8090` | nginx routes the two admin trajectory paths to the worker (the image default still points at the backend). |
 | `postgres` | `mem_limit: 2g`; `shared_buffers=512MB`, `effective_cache_size=1GB`, `shared_preload_libraries=pg_stat_statements`, `pg_stat_statements.track=all`, `max_connections=200` | Room for the trace database and its pool; query statistics for the isolation check. Applying it recreates postgres. |
 | volumes | `trajectory-spool` | The spool may contain unredacted data; it is mounted into backend and worker only. |
@@ -44,7 +44,6 @@ What `docker-compose.trajectory.yml` changes:
 | `scripts/create-trace-db.sh` | gw2 | Role `openbox_trace`, database `openbox_trace`, `pg_trgm`, `pg_stat_statements` (idempotent). |
 | `scripts/push-metrics.sh` | gw2, minute timer | Host metrics + worker metrics → CloudMonitor (§8). |
 | `scripts/pg-backup.sh` | gw2, daily timer | `pg_dump -Fc` of `openbox` and `openbox_trace` → OSS (§10). |
-| `scripts/analytics-export.sh` | gw2, daily timer | Analytics export of the previous day; reports failures (§7, §8). |
 | `scripts/prune-images.sh` | gw2, weekly timer | Image cleanup, dry run unless `--execute`. |
 | `scripts/install-timers.sh` | gw2 | Installs the systemd units in `systemd/` and the metrics instance (§7). |
 | `scripts/apply-oss-lifecycle.sh` | operator machine | Merges `oss-lifecycle.xml` into the bucket's rules, dry run unless `--execute`. |
@@ -115,15 +114,17 @@ docker compose config --images     # trajectory-worker has the backend's tag
 
 1. **The release commit is merged to `origin/main` before anything changes on gw2**, and the override's current image
    commits are contained in it (lesson of 2026-09-10): `git fetch origin && git merge-base --is-ancestor <release commit> origin/main`
-   exits 0. Otherwise the next routine deploy from `main` by anyone else rolls the architecture back: its backend
-   neither writes the spool nor knows the renamed `legacy_trajectory_*` tables, and its business migrations fail on them.
+   exits 0. Otherwise the next routine deploy from `main` by anyone else breaks the backend: a main-built image cannot
+   find the business revisions `d3b5f7a9c1e2` and `e5c7a9b1d3f4` in its migration scripts, so its `alembic upgrade head`
+   fails and the backend never starts.
 2. Both migration chains have one head, checked in the new image:
    `docker run --rm --entrypoint alembic openbox-backend:<TAG> heads` and
    `docker run --rm --entrypoint alembic openbox-backend:<TAG> -c alembic_trajectory.ini heads`.
 3. `config/backend.env` has non-empty `JWT_SECRET` and `INTERNAL_API_TOKEN` (the worker authenticates
    viewers through the backend's internal endpoints), `OSS_BUCKET` and `OSS_REGION` (or `TRAJECTORY_OSS_*`),
    and the shared recording flags (`TRAJECTORY_RECORDING_ENABLED`, `TRAJECTORY_RECORD_USER_IDS`,
-   `TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`).
+   `TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`). On the AWS development host it also has
+   `TRAJECTORY_OSS_INTERNAL=false`: the internal OSS endpoint is reachable only inside Alibaba Cloud.
 4. `.env` has a password for the trace role, 16 to 128 letters, digits, `.`, `_`, `~` or `-` (it is part of
    `TRAJECTORY_DATABASE_URL`). Add it once without printing it:
 
@@ -137,10 +138,9 @@ docker compose config --images     # trajectory-worker has the backend's tag
    grep -c '^OPENBOX_TRACE_DB_PASSWORD=' .env   # 1
    ```
 
-5. The RAM user in `secrets/aliyun-config.json` may PUT/GET/HEAD/DELETE/LIST under `trajectories/`,
-   `backups/postgres/` and `analytics/trajectories/` (`TRAJECTORY_ANALYTICS_PREFIX`) of the bucket and call
-   `cms:PutCustomMetric`. The operator's own profile needs `oss:GetBucketLifecycle`, `oss:PutBucketLifecycle` and
-   `cms:PutCustomMetricRule`.
+5. The RAM user in `secrets/aliyun-config.json` may PUT/GET/HEAD/DELETE/LIST under `trajectories/` and
+   `backups/postgres/` of the bucket and call `cms:PutCustomMetric`. The operator's own profile needs
+   `oss:GetBucketLifecycle`, `oss:PutBucketLifecycle` and `cms:PutCustomMetricRule`.
 6. Disk: `df -h / "$(docker info --format '{{.DockerRootDir}}')"` shows at least 20 % free (the spool budget is 2 GiB).
 7. PostgreSQL: `docker compose exec postgres postgres --version` (13+ for trusted `pg_trgm`),
    `docker compose exec postgres psql -U openbox -tAc 'SHOW max_connections'`.
@@ -167,7 +167,7 @@ Keep a terminal probing the public site during every switch, as in previous rele
    docker build --platform linux/amd64 --pull --no-cache -f backend/Dockerfile -t openbox-backend:$TAG .
    docker build --platform linux/amd64 --pull --no-cache --build-arg NGINX_IMAGE=nginx:1.31.5-alpine \
      -t openbox-frontend-v2:$TAG frontend-v2/
-   docker run --rm --entrypoint python openbox-backend:$TAG -c 'import duckdb, zstandard'   # new dependencies present
+   docker run --rm --entrypoint python openbox-backend:$TAG -c 'import orjson, zstandard'   # new dependencies present
    ```
 
    Build the `deploy/gw2` bundle (§3).
@@ -220,57 +220,30 @@ Keep a terminal probing the public site during every switch, as in previous rele
    `/health` must show `"writer": true, "db": true, "spool": true, "blob_store": true`. The worker only reads the
    spool; nothing records to it yet. Rollback: `docker compose stop trajectory-worker` (no business impact).
 6. **Backend on the spool**: back up `config/backend.env`, set `TRAJECTORY_RECORDING_ENABLED=false` (recording
-   restarts in step 9; sessions recorded so far show a paused/resumed gap), pin the new backend tag, check 0 active
-   runs, then `docker compose up -d --no-deps backend` and wait for healthy. The business migration renames the
-   seven trajectory tables to `legacy_trajectory_*`:
+   restarts in step 9), pin the new backend tag, check 0 active runs, then `docker compose up -d --no-deps backend` and
+   wait for healthy. The business migration drops the seven old trajectory tables; old recordings are not kept.
+   Verify, then reset the query statistics right away:
 
    ```bash
-   docker compose exec -T postgres psql -U openbox -d openbox -c '\dt legacy_trajectory_*'
-   docker compose exec -T backend alembic current
+   docker compose exec -T postgres psql -U openbox -d openbox -c '\dt trajectory_*'          # Did not find any relation
+   docker compose exec -T postgres psql -U openbox -d openbox -c '\dt legacy_trajectory_*'   # Did not find any relation
+   docker compose exec -T backend alembic current                                            # e5c7a9b1d3f4 (head)
+   docker compose exec -T postgres psql -U openbox -d openbox -c 'SELECT pg_stat_statements_reset()'
    ```
 
-   Rollback before step 7 finishes: see §6.
-7. **Legacy conversion, with the worker stopped.** The converter takes the worker's writer lock and refuses to run while
-   a worker holds it, so it runs in a one-off container of the worker service. The business database URL carries no
-   password: asyncpg reads it from `PGPASSWORD`, which `docker compose run -e` passes by name, so the password appears
-   in no process's arguments:
+   The migration's `DROP TABLE … trajectory_*` statements match the `business_trajectory_statements` isolation filter
+   of `scripts/push-metrics.sh` (§8); the reset keeps them out of that metric. Rollback: §6.
+7. **Old trajectory payload files**: the business blob store (volume `blob-data`, mounted at `/tmp/openbox-blobs` in the
+   backend) still holds the payload files of the old recordings in its `trajectories/` directory, about 1.5 GB of
+   unredacted content that nothing reads any more. List the sizes, then remove only that directory; `policies/` stays:
 
    ```bash
-   cd /opt/openbox
-   docker compose stop trajectory-worker
-   export PGPASSWORD="$(grep '^OPENBOX_DB_PASSWORD=' .env | tail -n 1 | cut -d= -f2-)"
-   convert() {
-     docker compose run --rm --no-deps -T -e PGPASSWORD trajectory-worker python -m trajectory.tools.migrate_legacy \
-       --business-database-url postgresql+asyncpg://openbox@postgres:5432/openbox --legacy-blob-path /legacy-blobs "$@"
-   }
-   convert --dry-run
-   convert
-   convert --verify                                     # must exit 0
-   deploy/gw2/scripts/pg-backup.sh --legacy-trajectory-tables
-   convert --finalize-drop                              # point of no return for the legacy tables
+   docker compose exec -T backend sh -c 'du -sh /tmp/openbox-blobs/*'     # trajectories about 1.5G, policies
+   docker compose exec -T backend rm -rf /tmp/openbox-blobs/trajectories
+   docker compose exec -T backend ls /tmp/openbox-blobs                    # policies remains
    ```
 
-   Then remove the legacy blob files the conversion migrated. `--purge-legacy-blobs` is accepted only after a
-   successful `--finalize-drop`, deletes exactly the files it migrated and prints counts and bytes. It cannot be undone
-   and the step 7 table dump does not contain these files, so it may also wait until step 9 has shown converted
-   sessions in the admin UI (stop the worker again for it). The overlay mounts the volume read-only; only the purge runs
-   with a writable mount, through a temporary compose file whose `/legacy-blobs` entry replaces the overlay's:
-
-   ```bash
-   printf 'services:\n  trajectory-worker:\n    volumes:\n      - blob-data:/legacy-blobs\n' > /tmp/openbox-legacy-purge.yml
-   purge() {
-     COMPOSE_FILE="$(grep '^COMPOSE_FILE=' .env | tail -n 1 | cut -d= -f2-):/tmp/openbox-legacy-purge.yml" \
-       docker compose run --rm --no-deps -T -e PGPASSWORD trajectory-worker python -m trajectory.tools.migrate_legacy \
-       --business-database-url postgresql+asyncpg://openbox@postgres:5432/openbox --legacy-blob-path /legacy-blobs \
-       --purge-legacy-blobs "$@"
-   }
-   purge --dry-run                                      # files and bytes it would delete
-   purge
-   rm -f /tmp/openbox-legacy-purge.yml
-   unset PGPASSWORD
-   docker compose up -d --no-deps trajectory-worker     # wait for healthy
-   ```
-
+   The deletion cannot be undone; neither `pg-backup.sh` nor the step 3 backup contains these files.
 8. **Frontend**: pin the new frontend tag, `docker compose up -d --no-deps frontend`, wait for healthy. Check routing:
    `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/admin/trajectories/sessions` answers 401 and
    `docker compose logs --since 1m trajectory-worker | grep admin/trajectories` shows the request. The access log lines
@@ -319,7 +292,7 @@ Keep a terminal probing the public site during every switch, as in previous rele
    done
    docker compose exec -T postgres psql -U openbox -d openbox -tAc \
      "SELECT count(*) FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid
-      WHERE d.datname = 'openbox' AND s.query ILIKE '%trajectory\_%' AND s.query NOT ILIKE '%legacy\_trajectory\_%'"   # 0
+      WHERE d.datname = 'openbox' AND s.query ILIKE '%trajectory\_%'"   # 0
    docker compose exec -T trajectory-worker curl -fsS http://127.0.0.1:8090/metrics
    ```
 
@@ -341,11 +314,24 @@ Keep a terminal probing the public site during every switch, as in previous rele
 | Situation | Steps |
 |---|---|
 | Worker misbehaves (any step) | `docker compose stop trajectory-worker`. Business requests keep working; the spool grows up to its budget (2 GiB), after which events are dropped as `spool_full` gaps. Fix and start it again. |
-| Backend switched (step 6), before `--finalize-drop` | 0 active runs; downgrade the business chain with the **new** image so the legacy tables get their names back: `docker compose run --rm --no-deps --entrypoint alembic backend downgrade <previous business head>`; pin the previous backend tag; `docker compose up -d --no-deps backend`. Restore `backend.env`. Recording written to `openbox_trace` since the switch is not visible to the old admin UI; keep the database for a later retry. |
-| After `--finalize-drop` | The legacy tables are gone from `openbox`. Restore them from the step 7 dump (`pg_restore -U openbox -d openbox --no-owner` of the `openbox-legacy-trajectory-*.dump`, §10), rename them back to their original names, then roll back the backend as above. After `--purge-legacy-blobs` the legacy payload files are gone as well; the old admin UI shows those payloads as missing. |
+| Backend switched (step 6 or later) | The backend rollback below. |
 | Frontend | Pin the previous frontend tag, `docker compose up -d --no-deps frontend`. |
 | Trace role and postgres tuning | Remove `COMPOSE_FILE` from `.env` only together with the backend rollback, then `docker compose up -d --no-deps postgres` in a maintenance window. `OPENBOX_TRACE_DB_PASSWORD`, the role and `openbox_trace` may stay; to remove them, stop the worker, back up `openbox_trace`, then `DROP DATABASE openbox_trace` and `DROP ROLE openbox_trace`. |
 | Whole topology | Order: frontend → backend → worker stop → `install-timers.sh --uninstall` → `.env` without `COMPOSE_FILE` → postgres. |
+
+Backend rollback, with 0 active runs (preflight 8):
+
+1. With the **new** backend image still pinned, downgrade the business chain:
+   `docker compose run --rm --no-deps backend alembic downgrade c7e9b1d3f5a7`. It recreates the seven old trajectory
+   tables, empty: the previous image's readiness check and session deletion expect them.
+2. Keep `TRAJECTORY_RECORDING_ENABLED` and `TRAJECTORY_ADMIN_ENABLED` false in `config/backend.env` (set them before the
+   next step if step 9 enabled recording).
+3. Pin the previous backend and frontend tags in the override and recreate both with `--no-deps`, one at a time,
+   waiting for healthy.
+4. `docker compose stop trajectory-worker`, then take the overlay out of `COMPOSE_FILE` in `.env` (§3).
+
+Old recordings are gone in both directions: the recreated tables stay empty, and the previous admin UI cannot show what
+was recorded into `openbox_trace`.
 
 ## 7. Timers
 
@@ -355,8 +341,6 @@ Keep a terminal probing the public site during every switch, as in previous rele
 systemctl list-timers 'openbox-*'
 journalctl -u openbox-trajectory-metrics.service -n 20
 systemctl start openbox-pg-backup.service                          # run a backup now
-systemctl start openbox-trajectory-analytics.service               # export yesterday now
-/opt/openbox/deploy/gw2/scripts/analytics-export.sh --date 2026-09-14   # export (or re-export) one day
 /opt/openbox/deploy/gw2/scripts/install-timers.sh --uninstall
 ```
 
@@ -367,7 +351,6 @@ every host other than gw2 needs its own `--instance`.
 |---|---|---|---|
 | `openbox-trajectory-metrics.timer` | every minute | `push-metrics.sh` | `/var/lib/openbox-ops/cms-state.json` (counter samples); instance in `/etc/systemd/system/openbox-trajectory-metrics.service.d/instance.conf` |
 | `openbox-pg-backup.timer` | daily 03:30 Asia/Shanghai, catches up after downtime | `pg-backup.sh` | `/var/backups/openbox/postgres` (dumps of failed uploads and `--keep-local` runs; removed after 3 days) |
-| `openbox-trajectory-analytics.timer` | daily 04:00 Asia/Shanghai, catches up after downtime | `analytics-export.sh`: `python -m trajectory.analytics export --date <yesterday, Asia/Shanghai>` in the worker container (after waiting up to 10 minutes for it to be healthy); writes `analytics/trajectories/dt=<day>/` and replaces that day on a rerun; reports `analytics_export_failed` 1 or 0 and fails the unit on an error | instance in `/etc/systemd/system/openbox-trajectory-analytics.service.d/instance.conf` |
 | `openbox-prune-images.timer` | Sunday 04:30 Asia/Shanghai | `prune-images.sh --execute` | — (removes nothing when the compose files cannot be read) |
 
 Overlapping runs are skipped through `/run/lock/openbox-<name>.lock`. Re-run `install-timers.sh` after a bundle update.
@@ -386,12 +369,13 @@ group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=<instance>
 | `oom_kills_1h`, `backend_oom_kills_1h` | `journalctl -k` `oom-kill:` lines of the last hour (backend: its container id in the memory cgroup) |
 | `trace_db_bytes` | `pg_database_size('openbox_trace')` |
 | `backend_cpu_percent`, `backend_mem_percent` | `docker stats --no-stream` of the backend container: CPU in percent of one core (the single uvicorn process saturates near 100), memory in percent of its limit (3 GiB) |
-| `business_trajectory_statements` | `pg_stat_statements` entries of the database `openbox` whose query mentions `trajectory_` but not `legacy_trajectory_`, cumulative since the last `pg_stat_statements_reset()`; 0 while the extension is not installed in `openbox` |
+| `business_trajectory_statements` | `pg_stat_statements` entries of the database `openbox` whose query mentions `trajectory_`, cumulative since the last `pg_stat_statements_reset()` (release steps 6 and 9 reset it); 0 while the extension is not installed in `openbox` |
 | `worker_up`, `worker_writer`, `worker_degraded`, `worker_db_ok`, `worker_spool_ok`, `worker_blob_store_ok` | worker `/health` |
-| `ingest_lag_seconds`, `projection_lag_events`, `archive_lag_events`, `gc_queue_depth`, `hot_events_rows`, `trajectories_degraded`, `trajectories_blocked`, `stale_hot_partitions`, `events_ingested_24h`, `hot_partitions`, `budget_degraded_trajectories`, `budget_degraded_users` | worker `/metrics` gauges |
-| `<counter>_delta` for `ingest_lines`, `ingest_events`, `duplicates`, `idempotency_conflicts`, `deleted_drops`, `ownership_drops`, `gaps_recorded`, `producer_loss_events`, `quarantined_files`, `blob_puts`, `blob_put_bytes`, `blob_put_failures`, `segment_uploads`, `segment_failures`, `gc_deleted`, `gc_failures`, `exports_built`, `blob_put_raw_bytes`, `audit_dead_letters`, `analytics_exports`, `analytics_export_failures`, `failed_batches` | worker counters, increase since the previous minute (restarts handled) |
+| `ingest_lag_seconds`, `projection_lag_events`, `archive_lag_events`, `gc_queue_depth`, `hot_events_rows`, `trajectories_degraded`, `trajectories_blocked`, `stale_hot_partitions`, `budget_degraded_trajectories`, `budget_degraded_users` | worker `/metrics` gauges |
+| `hot_partitions` | worker `/metrics` gauge: attached daily `trajectory_events_p*` partitions dated today or earlier (UTC); pre-created future partitions and the default partition are not counted. A healthy worker holds about 8. |
+| `events_ingested_24h` | worker `/metrics` gauge: events ingested in the last 24 hours, sampled every 5 minutes |
+| `<counter>_delta` for `ingest_lines`, `ingest_events`, `duplicates`, `idempotency_conflicts`, `deleted_drops`, `ownership_drops`, `gaps_recorded`, `producer_loss_events`, `quarantined_files`, `blob_puts`, `blob_put_bytes`, `blob_put_failures`, `segment_uploads`, `segment_failures`, `gc_deleted`, `gc_failures`, `exports_built`, `blob_put_raw_bytes`, `audit_dead_letters`, `failed_batches` | worker counters, increase since the previous minute (restarts handled) |
 | `gaps_recorded_1h`, `blob_put_failures_5m` | trailing sums of the counters above |
-| `analytics_export_failed` | `analytics-export.sh` after each daily export (`cms put`): 1 failed, 0 succeeded |
 
 A name the worker does not serve is not reported.
 
@@ -402,7 +386,7 @@ metrics. Every rule uses the `Average` statistic, the only value the PutCustomMe
 sample per minute it is the reported value.
 
 ```bash
-deploy/gw2/scripts/setup-alarms.sh                                         # dry run: prints the sixteen PutCustomMetricRule calls
+deploy/gw2/scripts/setup-alarms.sh                                         # dry run: prints the fifteen PutCustomMetricRule calls
 deploy/gw2/scripts/setup-alarms.sh --execute [--group-id <id>] [--webhook URL]
 ```
 
@@ -418,17 +402,15 @@ deploy/gw2/scripts/setup-alarms.sh --execute [--group-id <id>] [--webhook URL]
 | `trace-db-size` | `trace_db_bytes` ≥ 20 GiB | `archive_lag_events`, `stale_hot_partitions`, retention settings. |
 | `oom-kill` | `oom_kills_1h` > 0 | `journalctl -k \| grep oom-kill`; which container; memory limits. |
 | `archive-lag` | `archive_lag_events` ≥ 50000, 15 min | Archiving stalled: worker log (`segment_failures_delta`), OSS reachability, `hot_events_rows`, `trace_db_bytes`. |
-| `hot-partitions` | `hot_partitions` > 10, 5 min | Event partitions are not dropped: `stale_hot_partitions`, `archive_lag_events`, partition maintenance warnings in the worker log. |
+| `hot-partitions` | `hot_partitions` > 10, 5 min | More past-day partitions are attached than a healthy worker keeps (about 8), so old partitions are not dropped: `stale_hot_partitions`, `archive_lag_events`, partition maintenance warnings in the worker log. |
 | `backend-cpu` | `backend_cpu_percent` > 90, 5 min | The backend process is saturated: busiest routes of the frontend access log (`rt=`), polling clients, `docker stats`. |
 | `backend-memory` | `backend_mem_percent` > 90, 5 min | An OOM kill at the 3 GiB limit is next: `docker stats`, large responses, history loads; restart only with 0 active runs. |
-| `business-trajectory-statements` | `business_trajectory_statements` > 0 | Trajectory SQL reached the business database. List it with `SELECT calls, left(query, 200) FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid WHERE d.datname = 'openbox' AND s.query ILIKE '%trajectory\_%' AND s.query NOT ILIKE '%legacy\_trajectory\_%' ORDER BY calls DESC`, fix the producer, then `SELECT pg_stat_statements_reset()` clears the count. |
-| `events-ingested-24h` | `events_ingested_24h` > 1000000, 5 min, level INFO | Not an incident: the ClickHouse trigger of the analytics plan (docs/trajectory-rearch/ANALYTICS.md). |
-| `analytics-export` | `analytics_export_failed` > 0 | `journalctl -u openbox-trajectory-analytics.service -n 50` (exit 2: configuration; 1: export error); rerun with `analytics-export.sh --date <day>`, which reports 0 on success. |
+| `business-trajectory-statements` | `business_trajectory_statements` > 0 | Trajectory SQL reached the business database. List it with `SELECT calls, left(query, 200) FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid WHERE d.datname = 'openbox' AND s.query ILIKE '%trajectory\_%' ORDER BY calls DESC`, fix the producer, then `SELECT pg_stat_statements_reset()` clears the count. |
+| `events-ingested-24h` | `events_ingested_24h` > 1000000, 5 min, level INFO | Not an incident: more than a million events in 24 hours is above the planned load. Check `trace_db_bytes`, `archive_lag_events` and the budget gauges, and review capacity. |
 
 Testing a rule: `oom-kill` alarms when the average of one minute is above 0, so
 `docker compose exec -T trajectory-worker python -m trajectory.ops.cms put --metric oom_kills_1h=1` raises it once
-(the next timer run reports the real value 0 again). `analytics-export` is tested the same way with
-`--metric analytics_export_failed=1`, followed by `--metric analytics_export_failed=0`. Metrics that stop arriving do not
+(the next timer run reports the real value 0 again). Metrics that stop arriving do not
 alarm: check `systemctl list-timers 'openbox-*'` during the weekly review, or add a no-data alert in the CloudMonitor console.
 
 ## 9. OSS lifecycle rules
@@ -464,8 +446,10 @@ OSS loads new rules within 24 hours and runs them daily at 08:00 (UTC+8).
 PUT (internal endpoint, signed with `secrets/aliyun-config.json`) with exact `Content-Length` and
 `x-oss-meta-sha256`, then a signed HEAD that checks size and digest. Objects:
 `backups/postgres/<YYYYMMDD Asia/Shanghai>/<database>-<UTC stamp>.dump`, expired by the lifecycle rule after 30 days.
-A database that does not exist yet is skipped. The run fails (systemd marks the unit failed) when PostgreSQL cannot be
-queried, a dump or upload fails, or nothing was backed up; the dump of a failed upload stays in
+A database that does not exist yet is skipped. Old recordings are not kept, so the `openbox` dump passes
+`--exclude-table-data` for the old trajectory tables: their schema stays, their rows are not dumped, and after release
+step 6 the patterns match nothing (the exact patterns are in the script). The run fails (systemd marks the unit failed)
+when PostgreSQL cannot be queried, a dump or upload fails, or nothing was backed up; the dump of a failed upload stays in
 `/var/backups/openbox/postgres` for 3 days. One presigned PUT stores at most 5 GiB, so `trajectory.ops.backup` refuses
 a larger dump before sending it: add multipart uploads before a dump approaches that size (the `openbox` dump was
 162 MB on 2026-09-14).
@@ -528,7 +512,6 @@ Record the output of each drill in the release log.
 | Exports | 30 days (`TRAJECTORY_EXPORT_RETENTION_DAYS`) | worker retention, lifecycle rule as backstop |
 | Trajectory objects in OSS | IA after 30 days | lifecycle rule |
 | Deleted sessions and assets | removed when the deletion reaches the worker (GC queue with retries) | worker retention |
-| Analytics exports | one set of Parquet files per day under `analytics/trajectories/`, replaced by a rerun | `analytics-export.sh` |
 | PostgreSQL backups | 30 days in OSS; local dumps of failed uploads 3 days | lifecycle rule, `pg-backup.sh` |
 | Docker images | in use, pinned, and the newest 3 tags per repository | `prune-images.sh` weekly |
 | Spool | consumed files deleted after ingest; budget 2 GiB (`TRAJECTORY_SPOOL_MAX_BYTES`) | worker, emitter |
@@ -544,8 +527,8 @@ Record the output of each drill in the release log.
 - **`canceling statement due to statement timeout` in the worker log**: the role default is 5 s
   (`SELECT rolconfig FROM pg_roles WHERE rolname = 'openbox_trace'`); an operation that legitimately takes longer must set
   `SET LOCAL statement_timeout` itself. Report the statement instead of raising the role default.
-- **`"writer": false`**: another process holds the writer lock (a stray `docker compose run` of the worker, such as a
-  legacy conversion). Find it: `SELECT pid, application_name, backend_start FROM pg_stat_activity WHERE datname = 'openbox_trace'` and
+- **`"writer": false`**: another process holds the writer lock (a stray `docker compose run` of the worker service).
+  Find it: `SELECT pid, application_name, backend_start FROM pg_stat_activity WHERE datname = 'openbox_trace'` and
   `SELECT pid FROM pg_locks WHERE locktype = 'advisory'`; stop the extra container.
 - **Spool keeps growing**: worker stopped or lagging (`ingest_lag_seconds`), disk full, or quarantined files blocking a
   producer. Business requests are not affected; at the budget the backend records gaps.
@@ -555,8 +538,6 @@ Record the output of each drill in the release log.
   `INTERNAL_API_TOKEN` on both sides (401 on every admin request).
 - **Blob upload failures**: OSS status page, `secrets/aliyun-config.json`, reachability of
   `<bucket>.oss-cn-shanghai-internal.aliyuncs.com` from the worker container.
-- **Analytics export failed**: `journalctl -u openbox-trajectory-analytics.service -n 50`; the worker must be healthy at
-  04:00 (the script waits 10 minutes); rerun with `analytics-export.sh --date <day>`.
 - **OOM kills**: `journalctl -k --since -1h | grep oom-kill` names the task and memory cgroup; compare with
   `docker stats --no-stream`.
 - **`COMPOSE_FILE` missing**: `docker compose config --services` lacks `trajectory-worker`; restore the `.env` line (§3)

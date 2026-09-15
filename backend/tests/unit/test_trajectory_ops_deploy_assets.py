@@ -9,9 +9,7 @@ import sys
 import textwrap
 import time
 from configparser import ConfigParser
-from datetime import datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -99,8 +97,7 @@ def test_every_script_of_the_spec_is_shipped():
     assert {path.name for path in EXECUTABLES} == {
         "create-trace-db.sh", "prune-images.sh", "pg-backup.sh", "push-metrics.sh", "install-timers.sh",
         "apply-oss-lifecycle.sh", "setup-alarms.sh", "drill-worker-stop.sh", "drill-blob-outage.sh",
-        "drill-spool-full.sh", "rebuild-trace-db.sh", "analytics-export.sh", "drill-delete-session.sh",
-        "restore-check.sh",
+        "drill-spool-full.sh", "rebuild-trace-db.sh", "drill-delete-session.sh", "restore-check.sh",
     }
 
 
@@ -146,8 +143,6 @@ def test_help_touches_neither_docker_nor_the_cloud(sandbox, script):
         ("drill-blob-outage.sh", ["--fault", "drop everything"]),
         ("drill-spool-full.sh", ["--minutes", "-1"]),
         ("rebuild-trace-db.sh", ["--only", "session_1"]),
-        ("analytics-export.sh", ["--date", "yesterday"]),
-        ("analytics-export.sh", ["--wait", "soon"]),
         ("drill-delete-session.sh", ["--session-id", "session 1"]),
         ("drill-delete-session.sh", ["--session-id", "session_1", "--user-token-file", "/missing", "--admin-token-file", "/missing"]),
         ("drill-delete-session.sh", ["--session-id", "session_1", "--api-url", "http://127.0.0.1:8080/api"]),
@@ -370,9 +365,6 @@ def worker_python(args):
     if module == "trajectory.ops.deletion":
         note("deletion", command=command, options=options)
         return STATE.get(f"deletion_{command}_status", 0)
-    if module == "trajectory.analytics" and command == "export":
-        note("analytics", options=options)
-        return STATE.get("analytics_status", 0)
     return 99
 
 
@@ -518,7 +510,10 @@ def test_pg_backup_uploads_existing_databases_and_expires_only_its_own_dumps(san
 
     assert result.returncode == 0, result.stderr
     assert "skipping openbox_trace: the database does not exist" in result.stderr
-    assert [entry["args"] for entry in notes(record, "pg_dump")] == [["-U", "openbox", "-Fc", "openbox"]]
+    assert [entry["args"] for entry in notes(record, "pg_dump")] == [[
+        "-U", "openbox", "-Fc", "--exclude-table-data=public.session_trajectories",
+        "--exclude-table-data=public.trajectory_*", "--exclude-table-data=public.legacy_trajectory_*", "openbox",
+    ]]
     (upload,) = notes(record, "upload")
     assert re.fullmatch(r"backups/postgres/\d{8}/openbox-\d{8}T\d{6}Z\.dump", upload["key"])
     dump = b"PGDMPopenbox"
@@ -530,17 +525,20 @@ def test_pg_backup_uploads_existing_databases_and_expires_only_its_own_dumps(san
 
 
 @needs_bash
-def test_pg_backup_of_the_legacy_tables_passes_the_pattern_to_pg_dump(sandbox):
+def test_pg_backup_skips_old_trajectory_rows_in_the_business_dump_only(sandbox):
     record = server(sandbox)
-    result = sandbox.run(
-        SCRIPTS_DIR / "pg-backup.sh", "--legacy-trajectory-tables", "--local-dir", str(sandbox.root / "dumps")
-    )
+    result = sandbox.run(SCRIPTS_DIR / "pg-backup.sh", "--local-dir", str(sandbox.root / "dumps"))
     assert result.returncode == 0, result.stderr
+    # Old recordings are not kept: the business dump has these tables' schema only; the trace database keeps every row.
     assert [entry["args"] for entry in notes(record, "pg_dump")] == [
-        ["-U", "openbox", "-Fc", "--table=public.legacy_trajectory_*", "openbox"]
+        ["-U", "openbox", "-Fc", "--exclude-table-data=public.session_trajectories",
+         "--exclude-table-data=public.trajectory_*", "--exclude-table-data=public.legacy_trajectory_*", "openbox"],
+        ["-U", "openbox", "-Fc", "openbox_trace"],
     ]
-    (upload,) = notes(record, "upload")
-    assert "/openbox-legacy-trajectory-" in upload["key"]
+    assert [upload["key"].rsplit("/", 1)[1].rsplit("-", 1)[0] for upload in notes(record, "upload")] == [
+        "openbox", "openbox_trace",
+    ]
+    assert sandbox.run(SCRIPTS_DIR / "pg-backup.sh", "--legacy-trajectory-tables").returncode == 1
 
 
 @needs_bash
@@ -670,7 +668,8 @@ def test_push_metrics_measures_the_host_and_keeps_the_counter_state(sandbox):
     assert host["business_trajectory_statements"] == 3
     (query,) = notes(record, "statements_query")
     assert query["database"] == "openbox" and "d.datname = 'openbox'" in query["sql"]
-    assert "s.query ILIKE '%trajectory\\_%' AND s.query NOT ILIKE '%legacy\\_trajectory\\_%'" in query["sql"]
+    # Every trajectory_ statement counts: the business migration drops the old tables, so no name is excluded.
+    assert query["sql"].endswith("AND s.query ILIKE '%trajectory\\_%'")
     assert json.loads(state_line) == {"version": 1, "last": {}}
     assert json.loads((state_dir / "cms-state.json").read_text()) == {"version": 1, "pushed_at": 1}
     assert notes(record, "one-off") == []
@@ -707,49 +706,6 @@ def test_push_metrics_uses_a_one_off_worker_and_saves_the_state_when_the_report_
     (push,) = notes(record, "cms")
     assert push["options"] == ["--instance", "gw2", "--dry-run"]
     assert json.loads((state_dir / "cms-state.json").read_text()) == {"version": 1, "kept": True}
-
-
-def shanghai_yesterday() -> str:
-    return (datetime.now(ZoneInfo("Asia/Shanghai")) - timedelta(days=1)).strftime("%Y-%m-%d")
-
-
-@needs_bash
-def test_analytics_export_runs_for_yesterday_and_reports_the_outcome(sandbox):
-    script = SCRIPTS_DIR / "analytics-export.sh"
-    record = server(sandbox)
-    before = shanghai_yesterday()
-    succeeded = sandbox.run(script)
-    after = shanghai_yesterday()
-    assert succeeded.returncode == 0, succeeded.stderr
-    (export,) = notes(record, "analytics")
-    assert export["options"] in (["--date", before], ["--date", after])
-    assert [entry["options"] for entry in notes(record, "cms_put")] == [
-        ["--instance", "gw2", "--metric", "analytics_export_failed=0"]
-    ]
-
-    record = server(sandbox, analytics_status=2)
-    failed = sandbox.run(script, "--date", "2026-09-14", "--instance", "aws-dev")
-    assert failed.returncode == 2 and "analytics export for 2026-09-14 failed" in failed.stderr
-    assert [entry["options"] for entry in notes(record, "analytics")] == [["--date", "2026-09-14"]]
-    assert [entry["options"] for entry in notes(record, "cms_put")] == [
-        ["--instance", "aws-dev", "--metric", "analytics_export_failed=1"]
-    ]
-
-    record = server(sandbox, analytics_status=1)
-    dry = sandbox.run(script, "--date", "2026-09-14", "--dry-run")
-    assert dry.returncode == 1
-    assert notes(record, "analytics")[0]["options"] == ["--date", "2026-09-14", "--dry-run"]
-    assert notes(record, "cms_put")[0]["options"][-1] == "--dry-run"
-
-
-@needs_bash
-def test_analytics_export_reports_a_failure_when_the_worker_is_down(sandbox):
-    record = server(sandbox, running=["backend", "postgres"])
-    result = sandbox.run(SCRIPTS_DIR / "analytics-export.sh", "--date", "2026-09-14", "--wait", "0")
-    assert result.returncode == 1 and "did not run" in result.stderr
-    assert notes(record, "analytics") == []
-    assert len(notes(record, "one-off")) == 1
-    assert [entry["options"][-1] for entry in notes(record, "cms_put")] == ["analytics_export_failed=1"]
 
 
 def token_files(sandbox: Sandbox) -> list[str]:
@@ -967,13 +923,13 @@ def test_setup_alarms_creates_the_spec_rules(sandbox):
 
     dry = sandbox.run(script)
     assert dry.returncode == 0, dry.stderr
-    assert dry.stderr.count("dry-run: aliyun cms PutCustomMetricRule") == 16
+    assert dry.stderr.count("dry-run: aliyun cms PutCustomMetricRule") == 15
     assert sandbox.calls() == []
 
     applied = sandbox.run(script, "--execute", "--webhook", "https://hooks.example.invalid/cms")
     assert applied.returncode == 0, applied.stderr
     calls = sandbox.calls()
-    assert len(calls) == 16 and all(call[1:3] == ["cms", "PutCustomMetricRule"] for call in calls)
+    assert len(calls) == 15 and all(call[1:3] == ["cms", "PutCustomMetricRule"] for call in calls)
     rules = {option(call, "--RuleId"): call for call in calls}
     worker = rules["openbox-gw2-worker-down"]
     assert option(worker, "--MetricName") == "worker_up"
@@ -998,7 +954,6 @@ def test_setup_alarms_creates_the_spec_rules(sandbox):
         "backend_mem_percent": (">", "90"),
         "business_trajectory_statements": (">", "0"),
         "events_ingested_24h": (">", "1000000"),
-        "analytics_export_failed": (">", "0"),
     }
     for name in ("openbox-gw2-backend-cpu", "openbox-gw2-backend-memory"):
         # Five one-minute samples: above 90 % for 5 minutes.
@@ -1013,21 +968,19 @@ def test_alarm_rules_only_use_metrics_that_are_reported():
     _, state = cms.collect(host, health, worker, {}, now=1757836800.0)
     values, _ = cms.collect(host, health, worker, state, now=1757836860.0)
     metrics = re.findall(r"^[a-z0-9-]+\|([a-z0-9_]+)\|", (SCRIPTS_DIR / "setup-alarms.sh").read_text(), flags=re.MULTILINE)
-    assert len(metrics) == 16 and set(metrics) <= set(values) | set(cms.JOB_METRICS)
-    assert "analytics_export_failed" in (SCRIPTS_DIR / "analytics-export.sh").read_text()
+    assert len(metrics) == 15 and set(metrics) <= set(values)
 
 
 @needs_bash
 def test_install_timers_dry_run_lists_the_units_and_the_metrics_instance(sandbox):
     script = SCRIPTS_DIR / "install-timers.sh"
-    services = ("openbox-trajectory-metrics.service", "openbox-trajectory-analytics.service")
+    services = ("openbox-trajectory-metrics.service",)
     result = sandbox.run(script, "--dry-run")
     assert result.returncode == 0, result.stderr
     installs = re.findall(r"dry-run: install -m 0644 \S+/systemd/(\S+) ", result.stderr)
     assert sorted(installs) == sorted(path.name for path in UNITS_DIR.iterdir())
     assert (
-        "systemctl enable --now openbox-trajectory-metrics.timer openbox-pg-backup.timer "
-        "openbox-trajectory-analytics.timer openbox-prune-images.timer"
+        "systemctl enable --now openbox-trajectory-metrics.timer openbox-pg-backup.timer openbox-prune-images.timer"
     ) in result.stderr
     for service in services:
         assert (
@@ -1038,7 +991,7 @@ def test_install_timers_dry_run_lists_the_units_and_the_metrics_instance(sandbox
 
     other = sandbox.run(script, "--dry-run", "--instance", "aws-dev")
     assert other.returncode == 0, other.stderr
-    assert other.stderr.count("Environment=OPENBOX_CMS_INSTANCE=aws-dev\n") == 2
+    assert other.stderr.count("Environment=OPENBOX_CMS_INSTANCE=aws-dev\n") == 1
 
     removed = sandbox.run(script, "--dry-run", "--uninstall")
     assert removed.returncode == 0, removed.stderr
@@ -1130,8 +1083,8 @@ def test_overlay_validates_against_the_sanitized_production_compose(tmp_path):
     mounts = {volume["target"]: volume for volume in worker["volumes"]}
     assert mounts["/var/lib/openbox/trajectory-spool"]["source"] == "trajectory-spool"
     assert mounts["/run/secrets/aliyun-config.json"]["read_only"] is True
-    # Old local trajectory blob files are not converted, so the worker does not mount the blob volume.
-    assert "/legacy-blobs" not in mounts
+    # Old trajectory recordings are not kept, so the worker does not mount the business blob volume.
+    assert all(volume.get("source") != "blob-data" for volume in worker["volumes"])
     assert {name: dependency["condition"] for name, dependency in worker["depends_on"].items()} == {
         "postgres": "service_healthy", "redis": "service_healthy",
     }
@@ -1140,10 +1093,10 @@ def test_overlay_validates_against_the_sanitized_production_compose(tmp_path):
     assert worker["restart"] == "unless-stopped" and worker["logging"]["options"]["max-size"] == "50m"
 
     backend = services["backend"]
-    assert {key: backend["environment"][key] for key in ("TRAJECTORY_SINK", "TRAJECTORY_WORKER_MODE", "TRAJECTORY_SPOOL_DIR")} == {
-        "TRAJECTORY_SINK": "spool", "TRAJECTORY_WORKER_MODE": "external",
-        "TRAJECTORY_SPOOL_DIR": "/var/lib/openbox/trajectory-spool",
+    assert {key: backend["environment"][key] for key in ("TRAJECTORY_WORKER_MODE", "TRAJECTORY_SPOOL_DIR")} == {
+        "TRAJECTORY_WORKER_MODE": "external", "TRAJECTORY_SPOOL_DIR": "/var/lib/openbox/trajectory-spool",
     }
+    assert "TRAJECTORY_SINK" not in backend["environment"]
     assert backend["environment"]["DATABASE_URL"] == "postgresql+asyncpg://openbox:change-me@postgres:5432/openbox"
     spool_users = sorted(
         name for name, service in services.items()
@@ -1188,7 +1141,6 @@ def test_timers_follow_the_spec_schedules():
     schedules = {
         "openbox-trajectory-metrics.timer": "*-*-* *:*:00",
         "openbox-pg-backup.timer": "*-*-* 03:30:00 Asia/Shanghai",
-        "openbox-trajectory-analytics.timer": "*-*-* 04:00:00 Asia/Shanghai",
         "openbox-prune-images.timer": "Sun *-*-* 04:30:00 Asia/Shanghai",
     }
     assert {path.name for path in UNITS_DIR.glob("*.timer")} == set(schedules)
@@ -1197,13 +1149,13 @@ def test_timers_follow_the_spec_schedules():
         assert timer["Timer"]["OnCalendar"] == calendar
         assert timer["Timer"]["Unit"] == name.replace(".timer", ".service")
         assert timer["Install"]["WantedBy"] == "timers.target"
-    # A missed run (host down at 04:00) catches up at boot.
-    assert unit("openbox-trajectory-analytics.timer")["Timer"]["Persistent"] == "true"
+    # A missed backup (host down at 03:30) catches up at boot.
+    assert unit("openbox-pg-backup.timer")["Timer"]["Persistent"] == "true"
 
 
 def test_services_run_the_deployed_scripts():
     services = sorted(UNITS_DIR.glob("*.service"))
-    assert len(services) == 4
+    assert len(services) == 3
     for path in services:
         service = unit(path.name)
         assert service["Service"]["Type"] == "oneshot"
@@ -1212,7 +1164,6 @@ def test_services_run_the_deployed_scripts():
         assert executable.parent == Path("/opt/openbox/deploy/gw2/scripts")
         assert (SCRIPTS_DIR / executable.name) in EXECUTABLES
     assert unit("openbox-prune-images.service")["Service"]["ExecStart"].endswith("prune-images.sh --execute")
-    assert unit("openbox-trajectory-analytics.service")["Service"]["ExecStart"].endswith("/analytics-export.sh")
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze is not installed")
@@ -1261,7 +1212,7 @@ def test_k8s_runs_the_worker_as_a_sidecar_with_routes(manifest):
     subprocess.run(["/bin/sh", "-n", "-c", script], check=True)
 
     backend_env = container_environment(backend, documents)
-    assert (backend_env["TRAJECTORY_SINK"], backend_env["TRAJECTORY_WORKER_MODE"]) == ("spool", "external")
+    assert backend_env["TRAJECTORY_WORKER_MODE"] == "external" and "TRAJECTORY_SINK" not in backend_env
     worker_env = container_environment(worker, documents)
     assert worker_env["TRAJECTORY_WORKER_MODE"] == "external"
     assert worker_env["TRAJECTORY_BACKEND_INTERNAL_URL"] == "http://127.0.0.1:8080"

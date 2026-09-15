@@ -73,7 +73,7 @@ def _precheck_lines(pre: svc.Precheck) -> list[str]:
         lines.append(f"auto_publish=disabled since {acct.auto_publish_disabled_at.isoformat()} reason={acct.auto_publish_disabled_reason}")
     if pre.budget is not None:
         b = pre.budget
-        lines.append(f"budget={'ok' if b.allowed else 'blocked'} today={b.today_count}/{b.daily_limit}" + ("" if b.allowed else f" reason={b.reason}") + (f" next_allowed_at={b.next_allowed_at.astimezone(policy.SHANGHAI).isoformat()}" if b.next_allowed_at else ""))
+        lines.append(f"budget={'ok' if b.allowed else 'blocked'} {'scheduled_day=' + str(b.day) + ' count' if b.scheduled else 'today'}={b.today_count}/{b.daily_limit}" + ("" if b.allowed else f" reason={b.reason}") + (f" next_allowed_at={b.next_allowed_at.astimezone(policy.SHANGHAI).isoformat()}" if b.next_allowed_at else ""))
     lines.append(f"can_auto_publish={'true' if pre.can_auto else 'false'}")
     if pre.mode == "package":
         lines.append("→ use douyin_publish (QR package) for this video.")
@@ -84,11 +84,11 @@ def _precheck_lines(pre: svc.Precheck) -> list[str]:
 
 
 async def _precheck(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
-    pre = await svc.precheck(_caller(ctx), requested_mode=args.mode)
+    pre = await svc.precheck(_caller(ctx), requested_mode=args.mode, schedule_at=args.schedule_at)
     return ToolResult(title="Desktop publish precheck", output="\n".join(_precheck_lines(pre)),
                       metadata={"mode": pre.mode, "login_ok": pre.login_ok, "can_auto_publish": pre.can_auto,
                                 "budget": None if pre.budget is None else {"allowed": pre.budget.allowed, "today": pre.budget.today_count,
-                                                                            "limit": pre.budget.daily_limit, "reason": pre.budget.reason,
+                                                                            "limit": pre.budget.daily_limit, "reason": pre.budget.reason, "day": pre.budget.day,
                                                                             "next_allowed_at": pre.budget.next_allowed_at.isoformat() if pre.budget.next_allowed_at else None},
                                 "account_id": pre.account.id if pre.account else None})
 
@@ -174,9 +174,10 @@ async def execute(args: DesktopPublishArgs, ctx: ToolContext) -> ToolResult:
 DESKTOP_PUBLISH_DESCRIPTION = """Post a finished video to 抖音创作者中心 using the login state on the workspace's cloud desktop. \
 This is the DEFAULT way to publish to Douyin ("发布/发抖音/投稿"): the person never has to authorize or bind anything. \
 The video is read from the desktop itself, so size is not a limit. Actions:
-- precheck: which route applies now (auto vs QR package), login state, today's budget, next allowed time. Call first.
+- precheck: which route applies now (auto vs QR package), login state, today's budget (or, with schedule_at, that day's), next allowed time. Call first.
 - publish: asset_id + title (≤30 chars) + intro (≤1000, topics become #chips) + declaration (AI content must be `ai`) \
-+ visibility + optional hot_word / schedule_at ("YYYY-MM-DD HH:mm", 2h–14d ahead). `dry_run=true` fills the form, \
++ visibility + optional hot_word / schedule_at ("YYYY-MM-DD HH:mm", 2h–14d ahead; a scheduled post is budgeted against the day \
+it will appear and spaced against the other queued posts, so several days of posts can be queued right now). `dry_run=true` fills the form, \
 screenshots and saves a draft without publishing. Returns job_id, status, item_id when the work is visible.
 - status: recent desktop publish jobs (publish_jobs, platform douyin_creator).
 - enable_auto: re-enable this account's auto publish after a person confirmed the account is fine.

@@ -20,6 +20,13 @@ export interface WsChannelOptions {
   terminalTicketStatuses?: readonly number[]
   /** Server close codes with the same meaning, e.g. 4401/4403. */
   terminalCloseCodes?: readonly number[]
+  /**
+   * Only for a server that sends something at least this often (a
+   * heartbeat): an open socket silent for this long is dead, so it is dropped
+   * and reconnected. A half-open connection otherwise looks open until TCP
+   * gives up, which can take hours, and every event sent meanwhile is lost.
+   */
+  silenceTimeoutMs?: number
 }
 
 type Handler<M, E extends keyof M> = (data: M[E]) => void
@@ -28,6 +35,7 @@ export class WsClient<M extends WsLifecycleEvents> {
   private ws: WebSocket | null = null
   private handlers = new Map<string, Set<(data: unknown) => void>>()
   private reconnectTimer: number | null = null
+  private silenceTimer: number | null = null
   private connectPromise: Promise<void> | null = null
   private generation = 0
   private attempt = 0
@@ -115,10 +123,12 @@ export class WsClient<M extends WsLifecycleEvents> {
       }
       this._connected = true
       this.attempt = 0
+      this.watchSilence(socket)
       this.dispatch("__connected", {})
     }
     socket.onmessage = (event) => {
       if (this.ws !== socket) return
+      this.watchSilence(socket)
       try {
         const parsed = JSON.parse(event.data as string) as { type?: string; event?: string; data?: unknown }
         const name = parsed.type ?? parsed.event
@@ -130,6 +140,7 @@ export class WsClient<M extends WsLifecycleEvents> {
     socket.onclose = (event?: CloseEvent) => {
       // A stale socket must never null out or reconnect over its replacement.
       if (this.ws !== socket) return
+      this.clearSilence()
       this._connected = false
       this.ws = null
       const code = event?.code
@@ -143,6 +154,29 @@ export class WsClient<M extends WsLifecycleEvents> {
     socket.onerror = () => {
       socket.close()
     }
+  }
+
+  /** Restart the silence clock for `socket`: any frame counts, heartbeats included. */
+  private watchSilence(socket: WebSocket): void {
+    const limit = this.options.silenceTimeoutMs
+    if (!limit) return
+    this.clearSilence()
+    this.silenceTimer = window.setTimeout(() => {
+      this.silenceTimer = null
+      if (this.ws !== socket) return
+      // Let go of it before closing: a dead connection's close event can come
+      // much later, and must not reach the socket that replaces it.
+      this.ws = null
+      this._connected = false
+      this.dispatch("__disconnected", { code: undefined })
+      socket.close()
+      this.scheduleReconnect()
+    }, limit)
+  }
+
+  private clearSilence(): void {
+    if (this.silenceTimer !== null) window.clearTimeout(this.silenceTimer)
+    this.silenceTimer = null
   }
 
   /** Terminal refusal: stop reconnecting and let subscribers drop their state. */
@@ -160,6 +194,7 @@ export class WsClient<M extends WsLifecycleEvents> {
     this.connectPromise = null
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
+    this.clearSilence()
     const socket = this.ws
     this.ws = null
     this._connected = false
@@ -209,7 +244,9 @@ export class WsClient<M extends WsLifecycleEvents> {
 /** The agent event stream every chat surface listens to. */
 export class AgentWsClient extends WsClient<WsEventMap> {
   constructor() {
-    super({ path: "/ws/agent", ticketPath: "/api/auth/ticket" })
+    // The server sends `server.heartbeat` every 25s (backend api/ws.py), so a
+    // minute without any frame means the connection is gone.
+    super({ path: "/ws/agent", ticketPath: "/api/auth/ticket", silenceTimeoutMs: 60_000 })
   }
 }
 

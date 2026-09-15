@@ -8,7 +8,7 @@ The protocol of docs/trajectory-rearch/maps/api.md §3. A refusal happens after
 import asyncio
 import json
 import time
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 
@@ -18,7 +18,7 @@ from core.log import create_logger
 from trajectory import repository
 from trajectory.auth import (NoStoreRoute, record_audit, require_admin_account, require_mobile_session,
     require_trajectory_admin, token_revoked, viewer_facts)
-from trajectory.store.database import trace_read_session
+from trajectory.store.database import READ_POOL_RESERVE, trace_read_session
 
 log = create_logger("trajectory.worker.ws")
 
@@ -95,9 +95,19 @@ def watermark(data: dict) -> dict:
     return value
 
 
-async def _header(session_id: str) -> dict:
-    async with trace_read_session() as db:
-        return await repository.get_session_header(db, session_id)
+async def _header(session_id: str, app=None) -> dict:
+    """A subscription's session header, read by at most READ_POOL_RESERVE sockets of ``app`` at once.
+
+    The read pool keeps that many connections beyond the HTTP read slots, so admin reads that fill their
+    slots cannot make a subscription wait for a connection until the pool times out.
+    """
+    state = getattr(app, "state", None)
+    reads = getattr(state, "trajectory_header_reads", None) if state is not None else None
+    if state is not None and reads is None:
+        reads = state.trajectory_header_reads = asyncio.Semaphore(READ_POOL_RESERVE)
+    async with reads if reads is not None else nullcontext():
+        async with trace_read_session() as db:
+            return await repository.get_session_header(db, session_id)
 
 
 @router.websocket("/ws/admin/trajectories")
@@ -162,7 +172,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
                     await send({"type": "error", "data": {"code": "SUBSCRIPTION_LIMIT"}})
                     continue
                 try:
-                    header = await _header(sid)
+                    header = await _header(sid, websocket.app)
                 except (HTTPException, LookupError):
                     await send({"type": "error", "data": {"code": "SESSION_NOT_FOUND", "session_id": sid}})
                     continue

@@ -36,7 +36,8 @@ What `docker-compose.trajectory.yml` changes:
 ### Protecting business concurrency
 
 The admin reader now uses short, read-only PostgreSQL transactions and its own pool
-(2 connections, no overflow, 1 s pool wait). Each query releases its connection before
+(4 connections: one per HTTP read slot plus 2 for WebSocket subscription headers; no overflow,
+1 s pool wait). Each query releases its connection before
 waiting for OSS or decoding content. Reader connections enforce `statement_timeout=5s`,
 `lock_timeout=1s`, `idle_in_transaction_session_timeout=5s`, `work_mem=4MB` and disable
 parallel query workers (`max_parallel_workers_per_gather=0`).
@@ -48,7 +49,8 @@ JSON reads have a 10 s preparation deadline, a 16 MiB budget for decoded blobs/s
 and an 8 MiB response limit. Oversize reads return 413; the viewer halves event pages
 without moving the cursor. Individual payload/blob/export downloads spool to disk and
 hold a read slot through delivery (60 s preparation deadline). They do not have the
-JSON decoded-byte limit. Health, metrics, recording and background jobs do not wait
+JSON decoded-byte limit. JSON responses release their slot before they are sent, so a slow
+client does not hold one. Health, metrics, recording and background jobs do not wait
 for admin read slots. Monitor `read_active`, `read_waiting`, `read_rejected`,
 `read_timed_out` and `read_too_large` alongside spool age and ingest lag.
 

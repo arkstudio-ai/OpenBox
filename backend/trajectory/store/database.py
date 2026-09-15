@@ -26,6 +26,9 @@ PG_SERVER_SETTINGS = {"statement_timeout": "5000", "application_name": "openbox-
 #: Statement timeout of the trace migration connection: DDL on populated tables (t0002 rewrites a column type)
 #: outlasts the trace role's 5 s default (wave-3 contract 2).
 MIGRATION_STATEMENT_TIMEOUT = "15min"
+#: Read-pool connections kept beyond the HTTP read slots (TRAJECTORY_READ_CONCURRENCY): WebSocket subscription
+#: headers read with at most this many at once (worker/ws.py), so busy admin reads never make them wait for one.
+READ_POOL_RESERVE = 2
 
 
 class TraceEngineNotInitialized(RuntimeError):
@@ -54,13 +57,15 @@ def init_trace_engine(url: str, *, pool_size: int = 5, max_overflow: int = 5) ->
     enforce foreign keys (``ON DELETE CASCADE`` then behaves as on PostgreSQL)
     and use WAL so the embedded worker's readers do not block its writer.
     """
-    global _engine, _session_factory
+    global _engine, _session_factory, _read_engine, _read_factory
     parsed = make_url(url)
     dialect = parsed.get_backend_name()
     if dialect not in SUPPORTED_DIALECTS:
         raise ValueError(f"Unsupported trace database dialect: {dialect}")
     if _engine is not None:
         log.warning("Replacing an open trace database engine; close_trace_engine() was not called")
+    # The read pool belongs to the engine being replaced: the next read builds one for the new URL.
+    _read_engine = _read_factory = None
     if dialect == "sqlite":
         engine = create_async_engine(url, echo=False)
         event.listen(engine.sync_engine, "connect", _configure_sqlite_connection)
@@ -146,8 +151,10 @@ class TraceReader:
             return _session_factory
         if _read_factory is None:
             from trajectory.config import integer
+            pool_size = integer("TRAJECTORY_READ_DB_POOL_SIZE",
+                                integer("TRAJECTORY_READ_CONCURRENCY", 2) + READ_POOL_RESERVE)
             _read_engine = create_async_engine(
-                engine.url, pool_size=integer("TRAJECTORY_READ_DB_POOL_SIZE", 2), max_overflow=0,
+                engine.url, pool_size=pool_size, max_overflow=0,
                 pool_timeout=1, pool_pre_ping=True,
                 connect_args={"server_settings": {
                     **PG_SERVER_SETTINGS, "application_name": "openbox-trace-read",

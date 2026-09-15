@@ -238,3 +238,75 @@ async def test_stream_keeps_admission_until_send_or_cancellation(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert admission.active == 0
+
+
+async def test_a_json_response_releases_its_slot_before_a_slow_client_receives_it(monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_READ_CONCURRENCY", "1")
+    app, router = FastAPI(), APIRouter(route_class=BoundedReadRoute)
+
+    @router.get("/trace")
+    async def read():
+        return {"ok": True}
+
+    app.include_router(router)
+    sending, release = asyncio.Event(), asyncio.Event()
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            sending.set()
+            await release.wait()
+
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"}, "http_version": "1.1", "method": "GET",
+             "scheme": "http", "path": "/trace", "raw_path": b"/trace", "root_path": "", "query_string": b"",
+             "headers": [], "client": ("test", 1), "server": ("test", 80)}
+    task = asyncio.create_task(app(scope, receive, send))
+    try:
+        await asyncio.wait_for(sending.wait(), 1)
+        assert app.state.trajectory_read_admission.active == 0
+    finally:
+        release.set()
+        await task
+
+
+async def test_subscription_headers_read_within_the_pool_reserve(trace_db, monkeypatch):
+    from trajectory.store.database import READ_POOL_RESERVE
+    from trajectory.worker import ws
+    running, peak, release = 0, 0, asyncio.Event()
+
+    async def header(_db, session_id):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await release.wait()
+        running -= 1
+        return {"session_id": session_id}
+
+    monkeypatch.setattr(ws.repository, "get_session_header", header)
+    app, count = FastAPI(), READ_POOL_RESERVE + 3
+    reads = [asyncio.create_task(ws._header(f"s{index}", app)) for index in range(count)]
+    async with asyncio.timeout(1):
+        while running < READ_POOL_RESERVE:
+            await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    assert peak == READ_POOL_RESERVE
+    release.set()
+    assert [item["session_id"] for item in await asyncio.gather(*reads)] == [f"s{index}" for index in range(count)]
+
+
+async def test_the_read_pool_reserves_connections_for_subscriptions_and_follows_engine_replacement(monkeypatch):
+    from trajectory.store import database
+    await database.close_trace_engine()
+    monkeypatch.delenv("TRAJECTORY_READ_DB_POOL_SIZE", raising=False)
+    monkeypatch.setenv("TRAJECTORY_READ_CONCURRENCY", "3")
+    database.init_trace_engine("postgresql+asyncpg://reader:secret@127.0.0.1:1/openbox_trace_test_pool")
+    try:
+        database.TraceReader()._factory()
+        assert database._read_engine.pool.size() == 3 + database.READ_POOL_RESERVE
+        # A replaced engine does not keep the read pool of the old one.
+        database.init_trace_engine("postgresql+asyncpg://reader:secret@127.0.0.1:1/openbox_trace_test_other")
+        assert database._read_engine is None and database._read_factory is None
+    finally:
+        await database.close_trace_engine()

@@ -49,7 +49,7 @@ class ReadAdmission:
 
 
 class AdmittedResponse(Response):
-    """Keep the slot until streaming or a slow client's send has finished."""
+    """A streamed response keeps its read slot until the stream ends or the client goes away."""
 
     def __init__(self, response, admission):
         self.response = response
@@ -100,6 +100,10 @@ class BoundedReadRoute(NoStoreRoute):
                     body = getattr(response, "body", None)
                     if body is not None and len(body) > integer("TRAJECTORY_READ_RESPONSE_BYTES", 8 * 1024 * 1024):
                         raise ReadTooLarge("Trajectory result is too large; use a smaller page or download individual content")
+                if body is not None:
+                    # The body is complete in memory: the slot is released before it is sent, so a slow client
+                    # cannot hold it.
+                    return response
                 handed_off = True
                 return AdmittedResponse(response, admission)
             except ReadTooLarge as exc:

@@ -338,11 +338,19 @@ async def run_loop(session_id: str, user_id: str = "default", *, expected_genera
     last_step_requests = {}
     step_attempts = {}
     finished_steps = set()
-    run_context = question_runtime.current_run.set(ticket)
-    abort = register_run(session_id, ticket.run_id)
-    if question_runtime.is_revoked(ticket.run_id):
-        abort.set()
-    lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
+    run_context = None
+    try:
+        run_context = question_runtime.current_run.set(ticket)
+        abort = register_run(session_id, ticket.run_id)
+        if question_runtime.is_revoked(ticket.run_id):
+            abort.set()
+        lease_task = asyncio.create_task(question_runtime.heartbeat(ticket, abort))
+    except BaseException:
+        # The run's finally below is not reached yet: leave neither binding behind in this task.
+        if run_context is not None:
+            question_runtime.current_run.reset(run_context)
+        trace_scope.__exit__(None, None, None)
+        raise
     failed = False
     completed = False
     interrupted = False

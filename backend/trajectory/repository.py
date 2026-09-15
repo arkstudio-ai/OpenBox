@@ -101,7 +101,7 @@ def segment_cache() -> LruCache:
     """Verified segment JSONL keyed by (storage key, sha256), within TRAJECTORY_SEGMENT_CACHE_BYTES."""
     global _segment_cache
     if _segment_cache is None:
-        _segment_cache = LruCache(integer("TRAJECTORY_SEGMENT_CACHE_BYTES", 128 * 1024 * 1024))
+        _segment_cache = LruCache(integer("TRAJECTORY_SEGMENT_CACHE_BYTES", 32 * 1024 * 1024))
     return _segment_cache
 
 
@@ -134,6 +134,11 @@ async def _segment_lines(segment: TrajectorySegment, blob_store):
     if lines is None:
         lines = await load_segment_lines(blob_store if blob_store is not None else get_blob_store(), segment)
         cache.put(key, lines, lines.size)
+    else:
+        from trajectory.read_budget import current_read_budget
+        budget = current_read_budget()
+        if budget is not None:
+            budget.consume(lines.size)
     return lines
 
 

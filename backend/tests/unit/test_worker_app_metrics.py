@@ -17,12 +17,12 @@ def test_names_are_exactly_the_spec_and_cover_the_cloudmonitor_push():
                         "ownership_drops", "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts",
                         "blob_put_bytes", "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted",
                         "gc_failures", "exports_built", "blob_put_raw_bytes", "audit_dead_letters",
-                        "failed_batches")
+                        "failed_batches", "read_rejected", "read_timed_out", "read_too_large")
     assert GAUGES == ("spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds",
                       "projection_lag_events", "archive_lag_events", "gc_queue_depth", "trace_db_bytes",
                       "hot_events_rows", "trajectories_degraded", "trajectories_blocked", "stale_hot_partitions",
                       "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
-                      "spool_blob_bytes", "spool_quarantine_bytes", "spool_quarantine_files")
+                      "spool_blob_bytes", "spool_quarantine_bytes", "spool_quarantine_files", "read_active", "read_waiting")
     assert set(cms.COUNTERS) <= set(COUNTERS)
     assert set(cms.GAUGES) <= set(GAUGES)
 

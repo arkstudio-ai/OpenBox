@@ -127,11 +127,19 @@ async def load_segment_lines(blob_store, segment_row) -> SegmentLines:
     compression = _field(segment_row, "compression") or COMPRESSION
     if compression != COMPRESSION:
         raise CorruptContent(f"Unsupported trajectory segment compression: {compression!r}")
-    try:
-        stored = await blob_store.get(_field(segment_row, "storage_key"))
-    except FileNotFoundError as exc:
-        raise CorruptContent("Archived trajectory segment is missing") from exc
-    lines = SegmentLines(decode_blob(stored, COMPRESSION), expected_sha256=_field(segment_row, "sha256"))
+    from trajectory.read_budget import current_read_budget
+    budget = current_read_budget()
+    if budget is None:
+        try:
+            stored = await blob_store.get(_field(segment_row, "storage_key"))
+        except FileNotFoundError as exc:
+            raise CorruptContent("Archived trajectory segment is missing") from exc
+        raw = decode_blob(stored, COMPRESSION)
+    else:
+        from trajectory.payload import fetch_blob
+        raw = await fetch_blob(blob_store, _field(segment_row, "storage_key"), COMPRESSION,
+                               _field(segment_row, "sha256"), cache_result=False)
+    lines = SegmentLines(raw, expected_sha256=_field(segment_row, "sha256"))
     if (lines.from_seq, lines.to_seq) != (int(_field(segment_row, "from_seq")), int(_field(segment_row, "to_seq"))) \
             or len(lines.lines) != int(_field(segment_row, "event_count")):
         raise CorruptContent("Trajectory segment does not match its manifest row")

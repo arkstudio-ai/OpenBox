@@ -18,7 +18,7 @@ from core.log import create_logger
 from trajectory import repository
 from trajectory.auth import (NoStoreRoute, record_audit, require_admin_account, require_mobile_session,
     require_trajectory_admin, token_revoked, viewer_facts)
-from trajectory.store.database import trace_session
+from trajectory.store.database import trace_read_session
 
 log = create_logger("trajectory.worker.ws")
 
@@ -96,7 +96,7 @@ def watermark(data: dict) -> dict:
 
 
 async def _header(session_id: str) -> dict:
-    async with trace_session() as db:
+    async with trace_read_session() as db:
         return await repository.get_session_header(db, session_id)
 
 

@@ -15,8 +15,9 @@ from alembic.config import Config
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 
-from trajectory.store.database import close_trace_engine, init_trace_engine, trace_session
+from trajectory.store.database import close_trace_engine, init_trace_engine, trace_read_session, trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryEvent, TrajectoryIngestFile, TrajectoryPayload
 from trajectory.worker.ingest import IngestService
 from trajectory.worker.lock import PostgresWriterLock
@@ -86,6 +87,42 @@ async def test_ingest_writes_partitioned_rows_with_contiguous_seq(migrated, sett
             TrajectoryEvent.recorded_on == datetime.now(timezone.utc).date()))
     assert partition == 5 and on_day == 5 and payloads == 2
     assert harness.store.objects and all(key.startswith("trajectories/trj_") for key in harness.store.objects)
+
+
+async def test_busy_read_pool_does_not_starve_ingest(migrated, settings, monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_READ_DB_POOL_SIZE", "2")
+    async with trace_read_session() as reader:
+        assert await reader.scalar(select(func.current_setting("default_transaction_read_only"))) == "on"
+        assert await reader.scalar(select(func.current_setting("statement_timeout"))) == "5s"
+        assert await reader.scalar(select(func.current_setting("lock_timeout"))) == "1s"
+        assert await reader.scalar(select(func.current_setting("idle_in_transaction_session_timeout"))) == "5s"
+        assert await reader.scalar(select(func.current_setting("work_mem"))) == "4MB"
+        assert await reader.scalar(select(func.current_setting("max_parallel_workers_per_gather"))) == "0"
+        blocked = [asyncio.create_task(reader.scalar(select(func.pg_sleep(60)))) for _ in range(2)]
+        try:
+            async with asyncio.timeout(2):
+                while True:
+                    async with trace_session() as writer:
+                        sleeping = await writer.scalar(text("SELECT count(*) FROM pg_stat_activity "
+                            "WHERE datname = current_database() AND application_name = 'openbox-trace-read' "
+                            "AND state = 'active' AND wait_event = 'PgSleep'"))
+                    if sleeping == 2:
+                        break
+                    await asyncio.sleep(0.01)
+            harness = Harness(settings)
+            harness.writer.events(*[event(event_id=f"read_pressure_{index}") for index in range(100)])
+            result = await asyncio.wait_for(harness.run(), 2)
+            assert result["events"] == 100
+            # Only two reader connections; exhausting them fails quickly, without overflow.
+            with pytest.raises(PoolTimeout):
+                await reader.scalar(select(1))
+        finally:
+            for task in blocked:
+                task.cancel()
+            await asyncio.gather(*blocked, return_exceptions=True)
+        assert await reader.scalar(select(1)) == 1
+    _, stored = await events_of("ses_1")
+    assert len(stored) == 101 and [row.seq for row in stored] == list(range(1, 102))
 
 
 async def test_concurrent_ingesters_never_reuse_a_seq(migrated, settings):

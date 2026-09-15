@@ -29,6 +29,7 @@ COUNTERS = (
     "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted", "gc_failures", "exports_built",
     # Wave 3 (shared contract 5).
     "blob_put_raw_bytes", "audit_dead_letters", "failed_batches",
+    "read_rejected", "read_timed_out", "read_too_large",
 )
 GAUGES = (
     "spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds", "projection_lag_events",
@@ -38,6 +39,7 @@ GAUGES = (
     "events_ingested_24h", "hot_partitions", "budget_degraded_trajectories", "budget_degraded_users",
     # Spool usage by area: spool_bytes is their total.
     "spool_blob_bytes", "spool_quarantine_bytes", "spool_quarantine_files",
+    "read_active", "read_waiting",
 )
 
 

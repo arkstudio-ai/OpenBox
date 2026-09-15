@@ -33,6 +33,42 @@ What `docker-compose.trajectory.yml` changes:
 | `postgres` | `mem_limit: 2g`; `shared_buffers=512MB`, `effective_cache_size=1GB`, `shared_preload_libraries=pg_stat_statements`, `pg_stat_statements.track=all`, `max_connections=200` | Room for the trace database and its pool; query statistics for the isolation check. Applying it recreates postgres. |
 | volumes | `trajectory-spool` | The spool may contain unredacted data; it is mounted into backend and worker only. |
 
+### Protecting business concurrency
+
+The admin reader now uses short, read-only PostgreSQL transactions and its own pool
+(2 connections, no overflow, 1 s pool wait). Each query releases its connection before
+waiting for OSS or decoding content. Reader connections enforce `statement_timeout=5s`,
+`lock_timeout=1s`, `idle_in_transaction_session_timeout=5s`, `work_mem=4MB` and disable
+parallel query workers (`max_parallel_workers_per_gather=0`).
+The ingest/projection writer pool is separate; these reader settings do not change it.
+
+Worker GET requests allow 2 active reads and 4 queued reads, waiting at most 250 ms.
+Overflow returns HTTP 429 with `Retry-After: 1`; a query deadline returns 503.
+JSON reads have a 10 s preparation deadline, a 16 MiB budget for decoded blobs/segments,
+and an 8 MiB response limit. Oversize reads return 413; the viewer halves event pages
+without moving the cursor. Individual payload/blob/export downloads spool to disk and
+hold a read slot through delivery (60 s preparation deadline). They do not have the
+JSON decoded-byte limit. Health, metrics, recording and background jobs do not wait
+for admin read slots. Monitor `read_active`, `read_waiting`, `read_rejected`,
+`read_timed_out` and `read_too_large` alongside spool age and ingest lag.
+
+Blob and segment cache defaults are 64 MiB and 32 MiB of cached content. These are
+**not process RSS limits**: Python objects, SQL results, serialization and concurrent
+background work also use memory. Keep the worker's 1 CPU / 1 GiB container limits,
+the bounded producer queue, and spool disk budgets enabled. Under sustained pressure,
+reject trace reads or degrade recording before increasing resource limits.
+
+A separate database and role **on the same PostgreSQL server** still share CPU,
+buffer cache, disk IO and connection capacity with business queries. For production
+where trace must not consume the business database's resources, provision a dedicated
+PostgreSQL instance and storage; set `OPENBOX_TRACE_DATABASE_URL` in the Compose `.env`
+to its `postgresql+asyncpg://...` URL. The worker overlay accepts that override. Keep
+the business PostgreSQL configuration unchanged in the final Compose override,
+configure trace backups/metrics for the new instance (the bundled host scripts target
+the shared instance), and validate write/read load before enabling recording. A separate
+container on the same disk still shares host IO; use separate storage/host for that boundary.
+Code changes and editing this overlay do not apply these production changes by themselves.
+
 ## 2. Files
 
 | File | Where it runs | Purpose |

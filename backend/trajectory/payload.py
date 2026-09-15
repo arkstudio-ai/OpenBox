@@ -37,6 +37,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm.attributes import set_committed_value
 
 from trajectory.config import integer
+from trajectory.read_budget import current_read_budget
 from trajectory.storage import CHUNK_BYTES, blob_key, decode_blob, encode_blob, get_blob_store, read_chunks
 from trajectory.store.models import SessionTrajectory, TrajectoryMetaAsset, TrajectoryPayload
 from trajectory.types import CorruptContent, canonical, now
@@ -109,7 +110,7 @@ def blob_cache() -> LruCache:
     """Decoded blob bytes keyed by (storage key, sha256); immutable, so never stale."""
     global _blob_cache
     if _blob_cache is None:
-        _blob_cache = LruCache(integer("TRAJECTORY_BLOB_CACHE_BYTES", 256 * 1024 * 1024))
+        _blob_cache = LruCache(integer("TRAJECTORY_BLOB_CACHE_BYTES", 64 * 1024 * 1024))
     return _blob_cache
 
 
@@ -134,13 +135,31 @@ def _decode_verified(stored: bytes, encoding: str, sha256: str | None) -> bytes:
     return content
 
 
-async def fetch_blob(store, key: str, encoding: str, sha256: str | None) -> bytes:
+async def fetch_blob(store, key: str, encoding: str, sha256: str | None, *, cache_result: bool = True) -> bytes:
     """Decoded bytes of one stored blob, verified against sha256 when known."""
     cache = blob_cache()
-    if sha256 is not None:
+    if sha256 is not None and cache_result:
         cached = cache.get((key, sha256))
         if cached is not None:
+            budget = current_read_budget()
+            if budget is not None:
+                budget.consume(len(cached))
             return cached
+    budget = current_read_budget()
+    if budget is not None:
+        async with _fetch_limit():
+            spooled = await _spool(_blob_chunks(store, key), encoding=encoding, sha256=sha256,
+                                  mismatch="Trajectory content digest mismatch", memory_bytes=budget.remaining,
+                                  consume=budget.consume)
+        try:
+            content = spooled.content
+            if content is None:
+                content = b"".join([chunk async for chunk in spooled.chunks()])
+            if sha256 is not None and cache_result:
+                cache.put((key, sha256), content, len(content))
+            return content
+        finally:
+            spooled.close()
     async with _fetch_limit():
         try:
             stored = await (store if store is not None else get_blob_store()).get(key)
@@ -150,7 +169,7 @@ async def fetch_blob(store, key: str, encoding: str, sha256: str | None) -> byte
         content = await asyncio.to_thread(_decode_verified, stored, encoding, sha256)
     else:
         content = _decode_verified(stored, encoding, sha256)
-    if sha256 is not None:
+    if sha256 is not None and cache_result:
         cache.put((key, sha256), content, len(content))
     return content
 
@@ -340,13 +359,14 @@ class _SpoolWriter:
     error, so zstd content is complete only when its digest checks.
     """
 
-    def __init__(self, encoding: str, memory_bytes: int):
+    def __init__(self, encoding: str, memory_bytes: int, consume=None):
         if encoding not in ("identity", "zstd"):
             raise CorruptContent(f"Unsupported blob encoding: {encoding!r}")
         self.digest = hashlib.sha256()
         self.size = 0
         self.stored = 0
         self.memory_bytes = memory_bytes
+        self.consume = consume
         self.buffer: bytearray | None = bytearray()
         self.file = None
         # Every frame, concatenated ones included, is decoded into write() in pieces of at most a chunk.
@@ -354,6 +374,8 @@ class _SpoolWriter:
                       if encoding == "zstd" else None)
 
     def write(self, data) -> int:
+        if self.consume is not None:
+            self.consume(len(data))
         self.digest.update(data)
         self.size += len(data)
         if self.buffer is not None and self.size <= self.memory_bytes:
@@ -390,14 +412,25 @@ class _SpoolWriter:
             self.file.close()
 
 
-async def _spool(chunks, *, encoding: str, sha256: str | None, mismatch: str, memory_bytes: int = 0) -> Spooled:
+async def _spool_step(function, *args):
+    # Cancelling to_thread does not stop its thread. Join the current chunk
+    # before discarding its buffer/file or releasing the request's read slot.
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except BaseException:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+async def _spool(chunks, *, encoding: str, sha256: str | None, mismatch: str, memory_bytes: int = 0, consume=None) -> Spooled:
     """Decode, hash and keep the stored bytes ``chunks`` yields; CorruptContent(mismatch) unless they match sha256."""
     try:
-        writer = await asyncio.to_thread(_SpoolWriter, encoding, memory_bytes)
+        writer = await asyncio.to_thread(_SpoolWriter, encoding, memory_bytes, consume)
         try:
             async for chunk in chunks:
-                await asyncio.to_thread(writer.feed, chunk)
-            spooled = await asyncio.to_thread(writer.finish)
+                await _spool_step(writer.feed, chunk)
+            spooled = await _spool_step(writer.finish)
         except BaseException:
             writer.discard()
             raise
@@ -486,6 +519,18 @@ def _payload_ids(value, found: set) -> None:
             _payload_ids(child, found)
 
 
+async def _gather_reads(*awaitables):
+    """A failed/oversized read cancels and drains its sibling object requests."""
+    tasks = [asyncio.create_task(item) for item in awaitables]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 class Resolver:
     """Resolves the references of one read at a fixed watermark.
 
@@ -531,7 +576,7 @@ class Resolver:
                 self._assets[identity] = found.get(identity)
 
     async def _json(self, rows: list[TrajectoryPayload], message: str) -> list:
-        contents = await asyncio.gather(*(fetch_blob(self.blob_store, row.storage_key, row.encoding, row.sha256)
+        contents = await _gather_reads(*(fetch_blob(self.blob_store, row.storage_key, row.encoding, row.sha256)
                                           for row in rows))
         values = []
         for content in contents:
@@ -727,7 +772,7 @@ async def expand_pages(db, trajectory_id: str, references: list, *, through_seq:
         if not isinstance(value, dict) or not isinstance(value.get("records"), dict):
             raise CorruptContent("Invalid checkpoint page shape")
         return value
-    return list(await asyncio.gather(*(page(identity) for identity in ids)))
+    return list(await _gather_reads(*(page(identity) for identity in ids)))
 
 
 # -- Content-addressed JSON blobs written by the projection worker --

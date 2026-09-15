@@ -24,7 +24,8 @@ services:
     environment:
       # Dedicated role (scripts/create-trace-db.sh): owns openbox_trace, has no business data, and its
       # defaults are statement_timeout 5s and work_mem 32MB. Its password is OPENBOX_TRACE_DB_PASSWORD in .env.
-      TRAJECTORY_DATABASE_URL: postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace
+      # Use a separate PostgreSQL instance for database CPU/memory/IO isolation.
+      TRAJECTORY_DATABASE_URL: ${OPENBOX_TRACE_DATABASE_URL:-postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace}
       # Blank on purpose: the business connection string of config/backend.env must not reach the worker.
       DATABASE_URL: ""
       REDIS_URL: redis://redis:6379/0
@@ -32,6 +33,15 @@ services:
       TRAJECTORY_BLOB_PROVIDER: oss
       TRAJECTORY_BACKEND_INTERNAL_URL: http://backend:8080
       TRAJECTORY_SPOOL_DIR: /var/lib/openbox/trajectory-spool
+      TRAJECTORY_READ_CONCURRENCY: "2"
+      TRAJECTORY_READ_MAX_WAITING: "4"
+      TRAJECTORY_READ_WAIT_MS: "250"
+      TRAJECTORY_READ_DB_POOL_SIZE: "2"
+      TRAJECTORY_READ_TIMEOUT_SECONDS: "10"
+      TRAJECTORY_READ_MAX_BYTES: "16777216"
+      TRAJECTORY_READ_RESPONSE_BYTES: "8388608"
+      TRAJECTORY_BLOB_CACHE_BYTES: "67108864"
+      TRAJECTORY_SEGMENT_CACHE_BYTES: "33554432"
       ALIYUN_CLI_CONFIG: /run/secrets/aliyun-config.json
     volumes:
       - trajectory-spool:/var/lib/openbox/trajectory-spool

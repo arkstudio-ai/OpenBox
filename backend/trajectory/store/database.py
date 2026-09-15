@@ -42,6 +42,8 @@ class TraceBase(DeclarativeBase):
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+_read_engine: AsyncEngine | None = None
+_read_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def init_trace_engine(url: str, *, pool_size: int = 5, max_overflow: int = 5) -> AsyncEngine:
@@ -123,9 +125,77 @@ async def trace_session() -> AsyncIterator[AsyncSession]:
         await session.close()
 
 
+class TraceReader:
+    """Buffered SELECTs, each with its own short transaction.
+
+    Repository code may await object storage between calls. No connection or
+    transaction remains checked out then; loaded ORM values are detached.
+    The fixed event watermark still bounds every repository read.
+    """
+
+    @property
+    def bind(self):
+        return get_trace_engine()
+
+    def _factory(self):
+        global _read_engine, _read_factory
+        engine = get_trace_engine()
+        if engine.dialect.name == "sqlite":
+            # In-memory SQLite must use the same engine. Queries return their
+            # connection immediately, including when the worker shares it.
+            return _session_factory
+        if _read_factory is None:
+            from trajectory.config import integer
+            _read_engine = create_async_engine(
+                engine.url, pool_size=integer("TRAJECTORY_READ_DB_POOL_SIZE", 2), max_overflow=0,
+                pool_timeout=1, pool_pre_ping=True,
+                connect_args={"server_settings": {
+                    **PG_SERVER_SETTINGS, "application_name": "openbox-trace-read",
+                    "default_transaction_read_only": "on", "lock_timeout": "1000",
+                    "idle_in_transaction_session_timeout": "5000", "work_mem": "4MB",
+                    "max_parallel_workers_per_gather": "0",
+                }},
+            )
+            _read_factory = async_sessionmaker(_read_engine, expire_on_commit=False)
+        return _read_factory
+
+    async def execute(self, statement, *args, **kwargs):
+        if not getattr(statement, "is_select", False) or getattr(statement, "_for_update_arg", None) is not None:
+            raise ValueError("TraceReader accepts unlocked SELECT statements only")
+        async with self._factory()() as session:
+            async with session.begin():
+                result = await session.execute(statement, *args, **kwargs)
+                buffered = result.freeze()
+        return buffered()
+
+    async def scalars(self, statement, *args, **kwargs):
+        return (await self.execute(statement, *args, **kwargs)).scalars()
+
+    async def scalar(self, statement, *args, **kwargs):
+        return (await self.execute(statement, *args, **kwargs)).scalar()
+
+    async def get(self, entity, ident, **kwargs):
+        if kwargs.get("with_for_update") is not None and kwargs.get("with_for_update") is not False:
+            raise ValueError("TraceReader does not acquire row locks")
+        async with self._factory()() as session:
+            async with session.begin():
+                result = await session.get(entity, ident, **kwargs)
+        return result
+
+
+@asynccontextmanager
+async def trace_read_session() -> AsyncIterator[TraceReader]:
+    """Read facade; the context itself never holds a database connection."""
+    get_trace_engine()
+    yield TraceReader()
+
+
 async def close_trace_engine() -> None:
     """Dispose the trace engine and reset the singletons; safe to call twice."""
-    global _engine, _session_factory
+    global _engine, _session_factory, _read_engine, _read_factory
+    reader, _read_engine, _read_factory = _read_engine, None, None
+    if reader is not None:
+        await reader.dispose()
     if _engine is None:
         return
     engine, _engine, _session_factory = _engine, None, None

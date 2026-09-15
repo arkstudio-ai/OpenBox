@@ -107,14 +107,15 @@ async def test_maintenance_keeps_a_week_ahead_and_drops_only_empty_old_partition
     week = [partitions.partition_name_for(today + timedelta(days=offset)) for offset in range(8)]
     names = await attached(migrated)
     assert names == sorted([partitions.partition_name_for(with_rows), partitions.partition_name_for(recent), *week])
-    assert metrics.gauges == {"stale_hot_partitions": 1}
+    # with_rows, recent and today are hot; the dropped empty day and the days ahead are not.
+    assert metrics.gauges == {"stale_hot_partitions": 1, "hot_partitions": 3}
 
     # Once archival empties the old partition, the next maintenance drops it.
     assert await service.archive_trajectory("trj_a") == 1
     await service.maintain_partitions()
     assert partitions.partition_name_for(with_rows) not in await attached(migrated)
     assert partitions.partition_name_for(recent) in await attached(migrated)
-    assert metrics.gauges == {"stale_hot_partitions": 0}
+    assert metrics.gauges == {"stale_hot_partitions": 0, "hot_partitions": 2}
 
 
 async def test_every_partition_helper_runs_in_its_own_read_committed_transaction_with_a_60s_timeout(migrated,

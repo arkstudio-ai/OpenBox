@@ -17,7 +17,6 @@ import hashlib
 import os
 import socket
 import time
-import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -62,7 +61,6 @@ SESSION_ID_CHARS = 64
 TYPE_CHARS = 64
 REQUEST_ID_CHARS = 128
 TRAJECTORY_SCHEMA_VERSION = 2
-PROVISIONAL_IDS = 10000
 LOGGED_CONFLICTS = 10000
 INVALID_LOG_SECONDS = 60.0
 #: Invalid event field -> monotonic time before which it is not logged again.
@@ -200,6 +198,11 @@ def gap_event_id(producer_id: str, n_or_range: str, session_id: str, run_id: str
     if len(value) <= EVENT_ID_CHARS:
         return value
     return f"gap:h:{hashlib.sha256(value.encode()).hexdigest()}"
+
+
+def session_trajectory_id(session_id: str) -> str:
+    """The trajectory id of a root session: blobs uploaded before its row exists already use the row's prefix."""
+    return "trj_" + hashlib.sha256(b"openbox-trajectory\0" + session_id.encode()).hexdigest()[:32]
 
 
 def loss_range(first: int, last: int | None) -> str:
@@ -380,7 +383,6 @@ class IngestService:
         self.last_lag_seconds = 0.0
         self._documents: dict[str, dict | None] = {}
         self._backoff: dict[tuple[str, str, int], _Backoff] = {}
-        self._provisional: OrderedDict[str, str] = OrderedDict()
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
@@ -669,7 +671,7 @@ class IngestService:
                 event = item.event
                 row = rows.get(event["session_id"])
                 root = cache.sessions.get(event["session_id"])
-                item.trajectory_id = row.id if row is not None else self._provisional_id(event["session_id"])
+                item.trajectory_id = row.id if row is not None else session_trajectory_id(event["session_id"])
                 item.skipped = (event["event_id"] in keys or (root is not None and root.deleted) or (
                     row is not None and (row.deleted_at is not None or row.content_expired_at is not None
                                          or row.user_id != event["user_id"])))
@@ -766,17 +768,6 @@ class IngestService:
                             TrajectoryPayload.trajectory_id == trajectory_id, column.in_(chunk)))).all():
                         rows[row.payload_id] = content.ExistingPayload(*row)
         return {trajectory_id: list(rows.values()) for trajectory_id, rows in found.items()}
-
-    def _provisional_id(self, session_id: str) -> str:
-        """Stable across retries: blobs of a new trajectory are uploaded under this id before it exists."""
-        identifier = self._provisional.get(session_id)
-        if identifier is None:
-            identifier = self._provisional[session_id] = f"trj_{uuid.uuid4().hex}"
-            while len(self._provisional) > PROVISIONAL_IDS:
-                self._provisional.popitem(last=False)
-        else:
-            self._provisional.move_to_end(session_id)
-        return identifier
 
     # Uploads ----------------------------------------------------------------------
 
@@ -1076,7 +1067,6 @@ class _Transaction:
         self.user_bytes: dict[str, int] = {}
         self.unavailable: dict[str, list[tuple]] = {}
         self.notes: list[tuple] = []
-        self.created: list[str] = []
         self.counters = {name: 0 for name in COUNTERS}
         self.lines = 0
         self.producer: TrajectoryIngestProducer | None = None
@@ -1193,8 +1183,6 @@ class _Transaction:
                 publish_available(state)
         if tombstones:
             service._tombstones_committed(tombstones)
-        for session_id in self.created:
-            service._provisional.pop(session_id, None)
         if service._recent is not None:
             for user_id, session_id, run_id, at in self.notes:
                 service._recent.note(self.producer_id, user_id, session_id, run_id, at)
@@ -1293,22 +1281,24 @@ class _Transaction:
     async def _create(self, db, item: Item) -> TrajectoryState:
         event = item.event
         root = event["session_id"]
+        identifier = session_trajectory_id(root)
+        if item.trajectory_id != identifier:
+            raise RetryBatch()  # planned for a row that is gone: its blobs sit under another prefix
         root_meta = self.cache.sessions.get(root)
         workspace = event.get("workspace_id")
         if not _identifier(workspace, SESSION_ID_CHARS):
             workspace = root_meta.workspace_id if root_meta is not None and root_meta.workspace_id else ""
         occurred = item.occurred_at
         await db.execute(insert(SessionTrajectory).values(
-            id=item.trajectory_id, user_id=event["user_id"], session_id=root, workspace_id=workspace,
+            id=identifier, user_id=event["user_id"], session_id=root, workspace_id=workspace,
             started_at=self.now, updated_at=self.now, last_activity_at=occurred, next_seq=1, committed_seq=0,
             projected_seq=0, archived_seq=0, checkpoint_seq=0, schema_version=TRAJECTORY_SCHEMA_VERSION,
             recording_status="recording", recording_epoch=0, event_count=0, stored_bytes=0, budget_level="normal"))
-        state = TrajectoryState(item.trajectory_id, event["user_id"], root, workspace, 1, 0, 0, 0, "recording", 0,
+        state = TrajectoryState(identifier, event["user_id"], root, workspace, 1, 0, 0, 0, "recording", 0,
                                 occurred, created=True)
         state.mark_written()
         self.states[root] = state
         self.missing.discard(root)
-        self.created.append(root)
         await self.append_worker_event(state, event_id=f"evt_start_{state.id}", event_type="trajectory.started",
                                        occurred_at=occurred, data={"existing_session": item.history,
                                                                    "coverage_start": iso(occurred),

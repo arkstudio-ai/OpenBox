@@ -40,12 +40,14 @@ class ChatFlow extends StatefulWidget {
   final VoidCallback? onNearTop;
 
   /// The first row's identity across rebuilds, such as its first message's
-  /// id. [onNearTop] is called once per top row (web `ChatFlow`): a page that
-  /// failed is asked for again when the reader leaves the top and comes back,
-  /// not on every scroll update or streamed delta while they stay there.
+  /// id. [onNearTop] is called once per top row (web `ChatFlow`), not on every
+  /// scroll update or streamed delta: a page that failed is asked for again
+  /// when the reader leaves the top and comes back, or after a pause that
+  /// doubles with each failure while they stay there.
   final Object? topKey;
 
-  /// An older page is on its way: a small spinner at the top edge.
+  /// An older page is on its way: a small spinner at the top edge. Its end
+  /// under an unchanged [topKey] means the page failed.
   final bool loadingOlder;
 
   @override
@@ -64,6 +66,11 @@ class _ChatFlowState extends State<ChatFlow> {
   /// away from the top.
   static const _notAsked = Object();
 
+  /// The pause before a failed older page is asked for again, doubling with
+  /// each failure in a row up to the last.
+  static const _firstOlderRetry = Duration(seconds: 2);
+  static const _lastOlderRetry = Duration(seconds: 30);
+
   final _localController = ScrollController();
   ScrollController get _controller => widget.controller ?? _localController;
   bool _atBottom = true;
@@ -73,6 +80,14 @@ class _ChatFlowState extends State<ChatFlow> {
 
   /// The [ChatFlow.topKey] older history was last asked for.
   Object? _olderAskedFor = _notAsked;
+
+  /// An older page was asked for and has not been answered yet: no row
+  /// landed on top, and no build has shown the load over.
+  bool _olderAwaited = false;
+
+  /// The ask after a failed older page, and the pause the next failure gets.
+  Timer? _olderRetry;
+  Duration _olderRetryPause = _firstOlderRetry;
 
   @override
   void initState() {
@@ -99,6 +114,24 @@ class _ChatFlowState extends State<ChatFlow> {
       _reportAtBottom();
     }
     if (_stickToBottom) _scheduleStick();
+    if (widget.topKey != oldWidget.topKey) {
+      // A page landed, or history was reset: nothing waits on the old top any
+      // more, and the next failure starts again from the shortest pause.
+      _olderAwaited = false;
+      _olderRetry?.cancel();
+      _olderRetry = null;
+      _olderRetryPause = _firstOlderRetry;
+    } else if (_olderAwaited &&
+        !widget.loadingOlder &&
+        widget.onNearTop != null) {
+      // Over, and nothing landed in front: the page failed. A list too short
+      // to scroll, or a reader staying at the top, never leaves the top to ask
+      // again, so ask after a pause. Judged from the ask rather than from
+      // loadingOlder turning false: a page that fails before a frame shows it
+      // loading never turns it true for this widget to see.
+      _olderAwaited = false;
+      _retryOlderLater();
+    }
     // Older history became available while the top was already in view. That
     // is news rather than a retry, so what was asked for before is forgotten.
     if (oldWidget.onNearTop == null &&
@@ -107,6 +140,22 @@ class _ChatFlowState extends State<ChatFlow> {
       _olderAskedFor = _notAsked;
       _checkNearTop(_controller.position);
     }
+  }
+
+  /// Ask for older history again after a pause, if the reader is still near
+  /// the top by then or the list cannot scroll. Each failure in a row doubles
+  /// the pause, up to [_lastOlderRetry].
+  void _retryOlderLater() {
+    _olderRetry?.cancel();
+    final pause = _olderRetryPause;
+    final doubled = pause * 2;
+    _olderRetryPause = doubled > _lastOlderRetry ? _lastOlderRetry : doubled;
+    _olderRetry = Timer(pause, () {
+      _olderRetry = null;
+      if (!mounted || !_controller.hasClients) return;
+      _olderAskedFor = _notAsked;
+      _checkNearTop(_controller.position);
+    });
   }
 
   void _scheduleStick() {
@@ -137,7 +186,12 @@ class _ChatFlowState extends State<ChatFlow> {
     _nearTopScheduled = true;
     scheduleMicrotask(() {
       _nearTopScheduled = false;
-      if (mounted) widget.onNearTop?.call();
+      final ask = widget.onNearTop;
+      if (!mounted || ask == null) return;
+      // Answered by a row landing on top, or by a build that shows the load
+      // over without one.
+      _olderAwaited = true;
+      ask();
     });
   }
 
@@ -157,6 +211,7 @@ class _ChatFlowState extends State<ChatFlow> {
 
   @override
   void dispose() {
+    _olderRetry?.cancel();
     _localController.dispose();
     super.dispose();
   }

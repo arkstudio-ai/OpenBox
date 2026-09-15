@@ -34,6 +34,23 @@ List<ChatMessage> _transcript() => [
   ],
 ];
 
+/// Twelve turns of a line each: the newest eight fit on a tall screen, and
+/// four older ones wait on the server.
+List<ChatMessage> _shortTranscript() => [
+  for (var i = 0; i < 12; i++) ...[
+    ChatMessage(
+      id: _id(2 * i),
+      sessionId: 's1',
+      role: 'user',
+      parts: [TextPart(id: 'ask-$i', text: 'Q$i')],
+    ),
+    answer(
+      id: _id(2 * i + 1),
+      parts: [TextPart(id: 'reply-$i', text: 'A$i')],
+    ),
+  ],
+];
+
 Finder get _list => find.descendant(
   of: find.byType(ChatFlow),
   matching: find.byType(CustomScrollView),
@@ -44,6 +61,9 @@ void main() {
   late SuggestionFixture fixture;
   setUp(() async => fixture = await SuggestionFixture.create());
   tearDown(() => fixture.dispose());
+
+  int olderReads() =>
+      fixture.api.historyReads.where((read) => read.before != null).length;
 
   testWidgets('reaching the top loads the turns before, in place', (
     tester,
@@ -103,8 +123,6 @@ void main() {
         .widget<CustomScrollView>(_list)
         .controller!
         .position;
-    int olderReads() =>
-        fixture.api.historyReads.where((read) => read.before != null).length;
 
     fixture.api.failOlder = true;
     await tester.drag(_list, Offset(0, position.pixels - 100));
@@ -121,19 +139,83 @@ void main() {
     }
     expect(olderReads(), 1);
 
-    // Leaving the top and coming back is the retry.
+    // A reader who stays at the top has it asked for again after a pause.
+    await tester.pump(const Duration(seconds: 2));
+    expect(olderReads(), 2);
+
+    // Leaving the top and coming back asks at once.
     fixture.api.failOlder = false;
     await tester.drag(_list, const Offset(0, -800));
     await tester.pumpAndSettle();
     await tester.drag(_list, Offset(0, position.pixels - 100));
     await tester.pumpAndSettle();
-    expect(olderReads(), 2);
+    expect(olderReads(), 3);
     expect(
       fixture.container.read(chatStreamProvider).messagesOf('s1'),
       hasLength(24),
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a top that cannot scroll away asks again after a doubling pause',
+    (tester) async {
+      // Tall enough that the newest eight short turns fit: the list cannot
+      // move away from its top, and the reader has nothing to scroll.
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      fixture.api
+        ..messages = _shortTranscript()
+        ..failOlder = true;
+      await tester.pumpWidget(fixture.app(const ChatScreen(sessionId: 's1')));
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump();
+      }
+      final position = tester
+          .widget<CustomScrollView>(_list)
+          .controller!
+          .position;
+      expect(position.maxScrollExtent, 0);
+      expect(olderReads(), 1);
+
+      // A reply arriving at the bottom leaves the top as it was, and asks for
+      // nothing.
+      fixture.container
+          .read(chatStreamProvider.notifier)
+          .addMessage(
+            's1',
+            answer(
+              id: _id(24),
+              parts: [TextPart(id: 'late', text: 'A late line.')],
+            ),
+          );
+      await tester.pump(const Duration(milliseconds: 1900));
+      expect(olderReads(), 1);
+
+      // Two seconds after the failure it is asked for again, and fails again.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(olderReads(), 2);
+
+      // Then after four seconds, not on every frame in between.
+      await tester.pump(const Duration(milliseconds: 3900));
+      expect(olderReads(), 2);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(olderReads(), 3);
+
+      // The next one lands: nothing more is asked for, and no retry waits.
+      fixture.api.failOlder = false;
+      await tester.pump(const Duration(seconds: 8));
+      expect(olderReads(), 4);
+      expect(
+        fixture.container.read(chatStreamProvider).messagesOf('s1'),
+        hasLength(25),
+      );
+      await tester.pump(const Duration(minutes: 1));
+      expect(olderReads(), 4);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('leaving a live chat stops its catch-up until it is back', (
     tester,

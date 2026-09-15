@@ -424,6 +424,8 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
       ref
           .read(chatStreamProvider.notifier)
           .mergeHistory(_sessionId, page.messages);
+      // In the same turn as the rows: shown the load over under an unchanged
+      // top row, the list would take the page for failed and ask again.
       state = state.copyWith(hasMore: page.hasMore, loadingOlder: false);
     } catch (error) {
       if (_disposed || sequence != _fetchSequence) return;
@@ -431,7 +433,8 @@ class ChatSessionController extends FamilyNotifier<ChatSessionState, String> {
         unawaited(_resetHistory());
         return;
       }
-      // hasMore stands, so leaving the top and coming back retries.
+      // hasMore stands: the list asks again after a pause, or when the reader
+      // leaves the top and comes back.
       state = state.copyWith(loadingOlder: false);
     }
   }

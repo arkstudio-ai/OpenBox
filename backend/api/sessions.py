@@ -317,7 +317,28 @@ async def update_session(session_id: str, body: UpdateSessionBody, current_user:
     session = await session_mod.update_session(session_id, user_id=user_id, **updates)
     if not session:
         raise HTTPException(404, "Session not found")
+    _announce_session_update(session, updates, user_id)
     return session.model_dump()
+
+
+def _announce_session_update(session, updates: dict, user_id: str) -> None:
+    """Tell the owner's other tabs and devices what a PATCH changed.
+
+    Nothing else announces a rename or an agent, model, variant or video pick,
+    so a chat open elsewhere showed the old record until it happened to read
+    the session again.
+    """
+    if not updates:
+        return
+    from bus import bus
+    from bus.events import SESSION_TITLE, SESSION_UPDATED
+
+    record = session.model_dump(mode="json")
+    changed = {key: record.get(key) for key in updates}
+    bus.publish(SESSION_UPDATED, {"userId": user_id, "sessionId": session.id, **changed})
+    if "title" in updates:
+        # Session lists follow the title event, not the record.
+        bus.publish(SESSION_TITLE, {"userId": user_id, "sessionId": session.id, "title": session.title})
 
 
 # ─── Messages ───

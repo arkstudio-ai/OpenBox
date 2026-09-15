@@ -62,13 +62,17 @@ String jsSetKeyboard(bool on) =>
 /// Stop only this viewer session, never the retained cloud machine.
 const jsStopDesktop = 'window.__stopDesktop && window.__stopDesktop()';
 
+// The SDK plays the stream in a <video> inside the cross-origin frame. Its
+// permissions policy refuses picture-in-picture, as on web: a floating copy of
+// the desktop hovering over the desktop froze once the session reconnected and
+// hid the page underneath.
 const _html = r'''
 <!doctype html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>html,body{margin:0;height:100%;background:transparent;overflow:hidden}
 iframe{position:absolute;display:block;border:0}</style></head>
 <body><iframe id="wuying-desktop-frame" tabindex="0" allowfullscreen
- allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+ allow="clipboard-read; clipboard-write; fullscreen; picture-in-picture 'none'"></iframe>
 <script>
 var TICKET = __TICKET__;
 var W = __REMOTE_W__, H = __REMOTE_H__;

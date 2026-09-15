@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, render, screen } from "@testing-library/react"
 import type { MessageWithParts } from "@/shared/types/api"
 import type { Turn } from "../lib/turn-view"
 import { ChatFlow } from "./ChatFlow"
@@ -27,6 +27,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -71,5 +72,39 @@ describe("ChatFlow older turns", () => {
 
     expect(onLoadOlder).not.toHaveBeenCalled()
     expect(screen.getByRole("status", { name: "loadingOlder" })).toBeTruthy()
+  })
+
+  // A column too short to scroll can never leave the top and come back, so a
+  // failed page is asked for again after a pause instead of never.
+  it("asks again after a pause when an older page failed, and pauses longer each time", () => {
+    vi.useFakeTimers()
+    const onLoadOlder = vi.fn()
+    const props = { sessionId: "s1", busy: false, hasMore: true, onLoadOlder }
+    const turns = [userTurn("m3")]
+    const { rerender } = render(<ChatFlow {...props} turns={turns} />)
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    const fail = () => {
+      rerender(<ChatFlow {...props} turns={turns} loadingOlder />)
+      rerender(<ChatFlow {...props} turns={turns} loadingOlder={false} />)
+    }
+
+    fail()
+    act(() => vi.advanceTimersByTime(1_999))
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(onLoadOlder).toHaveBeenCalledTimes(2)
+
+    fail()
+    act(() => vi.advanceTimersByTime(2_000))
+    expect(onLoadOlder).toHaveBeenCalledTimes(2)
+    act(() => vi.advanceTimersByTime(2_000))
+    expect(onLoadOlder).toHaveBeenCalledTimes(3)
+
+    // A page that lands resets the pause and asks for the next one at once.
+    rerender(<ChatFlow {...props} turns={turns} loadingOlder />)
+    rerender(<ChatFlow {...props} turns={[userTurn("m1"), ...turns]} />)
+    expect(onLoadOlder).toHaveBeenCalledTimes(4)
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(onLoadOlder).toHaveBeenCalledTimes(4)
   })
 })

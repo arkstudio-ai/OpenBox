@@ -11,6 +11,9 @@ import { InterruptionDivider } from "./InterruptionDivider"
 const VIRTUAL_THRESHOLD = 50
 /** How close to the top, in pixels, the reader gets before older turns load. */
 const LOAD_OLDER_EDGE = 600
+/** Pause before asking again for an older page that failed; doubles each time. */
+const OLDER_RETRY_FIRST_MS = 2_000
+const OLDER_RETRY_MAX_MS = 30_000
 
 interface Row {
   key: string
@@ -125,8 +128,9 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
   // would push what they are reading down the page, so the distance from the
   // bottom is taken when loading starts and restored once the rows have landed.
   const firstRowKey = rows[0]?.key
-  // One request per top row: a failed load is retried by scrolling away and
-  // back, not by every scroll event or render while the top stays put.
+  // One request per top row: not every scroll event or render while the top
+  // stays put. A failed load is asked for again by scrolling away and back, or
+  // after a pause while the reader is still at the top.
   const olderRequestedForRef = useRef<string | undefined>(undefined)
   const requestOlder = useCallback(() => {
     if (!scrollRef.current || !hasMore || loadingOlder || !onLoadOlder) return
@@ -134,6 +138,15 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     olderRequestedForRef.current = firstRowKey
     onLoadOlder()
   }, [hasMore, loadingOlder, onLoadOlder, firstRowKey])
+  const requestOlderRef = useRef(requestOlder)
+  useEffect(() => {
+    requestOlderRef.current = requestOlder
+  }, [requestOlder])
+  const olderRetryRef = useRef<{ timer?: number; delay: number }>({ delay: OLDER_RETRY_FIRST_MS })
+  useEffect(() => {
+    const retry = olderRetryRef.current
+    return () => window.clearTimeout(retry.timer)
+  }, [])
   const olderAnchorRef = useRef<{ height: number; top: number; key?: string } | null>(null)
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -144,8 +157,26 @@ export function ChatFlow({ turns, sessionId, busy, awaitingInput = false, footer
     }
     const anchor = olderAnchorRef.current
     olderAnchorRef.current = null
-    // Nothing landed in front (the load failed, or the view was reset meanwhile).
-    if (!anchor || anchor.key === firstRowKey || atBottomRef.current) return
+    if (!anchor) return
+    const retry = olderRetryRef.current
+    window.clearTimeout(retry.timer)
+    if (anchor.key === firstRowKey) {
+      // Nothing landed in front: the load failed, or the view was reset
+      // meanwhile. A column too short to scroll can never leave the top and
+      // come back, so ask again after a pause if the reader is still there.
+      retry.timer = window.setTimeout(() => {
+        const current = scrollRef.current
+        if (!current) return
+        olderRequestedForRef.current = undefined
+        const nearTop = current.scrollTop < LOAD_OLDER_EDGE
+        const short = current.scrollHeight - current.clientHeight <= LOAD_OLDER_EDGE
+        if (nearTop || short) requestOlderRef.current()
+      }, retry.delay)
+      retry.delay = Math.min(retry.delay * 2, OLDER_RETRY_MAX_MS)
+      return
+    }
+    retry.delay = OLDER_RETRY_FIRST_MS
+    if (atBottomRef.current) return
     el.scrollTop = anchor.top + (el.scrollHeight - anchor.height)
     scrollTopRef.current = el.scrollTop
   }, [firstRowKey, loadingOlder])

@@ -19,14 +19,33 @@ export function questionPairs(part: ToolPart): Array<{ question: string; answer:
   return questions.map((question, i) => ({ question, answer: strings(answers[i]) }))
 }
 
+type QuestionStateKey = "question.superseded" | "question.cancelled" | "question.expired" | "question.waiting"
+
+/** Where the question stands, when that is worth a line of its own. */
+export function questionStateKey(part: ToolPart): QuestionStateKey | null {
+  switch (part.metadata?.question_status) {
+    case "superseded":
+      return "question.superseded"
+    case "cancelled":
+      return "question.cancelled"
+    case "expired":
+      return "question.expired"
+  }
+  return part.status === "waiting_input" ? "question.waiting" : null
+}
+
+/** Whether there is a record to show. A question or desktop takeover that
+ *  failed before it was filed has none; its error belongs in the generic
+ *  detail, not an empty one. */
+export function hasQuestionRecord(part: ToolPart): boolean {
+  return questionPairs(part).length > 0 || questionStateKey(part) !== null
+}
+
 export function QuestionAnswered({ part }: { part: ToolPart }) {
   const { t } = useTranslation("chat")
   const pairs = questionPairs(part)
-  const state = part.metadata?.question_status
-  const stateLabel = state === "superseded" ? t("question.superseded")
-    : state === "cancelled" ? t("question.cancelled")
-    : state === "expired" ? t("question.expired")
-    : part.status === "waiting_input" ? t("question.waiting") : null
+  const stateKey = questionStateKey(part)
+  const stateLabel = stateKey ? t(stateKey) : null
   if (pairs.length === 0 && !stateLabel) return null
   // desktop_takeover leaves what blocked the agent and where, so the record
   // reads "the user solved a slider on host X" rather than a bare question.

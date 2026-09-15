@@ -11,6 +11,7 @@ import '../../../../shared/models/message_part.dart';
 import '../../utils/diff_preview.dart';
 import '../../utils/tool_map.dart';
 import '../../utils/tool_parse.dart';
+import '../cards/desktop_takeover_detail.dart';
 import 'douyin_tool_actions.dart';
 import 'tool_primitives.dart';
 
@@ -604,6 +605,12 @@ class _QuestionAnswered extends ConsumerWidget {
     }
     final t = context.tokens;
     final i18n = ref.watch(i18nProvider);
+    // desktop_takeover leaves what blocked the agent and where, so the record
+    // reads "the user solved a slider on host X" rather than a bare question.
+    final rawTakeover = part.metadata['takeover'];
+    final takeover = rawTakeover is Map<String, dynamic>
+        ? readTakeoverDetail(rawTakeover)
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -611,6 +618,22 @@ class _QuestionAnswered extends ConsumerWidget {
           Text(
             i18n.t('chat:question.$label'),
             style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
+          ),
+        if (takeover != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 7),
+            child: Text(
+              i18n.t(
+                'chat:takeover.record',
+                vars: {
+                  'reason': i18n.t(takeoverReasonKey(takeover.reason)),
+                  'host': takeover.host.isNotEmpty
+                      ? takeover.host
+                      : takeover.url,
+                },
+              ),
+              style: TextStyle(fontSize: FontSizes.xs, color: t.a800),
+            ),
           ),
         for (final (question, answer) in pairs)
           Padding(

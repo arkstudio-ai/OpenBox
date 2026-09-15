@@ -142,6 +142,71 @@ describe("AgentWsClient", () => {
     expect(sockets[0]?.url).toContain("ticket=second")
     client.disconnect()
   })
+
+  it("drops a socket that stays silent past the heartbeat window and reconnects", async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => ticketResponse("t"))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new AgentWsClient()
+    const disconnected = vi.fn()
+    client.on("__disconnected", disconnected)
+
+    await client.connect()
+    sockets[0].open()
+    await vi.advanceTimersByTimeAsync(59_000)
+    expect(client.connected).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(client.connected).toBe(false)
+    expect(disconnected).toHaveBeenCalledTimes(1)
+    expect(sockets[0].readyState).toBe(FakeSocket.CLOSED)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sockets).toHaveLength(2)
+    client.disconnect()
+  })
+
+  it("keeps a quiet socket open while heartbeats arrive", async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => ticketResponse("t"))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new AgentWsClient()
+
+    await client.connect()
+    sockets[0].open()
+    for (let beat = 0; beat < 8; beat++) {
+      await vi.advanceTimersByTimeAsync(25_000)
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "server.heartbeat", data: {} }) })
+    }
+
+    expect(client.connected).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    client.disconnect()
+  })
+
+  it("ignores a late close from the socket it dropped for silence", async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => ticketResponse("t"))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new AgentWsClient()
+    const disconnected = vi.fn()
+    client.on("__disconnected", disconnected)
+
+    await client.connect()
+    const dead = sockets[0]
+    dead.open()
+    // Sixty seconds of silence, then the one-second reconnect delay.
+    await vi.advanceTimersByTimeAsync(61_000)
+    sockets[1].open()
+    dead.onclose?.({ code: 1006 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(client.connected).toBe(true)
+    expect(disconnected).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    client.disconnect()
+  })
 })
 
 describe("trajectory channel configuration", () => {

@@ -5,6 +5,7 @@ import 'package:bossip_mobile/app/router.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/events/app_lifecycle.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
 import 'package:bossip_mobile/shared/models/workspace.dart';
@@ -356,6 +357,13 @@ void main() {
           expect(push.lifecycle, state.name);
           expect(
             push.foreground,
+            state == AppLifecycleState.resumed ||
+                state == AppLifecycleState.inactive,
+          );
+          // A live chat's catch-up runs while the app is on screen, which
+          // inactive still is: a pulled-down notification centre, a dialog.
+          expect(
+            container.read(appVisibleProvider),
             state == AppLifecycleState.resumed ||
                 state == AppLifecycleState.inactive,
           );

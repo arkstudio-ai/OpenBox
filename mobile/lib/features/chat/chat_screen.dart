@@ -228,6 +228,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             .read(chatSessionProvider(sessionId).notifier)
                             .loadOlder()
                       : null,
+                  // The first row's first message: the row widgets are new
+                  // on every delta, the message they start with is not.
+                  topKey: switch (rows.firstOrNull) {
+                    UserRowData(:final message) => message.id,
+                    AssistantTurnData(:final messages) =>
+                      messages.firstOrNull?.id,
+                    null => null,
+                  },
                   loadingOlder:
                       sessionState.hasMore && sessionState.loadingOlder,
                 ),

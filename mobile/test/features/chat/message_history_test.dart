@@ -5,6 +5,7 @@ import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/features/chat/state/stream_store.dart';
 import 'package:bossip_mobile/features/chat/state/subagent_progress.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/events/app_lifecycle.dart';
 import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
@@ -70,9 +71,17 @@ class _Server extends ChatApi {
 
   List<ChatMessage> messages = [];
   String status = 'idle';
+  String agent = 'build';
   bool hold = false;
   final reads = <_Read>[];
   final _waiting = <(_Read, Completer<HistoryPage>)>[];
+
+  /// Session and question-list reads, counted.
+  int sessionReads = 0;
+  int questionReads = 0;
+
+  /// While set, session reads wait for it before answering.
+  Completer<void>? sessionGate;
 
   @override
   Future<HistoryPage> history(
@@ -107,14 +116,24 @@ class _Server extends ChatApi {
   }
 
   @override
-  Future<Session> getSession(String sessionId) async =>
-      Session.fromJson({'id': sessionId, 'status': status});
+  Future<Session> getSession(String sessionId) async {
+    sessionReads++;
+    await sessionGate?.future;
+    return Session.fromJson({
+      'id': sessionId,
+      'status': status,
+      'agent': agent,
+    });
+  }
 
   @override
   Future<List<PermissionRequest>> listPermissions() async => [];
 
   @override
-  Future<List<QuestionRequest>> listQuestions() async => [];
+  Future<List<QuestionRequest>> listQuestions() async {
+    questionReads++;
+    return [];
+  }
 }
 
 Future<(ProviderContainer, SuggestionWs)> _open(ChatApi api) async {
@@ -262,6 +281,35 @@ void main() {
         _reply(_id(3)),
       ]);
       expect(_ids(container), ['m00', 'm01', 'm02', 'm03']);
+      // The server's copy as it stands. Merged with the echo, it kept the
+      // echo's part as well, and the bubble said the message twice.
+      expect([for (final p in held()[2].parts) p.id], ['m02-text']);
+    });
+
+    test('the socket confirming a send replaces its echo whole', () {
+      store.mergeHistory('s1', _turns(1));
+      store.addMessage('s1', _echo('c1'));
+      store.addMessage('s1', _user(_id(2), clientId: 'c1'));
+      expect(_ids(container), ['m00', 'm01', 'm02']);
+      expect([for (final p in held()[2].parts) p.id], ['m02-text']);
+    });
+
+    test('a late message.created merges into what a read already brought', () {
+      store.mergeHistory('s1', [
+        _user(_id(0)),
+        _reply(_id(1), text: 'reply, streamed in full', finish: 'stop'),
+      ]);
+      final brought = held()[1];
+
+      // Its creation frame, sent before any of that streamed.
+      store.addMessage(
+        's1',
+        _reply(_id(1), text: 'rep', tool: ToolStatus.running),
+      );
+      expect(held()[1], same(brought));
+      expect((held()[1].parts[0] as TextPart).text, 'reply, streamed in full');
+      expect((held()[1].parts[1] as ToolPart).status, ToolStatus.completed);
+      expect(held()[1].finish, 'stop');
     });
   });
 
@@ -363,6 +411,439 @@ void main() {
       // The older page went with the reset; the window starts over.
       expect(_ids(container), [for (var i = 8; i < 23; i++) _id(i), 'm24']);
       expect(container.read(chatSessionProvider('s1')).hasMore, isTrue);
+    });
+  });
+
+  testWidgets('a chat nobody watches fetches nothing until watched again', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'busy';
+    final (container, ws) = await _open(server);
+    try {
+      final screen = container.listen(chatSessionProvider('s1'), (_, _) {});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+        (turns: null, before: null, after: 'm05'),
+      ]);
+
+      // The chat screen went away: no ticks, and no frame starts a read.
+      screen.close();
+      server.reads.clear();
+      server.sessionReads = 0;
+      final questionReads = server.questionReads;
+      await tester.pump(const Duration(seconds: 3));
+      ws.frames
+        ..add(const WsEvent('__connected', {}))
+        ..add(
+          const WsEvent('session.status', {
+            'sessionId': 's1',
+            'status': 'idle',
+          }),
+        )
+        ..add(
+          const WsEvent('question.replied', {'session_id': 's1', 'id': 'q1'}),
+        )
+        ..add(const WsEvent('session.updated', {'sessionId': 's1'}));
+      await tester.pump();
+      expect(server.reads, isEmpty);
+      expect(server.sessionReads, 0);
+      expect(server.questionReads, questionReads);
+
+      // Back on screen: the newest turns and the pending cards once, then the
+      // catch-up again.
+      final back = container.listen(chatSessionProvider('s1'), (_, _) {});
+      await tester.pump();
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+      ]);
+      expect(server.questionReads, questionReads + 1);
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads.last, (turns: null, before: null, after: 'm05'));
+      back.close();
+    } finally {
+      container.dispose();
+      await ws.close();
+    }
+  });
+
+  testWidgets(
+    'a live chat reads its session every fifth tick with the socket up',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        server.sessionReads = 0;
+        await tester.pump(const Duration(seconds: 4));
+        expect(server.reads, hasLength(4));
+        expect(server.sessionReads, 0);
+
+        // The fifth carries it: web's recovery for frames that never came.
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(5));
+        expect(server.sessionReads, 1);
+
+        // Down, every tick carries one.
+        ws.open = false;
+        await tester.pump(const Duration(seconds: 2));
+        expect(server.reads, hasLength(7));
+        expect(server.sessionReads, 3);
+      });
+    },
+  );
+
+  testWidgets(
+    'a tick skipped behind a read in flight leaves its session read due',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        server.sessionReads = 0;
+        server.hold = true;
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(1));
+
+        // Ticks two to five find that read still out; the fifth was due.
+        await tester.pump(const Duration(seconds: 4));
+        expect(server.reads, hasLength(1));
+        expect(server.sessionReads, 0);
+
+        server.hold = false;
+        server.release();
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(server.reads, hasLength(2));
+        expect(server.sessionReads, 1);
+      });
+    },
+  );
+
+  testWidgets(
+    'a lost end of run is found by the session read, which reloads once',
+    (tester) async {
+      final server = _Server()
+        ..messages = _turns(3)
+        ..status = 'busy';
+      await _withController(tester, server, (container, ws) async {
+        ws.open = true;
+        server.reads.clear();
+        // The run ends, and its session.status frame never arrives.
+        server.status = 'idle';
+        await tester.pump(const Duration(seconds: 5));
+
+        expect(
+          container.read(chatStreamProvider).statusOf('s1'),
+          SessionStatus.idle,
+        );
+        expect(server.reads.skip(3), [
+          (turns: null, before: null, after: 'm05'),
+          (turns: null, before: null, after: 'm05'),
+          (turns: chatHistoryTurns, before: null, after: null),
+        ]);
+
+        // Over: nothing more to poll.
+        await tester.pump(const Duration(seconds: 5));
+        expect(server.reads, hasLength(6));
+      });
+    },
+  );
+
+  testWidgets('a queued chat reads only its session until its run starts', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'queued';
+    await _withController(tester, server, (container, ws) async {
+      ws.open = true;
+      server.reads.clear();
+      server.sessionReads = 0;
+      await tester.pump(const Duration(seconds: 5));
+      expect(server.sessionReads, 1);
+      expect(server.reads, isEmpty);
+
+      // Down, every tick asks.
+      ws.open = false;
+      await tester.pump(const Duration(seconds: 2));
+      expect(server.sessionReads, 3);
+      expect(server.reads, isEmpty);
+
+      // Its run starts and that frame is lost too: the next read finds it,
+      // and the tick after that polls history.
+      server.status = 'busy';
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        container.read(chatStreamProvider).statusOf('s1'),
+        SessionStatus.busy,
+      );
+      expect(server.reads, isEmpty);
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads, [(turns: null, before: null, after: 'm05')]);
+    });
+  });
+
+  testWidgets('session.updated reads the record once; a newer status stands', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'busy';
+    await _withController(tester, server, (container, ws) async {
+      ws.open = true;
+      server.reads.clear();
+      server.sessionReads = 0;
+
+      // The model switched to plan mode, and while the record was out the
+      // run went on to a retry over the socket.
+      server
+        ..agent = 'plan'
+        ..sessionGate = Completer<void>();
+      ws.frames
+        ..add(
+          const WsEvent('session.updated', {
+            'sessionId': 's1',
+            'agent': 'plan',
+          }),
+        )
+        ..add(
+          const WsEvent('session.status', {
+            'sessionId': 's1',
+            'status': 'retry',
+          }),
+        );
+      server.sessionGate!.complete();
+      server.sessionGate = null;
+      await tester.pump();
+
+      expect(server.sessionReads, 1);
+      expect(server.reads, isEmpty);
+      expect(container.read(chatSessionProvider('s1')).session?.agent, 'plan');
+      expect(
+        container.read(chatStreamProvider).statusOf('s1'),
+        SessionStatus.retry,
+      );
+    });
+  });
+
+  testWidgets('a session.updated read that finds the run over reloads once', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'busy';
+    await _withController(tester, server, (container, ws) async {
+      ws.open = true;
+      server.reads.clear();
+      server
+        ..status = 'idle'
+        ..agent = 'plan';
+      ws.frames.add(
+        const WsEvent('session.updated', {'sessionId': 's1', 'agent': 'plan'}),
+      );
+      await tester.pump();
+
+      expect(
+        container.read(chatStreamProvider).statusOf('s1'),
+        SessionStatus.idle,
+      );
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+      ]);
+    });
+  });
+
+  testWidgets('session.updated reads coalesce: one out, one waiting', (
+    tester,
+  ) async {
+    final server = _Server()..messages = _turns(3);
+    await _withController(tester, server, (container, ws) async {
+      server
+        ..sessionReads = 0
+        ..sessionGate = Completer<void>();
+      for (final agent in ['plan', 'build', 'plan']) {
+        ws.frames.add(
+          WsEvent('session.updated', {'sessionId': 's1', 'agent': agent}),
+        );
+      }
+      await tester.pump();
+      expect(server.sessionReads, 1);
+
+      final gate = server.sessionGate!;
+      server
+        ..agent = 'plan'
+        ..sessionGate = null;
+      gate.complete();
+      await tester.pump();
+      expect(server.sessionReads, 2);
+      expect(container.read(chatSessionProvider('s1')).session?.agent, 'plan');
+    });
+  });
+
+  testWidgets(
+    'title and usage frames patch the record; plan frames read nothing',
+    (tester) async {
+      final server = _Server()..messages = _turns(3);
+      await _withController(tester, server, (container, ws) async {
+        server.sessionReads = 0;
+        ws.frames
+          ..add(
+            const WsEvent('session.title', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'title': 'Renamed',
+            }),
+          )
+          ..add(
+            const WsEvent('session.updated', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'token_usage': {'context': 4200, 'limit': 200000},
+            }),
+          )
+          ..add(
+            const WsEvent('session.updated', {
+              'userId': 'u1',
+              'sessionId': 's1',
+              'planUpdated': true,
+            }),
+          );
+        await tester.pump();
+
+        final session = container.read(chatSessionProvider('s1')).session;
+        expect(session?.title, 'Renamed');
+        // The composer's context ring reads it.
+        expect(session?.tokenUsage?.context, 4200);
+        expect(server.sessionReads, 0);
+        expect(server.reads, hasLength(1));
+      });
+    },
+  );
+
+  for (final storeFirst in [false, true]) {
+    testWidgets(
+      'the end of a run re-reads the newest turns (store first: $storeFirst)',
+      (tester) async {
+        final server = _Server()
+          ..messages = _turns(3)
+          ..status = 'busy';
+        final (container, ws) = await _open(server);
+        try {
+          // The chat screen builds its controller before anything has read
+          // the store, and that controller hears every frame first.
+          if (storeFirst) container.read(chatStreamProvider);
+          container.read(chatSessionProvider('s1'));
+          await tester.pump();
+          server.reads.clear();
+
+          server.status = 'idle';
+          ws.frames.add(
+            const WsEvent('session.status', {
+              'sessionId': 's1',
+              'status': 'idle',
+            }),
+          );
+          await tester.pump();
+          expect(server.reads, [
+            (turns: chatHistoryTurns, before: null, after: null),
+          ]);
+
+          // A run starting is no consistency barrier.
+          server.reads.clear();
+          server.status = 'busy';
+          ws.frames.add(
+            const WsEvent('session.status', {
+              'sessionId': 's1',
+              'status': 'busy',
+            }),
+          );
+          await tester.pump();
+          expect(server.reads, isEmpty);
+        } finally {
+          container.dispose();
+          await ws.close();
+        }
+      },
+    );
+  }
+
+  testWidgets('a queued run is not polled until the socket starts it', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'queued';
+    await _withController(tester, server, (container, ws) async {
+      await tester.pump(const Duration(seconds: 3));
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+      ]);
+
+      server.status = 'busy';
+      ws.frames.add(
+        const WsEvent('session.status', {'sessionId': 's1', 'status': 'busy'}),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads.last, (turns: null, before: null, after: 'm05'));
+    });
+  });
+
+  testWidgets('only an answered question re-reads the transcript', (
+    tester,
+  ) async {
+    final server = _Server()..messages = _turns(3);
+    await _withController(tester, server, (container, ws) async {
+      await tester.pump();
+      server.reads.clear();
+      final questionReads = server.questionReads;
+
+      // The pending store puts the card up and keeps it current by itself.
+      for (final type in ['question.asked', 'question.updated']) {
+        ws.frames.add(WsEvent(type, const {'session_id': 's1', 'id': 'q1'}));
+      }
+      await tester.pump();
+      expect(server.reads, isEmpty);
+
+      ws.frames.add(
+        const WsEvent('question.replied', {'session_id': 's1', 'id': 'q1'}),
+      );
+      await tester.pump();
+      expect(server.reads, [
+        (turns: chatHistoryTurns, before: null, after: null),
+      ]);
+      // And takes the card down by itself: the list is not read again.
+      expect(server.questionReads, questionReads);
+    });
+  });
+
+  testWidgets('an app off screen skips its ticks and catches up on the next', (
+    tester,
+  ) async {
+    final server = _Server()
+      ..messages = _turns(3)
+      ..status = 'busy';
+    await _withController(tester, server, (container, ws) async {
+      server.reads.clear();
+      final visible = container.read(appVisibleProvider.notifier);
+
+      visible.state = false;
+      await tester.pump(const Duration(seconds: 3));
+      expect(server.reads, isEmpty);
+
+      // On screen again: no burst on the way back, the next tick reads on.
+      visible.state = true;
+      await tester.pump();
+      expect(server.reads, isEmpty);
+      await tester.pump(const Duration(seconds: 1));
+      expect(server.reads, [(turns: null, before: null, after: 'm05')]);
     });
   });
 

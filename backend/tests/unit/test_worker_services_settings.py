@@ -9,7 +9,8 @@ from trajectory.worker.settings import WorkerSettings, get_worker_settings, rese
 _VARS = ("JWT_SECRET", "TRAJECTORY_WORKER_MODE", "TRAJECTORY_DATABASE_URL", "OSS_BUCKET", "OSS_REGION",
          "TRAJECTORY_OSS_REGION", "TRAJECTORY_OSS_ENDPOINT", "TRAJECTORY_SPOOL_DIR", "REDIS_URL",
          "TRAJECTORY_INGEST_BATCH_LINES", "TRAJECTORY_SPOOL_ABANDON_SECONDS", "TRAJECTORY_BLOB_PROVIDER",
-         "TRAJECTORY_OSS_INTERNAL", "INTERNAL_API_TOKEN")
+         "TRAJECTORY_OSS_INTERNAL", "INTERNAL_API_TOKEN", "TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES",
+         "TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS")
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +34,7 @@ def test_defaults_follow_the_configuration_reference(tmp_path):
     assert (settings.ingest_batch_lines, settings.ingest_batch_bytes) == (2000, 16777216)
     assert settings.spool_abandon_seconds == 60
     assert settings.ingest_max_batch_failures == 10
+    assert (settings.quarantine_max_bytes, settings.quarantine_retention_days) == (268435456, 7)
     assert (settings.inline_bytes, settings.record_inline_bytes) == (65536, 16384)
     assert (settings.projection_batch_ms, settings.projection_batch_events) == (250, 200)
     assert settings.checkpoint_interval == 1000
@@ -74,7 +76,10 @@ def test_invalid_values_fall_back_to_their_defaults(monkeypatch, caplog):
     monkeypatch.setenv("TRAJECTORY_SPOOL_ABANDON_SECONDS", "0")
     monkeypatch.setenv("TRAJECTORY_BLOB_PROVIDER", "ftp")
     monkeypatch.setenv("TRAJECTORY_OSS_INTERNAL", "maybe")
+    monkeypatch.setenv("TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES", "1048576")
+    monkeypatch.setenv("TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS", "0")
     settings = WorkerSettings.from_env()
+    assert (settings.quarantine_max_bytes, settings.quarantine_retention_days) == (1048576, 7)
     assert settings.mode == "embedded"
     assert settings.ingest_batch_lines == 2000
     assert settings.spool_abandon_seconds == 60

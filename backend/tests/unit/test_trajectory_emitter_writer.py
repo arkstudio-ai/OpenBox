@@ -163,12 +163,12 @@ def test_spool_budget_drops_new_lines_until_usage_falls_then_reports_the_gap(mak
     written = [record for record in records(emitter) if record["k"] == "event"]
     dropped = emitter.stats()["dropped_by_reason"]["spool_full"]
     assert 0 < len(written) < 20 and len(written) + dropped == 20
-    assert spool.spool_usage_bytes(tmp_path / "spool") <= 48 * KIB
+    # Event lines stop at the cap; the gap line may use the reserve of writer-owned lines.
+    assert spool.spool_usage_bytes(tmp_path / "spool") <= 48 * KIB + Emitter.CONTROL_RESERVE_BYTES
     (other / spool.file_name(1)).unlink()
     # Every cycle samples the usage, so the flush's cycle sees the smaller spool.
     assert emitter.flush(5)
     assert emitter.stats()["spool_bytes"] < 20 * KIB
-    # A gap line that did not fit before is written within one gap interval.
     assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
     assert emit(emitter, 100, pad=900)
     assert emitter.flush(5)
@@ -180,6 +180,84 @@ def test_spool_budget_drops_new_lines_until_usage_falls_then_reports_the_gap(mak
     assert gaps[0]["sessions"] == [{"user_id": "user", "session_id": "root", "run_ids": ["run"],
                                     "request_ids": [f"req{index}" for index in range(len(written), 20)]}]
     assert [record["n"] for record in everything] == list(range(1, len(everything) + 1))
+
+
+def test_producers_are_rescanned_every_sample_and_blobs_and_quarantine_every_shared_sample(make_emitter, tmp_path):
+    root = tmp_path / "spool"
+    emitter = make_emitter()
+    emitter.WAIT_SECONDS = 10
+    emitter.SPOOL_SAMPLE_SECONDS, emitter.SHARED_SAMPLE_SECONDS = 0, 3600
+    start_idle(emitter)
+    assert emit(emitter, 0) and emitter.flush(5)
+    other = root / spool.PRODUCERS_DIR / "20260101000000-other-1-00000000"
+    other.mkdir()
+    (other / spool.file_name(1)).write_bytes(b"x" * 256 * KIB)
+    spool.ensure_private_dir(spool.blobs_dir(root))
+    (spool.blobs_dir(root) / ("b" * 64)).write_bytes(b"x" * 256 * KIB)
+    (root / spool.QUARANTINE_DIR).mkdir()
+    (root / spool.QUARANTINE_DIR / f"other__{spool.file_name(1)}").write_bytes(b"x" * 256 * KIB)
+    assert emit(emitter, 1) and emitter.flush(5)
+    # The next cycle sees the other producer's file; blobs/ and quarantine/ keep their first sample.
+    assert 256 * KIB <= emitter.stats()["spool_bytes"] < 512 * KIB
+    emitter._next_shared_sample = 0.0
+    assert emit(emitter, 2) and emitter.flush(5)
+    assert emitter.stats()["spool_bytes"] >= 768 * KIB
+
+
+def test_goodbye_and_gap_lines_fit_above_the_spool_cap_within_the_control_reserve(make_emitter, tmp_path):
+    """Without its goodbye, a producer restarted on a full spool is reported as crashed for every recent session."""
+    other = tmp_path / "spool" / spool.PRODUCERS_DIR / "20260101000000-other-1-00000000"
+    other.mkdir(parents=True)
+    (other / spool.file_name(1)).write_bytes(b"x" * 64 * KIB)
+    emitter = make_emitter(spool_max_bytes=64 * KIB)
+    emitter.WAIT_SECONDS = 10
+    start_idle(emitter)
+    assert emit(emitter, 0)
+    assert emitter.flush(5) is False
+    emitter.close(5)
+    everything = records(emitter)
+    assert [(record["k"], record["control"]["type"]) for record in everything] == [
+        ("control", "gap"), ("control", "producer.goodbye")]
+    assert everything[0]["control"]["reason"] == "spool_full"
+    stats = emitter.stats()
+    assert stats["dropped_by_reason"] == {"spool_full": 1} and stats["writer_lines_skipped"] == 0
+
+    # Beyond the reserve a writer-owned line is skipped, and counted.
+    (other / spool.file_name(2)).write_bytes(b"x" * Emitter.CONTROL_RESERVE_BYTES)
+    second = make_emitter(spool_max_bytes=64 * KIB)
+    start_idle(second)
+    second.close(5)
+    stats = second.stats()
+    assert (stats["state"], stats["writer_lines_skipped"]) == ("closed", 1)
+    assert data_files(second, closed_only=False) == []
+
+
+def test_lines_for_an_open_file_the_worker_deleted_go_to_the_next_file(make_emitter):
+    """A writer stalled past TRAJECTORY_SPOOL_ABANDON_SECONDS finds its .part consumed and deleted."""
+    emitter = make_emitter()
+    start_idle(emitter)
+
+    def written(counter):
+        path = emitter.producer_dir / spool.file_name(counter, closed=False)
+        assert wait_for(lambda: path.exists() and path.stat().st_size > 0)
+        return path
+
+    # Deleted before its rotation: the rename finds nothing and the file does not count as closed.
+    assert emit(emitter, 0)
+    written(1).unlink()
+    assert emitter.flush(5)
+    stats = emitter.stats()
+    assert (stats["files_lost"], stats["files_closed"]) == (1, 0)
+    # Deleted before more lines reach it: they go to the next file, keeping their counters.
+    assert emit(emitter, 1)
+    written(2).unlink()
+    assert emit(emitter, 2)
+    assert emitter.flush(5)
+    assert data_files(emitter, closed_only=False) == [spool.file_name(3)]
+    assert [(record["n"], record["event"]["index"]) for record in records(emitter)] == [(3, 2)]
+    stats = emitter.stats()
+    assert (stats["files_lost"], stats["files_closed"], stats["written_lines"], stats["dropped_events"]) == (
+        2, 1, 3, 0)
 
 
 def test_enospc_drops_affected_lines_keeps_complete_ones_and_recovers(make_emitter):

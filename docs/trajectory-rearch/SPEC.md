@@ -159,7 +159,7 @@ Repeated prompt content (system prompts, tool lists, conversation history) is wr
   - Any other value inside `data` of any event (depth 1-6, leaves first) whose compact JSON is larger than 16 KiB. A value that already holds a reference stays inline, so blob content never contains references.
   - An event whose serialized bytes contain `"$blob"` is written inline as version 1: in a version 2 line every `{"$blob": ...}` object is a reference.
 - **Blob file**: `blobs/<sha256>` holds the value's compact JSON (the exact bytes it has inline); the name is the sha256 of the content. Written as a temp file (`.<sha256>.<8 hex>.tmp`), fsynced, then renamed; the blobs directory is fsynced before a data file that references a new blob is closed. A blob that already exists gets its mtime refreshed instead, at most every 60 s per writer. Blobs are written before the line that references them; if a blob cannot be stored the event is written inline.
-- **Spool budget**: `spool_max_bytes` (§5.2) counts `blobs/` as well as `producers/`; a line is dropped with `spool_full` when the line plus its new blob bytes do not fit.
+- **Spool budget**: `spool_max_bytes` (§5.2) counts the allocated size (`max(st_size, st_blocks × 512)`) of the files in the producer directories, `blobs/` and `quarantine/`; an event line is dropped with `spool_full` when the line plus its new blob bytes do not fit. Writer-owned lines (`gap`, `producer.goodbye`) may exceed the cap by 1 MiB, so a producer restarted on a full spool still ends with its goodbye; one refused even then is counted in the emitter's `writer_lines_skipped`. The worker keeps `quarantine/` within `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` and `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` (§13), oldest files first.
 - **Reading**: the worker's `read_batch` replaces every reference of a version 2 event line with the blob content before decoding, so sanitize, the event hash, previews and content addressing (§8.4) see the same event as for the inline line, and the resolved size counts against `TRAJECTORY_INGEST_BATCH_BYTES` and the user byte budget. A blob that is missing or whose content does not match its sha256 turns the line into a `gap` control with the same `n` and `t` (`reason` `spool_blob_missing` or `spool_blob_corrupt`, `dropped_events` 1, the event's user, root session, run and request ids); the rest of the file is ingested normally.
 - **Sweep**: at most once a minute, after a complete scan of the producer directories, the worker deletes blob files whose mtime is older than the oldest remaining data file (consumed or not; the scan time when there is none) minus 600 s. A candidate is renamed aside and its mtime checked again, so a writer that refreshed it meanwhile keeps it. Orphaned temp files older than the margin are deleted too.
 
@@ -204,7 +204,7 @@ Rules:
 - `emit_bytes` does only: size check (`max_event_bytes` → drop, reason `event_too_large`), byte-budget check against `queue_bytes` (→ drop, reason `queue_overflow`), append to a `collections.deque` under a lock, update counters. Target ≤ 20 µs excluding serialization.
 - Drop accounting keeps per-root-session sets of run_ids/request_ids (capped) and writes one `gap` control as soon as the queue has room (at most one gap line per 100 ms).
 - Writer thread: waits on a condition (≤ 100 ms), assigns `n`, builds the line by byte concatenation (`b'{"v":1,"k":"event","n":' + n + b',"t":"' + t + b'","event":' + event_json + b'}\n'`), writes to the open `.part` file (buffered), flushes buffers at least every 100 ms, rotates when size ≥ `file_bytes` or age ≥ `file_ms` (non-empty): flush, `fsync`, rename `.part` → `.jsonl`.
-- Spool budget: the writer samples spool usage every 5 s (sum of file sizes under `producers/`); above `spool_max_bytes` new lines are dropped (reason `spool_full`).
+- Spool budget: the writer rescans the producer directories every 5 s and `blobs/` plus `quarantine/` every 60 s, adding its own data and blob bytes in between (allocated sizes, §3.5); above `spool_max_bytes` new event lines are dropped (reason `spool_full`), writer-owned `gap` and `producer.goodbye` lines only above `spool_max_bytes` + 1 MiB.
 - Write errors (e.g. ENOSPC): drop the affected lines (reason `writer_error`), close the file, retry opening after 1 s. Never propagate.
 - Process exit: `atexit` calls `close(2.0)`; backend lifespan shutdown calls `close(5.0)`.
 
@@ -785,6 +785,8 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_INGEST_BATCH_LINES` / `_BYTES` | 2000 / 16777216 | worker |
 | `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` | 10 (consecutive failures of one file batch before the file is quarantined with a `recording.gap`) | worker |
 | `TRAJECTORY_SPOOL_ABANDON_SECONDS` | 60 | worker |
+| `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` | 268435456 (data bytes kept in `quarantine/`; the oldest quarantined files and their `.reason` sidecars are deleted first) | worker |
+| `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` | 7 (quarantined files older than this are deleted; age from the `.reason` sidecar) | worker |
 | `TRAJECTORY_INLINE_BYTES` | 65536 | worker |
 | `TRAJECTORY_RECORD_INLINE_BYTES` | 16384 | worker |
 | `TRAJECTORY_PROJECTION_BATCH_MS` / `_EVENTS` | 250 / 200 | worker |

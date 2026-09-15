@@ -11,6 +11,7 @@ import re
 import socket
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,8 @@ LINE_VERSIONS = (VERSION, BLOB_VERSION)
 PRODUCERS_DIR = "producers"
 CONTROL_DIR = "control"
 QUARANTINE_DIR = "quarantine"
+#: Sidecar of a quarantined data file: ``quarantine/<name>.reason``.
+REASON_SUFFIX = ".reason"
 BLOBS_DIR = "blobs"
 PRODUCER_FILE = "producer.json"
 BUDGETS_FILE = "budgets.json"
@@ -232,36 +235,82 @@ def write_json_atomic(path: Path, value, *, mode: int = FILE_MODE) -> None:
         raise
 
 
+def is_quarantined_file(name: str) -> bool:
+    """A quarantined data file: not its ``.reason`` sidecar and not a temporary (dot) file."""
+    return not name.startswith(".") and not name.endswith(REASON_SUFFIX)
+
+
+@dataclass(frozen=True)
+class SpoolUsage:
+    """Allocated bytes of the files that count against ``TRAJECTORY_SPOOL_MAX_BYTES``."""
+    producers_bytes: int = 0
+    blob_bytes: int = 0
+    #: Every file in ``quarantine/``, sidecars included.
+    quarantine_bytes: int = 0
+    #: Quarantined data files, without their ``.reason`` sidecars.
+    quarantine_files: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.producers_bytes + self.blob_bytes + self.quarantine_bytes
+
+
+def spool_usage(spool_dir: Path) -> SpoolUsage:
+    """Usage of the producer directories, ``blobs/`` and ``quarantine/``; a missing directory counts as empty."""
+    quarantine_bytes, quarantine_files = _directory_usage(Path(spool_dir) / QUARANTINE_DIR)
+    return SpoolUsage(producer_usage_bytes(spool_dir), _directory_usage(blobs_dir(spool_dir))[0],
+                      quarantine_bytes, quarantine_files)
+
+
 def spool_usage_bytes(spool_dir: Path) -> int:
-    """Sum of file sizes under ``producers/`` (one directory per producer) and ``blobs/``."""
-    try:
-        total = _file_bytes(blobs_dir(spool_dir))
-    except FileNotFoundError:
-        total = 0
+    return spool_usage(spool_dir).total
+
+
+def producer_usage_bytes(spool_dir: Path) -> int:
+    """Allocated bytes of the files directly inside each directory under ``producers/``."""
     try:
         producers = list(os.scandir(Path(spool_dir) / PRODUCERS_DIR))
     except FileNotFoundError:
-        return total
+        return 0
+    total = 0
     for producer in producers:
         try:
-            if not producer.is_dir(follow_symlinks=False):
-                continue
-            total += _file_bytes(producer.path)
+            if producer.is_dir(follow_symlinks=False):
+                total += _directory_usage(producer.path)[0]
         except OSError:
             continue
     return total
 
 
-def _file_bytes(directory) -> int:
-    """Sizes of the regular files directly inside ``directory``; raises when it cannot be listed."""
-    total = 0
-    for entry in list(os.scandir(directory)):
+def shared_usage_bytes(spool_dir: Path) -> int:
+    """Allocated bytes of ``blobs/`` and ``quarantine/``, the part of the usage no producer owns."""
+    return _directory_usage(blobs_dir(spool_dir))[0] + _directory_usage(Path(spool_dir) / QUARANTINE_DIR)[0]
+
+
+def _allocated(status: os.stat_result) -> int:
+    # Blocks, not st_size: small files take a whole block and budgets are about disk space.
+    blocks = getattr(status, "st_blocks", None)
+    return status.st_size if blocks is None else max(status.st_size, blocks * 512)
+
+
+def _directory_usage(directory) -> tuple[int, int]:
+    """``(allocated bytes, quarantined data files)`` of the regular files directly inside ``directory``.
+
+    ``(0, 0)`` when it does not exist; raises when it cannot be listed otherwise.
+    """
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return 0, 0
+    total = files = 0
+    for entry in entries:
         try:
             if entry.is_file(follow_symlinks=False):
-                total += entry.stat(follow_symlinks=False).st_size
+                total += _allocated(entry.stat(follow_symlinks=False))
+                files += is_quarantined_file(entry.name)
         except OSError:
             continue
-    return total
+    return total, files
 
 
 def budgets_path(spool_dir: Path) -> Path:

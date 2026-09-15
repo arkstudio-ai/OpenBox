@@ -208,6 +208,39 @@ def test_drills_compare_worker_metrics_as_numbers(sandbox):
     assert result.returncode == 0, result.stderr
 
 
+@needs_bash
+def test_spool_stats_counts_every_spool_file_in_bytes_and_producer_data_files_in_files(sandbox):
+    find = shutil.which("find", path=sandbox.env["PATH"])
+    if find is None or subprocess.run([find, str(sandbox.root), "-maxdepth", "0", "-printf", ""],
+                                      capture_output=True, timeout=60).returncode != 0:
+        pytest.skip("this find has no -printf; the servers run GNU findutils")
+    spool = sandbox.root / "spool volume"
+    producer = spool / "producers" / "p1"
+    producer.mkdir(parents=True)
+    (spool / "blobs").mkdir()
+    (spool / "quarantine").mkdir()
+    files = {
+        producer / "producer.json": 20, producer / "00000000000000000001.jsonl": 100,
+        producer / "00000000000000000002.jsonl.part": 50, producer / "00000000000000000003.jsonl.part": 0,
+        spool / "blobs" / ("a" * 64): 1000, spool / "quarantine" / "p1__00000000000000000009.jsonl": 30,
+        spool / "quarantine" / "p1__00000000000000000009.jsonl.reason": 5,
+    }
+    for path, size in files.items():
+        path.write_bytes(b"x" * size)
+    old = time.time() - 120
+    os.utime(producer / "00000000000000000001.jsonl", (old, old))
+    result = subprocess.run(
+        [BASH, "-c", '. "$1"; spool="$2"; spool_host_dir() { printf "%s" "$spool"; }; spool_stats', "stats",
+         str(SCRIPTS_DIR / "lib.sh"), str(spool)], env=sandbox.env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    size, data_files, closed, age, quarantined = map(int, result.stdout.split())
+    allocated = sum(max(path.stat().st_size, path.stat().st_blocks * 512) for path in files)
+    # Bytes are those of every file, as the emitter's spool budget counts them; files only the producer data.
+    assert (size, data_files, closed, quarantined) == (allocated, 2, 1, 1)
+    assert 110 <= age <= 300
+
+
 PRUNE_RESPONDER = """
 import json, os, sys
 from pathlib import Path

@@ -237,7 +237,13 @@ def _fsync_directory(path) -> bool:
 class Emitter:
     WAIT_SECONDS = 0.1
     GAP_INTERVAL_SECONDS = 0.1
+    #: The writer rescans producers/ this often, and blobs/ plus quarantine/ (they can hold many files) only every
+    #: SHARED_SAMPLE_SECONDS; its own blob writes are added in between.
     SPOOL_SAMPLE_SECONDS = 5.0
+    SHARED_SAMPLE_SECONDS = 60.0
+    #: Writer-owned lines (gap controls, producer.goodbye) may exceed spool_max_bytes by this much: without its
+    #: goodbye, a producer restarted while the spool is full is reported as crashed for every recent session.
+    CONTROL_RESERVE_BYTES = 1024 * 1024
     #: The writer refreshes the mtime of producer.json this often: the worker declares a producer whose
     #: producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS dead, on any host.
     HEARTBEAT_SECONDS = 5.0
@@ -290,6 +296,10 @@ class Emitter:
         self._dropped_bytes = 0
         self._dropped_by_reason: dict[str, int] = {}
         self._files_closed = 0
+        #: Open files the worker consumed and deleted before this writer closed them.
+        self._files_lost = 0
+        #: Writer-owned lines refused at the spool cap plus reserve or without a file; a refused gap line is retried.
+        self._writer_lines_skipped = 0
         self._gap_lines = 0
         self._gaps_in_flight = 0
         self._filtered_events = 0
@@ -308,8 +318,11 @@ class Emitter:
         self._file_opened = 0.0
         self._retry_at = 0.0
         self._next_sample = 0.0
+        self._next_shared_sample = 0.0
         self._next_heartbeat = 0.0
         self._spool_estimate = 0
+        #: The blobs/ and quarantine/ part of _spool_estimate: the last rescan plus this writer's blob writes since.
+        self._shared_estimate = 0
         self._last_gap = float("-inf")
         self._inflight: collections.deque = collections.deque()
         self._unreleased_bytes = 0
@@ -518,12 +531,14 @@ class Emitter:
                     "queued_bytes": self._queued_bytes, "queued_lines": self._queued_lines,
                     "written_lines": self._written_lines, "dropped_events": self._dropped_events,
                     "dropped_bytes": self._dropped_bytes, "dropped_by_reason": dict(self._dropped_by_reason),
-                    "files_closed": self._files_closed, "last_error": self._last_error,
+                    "files_closed": self._files_closed, "files_lost": self._files_lost,
+                    "last_error": self._last_error,
                     "spool_bytes": self._spool_estimate, "gap_lines": self._gap_lines,
                     "pending_gap_reasons": list(self._drops),
                     "pending_gaps": len(self._drops) + self._gaps_in_flight,
                     "filtered_events": self._filtered_events,
                     "truncated_events": self._truncated_events, "write_errors": self._write_errors,
+                    "writer_lines_skipped": self._writer_lines_skipped,
                     "rejected_after_close": self._rejected_after_close, "writer_restarts": self._restarts,
                     "blobs_written": self._blobs_written, "blob_bytes_written": self._blob_bytes_written,
                     "blob_errors": self._blob_errors}
@@ -624,8 +639,14 @@ class Emitter:
             self._heartbeat()
         if now >= self._next_sample:
             self._next_sample = now + self.SPOOL_SAMPLE_SECONDS
+            if now >= self._next_shared_sample:
+                self._next_shared_sample = now + self.SHARED_SAMPLE_SECONDS
+                try:
+                    self._shared_estimate = spool.shared_usage_bytes(self.spool_dir)
+                except Exception as exc:
+                    self._note_error(exc)
             try:
-                self._spool_estimate = spool.spool_usage_bytes(self.spool_dir)
+                self._spool_estimate = spool.producer_usage_bytes(self.spool_dir) + self._shared_estimate
             except Exception as exc:
                 self._note_error(exc)
 
@@ -660,13 +681,12 @@ class Emitter:
             encode = spool.encode_event_line if kind == EVENT else spool.encode_control_line
             line, pending, added = encode(self._n, stamp, payload), [], 0
         # New blob bytes count against the spool budget like the line itself.
-        if self._spool_estimate + self._buffer_bytes + len(line) + added > self.spool_max_bytes:
-            if routing is not None:
-                self._writer_drop("spool_full", len(payload), at, routing)
+        limit = self.spool_max_bytes + (0 if routing is not None else self.CONTROL_RESERVE_BYTES)
+        if self._spool_estimate + self._buffer_bytes + len(line) + added > limit:
+            self._refuse("spool_full", len(payload), at, routing)
             return False
         if not self._open_file():
-            if routing is not None:
-                self._writer_drop("writer_error", len(payload), at, routing)
+            self._refuse("writer_error", len(payload), at, routing)
             return False
         if external is not None and not self._store_blobs(pending):
             # A blob that cannot be stored leaves the event inline.
@@ -686,6 +706,15 @@ class Emitter:
         with self._lock:
             self._writer_drops += 1
             self._drop_locked(reason, size, at, *routing)
+
+    def _refuse(self, reason: str, size: int, at: float, routing: tuple | None) -> None:
+        """A line that cannot be buffered: a drop, or a skip for a writer-owned line (a gap line stays pending)."""
+        if routing is not None:
+            self._writer_drop(reason, size, at, routing)
+            return
+        self._writer_lines_skipped += 1
+        if _log_limiter.allow(("writer_line_skipped", reason)):
+            log.warning("Trajectory writer line skipped reason=%s producer_id=%s", reason, self.producer_id)
 
     def _externalize(self, payload: bytes) -> tuple[bytes, dict[str, bytes]] | None:
         try:
@@ -770,6 +799,7 @@ class Emitter:
         self._blobs_written += 1
         self._blob_bytes_written += len(content)
         self._spool_estimate += len(content)
+        self._shared_estimate += len(content)
         self._blobs_unsynced = True
         return True
 
@@ -822,6 +852,8 @@ class Emitter:
         return True
 
     def _write_buffer(self) -> None:
+        if self._buffer and self._file_removed() and not self._reopen():
+            self._write_failed(OSError(errno.ENOENT, "Open spool file was removed"), 0)
         if self._buffer:
             data = self._buffer[0] if len(self._buffer) == 1 else b"".join(self._buffer)
             written = 0
@@ -841,6 +873,29 @@ class Emitter:
                 self._settle_gap_lines(self._meta)
                 self._buffer, self._meta, self._buffer_bytes = [], [], 0
         self._release()
+
+    def _file_removed(self) -> bool:
+        """The open file is unlinked: the worker consumes and deletes a ``.part`` left unmodified for
+        TRAJECTORY_SPOOL_ABANDON_SECONDS, so a writer stalled that long would write into a deleted file."""
+        try:
+            return self._fd is not None and os.fstat(self._fd).st_nlink == 0
+        except OSError as exc:
+            self._note_error(exc)
+            return False
+
+    def _reopen(self) -> bool:
+        """Close the removed file without a rename and open the next one for the buffered lines."""
+        descriptor, self._fd, self._part_path = self._fd, None, None
+        self._files_lost += 1
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        if self._open_file():
+            return True
+        # The worker also removes the directory of a producer left without data files and heartbeat.
+        self._retry_at = 0.0
+        return not self._ready and self._open_file()
 
     def _release(self) -> None:
         if self._unreleased_lines:
@@ -918,6 +973,9 @@ class Emitter:
         try:
             self._rename(path, path.with_name(path.name[:-len(".part")]))
         except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                # Consumed as abandoned and deleted while this writer was stalled.
+                self._files_lost += 1
             self._note_error(exc)
             return
         self._files_closed += 1

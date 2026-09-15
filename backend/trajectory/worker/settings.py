@@ -108,6 +108,10 @@ class WorkerSettings:
     export_max_bytes: int = 256 * 1024 * 1024
     #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES: consecutive failures of one spool file batch before it is quarantined.
     ingest_max_batch_failures: int = 10
+    #: TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES: data bytes kept in quarantine/; the oldest files are deleted first.
+    quarantine_max_bytes: int = 256 * 1024 * 1024
+    #: TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS: quarantined files older than this are deleted.
+    quarantine_retention_days: int = 7
 
     @classmethod
     def from_env(cls) -> WorkerSettings:
@@ -143,6 +147,8 @@ class WorkerSettings:
             export_retention_days=integer("TRAJECTORY_EXPORT_RETENTION_DAYS", 30),
             export_max_bytes=integer("TRAJECTORY_EXPORT_MAX_BYTES", 256 * 1024 * 1024),
             ingest_max_batch_failures=integer("TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10),
+            quarantine_max_bytes=integer("TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES", 256 * 1024 * 1024),
+            quarantine_retention_days=integer("TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS", 7),
             budget_trajectory_events=integer("TRAJECTORY_BUDGET_TRAJECTORY_EVENTS", 50000),
             budget_trajectory_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BYTES", 200 * 1024 * 1024),
             budget_trajectory_block_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BLOCK_BYTES", 1024 * 1024 * 1024),

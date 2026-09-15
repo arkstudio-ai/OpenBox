@@ -138,7 +138,7 @@ Shape equals today's `trajectory.types.prepare()` output:
 
 | type | fields | producer | worker action |
 |---|---|---|---|
-| `gap` | `reason` (`queue_overflow`,`spool_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`; the worker's reader adds `spool_blob_missing`,`spool_blob_corrupt`, §3.5), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
+| `gap` | `reason` (`queue_overflow`,`spool_full`,`disk_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`; the worker's reader adds `spool_blob_missing`,`spool_blob_corrupt`, §3.5), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
 | `producer.goodbye` | `last_n` | emitter on graceful close | mark producer closed |
 | `session.meta` | `session`: `{id,user_id,workspace_id,project_id,parent_id,kind,title,status,model,agent,is_deleted,deleted_at,created_at,updated_at}` | meta sync | upsert `trajectory_meta_sessions` |
 | `user.meta` | `user`: `{id,username,email,role,is_active,is_deleted,updated_at}` | meta sync | upsert `trajectory_meta_users` |

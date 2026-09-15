@@ -535,8 +535,16 @@ Record the output of each drill in the release log.
   producer. Business requests are not affected; at the budget the backend records gaps (`spool_full`), and while the
   spool's file system has less than `TRAJECTORY_SPOOL_MIN_FREE_BYTES` (1 GiB) free it drops events as `disk_full`
   gaps even below the budget.
-- **Files in `quarantine/`**: read the `.reason` sidecar and the worker log. The files may contain unredacted content;
-  keep them only as long as the analysis needs, then delete them.
+- **Files in `quarantine/`**: read the `.reason` sidecar and the worker log. `reason` is `unparsable_line`,
+  `torn_closed_file`, `batch_failed` (10 counted failures in a row; timeouts, lock conflicts, lost connections and a full
+  disk never count) or `batch_crashed` (the worker process died in the same batch 3 times; the batch it was in is
+  named in `control/ingest.json` while it runs). The blobs a quarantined file references sit beside it as
+  `<name>.blob-<sha256>`. The files may contain unredacted content: the worker deletes them after
+  `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` (7) or beyond `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` (256 MiB), oldest
+  first; delete them earlier once the analysis is done.
+- **GC entries with reason `orphan_object`**: the orphan sweep (every 10 minutes) found blobs or exports older than 7
+  days that no row references, typically from a batch that never committed. The GC pass checks each again before it
+  deletes it.
 - **Admin trajectory pages fail (502/404)**: `docker compose exec frontend env | grep TRAJECTORY_HOST`, worker health,
   `INTERNAL_API_TOKEN` on both sides (401 on every admin request).
 - **Blob upload failures**: OSS status page, `secrets/aliyun-config.json`, reachability of

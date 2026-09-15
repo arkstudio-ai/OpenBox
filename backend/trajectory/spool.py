@@ -42,7 +42,7 @@ FILE_MODE = 0o600
 KIND_EVENT = "event"
 KIND_CONTROL = "control"
 
-GAP_REASONS = ("queue_overflow", "spool_full", "serialization_failed", "invalid_event",
+GAP_REASONS = ("queue_overflow", "spool_full", "disk_full", "serialization_failed", "invalid_event",
                "event_too_large", "writer_error", "budget")
 CONTROL_TYPES = ("gap", "producer.goodbye", "session.meta", "user.meta", "workspace.meta",
                  "asset.meta", "session.deleted", "asset.deleted", "recording.state")

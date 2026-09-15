@@ -227,25 +227,79 @@ def abandoned(producer: ProducerDir, item: SpoolFile, *, now: float, abandon_sec
     return not alive and (heartbeat is None or now - heartbeat >= abandon_seconds)
 
 
+class ReadyCursor:
+    """The next consumable file of every producer of a scan, followed through a pass (SPEC §8.2).
+
+    A producer's files are consumed strictly by counter, so one cursor per producer stands at its first file
+    not consumed. ``ready`` lists the files at the cursors of the producers still in the pass, oldest mtime
+    first: one round. ``advance`` moves a cursor past a file that finished, so the next file is eligible in
+    the next round, and ``block`` takes a producer whose file stays unfinished out of the pass. Every file is
+    examined once; selecting afresh after each finished file (``select_ready``) walks every producer's
+    consumed prefix again and makes a pass over thousands of one-second files quadratic in them.
+    """
+
+    def __init__(self, scan: SpoolScan, done: set[tuple[str, str]], *, now: float, abandon_seconds: float,
+                 alive=None):
+        self.scan = scan
+        #: ``(producer_id, name)`` of fully consumed files that still exist on disk (their deletion failed or is
+        #: pending): they never block, the cursors skip them.
+        self.done = done
+        self.now = now
+        self.abandon_seconds = abandon_seconds
+        #: ``alive(producer)`` is true for the producers of this very process; their open file is never abandoned.
+        self.alive = alive
+        #: Files consumed through ``advance`` in this pass.
+        self.advanced = 0
+        self._position: dict[str, int] = dict.fromkeys(scan.producers, 0)
+        self._blocked: set[str] = set()
+
+    def ready(self) -> list[SpoolFile]:
+        """The consumable file at the cursor of every producer still in the pass, oldest mtime first."""
+        ready = []
+        for producer in self.scan.producers.values():
+            if producer.producer_id not in self._blocked:
+                item = self._head(producer)
+                if item is not None:
+                    ready.append(item)
+        return sorted(ready, key=lambda item: (item.mtime, item.producer_id, item.counter))
+
+    def _head(self, producer: ProducerDir) -> SpoolFile | None:
+        """The file at the producer's cursor when it is closed or ``abandoned``; else the producer leaves the pass."""
+        files = producer.files
+        position = self._position[producer.producer_id]
+        while position < len(files) and (producer.producer_id, files[position].name) in self.done:
+            position += 1
+        self._position[producer.producer_id] = position
+        if position < len(files):
+            item = files[position]
+            if item.closed or abandoned(producer, item, now=self.now, abandon_seconds=self.abandon_seconds,
+                                        heartbeat=producer.heartbeat,
+                                        alive=self.alive is not None and self.alive(producer)):
+                return item
+        # Nothing of this producer becomes ready within the pass: the scan and ``now`` are fixed.
+        self._blocked.add(producer.producer_id)
+        return None
+
+    def advance(self, item: SpoolFile) -> None:
+        """``item``, at its producer's cursor, is consumed: the producer's next file is eligible in the next round."""
+        self._position[item.producer_id] += 1
+        self.advanced += 1
+
+    def block(self, item: SpoolFile) -> None:
+        """``item`` stays unfinished: its producer's later files wait behind it until the next pass."""
+        self._blocked.add(item.producer_id)
+
+
 def select_ready(scan: SpoolScan, done: set[tuple[str, str]], *, now: float, abandon_seconds: float,
                  alive=None) -> list[SpoolFile]:
-    """The next consumable file of every producer, oldest mtime first.
+    """The next consumable file of every producer, oldest mtime first: the first round of a ``ReadyCursor``.
 
     ``done`` holds ``(producer_id, name)`` of fully consumed files that still
     exist on disk (their deletion failed or is pending); they never block.
     An open file must be ``abandoned``; ``alive(producer)`` is true for the
     producers of this very process.
     """
-    ready = []
-    for producer in scan.producers.values():
-        for item in producer.files:
-            if (producer.producer_id, item.name) in done:
-                continue
-            if item.closed or abandoned(producer, item, now=now, abandon_seconds=abandon_seconds,
-                                        heartbeat=producer.heartbeat, alive=alive is not None and alive(producer)):
-                ready.append(item)
-            break
-    return sorted(ready, key=lambda item: (item.mtime, item.producer_id, item.counter))
+    return ReadyCursor(scan, done, now=now, abandon_seconds=abandon_seconds, alive=alive).ready()
 
 
 def read_batch(path: Path, offset: int, *, max_lines: int, max_bytes: int,

@@ -523,6 +523,41 @@ async def test_out_of_range_times_are_invalid_values_not_fatal_errors(harness):
     assert [row.event_id for row in (await events_of("ses_1"))[1][1:]] == ["kept"]
 
 
+async def test_a_backlog_of_thousands_of_small_files_drains_in_one_pass_with_linear_selection(harness, monkeypatch):
+    """A worker outage leaves one file per second of activity: the pass must follow each producer from file to file,
+    not select afresh over the consumed prefix after each one (quadratic in the files), and delete the bookkeeping
+    rows of all of them in one transaction at its end, not one per file."""
+    writer = harness.writer
+    files = 3000
+    for index in range(files):
+        writer.file([writer.line("event", event(event_id=f"e{index}"))] if index % 100 == 0 else [])
+    rounds, examined, forgets = [], [], []
+    ready, name, forget = spool_reader.ReadyCursor.ready, spool_reader.SpoolFile.name, IngestService._forget_files
+
+    def counting_ready(cursor):
+        items = ready(cursor)
+        rounds.append(len(items))
+        return items
+
+    async def counting_forget(service, keys):
+        keys = list(keys)
+        forgets.append(len(keys))
+        await forget(service, keys)
+
+    monkeypatch.setattr(spool_reader.ReadyCursor, "ready", counting_ready)
+    monkeypatch.setattr(spool_reader.SpoolFile, "name", property(lambda item: examined.append(1) or name.fget(item)))
+    monkeypatch.setattr(IngestService, "_forget_files", counting_forget)
+    result = await harness.run()
+    assert (result["files_done"], result["events"]) == (files, files // 100)
+    assert not list(writer.directory.glob("*.jsonl")) and await rows(TrajectoryIngestFile) == []
+    assert len((await events_of("ses_1"))[1]) == files // 100 + 1
+    # One producer: one file per round, each selected once, and the empty round that ends the pass.
+    assert sum(rounds) == files and len(rounds) == files + 1
+    # About nine file name lookups per file; selecting afresh after each finished file made 4.5 million here.
+    assert len(examined) < 20 * files
+    assert forgets == [files]
+
+
 async def test_max_lines_limits_one_pass(harness):
     harness.writer.events(*[event() for _ in range(5)])
     assert (await harness.run(max_lines=3))["lines"] == 3

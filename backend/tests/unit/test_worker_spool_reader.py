@@ -82,6 +82,45 @@ def test_a_newest_open_file_is_abandoned_only_once_its_producer_heartbeat_is_sta
     assert "live" in {item.producer_id for item in select_ready(scan, set(), now=now + 60, abandon_seconds=60)}
 
 
+def test_ready_cursor_follows_each_producer_and_examines_every_file_once(tmp_path, monkeypatch):
+    """A pass over thousands of one-second files must not select afresh over every file after each finished one."""
+    now = time.time()
+
+    def producer(producer_id, files):
+        return spool_reader.ProducerDir(producer_id, tmp_path / producer_id, None, heartbeat=now, files=[
+            spool_reader.SpoolFile(producer_id, counter, tmp_path / producer_id / spool.file_name(counter, closed=closed),
+                                   closed, 1, now - age) for counter, closed, age in files])
+
+    scan = spool_reader.SpoolScan(producers={
+        "a": producer("a", [(counter, True, 10_000 - counter) for counter in range(1, 3001)]),
+        "b": producer("b", [(1, True, 9_997.5), (2, False, 1)]),
+        "c": producer("c", [(1, True, 9_999.5), (2, True, 9_998.5)]),
+    })
+    computed = []
+    original = spool_reader.SpoolFile.name
+    monkeypatch.setattr(spool_reader.SpoolFile, "name",
+                        property(lambda item: computed.append(item.counter) or original.fget(item)))
+    done = {("c", spool.file_name(1))}  # consumed earlier, its deletion pending: skipped, never blocking
+    cursor = spool_reader.ReadyCursor(scan, done, now=now, abandon_seconds=60)
+    ready = cursor.ready()
+    assert [(item.producer_id, item.counter) for item in ready] == [("a", 1), ("c", 2), ("b", 1)]
+    assert ready == select_ready(scan, done, now=now, abandon_seconds=60)
+    order, rounds = [], 0
+    while ready:
+        rounds += 1
+        for item in ready:
+            order.append((item.producer_id, item.counter))
+            if item.producer_id == "b":
+                cursor.block(item)  # b#1 stays unfinished: b#2 waits behind it (an open file anyway)
+            else:
+                cursor.advance(item)
+        ready = cursor.ready()
+    assert order == [("a", 1), ("c", 2), ("b", 1)] + [("a", counter) for counter in range(2, 3001)]
+    assert (rounds, cursor.advanced) == (3000, 3001)
+    # Every file was examined a bounded number of times, not once per round (4.5 million for 3,000 files).
+    assert len(computed) < 2 * 3004
+
+
 def test_batches_respect_line_and_byte_limits_and_resume(tmp_path):
     lines = [_line(n, "y" * n) for n in range(1, 21)]
     path = _write(tmp_path, 1, lines)

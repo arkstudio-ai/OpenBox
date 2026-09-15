@@ -7,7 +7,8 @@ blob uploads are idempotent (content-addressed keys). The batch is then
 applied in one trace transaction together with the file offset, so a crash
 anywhere replays it from the committed offset, and keep-first event keys
 drop whatever had already been committed. Consumed files are deleted and
-``trajectory.available`` is published only after the commit.
+``trajectory.available`` is published only after the commit; the bookkeeping
+rows of the files a pass finished are deleted together at its end.
 """
 from __future__ import annotations
 
@@ -485,6 +486,10 @@ class IngestService:
         self._failures_saved = 0.0
         #: (producer_id, file name) -> committed offset of the batch being ingested (the one a failure is about).
         self._positions: dict[tuple[str, str], int] = {}
+        #: (producer_id, file name) of the files finished in the current pass, deleted or quarantined, and of consumed
+        #: files an earlier pass left behind (``_delete_consumed``): their done rows are deleted together at the end of
+        #: the pass (``_forget_files``). A row a crash leaves behind is only found again by the next pass.
+        self._finished: list[tuple[str, str]] = []
         #: The in-flight batch marker (``_mark_inflight``), whether this process may have one on disk, and whether
         #: writing it fails (logged once).
         self._inflight_path = Path(self.spool_dir) / spool.CONTROL_DIR / INFLIGHT_FILE
@@ -577,37 +582,41 @@ class IngestService:
         self._gauge("spool_oldest_age_seconds", spool_reader.monotonic_age(scan.oldest_mtime, now))
         files = await self._file_rows(scan)
         done = {key for key, row in files.items() if row["done"]}
-        await self._delete_consumed(scan, done)
+        # Keys an interrupted pass left here have done rows, which _delete_consumed lists again.
+        self._finished = []
+        self._delete_consumed(scan, done)
         remaining = max_lines
-        consumed = set(done)
         waiting: dict[tuple[str, str], float] = {}
-        progressed = True
-        while progressed:
-            # A finished file makes the producer's next listed file eligible in the same pass;
-            # a file left unfinished blocks its producer until the next pass.
-            progressed = False
-            for spool_file in spool_reader.select_ready(scan, consumed, now=now, alive=self._own,
-                                                        abandon_seconds=self.settings.spool_abandon_seconds):
+        # One cursor per producer (never a fresh selection over every file after each finished one): a finished
+        # file makes the producer's next listed file eligible in the next round of the pass; a file left
+        # unfinished blocks its producer until the next pass.
+        cursor = spool_reader.ReadyCursor(scan, done, now=now, alive=self._own,
+                                          abandon_seconds=self.settings.spool_abandon_seconds)
+
+        def wait(spool_file) -> None:
+            waiting[(spool_file.producer_id, spool_file.name)] = spool_file.mtime
+            cursor.block(spool_file)
+
+        while True:
+            advanced = cursor.advanced
+            for spool_file in cursor.ready():
                 key = (spool_file.producer_id, spool_file.name)
-                if key in waiting:
-                    continue
                 if remaining is not None and remaining <= 0:
-                    waiting[key] = spool_file.mtime
+                    wait(spool_file)
                     continue
                 failure = self._failures.get(key)
                 if failure is not None and time.monotonic() < failure.next_at:
                     result["deferred_batches"] += 1
-                    waiting[key] = spool_file.mtime
+                    wait(spool_file)
                     continue
                 row = files.get(key)
                 if (failure is not None and failure.crashes >= MAX_BATCH_CRASHES
                         and failure.offset == (row["bytes_consumed"] if row else 0)):
                     if await self._crashed(spool_file, scan, failure, result):
-                        consumed.add(key)
-                        progressed = True
+                        cursor.advance(spool_file)
                     else:
                         self._failures[key] = self._next_failure(key, failure.offset)
-                        waiting[key] = spool_file.mtime
+                        wait(spool_file)
                     continue
                 try:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
@@ -616,26 +625,29 @@ class IngestService:
                     self._failures[key] = self._next_failure(key, self._positions.get(key, 0))
                     if remaining is not None:
                         remaining -= deferred.lines
-                    waiting[key] = spool_file.mtime
+                    wait(spool_file)
                     continue
                 except Exception as exc:
                     # One file's failure (a purge that times out, a value the database rejects, a bug) must
                     # not stop the other producers: the file retries from its committed offset after a backoff,
                     # and a batch that keeps failing is quarantined so the producer's later files proceed.
                     if await self._failed(spool_file, scan, exc, result):
-                        consumed.add(key)
-                        progressed = True
+                        cursor.advance(spool_file)
                     else:
-                        waiting[key] = spool_file.mtime
+                        wait(spool_file)
                     continue
                 self._failures.pop(key, None)
                 if remaining is not None:
                     remaining -= lines
                 if finished:
-                    consumed.add(key)
-                    progressed = True
+                    cursor.advance(spool_file)
                 else:
-                    waiting[key] = spool_file.mtime
+                    wait(spool_file)
+            if cursor.advanced == advanced:
+                break
+        # The rows of every file finished in the pass go in one transaction, not one per file.
+        await self._forget_files(self._finished)
+        self._finished = []
         listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
         self._failures = {key: value for key, value in self._failures.items() if key in listed}
         self._positions = {key: value for key, value in self._positions.items() if key in listed}
@@ -714,7 +726,7 @@ class IngestService:
                             await self._reopen_file(key)
                             return consumed, False
                     if removed:
-                        await self._forget_files([key])
+                        self._finished.append(key)
                     result["files_done"] += 1
                     return consumed, True
                 if batch.eof:
@@ -758,29 +770,35 @@ class IngestService:
                     rows[(row.producer_id, row.file_name)] = {"bytes_consumed": row.bytes_consumed, "done": row.done}
         return rows
 
-    async def _delete_consumed(self, scan, done) -> None:
-        """Clean up after a crash between a commit and the file deletion, or the row cleanup that follows it."""
-        removed = []
+    def _delete_consumed(self, scan, done) -> None:
+        """Clean up after a crash between a commit and the file deletion, or the row cleanup that follows it.
+
+        The rows of these files go with the pass's own at its end (``_finished``).
+        """
         listed = set()
         for producer in scan.producers.values():
             for spool_file in producer.files:
                 key = (producer.producer_id, spool_file.name)
                 listed.add(key)
                 if key in done and spool_reader.remove_file(spool_reader.locate(spool_file) or spool_file.path):
-                    removed.append(key)
+                    self._finished.append(key)
         # A consumed file that is already gone leaves only its row behind; a producer never reuses a counter.
-        removed.extend(key for key in done if key not in listed)
-        await self._forget_files(removed)
+        self._finished.extend(key for key in done if key not in listed)
 
     async def _forget_files(self, keys) -> None:
-        if not keys:
+        """Delete the done rows of ``keys``: one transaction, one statement per producer and QUERY_CHUNK names."""
+        names_of: dict[str, dict[str, None]] = {}
+        for producer_id, name in keys:
+            names_of.setdefault(producer_id, {})[name] = None
+        if not names_of:
             return
         try:
             async with trace_session() as db:
-                for producer_id, name in keys:
-                    await db.execute(TrajectoryIngestFile.__table__.delete().where(
-                        TrajectoryIngestFile.producer_id == producer_id, TrajectoryIngestFile.file_name == name,
-                        TrajectoryIngestFile.done.is_(True)))
+                for producer_id, names in names_of.items():
+                    for chunk in _chunks(names):
+                        await db.execute(TrajectoryIngestFile.__table__.delete().where(
+                            TrajectoryIngestFile.producer_id == producer_id, TrajectoryIngestFile.file_name.in_(chunk),
+                            TrajectoryIngestFile.done.is_(True)))
         except Exception as exc:
             # A done row left behind only makes the next pass retry the (idempotent) deletion.
             log.warning("Ingest file bookkeeping cleanup failed error_type=%s", type(exc).__name__)
@@ -1117,7 +1135,7 @@ class IngestService:
             return True
         tx.counters["quarantined_files"] += 1
         tx.after_commit(result)
-        await self._forget_files([(spool_file.producer_id, spool_file.name)])
+        self._finished.append((spool_file.producer_id, spool_file.name))
         return True
 
     async def _finish_producers(self, scan, result) -> None:

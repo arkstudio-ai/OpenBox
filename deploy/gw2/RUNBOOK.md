@@ -226,6 +226,7 @@ Keep a terminal probing the public site during every switch, as in previous rele
 
    ```bash
    docker compose exec -T postgres psql -U openbox -d openbox -c '\dt trajectory_*'          # Did not find any relation
+   docker compose exec -T postgres psql -U openbox -d openbox -c '\dt session_trajectories'          # Did not find any relation
    docker compose exec -T postgres psql -U openbox -d openbox -c '\dt legacy_trajectory_*'   # Did not find any relation
    docker compose exec -T backend alembic current                                            # e5c7a9b1d3f4 (head)
    docker compose exec -T postgres psql -U openbox -d openbox -c 'SELECT pg_stat_statements_reset()'

@@ -414,6 +414,8 @@ All server-side operations use OSS V1 header signatures, a shared `httpx.AsyncCl
 ```python
 async def put_object(self, key: str, data: bytes, *, content_type: str = "application/octet-stream",
                      forbid_overwrite: bool = False, internal: bool = False, timeout: float = 120) -> str   # etag
+async def put_object_file(self, key: str, path, *, content_type: str = "application/octet-stream",
+                          forbid_overwrite: bool = False, internal: bool = False) -> str   # etag; Content-MD5 from one chunked pass, streamed body
 async def get_object(self, key: str, *, internal: bool = False, timeout: float = 120) -> bytes    # FileNotFoundError on 404
 async def head_object_info(self, key: str, *, internal: bool = False) -> dict | None
 async def delete_object_key(self, key: str, *, internal: bool = False) -> bool
@@ -431,6 +433,7 @@ async def list_objects(self, prefix: str, *, continuation_token: str | None = No
 ```python
 class BlobStore(Protocol):
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str, if_absent: bool = True) -> None   # streams a local file (exports), bounded memory
     async def get(self, key: str) -> bytes              # FileNotFoundError when missing
     async def exists(self, key: str) -> bool
     async def delete(self, key: str) -> None            # idempotent

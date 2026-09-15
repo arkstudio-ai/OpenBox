@@ -24,52 +24,6 @@ if not os.environ.get("TRAJECTORY_SPOOL_DIR"):
 _SHELL_TRAJECTORY_ENV = {k: v for k, v in os.environ.items() if k.startswith("TRAJECTORY_")}
 
 
-def _quarantine_reason(nodeid: str) -> str | None:
-    from tests.legacy_trajectory_quarantine import QUARANTINE
-    candidates = (nodeid, nodeid.split("[", 1)[0], nodeid.split("::", 1)[0])
-    return next((QUARANTINE[key] for key in candidates if key in QUARANTINE), None)
-
-
-class _QuarantinedTest(pytest.Item):
-    """Stands in for a quarantined module, which may no longer import at all."""
-
-    def runtest(self):
-        pytest.skip("legacy trajectory quarantine")
-
-    def reportinfo(self):
-        # A skip report needs a line number.
-        return self.path, 0, self.name
-
-
-class _QuarantinedModule(pytest.File):
-    def collect(self):
-        item = _QuarantinedTest.from_parent(self, name="quarantined")
-        item.add_marker(pytest.mark.skip(reason=f"legacy trajectory quarantine: {_quarantine_reason(self.nodeid)}"))
-        return [item]
-
-
-def pytest_pycollect_makemodule(module_path, parent):
-    """A module listed in tests/legacy_trajectory_quarantine.py is reported skipped, not imported."""
-    try:
-        nodeid = module_path.relative_to(parent.config.rootpath).as_posix()
-    except ValueError:
-        return None
-    from tests.legacy_trajectory_quarantine import QUARANTINE
-    if nodeid in QUARANTINE:
-        return _QuarantinedModule.from_parent(parent, path=module_path)
-    return None
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip the legacy trajectory tests listed in tests/legacy_trajectory_quarantine.py."""
-    for item in items:
-        if isinstance(item, _QuarantinedTest):
-            continue
-        reason = _quarantine_reason(item.nodeid)
-        if reason is not None:
-            item.add_marker(pytest.mark.skip(reason=f"legacy trajectory quarantine: {reason}"))
-
-
 @pytest.fixture(autouse=True)
 def trajectory_env_from_shell():
     """Tests see only the shell's TRAJECTORY_* values; a test that records sets its own.

@@ -90,8 +90,8 @@ def test_request_prepared_inputs_over_the_minimum_move_to_blobs_and_other_inputs
     assert [line["event"] for line in lines[1:]] == [orjson.loads(started), orjson.loads(text_input)]
     moved = (system, instructions, tools, message, listed_input)
     assert blob_files(emitter) == {sha(value): orjson.dumps(value) for value in moved}
-    # New blob bytes count as spool usage, exactly as they are on disk.
-    assert emitter.stats()["spool_bytes"] == spool.spool_usage_bytes(emitter.spool_dir)
+    # New blob bytes count as spool usage at once, not at the next rescan of blobs/ (empty at the first one).
+    assert emitter._shared_estimate == sum(len(content) for content in blob_files(emitter).values())
 
 
 def test_other_values_over_16_kib_move_leaves_first_at_most_six_levels_deep(make_emitter):
@@ -250,26 +250,29 @@ def test_spool_budget_counts_blob_files_and_drops_a_line_whose_new_blob_does_not
     blob_dir = spool.blobs_dir(root)
     spool.ensure_private_dir(blob_dir)
     filler = blob_dir / hashlib.sha256(b"another producer's blob").hexdigest()
-    filler.write_bytes(b"f" * 54 * KIB)
-    assert spool.spool_usage_bytes(root) == 54 * KIB
-    emitter = make_emitter(spool_max_bytes=64 * KIB)
+    filler.write_bytes(b"f" * 128 * KIB)
+    assert spool.spool_usage(root).blob_bytes >= 128 * KIB
+    emitter = make_emitter()
     emitter.WAIT_SECONDS = 10
-    emitter.SPOOL_SAMPLE_SECONDS = 0  # every writer cycle samples the usage on disk
+    # Every writer cycle rescans producers/, blobs/ and quarantine/.
+    emitter.SPOOL_SAMPLE_SECONDS = emitter.SHARED_SAMPLE_SECONDS = 0
     start_idle(emitter)
-    system = text(12 * KIB)
+    # Room for 32 KiB beyond what is on disk, whatever the file system's block size.
+    emitter.spool_max_bytes = spool.spool_usage_bytes(root) + 32 * KIB
+    system = text(64 * KIB)
     content = orjson.dumps(system)
     name = hashlib.sha256(content).hexdigest()
     payload = event_bytes("request.prepared", {"input": {"system": system}})
 
-    # The line alone fits in the budget; with its new 12 KiB blob it does not.
+    # The line alone fits in the budget; with its new 64 KiB blob it does not.
     assert emit(emitter, payload)
     assert emitter.flush(5) is False
     assert emitter.stats()["dropped_by_reason"] == {"spool_full": 1}
     assert name not in blob_files(emitter)
     wait_idle(emitter)
 
-    # The same usage with that blob already stored: only the line counts.
-    filler.write_bytes(b"f" * 42 * KIB)
+    # Less usage with that blob already stored: only the line counts.
+    filler.write_bytes(b"f" * 48 * KIB)
     (blob_dir / name).write_bytes(content)
     assert emit(emitter, payload, 1)
     assert emitter.flush(5)
@@ -280,7 +283,7 @@ def test_spool_budget_counts_blob_files_and_drops_a_line_whose_new_blob_does_not
     assert (gap["reason"], gap["dropped_events"], gap["dropped_bytes"]) == ("spool_full", 1, len(payload))
     assert lines[1]["event"]["data"]["input"]["system"] == {spool.BLOB_KEY: name}
     assert emitter.stats()["blobs_written"] == 0
-    assert spool.spool_usage_bytes(root) <= 64 * KIB
+    assert spool.spool_usage_bytes(root) <= emitter.spool_max_bytes
 
 
 def test_worker_reads_a_version_2_line_as_the_inline_event(make_emitter):

@@ -98,16 +98,40 @@ def test_private_directories_are_created_0700_below_the_existing_parent(tmp_path
     assert mode(tmp_path) == before
 
 
-def test_spool_usage_counts_only_producer_files(tmp_path):
+def allocated(*paths) -> int:
+    return sum(max(os.stat(path).st_size, os.stat(path).st_blocks * 512) for path in paths)
+
+
+def test_spool_usage_counts_allocated_bytes_of_producers_blobs_and_quarantine(tmp_path):
+    assert spool.spool_usage(tmp_path / "missing") == spool.SpoolUsage()
     assert spool.spool_usage_bytes(tmp_path / "missing") == 0
-    (tmp_path / "producers" / "p1").mkdir(parents=True)
-    (tmp_path / "producers" / "p2").mkdir()
-    (tmp_path / "control").mkdir()
-    (tmp_path / "producers" / "p1" / spool.file_name(1)).write_bytes(b"x" * 10)
-    (tmp_path / "producers" / "p2" / spool.file_name(1, closed=False)).write_bytes(b"x" * 5)
-    (tmp_path / "producers" / "stray").write_bytes(b"x" * 1000)
-    (tmp_path / "control" / spool.BUDGETS_FILE).write_bytes(b"x" * 100)
-    assert spool.spool_usage_bytes(tmp_path) == 15
+    producers = tmp_path / spool.PRODUCERS_DIR
+    (producers / "p1").mkdir(parents=True)
+    (producers / "p2").mkdir()
+    (tmp_path / spool.CONTROL_DIR).mkdir()
+    (tmp_path / spool.QUARANTINE_DIR).mkdir()
+    spool.ensure_private_dir(spool.blobs_dir(tmp_path))
+    data = [producers / "p1" / spool.file_name(1), producers / "p2" / spool.file_name(1, closed=False)]
+    data[0].write_bytes(b"x" * 10)
+    data[1].write_bytes(b"x" * 5)
+    (producers / "stray").write_bytes(b"x" * 1000)
+    (tmp_path / spool.CONTROL_DIR / spool.BUDGETS_FILE).write_bytes(b"x" * 100)
+    blob = spool.blobs_dir(tmp_path) / ("a" * 64)
+    with open(blob, "wb") as handle:
+        handle.truncate(1024 * 1024)  # sparse: fewer blocks than its size
+    quarantined = tmp_path / spool.QUARANTINE_DIR / f"p1__{spool.file_name(2)}"
+    quarantined.write_bytes(b"q" * 7)
+    reason = quarantined.with_name(quarantined.name + spool.REASON_SUFFIX)
+    reason.write_bytes(b"{}")
+
+    usage = spool.spool_usage(tmp_path)
+    assert usage == spool.SpoolUsage(producers_bytes=allocated(*data), blob_bytes=allocated(blob),
+                                     quarantine_bytes=allocated(quarantined, reason), quarantine_files=1)
+    assert usage.producers_bytes >= 15 and usage.blob_bytes >= 1024 * 1024
+    assert spool.spool_usage_bytes(tmp_path) == usage.total == (
+        usage.producers_bytes + usage.blob_bytes + usage.quarantine_bytes)
+    assert spool.producer_usage_bytes(tmp_path) == usage.producers_bytes
+    assert spool.shared_usage_bytes(tmp_path) == usage.blob_bytes + usage.quarantine_bytes
 
 
 def test_budget_documents_round_trip_and_invalid_files_raise(tmp_path):

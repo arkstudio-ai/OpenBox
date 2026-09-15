@@ -85,6 +85,15 @@ class UploadsDeferred(Exception):
     """Blob uploads failed; the batch waits for its backoff."""
 
 
+class QuarantineDeferred(Exception):
+    """A file to quarantine could not be moved: it stays unfinished and is retried after a backoff."""
+
+    def __init__(self, lines: int):
+        super().__init__(lines)
+        #: Lines of the file committed before the move failed.
+        self.lines = lines
+
+
 # -- Lines ----------------------------------------------------------------------
 
 @dataclass(eq=False)
@@ -218,6 +227,11 @@ async def trace_db_available(timeout: float = DB_PROBE_SECONDS) -> bool:
     except Exception:
         return False
     return True
+
+
+def backoff_seconds(attempts: int) -> float:
+    """The wait after ``attempts`` failed attempts in a row: BACKOFF_FIRST_SECONDS, doubling up to BACKOFF_MAX_SECONDS."""
+    return min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(max(attempts, 1) - 1, 16))
 
 
 @dataclass(eq=False)
@@ -377,6 +391,15 @@ class IngestService:
         self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
                                                  "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
 
+    def _next_failure(self, key, offset: int) -> _FileFailure:
+        """The failure of file ``key`` after one more failed attempt at ``offset``, backed off; not stored."""
+        previous = self._failures.get(key)
+        if previous is None or previous.offset != offset:
+            # The first failure, or an earlier batch of the file committed since: this one fails for the first time.
+            previous = _FileFailure(0.0, 0, offset, 0)
+        attempts = previous.attempts + 1
+        return _FileFailure(time.monotonic() + backoff_seconds(attempts), attempts, offset, previous.failures)
+
     async def _failed(self, spool_file, scan, exc: Exception, result: dict) -> bool:
         """Back off a file whose batch failed; True when the batch failed too often and the file was quarantined.
 
@@ -388,30 +411,24 @@ class IngestService:
         key = (spool_file.producer_id, spool_file.name)
         result["failed_batches"] += 1
         self._inc("failed_batches")
-        offset = self._positions.get(key, 0)
-        previous = self._failures.get(key)
-        if previous is not None and previous.offset != offset:
-            previous = None  # an earlier batch of the file committed since: this one fails for the first time
-        attempts = (previous.attempts if previous is not None else 0) + 1
-        failures = previous.failures if previous is not None else 0
+        failure = self._next_failure(key, self._positions.get(key, 0))
         available = await trace_db_available()
         if available:
-            failures += 1
+            failure.failures += 1
         # The error type only in the log: database messages can carry event content.
         error_type = type(exc).__name__
         # Only a failure while the database answers quarantines: an outage never does, even at the limit.
-        if available and failures >= self.max_batch_failures:
+        if available and failure.failures >= self.max_batch_failures:
             path = spool_reader.locate(spool_file)
-            parsed = ParsedBatch([], offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
-            if path is not None and await self._quarantine(spool_file, scan, path, offset, parsed, result):
+            parsed = ParsedBatch([], failure.offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
+            if path is not None and await self._quarantine(spool_file, scan, path, failure.offset, parsed, result):
                 self._failures.pop(key, None)
                 self._positions.pop(key, None)
                 return True
-        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
-        self._failures[key] = _FileFailure(time.monotonic() + delay, attempts, offset, failures)
+        self._failures[key] = failure
         log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
-                    "failures=%s trace_db_available=%s error_type=%s", delay, key[0], key[1], attempts, failures,
-                    available, error_type)
+                    "failures=%s trace_db_available=%s error_type=%s", backoff_seconds(failure.attempts), key[0],
+                    key[1], failure.attempts, failure.failures, available, error_type)
         return False
 
     async def run_once(self, max_lines: int | None = None) -> dict:
@@ -451,6 +468,13 @@ class IngestService:
                     continue
                 try:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                except QuarantineDeferred as deferred:
+                    # Unfinished until the move succeeds: the producer's later files must not overtake the file.
+                    self._failures[key] = self._next_failure(key, self._positions.get(key, 0))
+                    if remaining is not None:
+                        remaining -= deferred.lines
+                    waiting[key] = spool_file.mtime
+                    continue
                 except Exception as exc:
                     # One file's failure (a purge that times out, a value the database rejects, a bug) must
                     # not stop the other producers: the file retries from its committed offset after a backoff,
@@ -525,7 +549,9 @@ class IngestService:
                 consumed += len(parsed.items)
                 offset = end_offset
             if bad:
-                await self._quarantine(spool_file, scan, path, offset, parsed, result)
+                if not await self._quarantine(spool_file, scan, path, offset, parsed, result):
+                    self._positions[key] = offset
+                    raise QuarantineDeferred(consumed)
                 return consumed, True
             if finished:
                 if spool_reader.remove_file(path):

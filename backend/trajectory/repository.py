@@ -460,6 +460,13 @@ def summary_rules(events: list[dict], running_status: str, model: str | None) ->
 
 
 SUMMARY_RULE_FAMILIES = frozenset({"run", "permission", "question"})
+#: Ruled events a live header reads past the projection; a tail that reaches this many is replayed instead.
+HEADER_TAIL_LIMIT = 2000
+
+
+def _ruled(event_type: str) -> bool:
+    """Whether ``summary_rules`` looks at an event of this type for the running status or the model."""
+    return event_type.partition(".")[0] in SUMMARY_RULE_FAMILIES or event_type == "request.started"
 
 
 def _row_metadata(session, trajectory, summary, owner, workspace) -> dict:
@@ -515,7 +522,89 @@ async def _model_at(db, trajectory_id: str, head: int):
         .limit(1))
 
 
+async def _summary_tail(db, trajectory, projected: int, head: int) -> list | None:
+    """Hot (seq, type, data) rows of the ruled events (``_ruled``) with projected < seq <= head in seq order;
+    None when they reach HEADER_TAIL_LIMIT.
+
+    Archival covers only seq <= projected_seq, so the tail is all hot rows while the projection stays at
+    ``projected``; the caller checks that after the read.
+    """
+    rows = (await db.execute(select(TrajectoryEvent.seq, TrajectoryEvent.type, TrajectoryEvent.data).where(
+        TrajectoryEvent.trajectory_id == trajectory.id, TrajectoryEvent.seq > projected, TrajectoryEvent.seq <= head,
+        or_(TrajectoryEvent.type == "request.started",
+            *(TrajectoryEvent.type.like(f"{family}.%") for family in sorted(SUMMARY_RULE_FAMILIES))))
+        .order_by(TrajectoryEvent.seq).limit(HEADER_TAIL_LIMIT))).all()
+    return None if len(rows) >= HEADER_TAIL_LIMIT else rows
+
+
+async def _summarized_header(db, trajectory, summary, head: int, base: dict, *, blob_store=None):
+    """(state, statistics, (running_status, model)) of a header from what the projection wrote, never record
+    data; None when the caller must replay.
+
+    The record summaries and ``base`` (the summary row's statistics) describe ``projected_seq``. A live probe
+    whose head is past it carries the summary's statuses through the tail's ruled events, as a replay would;
+    whole-data ``$payload`` references among them are loaded as a replay loads them (``reduction_events``).
+    None when the tail reaches HEADER_TAIL_LIMIT or the projection moved during the reads.
+    """
+    projected = trajectory.projected_seq
+    rows = (await db.scalars(select(TrajectoryRecord.summary).where(TrajectoryRecord.trajectory_id == trajectory.id,
+        TrajectoryRecord.kind.in_(["agent", "run"]), TrajectoryRecord.start_seq <= projected)
+        .order_by(TrajectoryRecord.start_seq, TrajectoryRecord.record_id))).all()
+    tail = await _summary_tail(db, trajectory, projected, head) if head > projected else []
+    # Checked after the reads, each its own transaction on the read facade: a projection committed in between
+    # wrote rows past the summary, and archival, which only follows the projection, may have moved tail rows
+    # out of the hot table.
+    if tail is None or await _cache_changed_after(db, trajectory.id, projected):
+        return None
+    if head > projected and await db.scalar(
+            select(SessionTrajectory.projected_seq).where(SessionTrajectory.id == trajectory.id)) != projected:
+        return None
+    datas = await Resolver(db, trajectory.id, through_seq=head, blob_store=blob_store).expand_payloads(
+        [row.data for row in tail])
+    running_status, model, _ = summary_rules([{"type": row.type, "data": data} for row, data in zip(tail, datas)],
+                                             summary.running_status, summary.model)
+    state = empty_state()
+    state.update(through_seq=str(projected), records={row["record_id"]: row for row in rows},
+                 **_hidden(summary, projected))
+    metrics = {**base, "duration_ms": statistics(state)["duration_ms"], "through_seq": str(projected),
+               "coverage_start": state["coverage_start"]}
+    return state, metrics, (running_status, model)
+
+
+async def _replayed_header(db, trajectory, summary, head: int, *, blob_store=None):
+    """(state, statistics, statuses) of a header from the state at head; ``statuses`` is (running_status, model)
+    carried from the summary through the replayed events, or None to keep the metadata's."""
+    replayed, ruled = [], []
+
+    def observe(row, event, before, after):
+        if not replayed:
+            replayed.append(row["seq"])
+        if _ruled(event["type"]):
+            ruled.append(event)
+    state = await state_at(db, trajectory, head, blob_store=blob_store, observe=observe) if trajectory else empty_state()
+    statuses = None
+    base = summary.applied_seq if summary is not None else 0
+    if trajectory is not None and head == trajectory.committed_seq and replayed and replayed[0] <= base + 1:
+        # Projection lags the head: carry the summary's statuses through the
+        # events it has not applied, so they describe the same position as
+        # the statistics (a finished run must not read as running).
+        running, model = (summary.running_status, summary.model) if summary is not None else ("idle", None)
+        statuses = summary_rules([event for event in ruled if int(event["seq"]) > base], running, model)[:2]
+    return state, statistics(state), statuses
+
+
 async def get_session_header(db, session_id: str, through_seq=None, *, blob_store=None):
+    """The session header at ``through_seq`` (the head without it).
+
+    A live probe (no ``through_seq``) is the viewer's frequent check and reads
+    no record data and replays nothing, even while the projection lags the
+    head: statistics and agents as of ``projected_through_seq``, the running
+    status and model carried from the summary through the ruled events after
+    it (``_summarized_header``). A tail of HEADER_TAIL_LIMIT ruled events, or a
+    projection that moves during the reads, is replayed instead. An explicit
+    ``through_seq`` is served from the summaries only at the projected position
+    and replayed otherwise.
+    """
     session, trajectory = await get_trajectory(db, session_id, optional=True)
     summary = await db.get(TrajectorySessionSummary, trajectory.id) if trajectory else None
     header = await _metadata(db, session, trajectory, summary)
@@ -526,38 +615,18 @@ async def get_session_header(db, session_id: str, through_seq=None, *, blob_stor
         state = empty_state()
         state.update(through_seq=str(head), **_hidden(summary, head))
         metrics = {**header["statistics"], "through_seq": str(head), "coverage_start": state["coverage_start"]}
-    elif trajectory is not None and summary is not None and summary.applied_seq == head == trajectory.projected_seq:
-        # The header is a frequent watermark probe: record summaries, never record data.
-        rows = (await db.scalars(select(TrajectoryRecord.summary).where(TrajectoryRecord.trajectory_id == trajectory.id,
-            TrajectoryRecord.kind.in_(["agent", "run"]), TrajectoryRecord.start_seq <= head)
-            .order_by(TrajectoryRecord.start_seq, TrajectoryRecord.record_id))).all()
-        state = empty_state()
-        state.update(through_seq=str(head), records={row["record_id"]: row for row in rows}, **_hidden(summary, head))
-        metrics = {**header["statistics"], "duration_ms": statistics(state)["duration_ms"], "through_seq": str(head),
-                   "coverage_start": state["coverage_start"]}
-        summaries_only = True
-        if await _cache_changed_after(db, trajectory.id, head):
-            state = await state_at(db, trajectory, head, blob_store=blob_store)
-            metrics = statistics(state)
-            summaries_only = False
     else:
-        replayed, ruled = [], []
-
-        def observe(row, event, before, after):
-            if not replayed:
-                replayed.append(row["seq"])
-            if event["type"].partition(".")[0] in SUMMARY_RULE_FAMILIES or event["type"] == "request.started":
-                ruled.append(event)
-        state = await state_at(db, trajectory, head, blob_store=blob_store, observe=observe) if trajectory else empty_state()
-        metrics = statistics(state)
-        base = summary.applied_seq if summary is not None else 0
-        if trajectory is not None and head == trajectory.committed_seq and replayed and replayed[0] <= base + 1:
-            # Projection lags the head: carry the summary's statuses through the
-            # events it has not applied, so they describe the same position as
-            # the statistics (a finished run must not read as running).
-            running, model = (summary.running_status, summary.model) if summary is not None else ("idle", None)
-            header["running_status"], header["model"], _ = summary_rules(
-                [event for event in ruled if int(event["seq"]) > base], running, model)
+        summarized = None
+        if trajectory is not None and summary is not None and summary.applied_seq == trajectory.projected_seq and (
+                head == trajectory.projected_seq or through_seq is None):
+            summarized = await _summarized_header(db, trajectory, summary, head, header["statistics"], blob_store=blob_store)
+        if summarized is not None:
+            state, metrics, (header["running_status"], header["model"]) = summarized
+            summaries_only = True
+        else:
+            state, metrics, statuses = await _replayed_header(db, trajectory, summary, head, blob_store=blob_store)
+            if statuses is not None:
+                header["running_status"], header["model"] = statuses
     if trajectory is not None and head < trajectory.committed_seq:
         rows = sorted(state["records"].values(), key=lambda item: int(item["as_of_seq"]))
         root_runs = [row for row in rows if row["kind"] == "run" and row.get("source_session_id") == session_id]

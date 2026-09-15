@@ -176,8 +176,10 @@ async def test_header_at_head_reads_summaries_and_matches_the_replayed_state(tra
                    request_id="req_2", **run)]
     await Ingest(blobs).append("trj_1", more)
     async with trace_session() as db:
-        # Projection lags: the head is replayed; earlier positions recompute status and model.
-        assert (await get_session_header(db, "s1"))["statistics"] == statistics(replay(events + more))
+        # Projection lags: a live probe keeps the projection's statistics; earlier positions recompute status and model.
+        live = await get_session_header(db, "s1")
+        assert (live["through_seq"], live["statistics"]) == ("14", statistics(state))
+        assert (live["running_status"], live["model"]) == ("running", "model-y")
         at_projection = await get_session_header(db, "s1", "12")
         assert (at_projection["running_status"], at_projection["model"]) == ("idle", "model-x")
         assert at_projection["statistics"] == statistics(state)
@@ -227,18 +229,57 @@ async def test_live_header_statuses_include_events_the_projection_has_not_applie
     await add_trajectory("trj_2", "s2")
     await Ingest(blobs).append("trj_2", conversation("trj_2", "s2", "user_a")[:2])
     async with trace_session() as db:
-        lagging = await get_session_header(db, "s1")
+        with statements(trace_db) as seen:
+            lagging = await get_session_header(db, "s1")
         unprojected = await get_session_header(db, "s2")
-    # The statuses describe the same position as the statistics: the head, not the projection.
+    # A live probe: the statuses describe the head, carried through the tail the projection has not applied;
+    # statistics and agents describe the projection, read from its summaries without record data or a replay.
     assert (lagging["through_seq"], lagging["projected_through_seq"]) == ("15", "12")
     assert (lagging["running_status"], lagging["model"]) == ("waiting", "model-y")
-    assert lagging["statistics"] == statistics(replay(events + more))
+    assert lagging["statistics"] == statistics(replay(events)) and lagging["agents"] == agents(replay(events)) != []
+    assert lagging["statistics"]["through_seq"] == "12"
+    assert not any("trajectory_records.data" in statement or "trajectory_checkpoints" in statement for statement in seen)
+    assert sum("FROM trajectory_events" in statement for statement in seen) == 1
     assert (unprojected["running_status"], unprojected["model"], unprojected["projected_through_seq"]) == ("running", "model-x", "0")
     await project_all(ProjectionService(settings(), blob_store=blobs, metrics=Metrics()), "trj_1")
     async with trace_session() as db:
         projected = await get_session_header(db, "s1")
-    keys = ("running_status", "model", "statistics", "agents", "through_seq")
+    keys = ("running_status", "model", "through_seq")
     assert {key: projected[key] for key in keys} == {key: lagging[key] for key in keys}
+    assert projected["statistics"] == statistics(replay(events + more))
+
+
+async def test_a_live_header_replays_when_its_tail_reaches_the_limit_or_the_projection_moves_meanwhile(
+        trace_db, blobs, monkeypatch):
+    import trajectory.repository as repository
+    events = await recorded(blobs, "trj_1", "s1")
+    run = {"run_id": "run_2", "turn_id": "turn_2", "agent_id": "root"}
+    more = [_event("trj_1", "s1", "user_a", 13, "run.started", {}, **run),
+            _event("trj_1", "s1", "user_a", 14, "request.started", {"model": "model-y"}, request_id="req_2", **run),
+            _event("trj_1", "s1", "user_a", 15, "permission.requested", {"permission_id": "perm_1"}, call_id="call_2", **run)]
+    await Ingest(blobs).append("trj_1", more)
+    replayed = ("waiting", "model-y", statistics(replay(events + more)))
+    monkeypatch.setattr(repository, "HEADER_TAIL_LIMIT", 3)
+    async with trace_session() as db:
+        with statements(trace_db) as seen:
+            header = await get_session_header(db, "s1")
+    assert (header["running_status"], header["model"], header["statistics"]) == replayed
+    assert any("trajectory_checkpoints" in statement for statement in seen)
+    # A projection that commits between the reads may be followed by archival, which moves tail rows out of the
+    # hot table: the tail read before it cannot be trusted.
+    monkeypatch.setattr(repository, "HEADER_TAIL_LIMIT", 4)
+    changed_after = repository._cache_changed_after
+
+    async def projected_meanwhile(db, trajectory_id, head):
+        await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == trajectory_id).values(projected_seq=13))
+        return await changed_after(db, trajectory_id, head)
+
+    monkeypatch.setattr(repository, "_cache_changed_after", projected_meanwhile)
+    async with trace_session() as db:
+        with statements(trace_db) as seen:
+            header = await get_session_header(db, "s1")
+    assert (header["running_status"], header["model"], header["statistics"]) == replayed
+    assert any("trajectory_checkpoints" in statement for statement in seen)
 
 
 async def test_expired_content_keeps_its_summary_but_refuses_record_reads(trace_db, blobs):

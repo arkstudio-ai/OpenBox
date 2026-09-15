@@ -15,7 +15,7 @@ timeout on a huge trajectory, say) is logged and the others still run.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from sqlalchemy import and_, delete, func, select, update
 
@@ -25,8 +25,9 @@ from trajectory.lifecycle import (GC_KEY, GC_PREFIX, allow_long_statements, dele
 from trajectory.storage import key_prefix
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryExport, TrajectoryGcQueue, TrajectoryMetaSession,
-    TrajectoryPayload, TrajectorySegment)
+    TrajectoryPayload, TrajectorySegment, TrajectoryWorkerState)
 from trajectory.types import now
+from trajectory.worker.budgets import NORMAL, USER_BYTES_STATE_KEY, iso, utc_day
 
 log = create_logger("trajectory.worker.retention")
 
@@ -35,6 +36,37 @@ SWEEP_LIMIT = 100
 ERROR_TEXT_LIMIT = 1000
 #: Directory of export archives next to the trajectory directories (``trajectory.storage.export_key``).
 EXPORTS_DIRECTORY = "_exports"
+#: The daily report is logged by the first retention pass of each UTC day at or after this time, so the
+#: users it lists as degraded are those of that day (their budget resets at midnight).
+REPORT_TIME = time(23, 55)
+#: Work the daily report counts, in the order it lists it.
+REPORT_COUNTERS = ("trajectories_expired", "tombstones_processed", "gc_objects_deleted", "gc_failures")
+
+
+class DailyReport:
+    """What retention did since the previous daily report, kept in memory (a restart begins a new period)."""
+
+    def __init__(self, clock=now):
+        self.clock = clock
+        self.since = clock()
+        self.counters = dict.fromkeys(REPORT_COUNTERS, 0)
+        #: UTC day of the last report.
+        self.reported_day: str | None = None
+
+    def add(self, name: str, value: int = 1) -> None:
+        self.counters[name] += value
+
+    def due(self, moment: datetime) -> bool:
+        return utc_day(moment) != self.reported_day and utc(moment).time() >= REPORT_TIME
+
+    def emit(self, moment: datetime, *, degraded_trajectories: int, degraded_users: int) -> dict:
+        """Log the report line and begin the next period; returns the fields logged."""
+        fields = {"since": iso(self.since), "until": iso(moment), **self.counters,
+                  "degraded_trajectories": degraded_trajectories, "degraded_users": degraded_users}
+        log.info("Trajectory worker daily report %s", " ".join(f"{name}={value}" for name, value in fields.items()))
+        self.since, self.reported_day = moment, utc_day(moment)
+        self.counters = dict.fromkeys(REPORT_COUNTERS, 0)
+        return fields
 
 
 class GcRefused(ValueError):
@@ -44,7 +76,7 @@ class GcRefused(ValueError):
 class RetentionService:
     """Expires old content and exports, catches up on deleted sessions and drains the GC queue."""
 
-    def __init__(self, settings, *, blob_store, metrics):
+    def __init__(self, settings, *, blob_store, metrics, clock=now):
         self.settings = settings
         self.blob_store = blob_store
         self.metrics = metrics
@@ -52,9 +84,14 @@ class RetentionService:
                                                      "TRAJECTORY_CONTENT_RETENTION_DAYS", 180)
         self.export_retention_days = worker_setting(settings, "export_retention_days",
                                                     "TRAJECTORY_EXPORT_RETENTION_DAYS", 30)
+        #: Work since the previous daily report; ``clock`` gives its aware UTC instants.
+        self.report = DailyReport(clock)
 
     async def run_once(self) -> dict:
-        """One pass over every retention duty; returns what each did (0 for a duty that failed)."""
+        """One pass over every retention duty; returns what each did (0 for a duty that failed).
+
+        The pass ends with the daily report when it is due (``report_if_due``).
+        """
         result = {}
         for name, duty in (("tombstoned", self.tombstone_deleted_sessions), ("expired", self.expire_due_content),
                            ("exports_expired", self.expire_exports), ("gc_processed", self.process_gc_queue)):
@@ -63,16 +100,46 @@ class RetentionService:
             except Exception as exc:
                 result[name] = 0
                 log.warning("Trajectory retention step %s failed: %s", name, type(exc).__name__)
+        await self.report_if_due()
         return result
+
+    async def report_if_due(self) -> dict | None:
+        """Log the daily report when it is due (``DailyReport.due``); returns the fields logged.
+
+        Degraded trajectories and users are read at that moment: live trajectories whose budget level is
+        not normal, and the users over their daily bytes for the current UTC day. When they cannot be read
+        the report waits for the next pass.
+        """
+        moment = self.report.clock()
+        if not self.report.due(moment):
+            return None
+        try:
+            async with trace_session() as db:
+                trajectories = await db.scalar(select(func.count()).select_from(SessionTrajectory).where(
+                    SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None),
+                    SessionTrajectory.budget_level != NORMAL))
+                state = await db.get(TrajectoryWorkerState, USER_BYTES_STATE_KEY)
+        except Exception as exc:
+            log.warning("Trajectory daily report postponed: %s", type(exc).__name__)
+            return None
+        value = state.value if state is not None and isinstance(state.value, dict) else {}
+        exceeded = value.get("exceeded") if value.get("day") == utc_day(moment) else None
+        return self.report.emit(moment, degraded_trajectories=int(trajectories or 0),
+                                degraded_users=len(exceeded) if isinstance(exceeded, dict) else 0)
 
     async def tombstone(self, db, trajectory, *, reason: str) -> None:
         """Tombstone ``trajectory`` inside the caller's trace transaction (ingest applies ``session.deleted``).
 
         On PostgreSQL the rest of that transaction gets the long statement
         timeout, so a large purge cannot fail the batch over and over. The
-        deleted notification is published once the transaction commits.
+        deleted notification is published once the transaction commits. The
+        caller reports committed tombstones through ``tombstones_committed``.
         """
         await tombstone_trajectory(db, trajectory, reason=reason)
+
+    def tombstones_committed(self, count: int) -> None:
+        """Count tombstones a caller's transaction committed (``tombstone``) for the daily report."""
+        self.report.add("tombstones_processed", count)
 
     async def expire_content(self, trajectory_id: str, *, inactive_before: datetime | None = None) -> None:
         """Expire one trajectory's content in a transaction of its own.
@@ -90,7 +157,10 @@ class RetentionService:
                 return False
             if inactive_before is not None and utc(trajectory.last_activity_at) >= inactive_before:
                 return False
-            return await expire_trajectory_content(db, trajectory)
+            expired = await expire_trajectory_content(db, trajectory)
+        if expired:
+            self.report.add("trajectories_expired")
+        return expired
 
     async def expire_due_content(self) -> int:
         """Expire trajectories inactive for TRAJECTORY_CONTENT_RETENTION_DAYS; returns how many."""
@@ -133,10 +203,14 @@ class RetentionService:
                 async with trace_session() as db:
                     await allow_long_statements(db)
                     trajectory = await lock_trajectory(db, trajectory_id)
-                    if trajectory is not None:
-                        tombstoned += await tombstone_trajectory(db, trajectory, reason="session_deleted")
+                    done = trajectory is not None and await tombstone_trajectory(db, trajectory,
+                                                                                 reason="session_deleted")
             except Exception as exc:
                 log.warning("Trajectory %s tombstone failed: %s", trajectory_id, type(exc).__name__)
+                continue
+            if done:
+                tombstoned += 1
+                self.report.add("tombstones_processed")
         return tombstoned
 
     async def expire_exports(self) -> int:
@@ -194,6 +268,8 @@ class RetentionService:
                 await db.execute(update(TrajectoryGcQueue).where(TrajectoryGcQueue.id == entry_id).values(
                     attempts=attempts, next_attempt_at=finished + gc_retry_delay(attempts), last_error=error))
             depth = await db.scalar(select(func.count()).select_from(TrajectoryGcQueue))
+        self.report.add("gc_objects_deleted", objects)
+        self.report.add("gc_failures", len(failed))
         if objects:
             self.metrics.inc("gc_deleted", objects)
         if failed:

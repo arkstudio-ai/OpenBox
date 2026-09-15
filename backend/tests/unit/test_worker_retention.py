@@ -380,6 +380,63 @@ async def test_a_failing_duty_or_purge_does_not_stop_the_rest_of_the_pass(trace_
     assert free not in blob_store.objects
 
 
+async def test_the_daily_report_logs_the_work_since_the_previous_report_once_a_day(trace_db, blob_store):
+    """One structured INFO line per UTC day, late in the day: the in-memory counters since the previous report,
+    then the trajectories and users degraded at that moment."""
+    import logging
+    from datetime import datetime, timezone
+
+    from trajectory.worker.budgets import USER_BYTES_STATE_KEY
+
+    clock = {"now": datetime(2026, 9, 15, 23, 50, tzinfo=timezone.utc)}
+    retention = RetentionService(worker_settings(), blob_store=blob_store, metrics=FakeMetrics(),
+                                 clock=lambda: clock["now"])
+    await add_trajectory("trj_old", committed=1, last_activity_at=now() - timedelta(days=200))
+    await blob_store.put(blob_key("trj_old", sha("old")), b"x", content_type="application/octet-stream")
+    for trajectory_id, level in (("trj_degraded", "degraded"), ("trj_blocked", "blocked"), ("trj_normal", "normal")):
+        await add_trajectory(trajectory_id, budget_level=level)
+    await add_trajectory("trj_deleted", budget_level="degraded", deleted_at=now(), recording_status="deleted")
+    stamp = now()
+    async with trace_session() as db:
+        db.add(TrajectoryWorkerState(key=USER_BYTES_STATE_KEY, updated_at=stamp, value={
+            "day": "2026-09-15", "users": {"u1": 9, "u2": 9},
+            "exceeded": {"u1": "2026-09-15T10:00:00.000Z", "u2": "2026-09-15T11:00:00.000Z"}}))
+        # Refused by the GC: a failure.
+        db.add(TrajectoryGcQueue(kind=GC_KEY, storage_key="assets/user_a/photo.png", reason="test", attempts=0,
+                                 next_attempt_at=stamp, created_at=stamp))
+    lines = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            if record.getMessage().startswith("Trajectory worker daily report"):
+                lines.append((record.levelno, record.getMessage()))
+
+    handler = Capture()
+    retention_module.log.addHandler(handler)
+    try:
+        await retention.run_once()  # expires trj_old, deletes its object, fails the refused entry
+        retention.tombstones_committed(2)  # ingest's session.deleted tombstones
+        assert lines == []
+        clock["now"] = datetime(2026, 9, 15, 23, 56, tzinfo=timezone.utc)
+        await retention.run_once()
+        assert lines == [(logging.INFO, "Trajectory worker daily report since=2026-09-15T23:50:00.000Z "
+                                        "until=2026-09-15T23:56:00.000Z trajectories_expired=1 tombstones_processed=2 "
+                                        "gc_objects_deleted=1 gc_failures=1 degraded_trajectories=2 degraded_users=2")]
+        clock["now"] = datetime(2026, 9, 15, 23, 59, tzinfo=timezone.utc)
+        await retention.run_once()
+        clock["now"] = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
+        assert await retention.report_if_due() is None and len(lines) == 1
+        clock["now"] = datetime(2026, 9, 16, 23, 55, tzinfo=timezone.utc)
+        # Counters start again after each report; the users degraded on 09-15 are not degraded on 09-16.
+        assert await retention.report_if_due() == {
+            "since": "2026-09-15T23:56:00.000Z", "until": "2026-09-16T23:55:00.000Z", "trajectories_expired": 0,
+            "tombstones_processed": 0, "gc_objects_deleted": 0, "gc_failures": 0, "degraded_trajectories": 2,
+            "degraded_users": 0}
+        assert len(lines) == 2
+    finally:
+        retention_module.log.removeHandler(handler)
+
+
 async def test_gc_keeps_objects_in_use_and_refuses_foreign_keys_and_live_prefixes(trace_db, blob_store):
     await add_trajectory("trj_live")
     await add_trajectory("trj_dead", deleted_at=now(), recording_status="deleted")

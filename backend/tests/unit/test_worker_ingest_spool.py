@@ -57,6 +57,46 @@ async def test_open_part_blocks_its_producer_until_abandoned(harness):
     assert (producer_row.last_n, producer_row.abandoned) == (4, False)
 
 
+async def test_an_abandoned_part_whose_writer_resumes_during_the_commit_is_read_on(harness, monkeypatch):
+    writer = harness.writer
+    part = writer.file([writer.line("event", event(event_id="e1"))], closed=False, age=120)
+    removal = spool_reader.remove_if_unchanged
+
+    def resumed(path, signature):
+        # The stalled writer appends a line after the batch was read, before the consumed file is removed.
+        with open(path, "ab") as handle:
+            handle.write(writer.line("event", event(event_id="e2")))
+        return removal(path, signature)
+
+    monkeypatch.setattr(spool_reader, "remove_if_unchanged", resumed)
+    await harness.run()
+    [file_row] = await rows(TrajectoryIngestFile)
+    assert part.exists() and not file_row.done
+
+    monkeypatch.setattr(spool_reader, "remove_if_unchanged", removal)
+    _age(part, 120)
+    await harness.run()
+    assert not part.exists() and await rows(TrajectoryIngestFile) == []
+    _, stored = await events_of("ses_1")
+    assert [row.event_id for row in stored if row.type == "input.accepted"] == ["e1", "e2"]
+
+
+async def test_spool_gauges_count_blobs_and_quarantine_like_the_emitter_budget(harness):
+    blobs = spool.blobs_dir(harness.settings.spool_dir)
+    spool.ensure_private_dir(blobs)
+    (blobs / ("a" * 64)).write_bytes(b"x" * 5000)
+    quarantine = harness.settings.spool_dir / spool.QUARANTINE_DIR
+    spool.ensure_private_dir(quarantine)
+    (quarantine / "producer__000001.jsonl").write_bytes(b"y" * 3000)
+    (quarantine / "producer__000001.jsonl.reason").write_bytes(b"{}")
+    await harness.run()
+    usage = spool.spool_usage(harness.settings.spool_dir)
+    gauges = harness.metrics.gauges
+    assert gauges["spool_bytes"] == usage.total >= 8000
+    assert gauges["spool_blob_bytes"] == usage.blob_bytes >= 5000
+    assert (gauges["spool_quarantine_bytes"], gauges["spool_quarantine_files"]) == (usage.quarantine_bytes, 1)
+
+
 async def test_abandoned_newest_part_reports_a_crashed_producer_once(harness):
     writer = harness.writer
     writer.file([writer.line("event", event(event_id="e1", run_id="run_1")), TORN], closed=False, age=120)

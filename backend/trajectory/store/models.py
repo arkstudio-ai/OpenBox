@@ -67,7 +67,7 @@ def _compile_partitioned_primary_key(constraint, compiler, **kw) -> str:
 
 class SessionTrajectory(TraceBase):
     __tablename__ = "session_trajectories"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # trj_ + uuid hex
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # ingest.session_trajectory_id(session_id)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False)  # root session
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)

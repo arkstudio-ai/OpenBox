@@ -56,6 +56,8 @@ RECENT_SESSION_SECONDS = 600.0
 RECENT_PERSIST_SECONDS = 60.0
 RECENT_STATE_KEY = "ingest.recent_sessions"
 FAILURES_STATE_KEY = "ingest.file_failures"
+#: Spool usage by area (``spool.spool_usage``; blobs/ and quarantine/ can hold many files) is sampled this often.
+SPOOL_USAGE_SAMPLE_SECONDS = 30.0
 #: SQLSTATE classes of failures that pass by themselves: connection exceptions (08), transaction rollbacks such as
 #: serialization failures and deadlocks (40), insufficient resources such as a full disk or too many connections
 #: (53), operator intervention such as a statement timeout or an admin shutdown (57) and system errors (58).
@@ -466,6 +468,12 @@ class IngestService:
         self._positions: dict[tuple[str, str], int] = {}
         self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
                                                  "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
+        self.quarantine_max_bytes = worker_setting(settings, "quarantine_max_bytes",
+                                                   "TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES", 256 * 1024 * 1024)
+        self.quarantine_max_age_seconds = 86400.0 * worker_setting(
+            settings, "quarantine_retention_days", "TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS", 7)
+        #: Monotonic time of the last spool usage sample (``_sample_usage``).
+        self._usage_sampled: float | None = None
 
     def _next_failure(self, key, offset: int) -> _FileFailure:
         """The failure of file ``key`` after one more failed attempt at ``offset``, backed off; not stored."""
@@ -518,8 +526,10 @@ class IngestService:
         result["deleted_trajectories"] = set()
         now = time.time()
         await self._load_state()
-        scan = await asyncio.to_thread(spool_reader.scan_spool, self.spool_dir, documents=self._documents)
-        self._gauge("spool_bytes", scan.bytes)
+        scan = await asyncio.to_thread(spool_reader.scan_spool, self.spool_dir, documents=self._documents,
+                                       quarantine_max_bytes=self.quarantine_max_bytes,
+                                       quarantine_max_age_seconds=self.quarantine_max_age_seconds)
+        await self._sample_usage()
         self._gauge("spool_files", scan.files)
         self._gauge("spool_oldest_age_seconds", spool_reader.monotonic_age(scan.oldest_mtime, now))
         files = await self._file_rows(scan)
@@ -636,7 +646,16 @@ class IngestService:
                     raise QuarantineDeferred(consumed)
                 return consumed, True
             if finished:
-                if spool_reader.remove_file(path):
+                if closed:
+                    removed = spool_reader.remove_file(path)
+                else:
+                    # An abandoned .part whose writer resumed while the batch committed keeps its new lines: the
+                    # file stays and its row reopens, so the next pass reads on from the committed offset.
+                    removed = await asyncio.to_thread(spool_reader.remove_if_unchanged, path, signature)
+                    if not removed and spool_reader.locate(spool_file) is not None:
+                        await self._reopen_file(key)
+                        return consumed, False
+                if removed:
                     await self._forget_files([key])
                 result["files_done"] += 1
                 return consumed, True
@@ -647,6 +666,19 @@ class IngestService:
         current = spool_reader.stat_signature(path)
         return (current is not None and current == signature
                 and time.time() - current[1] >= self.settings.spool_abandon_seconds)
+
+    async def _reopen_file(self, key) -> None:
+        """A file consumed as abandoned changed before its removal: its writer was only stalled, so read on."""
+        log.warning("Spool file written again after it was consumed as abandoned producer_id=%s file=%s", *key)
+        try:
+            async with trace_session() as db:
+                await db.execute(update(TrajectoryIngestFile).where(
+                    TrajectoryIngestFile.producer_id == key[0], TrajectoryIngestFile.file_name == key[1])
+                    .values(done=False, updated_at=datetime.now(timezone.utc))
+                    .execution_options(synchronize_session=False))
+        except Exception as exc:
+            # The next pass then deletes the file as consumed, and the lines it lost show up as a counter gap.
+            log.warning("Ingest file bookkeeping not reopened error_type=%s", type(exc).__name__)
 
     async def _file_rows(self, scan) -> dict[tuple[str, str], dict]:
         if not scan.producers:
@@ -941,6 +973,22 @@ class IngestService:
         except Exception:
             pass
 
+    async def _sample_usage(self) -> None:
+        """Spool usage gauges as the emitter's budget counts it, at most every SPOOL_USAGE_SAMPLE_SECONDS."""
+        moment = time.monotonic()
+        if self._usage_sampled is not None and moment - self._usage_sampled < SPOOL_USAGE_SAMPLE_SECONDS:
+            return
+        self._usage_sampled = moment
+        try:
+            usage = await asyncio.to_thread(spool.spool_usage, self.spool_dir)
+        except OSError as exc:
+            log.warning("Spool usage not sampled error_type=%s", type(exc).__name__)
+            return
+        self._gauge("spool_bytes", usage.total)
+        self._gauge("spool_blob_bytes", usage.blob_bytes)
+        self._gauge("spool_quarantine_bytes", usage.quarantine_bytes)
+        self._gauge("spool_quarantine_files", usage.quarantine_files)
+
 
     # Transactions -------------------------------------------------------------------
 
@@ -978,7 +1026,8 @@ class IngestService:
                 spool_file.producer_id, spool_file.counter, path, path.name.endswith(spool.CLOSED_SUFFIX),
                 spool_file.size, spool_file.mtime),
             reason=parsed.bad_reason or "unparsable_line",
-            detail={"offset": offset, "error": parsed.bad_error, "first_n": low, "last_n": high})
+            detail={"offset": offset, "error": parsed.bad_error, "first_n": low, "last_n": high},
+            max_bytes=self.quarantine_max_bytes)
         if moved is None:
             log.warning("Could not quarantine spool file producer_id=%s file=%s", spool_file.producer_id,
                         spool_file.name)

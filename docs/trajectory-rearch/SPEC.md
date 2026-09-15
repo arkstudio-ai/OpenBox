@@ -305,7 +305,7 @@ Types: `str` = `String(64)` unless noted; `json` = `JSONType`; timestamps are ti
 **`session_trajectories`**
 | column | type | notes |
 |---|---|---|
-| id | String(64) PK | `trj_` + uuid hex |
+| id | String(64) PK | `trj_` + the first 32 hex digits of sha256(`openbox-trajectory\0` + root session id): blobs uploaded before the row exists already use its prefix, across worker restarts |
 | user_id | str | |
 | session_id | str UNIQUE | root session |
 | workspace_id | str | |
@@ -518,7 +518,7 @@ Per batch (≤ `TRAJECTORY_INGEST_BATCH_LINES` lines or ≤ `TRAJECTORY_INGEST_B
 - Blob upload failure for an event → retry the batch with exponential backoff (1 s → 60 s) while other producers' files continue; after 10 attempts the event's content is replaced by an availability marker `{"availability":"not_recorded","reason":"blob_store_unavailable"}` and a gap is recorded.
 
 Trajectory resolution:
-- Key: root `session_id` + `user_id`. Missing row → create (`trj_{uuid}`), append `trajectory.started` at seq 1 with id `evt_start_{trajectory_id}` and data `{"existing_session": <bool: first ingested event is baseline.captured with non-empty history>, "coverage_start": <occurred_at of first event>, "schema_version": 2}`.
+- Key: root `session_id` + `user_id`. Missing row → create (id derived from the root session id, see `session_trajectories.id`), append `trajectory.started` at seq 1 with id `evt_start_{trajectory_id}` and data `{"existing_session": <bool: first ingested event is baseline.captured with non-empty history>, "coverage_start": <occurred_at of first event>, "schema_version": 2}`.
 - `workspace_id`: from the event, else the meta session, else `""`.
 - Tombstoned (`deleted_at` set) or meta session `is_deleted` → drop the event (count `deleted_drops`).
 - Ownership (meta-assisted): when the meta session exists and its `user_id` differs → drop (`ownership_drops`). When `source_session_id` differs from the root and the meta chain (parent_id walk, ≤100 hops) is known and does not reach the root → drop. Unknown meta → accept.
@@ -783,7 +783,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_WORKER_HOST` / `TRAJECTORY_WORKER_PORT` | 0.0.0.0 / 8090 | worker |
 | `TRAJECTORY_INGEST_POLL_MS` | 200 | worker |
 | `TRAJECTORY_INGEST_BATCH_LINES` / `_BYTES` | 2000 / 16777216 | worker |
-| `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` | 10 (consecutive failures of one file batch before the file is quarantined with a `recording.gap`) | worker |
+| `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` | 10 (consecutive failures of one file batch before the file is quarantined with a `recording.gap`; failures while the trace database does not answer and transient ones — timeouts, lock or serialization conflicts, lost connections, a full disk — never count; the counts survive a worker restart) | worker |
 | `TRAJECTORY_SPOOL_ABANDON_SECONDS` | 60 | worker |
 | `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` | 268435456 (data bytes kept in `quarantine/`; the oldest quarantined files and their `.reason` sidecars are deleted first) | worker |
 | `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` | 7 (quarantined files older than this are deleted; age from the `.reason` sidecar) | worker |

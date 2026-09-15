@@ -173,8 +173,11 @@ async def events_of(session_id: str):
 async def test_empty_spool_pass_reports_gauges(harness):
     result = await harness.run()
     assert result["lines"] == 0 and result["trajectories"] == set()
-    assert harness.metrics.gauges == {"spool_bytes": 0, "spool_files": 0, "spool_oldest_age_seconds": 0.0,
-                                      "ingest_lag_seconds": 0.0}
+    # Only the producer.json of the writer's directory takes space.
+    usage = spool.spool_usage(harness.settings.spool_dir)
+    assert harness.metrics.gauges == {"spool_bytes": usage.total, "spool_blob_bytes": 0, "spool_quarantine_bytes": 0,
+                                      "spool_quarantine_files": 0, "spool_files": 0,
+                                      "spool_oldest_age_seconds": 0.0, "ingest_lag_seconds": 0.0}
 
 
 async def test_first_events_create_a_trajectory_started_at_seq_1(harness):

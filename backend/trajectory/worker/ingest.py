@@ -336,8 +336,6 @@ class _Backoff:
     next_at: float = 0.0
     #: Object keys the blob store kept failing to store: references to them become not-recorded markers.
     unavailable: set[str] = field(default_factory=set)
-    #: Objects already stored by an earlier attempt of this batch.
-    uploaded: set[str] = field(default_factory=set)
     #: Objects that had a queued GC entry in any attempt: stored again on every attempt, never reused.
     queued: set[str] = field(default_factory=set)
     #: Ids of new payloads by (trajectory id, dedupe key), reused by later attempts: blobs that embed references keep
@@ -386,6 +384,8 @@ class IngestService:
         self.last_lag_seconds = 0.0
         self._documents: dict[str, dict | None] = {}
         self._backoff: dict[tuple[str, str, int], _Backoff] = {}
+        #: (producer_id, file name, offset) of a batch -> blob keys any of its attempts stored, until it commits.
+        self._stored: dict[tuple[str, str, int], set[str]] = {}
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
@@ -654,6 +654,7 @@ class IngestService:
                     return False
                 continue
             self._backoff.pop(key, None)
+            self._stored.pop(key, None)
             return True
 
     async def _prepare(self, items: list[Item], backoff: _Backoff | None) -> PreparedBatch:
@@ -803,16 +804,18 @@ class IngestService:
         uploads = planner.uploads
         if not uploads:
             return
-        backoff = self._backoff.get(key)
-        uploaded = backoff.uploaded if backoff is not None else set()
+        stored = self._stored.setdefault(key, set())
+        earlier = frozenset(stored)
         failed: set[str] = set()
         semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
         async def put(upload: content.Upload) -> None:
-            if upload.key in uploaded and upload.if_absent:
-                return  # stored by an earlier attempt, and no GC entry has doubted it since
             async with semaphore:
                 try:
+                    # A GC entry queued and processed between two attempts may have deleted what an earlier attempt
+                    # stored; an object that still exists stays, as no GC delete runs inside the object guard.
+                    if upload.if_absent and upload.key in earlier and await self.blob_store.exists(upload.key):
+                        return
                     await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type,
                                               if_absent=upload.if_absent)
                 except Exception as exc:
@@ -821,7 +824,7 @@ class IngestService:
                     self._inc("blob_put_failures")
                     log.warning("Trajectory blob upload failed error_type=%s", type(exc).__name__)
                     return
-            uploaded.add(upload.key)
+            stored.add(upload.key)
             result["blob_puts"] += 1
             result["blob_put_bytes"] += len(upload.data)
             self._inc("blob_puts")
@@ -834,7 +837,6 @@ class IngestService:
         if not failed:
             return
         backoff = self._backoff.setdefault(key, _Backoff())
-        backoff.uploaded |= uploaded
         # Later attempts give new payloads the same ids, so the blobs that embed them keep their keys.
         backoff.payload_ids.update(planner.new_payload_ids())
         backoff.attempts += 1
@@ -864,7 +866,8 @@ class IngestService:
 
     async def _commit(self, spool_file, scan, prepared: PreparedBatch, *, offset, end_offset, finished, abandoned,
                       torn, result) -> None:
-        tx = _Transaction(self, prepared, producer_id=spool_file.producer_id)
+        stored = self._stored.get((spool_file.producer_id, spool_file.name, offset), ())
+        tx = _Transaction(self, prepared, producer_id=spool_file.producer_id, stored=frozenset(stored))
         try:
             async with trace_session() as db:
                 await tx.begin(db, scan, file_name=spool_file.name, offset=offset)
@@ -902,7 +905,12 @@ class IngestService:
             return False
         log.warning("Quarantined spool file producer_id=%s file=%s reason=%s", spool_file.producer_id,
                     spool_file.name, parsed.bad_reason)
-        tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=spool_file.producer_id)
+        # The file's uncommitted batches never commit now: what their attempts stored is queued with the loss report.
+        stored: set[str] = set()
+        for batch in [batch for batch in self._stored if batch[:2] == (spool_file.producer_id, spool_file.name)]:
+            stored |= self._stored.pop(batch)
+        tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=spool_file.producer_id,
+                          stored=frozenset(stored))
         try:
             async with trace_session() as db:
                 await tx.begin(db, scan, file_name=spool_file.name, offset=offset)
@@ -1045,9 +1053,12 @@ class IngestService:
 class _Transaction:
     """One ingest transaction: applies a batch's lines in order and writes the rows at the end."""
 
-    def __init__(self, service: IngestService, prepared: PreparedBatch, *, producer_id: str):
+    def __init__(self, service: IngestService, prepared: PreparedBatch, *, producer_id: str,
+                 stored: frozenset[str] = frozenset()):
         self.service = service
         self.prepared = prepared
+        #: Blob keys the attempts of the batch stored (``IngestService._stored``): queued unless a row references them.
+        self.stored = stored
         self.cache = prepared.cache
         self.producer_id = producer_id
         self.now = datetime.now(timezone.utc)
@@ -1157,6 +1168,9 @@ class _Transaction:
                 "dropped_bytes": sum(entry[3] for entry in entries), "producer_id": self.producer_id,
                 "request_ids": list(dict.fromkeys(entry[2] for entry in entries if entry[2]))[:GAP_REQUEST_IDS],
                 "event_ids": [entry[1] for entry in entries][:GAP_REQUEST_IDS]})
+        # Stored by an attempt of the batch but referenced by no row of this transaction (a replan planned other
+        # objects, an event was dropped, the file was quarantined): nothing else would ever delete the object.
+        self.gc_keys.extend(sorted(self.stored))
         await self.flush(db)
         # Objects this transaction references stay stored: their queued GC entries end here (lock.ObjectGuard).
         cancelled = [entry_id for entry_id, storage_key in self.claimable if storage_key in self.referenced]

@@ -45,18 +45,27 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
     try:
         get_oss()
     except OssNotConfigured as e:
-        return ToolResult(title="share_file unavailable", output=f"OSS transfer is not configured: {e}")
+        return ToolResult(
+            title="share_file unavailable", output=f"OSS transfer is not configured: {e}",
+            metadata={"error": True},
+        )
 
     probe = await ctx.sandbox.execute(
         f"stat -c %s {shlex.quote(path)} && file --brief --mime-type {shlex.quote(path)}", timeout=15
     )
     if probe.exit_code != 0:
-        return ToolResult(title=f"Cannot read {path}", output=probe.stderr.strip() or "No such file")
+        return ToolResult(
+            title=f"Cannot read {path}", output=probe.stderr.strip() or "No such file",
+            metadata={"error": True},
+        )
     lines = probe.stdout.strip().splitlines()
     size = int(lines[0]) if lines and lines[0].isdigit() else 0
     mime = (lines[1].strip() if len(lines) > 1 else "") or "application/octet-stream"
     if size > _MAX_BYTES:
-        return ToolResult(title=f"File too large: {path}", output=f"{size} bytes (max {_MAX_BYTES})")
+        return ToolResult(
+            title=f"File too large: {path}", output=f"{size} bytes (max {_MAX_BYTES})",
+            metadata={"error": True},
+        )
 
     name = path.split("/")[-1]
     try:
@@ -74,7 +83,7 @@ async def execute(args: ShareFileArgs, ctx: ToolContext) -> ToolResult:
     except RunRevoked:
         raise
     except Exception as e:
-        return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300])
+        return ToolResult(title=f"Upload failed: {path}", output=str(e)[:300], metadata={"error": True})
 
     output = (
         f"File attached to this reply for the user: {path} ({mime}, {verified} bytes)."

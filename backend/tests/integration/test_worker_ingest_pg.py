@@ -130,7 +130,8 @@ async def test_services_run_one_task_per_loop_and_resume_without_duplicates(migr
     SpoolWriter(settings.spool_dir).events(event(), event(), event())
     await services.start()
     try:
-        assert services.is_writer and len(services._writer_tasks) == 9
+        # ingest, projection, archive, partitions, retention, gc, orphans, exports, budgets, heartbeat
+        assert services.is_writer and len(services._writer_tasks) == 10
         for _ in range(300):
             async with trace_session() as db:
                 if await db.scalar(select(func.count()).select_from(TrajectoryEvent)) == 4:

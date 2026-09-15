@@ -72,14 +72,14 @@ def test_worker_mode_off_leaves_the_process_without_an_emitter(monkeypatch, tmp_
 def test_emitter_settings_defaults_minimums_and_invalid_values(monkeypatch, tmp_path, caplog):
     for name in ("TRAJECTORY_SPOOL_DIR", "TRAJECTORY_EMIT_QUEUE_BYTES", "TRAJECTORY_EMIT_MAX_EVENT_BYTES",
                  "TRAJECTORY_SPOOL_FILE_BYTES", "TRAJECTORY_SPOOL_FILE_MS", "TRAJECTORY_SPOOL_MAX_BYTES",
-                 "TRAJECTORY_BUDGET_REFRESH_MS"):
+                 "TRAJECTORY_SPOOL_MIN_FREE_BYTES", "TRAJECTORY_BUDGET_REFRESH_MS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(config, "SERVER_SPOOL_DIR", tmp_path / "missing")
     assert config.BACKEND_DIR == Path(recorder.__file__).resolve().parent.parent
     assert config.emitter_settings() == config.EmitterSettings(
         spool_dir=config.BACKEND_DIR / ".openbox" / "trajectory-spool", queue_bytes=67108864,
         max_event_bytes=33554432, file_bytes=8388608, file_ms=1000, spool_max_bytes=2147483648,
-        budget_refresh_ms=5000)
+        spool_min_free_bytes=1073741824, budget_refresh_ms=5000)
     server = tmp_path / "server-spool"
     server.mkdir()
     monkeypatch.setattr(config, "SERVER_SPOOL_DIR", server)
@@ -89,16 +89,24 @@ def test_emitter_settings_defaults_minimums_and_invalid_values(monkeypatch, tmp_
     monkeypatch.setenv("TRAJECTORY_EMIT_QUEUE_BYTES", "not-a-number-settings-test")
     monkeypatch.setenv("TRAJECTORY_SPOOL_FILE_MS", "0")
     monkeypatch.setenv("TRAJECTORY_SPOOL_MAX_BYTES", " 4096 ")
+    monkeypatch.setenv("TRAJECTORY_SPOOL_MIN_FREE_BYTES", "0")
     with caplog.at_level(logging.WARNING, logger="trajectory.config"):
         settings = config.emitter_settings()
     # Below its minimum a value falls back to the default, like one that is not an integer.
     assert (settings.queue_bytes, settings.file_ms, settings.spool_max_bytes) == (67108864, 1000, 4096)
     assert "Invalid TRAJECTORY_EMIT_QUEUE_BYTES" in caplog.text and "Invalid TRAJECTORY_SPOOL_FILE_MS" in caplog.text
+    # 0 disables the disk floor; only a negative value is invalid.
+    assert settings.spool_min_free_bytes == 0 and "TRAJECTORY_SPOOL_MIN_FREE_BYTES" not in caplog.text
+    monkeypatch.setenv("TRAJECTORY_SPOOL_MIN_FREE_BYTES", "-1")
+    with caplog.at_level(logging.WARNING, logger="trajectory.config"):
+        assert config.emitter_settings().spool_min_free_bytes == 1073741824
+    assert "Invalid TRAJECTORY_SPOOL_MIN_FREE_BYTES" in caplog.text
 
 
-def test_get_emitter_starts_one_process_emitter_and_reset_closes_it(spool_env):
+def test_get_emitter_starts_one_process_emitter_and_reset_closes_it(spool_env, monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_SPOOL_MIN_FREE_BYTES", "0")
     first = get_emitter()
-    assert first is get_emitter() and first.stats()["state"] == "running"
+    assert first is get_emitter() and first.stats()["state"] == "running" and first.spool_min_free_bytes == 0
     assert first.producer_dir.parent == spool_env / spool.PRODUCERS_DIR
     assert (first.producer_dir / spool.PRODUCER_FILE).exists()
     reset_emitter_for_tests()

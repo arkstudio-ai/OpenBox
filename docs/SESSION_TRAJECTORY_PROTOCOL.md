@@ -130,5 +130,5 @@ WebSocket 协议不变。提示 `trajectory.available` 的 data 为 `{user_id,ow
 - **资产删除**：`asset.deleted` 把引用该资产的 payload 置 `deleted`，不再被可用行引用的 blob 排队删除，受影响的轨迹追加 `artifact.removed`。
 - **内容过期**：最后活动早于 `TRAJECTORY_CONTENT_RETENTION_DAYS`（180 天）的轨迹删除内容，保留摘要行与统计（`recording_status=expired`），读取返回 410。
 - **归档**：事件投影后写成 OSS 段（zstd，读回校验 sha256），PostgreSQL 日分区在 `TRAJECTORY_HOT_DAYS`（7 天）后删除；
-  幂等键保留 `TRAJECTORY_DEDUPE_DAYS`（30 天），导出保留 `TRAJECTORY_EXPORT_RETENTION_DAYS`（30 天）。
+  幂等键保留 `TRAJECTORY_DEDUPE_DAYS`（3 天），导出保留 `TRAJECTORY_EXPORT_RETENTION_DAYS`（30 天）。
 - **spool**：文件在摄取事务提交后删除；总预算 `TRAJECTORY_SPOOL_MAX_BYTES`（2 GiB），超出后新行丢弃并记 gap。

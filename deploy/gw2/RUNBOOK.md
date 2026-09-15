@@ -547,7 +547,7 @@ Record the output of each drill in the release log.
 |---|---|---|
 | Trajectory content (events, blobs, segments) | 180 days after the last activity (`TRAJECTORY_CONTENT_RETENTION_DAYS`); the summary row stays | worker retention |
 | Hot events in PostgreSQL | archived to OSS segments; partitions dropped after 7 days (`TRAJECTORY_HOT_DAYS`) | worker archive |
-| Idempotency keys | 30 days (`TRAJECTORY_DEDUPE_DAYS`) | worker archive |
+| Idempotency keys | 3 days (`TRAJECTORY_DEDUPE_DAYS`) | worker archive |
 | Exports | 30 days (`TRAJECTORY_EXPORT_RETENTION_DAYS`) | worker retention, lifecycle rule as backstop |
 | Trajectory objects in OSS | IA after 30 days | lifecycle rule |
 | Deleted sessions and assets | removed when the deletion reaches the worker (GC queue with retries) | worker retention |

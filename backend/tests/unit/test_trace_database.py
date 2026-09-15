@@ -1,6 +1,7 @@
 """Trace engine and sessions (SPEC 6.1): separate engine, pool settings, commit/rollback/close."""
 from datetime import datetime, timezone
 
+import orjson
 import pytest
 from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -108,6 +109,37 @@ async def test_postgresql_engine_pre_pings_and_sets_server_settings(kwargs, size
         assert captured["server_settings"] == {"statement_timeout": "5000", "application_name": "openbox-trace"}
     finally:
         await close_trace_engine()
+
+
+async def test_postgresql_engines_bind_and_read_jsonb_through_orjson(monkeypatch):
+    """JSONB binds went through the stdlib json; both PostgreSQL engines (writer and TraceReader) now share orjson."""
+    calls = []
+    real_create = database.create_async_engine
+
+    def capture(url, **kwargs):
+        calls.append(kwargs)
+        return real_create(url, **kwargs)
+
+    monkeypatch.setattr(database, "create_async_engine", capture)
+    await close_trace_engine()
+    engine = init_trace_engine("postgresql+asyncpg://trace:secret@127.0.0.1:9/openbox_trace")
+    try:
+        assert engine.dialect._json_serializer is database.json_serializer
+        assert engine.dialect._json_deserializer is orjson.loads
+        database.TraceReader()._factory()
+        assert database._read_engine.dialect._json_serializer is database.json_serializer
+        assert database._read_engine.dialect._json_deserializer is orjson.loads
+        assert [(kwargs["json_serializer"], kwargs["json_deserializer"]) for kwargs in calls] == [
+            (database.json_serializer, orjson.loads)] * 2
+    finally:
+        await close_trace_engine()
+    document = {"text": "你好", "nested": [1, {"key": None}], "when": datetime(2026, 9, 14, tzinfo=timezone.utc)}
+    text_form = database.json_serializer(document)
+    assert text_form == '{"text":"你好","nested":[1,{"key":null}],"when":"2026-09-14T00:00:00+00:00"}'
+    assert orjson.loads(text_form) == {**document, "when": "2026-09-14T00:00:00+00:00"}
+    # What orjson refuses to write goes through the stdlib json.dumps the engines used before: integers beyond
+    # 64 bits and non-string keys.
+    assert database.json_serializer({"big": 2 ** 70 + 1, 1: "one"}) == '{"big": 1180591620717411303425, "1": "one"}'
 
 
 async def test_unsupported_dialect_is_rejected():

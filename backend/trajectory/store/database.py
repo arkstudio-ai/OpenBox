@@ -6,8 +6,10 @@ inside, or wait on, a business transaction.
 """
 from contextlib import asynccontextmanager
 from datetime import datetime
+import json
 from typing import AsyncIterator
 
+import orjson
 from sqlalchemy import DateTime, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -29,6 +31,20 @@ MIGRATION_STATEMENT_TIMEOUT = "15min"
 #: Read-pool connections kept beyond the HTTP read slots (TRAJECTORY_READ_CONCURRENCY): WebSocket subscription
 #: headers read with at most this many at once (worker/ws.py), so busy admin reads never make them wait for one.
 READ_POOL_RESERVE = 2
+
+
+def json_serializer(value) -> str:
+    """JSONB bind text: orjson, and for what it refuses (integers beyond 64 bits, non-string keys) the stdlib
+    ``json.dumps`` the engines used before."""
+    try:
+        return orjson.dumps(value).decode()
+    except TypeError:
+        return json.dumps(value)
+
+
+#: JSONB codecs of every PostgreSQL trace engine, the writer's and the TraceReader's: event data, hints,
+#: records and checkpoints are bound and read through these instead of the stdlib ``json``.
+PG_JSON_ARGUMENTS = {"json_serializer": json_serializer, "json_deserializer": orjson.loads}
 
 
 class TraceEngineNotInitialized(RuntimeError):
@@ -77,6 +93,7 @@ def init_trace_engine(url: str, *, pool_size: int = 5, max_overflow: int = 5) ->
             pool_pre_ping=True,
             connect_args={"server_settings": dict(PG_SERVER_SETTINGS)},
             echo=False,
+            **PG_JSON_ARGUMENTS,
         )
     _engine = engine
     _session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -155,7 +172,7 @@ class TraceReader:
                                 integer("TRAJECTORY_READ_CONCURRENCY", 2) + READ_POOL_RESERVE)
             _read_engine = create_async_engine(
                 engine.url, pool_size=pool_size, max_overflow=0,
-                pool_timeout=1, pool_pre_ping=True,
+                pool_timeout=1, pool_pre_ping=True, **PG_JSON_ARGUMENTS,
                 connect_args={"server_settings": {
                     **PG_SERVER_SETTINGS, "application_name": "openbox-trace-read",
                     "default_transaction_read_only": "on", "lock_timeout": "1000",

@@ -10,10 +10,10 @@ object is not referenced again (content-addressed keys can be reused) and
 refuses anything outside the trajectory namespace and the prefix of a live
 trajectory.
 
-Some objects no row ever references: blobs of a batch that never committed,
-segments of an archive attempt that died before its row did. The orphan sweep
-pages through the namespace and queues GC entries for the old ones nothing
-uses.
+Some objects no row ever references, such as the blobs of a batch that never
+committed. The orphan sweep pages through the namespace and queues GC entries
+for the old blobs and exports nothing uses; segments are left to their
+trajectory's prefix deletion.
 
 The duties of one pass are independent: a purge that fails (a statement
 timeout on a huge trajectory, say) is logged and the others still run.
@@ -303,8 +303,9 @@ class RetentionService:
 
         Each call lists the next ``limit`` keys of the trajectory namespace after the cursor kept under
         ORPHAN_CURSOR_STATE_KEY and starts over after a short page. Objects younger than
-        ORPHAN_MIN_AGE_SECONDS, or of unknown age, are left alone; the others are checked by the rules of
-        ``_still_used``, a few statements per page. An unused key without a queued key entry gets one (reason
+        ORPHAN_MIN_AGE_SECONDS, or of unknown age, are left alone; the blobs and exports among the others are
+        checked by the rules of ``_still_used``, a few statements per page (``_unused_keys``). An unused key
+        without a queued key entry gets one (reason
         ``orphan_object``), which the GC pass checks again before it deletes the object. Prefixes are never
         queued.
         """
@@ -341,30 +342,35 @@ class RetentionService:
     async def _unused_keys(db, namespace: str, keys: list[str]) -> list[str]:
         """The keys ``_still_used`` finds unused, in their order, decided for a chunk of keys per statement.
 
-        Only keys in a trajectory directory or the exports directory are candidates: objects directly in the
-        namespace, other reserved ("_") directories and keys ``enqueue_gc`` refuses are left alone.
+        Only blobs (no available payload row; checkpoint pages are payload rows too) and exports (no live export
+        row) are candidates. A GC delete of a blob waits for in-flight ingest, projection and checkpoint batches
+        (``ObjectGuard``) and export keys are never written twice, but an archive retry rewrites the same segment
+        key without that guard, so segments are left to their trajectory's prefix deletion. Objects directly in
+        the namespace, other reserved ("_") directories, other sections and keys ``enqueue_gc`` refuses are left
+        alone too.
         """
         candidates = []
         for key in keys:
             owner, _, rest = key[len(namespace):].partition("/")
-            if not rest or (owner.startswith("_") and owner != EXPORTS_DIRECTORY):
+            section, _, name = rest.partition("/")
+            if owner == EXPORTS_DIRECTORY:
+                if not rest:
+                    continue
+            elif owner.startswith("_") or section != "blobs" or not name:
                 continue
             try:
                 check_key(key)
             except ValueError:
                 continue
-            section, _, name = rest.partition("/")
-            candidates.append((key, owner, section, name))
+            candidates.append((key, owner, name))
         used = set()
         for chunk in _chunks(candidates):
-            blobs, segments, exports = {}, {}, []
-            for key, owner, section, name in chunk:
+            blobs, exports = {}, []
+            for key, owner, name in chunk:
                 if owner == EXPORTS_DIRECTORY:
                     exports.append(key)
-                elif section == "blobs":
+                else:
                     blobs.setdefault(owner, {})[name] = key
-                elif section == "segments":
-                    segments.setdefault(owner, []).append(key)
             if blobs:
                 rows = await db.execute(
                     select(TrajectoryPayload.trajectory_id, TrajectoryPayload.sha256, TrajectoryPayload.storage_key)
@@ -373,10 +379,6 @@ class RetentionService:
                                  for owner, names in blobs.items()))))
                 used.update(storage_key for owner, sha256, storage_key in rows
                             if blobs[owner].get(sha256) == storage_key)
-            if segments:
-                used.update((await db.scalars(select(TrajectorySegment.storage_key).where(
-                    or_(*(and_(TrajectorySegment.trajectory_id == owner, TrajectorySegment.storage_key.in_(names))
-                          for owner, names in segments.items()))))).all())
             if exports:
                 used.update((await db.scalars(select(TrajectoryExport.storage_key).where(
                     TrajectoryExport.storage_key.in_(exports), TrajectoryExport.status != "deleted"))).all())

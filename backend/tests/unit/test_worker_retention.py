@@ -514,17 +514,18 @@ async def test_the_orphan_sweep_queues_only_old_objects_nothing_references(trace
         await enqueue_gc(db, GC_KEY, keys["queued"], "asset_deleted")
     retention = service(blob_store)
 
-    assert await retention.sweep_orphans() == 5
-    orphans = sorted(keys[name] for name in ("deleted_blob", "other_trajectory_blob", "uncommitted", "deleted_export",
-                                             "stray"))
+    # The uncommitted segment and the stray object are left to trj_a's prefix deletion.
+    assert await retention.sweep_orphans() == 3
+    orphans = sorted(keys[name] for name in ("deleted_blob", "other_trajectory_blob", "deleted_export"))
     assert await gc_entries() == [("key", keys["queued"], "asset_deleted")] + [
         ("key", key, "orphan_object") for key in orphans]
-    assert retention.report.counters["gc_orphans_queued"] == 5
+    assert retention.report.counters["gc_orphans_queued"] == 3
     assert await worker_state("gc.orphan_cursor") == {"after": None}  # a short page: the next sweep starts over
-    assert await retention.sweep_orphans() == 0 and len(await gc_entries()) == 6
+    assert await retention.sweep_orphans() == 0 and len(await gc_entries()) == 4
 
-    assert await retention.process_gc_queue() == 6
-    assert sorted(blob_store.objects) == sorted([keys["used_blob"], keys["committed"], keys["live_export"],
+    assert await retention.process_gc_queue() == 4
+    assert sorted(blob_store.objects) == sorted([keys["used_blob"], keys["committed"], keys["uncommitted"],
+                                                 keys["stray"], keys["live_export"],
                                                  keys["namespace_file"], keys["reserved"], young,
                                                  "assets/user_a/photo.png"])
 

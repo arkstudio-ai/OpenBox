@@ -5,6 +5,8 @@ Plan document (Chinese, product-level): "OpenBox 会话追踪改造计划" artif
 Code maps of the current system (read them before changing an area): `docs/trajectory-rearch/maps/`
 `recorder.full.md`, `projection.md`, `producers.md`, `api.md`, `tests.md`, `infra.full.md`, `runtime.md`.
 
+Post-load-test follow-up (2026-09-16): [Chat capacity and trace resource isolation plan](CHAT_CAPACITY_PLAN.md). This additive plan covers durable chat jobs, separate chat workers, connection budgets, performance estimates and mixed-load acceptance. Its implementation and performance targets are pending; the recording contract below remains in effect.
+
 ## Scope changes after v1 (2026-09-15)
 
 Decided during development, before any deployment. These points override the sections they name; the rest of the body is v1 text.

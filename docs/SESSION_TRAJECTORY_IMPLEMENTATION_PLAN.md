@@ -3,6 +3,8 @@
 > **已被取代（2026-09-15）**：本计划的存储与录制设计已由 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md) 取代；旧录制不保留。
 > 下文是原计划的历史记录，业务库轨迹表与事务内记录器相关内容不再适用。
 
+> **容量改造后续计划（2026-09-16）**：[聊天容量与 Trace 资源隔离实施计划](trajectory-rearch/CHAT_CAPACITY_PLAN.md)，包含混合压测后的实施顺序、市场方案调研、性能估算与验收标准；新增工作尚待实现。
+
 > 状态：本地代码已实现，M0–M6 与 M7 的本地实现/专项验证已完成。本文件保留完整目标方案与退出条件；现行代码与部署步骤见 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md) 与 [deploy/gw2/RUNBOOK.md](../deploy/gw2/RUNBOOK.md)。尚未部署或全量启用，完整发布验收仍按 M7/M8 的未勾选项执行。
 >
 > 日期：2026-09-11。

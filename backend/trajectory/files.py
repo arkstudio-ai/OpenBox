@@ -5,7 +5,6 @@ import difflib
 import hashlib
 
 from trajectory import current, enabled, record
-from trajectory.redaction import sanitize
 
 
 def captures_files(ctx) -> bool:
@@ -15,35 +14,28 @@ def captures_files(ctx) -> bool:
 
 async def record_file_change(ctx, path: str, *, operation: str,
                              before: str | None = None, after: str | None = None) -> None:
-    """Enqueue the change; the worker externalizes large text. Sanitize runs first: it feeds the digests."""
+    """Enqueue the change as the executor saw it; the worker externalizes large text."""
     if not captures_files(ctx):
         return
     context = getattr(ctx, "trace_context", None) or current()
-    try:
-        before_visible = sanitize(before) if before is not None else None
-        after_visible = sanitize(after) if after is not None else None
-    except Exception:
-        # A version that cannot be redacted is never recorded unredacted.
-        before_visible = after_visible = None
-        before = after = None
 
-    def version(value, original, absent=False):
+    def version(value, absent=False):
         if value is None:
             return {"availability": "absent" if absent else "not_recorded"}
         return {"availability": "available", "text": value,
                 "sha256": hashlib.sha256(value.encode()).hexdigest(),
                 "size_bytes": len(value.encode()), "source": "executor_content",
-                "hash_scope": "retained_content", "redacted": value != original}
+                "hash_scope": "retained_content"}
     diff = None
-    if before_visible is not None and after_visible is not None:
-        diff = "".join(difflib.unified_diff(before_visible.splitlines(keepends=True),
-                                           after_visible.splitlines(keepends=True),
+    if before is not None and after is not None:
+        diff = "".join(difflib.unified_diff(before.splitlines(keepends=True),
+                                           after.splitlines(keepends=True),
                                            fromfile=path, tofile=path))
     await record("artifact.recorded", {
         "artifact_id": f"file:{context.source_session_id}:{path}",
         "artifact_type": "file_diff", "name": path.rsplit("/", 1)[-1], "path": path,
         "operation": operation, "media_type": "text/plain", "source_kind": "file_tool",
-        "before": version(before_visible, before),
-        "after": version(after_visible, after, absent=operation == "delete"),
+        "before": version(before),
+        "after": version(after, absent=operation == "delete"),
         "diff": diff, "availability": "available", "capture_level": "executor_content",
     }, context=context)

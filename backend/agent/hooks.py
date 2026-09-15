@@ -73,8 +73,6 @@ class ToolHooks:
             ctx.trace_context = context
         ctx._trajectory_execute_started = None
         ctx._trajectory_full_tool_output = None
-        from trajectory.stream_redaction import StreamTextRedactor
-        ctx._trajectory_output_redactor = StreamTextRedactor()
         started = time.monotonic()
         with bind(context), _bind_tool_context(ctx):
             if not requested_recorded:
@@ -106,12 +104,9 @@ class ToolHooks:
                 execution_duration = time.monotonic() - ctx._trajectory_execute_started
             status = "denied" if result.metadata.get("blocked") or result.metadata.get("rejected") else (
                 "failed" if result.metadata.get("error") else "completed")
-            recorded_model_output = ctx._trajectory_output_redactor.redact(
-                result.output, mode="replace", final=True)
             await record("tool.finished", {
                 "tool": tool_id, "status": status, "title": result.title,
-                "model_output": recorded_model_output["output"], "metadata": public_value(result.metadata),
-                "model_output_redaction": recorded_model_output.get("redaction"),
+                "model_output": result.output, "metadata": public_value(result.metadata),
                 "duration_ms": execution_duration * 1000 if execution_duration is not None else None,
                 "total_duration_ms": (time.monotonic() - started) * 1000,
                 "timing_source": "producer_monotonic",
@@ -173,13 +168,19 @@ class ToolHooks:
             if revoked():
                 return  # A revoked run records and publishes no further output.
             from trajectory import record
-            recorded_output = ctx._trajectory_output_redactor.redact(output, mode="replace")
-            await record("tool.output", {"tool": tool_id, **recorded_output,
+            last = _last_output["text"]
+            if output == last:
+                return
+            # Tools push their whole collected output on every chunk; the trace
+            # keeps the new suffix, and a rewritten output as a replacement.
+            if output.startswith(last):
+                recorded = {"output": output[len(last):], "mode": "delta"}
+            else:
+                recorded = {"output": output, "mode": "replace"}
+            await record("tool.output", {"tool": tool_id, **recorded,
                 "stage": "executor_stream", "chunk_index": _last_output.get("index", 0)},
                 context=getattr(ctx, "trace_context", None))
             _last_output["index"] = _last_output.get("index", 0) + 1
-            if output == _last_output["text"]:
-                return
             _last_output["text"] = output
             bus.publish(PART_UPDATED, {
                 "userId": self.user_id,
@@ -282,10 +283,8 @@ class ToolHooks:
 
         if not getattr(execute_fn, "_trajectory_validates", False):
             result.metadata["duration"] = duration
-            recorded_output = ctx._trajectory_output_redactor.redact(
-                ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output,
-                mode="replace", final=True)
-            await record("tool.output", {"tool": tool_id, **recorded_output, "title": result.title,
+            retained = ctx._trajectory_full_tool_output if ctx._trajectory_full_tool_output is not None else result.output
+            await record("tool.output", {"tool": tool_id, "output": retained, "mode": "replace", "title": result.title,
                 "metadata": public_value(result.metadata), "stage": "executor_result", "final": True,
                 "duration_ms": duration * 1000 if duration is not None else None},
                 context=getattr(ctx, "trace_context", None))

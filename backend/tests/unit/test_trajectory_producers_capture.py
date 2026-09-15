@@ -27,9 +27,26 @@ from tool.tool import ToolContext, ToolResult, define_tool
 from trajectory import TraceContext
 
 
+class _Delta(BaseModel):
+    content: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: list = []
+
+
+class _Choice(BaseModel):
+    index: int = 0
+    finish_reason: str | None = None
+    delta: _Delta
+
+
+class _Chunk(BaseModel):
+    """A provider chunk the way the SDK delivers it: a model the snapshot can dump."""
+    choices: list[_Choice]
+    usage: dict | None = None
+
+
 def _chunk(text: str):
-    return SimpleNamespace(choices=[SimpleNamespace(index=0, finish_reason=None, delta=SimpleNamespace(
-        content=text, reasoning_content=None, tool_calls=[]))], usage=None)
+    return _Chunk(choices=[_Choice(delta=_Delta(content=text))])
 
 
 def _tool_ctx(**trace) -> ToolContext:
@@ -48,8 +65,8 @@ async def _file_asset(asset_id: str, *, status: str = "ready", size: int = 12, k
                          status=status, created_at=runtime.now()))
 
 
-async def test_request_capture_opens_no_transaction_and_marks_its_last_delta_final(recording_spool,
-                                                                                 business_statements):
+async def test_request_capture_opens_no_transaction_and_records_each_chunk_verbatim(recording_spool,
+                                                                                  business_statements):
     from agent.trajectory import RequestCapture, litellm_chunk_blocks
     ctx = _tool_ctx()
     ctx._trajectory_media_sources = {"a" * 64: "asset_frame"}
@@ -58,9 +75,7 @@ async def test_request_capture_opens_no_transaction_and_marks_its_last_delta_fin
                                                   "messages": [{"role": "user", "content": "hello"}]})
 
     async def provider():
-        # The trailing "htt" could begin a URL, so the redactor withholds it
-        # until the stream ends; finish() then emits it as the last delta.
-        for text in ("Hello ", "visit htt"):
+        for text in ("Hello ", "token sk-FIXTURE_SECRET_VALUE"):
             yield _chunk(text)
     delivered = [chunk async for chunk in capture.stream_chunks(provider(), litellm_chunk_blocks)]
     await capture.capture_usage({"input": 3, "output": 2})
@@ -69,15 +84,20 @@ async def test_request_capture_opens_no_transaction_and_marks_its_last_delta_fin
     assert len(delivered) == 2 and business_statements == []
     events = recording_spool.events()
     assert [item["type"] for item in events] == ["request.prepared", "request.started", "request.delta",
-                                                  "request.delta", "request.usage", "request.delta",
-                                                  "request.finished"]
+                                                  "request.delta", "request.usage", "request.finished"]
     prepared = events[0]["data"]
     assert prepared["media_sources"] == {"a" * 64: "asset_frame"}
     assert "never-recorded" not in json.dumps(prepared) and "api_key" in prepared["input"]["omitted_fields"]
-    assert [item["data"].get("final") for item in events if item["type"] == "request.delta"] == [None, None, True]
-    final = events[5]
-    assert final["event_id"].endswith(":redaction:finalize") and final["data"]["source"] == "recorder_redaction"
-    assert final["data"]["blocks"][0]["delta"] == "htt"
+    deltas = [item["data"] for item in events if item["type"] == "request.delta"]
+    assert [item["chunk_index"] for item in deltas] == [1, 2]
+    assert [item["blocks"] for item in deltas] == [[{"type": "text", "block_id": "0:text", "delta": "Hello "}],
+                                                   [{"type": "text", "block_id": "0:text",
+                                                     "delta": "token sk-FIXTURE_SECRET_VALUE"}]]
+    # The raw chunk names the block instead of repeating its text; nothing is masked.
+    assert deltas[1]["raw"]["choices"][0]["delta"]["content"] == {"$stream_blocks": ["0:text"],
+                                                                  "availability": "stream_reference"}
+    assert {item["raw_content_mode"] for item in deltas} == {"stream_references"}
+    assert "REDACTED" not in json.dumps(events)
     assert {item["request_id"] for item in events} == {capture.context.request_id}
     assert ctx.trace_context == capture.context
 
@@ -374,7 +394,11 @@ async def test_tool_calls_and_file_changes_reach_the_spool_with_their_call_ident
         "tool.requested", "tool.started", "tool.output", "tool.finished"]
     assert {item["call_id"] for item in events[:6]} == {"call-9"}
     diff = events[3]
-    assert diff["data"]["artifact_type"] == "file_diff" and "sk-abcdefghijklmnopqrstuvwx" not in json.dumps(diff)
+    assert diff["data"]["artifact_type"] == "file_diff"
+    # The versions are recorded as the executor saw them, hashed as recorded.
+    assert diff["data"]["after"]["text"] == "api_key=sk-abcdefghijklmnopqrstuvwx\n" and "redacted" not in diff["data"]["after"]
+    assert events[2]["data"] == {"tool": "example", "output": "working", "mode": "delta", "stage": "executor_stream",
+                                 "chunk_index": 0}
     # Only each call's last output is final: a registered tool's (define_tool) and a direct executor's.
     assert events[2]["data"].get("final") is None
     for result_output in (events[4], events[8]):

@@ -39,26 +39,35 @@ PRIVATE_FIELDS = frozenset({
 })
 
 
-def public_value(value: Any, *, schema: bool = False) -> Any:
+SCHEMA_KEYS = frozenset({"schema", "parameters", "inputschema", "outputschema", "jsonschema"})
+
+
+def _schema_node(value: Any) -> bool:
+    return isinstance(value, Mapping) and (
+        (isinstance(value.get("type"), str) and value["type"] in {"object", "array", "string", "number", "integer", "boolean", "null"})
+        or isinstance(value.get("type"), list)
+        or any(key in value for key in ("properties", "$ref", "oneOf", "anyOf", "allOf")))
+
+
+def public_value(value: Any) -> Any:
     """Serialize known public fields, excluding nested SDK/private state."""
+    return _public(value, schema=False)
+
+
+def _public(value: Any, *, schema: bool) -> Any:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
-    if schema:
-        # A property called password describes a public input contract. Its
-        # definition/constraints remain visible; credential examples/defaults
-        # are redacted by the shared schema-aware policy.
-        from trajectory.redaction import sanitize
-        return sanitize(value, _schema=True)
     if isinstance(value, Mapping):
-        from trajectory.redaction import _schema_node
+        # A JSON Schema is a public input contract: a property called password
+        # is kept with its definition, not excluded as a credential.
         return {
-            str(key): public_value(item, schema=(str(key).replace("_", "").lower() in {
-                "schema", "parameters", "inputschema", "outputschema", "jsonschema",
-            } and _schema_node(item))) for key, item in value.items()
-            if not str(key).startswith("_") and str(key).lower() not in PRIVATE_FIELDS
+            str(key): _public(item, schema=schema or (
+                str(key).replace("_", "").lower() in SCHEMA_KEYS and _schema_node(item)))
+            for key, item in value.items()
+            if schema or (not str(key).startswith("_") and str(key).lower() not in PRIVATE_FIELDS)
         }
     if isinstance(value, (list, tuple)):
-        return [public_value(item) for item in value]
+        return [_public(item, schema=schema) for item in value]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     # Unknown SDK objects can carry headers and credentials in repr/__dict__.
@@ -471,10 +480,8 @@ class RequestCapture:
         self.usage: dict | None = None
         self.usage_index = 0
         self.response_ended: float | None = None
-        # A redactor that failed once cannot vouch for later chunks of its stream.
-        self._redaction_failed = False
-        from trajectory.stream_redaction import CaptureStreamRedactor
-        self._stream_redactor = CaptureStreamRedactor() if self.context is not None else None
+        from trajectory.stream_capture import ChunkCapture
+        self._chunks = ChunkCapture()
 
     @classmethod
     async def start(cls, ctx, *, purpose: str, model_id: str, payload: Mapping,
@@ -525,7 +532,7 @@ class RequestCapture:
         return capture
 
     def chunk_data(self, raw: Any, *, blocks: list[dict] | None = None):
-        """One redacted delta, or None when this stream can no longer be recorded safely."""
+        """One recorded delta, or None when this chunk cannot be captured; the request goes on."""
         self.chunk_index += 1
         observed = time.monotonic()
         blocks = blocks or []
@@ -536,18 +543,13 @@ class RequestCapture:
                 isinstance(block, dict) and block.get("type") == "text" and block.get("delta") for block in blocks
             ):
                 self.first_text = observed
-        if self._redaction_failed:
-            return None
         try:
-            data = {
+            return self._chunks.capture({
                 "chunk_index": self.chunk_index, "mode": "delta", "blocks": blocks, "purpose": self.purpose,
                 "raw": provider_output_snapshot(raw), "elapsed_ms": (observed - self.started) * 1000,
-            }
-            return data if self._stream_redactor is None else self._stream_redactor.redact(data)
+            })
         except Exception as exc:
-            # Unredacted provider output never reaches the spool.
-            self._redaction_failed = True
-            _not_recorded("response chunk could not be redacted", exc)
+            _not_recorded("response chunk could not be captured", exc)
             return None
 
     async def chunk(self, raw: Any, *, blocks: list[dict] | None = None):
@@ -622,20 +624,6 @@ class RequestCapture:
         if self.context is None:
             return
         from trajectory import record
-        finalized = None
-        if self._stream_redactor is not None and not self._redaction_failed:
-            try:
-                finalized = self._stream_redactor.finalize()
-            except Exception as exc:
-                _not_recorded("response redaction could not be finalized", exc)
-        if finalized is not None:
-            # A buffered redaction suffix is recorder control data, not an
-            # additional provider chunk. As the request's last delta it is
-            # marked final, so a degraded budget still keeps it.
-            await record("request.delta", {**finalized, "purpose": self.purpose,
-                "source": "recorder_redaction", "observed_chunk_count": self.chunk_index,
-                "elapsed_ms": (ended - self.started) * 1000, "final": True}, context=self.context,
-                event_id=f"request:{self.context.request_id}:redaction:finalize")
         await record("request.finished", {
             "status": status, "finish_reason": reason, "purpose": self.purpose,
             "error": {"type": type(error).__name__, "message": str(error)} if error else None,

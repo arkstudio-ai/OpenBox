@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 from trajectory.context import TraceContext, bind, current
 from trajectory.projector import agents, empty_state, reduce, replay, statistics
-from trajectory.redaction import sanitize
 from trajectory.types import TrajectoryError, prepare, sequence
 FIXTURE = Path(__file__).parents[2] / "trajectory/fixtures/session_v1.json"
 
@@ -56,36 +55,3 @@ def test_unknown_versions_visible_context_immutable_and_seq_safe():
         prepare(ctx, {"type": "request.started", "data": {}})
     with pytest.raises(TrajectoryError): sequence("1.5")
     assert sequence("9007199254740993") == 9007199254740993
-
-
-def test_credential_redaction_covers_nested_raw_and_signed_urls():
-    source = {"input": {"headers": {"Authorization": "Bearer dangerous-auth", "Cookie": "sid=dangerous-cookie"},
-                        "api_key": "dangerous-key", "text": "Authorization=Bearer dangerous-token"},
-              "url": "https://example.invalid/a?X-Amz-Signature=dangerous-signature&name=photo", "output": "Bearer dangerous-bearer"}
-    sanitized = json.dumps(sanitize(source))
-    for value in ("dangerous-auth", "dangerous-cookie", "dangerous-key", "dangerous-token", "dangerous-signature", "dangerous-bearer"):
-        assert value not in sanitized
-    assert source["input"]["api_key"] == "dangerous-key"
-
-@pytest.mark.parametrize('raw', [
-    '{"password":"short-secret","api_key":"other-secret"}',
-    '{"password":"short-secret',
-    '{\\"password\\":\\"short-secret\\"}',
-    'args = {"password": "short-secret"}',
-    "args = {'password': 'short-secret'}",
-    '{"arguments":"{\\"password\\":\\"short-secret\\"}"}',
-    '{"password":"short-secret\\"other-secret',
-])
-def test_raw_json_and_incomplete_credential_fragments(raw):
-    result = sanitize({'arguments_raw': raw})
-    assert 'short-secret' not in json.dumps(result)
-    assert 'other-secret' not in json.dumps(result)
-
-
-def test_schema_credential_property_definitions_remain_inspectable():
-    data = {'schema': {'type':'object', 'properties': {'token': {'type':'string','description':'Authentication token','default':'actual-default-secret'},
-            'password': {'type':['string','null'],'minLength':1}}}, 'requested_arguments': {'token':'actual-token-secret','password':'actual-password-secret'}}
-    result=sanitize(data)
-    assert result['schema']['properties']['token']['type']=='string'
-    assert result['schema']['properties']['password']['minLength']==1
-    assert 'actual-' not in json.dumps(result)

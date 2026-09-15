@@ -628,8 +628,6 @@
     "noDiff": "No diff recorded",
     "absent": "The file did not exist yet (for example, a newly created file).",
     "source": "Content source",
-    "redacted": "Redacted",
-    "redactedNote": "Sensitive values were removed before recording",
     "revision": "Revision {{index}}",
     "revisions_one": "{{count}} revision",
     "revisions_other": "{{count}} revisions"
@@ -652,9 +650,7 @@
     "count_one": "{{count}} event through #{{seq}}",
     "count_other": "{{count}} events through #{{seq}}",
     "seq": "#{{seq}}",
-    "sanitizedRawNote": "Raw chunk fields here point to the sanitized blocks shown for the same event; the retained text is in those blocks.",
-    "finalizeNote": "A recorder flush writes buffered sanitized text at the end of the stream. It is not a new provider chunk or request.",
-    "finalize": "Recorder flush"
+    "streamReferenceNote": "Raw chunk fields here point to the blocks shown for the same event; the streamed text is kept once, in those blocks."
   },
   "session": {
     "loading": "Loading session…",

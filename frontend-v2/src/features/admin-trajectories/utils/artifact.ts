@@ -16,8 +16,6 @@ export interface FileVersion {
   sha256: string | null
   sizeBytes: number | null
   source: string | null
-  /** The retained text differs from what the executor saw (secrets removed). */
-  redacted: boolean
 }
 
 export interface FileRevision {
@@ -53,7 +51,6 @@ function version(record: ViewRecord, data: Record<string, unknown>, key: "before
     sha256: str(wrapper.sha256),
     sizeBytes: num(wrapper.size_bytes),
     source: str(wrapper.source),
-    redacted: wrapper.redacted === true,
   }
 }
 

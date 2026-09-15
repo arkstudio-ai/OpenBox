@@ -49,7 +49,6 @@ function VersionCard({ title, version, name, testId }: VersionCardProps) {
                 })}
               </Field>
             )}
-            {version.redacted && <Field label={t("artifact.redacted")}>{t("artifact.redactedNote")}</Field>}
           </FieldList>
         )}
         {field.state === "available" &&

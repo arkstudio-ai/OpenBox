@@ -136,6 +136,43 @@ async def test_custom_executor_full_output_slot_is_cleared_between_calls(recorde
         "model preview", "second result"]
 
 
+@pytest.mark.asyncio
+async def test_cumulative_output_pushes_are_recorded_as_suffixes_and_replay_to_the_final_output(recorded):
+    from agent.hooks import ToolHooks
+    from trajectory.projector import replay
+    hooks = ToolHooks("session", "owner")
+
+    async def allow(*args):
+        return None
+    hooks.authorize_tool = allow
+
+    async def execute(args, ctx):
+        # bash pushes its whole collected output on every chunk, repeats a push
+        # while idle, and appends an idle notice that the next chunk drops again.
+        for output in ("one", "one two", "one two", "one two three", "one two three\n[Waiting...]\n",
+                       "one two three four"):
+            await ctx.update_output(output)
+        return ToolResult(output="one two three four")
+    await hooks.wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    assert [(item["mode"], item["output"]) for item in outputs] == [
+        ("delta", "one"), ("delta", " two"), ("delta", " three"), ("delta", "\n[Waiting...]\n"),
+        ("replace", "one two three four"), ("replace", "one two three four")]
+    assert [item.get("chunk_index") for item in outputs] == [0, 1, 2, 3, 4, None]
+    assert outputs[-1]["stage"] == "executor_result" and outputs[-1]["final"] is True
+    assert all("redaction" not in item for item in outputs)
+
+    events = [{"seq": str(index), "version": 1, "type": event["type"], "data": event["data"],
+               "event_id": f"evt_{index}", "occurred_at": "2026-09-15T00:00:00.000Z", "user_id": "owner",
+               "session_id": "session", "source_session_id": "session", "call_id": "call"}
+              for index, event in enumerate(recorded, 1)]
+    streamed = [event for event in events if event["type"] != "tool.output" or event["data"].get("stage") == "executor_stream"]
+    assert replay(streamed[:5])["records"]["tool:call"]["data"]["output"] == "one two three"
+    assert replay(streamed)["records"]["tool:call"]["data"]["output"] == "one two three four"
+    assert replay(events)["records"]["tool:call"]["data"]["output"] == "one two three four"
+
+
 def test_responses_final_only_output_is_a_replace_checkpoint():
     blocks = responses_chunk_blocks({"type": "response.completed", "response": {"output": [
         {"id": "item", "type": "message", "content": [{"type": "output_text", "text": "answer"}]},

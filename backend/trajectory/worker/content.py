@@ -1,8 +1,9 @@
 """Content preparation of ingested events (SPEC §8.4).
 
-Per event, in order: generic redaction (``sanitize``), the idempotency hash,
-producer helper keys, inline base64 media, content addressing of
+Per event, in order: the NUL replacement the databases need, the idempotency
+hash, producer helper keys, inline base64 media, content addressing of
 ``request.prepared`` inputs, large values and the whole-data fallback.
+Content is stored as recorded: there is no redaction (SPEC §5.5).
 
 This module is CPU work on plain JSON values without I/O; the ingest service
 runs it in a thread. Database facts it needs (existing payload rows of a
@@ -24,7 +25,6 @@ from typing import Callable
 import zstandard
 
 from trajectory.projector import _preview
-from trajectory.redaction import sanitize
 from trajectory.storage import ZSTD_LEVEL, encode_blob
 from trajectory.types import canonical
 
@@ -44,8 +44,8 @@ ENVELOPE_KEYS = frozenset({"$ref", "$payload", "$media"})
 BLOB_UNAVAILABLE = {"availability": "not_recorded", "reason": "blob_store_unavailable"}
 ASSET_ID_CHARS = 64
 OSS_KEY_CHARS = 1024
-#: Sanitize can grow a value (``token=a`` becomes ``token=[REDACTED]``) but not
-#: fourfold, so a shorter spool line cannot produce data above the inline limit.
+#: The spool line is the event's compact JSON with its envelope; canonical data
+#: cannot be fourfold larger, so a shorter line cannot exceed the inline limit.
 SIZE_HINT_FACTOR = 4
 _DATA_URL = re.compile(r"data:([^;,]+)(?:;[^,;]+)*;base64,(.*)", re.DOTALL)
 _MEDIA_MARKERS = (b";base64,", b'"base64"', b'"input_audio"')
@@ -89,11 +89,11 @@ def replace_nul(value):
 
 
 def redact_data(data: dict, raw: bytes | None = None) -> dict:
-    """Step 1: the generic ``sanitize`` pass, plus the NUL replacement the databases need.
+    """Step 1: the NUL replacement the databases need; nothing else changes the content.
 
     ``raw`` is the spool line: a NUL can only be present when it has a ``\\u0000`` escape.
+    The name stays until ``ingest.py``, its only caller, is next edited.
     """
-    data = sanitize(data)
     if raw is None or b"\\u0000" in raw:
         data = replace_nul(data)
     return data

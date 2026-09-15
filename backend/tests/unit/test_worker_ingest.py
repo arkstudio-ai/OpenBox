@@ -1,4 +1,4 @@
-"""Spool ingest (SPEC §8.3, §8.4, §8.7): trajectories, seq, keep-first dedupe, redaction, content addressing.
+"""Spool ingest (SPEC §8.3, §8.4, §8.7): trajectories, seq, keep-first dedupe, verbatim content, content addressing.
 
 The helpers here (spool writer, fake metrics and retention, harness) are shared by the other
 ``test_worker_ingest_*`` modules.
@@ -19,7 +19,6 @@ from bus import bus
 from trajectory import spool
 from trajectory.lifecycle import publish_after_commit
 from trajectory.projector import _preview
-from trajectory.redaction import sanitize
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine, trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryGcQueue,
@@ -239,15 +238,14 @@ async def test_keep_first_dedupe_counts_duplicates_and_conflicts(harness):
     assert second["trajectories"] == set()
 
 
-async def test_redaction_runs_before_hashing_and_storage(harness):
+async def test_secrets_are_stored_verbatim_and_hashed_as_recorded(harness):
     secret = event("tool.finished", event_id="t1", call_id="c1",
                    data={"arguments": {"api_key": "sk-abcdefghijklmnop"}, "output": "Authorization: Bearer abc.def.ghi"})
     harness.writer.events(secret)
     await harness.run()
     row = (await events_of("ses_1"))[1][1]
-    assert row.data["arguments"]["api_key"] == "[REDACTED]" and "abc.def" not in row.data["output"]
+    assert row.data == secret["data"]
     expected = {key: value for key, value in secret.items() if key not in {"event_id", "occurred_at"}}
-    expected["data"] = sanitize(secret["data"])
     assert row.content_hash == digest(expected)
     assert (row.call_id, row.request_id, row.agent_id) == ("c1", None, None)
 

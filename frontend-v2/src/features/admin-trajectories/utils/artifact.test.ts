@@ -35,7 +35,6 @@ const version = (text: string) => ({
   sha256: `sha-${text}`,
   size_bytes: text.length,
   source: "executor_content",
-  redacted: false,
 })
 
 const events = [

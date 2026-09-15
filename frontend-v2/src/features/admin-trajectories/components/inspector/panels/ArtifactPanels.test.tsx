@@ -52,7 +52,6 @@ describe("file change artifacts", () => {
         sha256: "bb22",
         size_bytes: 19,
         source: "executor_content",
-        redacted: true,
       },
       diff: DIFF,
     })
@@ -62,7 +61,6 @@ describe("file change artifacts", () => {
       "available",
     )
     expect(screen.getByText("aa11")).toBeTruthy()
-    expect(screen.getByText("artifact.redactedNote")).toBeTruthy()
     expect(container.textContent).toContain("状态：已完成")
     unmount()
     const preview = render(withInspector(<ArtifactPreviewPanel record={record} />, env))

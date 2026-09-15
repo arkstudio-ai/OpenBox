@@ -183,15 +183,12 @@ async def execute(args: BashArgs, ctx: ToolContext) -> ToolResult:
                     from trajectory import record, current
                     trace = getattr(ctx, "trace_context", None) or current()
                     if trace is not None:
-                        from trajectory.stream_redaction import StreamTextRedactor
-                        if ctx._trajectory_output_redactor is None:
-                            ctx._trajectory_output_redactor = StreamTextRedactor()
-                        safe_output = ctx._trajectory_output_redactor.redact(
-                            chunk.content if ctx._on_output else collected_output,
-                            mode="delta" if ctx._on_output else "replace",
-                        )
+                        # Past the chat budget the chunks are recorded here: as
+                        # deltas after the callback's pushes, or as the whole
+                        # output when no callback ran.
                         await record("tool.output", {
-                            **safe_output,
+                            "output": chunk.content if ctx._on_output else collected_output,
+                            "mode": "delta" if ctx._on_output else "replace",
                             "stage": "executor_stream",
                         }, context=trace)
 

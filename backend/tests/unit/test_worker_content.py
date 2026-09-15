@@ -1,4 +1,4 @@
-"""Content preparation (SPEC §8.4): redaction, hash, hints, media, content addressing, fallbacks."""
+"""Content preparation (SPEC §8.4): NUL replacement, hash, hints, media, content addressing, fallbacks."""
 import base64
 import hashlib
 import json
@@ -49,13 +49,13 @@ def test_hash_matches_the_recorder_definition(event):
     assert hash_event({**event, "event_id": "other", "occurred_at": "2027-01-01T00:00:00.000Z"}) == expected
 
 
-def test_redaction_runs_sanitize_and_replaces_nul():
+def test_data_preparation_replaces_nul_and_keeps_secrets_verbatim():
     data = {"api_key": "sk-1234567890abcdef", "text": "Bearer abc.def", "nul\x00key": "a\x00b"}
     raw = json.dumps(data).encode()
     assert b"\\u0000" in raw
     result = redact_data(data, raw)
-    assert result["api_key"] == "[REDACTED]"
-    assert result["text"] == "Bearer [REDACTED]"
+    assert result["api_key"] == "sk-1234567890abcdef"
+    assert result["text"] == "Bearer abc.def"
     assert result["nul�key"] == "a�b"
     # Without a \\u0000 escape in the line, the NUL pass is skipped.
     assert redact_data({"text": "plain"}, b'{"text":"plain"}') == {"text": "plain"}

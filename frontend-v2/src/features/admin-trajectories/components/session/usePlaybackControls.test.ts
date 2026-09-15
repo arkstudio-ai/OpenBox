@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import type { Position, SyncSnapshot } from "../../api/sync"
 import { useTrajectoryView } from "../../stores/view"
 import { PROJECTOR_VERSION, type TrajectoryEvent, type TrajectoryRecord } from "../../types/protocol"
-import { hasSanitizedRaw } from "../inspector/panels/eventNotes"
+import { hasStreamReferences } from "../inspector/panels/eventNotes"
 import { makeRecord } from "../testing/harness"
 import { sliderMax } from "./seekScale"
 import { usePlaybackControls } from "./usePlaybackControls"
@@ -203,11 +203,11 @@ describe("next Step after a target-only seek", () => {
   })
 })
 
-describe("sanitized raw notes", () => {
-  it("recognises both recorder raw-content modes", () => {
+describe("stream reference notes", () => {
+  it("recognises the recorder's raw-content mode", () => {
     const withMode = (mode: string) => [{ ...event("1", "request.delta"), data: { raw_content_mode: mode } }]
-    expect(hasSanitizedRaw(withMode("sanitized_stream_references_and_complete_fields"))).toBe(true)
-    expect(hasSanitizedRaw(withMode("sanitized_block_references"))).toBe(true)
-    expect(hasSanitizedRaw(withMode("verbatim"))).toBe(false)
+    expect(hasStreamReferences(withMode("stream_references"))).toBe(true)
+    expect(hasStreamReferences(withMode("verbatim"))).toBe(false)
+    expect(hasStreamReferences([event("1", "request.delta")])).toBe(false)
   })
 })

@@ -109,7 +109,8 @@ def filter_event(level: str, event_type, data) -> tuple[str | None, object]:
     if not isinstance(data, dict) or not isinstance(event_type, str):
         return None, data
     if event_type == "request.delta":
-        # finish() marks the last chunk final; it carries the settled output.
+        # Degraded: streamed deltas are dropped; a replace checkpoint or a chunk
+        # a producer marked final is kept.
         if data.get("mode", "delta") == "delta" and data.get("final") is not True:
             return DROP_DEGRADED, data
         return None, data

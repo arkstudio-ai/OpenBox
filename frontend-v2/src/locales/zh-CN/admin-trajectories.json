@@ -628,8 +628,6 @@
     "noDiff": "未记录差异",
     "absent": "当时文件还不存在（例如新建的文件）。",
     "source": "内容来源",
-    "redacted": "已脱敏",
-    "redactedNote": "敏感内容在记录前已移除",
     "revision": "第 {{index}} 次修改",
     "revisions_one": "{{count}} 次修改",
     "revisions_other": "{{count}} 次修改"
@@ -652,9 +650,7 @@
     "count_one": "截至 #{{seq}} 共 {{count}} 个事件",
     "count_other": "截至 #{{seq}} 共 {{count}} 个事件",
     "seq": "#{{seq}}",
-    "sanitizedRawNote": "此处原始分片字段引用同一事件中已脱敏的内容块，实际保留的文本见这些内容块。",
-    "finalizeNote": "记录器刷新是在流结束时写出缓冲的脱敏文本，不是新的模型分片或请求。",
-    "finalize": "记录器刷新"
+    "streamReferenceNote": "此处原始分片字段引用同一事件中的内容块，流式文本只保留一份，见这些内容块。"
   },
   "session": {
     "loading": "正在加载会话…",

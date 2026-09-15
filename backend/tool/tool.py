@@ -42,7 +42,6 @@ class ToolContext:
     trace_context: Any = None
     _trajectory_execute_started: float | None = None
     _trajectory_full_tool_output: str | None = None
-    _trajectory_output_redactor: Any = None
     workdir: str = "/workspace"  # Session-specific working directory
     # Tools exposed for this agent turn. Nested dispatchers such as `batch`
     # must not use the global registry to escape the current agent's allowlist.
@@ -170,9 +169,6 @@ def define_tool(
         # Execute
         ctx._trajectory_execute_started = time.monotonic()
         ctx._trajectory_full_tool_output = None
-        if trace is not None:
-            from trajectory.stream_redaction import StreamTextRedactor
-            ctx._trajectory_output_redactor = StreamTextRedactor()
         result = await execute(validated, ctx)
         duration = time.monotonic() - ctx._trajectory_execute_started
 
@@ -181,9 +177,8 @@ def define_tool(
         if trace is not None:
             retained = (ctx._trajectory_full_tool_output
                 if ctx._trajectory_full_tool_output is not None else result.output)
-            safe_output = ctx._trajectory_output_redactor.redact(retained, mode="replace", final=True)
             await record("tool.output", {
-                **safe_output,
+                "output": retained, "mode": "replace",
                 # The call's last output: a degraded budget keeps it (NOTES decision 7).
                 "stage": "executor_result", "final": True, "title": result.title,
                 "metadata": result.metadata, "duration_ms": round(duration * 1000, 3),

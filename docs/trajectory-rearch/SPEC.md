@@ -37,7 +37,7 @@ Everything in this spec is in scope. "Optional"/"later" items are called out exp
 business backend process (uvicorn)                           trajectory worker process (same image)
   producers ── emit()/emit_after_commit() ──► bounded queue    ┌────────────────────────────────────────┐
                                         writer thread          │ spool reader ─► ingest (seq, dedupe,   │
-                                             │  JSONL append   │   sanitize, externalize, meta/control) │
+                                             │  JSONL append   │   prepare, externalize, meta/control)  │
                                              ▼                 │ projection (batched)                    │
                                    shared spool volume ───────►│ archive (OSS segments), retention, GC   │
   meta sync task (30 s) ── control lines ──►  (0700)           │ exports, checkpoints, budgets           │
@@ -88,7 +88,7 @@ Version 2 adds blob values (§3.5) to version 1. Workers read files with version
 
 - `producer_id` = `{UTC yyyymmddHHMMSS}-{hostname}-{pid}-{8 hex}`; lexical order equals start order.
 - File names are 20-digit zero-padded counters per producer, starting at 1.
-- Permissions: directories `0700`, files `0600`. The spool may contain unredacted data (generic redaction runs in the worker, §8.4); it must only be mounted into the backend and worker containers.
+- Permissions: directories `0700`, files `0600`. The spool holds raw content (there is no content redaction, §5.5); it must only be mounted into the backend and worker containers.
 - Consumed files are deleted by the worker after the consuming transaction commits. Blob files are deleted by the worker's sweep (§3.5).
 - The JSON documents (`producer.json`, `budgets.json`, `worker.json`, `.reason`) keep `"version": 1`.
 
@@ -160,7 +160,7 @@ Repeated prompt content (system prompts, tool lists, conversation history) is wr
   - An event whose serialized bytes contain `"$blob"` is written inline as version 1: in a version 2 line every `{"$blob": ...}` object is a reference.
 - **Blob file**: `blobs/<sha256>` holds the value's compact JSON (the exact bytes it has inline); the name is the sha256 of the content. Written as a temp file (`.<sha256>.<8 hex>.tmp`), fsynced, then renamed; the blobs directory is fsynced before a data file that references a new blob is closed. A blob that already exists gets its mtime refreshed instead, at most every 60 s per writer. Blobs are written before the line that references them; if a blob cannot be stored the event is written inline.
 - **Spool budget**: `spool_max_bytes` (§5.2) counts the allocated size (`max(st_size, st_blocks × 512)`) of the files in the producer directories, `blobs/` and `quarantine/`; an event line is dropped with `spool_full` when the line plus its new blob bytes do not fit. Writer-owned lines (`gap`, `producer.goodbye`) may exceed the cap by 1 MiB, so a producer restarted on a full spool still ends with its goodbye; one refused even then is counted in the emitter's `writer_lines_skipped`. The worker keeps `quarantine/` within `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` and `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` (§13), oldest files first.
-- **Reading**: the worker's `read_batch` replaces every reference of a version 2 event line with the blob content before decoding, so sanitize, the event hash, previews and content addressing (§8.4) see the same event as for the inline line, and the resolved size counts against `TRAJECTORY_INGEST_BATCH_BYTES` and the user byte budget. A blob that is missing or whose content does not match its sha256 turns the line into a `gap` control with the same `n` and `t` (`reason` `spool_blob_missing` or `spool_blob_corrupt`, `dropped_events` 1, the event's user, root session, run and request ids); the rest of the file is ingested normally.
+- **Reading**: the worker's `read_batch` replaces every reference of a version 2 event line with the blob content before decoding, so the NUL replacement, the event hash, previews and content addressing (§8.4) see the same event as for the inline line, and the resolved size counts against `TRAJECTORY_INGEST_BATCH_BYTES` and the user byte budget. A blob that is missing or whose content does not match its sha256 turns the line into a `gap` control with the same `n` and `t` (`reason` `spool_blob_missing` or `spool_blob_corrupt`, `dropped_events` 1, the event's user, root session, run and request ids); the rest of the file is ingested normally.
 - **Sweep**: at most once a minute, after a complete scan of the producer directories, the worker deletes blob files whose mtime is older than the oldest remaining data file (consumed or not; the scan time when there is none) minus 600 s. Data files unmodified for 15 minutes do not hold the cutoff back: they are read instead (at most 256 MiB per sweep, else the plain rule applies) and the blobs they reference are kept whatever their age, so one stuck file does not keep every later blob until the spool is full. A candidate is renamed aside and its mtime checked again, so a writer that refreshed it meanwhile keeps it. Orphaned temp files older than the margin are deleted too.
 
 ---
@@ -245,9 +245,12 @@ Compatibility requirements for wave 1 (`TRAJECTORY_SINK=db` default): the legacy
 ### 5.4 Serialization helper
 `_json_default(obj)`: pydantic models → `model_dump(mode="json")`; `datetime` → ISO; `bytes` → `{"availability":"not_recorded","reason":"binary_value"}`; sets/tuples → lists; anything else → `{"availability":"not_recorded","reason":"unsupported_value"}`.
 
-### 5.5 Redaction placement
-- Stays in producers: request allowlists (`request_snapshot`, `public_value`), provider output allowlists, stream redactors (`CaptureStreamRedactor`, `StreamTextRedactor`), file tool `sanitize` of before/after text (it feeds sha256 values).
-- Moves to the worker: the generic `sanitize(data)` pass that the recorder applied to every event (§8.4).
+### 5.5 No content redaction
+Trace viewers are super-admins, so recorded content is not redacted: the spool, the trace database and the blob store hold raw content (provider chunks, tool output, file versions, arguments) exactly as the producers saw it. Access is limited to the admin allowlist (`TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`; §8.12) and to the containers that mount the spool (§3.1).
+- Producers still copy only known request fields: `request_snapshot` / `public_value` drop underscore keys and `PRIVATE_FIELDS` (`api_key`, `headers`, provider replay state, ...), a JSON Schema subtree is copied whole; `provider_output_snapshot` keeps the provider's public chunk fields. This is a field allowlist, not content masking.
+- `ChunkCapture` (`trajectory/stream_capture.py`) is a size optimization only: a raw chunk slot that repeats a block delta becomes `{"$stream_blocks": [ids], "availability": "stream_reference"}` (`raw_content_mode: "stream_references"`); every other value passes through unchanged and there is no end-of-stream recorder event.
+- Tool output: the hooks record the new suffix of each cumulative push as a `tool.output` delta (`mode: "delta"`), a rewritten output as `mode: "replace"`, and the retained full output once at the end (`stage: "executor_result"`, `final: true`). `tool.finished` carries the model-facing `model_output`.
+- File versions (`trajectory/files.py`) and the worker (§8.4) change nothing but U+0000.
 
 ### 5.6 Pause, resume and baseline without trace tables
 Business marker: `SessionExecution.trace_context` (business column, kept).
@@ -340,7 +343,7 @@ UNIQUE(user_id, session_id). Index (last_activity_at).
 | user_id, session_id, source_session_id | str |
 | request_id, call_id, agent_id | String(128) nullable |
 | context | json (non-null identity fields) |
-| data | json (sanitized; externalized values replaced by references) |
+| data | json (as recorded, no redaction; externalized values replaced by references) |
 | hints | json nullable (worker-only: `{"preview": {"<field>": "<≤240 chars>"}}`) |
 | content_hash | String(64) |
 | occurred_at, recorded_at | timestamp |
@@ -479,7 +482,7 @@ backend/trajectory/worker/lock.py         # single-writer lock
 backend/trajectory/worker/services.py     # WorkerServices: start/stop of loops; used by app lifespan and embedded mode
 backend/trajectory/worker/spool_reader.py # enumerate files, read lines, offsets, abandonment, quarantine
 backend/trajectory/worker/ingest.py       # IngestService
-backend/trajectory/worker/content.py      # sanitize, externalization, content addressing, media references
+backend/trajectory/worker/content.py      # NUL replacement, externalization, content addressing, media references
 backend/trajectory/worker/meta.py         # control record application, ownership checks
 backend/trajectory/worker/budgets.py      # budget computation and control/budgets.json
 backend/trajectory/worker/notify.py       # trajectory.available publication
@@ -514,7 +517,7 @@ backend/trajectory/ops/backup.py          # pg_dump upload helper used by deploy
 
 ### 8.3 Ingest transaction
 Per batch (≤ `TRAJECTORY_INGEST_BATCH_LINES` lines or ≤ `TRAJECTORY_INGEST_BATCH_BYTES`):
-1. Content preparation outside the DB transaction: sanitize, content addressing, media decoding, blob uploads (§8.4). Uploads are idempotent (content-addressed keys, `if_absent=True`).
+1. Content preparation outside the DB transaction: NUL replacement, content addressing, media decoding, blob uploads (§8.4). Uploads are idempotent (content-addressed keys, `if_absent=True`).
 2. One trace DB transaction: apply controls (§8.5), resolve trajectories, dedupe, allocate seq (`SELECT ... FOR UPDATE` on the trajectory row), insert events/keys/payload rows, update counters, update `trajectory_ingest_files`/`trajectory_ingest_producers`.
 3. After commit: delete fully consumed files, enqueue projection for touched trajectories, publish notifications (§8.7).
 - Blob upload failure for an event → retry the batch with exponential backoff (1 s → 60 s) while other producers' files continue; after 10 attempts the event's content is replaced by an availability marker `{"availability":"not_recorded","reason":"blob_store_unavailable"}` and a gap is recorded.
@@ -525,11 +528,11 @@ Trajectory resolution:
 - Tombstoned (`deleted_at` set) or meta session `is_deleted` → drop the event (count `deleted_drops`).
 - Ownership (meta-assisted): when the meta session exists and its `user_id` differs → drop (`ownership_drops`). When `source_session_id` differs from the root and the meta chain (parent_id walk, ≤100 hops) is known and does not reach the root → drop. Unknown meta → accept.
 
-Dedupe (keep-first): look up `trajectory_event_keys`. Same trajectory and hash → duplicate (count, skip). Different hash or trajectory → conflict (count `idempotency_conflicts`, log once per event_id, skip). Hash = `digest(event minus event_id and occurred_at)` computed after sanitize and before externalization (same definition as today).
+Dedupe (keep-first): look up `trajectory_event_keys`. Same trajectory and hash → duplicate (count, skip). Different hash or trajectory → conflict (count `idempotency_conflicts`, log once per event_id, skip). Hash = `digest(event minus event_id and occurred_at)` computed after the NUL replacement and before externalization (same definition as today).
 
 ### 8.4 Content preparation (`content.py`)
 Order per event:
-1. `data = sanitize(data)` (existing `trajectory.redaction.sanitize`).
+1. Replace U+0000 in strings and keys (`replace_nul`; PostgreSQL text and jsonb cannot store it). Nothing else changes the content: there is no redaction (§5.5).
 2. Compute `hints.preview` for fields the projector previews (`text`, `content`, `input`, `prompt`, `questions`, `requested_arguments`, `arguments`, `summary`, and result fields `output`, `result`, `answers`, `model_output`) using the projector's `_preview` on the unexternalized values.
 3. Strip producer helper keys (`media_sources`, `asset_ref`, `source_root_session_id`) after using them.
 4. Media:
@@ -706,7 +709,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
   - `trajectory/artifacts.py`: producer helpers only (no DB, no bytes): `capture_asset*` emit `artifact.recorded` with `asset_ref` after commit; `revoke_asset_in_tx` → `emit_control(asset.deleted, db=db)`; `read_asset_bytes` stays for business callers only.
   - `api/assets.py`, `sandbox/assets.py`, `tool/image_gen.py`, `tool/video_production.py`, `tool/douyin_publish.py`: no recording-only downloads; asset references.
   - `agent/trajectory.py`: `RequestCapture.start` performs no DB transaction and no media retention; emits `request.prepared` (with `media_sources` when available) and `request.started`; `stream_chunks` emits each chunk without awaiting receipts; `register_owned_media_inputs` / `retain_derived_media_inputs` record OSS-key references bound to the source asset (no downloads, no transient FileAsset rows); `_link_service_job` stays (business link) but only when enabled.
-  - `trajectory/files.py`: emit; keep sanitize before hashing.
+  - `trajectory/files.py`: emit; the versions are recorded and hashed as the executor saw them (no sanitize).
   - `main.py` (wave 2, WP-E): start emitter + meta sync; embedded worker when mode embedded; no archive worker, no `resume_exports`, no admin routers in external mode; shutdown closes emitter.
 - Business DB retirement (§6.9): rename migration, unhook models, readiness schema update, remove imports of `db.models.trajectory` from business modules.
 - Default `TRAJECTORY_SINK=spool`; remove the legacy `db` sink code paths (`append_events_in_tx`, `ensure_trajectory_in_tx`, `_append_prepared`, stream queues) from `recorder.py` once no caller remains (tests are adapted in wave 3).

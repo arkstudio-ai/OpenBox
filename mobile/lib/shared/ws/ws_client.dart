@@ -42,6 +42,10 @@ class AgentWsClient {
 
   Stream<WsEvent> get events => _events.stream;
 
+  /// A socket is open right now. `__connected` only reaches listeners that
+  /// were already subscribed when the handshake finished; a later one asks.
+  bool get connected => _channel != null;
+
   Future<String> fetchTicket() async {
     final resp = await _dio.post<Map<String, dynamic>>('/api/auth/ticket');
     return asString(resp.data?['ticket']) ?? '';

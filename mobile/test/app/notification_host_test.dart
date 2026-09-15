@@ -5,6 +5,7 @@ import 'package:bossip_mobile/app/router.dart';
 import 'package:bossip_mobile/features/workspace/state/active_workspace_store.dart';
 import 'package:bossip_mobile/shared/api/auth_store.dart';
 import 'package:bossip_mobile/shared/api/providers.dart';
+import 'package:bossip_mobile/shared/events/app_lifecycle.dart';
 import 'package:bossip_mobile/shared/i18n/i18n.dart';
 import 'package:bossip_mobile/shared/models/auth_user.dart';
 import 'package:bossip_mobile/shared/models/workspace.dart';
@@ -358,6 +359,11 @@ void main() {
             push.foreground,
             state == AppLifecycleState.resumed ||
                 state == AppLifecycleState.inactive,
+          );
+          // A live chat's catch-up runs only in front, where it has a reader.
+          expect(
+            container.read(appResumedProvider),
+            state == AppLifecycleState.resumed,
           );
           expect(native.localShows, 0);
         }

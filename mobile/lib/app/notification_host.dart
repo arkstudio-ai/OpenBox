@@ -9,6 +9,7 @@ import '../features/inbox/state/inbox_navigator.dart';
 import '../features/workspace/state/active_workspace_store.dart';
 import '../shared/api/auth_store.dart';
 import '../shared/api/providers.dart';
+import '../shared/events/app_lifecycle.dart';
 import '../shared/i18n/i18n.dart';
 import '../shared/models/inbox.dart';
 import '../shared/notifications/push_controller.dart';
@@ -56,6 +57,14 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      // Started behind the home screen (a push woke it): nothing that polls
+      // for a reader runs until the app is opened. Null means the platform
+      // has not said yet, which is not the same as backgrounded.
+      final launched = WidgetsBinding.instance.lifecycleState;
+      if (launched != null) {
+        ref.read(appResumedProvider.notifier).state =
+            launched == AppLifecycleState.resumed;
+      }
       _syncIdentity();
       await native.refresh();
       if (mounted) unawaited(_openPending());
@@ -106,6 +115,10 @@ class _NotificationHostState extends ConsumerState<NotificationHost>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycle = state;
+    // A live chat stops its catch-up poll behind the home screen; its first
+    // tick after resuming catches up.
+    ref.read(appResumedProvider.notifier).state =
+        state == AppLifecycleState.resumed;
     final push = ref.read(pushControllerProvider);
     push.setLifecycle(state.name);
     _routeChanged();

@@ -18,6 +18,7 @@ class ChatFlow extends StatefulWidget {
     this.onAtBottomChanged,
     this.controller,
     this.onNearTop,
+    this.topKey,
     this.loadingOlder = false,
   });
 
@@ -38,6 +39,12 @@ class ChatFlow extends StatefulWidget {
   /// Null when there is nothing older to fetch.
   final VoidCallback? onNearTop;
 
+  /// The first row's identity across rebuilds, such as its first message's
+  /// id. [onNearTop] is called once per top row (web `ChatFlow`): a page that
+  /// failed is asked for again when the reader leaves the top and comes back,
+  /// not on every scroll update or streamed delta while they stay there.
+  final Object? topKey;
+
   /// An older page is on its way: a small spinner at the top edge.
   final bool loadingOlder;
 
@@ -53,12 +60,19 @@ class _ChatFlowState extends State<ChatFlow> {
   /// opened on and everything after them.
   static const _newestKey = ValueKey<String>('chat-flow-newest');
 
+  /// [_olderAskedFor] when nothing was asked for since the reader was last
+  /// away from the top.
+  static const _notAsked = Object();
+
   final _localController = ScrollController();
   ScrollController get _controller => widget.controller ?? _localController;
   bool _atBottom = true;
   bool _stickToBottom = true;
   bool? _reportedAtBottom;
   bool _nearTopScheduled = false;
+
+  /// The [ChatFlow.topKey] older history was last asked for.
+  Object? _olderAskedFor = _notAsked;
 
   @override
   void initState() {
@@ -85,8 +99,12 @@ class _ChatFlowState extends State<ChatFlow> {
       _reportAtBottom();
     }
     if (_stickToBottom) _scheduleStick();
-    // Older history became available while the top was already in view.
-    if (oldWidget.onNearTop == null && _controller.hasClients) {
+    // Older history became available while the top was already in view. That
+    // is news rather than a retry, so what was asked for before is forgotten.
+    if (oldWidget.onNearTop == null &&
+        widget.onNearTop != null &&
+        _controller.hasClients) {
+      _olderAskedFor = _notAsked;
       _checkNearTop(_controller.position);
     }
   }
@@ -102,11 +120,19 @@ class _ChatFlowState extends State<ChatFlow> {
   }
 
   void _checkNearTop(ScrollMetrics metrics) {
-    if (widget.onNearTop == null || _nearTopScheduled) return;
+    if (widget.onNearTop == null) return;
     // A pinned list settles at its bottom whatever this frame shows, so a
     // long transcript opening at offset zero is not near its top.
     final resting = _stickToBottom ? metrics.maxScrollExtent : metrics.pixels;
-    if (resting - metrics.minScrollExtent > _nearTop) return;
+    if (resting - metrics.minScrollExtent > _nearTop) {
+      _olderAskedFor = _notAsked;
+      return;
+    }
+    // Once per top row. A page that failed used to be asked for again on
+    // every scroll update and streamed delta, back to back against a server
+    // that was already failing.
+    if (_nearTopScheduled || _olderAskedFor == widget.topKey) return;
+    _olderAskedFor = widget.topKey;
     // Notifications can arrive mid-layout; call out once it is over.
     _nearTopScheduled = true;
     scheduleMicrotask(() {

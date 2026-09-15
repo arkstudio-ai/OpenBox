@@ -205,7 +205,7 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
   /// - held messages newer than the last — socket arrivals after the read
   ///   started — stay after it, and so do optimistic echoes the read does not
   ///   confirm. One it does confirm is matched by client message id and
-  ///   replaced where the server put it, as snapshots always did.
+  ///   replaced where the server put it, by the server's copy as it stands.
   ///
   /// A message the read left unchanged keeps its instance, and a read that
   /// changed nothing publishes nothing, so a poll that finds nothing new
@@ -235,8 +235,12 @@ class ChatStreamStore extends Notifier<ChatStreamState> {
       final clientId = message.clientMessageId;
       final match =
           byId[message.id] ?? (clientId == null ? null : byClientId[clientId]);
+      // Found by client id, the held copy is another message — the send's
+      // echo — not an earlier state of this one, so it is used up but not
+      // merged. Merging kept the echo's part, whose id only this store knows,
+      // beside the server's own, and the bubble said everything twice.
       merged.add(
-        match != null && used.add(match)
+        match != null && used.add(match) && match.id == message.id
             ? _mergeMessage(match, message)
             : message,
       );

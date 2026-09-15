@@ -82,8 +82,13 @@ ChatMessage answer({
 class SuggestionWs extends AgentWsClient {
   SuggestionWs() : super(Dio());
   final frames = StreamController<WsEvent>.broadcast(sync: true);
+
+  /// What [connected] reports; no real socket is ever opened.
+  bool open = false;
   @override
   Stream<WsEvent> get events => frames.stream;
+  @override
+  bool get connected => open;
   @override
   Future<void> connect() async {}
   Future<void> close() => frames.close();
@@ -118,19 +123,31 @@ class SuggestionApi extends ChatApi {
 
   /// While set, history reads wait for it before answering.
   Completer<void>? historyGate;
+
+  /// While set, older pages (`before` reads) fail with a 500.
+  bool failOlder = false;
   Future<void> Function(RequestOptions)? onPrompt;
 
   /// The server's transcript, oldest first.
   List<ChatMessage> messages = [answer()];
   String owner = 'owner';
 
+  /// The session's status as the server reports it.
+  String status = 'idle';
+
+  /// How many times the session record was read.
+  int sessionReads = 0;
+
   @override
-  Future<Session> getSession(String sessionId) async => Session.fromJson({
-    'id': sessionId,
-    'status': 'idle',
-    'user_id': owner,
-    'model': 'test/chat',
-  });
+  Future<Session> getSession(String sessionId) async {
+    sessionReads++;
+    return Session.fromJson({
+      'id': sessionId,
+      'status': status,
+      'user_id': owner,
+      'model': 'test/chat',
+    });
+  }
 
   @override
   Future<HistoryPage> history(
@@ -141,6 +158,13 @@ class SuggestionApi extends ChatApi {
   }) async {
     historyReads.add((before: before, after: after, turns: turns));
     await historyGate?.future;
+    if (failOlder && before != null) {
+      final request = RequestOptions(path: '/history');
+      throw DioException(
+        requestOptions: request,
+        response: Response<dynamic>(requestOptions: request, statusCode: 500),
+      );
+    }
     return window(
       messages.where((m) => m.sessionId == sessionId).toList(),
       turns: turns,

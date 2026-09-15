@@ -1,5 +1,7 @@
 # Wave 3 work packages (trajectory re-architecture, code only)
 
+> **2026-09-15:** analytics (`w3-analytics`, contract 4, the export timer and its alarm) was reverted and the legacy converter removed; old recordings are not kept. See "Scope changes after v1" at the top of [SPEC.md](SPEC.md).
+
 Base: the `feat/trajectory-rearch` commit that adds this file, on top of the wave-2 integration `05bc977`; every prompt names the exact sha. `w3-frontend` and `w3-ops` started earlier from `7c6b5ba` because wave 2 did not touch their files. Contract: `docs/trajectory-rearch/SPEC.md`; wave-1 decisions: `docs/trajectory-rearch/reports/wave1/NOTES.md`; wave-2 integration notes: `docs/trajectory-rearch/reports/wave2/INTEGRATION.md`. Where this file refines SPEC, this file wins.
 
 **Scope decision (user, 2026-09-14):** finish the remaining production code fast. Every package writes unit tests for the code it adds and runs `cd backend && uv run pytest tests/unit -q` (frontend: `cd frontend-v2 && npx vitest run` and `npm run test:nginx`). No new integration, end-to-end, performance, chaos or load tests; no Playwright runs; no local release rehearsal; the 88 quarantined legacy trajectory tests stay quarantined.

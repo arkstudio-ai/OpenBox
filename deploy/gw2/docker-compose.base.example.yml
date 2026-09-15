@@ -63,8 +63,8 @@ services:
       - host.docker.internal:host-gateway
     volumes:
       - ./config/openbox.json:/app/openbox.json:ro
-      # Local blob store (BLOB_PROVIDER=local, BLOB_LOCAL_PATH=/tmp/openbox-blobs), including the
-      # legacy trajectory blob files that trajectory.tools.migrate_legacy converts.
+      # Local blob store (BLOB_PROVIDER=local, BLOB_LOCAL_PATH=/tmp/openbox-blobs). Its trajectories/
+      # directory holds old trajectory payload files, deleted in release step 7 (RUNBOOK.md §5).
       - blob-data:/tmp/openbox-blobs
     command:
       - sh

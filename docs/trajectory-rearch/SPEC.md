@@ -5,6 +5,16 @@ Plan document (Chinese, product-level): "OpenBox 会话追踪改造计划" artif
 Code maps of the current system (read them before changing an area): `docs/trajectory-rearch/maps/`
 `recorder.full.md`, `projection.md`, `producers.md`, `api.md`, `tests.md`, `infra.full.md`, `runtime.md`.
 
+## Scope changes after v1 (2026-09-15)
+
+Decided during development, before any deployment. These points override the sections they name; the rest of the body is v1 text.
+
+- **§2 switches:** `TRAJECTORY_SINK` is removed from the code; the backend always writes the spool. `TRAJECTORY_WORKER_MODE=off` disables the whole pipeline: no emitter, no metadata sync and no worker.
+- **§6.9 and §8.14, old data:** old recordings are not kept. Business migration `d3b5f7a9c1e2` drops the seven trajectory tables of the business database together with the renamed copies of an earlier revision; its `downgrade()` recreates the seven tables empty, so that a main-built image, whose readiness check and session deletion still expect them, can start again. There is no converter: `trajectory.tools.migrate_legacy` is deleted.
+- **§12, operations:** the worker mounts no business `blob-data` volume. There is no analytics export, timer or alarm and no `TRAJECTORY_ANALYTICS_PREFIX` (`trajectory.analytics` and duckdb were reverted): `setup-alarms.sh` creates 15 rules and the worker metrics have no `analytics_*` counters. `pg-backup.sh` has no legacy-table mode; the `openbox` dump always excludes the rows of the old trajectory tables (the schema stays). `business_trajectory_statements` counts every `pg_stat_statements` entry of `openbox` that mentions `trajectory_`.
+- **§12.1 steps 6-7** (commands in `deploy/gw2/RUNBOOK.md` §5): step 6 switches the backend, whose migration drops the old tables; verify that none is left and that `alembic current` is `e5c7a9b1d3f4`, then run `SELECT pg_stat_statements_reset()` in `openbox`, because the migration's `DROP TABLE` statements match the isolation metric. Step 7 deletes the old payload files: only the `trajectories/` directory of the business `blob-data` volume (about 1.5 GB, unredacted), keeping `policies/`. A backend rollback first downgrades the business chain to `c7e9b1d3f5a7` with the new image (RUNBOOK §6).
+- **§14.3 and §15.3, testing:** unit tests only; no acceptance, isolation, benchmark, chaos, end-to-end or performance suites.
+
 ---
 
 ## 0. Goals and non-negotiables
@@ -717,8 +727,8 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 ## 12. Operations and deployment assets (`deploy/gw2/`)
 
 - `docker-compose.trajectory.yml` (overlay used with the server compose files):
-  - `trajectory-worker` service: image `openbox-backend:${OPENBOX_IMAGE_TAG}` (pinned in override like backend), command `sh -ec "alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker"`, `env_file: config/backend.env`, environment `TRAJECTORY_DATABASE_URL=postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace` (dedicated role), `DATABASE_URL: ""` (the business connection string of `backend.env` never reaches the worker), `REDIS_URL`, `TRAJECTORY_WORKER_MODE=external`, `TRAJECTORY_BLOB_PROVIDER=oss`, `TRAJECTORY_BACKEND_INTERNAL_URL=http://backend:8080`, `ALIYUN_CLI_CONFIG=/run/secrets/aliyun-config.json`; volumes `trajectory-spool:/var/lib/openbox/trajectory-spool`, the aliyun secret (read-only), `blob-data:/legacy-blobs:ro` (converter; the `--purge-legacy-blobs` run alone mounts it writable); `depends_on` postgres and redis `service_healthy`; healthcheck `curl -fsS http://127.0.0.1:8090/health`; `cpus: 1.0`; `mem_limit: 1g`; restart unless-stopped; logging limits. Service name must not be `backend-worker`.
-  - `backend`: add the spool volume and `TRAJECTORY_SPOOL_DIR=/var/lib/openbox/trajectory-spool`, `TRAJECTORY_SINK=spool`, `TRAJECTORY_WORKER_MODE=external`.
+  - `trajectory-worker` service: image `openbox-backend:${OPENBOX_IMAGE_TAG}` (pinned in override like backend), command `sh -ec "alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker"`, `env_file: config/backend.env`, environment `TRAJECTORY_DATABASE_URL=postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace` (dedicated role), `DATABASE_URL: ""` (the business connection string of `backend.env` never reaches the worker), `REDIS_URL`, `TRAJECTORY_WORKER_MODE=external`, `TRAJECTORY_BLOB_PROVIDER=oss`, `TRAJECTORY_BACKEND_INTERNAL_URL=http://backend:8080`, `ALIYUN_CLI_CONFIG=/run/secrets/aliyun-config.json`; volumes `trajectory-spool:/var/lib/openbox/trajectory-spool`, the aliyun secret (read-only); `depends_on` postgres and redis `service_healthy`; healthcheck `curl -fsS http://127.0.0.1:8090/health`; `cpus: 1.0`; `mem_limit: 1g`; restart unless-stopped; logging limits. Service name must not be `backend-worker`.
+  - `backend`: add the spool volume and `TRAJECTORY_SPOOL_DIR=/var/lib/openbox/trajectory-spool`, `TRAJECTORY_WORKER_MODE=external`.
   - `frontend`: `TRAJECTORY_HOST: trajectory-worker:8090`.
   - `postgres`: `mem_limit: 2g`, command `postgres -c shared_buffers=512MB -c effective_cache_size=1GB -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=200`.
   - volume `trajectory-spool`.
@@ -727,11 +737,10 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 - `scripts/prune-images.sh`: keep images used by any container plus the newest 3 tags per repository; dry-run by default.
 - `scripts/pg-backup.sh` + `trajectory/ops/backup.py`: `pg_dump -Fc` of `openbox` and `openbox_trace` inside the postgres container, upload to OSS `backups/postgres/{YYYYMMDD}/` through a presigned PUT generated with the mounted credentials; verification of size; local copy removed.
 - `scripts/restore-check.sh` + `trajectory/ops/backup.py download`: restore a backup (downloaded with size and sha256 checks, or a local file) into a scratch database `openbox_restore_check_*`, compare its tables with the dump's table of contents, drop it; never touches the live databases.
-- `scripts/push-metrics.sh`: host disk usage, spool size/oldest age, worker `/metrics`, backend OOM kill count (`journalctl -k`), trace DB size, `backend_cpu_percent` and `backend_mem_percent` (`docker stats --no-stream`), `business_trajectory_statements` (`pg_stat_statements` entries of `openbox` matching `trajectory_` but not `legacy_trajectory_`; 0 without the extension) → `python -m trajectory.ops.cms push` executed inside the worker container, which also passes through the wave-3 worker metric names.
-- `scripts/analytics-export.sh`: `docker compose exec -T trajectory-worker python -m trajectory.analytics export --date <yesterday, Asia/Shanghai>`; reports `analytics_export_failed` (1 on failure, then a non-zero exit; 0 on success) through `python -m trajectory.ops.cms put`.
-- systemd units + timers: `openbox-trajectory-metrics.timer` (every minute), `openbox-pg-backup.timer` (daily 03:30 Asia/Shanghai), `openbox-trajectory-analytics.timer` (daily 04:00 Asia/Shanghai, persistent), `openbox-prune-images.timer` (weekly); installed and uninstalled by `scripts/install-timers.sh`.
+- `scripts/push-metrics.sh`: host disk usage, spool size/oldest age, worker `/metrics`, backend OOM kill count (`journalctl -k`), trace DB size, `backend_cpu_percent` and `backend_mem_percent` (`docker stats --no-stream`), `business_trajectory_statements` (`pg_stat_statements` entries of `openbox` matching `trajectory_`; 0 without the extension) → `python -m trajectory.ops.cms push` executed inside the worker container, which also passes through the wave-3 worker metric names.
+- systemd units + timers: `openbox-trajectory-metrics.timer` (every minute), `openbox-pg-backup.timer` (daily 03:30 Asia/Shanghai, persistent), `openbox-prune-images.timer` (weekly); installed and uninstalled by `scripts/install-timers.sh`.
 - `oss-lifecycle.xml`: `trajectories/` transition to IA after 30 days; `trajectories/_exports/` expire after 30 days; `backups/postgres/` expire after 30 days; abort incomplete multipart uploads after 7 days. Applied with `scripts/apply-oss-lifecycle.sh` (from an operator machine with the aliyun CLI) after reading and merging any existing rules.
-- `scripts/setup-alarms.sh`: CloudMonitor rules (contact group `云账号报警联系人`) for host disk ≥ 80 %, spool bytes ≥ 1 GiB, spool oldest age ≥ 60 s, worker health down, gaps per hour > 0, projection lag ≥ 5000, blob put failures ≥ 10 / 5 min, trace DB ≥ 20 GiB, OOM kill > 0, archive lag ≥ 50000 events for 15 min, `hot_partitions` > 10, backend CPU or memory > 90 % for 5 min, business-DB `trajectory_` statements > 0, `events_ingested_24h` > 1,000,000 (ClickHouse trigger, INFO), analytics export failure.
+- `scripts/setup-alarms.sh`: CloudMonitor rules (contact group `云账号报警联系人`) for host disk ≥ 80 %, spool bytes ≥ 1 GiB, spool oldest age ≥ 60 s, worker health down, gaps per hour > 0, projection lag ≥ 5000, blob put failures ≥ 10 / 5 min, trace DB ≥ 20 GiB, OOM kill > 0, archive lag ≥ 50000 events for 15 min, `hot_partitions` > 10, backend CPU or memory > 90 % for 5 min, business-DB `trajectory_` statements > 0, `events_ingested_24h` > 1,000,000 (INFO).
 - Drills: `drill-worker-stop.sh` (15 minutes; the spool drains within 5 minutes of the restart), `drill-blob-outage.sh` (worker env `TRAJECTORY_BLOB_FAULT=put:1.0`, 30 minutes), `drill-spool-full.sh` (backend `TRAJECTORY_SPOOL_MAX_BYTES` temporarily tiny), `drill-delete-session.sh` (deletes an internal test session through the business API, then requires admin API 404/410 and, through `trajectory.ops.deletion`, a tombstoned trajectory with no pending GC and no object under its prefix), `rebuild-trace-db.sh` (restore segments into a scratch database and compare digests).
 - Release comparison: `trajectory.ops.latency` compares per-route p95 of the frontend access log `rt=` field and backend `docker stats` samples between a recording-off and a recording-on window.
 - `RUNBOOK.md`: release procedure (§12.1), verification, rollback, drills, alarms, retention.
@@ -744,8 +753,8 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 3. Backups: config, compose files, `pg_dump openbox`.
 4. Create `openbox_trace`; apply postgres tuning (postgres recreate, maintenance window, 0 active sessions check).
 5. Start `trajectory-worker` (migrations run; reads spool; recording still disabled).
-6. Switch backend (`--no-deps backend`) with `TRAJECTORY_SINK=spool`; business migration renames legacy tables.
-7. Run `migrate_legacy` (+ `--verify`), then `pg_dump` of legacy tables to OSS, then `--finalize-drop`.
+6. Switch backend (`--no-deps backend`); the business migration drops the old trajectory tables. Verify, then `SELECT pg_stat_statements_reset()` in `openbox`.
+7. Delete the old payload files under `trajectories/` of the business `blob-data` volume, keeping `policies/`.
 8. Switch frontend (routing to worker).
 9. Enable recording for internal users, verify isolation and metrics, then all users.
 10. Install timers, lifecycle rules, alarms; run drills.
@@ -756,14 +765,14 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 
 | Variable | Default | Used by |
 |---|---|---|
-| `TRAJECTORY_SINK` | `db` in wave 1, `spool` from wave 2 | backend |
-| `TRAJECTORY_WORKER_MODE` | `external` if `JWT_SECRET` set else `embedded` | backend, worker |
+| `TRAJECTORY_WORKER_MODE` | `external` if `JWT_SECRET` set else `embedded`; `off` disables the pipeline (no emitter, no metadata sync, no worker) | backend, worker |
 | `TRAJECTORY_SPOOL_DIR` | `/var/lib/openbox/trajectory-spool` when it exists, else `<backend>/.openbox/trajectory-spool` | both |
 | `TRAJECTORY_EMIT_QUEUE_BYTES` | 67108864 | backend |
 | `TRAJECTORY_EMIT_MAX_EVENT_BYTES` | 33554432 | backend |
 | `TRAJECTORY_SPOOL_FILE_BYTES` | 8388608 | backend |
 | `TRAJECTORY_SPOOL_FILE_MS` | 1000 | backend |
 | `TRAJECTORY_SPOOL_MAX_BYTES` | 2147483648 | backend |
+| `TRAJECTORY_SPOOL_BLOB_MIN_BYTES` | 1024 (size above which `request.prepared` input values move to spool blobs, §3.5) | backend |
 | `TRAJECTORY_BUDGET_REFRESH_MS` | 5000 | backend |
 | `TRAJECTORY_META_SYNC_SECONDS` | 30 | backend |
 | `TRAJECTORY_DATABASE_URL` | embedded: `sqlite+aiosqlite:///<backend>/.openbox/trajectory.db`; external: required | worker |
@@ -771,10 +780,12 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_WORKER_HOST` / `TRAJECTORY_WORKER_PORT` | 0.0.0.0 / 8090 | worker |
 | `TRAJECTORY_INGEST_POLL_MS` | 200 | worker |
 | `TRAJECTORY_INGEST_BATCH_LINES` / `_BYTES` | 2000 / 16777216 | worker |
+| `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` | 10 (consecutive failures of one file batch before the file is quarantined with a `recording.gap`) | worker |
 | `TRAJECTORY_SPOOL_ABANDON_SECONDS` | 60 | worker |
 | `TRAJECTORY_INLINE_BYTES` | 65536 | worker |
 | `TRAJECTORY_RECORD_INLINE_BYTES` | 16384 | worker |
 | `TRAJECTORY_PROJECTION_BATCH_MS` / `_EVENTS` | 250 / 200 | worker |
+| `TRAJECTORY_PROJECTION_BATCH_BYTES` | 8388608 (byte bound of one projection batch) | worker |
 | `TRAJECTORY_CHECKPOINT_INTERVAL` | 1000 | worker |
 | `TRAJECTORY_SEGMENT_EVENTS` / `_MAX_BYTES` / `_IDLE_SECONDS` | 1000 / 4194304 / 300 | worker |
 | `TRAJECTORY_SEGMENT_CACHE_BYTES` / `TRAJECTORY_BLOB_CACHE_BYTES` | 134217728 / 268435456 | worker |
@@ -790,14 +801,14 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_OSS_BUCKET` / `_REGION` / `_ENDPOINT` / `_PREFIX` / `_INTERNAL` | `OSS_BUCKET` / `OSS_REGION` / derived / `trajectories/` / `true` (asset payload reads of an embedded worker use the public endpoint unless `_INTERNAL` is set) | worker |
 | `TRAJECTORY_BACKEND_INTERNAL_URL` | `http://backend:8080` | worker |
 | `TRAJECTORY_AUTH_CACHE_SECONDS` | 5 | worker |
+| `TRAJECTORY_AUDIT_MAX_ATTEMPTS` / `TRAJECTORY_AUDIT_MAX_AGE_SECONDS` | 30 / 259200 (after either limit an audit outbox record is dead-lettered) | worker |
 | `TRAJECTORY_BLOB_FAULT` | unset (drills/tests only) | worker |
 | `TRAJECTORY_CMS_REGION` / `TRAJECTORY_CMS_GROUP_ID` | `cn-shanghai` / unset | ops |
-| `TRAJECTORY_ANALYTICS_PREFIX` | `analytics/trajectories/` (refused inside the trajectory key namespace) | analytics |
 | `OPENBOX_TRACE_DB_PASSWORD` | unset; deploy `/opt/openbox/.env`, 16–128 characters of `A-Za-z0-9._~-` (`openssl rand -hex 32`) | overlay (`openbox_trace` role URL), `create-trace-db.sh` |
 | `OPENBOX_TRACE_ROLE` / `OPENBOX_RESTORE_DIR` | `openbox_trace` / `/var/backups/openbox/restore-check` | ops scripts |
 | existing: `TRAJECTORY_RECORDING_ENABLED`, `TRAJECTORY_RECORD_USER_IDS`, `TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`, `JWT_SECRET`, `INTERNAL_API_TOKEN`, `REDIS_URL` | | both |
 
-All integer settings are parsed with a minimum of 1; invalid values fall back to defaults with a warning.
+Every integer setting has a minimum (at least 1); a value that is not an integer or is below its minimum falls back to the default with a warning.
 
 ---
 

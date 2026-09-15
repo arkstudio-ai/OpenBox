@@ -3,8 +3,8 @@
 # spool (bytes, files, oldest file age, quarantined files), kernel OOM kills of the last hour (all, and
 # those of the backend container), the trace database size, the backend container's CPU (percent of one
 # core) and memory (percent of its limit) from `docker stats --no-stream`, and the number of
-# pg_stat_statements entries of the business database that mention trajectory_ but not
-# legacy_trajectory_ (0 while the extension is not installed there) are measured here and piped into
+# pg_stat_statements entries of the business database that mention trajectory_ (0 while the extension
+# is not installed there) are measured here and piped into
 # `python -m trajectory.ops.cms push` in the worker image, which adds the worker's /health and /metrics
 # and reports everything. While the worker is stopped a one-off container reports worker_up=0.
 # The counter samples of the cms module are kept in /var/lib/openbox-ops/cms-state.json.
@@ -88,13 +88,14 @@ if [ -n "$backend" ]; then
 fi
 
 # Isolation check of the business database (RUNBOOK.md §5 step 9): the worker owns every trajectory_
-# table; legacy_trajectory_* statements come from the business migration and the legacy converter.
+# table. The business migration that drops the old trajectory tables matches as well, so the release
+# resets pg_stat_statements right after it (RUNBOOK.md §5 step 6).
 business_statements=
 extension=$(psql_scalar "$OPENBOX_BUSINESS_DB" "SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'" 2>/dev/null) || extension=
 if [ "$extension" = 0 ]; then
   business_statements=0
 elif [ "$extension" = 1 ]; then
-  business_statements=$(psql_scalar "$OPENBOX_BUSINESS_DB" "SELECT count(*) FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid WHERE d.datname = '$OPENBOX_BUSINESS_DB' AND s.query ILIKE '%trajectory\_%' AND s.query NOT ILIKE '%legacy\_trajectory\_%'" 2>/dev/null) || business_statements=
+  business_statements=$(psql_scalar "$OPENBOX_BUSINESS_DB" "SELECT count(*) FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid WHERE d.datname = '$OPENBOX_BUSINESS_DB' AND s.query ILIKE '%trajectory\_%'" 2>/dev/null) || business_statements=
 fi
 
 host=$(printf '{"host_disk_used_percent":%s,"docker_disk_used_percent":%s,"spool_bytes":%s,"spool_files":%s,"spool_oldest_age_seconds":%s,"spool_quarantined_files":%s,"oom_kills_1h":%s,"backend_oom_kills_1h":%s,"trace_db_bytes":%s,"backend_cpu_percent":%s,"backend_mem_percent":%s,"business_trajectory_statements":%s}' \

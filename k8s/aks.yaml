@@ -89,7 +89,6 @@ data:
   BLOB_AZURE_CONTAINER: "ads-staging"
   MAX_CONCURRENT_AGENTS: "1"
   # Trajectory events go to the spool shared with the trajectory-worker sidecar.
-  TRAJECTORY_SINK: "spool"
   TRAJECTORY_WORKER_MODE: "external"
   TRAJECTORY_SPOOL_DIR: "/var/lib/openbox/trajectory-spool"
 

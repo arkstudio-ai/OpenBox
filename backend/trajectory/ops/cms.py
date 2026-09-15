@@ -51,7 +51,7 @@ COUNTERS = (
     "ingest_lines", "ingest_events", "duplicates", "idempotency_conflicts", "deleted_drops", "ownership_drops",
     "gaps_recorded", "producer_loss_events", "quarantined_files", "blob_puts", "blob_put_bytes",
     "blob_put_failures", "segment_uploads", "segment_failures", "gc_deleted", "gc_failures", "exports_built",
-    "blob_put_raw_bytes", "audit_dead_letters", "analytics_exports", "analytics_export_failures", "failed_batches",
+    "blob_put_raw_bytes", "audit_dead_letters", "failed_batches",
 )
 GAUGES = (
     "spool_bytes", "spool_files", "spool_oldest_age_seconds", "ingest_lag_seconds", "projection_lag_events",
@@ -64,16 +64,12 @@ GAUGES = (
 # backend_cpu_percent and backend_mem_percent come from `docker stats` (CPU as a
 # percentage of one core, memory of the container limit);
 # business_trajectory_statements counts pg_stat_statements entries of the
-# business database that mention trajectory_ tables other than legacy_trajectory_*.
+# business database that mention trajectory_ tables.
 HOST_METRICS = (
     "host_disk_used_percent", "docker_disk_used_percent", "spool_bytes", "spool_files",
     "spool_oldest_age_seconds", "spool_quarantined_files", "oom_kills_1h", "backend_oom_kills_1h",
     "trace_db_bytes", "backend_cpu_percent", "backend_mem_percent", "business_trajectory_statements",
 )
-# Reported with ``put`` by jobs other than the minute timer (setup-alarms.sh has
-# rules on them): analytics-export.sh sends 1 after a failed export and 0 after a
-# successful one.
-JOB_METRICS = ("analytics_export_failed",)
 # Alarm windows used by setup-alarms.sh: counter increments summed over the
 # trailing number of seconds.
 WINDOWS = {"gaps_recorded_1h": ("gaps_recorded", 3600), "blob_put_failures_5m": ("blob_put_failures", 300)}

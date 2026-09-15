@@ -42,7 +42,7 @@ def test_serves_the_worker_app_with_20_second_pings(served, monkeypatch):
 
 @pytest.mark.parametrize("host,port,expected", [("127.0.0.1", "9123", ("127.0.0.1", 9123)),
                                                 ("", "not-a-port", ("0.0.0.0", 8090)),
-                                                ("  ", "0", ("0.0.0.0", 1))])
+                                                ("  ", "0", ("0.0.0.0", 8090))])
 def test_host_and_port_come_from_the_environment(served, monkeypatch, host, port, expected):
     monkeypatch.setattr(worker_app, "check_schema", current)
     monkeypatch.setenv("TRAJECTORY_WORKER_HOST", host)

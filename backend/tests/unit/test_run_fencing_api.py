@@ -11,8 +11,9 @@ from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import orjson
 import pytest
-from sqlalchemy import event, select, update
+from sqlalchemy import event, update
 
 import db.base as database
 from db.models.question import SessionExecution
@@ -25,7 +26,7 @@ from trajectory.types import TrajectoryError
 
 @pytest.fixture(params=[False, True], ids=["recording-off", "recording-on"])
 def recording(request, monkeypatch):
-    """Fencing must not depend on the recorder; recording on uses the db sink."""
+    """Fencing must not depend on recording; recording on hands facts to the spool emitter."""
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true" if request.param else "false")
     monkeypatch.delenv("TRAJECTORY_RECORD_USER_IDS", raising=False)
     return request.param
@@ -106,13 +107,33 @@ async def add_session(session_id: str, *, user_id: str = "u1", **fields) -> None
                        **fields))
 
 
-async def trajectory_events(*types: str) -> list:
-    from db.models.trajectory import TrajectoryEvent
-    async with database.get_db_session() as db:
-        query = select(TrajectoryEvent).order_by(TrajectoryEvent.recorded_at, TrajectoryEvent.seq)
-        if types:
-            query = query.where(TrajectoryEvent.type.in_(types))
-        return list((await db.scalars(query)).all())
+@pytest.fixture
+def emitted(monkeypatch) -> list[dict]:
+    """Every event the spool emitter accepts, decoded, in order: the facts recording writes.
+
+    A fact bound to a transaction reaches the emitter only when that transaction
+    commits; the trajectory worker keeps the first copy of a repeated event id.
+    """
+    from trajectory.emitter import EVENT, Emitter
+    events = []
+    emit_bytes, enqueue_encoded = Emitter.emit_bytes, Emitter.enqueue_encoded
+
+    def emitted_now(self, event_json, **routing):
+        events.append(orjson.loads(event_json))
+        return emit_bytes(self, event_json, **routing)
+
+    def emitted_after_commit(self, kind, payload, routing):
+        if kind == EVENT:
+            events.append(orjson.loads(payload))
+        return enqueue_encoded(self, kind, payload, routing)
+    monkeypatch.setenv("TRAJECTORY_SINK", "spool")
+    monkeypatch.setattr(Emitter, "emit_bytes", emitted_now)
+    monkeypatch.setattr(Emitter, "enqueue_encoded", emitted_after_commit)
+    return events
+
+
+def facts(events: list[dict], *types: str) -> list[dict]:
+    return [fact for fact in events if fact["type"] in types]
 
 
 def published(events: list, kind: str) -> list:

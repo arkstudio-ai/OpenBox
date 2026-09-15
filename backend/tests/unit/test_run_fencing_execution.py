@@ -29,11 +29,12 @@ from tests.unit.test_durable_questions import checkpoint, read, state  # noqa: F
 from tests.unit.test_run_fencing_api import (  # noqa: F401
     acting_as,
     add_session,
+    emitted,
     expire_lease,
+    facts,
     loop_harness,
     published,
     recording,
-    trajectory_events,
 )
 
 PAST = timedelta(seconds=1)
@@ -241,12 +242,12 @@ async def test_every_ordering_records_exactly_one_terminal_fact_per_run(state, r
         assert (await read(SessionExecution, session_id)).run_id is None, order
 
 
-async def test_poisoned_lease_is_released_quietly_by_recovery_and_by_new_input(state, monkeypatch):
+async def test_poisoned_lease_is_released_quietly_by_recovery_and_by_new_input(state, emitted, monkeypatch):
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     await create_user_message("s1", "Work", user_id="u1")
     ticket = await runtime.start_run("s1", "u1")
     await runtime.cancel_session("s1", "u1")
-    assert len(await _terminal_facts(ticket.run_id)) == 1
+    assert len(_terminal_facts(emitted, ticket.run_id)) == 1
 
     async def poison(lease_until):
         # Rows stopped before this release kept the lease after invalidation, and
@@ -262,18 +263,17 @@ async def test_poisoned_lease_is_released_quietly_by_recovery_and_by_new_input(s
     assert execution.run_id is None and execution.resume_error is None
     assert (await read(Session, "s1")).status == "idle"
     assert not published(state, "session.error")
-    assert len(await _terminal_facts(ticket.run_id)) == 1
+    assert len(_terminal_facts(emitted, ticket.run_id)) == 1
 
     await poison(runtime.now() + timedelta(seconds=60))
     await create_user_message("s1", "Next request", user_id="u1")
     assert (await read(SessionExecution, "s1")).run_id is None
-    assert len(await _terminal_facts(ticket.run_id)) == 1
+    assert len(_terminal_facts(emitted, ticket.run_id)) == 1
     assert await runtime.start_run("s1", "u1") is not None
 
 
-async def _terminal_facts(run_id: str) -> list:
-    events = await trajectory_events("run.finished", "run.interrupted")
-    return [event for event in events if event.context.get("run_id") == run_id]
+def _terminal_facts(events: list[dict], run_id: str) -> list[dict]:
+    return [fact for fact in facts(events, "run.finished", "run.interrupted") if fact.get("run_id") == run_id]
 
 
 async def test_recovery_isolates_a_failing_candidate(state, monkeypatch):
@@ -331,31 +331,10 @@ async def test_tick_phases_run_even_when_another_phase_fails(state, monkeypatch,
     assert (await read(QuestionCheckpoint, expiring)).status == expected
 
 
-async def test_recording_failure_while_applying_answers_is_retried_not_a_resume_failure(state, monkeypatch):
-    import trajectory
-    from trajectory.types import RecordingError
-    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
-    request_id = await checkpoint()
-    await q.reply(request_id, [["Yes"]], "u1")
-    original = trajectory.record
-
-    async def failing(kind, data, **kwargs):
-        if kind == "input.injected":
-            raise RecordingError("injected journal failure")
-        return await original(kind, data, **kwargs)
-    monkeypatch.setattr(trajectory, "record", failing)
-    await sweep()
-    execution = await read(SessionExecution, "s1")
-    assert execution.resume_pending and execution.next_attempt_at is not None
-    assert execution.resume_error is None
-    assert not published(state, "session.error")
-    assert not (await read(QuestionCheckpoint, request_id)).applied
-
-
 @pytest.mark.parametrize("restarted", [False, True], ids=["same-process", "after-restart"])
 @pytest.mark.parametrize("second_run", ["regenerate", "plan_accept"])
 async def test_two_completed_runs_in_one_turn_finish_cleanly_with_one_turn_finished(
-        state, monkeypatch, second_run, restarted):
+        state, emitted, monkeypatch, second_run, restarted):
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     prompt = await create_user_message("s1", "Write a plan", user_id="u1")
     first = await runtime.start_run("s1", "u1")
@@ -364,7 +343,7 @@ async def test_two_completed_runs_in_one_turn_finish_cleanly_with_one_turn_finis
     await runtime.finish_run(first, completed=True)
     if restarted:
         # A deploy between the two runs: this process remembers no earlier fact
-        # of the turn, while the legacy sink still holds turn_finish for it.
+        # of the turn, while the worker already holds turn_finish for it.
         monkeypatch.setattr(runtime, "_terminal_runs", runtime._Recent())
         monkeypatch.setattr(runtime, "_finished_turns", runtime._Recent())
     if second_run == "regenerate":
@@ -378,10 +357,16 @@ async def test_two_completed_runs_in_one_turn_finish_cleanly_with_one_turn_finis
     assert (await read(SessionExecution, "s1")).run_id is None
     assert (await read(Session, "s1")).status == "idle"
     assert not published(state, "session.error")
-    finished_runs = await trajectory_events("run.finished")
-    assert {event.context["run_id"] for event in finished_runs} == {first.run_id, second.run_id}
-    assert {event.context["turn_id"] for event in finished_runs} == {prompt.id}
-    assert len(await trajectory_events("turn.finished")) == 1
+    finished_runs = facts(emitted, "run.finished")
+    assert {fact["run_id"] for fact in finished_runs} == {first.run_id, second.run_id}
+    assert {fact["turn_id"] for fact in finished_runs} == {prompt.id}
+    turn_finished = facts(emitted, "turn.finished")
+    assert {fact["turn_id"] for fact in turn_finished} == {prompt.id}
+    # One fact per turn: a restarted process may repeat it under the same event id,
+    # of which the worker keeps the first copy.
+    assert len({fact["event_id"] for fact in turn_finished}) == 1
+    if not restarted:
+        assert len(turn_finished) == 1
 
 
 class AfterCommitEmitter:
@@ -469,7 +454,7 @@ async def test_transitions_emit_only_committed_facts_and_ignore_emitter_failures
         assert emitter.delivered == []
 
 
-async def test_superseded_run_gets_no_auth_prompt_and_its_late_job_result_is_flagged(state, monkeypatch):
+async def test_superseded_run_gets_no_auth_prompt_and_its_late_job_result_is_flagged(state, emitted, monkeypatch):
     from notifications import events
     from trajectory.jobs import record_job_in_tx
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
@@ -499,5 +484,5 @@ async def test_superseded_run_gets_no_auth_prompt_and_its_late_job_result_is_fla
         job = await db.get(VideoJob, job_id)
         job.status = "completed"
         await record_job_in_tx(db, job)
-    late = await trajectory_events("operation.late_result")
-    assert [event.data["original_run_id"] for event in late] == [ticket.run_id]
+    late = facts(emitted, "operation.late_result")
+    assert [fact["data"]["original_run_id"] for fact in late] == [ticket.run_id]

@@ -15,11 +15,12 @@ from question import runtime
 from tests.unit.test_durable_questions import read, state  # noqa: F401
 from tests.unit.test_run_fencing_api import (  # noqa: F401
     acting_as,
+    emitted,
+    facts,
     loop_harness,
     published,
     recording,
     supersede_elsewhere,
-    trajectory_events,
 )
 from tool.tool import ToolContext, ToolResult, define_tool
 
@@ -199,7 +200,7 @@ async def test_tool_output_stops_publishing_once_the_run_is_revoked(state, tools
 
 
 async def test_revoked_run_ends_as_an_abort_with_its_tool_recorded_cancelled(
-        state, recording, loop_harness, monkeypatch):
+        state, recording, loop_harness, emitted, monkeypatch):
     import trajectory
     from session.session import create_user_message, update_part_data
     recorded = []
@@ -227,7 +228,7 @@ async def test_revoked_run_ends_as_an_abort_with_its_tool_recorded_cancelled(
     assert not published(state, "session.error")
     assert (await read(Session, "s1")).status != "error"
     if recording:
-        finished = [event.data for event in await trajectory_events("tool.finished")]
+        finished = [fact["data"] for fact in facts(emitted, "tool.finished")]
     else:
         finished = [data for kind, data in recorded if kind == "tool.finished"]
     assert [data["status"] for data in finished] == ["cancelled"]

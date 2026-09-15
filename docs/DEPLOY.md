@@ -5,7 +5,19 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前两边发布：2026-09-15 15:28 `20260915-main-73a311b`（backend + frontend，归零发布，M5 消息中心上线）
+## 当前阿里云发布：2026-09-16 `20260916-main-08f5d952`（独立 trace worker）
+
+- 源码为已合并 PR [#41](https://github.com/arkstudio-ai/OpenBox/pull/41) 的 `main@08f5d952`；本地以该提交的 `git archive` 完整构建 `linux/amd64` backend / frontend，前端固定 `nginx:1.31.5-alpine`。经阿里云 CLI、私有 OSS 中转、SHA-256 校验后装载到 gw2；AWS 本次未更新。
+- 生产顺序：完整备份 → 0 个活动执行租约 → PostgreSQL 调整 → 独立 trace 库/角色 → worker → 本机回环前端预检 → backend → frontend。每次仅 `up -d --no-deps <service>`，逐项等待 healthy。新 worker 限制 1 CPU / 1 GiB，读取限制保留；与业务库仍共享同一台 PostgreSQL 和磁盘，不代表已实现物理资源隔离。
+- 迁移：业务 `c7e9b1d3f5a7 → f8c2a6e0b4d1`；trace `t0004_worker_efficiency`。业务库旧 trace 表已移除，`ix_file_assets_oss_key` 存在；普通聊天数据核对正常（发布前 messages / sessions / users 为 19,224 / 1,637 / 26，切换后 19,228 / 1,638 / 26）。旧 trace payload 目录暂留原卷，供回退核对。
+- 发布前完整备份：`/opt/openbox/backups/20260916-main-08f5d952/activation-20260915T231357Z/`，包含配置、compose、容器详情和通过 `pg_restore --list` 的 `preflight.dump`；其 SHA-256 为 `3a9ef84e6b265bc2bb9e6dae3edd3c9112598f83faabf2577396e3384c5b610f`。备份目录权限 0700。旧镜像保留。
+- 发布验证：五个容器 healthy；worker 的 writer / db / spool / blob_store 均 true；公网 HTML 与 JS 的 build ID 为新 tag；9 个前端 JS/CSS 可读；trace 匿名读取 401，内部鉴权接口外部 404。单机切换期间出现短暂 502，切换后恢复 200，不属于零停机发布。
+- **当前为内部账号试运行**：`TRAJECTORY_RECORDING_ENABLED=true`，`TRAJECTORY_RECORD_USER_IDS` 仅含指定内部验收账号。管理员功能仍受原有角色校验。原来生产 recording 为 false；本次没有给其他用户全量打开。完成运行手册要求的等长生产观察窗后再决定扩大范围，本次功能验收不能替代 50 并发真实模型的生产容量证明。
+- 运维：启用每分钟 metrics 和每日 03:30（上海时区）的业务/trace 数据库备份 timer。发布后两个备份已上传到私有 `bossip/backups/postgres/20260916/`，校验大小和 SHA-256，并在新建临时数据库中分别完整恢复 57/57、29/29 张表；检查结束只移除本次新建的临时数据库。原业务库 632 MB，迁移后约 145 MB；trace 库约 13 MB。业务库 trace SQL 计数为 0。
+- **云监控配额待处理**：首轮 58 项指标的 3 次 RPC 均返回成功，但后续分钟任务报 `206: reach max time series num`。CLI 回读确认该账号只有 10 个已注册时间序列（含既有 `openbox_preflight`），未实现 58 项全覆盖。metrics timer 当前保留失败状态和重试，worker 本地 `/health`、`/metrics` 正常；不能把首次 200 当作云端完整验收。原因对应 [阿里云配额说明](https://help.aliyun.com/zh/document_detail/151210.html)。未开通付费产品、删除既有指标或扩大告警发送范围；需确定配额/监控产品方案后再完成云端验收。暂未启用自动镜像清理，也未改变现有 OSS 生命周期或告警联系人。
+- 回滚须遵循 [gw2 runbook](../deploy/gw2/RUNBOOK.md#6-rollback)：旧镜像不认识新业务 revision，不能直接切回；先用新镜像降级到 `c7e9b1d3f5a7`，再恢复旧配置和镜像。降级仅重建空旧 trace 表；需要旧 trace 数据时使用上述完整备份，不能用发布后的日常业务备份恢复旧记录。恢复整个业务库前必须处理发布后的新增消息。
+
+## 当前 AWS / 历史阿里云发布：2026-09-15 15:28 `20260915-main-73a311b`（backend + frontend，归零发布，M5 消息中心上线）
 
 - 源码 `main@73a311b` 全量构建，两边同一 tag，**gw2 与 AWS 自此回到可追溯的 main sha**，此前 gw2 的三层叠加热修镜像（714a30b / 6f90252 / 6aee878+68bb0fa）全部已在 main 内。
   本次随 main 一起上线：PR [#36](https://github.com/arkstudio-ai/OpenBox/pull/36)（Seedance 选择器精简 + Fast 计费 + autopilot 高档改 `video-sd-1080p-pro`）、

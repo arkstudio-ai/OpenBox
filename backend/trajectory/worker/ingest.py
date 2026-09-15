@@ -399,7 +399,8 @@ class IngestService:
             failures += 1
         # The error type only in the log: database messages can carry event content.
         error_type = type(exc).__name__
-        if failures >= self.max_batch_failures:
+        # Only a failure while the database answers quarantines: an outage never does, even at the limit.
+        if available and failures >= self.max_batch_failures:
             path = spool_reader.locate(spool_file)
             parsed = ParsedBatch([], offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
             if path is not None and await self._quarantine(spool_file, scan, path, offset, parsed, result):

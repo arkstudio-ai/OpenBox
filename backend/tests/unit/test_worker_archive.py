@@ -68,7 +68,8 @@ async def test_run_once_archives_full_backlogs_and_idle_tails_only(trace_db, blo
         segment_key("trj_full", 1, 1000), segment_key("trj_full", 1001, 2000), segment_key("trj_idle", 1, 30),
         segment_key("trj_lagging", 1, 12)])
     assert metrics.counters == {"segment_uploads": 4}
-    assert metrics.gauges == {"archive_lag_events": 500 + 30, "hot_events_rows": 500 + 30 + 28}
+    assert metrics.gauges == {"archive_lag_events": 500 + 30, "hot_events_rows": 500 + 30 + 28, "hot_partitions": 0,
+                              "events_ingested_24h": 0}
     assert await service.run_once() == 0
 
 
@@ -279,7 +280,94 @@ async def test_partition_maintenance_is_a_no_op_on_sqlite(trace_db, blob_store):
     service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=metrics)
     await service.maintain_partitions()
     assert await service.run_once() == 0
-    assert metrics.gauges == {"archive_lag_events": 0, "hot_events_rows": 0}
+    assert metrics.gauges == {"archive_lag_events": 0, "hot_events_rows": 0, "hot_partitions": 0,
+                              "events_ingested_24h": 0}
+
+
+def test_hot_partitions_are_the_attached_days_up_to_today():
+    from datetime import date
+
+    from trajectory.worker.archive import hot_partition_count
+
+    names = ["trajectory_events_p20260901", "trajectory_events_p20260914", "trajectory_events_p20260915",
+             "trajectory_events_p20260916", "trajectory_events_p20260922", "trajectory_events_default", "other"]
+    assert hot_partition_count(names, date(2026, 9, 15)) == 3
+    assert hot_partition_count([], date(2026, 9, 15)) == 0
+
+
+async def test_partition_maintenance_reports_the_hot_partitions_left_after_drops(trace_db, blob_store, monkeypatch):
+    """The PostgreSQL path with its partition SQL stubbed: future partitions and dropped ones do not count."""
+    from types import SimpleNamespace
+
+    from trajectory.store import partitions
+
+    today = now().date()
+    names = [partitions.partition_name_for(today + timedelta(days=offset)) for offset in (-10, -8, -1, 0, 1, 7)]
+
+    async def maintenance(work):
+        return await work(None)
+
+    async def ensure(connection, day, days_ahead):
+        return []
+
+    async def listed(connection):
+        return list(names)
+
+    async def drop(connection, name):
+        return name == names[0]
+
+    monkeypatch.setattr(archive_module, "get_trace_engine",
+                        lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")))
+    monkeypatch.setattr(ArchiveService, "_maintenance", staticmethod(maintenance))
+    monkeypatch.setattr(partitions, "ensure_partitions", ensure)
+    monkeypatch.setattr(partitions, "list_partitions", listed)
+    monkeypatch.setattr(partitions, "drop_partition_if_empty", drop)
+    metrics = FakeMetrics()
+    await ArchiveService(worker_settings(), blob_store=blob_store, metrics=metrics).maintain_partitions()
+    # today-10 was dropped and today-8 still holds rows; today-8, today-1 and today are hot, later days are not.
+    assert metrics.gauges == {"stale_hot_partitions": 1, "hot_partitions": 3}
+
+
+async def test_events_ingested_in_the_last_day_are_sampled_every_5_minutes(trace_db, blob_store):
+    stamp = now()
+    async with trace_session() as db:
+        for index, hours in enumerate((1, 23, 25, 48)):
+            db.add(TrajectoryEventKey(event_id=f"evt_{index}", trajectory_id="trj_a", seq=index + 1,
+                                      content_hash="0" * 64, recorded_at=stamp - timedelta(hours=hours)))
+    metrics = FakeMetrics()
+    service = ArchiveService(worker_settings(), blob_store=blob_store, metrics=metrics)
+    await service.run_once()
+    assert metrics.gauges["events_ingested_24h"] == 2
+    async with trace_session() as db:
+        db.add(TrajectoryEventKey(event_id="evt_new", trajectory_id="trj_a", seq=9, content_hash="0" * 64,
+                                  recorded_at=stamp))
+    await service.run_once()
+    assert metrics.gauges["events_ingested_24h"] == 2
+    service._ingested_due = 0.0  # 5 minutes later
+    await service.run_once()
+    assert metrics.gauges["events_ingested_24h"] == 3
+
+
+async def test_the_segment_commit_lifts_the_request_statement_timeout(trace_db, blob_store, monkeypatch):
+    """Contract 2: deleting a segment's hot rows may outlast the trace role's 5 s statement timeout."""
+    calls, committed = [], []
+
+    async def allow(db):
+        calls.append(db)
+
+    original = ArchiveService._commit
+
+    async def commit(self, *args, **kwargs):
+        before = len(calls)
+        await original(self, *args, **kwargs)
+        committed.append(len(calls) - before)
+
+    monkeypatch.setattr(archive_module, "allow_long_statements", allow)
+    monkeypatch.setattr(ArchiveService, "_commit", commit)
+    await seed("trj_t", 10)
+    service = ArchiveService(worker_settings(segment_events=10), blob_store=blob_store, metrics=FakeMetrics())
+    assert await service.archive_trajectory("trj_t") == 10
+    assert committed == [1]
 
 
 async def test_a_superseded_upload_is_kept_until_its_range_can_no_longer_be_committed(trace_db, blob_store,

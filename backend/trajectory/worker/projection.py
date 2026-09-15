@@ -54,6 +54,8 @@ _RETRY_LIMIT = 10_000
 #: PostgreSQL statement timeout of projection and checkpoint transactions; the
 #: engine's 5 s default is meant for request-serving reads (SPEC 6.1).
 WORKER_STATEMENT_TIMEOUT = "60s"
+#: ``projection_lag_events`` sums over every live trajectory: sampled at most this often, not on every pass.
+LAG_SAMPLE_SECONDS = 5.0
 _CHUNK = 500
 _REF_SIZE = len(canonical({"$ref": {"sha256": "0" * 64, "size_bytes": 0, "media_type": JSON_MEDIA_TYPE,
                                     "kind": "value", "payload_id": "pld_" + "0" * 32}}))
@@ -227,6 +229,8 @@ class ProjectionService:
         self._cursor = ""
         #: (operation, trajectory id) -> (monotonic time it is due again, consecutive failures).
         self._retry: dict[tuple[str, str], tuple[float, int]] = {}
+        #: Monotonic time of the next ``projection_lag_events`` sample.
+        self._lag_due = 0.0
 
     def _object_guard(self):
         return self.object_guard.shared() if self.object_guard is not None else contextlib.nullcontext()
@@ -304,6 +308,10 @@ class ProjectionService:
     async def _lag_gauge(self) -> None:
         if self.metrics is None:
             return
+        at = time.monotonic()
+        if at < self._lag_due:
+            return
+        self._lag_due = at + LAG_SAMPLE_SECONDS
         async with trace_session() as db:
             lag = await db.scalar(select(func.coalesce(func.sum(SessionTrajectory.committed_seq - SessionTrajectory.projected_seq), 0))
                                   .where(SessionTrajectory.deleted_at.is_(None), SessionTrajectory.content_expired_at.is_(None)))
@@ -536,8 +544,8 @@ async def build_checkpoint(trajectory_id: str, *, interval: int, blob_store, met
         if through <= 0 or through - trajectory.checkpoint_seq < interval:
             return False
         if await db.get(TrajectoryCheckpoint, (trajectory_id, through)) is not None:
-            # Stored without moving checkpoint_seq (a converter, a repair): record it, or
-            # the trajectory would stay a candidate of every pass.
+            # Stored without moving checkpoint_seq (a repair, say): record it, or the
+            # trajectory would stay a candidate of every pass.
             await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == trajectory_id,
                 SessionTrajectory.checkpoint_seq < through).values(checkpoint_seq=through))
             return False

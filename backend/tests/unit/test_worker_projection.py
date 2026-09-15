@@ -406,6 +406,21 @@ async def test_run_once_projects_lagging_trajectories_and_isolates_a_failing_one
     assert metrics.gauges["projection_lag_events"] == 1
 
 
+async def test_the_lag_gauge_is_sampled_at_most_every_5_seconds(trajectory, blobs):
+    """projection_lag_events sums over every live trajectory: a 250 ms pass must not run that query each time."""
+    metrics = Metrics()
+    service = ProjectionService(settings(), blob_store=blobs, metrics=metrics)
+    await service.run_once()
+    assert metrics.gauges["projection_lag_events"] == 0
+    async with trace_session() as db:
+        await db.execute(update(SessionTrajectory).where(SessionTrajectory.id == TRAJECTORY).values(committed_seq=5))
+    await service.run_once()
+    assert metrics.gauges["projection_lag_events"] == 0
+    service._lag_due = 0.0  # 5 seconds later
+    await service.run_once()
+    assert metrics.gauges["projection_lag_events"] == 5
+
+
 async def test_passes_rotate_past_failing_trajectories_that_back_off(trace_db, blobs, monkeypatch):
     monkeypatch.setattr(projection, "PASS_TRAJECTORIES", 2)
     missing = {"$payload": {"payload_id": "pld_missing", "sha256": "0" * 64, "size_bytes": 1, "media_type": JSON,

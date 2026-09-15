@@ -17,7 +17,7 @@ from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from db.base import JSONType
-from trajectory.store.database import TraceBase
+from trajectory.store.database import TraceBase, allow_long_migrations
 from trajectory.store.partitions import DEFAULT_PARTITION, partition_date
 import trajectory.store.models  # noqa: F401  (registers the trace tables)
 
@@ -123,6 +123,8 @@ def do_run_migrations(connection) -> None:
     connection.rollback()
     if business_database:
         raise MigrationRefused(f"the target database holds the business migration table {BUSINESS_VERSION_TABLE}")
+    # The trace role defaults to a 5 s statement timeout; DDL on populated tables takes longer (contract 2).
+    allow_long_migrations(connection)
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

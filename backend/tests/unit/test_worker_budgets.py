@@ -95,7 +95,8 @@ async def test_budget_file_levels_since_and_rows(trace_db, settings):
     assert document["users"] == {"heavy": {"level": "degraded", "reason": "user_daily_bytes",
                                            "since": "2026-09-14T08:00:00.000Z"}}
     assert (os.stat(path).st_mode & 0o777) == 0o600
-    assert metrics.gauges == {"trajectories_degraded": 2, "trajectories_blocked": 1}
+    assert metrics.gauges == {"trajectories_degraded": 2, "trajectories_blocked": 1,
+                              "budget_degraded_trajectories": 3, "budget_degraded_users": 1}
     reader = BudgetReader(path, 5000)
     reader.maybe_refresh(force=True)
     assert reader.level("heavy", "s_ok") == DEGRADED and reader.level("u1", "s_block") == BLOCKED

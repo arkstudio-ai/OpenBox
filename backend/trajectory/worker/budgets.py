@@ -97,12 +97,13 @@ class BudgetService:
                     SessionTrajectory.stored_bytes >= settings.budget_trajectory_bytes,
                     SessionTrajectory.budget_level != NORMAL)))).all()
             users = await self._user_levels(db, now)
-        sessions, changes = {}, []
+        sessions, changes, degraded = {}, [], 0
         for trajectory_id, session_id, events, stored, current_level, current_reason in rows:
             level, reason = trajectory_level(settings, event_count=events, stored_bytes=stored)
             if (level, reason) != (current_level, current_reason):
                 changes.append((trajectory_id, level, reason))
             if level != NORMAL:
+                degraded += 1
                 sessions[session_id] = self._entry(("session", session_id), level, reason, now)
         for trajectory_id, level, reason in changes:
             # One short transaction per row: the budget pass never holds several
@@ -118,6 +119,9 @@ class BudgetService:
         written = await self._write(document)
         self._gauge("trajectories_degraded", sum(1 for entry in sessions.values() if entry["level"] == DEGRADED))
         self._gauge("trajectories_blocked", sum(1 for entry in sessions.values() if entry["level"] == BLOCKED))
+        # Wave-3 contract 5: trajectories at any level but normal, and users degraded for the UTC day.
+        self._gauge("budget_degraded_trajectories", degraded)
+        self._gauge("budget_degraded_users", len(users))
         return {"sessions": len(sessions), "users": len(users), "changed": changed, "written": written}
 
     async def _user_levels(self, db, now: datetime) -> dict:

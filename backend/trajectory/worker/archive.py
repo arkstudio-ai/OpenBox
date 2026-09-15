@@ -137,7 +137,9 @@ class ArchiveService:
         self.segment_idle_seconds = worker_setting(settings, "segment_idle_seconds",
                                                    "TRAJECTORY_SEGMENT_IDLE_SECONDS", 300)
         self.hot_days = worker_setting(settings, "hot_days", "TRAJECTORY_HOT_DAYS", 7)
-        self.dedupe_days = worker_setting(settings, "dedupe_days", "TRAJECTORY_DEDUPE_DAYS", 30)
+        # Keep-first dedupe only matters for batch replays, which follow a crash within a pass or two: three days
+        # of keys (224 bytes each, a random-UUID primary key) cover any replay with room to spare.
+        self.dedupe_days = worker_setting(settings, "dedupe_days", "TRAJECTORY_DEDUPE_DAYS", 3)
         self._partitions_due = 0.0
         self._keys_due = 0.0
         self._ingested_due = 0.0

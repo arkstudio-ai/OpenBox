@@ -94,7 +94,7 @@ class FakeMetrics:
 def worker_settings(**overrides) -> types.SimpleNamespace:
     """The WorkerSettings attributes these services read, with SPEC §13 defaults."""
     values = dict(segment_events=1000, segment_max_bytes=4 * 1024 * 1024, segment_idle_seconds=300, hot_days=7,
-                  dedupe_days=30, content_retention_days=180, export_retention_days=30)
+                  dedupe_days=3, content_retention_days=180, export_retention_days=30)
     values.update(overrides)
     return types.SimpleNamespace(**values)
 

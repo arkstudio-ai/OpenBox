@@ -593,7 +593,7 @@ Keep function names, parameters and response shapes from `maps/projection.md` §
 - Segment content: stored event rows as JSON lines (`event_id, trajectory_id, seq, type, version, user_id, session_id, source_session_id, request_id, call_id, agent_id, context, data, hints, content_hash, occurred_at, recorded_at`), ≤ 1000 events and ≤ `TRAJECTORY_SEGMENT_MAX_BYTES` (4 MiB raw).
 - Upload (content-addressed name by range; `if_absent=False` because a failed earlier attempt may have left a partial object — verify by reading back the sha256), then in one transaction insert the segment row, set `archived_seq`, delete hot rows in the range.
 - PostgreSQL partitions: create partitions for today..today+7 each day; drop partitions older than `TRAJECTORY_HOT_DAYS` (7) when they contain no rows (all archived); otherwise log and export a metric (`stale_hot_partitions`).
-- Prune `trajectory_event_keys` older than `TRAJECTORY_DEDUPE_DAYS` (30) whose seq ≤ archived_seq.
+- Prune `trajectory_event_keys` older than `TRAJECTORY_DEDUPE_DAYS` (3) whose seq ≤ archived_seq. Keep-first dedupe only matters for batch replays, which follow a crash within a pass or two; the keys cost 224 bytes each under a random primary key.
 
 ### 8.11 Retention and deletion (`retention.py`, `lifecycle.py`)
 - Tombstone (session deleted): set `deleted_at`, `recording_status=deleted`; delete hot events, records, record_events, checkpoints, summaries, segments rows; payload rows → `availability=deleted`; exports → `deleted`; enqueue GC `prefix` `trajectory_prefix(tid)`; publish the deleted notification. Keep the trajectory row and payload rows (tombstones reject late events and resurrection).
@@ -808,7 +808,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_READ_TIMEOUT_SECONDS` / `TRAJECTORY_DOWNLOAD_PREPARE_TIMEOUT_SECONDS` | 10 / 60 (preparation deadline of a JSON read / of a payload, blob or export download; missed: 503) | worker |
 | `TRAJECTORY_READ_MAX_BYTES` / `TRAJECTORY_READ_RESPONSE_BYTES` | 8388608 / 8388608 (decoded content one JSON read may load, cached content included / its response body; beyond: 413; the budget defaults to the response cap so a page that could not be sent is refused before it is decoded) | worker |
 | `TRAJECTORY_READ_DB_POOL_SIZE` | `TRAJECTORY_READ_CONCURRENCY` + 2 (read-only pool of admin reads: one connection per HTTP read slot and two for WebSocket subscription headers; no overflow, 1 s wait) | worker |
-| `TRAJECTORY_HOT_DAYS` / `TRAJECTORY_DEDUPE_DAYS` | 7 / 30 | worker |
+| `TRAJECTORY_HOT_DAYS` / `TRAJECTORY_DEDUPE_DAYS` | 7 / 3 (idempotency keys outlive their batch replays, not the events) | worker |
 | `TRAJECTORY_CONTENT_RETENTION_DAYS` / `TRAJECTORY_EXPORT_RETENTION_DAYS` | 180 / 30 | worker |
 | `TRAJECTORY_EXPORT_MAX_BYTES` | 268435456 (size cap of one export archive) | worker |
 | `TRAJECTORY_BUDGET_TRAJECTORY_EVENTS` | 50000 (degraded) | worker |

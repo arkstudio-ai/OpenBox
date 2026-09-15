@@ -41,7 +41,7 @@ def test_defaults_follow_the_configuration_reference(tmp_path):
     assert (settings.segment_events, settings.segment_max_bytes, settings.segment_idle_seconds) == (1000, 4194304, 300)
     # The segment and blob cache sizes are read where the caches live (repository.py, payload.py).
     assert not hasattr(settings, "segment_cache_bytes") and not hasattr(settings, "blob_cache_bytes")
-    assert (settings.hot_days, settings.dedupe_days) == (7, 30)
+    assert (settings.hot_days, settings.dedupe_days) == (7, 3)
     assert (settings.content_retention_days, settings.export_retention_days) == (180, 30)
     assert settings.budget_trajectory_events == 50000
     assert settings.budget_trajectory_bytes == 209715200

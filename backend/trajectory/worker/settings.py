@@ -142,7 +142,7 @@ class WorkerSettings:
             segment_max_bytes=integer("TRAJECTORY_SEGMENT_MAX_BYTES", 4 * 1024 * 1024),
             segment_idle_seconds=integer("TRAJECTORY_SEGMENT_IDLE_SECONDS", 300),
             hot_days=integer("TRAJECTORY_HOT_DAYS", 7),
-            dedupe_days=integer("TRAJECTORY_DEDUPE_DAYS", 30),
+            dedupe_days=integer("TRAJECTORY_DEDUPE_DAYS", 3),
             content_retention_days=integer("TRAJECTORY_CONTENT_RETENTION_DAYS", 180),
             export_retention_days=integer("TRAJECTORY_EXPORT_RETENTION_DAYS", 30),
             export_max_bytes=integer("TRAJECTORY_EXPORT_MAX_BYTES", 256 * 1024 * 1024),

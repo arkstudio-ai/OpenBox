@@ -262,6 +262,34 @@ async def test_job_facts_wait_for_the_job_commit_and_flag_a_late_result(state, r
     assert late["data"]["original_run_id"] == ticket.run_id and late["event_id"].startswith(f"job_late:{job_id}:")
 
 
+async def test_job_callbacks_record_nothing_while_the_session_recording_is_paused(state, recording_spool, monkeypatch):
+    from trajectory.jobs import record_job_in_tx
+    await create_user_message("s1", "First", user_id="u1")
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "false")
+    await create_user_message("s1", "Off", user_id="u1")
+
+    # Recording is on again, but no write holding the session lock has resumed the period yet.
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    job_id = uuid4().hex
+    async with database.get_db_session() as db:
+        job = VideoJob(id=job_id, user_id="u1", session_id="s1", kind="segment", idempotency_key=job_id,
+                       status="in_progress", model="fixture", attempt=0, request_data={"prompt": "clip"},
+                       result_data={}, created_at=runtime.now(), updated_at=runtime.now())
+        db.add(job)
+        assert await record_job_in_tx(db, job) is None
+    assert recording_spool.events("job.progress") == []
+    assert [event for event in recording_spool.events("baseline.captured")
+            if event["event_id"] == f"job_adopt:{job_id}"] == []
+
+    await create_user_message("s1", "On", user_id="u1")
+    async with database.get_db_session() as db:
+        job = await db.get(VideoJob, job_id)
+        job.status = "completed"
+        assert await record_job_in_tx(db, job) is not None
+    [finished] = recording_spool.events("job.finished")
+    assert finished["data"]["job_id"] == job_id
+
+
 async def test_cron_run_entry_takes_no_session_lock_and_its_facts_follow_the_run_row(state, recording_spool,
                                                                                    monkeypatch):
     import session.internal_parts as internal_parts

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 
 from trajectory import enabled, record
-from trajectory.producers import activity_context
+from trajectory.producers import activity_context, paused_in_tx
 from trajectory.types import canonical
 
 CONTEXT_KEY = "_trajectory_context"
@@ -15,7 +15,9 @@ async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None =
     """No latest-session lookup: a callback follows its saved root and call.
 
     Facts wait for the job row's commit. A callback for a deleted session is
-    dropped by the worker, which keeps the session's tombstone.
+    dropped by the worker, which keeps the session's tombstone. Job writes hold
+    no session row lock, so nothing is recorded while the session's recording
+    is paused and not resumed yet (SPEC §5.6).
     """
     if not enabled(job.user_id):
         return None
@@ -26,7 +28,7 @@ async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None =
     if not source_session:
         return None
     context = await activity_context(db, job.user_id, source_session, saved=saved)
-    if context is None:
+    if context is None or await paused_in_tx(db, context):
         return None
     if not saved:
         setattr(job, field, {**metadata, CONTEXT_KEY: context.to_dict()})

@@ -18,6 +18,7 @@ import operator
 import os
 import random
 import re
+import shutil
 import tempfile
 from pathlib import Path, PureWindowsPath
 from typing import AsyncIterator, Callable, Mapping, Protocol, runtime_checkable
@@ -59,12 +60,16 @@ class BlobStore(Protocol):
     """Opaque bytes under keys accepted by check_key.
 
     Every store behaves the same: put with if_absent keeps an existing object,
-    get raises FileNotFoundError for a missing key, delete is idempotent,
-    delete_prefix returns how many keys it removed and list yields keys in
-    lexical order.
+    put_file stores a local file's bytes as put stores data (the OSS and local
+    stores stream them, so memory does not grow with the file), get raises
+    FileNotFoundError for a missing key, delete is idempotent, delete_prefix
+    returns how many keys it removed and list yields keys in lexical order.
     """
 
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None: ...
+
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
+                       if_absent: bool = True) -> None: ...
 
     async def get(self, key: str) -> bytes: ...
 
@@ -278,6 +283,12 @@ class OssBlobStore:
             check_key(key), data, content_type=content_type, forbid_overwrite=if_absent, internal=self.internal
         )
 
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
+                       if_absent: bool = True) -> None:
+        await self._client().put_object_file(
+            check_key(key), path, content_type=content_type, forbid_overwrite=if_absent, internal=self.internal
+        )
+
     async def get(self, key: str) -> bytes:
         return await self._client().get_object(check_key(key), internal=self.internal)
 
@@ -333,7 +344,13 @@ class LocalBlobStore:
         return self.root / check_key(key)
 
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None:
-        await asyncio.to_thread(self._write, self._path(key), _as_bytes(data), if_absent)
+        path, content = self._path(key), _as_bytes(data)
+        await asyncio.to_thread(self._write, path, if_absent, lambda handle: handle.write(content))
+
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
+                       if_absent: bool = True) -> None:
+        target, source = self._path(key), os.fspath(path)
+        await asyncio.to_thread(self._write, target, if_absent, lambda handle: _copy_file(source, handle))
 
     async def get(self, key: str) -> bytes:
         return await asyncio.to_thread(self._read, self._path(key), key)
@@ -361,7 +378,7 @@ class LocalBlobStore:
         for key in await asyncio.to_thread(_walk_keys, self.root, prefix):
             yield key
 
-    def _write(self, path: Path, data: bytes, if_absent: bool) -> None:
+    def _write(self, path: Path, if_absent: bool, fill: Callable[..., object]) -> None:
         # Check-then-write is enough here: if_absent keys are content addressed
         # (a racing duplicate writes the same bytes) and one worker writes (§8.1).
         if if_absent and path.is_file():
@@ -369,7 +386,7 @@ class LocalBlobStore:
         fd, temp = _temp_file(path.parent)
         try:
             with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
+                fill(handle)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, path)
@@ -436,6 +453,11 @@ def _temp_file(directory: Path) -> tuple[int, str]:
         return tempfile.mkstemp(prefix=_TEMP_PREFIX, dir=directory)
 
 
+def _copy_file(source: str, handle) -> None:
+    with open(source, "rb") as reader:
+        shutil.copyfileobj(reader, handle, CHUNK_BYTES)
+
+
 def _fsync_directory(directory: Path) -> None:
     # Make the rename durable where the platform lets a directory be opened.
     try:
@@ -475,7 +497,7 @@ def _walk(root: Path, prefix: str) -> tuple[list[str], list[str]]:
 class MemoryBlobStore:
     """In-process store for tests.
 
-    Counters: puts (put calls, if_absent no-ops included), gets (get calls,
+    Counters: puts (put and put_file calls, if_absent no-ops included), gets (get calls,
     hits and misses), deletes (delete calls plus keys removed by
     delete_prefix) and bytes (bytes stored by puts that wrote). A call stopped
     by a fault changes nothing.
@@ -536,6 +558,13 @@ class MemoryBlobStore:
         self.objects[key] = stored
         self.content_types[key] = content_type
         self.bytes += len(stored)
+
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
+                       if_absent: bool = True) -> None:
+        """Reads the file whole (this store keeps objects in memory anyway) and puts it."""
+        check_key(key)
+        data = await asyncio.to_thread(Path(path).read_bytes)
+        await self.put(key, data, content_type=content_type, if_absent=if_absent)
 
     async def get(self, key: str) -> bytes:
         check_key(key)
@@ -627,6 +656,11 @@ class FaultInjectingBlobStore:
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None:
         self._maybe_fail("put", key)
         await self.inner.put(key, data, content_type=content_type, if_absent=if_absent)
+
+    async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
+                       if_absent: bool = True) -> None:
+        self._maybe_fail("put", key)
+        await self.inner.put_file(key, path, content_type=content_type, if_absent=if_absent)
 
     async def get(self, key: str) -> bytes:
         self._maybe_fail("get", key)

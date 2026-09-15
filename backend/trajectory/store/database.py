@@ -25,6 +25,10 @@ SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 PG_SERVER_SETTINGS = {"statement_timeout": "5000", "application_name": "openbox-trace"}
 
 
+class TraceEngineNotInitialized(RuntimeError):
+    """No trace engine is open: never initialized, already closed, or an embedded worker that failed to start."""
+
+
 class TraceBase(DeclarativeBase):
     """Declarative base of the trace database models (never ``db.base.Base``)."""
     type_annotation_map = {
@@ -82,7 +86,7 @@ def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
 def get_trace_engine() -> AsyncEngine:
     """Get the trace engine (must be initialized first)."""
     if _engine is None:
-        raise RuntimeError("Trace database engine not initialized. Call init_trace_engine() first.")
+        raise TraceEngineNotInitialized("Trace database engine not initialized. Call init_trace_engine() first.")
     return _engine
 
 
@@ -90,7 +94,7 @@ def get_trace_engine() -> AsyncEngine:
 async def trace_session() -> AsyncIterator[AsyncSession]:
     """Short-lived trace session: commit on success, rollback on exception, always close."""
     if _session_factory is None:
-        raise RuntimeError("Trace database engine not initialized. Call init_trace_engine() first.")
+        raise TraceEngineNotInitialized("Trace database engine not initialized. Call init_trace_engine() first.")
 
     session = _session_factory()
     try:

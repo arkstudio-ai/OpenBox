@@ -154,7 +154,8 @@ async def test_a_refused_entry_does_not_hold_back_its_batch(trace_engine, intern
         await client.close()
     (left,) = await outbox()
     assert left.payload["action"] == "admin.session.delete" and left.attempts == 1
-    assert left.next_attempt_at.replace(tzinfo=timezone.utc) > now()
+    # Resending cannot fix a refusal: the entry is a dead letter at once.
+    assert left.next_attempt_at.replace(tzinfo=timezone.utc) == AuditDelivery.DEAD_LETTER_AT
     assert sorted(row.action for row in await audit_logs(business_db)) == [
         "admin.trajectory.download", "admin.trajectory.payload"]
 
@@ -211,3 +212,79 @@ async def test_in_process_backend_writes_and_validates_audit_entries(business_db
     assert [row.id for row in await audit_logs(business_db)] == ["a" * 32]
     with pytest.raises(AuditRejected):
         await LocalBackend().audit([{**entry, "id": "b" * 32, "action": "admin.users.delete"}])
+
+
+class Counters:
+    def __init__(self):
+        self.values: dict[str, int] = {}
+
+    def inc(self, name, value=1):
+        self.values[name] = self.values.get(name, 0) + value
+
+
+async def make_due() -> None:
+    async with trace_session() as db:
+        await db.execute(update(TrajectoryAuditOutbox).values(next_attempt_at=now() - timedelta(seconds=1)))
+
+
+def dead(row) -> bool:
+    return row.next_attempt_at.replace(tzinfo=timezone.utc) == AuditDelivery.DEAD_LETTER_AT
+
+
+async def test_a_row_becomes_a_dead_letter_after_its_last_attempt(trace_engine, auth_stores, monkeypatch):
+    monkeypatch.setenv("TRAJECTORY_AUDIT_MAX_ATTEMPTS", "3")
+    await record_audit("admin", "admin.trajectory.payload", target_id="s1")
+    backend, metrics = RecordingBackend(down=True), Counters()
+    for attempt in (1, 2, 3):
+        await make_due()
+        assert await AuditDelivery(backend, metrics=metrics).deliver_once() == 0
+        (row,) = await outbox()
+        assert (row.attempts, dead(row)) == (attempt, attempt == 3)
+    assert metrics.values == {"audit_dead_letters": 1}
+    backend.down = False
+    assert await AuditDelivery(backend, metrics=metrics).deliver_once() == 0
+    (row,) = await outbox()
+    assert (row.attempts, backend.sent, metrics.values) == (3, [], {"audit_dead_letters": 1})
+
+
+async def test_a_row_becomes_a_dead_letter_once_it_is_too_old(trace_engine, auth_stores, monkeypatch):
+    monkeypatch.delenv("TRAJECTORY_AUDIT_MAX_AGE_SECONDS", raising=False)
+    await record_audit("admin", "admin.trajectory.payload", target_id="s1")
+    async with trace_session() as db:
+        await db.execute(update(TrajectoryAuditOutbox).values(
+            created_at=now() - timedelta(seconds=trajectory_auth.DEFAULT_AUDIT_MAX_AGE_SECONDS + 60)))
+    metrics = Counters()
+    assert await AuditDelivery(RecordingBackend(down=True), metrics=metrics).deliver_once() == 0
+    (row,) = await outbox()
+    assert (row.attempts, dead(row), metrics.values) == (1, True, {"audit_dead_letters": 1})
+
+
+async def test_a_refused_row_becomes_a_dead_letter_on_its_first_attempt(trace_engine, auth_stores):
+    await record_audit("admin", "admin.trajectory.payload", target_id="s1")
+    await record_audit("admin", "admin.trajectory.download", target_id="s1")
+    backend, metrics = RecordingBackend(refuse="admin.trajectory.payload"), Counters()
+    assert await AuditDelivery(backend, metrics=metrics).deliver_once() == 1
+    (row,) = await outbox()
+    assert (row.payload["action"], row.attempts, dead(row)) == ("admin.trajectory.payload", 1, True)
+    assert metrics.values == {"audit_dead_letters": 1} and len(backend.sent) == 1
+
+
+async def test_the_delivery_loop_deletes_dead_letters_older_than_thirty_days(trace_engine, auth_stores):
+    stamp = now()
+    rows = {"old dead letter": (31, True), "recent dead letter": (29, True), "old pending row": (31, False)}
+    async with trace_session() as db:
+        for name, (days, dead_letter) in rows.items():
+            db.add(TrajectoryAuditOutbox(payload={"id": name}, attempts=1, created_at=stamp - timedelta(days=days),
+                                         next_attempt_at=AuditDelivery.DEAD_LETTER_AT if dead_letter
+                                         else stamp + timedelta(hours=1)))
+    delivery = AuditDelivery(RecordingBackend(down=True), interval=0.02)
+    delivery.start()
+    try:
+        for _ in range(200):
+            if len(await outbox()) < 3:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        await delivery.stop()
+    assert sorted(row.payload["id"] for row in await outbox()) == ["old pending row", "recent dead letter"]
+    assert await AuditDelivery().purge_dead_letters() == 0

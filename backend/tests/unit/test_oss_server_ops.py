@@ -250,6 +250,64 @@ async def test_other_conflicts_raise(forbid_overwrite, code):
     assert (caught.value.status, caught.value.code, caught.value.request_id) == (409, code, "req-409")
 
 
+# -- put_object_file --
+
+class StreamingOss(httpx.AsyncBaseTransport):
+    """Receives each request body chunk by chunk, as a network transport does, then replays queued answers."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.requests: list[httpx.Request] = []
+        self.chunks: list[bytes] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        async for chunk in request.stream:
+            self.chunks.append(bytes(chunk))
+        return self.answers.pop(0)
+
+
+async def test_put_object_file_streams_the_file_under_its_md5_and_length(tmp_path):
+    content = b"".join(index.to_bytes(4, "big") for index in range(70_000))
+    path = tmp_path / "archive.zip"
+    path.write_bytes(content)
+    transport = StreamingOss(httpx.Response(200, headers={"ETag": '"F1LE"'}))
+    client = OssClient("bucket", "cn-shanghai", "oss-cn-shanghai.aliyuncs.com", KEY_ID, SECRET,
+                       http=httpx.AsyncClient(transport=transport))
+    etag = await client.put_object_file("trajectories/_exports/exp_1/archive.zip", path, content_type="application/zip",
+                                        forbid_overwrite=True, internal=True, chunk_bytes=64 * 1024)
+    assert etag == "F1LE"
+    [request] = transport.requests
+    assert request.method == "PUT" and request.url.host == INTERNAL_HOST
+    assert request.url.raw_path == b"/trajectories/_exports/exp_1/archive.zip"
+    assert b"".join(transport.chunks) == content
+    assert len(transport.chunks) > 1 and max(len(chunk) for chunk in transport.chunks) <= 64 * 1024
+    assert request.headers["content-md5"] == md5_b64(content)
+    assert request.headers["content-length"] == str(len(content)) and "transfer-encoding" not in request.headers
+    assert (request.headers["content-type"], request.headers["x-oss-forbid-overwrite"]) == ("application/zip", "true")
+    assert_signed(request)
+
+
+async def test_put_object_file_keeps_the_outcomes_of_put_object(tmp_path):
+    path = tmp_path / "archive.zip"
+    path.write_bytes(b"zip")
+    fake = FakeOss(httpx.Response(409, content=error_body("FileAlreadyExists")),
+                   httpx.Response(403, content=error_body("AccessDenied", request_id="req-file")))
+    client = client_for(fake)
+    assert await client.put_object_file("a/b.zip", path, forbid_overwrite=True) == ""
+    with pytest.raises(OssError) as caught:
+        await client.put_object_file("a/b.zip", str(path))
+    assert (caught.value.status, caught.value.code, caught.value.request_id) == (403, "AccessDenied", "req-file")
+    assert [request.content for request in fake.requests] == [b"zip", b"zip"]
+    assert fake.requests[1].headers["content-type"] == "application/octet-stream"
+    assert "x-oss-forbid-overwrite" not in fake.requests[1].headers
+    with pytest.raises(FileNotFoundError):
+        await client.put_object_file("a/c.zip", tmp_path / "missing.zip")
+    with pytest.raises(ValueError):
+        await client.put_object_file("", path)
+    assert len(fake.requests) == 2
+
+
 # -- get_object --
 
 async def test_get_object_encodes_the_key_and_uses_the_internal_host():

@@ -55,7 +55,6 @@ def dev_environment(data_dir: Path) -> dict[str, str]:
         "TRAJECTORY_ADMIN_ENABLED": "true",
         "TRAJECTORY_RECORD_USER_IDS": "",
         "TRAJECTORY_ADMIN_USER_IDS": "",
-        "TRAJECTORY_SINK": "spool",
         # JWT_SECRET would otherwise select an external worker.
         "TRAJECTORY_WORKER_MODE": "embedded",
         "TRAJECTORY_SPOOL_DIR": str(data_dir / "trajectory-spool"),

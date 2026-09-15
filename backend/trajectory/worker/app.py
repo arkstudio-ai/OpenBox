@@ -195,6 +195,9 @@ def create_app(*, database_url: str | None = None, blob_store=None,
             # Asset payloads: the business bucket, over the VPC endpoint unless TRAJECTORY_OSS_INTERNAL=false.
             set_asset_reader(asset_reader or oss_asset_reader())
             stack.callback(set_asset_reader, None)
+            # Temporary export archives of builds that a crash or kill interrupted (trajectory.export).
+            from trajectory.export import remove_stale_temp_files
+            await asyncio.to_thread(remove_stale_temp_files)
             services = (services_factory or default_services)(store)
             await services.start()
             stack.push_async_callback(services.stop)

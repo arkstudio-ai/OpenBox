@@ -24,6 +24,7 @@ import hmac
 import os
 import time
 from email.utils import formatdate
+from typing import AsyncIterator
 from urllib.parse import quote, unquote
 from xml.etree import ElementTree
 
@@ -333,7 +334,7 @@ class OssClient:
         key: str = "",
         *,
         params: dict[str, str] | None = None,
-        body: bytes | None = None,
+        body: bytes | AsyncIterator[bytes] | None = None,
         headers: dict[str, str] | None = None,
         internal: bool = False,
         timeout: float = _CONTROL_TIMEOUT,
@@ -341,9 +342,10 @@ class OssClient:
     ):
         """Send one header-signed request; key "" addresses the bucket itself.
 
-        With stream=True the body is left unread: the caller reads and closes
-        the response. Failures without an HTTP answer become OssError with
-        status 0.
+        An async iterator body is streamed; the caller sends its Content-Length.
+        With stream=True the response body is left unread: the caller reads and
+        closes the response. Failures without an HTTP answer become OssError
+        with status 0.
         """
         import httpx
 
@@ -389,11 +391,54 @@ class OssClient:
         """
         data = _as_bytes(data)
         headers = {"Content-Type": content_type, "Content-MD5": _content_md5(data)}
+        return await self._put(_object_key(key), data, headers, forbid_overwrite=forbid_overwrite, internal=internal,
+                               timeout=timeout)
+
+    async def put_object_file(
+        self,
+        key: str,
+        path,
+        *,
+        content_type: str = "application/octet-stream",
+        forbid_overwrite: bool = False,
+        internal: bool = False,
+        timeout: float = 120,
+        chunk_bytes: int = 1024 * 1024,
+    ) -> str:
+        """put_object for the bytes of a local file, holding at most chunk_bytes of it in memory.
+
+        Content-MD5 comes from one chunked pass over the file; the PUT then
+        streams the file under an explicit Content-Length. Signing,
+        forbid_overwrite and errors are those of put_object; timeout bounds
+        each network read and write. A file that changes in between fails the
+        upload (OSS checks Content-MD5, the transport the length).
+        """
+        key = _object_key(key)
+        handle = await asyncio.to_thread(open, path, "rb")
+        try:
+            md5, size = await asyncio.to_thread(_file_md5, handle, chunk_bytes)
+            await asyncio.to_thread(handle.seek, 0)
+
+            async def body():
+                remaining = size
+                while remaining > 0:
+                    chunk = await asyncio.to_thread(handle.read, min(chunk_bytes, remaining))
+                    if not chunk:
+                        return
+                    remaining -= len(chunk)
+                    yield chunk
+
+            headers = {"Content-Type": content_type, "Content-MD5": md5, "Content-Length": str(size)}
+            return await self._put(key, body(), headers, forbid_overwrite=forbid_overwrite, internal=internal,
+                                   timeout=timeout)
+        finally:
+            handle.close()
+
+    async def _put(self, key: str, body, headers: dict[str, str], *, forbid_overwrite: bool, internal: bool,
+                   timeout: float) -> str:
         if forbid_overwrite:
             headers["x-oss-forbid-overwrite"] = "true"
-        resp = await self._request(
-            "PUT", _object_key(key), body=data, headers=headers, internal=internal, timeout=timeout
-        )
+        resp = await self._request("PUT", key, body=body, headers=headers, internal=internal, timeout=timeout)
         if resp.status_code == 200:
             return resp.headers.get("etag", "").strip('"')
         error = _error(resp)
@@ -528,6 +573,15 @@ def _as_bytes(data) -> bytes:
 
 def _content_md5(data: bytes) -> str:
     return base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode()
+
+
+def _file_md5(handle, chunk_bytes: int) -> tuple[str, int]:
+    """(Content-MD5, size) of what remains in a binary file handle, read in chunks."""
+    digest, size = hashlib.md5(usedforsecurity=False), 0
+    while chunk := handle.read(chunk_bytes):
+        digest.update(chunk)
+        size += len(chunk)
+    return base64.b64encode(digest.digest()).decode(), size
 
 
 def _absent(resp) -> tuple[bool, OssError]:

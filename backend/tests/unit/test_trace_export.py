@@ -4,6 +4,8 @@ import hashlib
 import io
 import json
 import os
+import tempfile
+import time
 import zipfile
 from datetime import timedelta
 
@@ -14,8 +16,9 @@ from sqlalchemy import select, update
 from tests.unit.test_worker_archive_support import (AT, FakeMetrics, add_events, add_trajectory, blob_store, event_values,
     gc_entries, trace_db, worker_settings)
 from trajectory import export
-from trajectory.export import ExportService, create_export, export_status, read_export
+from trajectory.export import ExportService, create_export, export_status, get_export, validate_export
 from trajectory.lifecycle import expire_trajectory_content, revoke_asset, tombstone_trajectory
+from trajectory.payload import spool_object
 from trajectory.projector import replay, statistics
 from trajectory.storage import MemoryBlobStore, blob_key, decode_blob, encode_blob, export_key, get_blob_store
 from trajectory.store.database import trace_session
@@ -162,6 +165,14 @@ def unzip(content: bytes) -> tuple[dict, dict[str, bytes]]:
     return json.loads(entries["manifest.json"]), entries
 
 
+async def download_export(db, trajectory, export_id: str) -> tuple[TrajectoryExport, bytes]:
+    """A download as the route performs it: the row, ``validate_export``, then the object spooled and verified."""
+    row = await get_export(db, trajectory, export_id)
+    await validate_export(db, trajectory, row)
+    spooled = await spool_object(None, row.storage_key, sha256=row.sha256, mismatch="Export digest mismatch")
+    return row, b"".join([bytes(chunk) async for chunk in spooled.chunks()])
+
+
 async def test_an_export_holds_segments_hot_rows_payload_blobs_and_asset_bytes(trace_db, blob_store, payload_reader,
                                                                               admins):
     rows = await seed_export_trajectory(blob_store)
@@ -173,7 +184,7 @@ async def test_an_export_holds_segments_hot_rows_payload_blobs_and_asset_bytes(t
     assert await worker(blob_store, metrics).run_once() == 1
 
     async with trace_session() as db:
-        saved, content = await read_export(db, await db.get(SessionTrajectory, "trj_a"), row.id)
+        saved, content = await download_export(db, await db.get(SessionTrajectory, "trj_a"), row.id)
     sha = hashlib.sha256(content).hexdigest()
     assert export_status(saved, "session_trj_a") == {
         "export_id": row.id, "status": "completed", "through_seq": "8", "error": None,
@@ -216,7 +227,7 @@ async def test_an_export_at_an_earlier_watermark_is_complete(trace_db, blob_stor
     export_id = await new_export("trj_a", 4)
     assert await worker(blob_store).run_once() == 1
     async with trace_session() as db:
-        _, content = await read_export(db, await db.get(SessionTrajectory, "trj_a"), export_id)
+        _, content = await download_export(db, await db.get(SessionTrajectory, "trj_a"), export_id)
     manifest, entries = unzip(content)
     assert [json.loads(line) for line in entries["events.jsonl"].splitlines()] == [expected_event(row) for row in rows[:4]]
     assert sorted(name for name in entries if name.startswith("payloads/")) == ["payloads/pld_finished", "payloads/pld_system"]
@@ -453,7 +464,7 @@ async def test_downloads_are_refused_when_not_ready_invalidated_expired_or_corru
 
     async def attempt(export_id, trajectory_id="trj_a"):
         async with trace_session() as db:
-            return await read_export(db, await db.get(SessionTrajectory, trajectory_id), export_id)
+            return await download_export(db, await db.get(SessionTrajectory, trajectory_id), export_id)
 
     assert (await attempt(ready))[0].status == "completed"
     with pytest.raises(LookupError):
@@ -555,9 +566,9 @@ async def test_an_export_across_segments_and_hot_rows_reports_a_deleted_asset(tr
     assert await worker(blob_store).run_once() == 1
 
     async with trace_session() as db:
-        _, content = await read_export(db, await db.get(SessionTrajectory, "trj_a"), after)
+        _, content = await download_export(db, await db.get(SessionTrajectory, "trj_a"), after)
         with pytest.raises(FileNotFoundError, match="invalidated"):
-            await read_export(db, await db.get(SessionTrajectory, "trj_a"), before)
+            await download_export(db, await db.get(SessionTrajectory, "trj_a"), before)
     manifest, entries = unzip(content)
     events = [json.loads(line) for line in entries["events.jsonl"].splitlines()]
     assert events == [expected_event(row) for row in rows]
@@ -587,7 +598,7 @@ async def test_a_copy_bound_to_an_asset_the_replica_has_not_seen_still_downloads
 
     async def download():
         async with trace_session() as db:
-            return await read_export(db, await db.get(SessionTrajectory, "trj_a"), export_id)
+            return await download_export(db, await db.get(SessionTrajectory, "trj_a"), export_id)
 
     _, content = await download()
     assert unzip(content)[1]["payloads/pld_copy"] == b"derived media"
@@ -673,3 +684,57 @@ async def test_a_second_build_of_an_export_the_service_is_building_does_not_buil
     release.set()
     assert await asyncio.wait_for(building, 5) == "completed"
     assert len(uploads) == 1
+
+
+class StreamingExportStore(MemoryBlobStore):
+    """Records how exports reach the store: uploads from a file and chunked reads, never a whole read."""
+
+    def __init__(self):
+        super().__init__()
+        self.uploads: list[tuple[str, int, bool]] = []
+        self.chunked_reads: list[tuple[str, int]] = []
+
+    async def put_file(self, key, path, *, content_type, if_absent=True):
+        self.uploads.append((key, os.path.getsize(path), if_absent))
+        await super().put_file(key, path, content_type=content_type, if_absent=if_absent)
+
+    async def get_chunks(self, key, *, chunk_bytes):
+        self.chunked_reads.append((key, chunk_bytes))
+        content = await super().get(key)
+        for offset in range(0, len(content), chunk_bytes):
+            yield content[offset:offset + chunk_bytes]
+
+    async def get(self, key):
+        assert "/_exports/" not in f"/{key}", "an export archive is never read whole"
+        return await super().get(key)
+
+
+async def test_the_archive_is_uploaded_from_its_file_and_verified_by_a_chunked_read(trace_db, payload_reader, admins):
+    store = StreamingExportStore()
+    await add_trajectory("trj_a", committed=2)
+    await add_events([event_values("trj_a", 1), event_values("trj_a", 2, data={"text": os.urandom(3000).hex()})])
+    export_id = await new_export("trj_a", 2)
+    assert await worker(store).run_once() == 1
+    row = await export_row(export_id)
+    assert (row.status, row.error) == ("completed", None)
+    assert store.uploads == [(row.storage_key, row.size_bytes, False)]
+    assert store.chunked_reads == [(row.storage_key, export.WRITE_CHUNK_BYTES)]
+    assert hashlib.sha256(store.objects[row.storage_key]).hexdigest() == row.sha256
+
+
+def test_stale_export_temp_files_are_removed_from_the_build_temp_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    fd, building = tempfile.mkstemp(prefix=export.TEMP_PREFIX, suffix=".zip")
+    os.close(fd)
+    stale, unrelated, folder = (tmp_path / f"{export.TEMP_PREFIX}crashed.zip", tmp_path / "unrelated.zip",
+                                tmp_path / f"{export.TEMP_PREFIX}folder")
+    stale.write_bytes(b"zip")
+    unrelated.write_bytes(b"zip")
+    folder.mkdir()
+    old = time.time() - export.STALE_TEMP_SECONDS - 60
+    for path in (stale, unrelated, folder):
+        os.utime(path, (old, old))
+    assert export.remove_stale_temp_files() == 1
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
+        [os.path.basename(building), "unrelated.zip", f"{export.TEMP_PREFIX}folder"])
+    assert export.remove_stale_temp_files(str(tmp_path / "missing")) == 0

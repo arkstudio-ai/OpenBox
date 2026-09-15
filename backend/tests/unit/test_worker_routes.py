@@ -136,6 +136,17 @@ async def test_session_header_adds_refs_capability_and_views_are_audited_per_ses
     assert len(_audited(await worker.delivered_audit(), "admin.trajectory.view")) == 3
 
 
+async def test_session_header_capabilities_are_the_repository_s_own(worker, monkeypatch):
+    async def header(db, session_id, through_seq=None):
+        return {"session_id": session_id, "through_seq": "3",
+                "capabilities": {"recording": True, "admin_read": True, "export": False}}
+
+    monkeypatch.setattr("trajectory.repository.get_session_header", header)
+    response = await worker.client.get(SESSION)
+    assert response.status_code == 200, response.text
+    assert response.json()["capabilities"] == {"recording": True, "admin_read": True, "export": False}
+
+
 async def test_events_records_checkpoint_and_search_parameters(worker):
     events = await worker.client.get(SESSION + "/events")
     assert events.status_code == 200
@@ -246,9 +257,10 @@ async def test_blob_endpoint_returns_the_ref_value_at_the_watermark(worker):
     early = await worker.client.get(SESSION + f"/blobs/{SYSTEM_SHA}", params={"through_seq": "1"})
     assert early.status_code == 404 and early.headers["cache-control"] == "no-store"
     assert (await worker.client.get(SESSION + "/blobs/" + "e" * 64)).status_code == 404
-    for malformed in (SYSTEM_SHA.upper(), SYSTEM_SHA[:-1], SYSTEM_SHA + "0"):
+    for malformed in (SYSTEM_SHA.upper(), SYSTEM_SHA[:-1], SYSTEM_SHA + "0", "NOT-A-SHA"):
         response = await worker.client.get(SESSION + "/blobs/" + malformed)
-        assert response.status_code == 422 and response.headers["cache-control"] == "no-store"
+        assert response.status_code == 404 and response.headers["cache-control"] == "no-store"
+        assert response.json() == {"detail": "Trajectory blob is not available at this position"}
     worker.blob.objects[blob_key("trj_a1", SYSTEM_SHA)] = b"not zstd"
     from trajectory.payload import reset_blob_cache
     reset_blob_cache()  # the value served above was verified when it entered the cache

@@ -16,7 +16,8 @@ import auth.ticket as tickets
 from bus import bus
 from core.log import create_logger
 from trajectory import repository
-from trajectory.auth import NoStoreRoute, assert_admin, record_audit, require_trajectory_admin, token_revoked
+from trajectory.auth import (NoStoreRoute, record_audit, require_admin_account, require_mobile_session,
+    require_trajectory_admin, token_revoked, viewer_facts)
 from trajectory.store.database import trace_session
 
 log = create_logger("trajectory.worker.ws")
@@ -64,14 +65,17 @@ async def claim_ticket(ticket: str) -> dict | None:
 
 
 async def validate_viewer(identity: dict) -> None:
+    """The in-process socket's checks in its order: account, role and allowlist, then token expiry, revocation
+    and the mobile session. When several fail at once, the first decides the close code, as it did there."""
+    client, jti = identity.get("client"), identity.get("auth_jti")
+    facts = await viewer_facts(identity["user_id"], client=client, sid=identity.get("mobile_session_id"), jti=jti)
+    require_admin_account(facts)
     expires = identity.get("auth_expires_at")
     if expires is not None and float(expires) <= time.time():
         raise HTTPException(401, detail="Token expired")
-    jti = identity.get("auth_jti")
     if await token_revoked(jti):
         raise HTTPException(401, detail="Token revoked")
-    await assert_admin(identity["user_id"], client=identity.get("client"),
-                       sid=identity.get("mobile_session_id"), jti=jti)
+    require_mobile_session(facts, client)
 
 
 def close_code(exc: HTTPException) -> int:

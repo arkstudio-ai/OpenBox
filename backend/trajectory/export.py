@@ -12,9 +12,12 @@ streamed to a temporary file under a size cap:
   asset bytes, through ``trajectory.payload.read_payload``);
 - ``manifest.json``, written last.
 
-The archive is uploaded under ``export_key``, read back and verified, and the
-row completes only if neither the export nor its trajectory was deleted in the
-meantime: deletion wins, and the uploaded object goes to the GC queue.
+The archive is uploaded from the temporary file under ``export_key`` and
+verified by hashing a chunked read-back, so memory does not grow with its
+size. The row completes only if neither the export nor its trajectory was
+deleted in the meantime: deletion wins, and the uploaded object goes to the GC
+queue. Worker start removes temporary archives that outlived their build
+(``remove_stale_temp_files``).
 Unfinished rows (pending, or running under an expired lease) are resumed by
 the next pass of any worker; a worker's first pass also takes over rows its
 own owner id still holds from a previous run.
@@ -30,7 +33,6 @@ import tempfile
 import time
 import zipfile
 from datetime import datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -41,7 +43,7 @@ from trajectory.auth import assert_admin
 from trajectory.lifecycle import GC_KEY, enqueue_gc, worker_setting
 from trajectory.payload import read_payload
 from trajectory.projector import empty_state, reduce, statistics
-from trajectory.storage import export_key, get_blob_store
+from trajectory.storage import export_key, read_chunks
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryExport, TrajectoryMetaAsset,
     TrajectoryPayload, TrajectorySegment)
@@ -62,6 +64,10 @@ REPLAY_YIELD_EVENTS = 200
 ENTRY_OVERHEAD_BYTES = 512
 #: Room kept for the manifest entry beyond the manifest text itself.
 MANIFEST_RESERVE_BYTES = 4096
+#: Name prefix of the temporary archives builds write to tempfile.gettempdir().
+TEMP_PREFIX = "openbox-export-"
+#: A temporary archive older than this outlived its build (a crash or kill); worker start removes it.
+STALE_TEMP_SECONDS = 3600
 
 
 class ExportTooLarge(Exception):
@@ -122,22 +128,34 @@ async def validate_export(db, trajectory, row) -> None:
         raise FileNotFoundError("Export invalidated by explicit content deletion; create a new export")
 
 
-async def read_export(db, trajectory, export_id: str) -> tuple[TrajectoryExport, bytes]:
-    """The completed export's row and verified ZIP bytes.
-
-    LookupError: not an export of this trajectory (404). HTTPException 409:
-    not ready. FileNotFoundError: content deleted or expired since, or the
-    object is gone (410). CorruptContent: digest mismatch (409).
-    """
-    row = await get_export(db, trajectory, export_id)
-    await validate_export(db, trajectory, row)
-    content = await get_blob_store().get(row.storage_key)
-    if hashlib.sha256(content).hexdigest() != row.sha256:
-        raise CorruptContent("Export digest mismatch")
-    return row, content
-
-
 # -- Worker service --
+
+def remove_stale_temp_files(directory: str | None = None, *, max_age_seconds: float = STALE_TEMP_SECONDS) -> int:
+    """Delete ``openbox-export-*`` files older than ``max_age_seconds`` from the temporary directory builds use.
+
+    A build removes its archive however it ends, unless its process died
+    first. Returns how many files were removed; blocking, so call it in a
+    worker thread.
+    """
+    cutoff = time.time() - max_age_seconds
+    removed = 0
+    try:
+        with os.scandir(directory or tempfile.gettempdir()) as entries:
+            for entry in entries:
+                if not entry.name.startswith(TEMP_PREFIX):
+                    continue
+                try:
+                    if entry.is_file(follow_symlinks=False) and entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                        os.unlink(entry.path)
+                        removed += 1
+                except OSError:
+                    continue
+    except OSError as exc:
+        log.warning("Stale export temporary files were not removed error_type=%s", type(exc).__name__)
+    if removed:
+        log.info("Removed stale export temporary files count=%s", removed)
+    return removed
+
 
 class ExportService:
     """Builds exports under a lease; ``owner_id`` must be unique among running workers."""
@@ -210,7 +228,7 @@ class ExportService:
         self._building.add(export_id)
         path = None
         try:
-            fd, path = tempfile.mkstemp(prefix="openbox-export-", suffix=".zip")
+            fd, path = tempfile.mkstemp(prefix=TEMP_PREFIX, suffix=".zip")
             os.close(fd)
             await self._leased(export_id, self._produce(export_id, path))
         except ExportLeaseLost:
@@ -280,10 +298,9 @@ class ExportService:
         sha, size = await asyncio.to_thread(_file_digest, path)
         key = export_key(export_id, sha)
         await self._record_upload(export_id, key)
-        data = await asyncio.to_thread(Path(path).read_bytes)
-        await self.blob_store.put(key, data, content_type=EXPORT_CONTENT_TYPE, if_absent=False)
-        del data
-        if hashlib.sha256(await self.blob_store.get(key)).hexdigest() != sha:
+        # A streamed upload and a chunked read-back: memory stays bounded by a chunk whatever the archive's size.
+        await self.blob_store.put_file(key, path, content_type=EXPORT_CONTENT_TYPE, if_absent=False)
+        if await _stored_digest(self.blob_store, key) != sha:
             raise CorruptContent("Export digest mismatch")
         await self._complete(export_id, trajectory.id, key, sha, size)
 
@@ -484,6 +501,14 @@ def _file_digest(path: str) -> tuple[str, int]:
             digest.update(chunk)
             size += len(chunk)
     return digest.hexdigest(), size
+
+
+async def _stored_digest(store, key: str) -> str:
+    """sha256 of a stored object, hashed chunk by chunk as the store streams it."""
+    digest = hashlib.sha256()
+    async for chunk in read_chunks(store, key, chunk_bytes=WRITE_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 class _ZipWriter:

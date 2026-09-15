@@ -213,3 +213,32 @@ def test_close_codes_and_watermark_shape():
     assert ws.watermark({"user_id": "a", "owner_user_id": "a", "session_id": "s", "trajectory_id": "t",
                          "committed_seq": 12, "deleted": False}) == {
         "user_id": "a", "owner_user_id": "a", "session_id": "s", "trajectory_id": "t", "committed_seq": "12"}
+
+
+@pytest.mark.parametrize("case,code", [
+    ("member_and_expired", 4403),
+    ("disabled_and_revoked", 4403),
+    ("member_with_a_replaced_mobile_session", 4403),
+    ("expired_with_a_replaced_mobile_session", 4401),
+])
+async def test_the_old_check_order_decides_the_close_code_when_several_checks_fail(worker, monkeypatch, case, code):
+    """Account, role and allowlist first, then token expiry and revocation, then the mobile session."""
+    user_id, fields = "admin", {"audience": ws.AUDIENCE}
+    expired = int(time.time()) - 1
+    if case == "member_and_expired":
+        user_id, fields["auth_expires_at"] = "a", expired
+    elif case == "disabled_and_revoked":
+        monkeypatch.setenv("TRAJECTORY_ADMIN_ENABLED", "false")
+        await worker.cache.set("jwt_bl:revoked-jti", True, ttl=60)
+        fields["auth_jti"] = "revoked-jti"
+    elif case == "member_with_a_replaced_mobile_session":
+        user_id = "a"
+        fields.update(client="mobile", mobile_session_id="replaced")
+    else:
+        fields.update(client="mobile", mobile_session_id="replaced", auth_expires_at=expired)
+    from trajectory.auth import clear_viewer_cache
+    clear_viewer_cache()
+    ticket = await tickets.create_ticket(user_id, "admin", **fields)
+    async with worker.socket(ticket) as (_, receive):
+        assert (await receive())["type"] == "websocket.accept"
+        assert await closed_with(receive) == code

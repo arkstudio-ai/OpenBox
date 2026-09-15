@@ -1,13 +1,20 @@
 """Embedded worker in the backend process: SQLite create_all (never alembic on the loop), services and routers."""
 import asyncio
+import os
+import tempfile
 import threading
+import time
 import types
 
 import httpx
 import pytest
+from alembic.runtime.environment import EnvironmentContext
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.routing import APIRoute, APIWebSocketRoute
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 import auth.middleware as middleware
 import auth.ticket as tickets
@@ -139,3 +146,125 @@ async def test_start_does_not_block_other_tasks(desktop):
         assert len(ticks) == 3 and services.started == 1
     finally:
         await embedded.stop_embedded_worker()
+
+
+def _versions(path) -> set[str]:
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.connect() as connection:
+            return {row[0] for row in connection.execute(text(f"SELECT version_num FROM {embedded.VERSION_TABLE}"))}
+    finally:
+        engine.dispose()
+
+
+def _heads() -> set[str]:
+    return set(ScriptDirectory.from_config(embedded._alembic_config()).get_heads())
+
+
+@pytest.fixture
+def schema_steps(monkeypatch):
+    """The revisions migrate_sqlite stamps and the threads its alembic upgrades run in."""
+    seen = types.SimpleNamespace(stamps=[], upgrades=[])
+    stamp, run_migrations = MigrationContext.stamp, EnvironmentContext.run_migrations
+
+    def recorded_stamp(self, script, revision):
+        seen.stamps.append(revision)
+        return stamp(self, script, revision)
+
+    def recorded_run(self, **kwargs):
+        seen.upgrades.append(threading.current_thread())
+        return run_migrations(self, **kwargs)
+
+    monkeypatch.setattr(MigrationContext, "stamp", recorded_stamp)
+    monkeypatch.setattr(EnvironmentContext, "run_migrations", recorded_run)
+    return seen
+
+
+def test_a_new_sqlite_database_is_stamped_at_the_head_and_created(tmp_path, schema_steps):
+    path = tmp_path / "new.db"
+    embedded.migrate_sqlite(f"sqlite+aiosqlite:///{path}")
+    assert schema_steps.stamps == ["heads"] and schema_steps.upgrades == []
+    assert _versions(path) == _heads() and len(_heads()) == 1
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert set(TraceBase.metadata.tables) <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+async def test_a_create_all_database_is_stamped_at_the_initial_revision_and_upgraded_in_a_worker_thread(
+        tmp_path, schema_steps):
+    path = tmp_path / "created.db"
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        TraceBase.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+    url = f"sqlite+aiosqlite:///{path}"
+    trace = create_async_engine(url)
+    try:
+        await embedded.prepare_schema(trace, url)
+    finally:
+        await trace.dispose()
+    assert schema_steps.stamps == [embedded.CREATE_ALL_REVISION] == ["t0001_initial"]
+    assert _versions(path) == _heads() and embedded.CREATE_ALL_REVISION not in _heads()
+    (thread,) = schema_steps.upgrades
+    assert thread is not threading.current_thread()
+
+
+async def test_start_removes_stale_export_temp_files(desktop, monkeypatch, tmp_path):
+    temp = tmp_path / "tmp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    stale, building = temp / "openbox-export-crashed.zip", temp / "openbox-export-building.zip"
+    for path in (stale, building):
+        path.write_bytes(b"zip")
+    old = time.time() - 2 * 3600
+    os.utime(stale, (old, old))
+    services = FakeServices()
+    await embedded.start_embedded_worker(FastAPI(), blob_store=MemoryBlobStore(), services_factory=lambda store: services)
+    try:
+        assert (stale.exists(), building.exists(), services.started) == (False, True, 1)
+    finally:
+        await embedded.stop_embedded_worker()
+
+
+async def test_admin_routes_answer_503_while_the_trace_database_is_not_open(desktop):
+    """main.create_app mounts the routers in embedded mode; they stay mounted when the worker then fails to start."""
+    class Broken(FakeServices):
+        async def start(self):
+            raise OSError("spool unavailable")
+
+    app = FastAPI()
+    embedded.mount_admin_routers(app)
+    with pytest.raises(OSError):
+        await embedded.start_embedded_worker(app, blob_store=MemoryBlobStore(), services_factory=lambda store: Broken())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://desktop") as client:
+        for path in ("/sessions", "/sessions/session_a_1", "/sessions/session_a_1/blobs/" + "a" * 64,
+                     "/sessions/session_a_1/exports/exp_1/download"):
+            response = await client.get(PREFIX + path)
+            assert response.status_code == 503, response.text
+            assert response.headers["cache-control"] == "no-store"
+            assert response.json() == {"detail": "Trajectory database is unavailable"}
+
+
+async def test_the_hint_channel_opens_only_beside_a_redis_cache(monkeypatch):
+    """The dev server has JWT_SECRET but no Redis: it must not try to reach one."""
+    import cache
+    from bus import trajectory_hints
+    from cache.redis_cache import RedisCache
+    from core.config import OpenBoxConfig
+
+    opened = []
+
+    async def init(url, **kwargs):
+        opened.append(url)
+        return object()
+
+    monkeypatch.setattr(trajectory_hints, "init_trajectory_hints", init)
+    monkeypatch.setattr("core.config.get_config",
+                        lambda: OpenBoxConfig(jwt_secret="dev-secret", redis_url="redis://hints.invalid:6379/3"))
+    monkeypatch.setattr(cache, "_instance", MemoryCache())
+    assert await embedded._open_hints() is False and opened == []
+    monkeypatch.setattr(cache, "_instance", RedisCache.__new__(RedisCache))
+    assert await embedded._open_hints() is True and opened == ["redis://hints.invalid:6379/3"]

@@ -46,6 +46,8 @@ AUDIT_REJECTED_STATUSES = frozenset({400, 413, 422})
 #: 30 attempts span about 20 hours, so rows queued before a backend outage of most of a day are still delivered.
 DEFAULT_AUDIT_MAX_ATTEMPTS = 30
 DEFAULT_AUDIT_MAX_AGE_SECONDS = 3 * 24 * 3600
+#: Dead letters are deleted once they are this old (counted from ``created_at``).
+AUDIT_DEAD_LETTER_RETENTION = timedelta(days=30)
 
 _bearer = HTTPBearer(auto_error=False)
 # Desktop mode without JWT_SECRET: the same default administrator as auth.middleware.
@@ -205,15 +207,25 @@ async def assert_admin(user_id: str, *, client: str | None = "web", sid: str | N
     mobile-session claim before the account row was read.
     """
     facts = await viewer_facts(user_id, client=client, sid=sid, jti=jti, fresh=fresh)
+    require_mobile_session(facts, client)
+    return require_admin_account(facts)
+
+
+def require_mobile_session(facts: dict, client: str | None) -> None:
+    """401 when the token's mobile-session claim is not valid (``viewer_facts``)."""
     if not facts["mobile_session_valid"]:
         raise _mobile_session_error(client)
+
+
+def require_admin_account(facts: dict) -> dict:
+    """401 inactive or deleted; 403 not an admin; 404 administration disabled (``viewer_facts``)."""
     if facts["is_deleted"] or not facts["is_active"]:
         raise HTTPException(status_code=401, detail="Account is inactive or deleted")
     if facts["role"] != "admin":
         raise HTTPException(status_code=403, detail="Platform administrator access required")
     if not facts["admin_enabled"]:
         raise HTTPException(status_code=404, detail="Trajectory administration is disabled")
-    return {"user_id": user_id, "role": "admin"}
+    return {"user_id": facts["user_id"], "role": "admin"}
 
 
 # -- Tokens --
@@ -336,16 +348,19 @@ class AuditDelivery:
     lease. Delivered rows are deleted and failed rows back off (5 s up to 1 h);
     entry ids make a redelivery after a crash idempotent in the backend.
 
-    A row whose failed delivery was its ``audit_max_attempts()``-th, or that was
+    A row the backend refuses (400, 413 or 422: resending cannot fix it), whose
+    failed delivery was its ``audit_max_attempts()``-th, or that was
     ``audit_max_age_seconds()`` old by then, becomes a dead letter: it stays in
     the outbox with ``next_attempt_at = DEAD_LETTER_AT``, so no pass claims it
     again, counts ``audit_dead_letters`` and is logged once. Moving its
-    ``next_attempt_at`` back to the present delivers it again.
+    ``next_attempt_at`` back to the present delivers it again. The delivery
+    loop deletes dead letters older than ``AUDIT_DEAD_LETTER_RETENTION``.
     """
     BATCH = 100
     LEASE_SECONDS = 120
     INTERVAL_SECONDS = 2.0
     MAX_BACKOFF_SECONDS = 3600
+    PURGE_INTERVAL_SECONDS = 3600
     DEAD_LETTER_AT = datetime(9999, 1, 1, tzinfo=timezone.utc)
 
     def __init__(self, backend: HttpBackend | LocalBackend | None = None, *, interval: float | None = None,
@@ -387,15 +402,15 @@ class AuditDelivery:
                 .execution_options(synchronize_session=False))).all()
         if not rows:
             return 0
-        delivered, failed = await self._send(self._backend or get_backend(), rows)
+        delivered, failed, refused = await self._send(self._backend or get_backend(), rows)
         retry_from = now()
-        dead = [row for row in failed if self.exhausted(row.attempts, row.created_at, retry_from)]
+        dead = refused + [row for row in failed if self.exhausted(row.attempts, row.created_at, retry_from)]
         dead_ids = {row.id for row in dead}
         async with trace_session() as db:
             if delivered:
                 await db.execute(delete(Outbox).where(Outbox.id.in_(delivered))
                                  .execution_options(synchronize_session=False))
-            for row in failed:
+            for row in failed + refused:
                 retry_at = (self.DEAD_LETTER_AT if row.id in dead_ids
                             else retry_from + timedelta(seconds=self.backoff(row.attempts)))
                 await db.execute(update(Outbox).where(Outbox.id == row.id).values(next_attempt_at=retry_at)
@@ -413,30 +428,49 @@ class AuditDelivery:
                         payload.get("id"), payload.get("action"), row.attempts)
         (self._metrics or get_metrics()).inc("audit_dead_letters", len(rows))
 
-    async def _send(self, backend, rows) -> tuple[list[int], list]:
-        """(ids of the rows the backend accepted, the rows it did not accept)."""
+    async def purge_dead_letters(self) -> int:
+        """Delete dead letters created more than ``AUDIT_DEAD_LETTER_RETENTION`` ago; returns how many."""
+        from sqlalchemy import delete
+        from trajectory.store.database import trace_session
+        from trajectory.store.models import TrajectoryAuditOutbox as Outbox
+
+        async with trace_session() as db:
+            result = await db.execute(
+                delete(Outbox).where(Outbox.next_attempt_at >= self.DEAD_LETTER_AT,
+                                     Outbox.created_at < now() - AUDIT_DEAD_LETTER_RETENTION)
+                .execution_options(synchronize_session=False))
+            purged = result.rowcount or 0
+        if purged:
+            log.info("Purged trajectory audit dead letters rows=%s", purged)
+        return purged
+
+    async def _send(self, backend, rows) -> tuple[list[int], list, list]:
+        """(ids of the rows the backend accepted, rows to retry, rows it refused for good)."""
         try:
             await backend.audit([row.payload for row in rows])
-            return [row.id for row in rows], []
+            return [row.id for row in rows], [], []
         except AuditRejected as exc:
             rejected = exc
         except Exception as exc:
             log.warning("Trajectory audit delivery failed rows=%s error_type=%s", len(rows), type(exc).__name__)
-            return [], list(rows)
+            return [], list(rows), []
         if len(rows) == 1:
             log.warning("Trajectory audit entry refused id=%s reason=%s", rows[0].payload.get("id"), rejected)
-            return [], [rows[0]]
+            return [], [], [rows[0]]
         # One refused entry must not hold back the rest of its batch.
-        delivered, failed = [], []
+        delivered, failed, refused = [], [], []
         for row in rows:
             try:
                 await backend.audit([row.payload])
                 delivered.append(row.id)
+            except AuditRejected as exc:
+                log.warning("Trajectory audit entry refused id=%s reason=%s", row.payload.get("id"), exc)
+                refused.append(row)
             except Exception as exc:
                 log.warning("Trajectory audit entry not delivered id=%s error_type=%s",
                             row.payload.get("id"), type(exc).__name__)
                 failed.append(row)
-        return delivered, failed
+        return delivered, failed, refused
 
     def start(self) -> asyncio.Task:
         if self._task is None or self._task.done():
@@ -454,7 +488,14 @@ class AuditDelivery:
             pass
 
     async def _run(self) -> None:
+        purge_at = 0.0
         while True:
+            if _clock() >= purge_at:
+                purge_at = _clock() + self.PURGE_INTERVAL_SECONDS
+                try:
+                    await self.purge_dead_letters()
+                except Exception as exc:
+                    log.warning("Trajectory audit dead-letter purge failed error_type=%s", type(exc).__name__)
             try:
                 delivered = await self.deliver_once()
             except asyncio.CancelledError:

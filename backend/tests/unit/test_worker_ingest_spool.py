@@ -83,15 +83,17 @@ async def test_goodbye_producer_directory_is_removed_after_its_files(harness):
     assert not writer.directory.exists()
 
 
-async def test_dead_local_producer_without_goodbye_is_declared_crashed(harness):
+async def test_a_local_producer_is_declared_crashed_only_once_its_heartbeat_stops(harness):
+    """A pid this process cannot see proves nothing: the containers of one pod share hostname and boot id
+    but not their pid namespace. Only a stale producer.json does."""
     finished = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
     dead_pid = int(finished.stdout.strip())
     local = SpoolWriter(harness.settings.spool_dir, "20260914080001-local-2-bbbbbbbb", hostname=socket.gethostname(),
                         pid=dead_pid, boot_id=spool.boot_id())
     local.events(event(session="ses_local", run_id="run_l"))
     await harness.run()
-    assert local.directory.exists()
-    # Same host and boot: a gone pid is enough, its producer.json need not be stale yet.
+    assert (await harness.run())["producer_losses"] == 0 and local.directory.exists()  # heartbeat fresh
+    _age(local.directory / spool.PRODUCER_FILE, 120)
     result = await harness.run()
     assert not local.directory.exists() and result["producer_losses"] == 1
     _, stored = await events_of("ses_local")

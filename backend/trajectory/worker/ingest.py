@@ -945,24 +945,17 @@ class IngestService:
         A running emitter refreshes the mtime of its producer.json every few seconds
         (``Emitter.HEARTBEAT_SECONDS``), so one unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS belongs to a
         process that is gone, wherever it ran: a recreated container never comes back under its old hostname.
-        A producer of this host and boot is dead as soon as its pid is gone, and never while it is this process.
+        A pid is no evidence either way: the containers of one pod share hostname and boot id but not
+        their pid namespace. The producer of this very process is never dead.
         """
         try:
             age = time.time() - os.stat(producer.path / spool.PRODUCER_FILE).st_mtime
         except OSError:
             return False
         document = producer.document if isinstance(producer.document, dict) else {}
-        pid = document.get("pid")
         if (document.get("hostname") == self.hostname and document.get("boot_id") == self.boot_id
-                and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0):
-            if pid == os.getpid():
-                return False
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return True
-            except OSError:
-                pass  # alive, owned by another user
+                and document.get("pid") == os.getpid()):
+            return False
         return age >= self.settings.spool_abandon_seconds
 
     # Worker state ------------------------------------------------------------------

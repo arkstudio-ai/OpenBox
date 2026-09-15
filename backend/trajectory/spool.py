@@ -272,7 +272,7 @@ class SpoolUsage:
 
 def spool_usage(spool_dir: Path) -> SpoolUsage:
     """Usage of the producer directories, ``blobs/`` and ``quarantine/``; a missing directory counts as empty."""
-    quarantine_bytes, quarantine_files = _directory_usage(Path(spool_dir) / QUARANTINE_DIR)
+    quarantine_bytes, quarantine_files, _ = _directory_usage(Path(spool_dir) / QUARANTINE_DIR)
     return SpoolUsage(producer_usage_bytes(spool_dir), _directory_usage(blobs_dir(spool_dir))[0],
                       quarantine_bytes, quarantine_files)
 
@@ -283,18 +283,31 @@ def spool_usage_bytes(spool_dir: Path) -> int:
 
 def producer_usage_bytes(spool_dir: Path) -> int:
     """Allocated bytes of the files directly inside each directory under ``producers/``."""
+    return producer_usage(spool_dir)[0]
+
+
+def producer_usage(spool_dir: Path, producer_id: str | None = None) -> tuple[int, int]:
+    """``(allocated bytes of the files directly inside each directory under producers/, closed data files waiting
+    in the directory of producer_id)``.
+
+    The count comes from the listing the byte total needs anyway: a writer samples its own backlog with it
+    (``Emitter.BACKLOG_FILES``). It is 0 without a producer id or without that directory.
+    """
     try:
         producers = list(os.scandir(Path(spool_dir) / PRODUCERS_DIR))
     except FileNotFoundError:
-        return 0
-    total = 0
+        return 0, 0
+    total = closed = 0
     for producer in producers:
         try:
             if producer.is_dir(follow_symlinks=False):
-                total += _directory_usage(producer.path)[0]
+                usage = _directory_usage(producer.path)
+                total += usage[0]
+                if producer.name == producer_id:
+                    closed = usage[2]
         except OSError:
             continue
-    return total
+    return total, closed
 
 
 def shared_usage_bytes(spool_dir: Path) -> int:
@@ -308,24 +321,27 @@ def _allocated(status: os.stat_result) -> int:
     return status.st_size if blocks is None else max(status.st_size, blocks * 512)
 
 
-def _directory_usage(directory) -> tuple[int, int]:
-    """``(allocated bytes, quarantined data files)`` of the regular files directly inside ``directory``.
+def _directory_usage(directory) -> tuple[int, int, int]:
+    """``(allocated bytes, quarantined data files, closed data files)`` of the regular files directly inside
+    ``directory``.
 
-    ``(0, 0)`` when it does not exist; raises when it cannot be listed otherwise.
+    The second count means something in ``quarantine/``, the third in a producer directory. ``(0, 0, 0)`` when it
+    does not exist; raises when it cannot be listed otherwise.
     """
     try:
         entries = list(os.scandir(directory))
     except FileNotFoundError:
-        return 0, 0
-    total = files = 0
+        return 0, 0, 0
+    total = files = closed = 0
     for entry in entries:
         try:
             if entry.is_file(follow_symlinks=False):
                 total += _allocated(entry.stat(follow_symlinks=False))
                 files += is_quarantined_file(entry.name)
+                closed += entry.name.endswith(CLOSED_SUFFIX) and parse_file_name(entry.name) is not None
         except OSError:
             continue
-    return total, files
+    return total, files, closed
 
 
 def budgets_path(spool_dir: Path) -> Path:

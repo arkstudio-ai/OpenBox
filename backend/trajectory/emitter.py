@@ -248,6 +248,12 @@ class Emitter:
     NEAR_CAP_FRACTION = 0.9
     NEAR_CAP_SAMPLE_SECONDS = 0.5
     NEAR_CAP_SHARED_SAMPLE_SECONDS = 5.0
+    #: More closed files than this waiting in this writer's own producer directory (counted with the producers/
+    #: rescan, its own closes added in between) mean the worker is behind: the writer then rotates by size or every
+    #: BACKLOG_FILE_SECONDS instead of file_ms, so an outage leaves a few large files rather than one per second of
+    #: activity, and the worker drains them at its big-file rate.
+    BACKLOG_FILES = 100
+    BACKLOG_FILE_SECONDS = 30.0
     #: Writer-owned lines (gap controls, producer.goodbye) may exceed spool_max_bytes by this much: without its
     #: goodbye, a producer restarted while the spool is full is reported as crashed for every recent session.
     CONTROL_RESERVE_BYTES = 1024 * 1024
@@ -337,6 +343,8 @@ class Emitter:
         self._spool_estimate = 0
         #: The blobs/ and quarantine/ part of _spool_estimate: the last rescan plus this writer's blob writes since.
         self._shared_estimate = 0
+        #: Closed files waiting in this writer's producer directory at the last rescan, plus its closes since.
+        self._backlog_files = 0
         #: Free bytes of the spool's file system at the last producers/ rescan; None sets no disk floor.
         self._disk_free: int | None = None
         #: _spool_estimate right after that rescan: this writer's writes since are what it has grown by.
@@ -552,7 +560,7 @@ class Emitter:
                     "written_lines": self._written_lines, "dropped_events": self._dropped_events,
                     "dropped_bytes": self._dropped_bytes, "dropped_by_reason": dict(self._dropped_by_reason),
                     "files_closed": self._files_closed, "files_lost": self._files_lost,
-                    "last_error": self._last_error,
+                    "backlog_files": self._backlog_files, "last_error": self._last_error,
                     "spool_bytes": self._spool_estimate, "gap_lines": self._gap_lines,
                     "pending_gap_reasons": list(self._drops),
                     "pending_gaps": len(self._drops) + self._gaps_in_flight,
@@ -666,7 +674,7 @@ class Emitter:
         self._write_buffer()
         if flush_seq != self._flush_done or closing:
             self._rotate()
-        elif self._fd is not None and time.monotonic() - self._file_opened >= self.file_seconds:
+        elif self._fd is not None and time.monotonic() - self._file_opened >= self._rotation_seconds():
             self._rotate()
         if flush_seq != self._flush_done:
             with self._lock:
@@ -691,10 +699,17 @@ class Emitter:
         now = time.monotonic()
         timeout = self.WAIT_SECONDS
         if self._fd is not None:
-            timeout = min(timeout, self._file_opened + self.file_seconds - now)
+            timeout = min(timeout, self._file_opened + self._rotation_seconds() - now)
         if self._drops:
             timeout = min(timeout, self._last_gap + self.GAP_INTERVAL_SECONDS - now)
         return max(0.001, timeout)
+
+    def _rotation_seconds(self) -> float:
+        """The age at which the open file rotates: ``file_ms``, or at least BACKLOG_FILE_SECONDS while more than
+        BACKLOG_FILES closed files of this writer wait for the worker (SPEC §5.2)."""
+        if self._backlog_files > self.BACKLOG_FILES:
+            return max(self.file_seconds, self.BACKLOG_FILE_SECONDS)
+        return self.file_seconds
 
     def _maintain(self, now: float) -> None:
         try:
@@ -716,7 +731,9 @@ class Emitter:
             except Exception as exc:
                 self._note_error(exc)
         try:
-            self._spool_estimate = spool.producer_usage_bytes(self.spool_dir) + self._shared_estimate
+            # The same listing counts the closed files the worker has not consumed from this writer's directory.
+            producers, self._backlog_files = spool.producer_usage(self.spool_dir, self.producer_id)
+            self._spool_estimate = producers + self._shared_estimate
         except Exception as exc:
             self._note_error(exc)
         self._disk_free, self._disk_free_estimate = None, self._spool_estimate
@@ -1065,6 +1082,8 @@ class Emitter:
             self._note_error(exc)
             return
         self._files_closed += 1
+        # Counted as waiting until the next rescan shows the worker consumed it.
+        self._backlog_files += 1
         _fsync_directory(self.producer_dir)
 
     def _rotate(self) -> None:

@@ -199,6 +199,83 @@ def test_age_rotation_closes_idle_files_without_a_flush(make_emitter):
     assert [record["n"] for record in records(emitter)] == [1, 2]
 
 
+def test_the_rotation_age_follows_the_sampled_backlog(make_emitter):
+    """With more than BACKLOG_FILES closed files of its own waiting, the writer rotates by size or at
+    BACKLOG_FILE_SECONDS instead of file_ms; at or below the threshold file_ms rules, and a longer file_ms is kept."""
+    assert (Emitter.BACKLOG_FILES, Emitter.BACKLOG_FILE_SECONDS) == (100, 30.0)
+    emitter = make_emitter(file_ms=1000)
+    assert emitter._rotation_seconds() == 1.0
+    emitter._backlog_files = Emitter.BACKLOG_FILES
+    assert emitter._rotation_seconds() == 1.0
+    emitter._backlog_files = Emitter.BACKLOG_FILES + 1
+    assert emitter._rotation_seconds() == 30.0
+    longer = make_emitter(file_ms=60_000)
+    longer._backlog_files = Emitter.BACKLOG_FILES + 1
+    assert longer._rotation_seconds() == 60.0
+
+
+def test_a_backlog_keeps_one_part_file_for_30_seconds_until_the_worker_catches_up(make_emitter, monkeypatch):
+    """A worker outage must not leave one file per second of activity. While more than BACKLOG_FILES closed files of
+    its own wait, one .part takes BACKLOG_FILE_SECONDS worth of lines and the writer's wait follows that age; once the
+    worker has consumed them, the next producers/ rescan brings the one-second rotation back. The writer's cycles run
+    here one by one on a simulated clock."""
+    clock = SimpleNamespace(now=float(int(time.monotonic())))
+    monkeypatch.setattr("trajectory.emitter.time", SimpleNamespace(monotonic=lambda: clock.now, time=time.time,
+                                                                   sleep=time.sleep))
+    emitter = make_emitter(file_ms=1000)
+    assert emitter._prepare_directory()
+    # Closed files the worker has not consumed yet, numbered past the counters this writer uses.
+    backlog = [emitter.producer_dir / spool.file_name(counter)
+               for counter in range(10_001, 10_002 + Emitter.BACKLOG_FILES)]
+    for path in backlog:
+        path.write_bytes(b"x")
+    sent = 0
+
+    def write():
+        nonlocal sent
+        sent += 1
+        assert emit(emitter, sent)
+        emitter._iterate()
+
+    def tick(seconds=1.0):
+        clock.now += seconds
+        emitter._iterate()
+
+    def lines(counter):
+        return [spool.decode_line(line)["n"]
+                for line in (emitter.producer_dir / spool.file_name(counter)).read_bytes().splitlines()]
+
+    for _ in range(30):
+        tick()
+        write()
+    tick(0.9375)
+    stats = emitter.stats()
+    assert (stats["files_closed"], stats["backlog_files"]) == (0, Emitter.BACKLOG_FILES + 1)
+    # The wait ends when the open file turns 30 s old, and the file closes then with 30 seconds of lines.
+    assert emitter._wait_timeout() == 0.0625
+    tick(0.0625)
+    assert emitter.stats()["files_closed"] == 1 and lines(1) == list(range(1, 31))
+
+    # The worker drains the backlog; until the next rescan (every SPOOL_SAMPLE_SECONDS) the writer still counts it.
+    for path in [*backlog, emitter.producer_dir / spool.file_name(1)]:
+        path.unlink()
+    write()
+    for _ in range(5):
+        tick()
+        write()
+    # That rescan closed the open file at once; the next files rotate at file_ms again, and the wait matches.
+    tick(0.9375)
+    assert emitter._wait_timeout() == 0.0625
+    tick(0.0625)
+    for _ in range(2):
+        write()
+        tick()
+    assert {name: lines(spool.parse_file_name(name)[0]) for name in data_files(emitter, closed_only=False)} == {
+        spool.file_name(2): [31, 32, 33, 34, 35], spool.file_name(3): [36], spool.file_name(4): [37],
+        spool.file_name(5): [38]}
+    assert emitter.stats()["backlog_files"] <= Emitter.BACKLOG_FILES
+
+
 def test_flush_writes_everything_enqueued_and_rotates_the_open_file(make_emitter):
     emitter = make_emitter()
     emitter.WAIT_SECONDS = 10
@@ -276,7 +353,8 @@ def test_usage_and_free_space_are_sampled_ten_times_as_often_near_the_spool_cap(
     emitter = make_emitter(spool_max_bytes=10_000)
     usage, scans, paths = {"producers": 0}, [], []
     monkeypatch.setattr(spool, "shared_usage_bytes", lambda root: scans.append("shared") or 0)
-    monkeypatch.setattr(spool, "producer_usage_bytes", lambda root: scans.append("producers") or usage["producers"])
+    monkeypatch.setattr(spool, "producer_usage",
+                        lambda root, producer_id=None: scans.append("producers") or (usage["producers"], 0))
 
     def statvfs(path):
         scans.append("statvfs")

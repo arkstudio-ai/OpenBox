@@ -155,6 +155,25 @@ def test_spool_usage_counts_allocated_bytes_of_producers_blobs_and_quarantine(tm
     assert spool.shared_usage_bytes(tmp_path) == usage.blob_bytes + usage.quarantine_bytes
 
 
+def test_producer_usage_counts_the_closed_data_files_of_one_producer_with_the_bytes_of_all(tmp_path):
+    """A writer samples its own backlog (Emitter.BACKLOG_FILES) from the listing the byte total needs anyway."""
+    producers = tmp_path / spool.PRODUCERS_DIR
+    (producers / "p1").mkdir(parents=True)
+    (producers / "p2").mkdir()
+    for number in (1, 2, 3):
+        (producers / "p1" / spool.file_name(number)).write_bytes(b"x")
+    (producers / "p1" / spool.file_name(4, closed=False)).write_bytes(b"x")
+    (producers / "p1" / spool.PRODUCER_FILE).write_bytes(b"{}")
+    (producers / "p1" / "notes.jsonl").write_bytes(b"x")  # not a data file name
+    (producers / "p2" / spool.file_name(1)).write_bytes(b"x")
+    total = spool.producer_usage_bytes(tmp_path)
+    assert total == allocated(*(producers / "p1").iterdir(), *(producers / "p2").iterdir())
+    assert spool.producer_usage(tmp_path, "p1") == (total, 3)
+    assert spool.producer_usage(tmp_path, "p2") == (total, 1)
+    assert spool.producer_usage(tmp_path, "gone") == spool.producer_usage(tmp_path) == (total, 0)
+    assert spool.producer_usage(tmp_path / "missing", "p1") == (0, 0)
+
+
 def test_budget_documents_round_trip_and_invalid_files_raise(tmp_path):
     document = spool.budgets_document(
         sessions={"root": {"level": "degraded", "reason": "trajectory_bytes", "since": "2026-09-14T08:00:00Z"},

@@ -219,15 +219,21 @@ spool_host_dir() {
   return 1
 }
 
-# spool_stats: "BYTES FILES CLOSED OLDEST_AGE_SECONDS QUARANTINED" for the non-empty spool files.
+# spool_stats: "BYTES FILES CLOSED OLDEST_AGE_SECONDS QUARANTINED". BYTES is the allocated size of every regular file
+# under producers/, blobs/ and quarantine/, as the emitter counts it against TRAJECTORY_SPOOL_MAX_BYTES; FILES, CLOSED
+# and the age are about the non-empty producer data files; QUARANTINED counts data files, not .reason sidecars.
 spool_stats() {
-  local dir now quarantined
+  local dir now
   dir=$(spool_host_dir) || return 1
   now=$(date +%s)
-  quarantined=$(find "$dir/quarantine" -type f ! -name '*.reason' 2>/dev/null | wc -l | tr -d ' ') || quarantined=0
-  { find "$dir/producers" -type f -size +0 \( -name '*.jsonl' -o -name '*.jsonl.part' \) -printf '%s %T@ %f\n' 2>/dev/null || true; } |
-    awk -v now="$now" -v quarantined="${quarantined:-0}" '
-      { bytes += $1; files++; if ($3 ~ /\.jsonl$/) closed++; if (oldest == "" || $2 < oldest) oldest = $2 }
+  # The starting point (%H) comes last: the volume path may contain spaces, spool file names do not.
+  { find "$dir/producers" "$dir/blobs" "$dir/quarantine" -type f -printf '%s %b %T@ %f %H\n' 2>/dev/null || true; } |
+    awk -v now="$now" '
+      { bytes += ($2 * 512 > $1) ? $2 * 512 : $1 }
+      $NF ~ /\/producers$/ && $1 > 0 && $4 ~ /\.jsonl(\.part)?$/ {
+        files++; if ($4 ~ /\.jsonl$/) closed++; if (oldest == "" || $3 < oldest) oldest = $3
+      }
+      $NF ~ /\/quarantine$/ && $4 !~ /^\./ && $4 !~ /\.reason$/ { quarantined++ }
       END {
         age = (oldest == "" || now < oldest) ? 0 : now - oldest
         printf "%.0f %d %d %.0f %d\n", bytes, files, closed, age, quarantined

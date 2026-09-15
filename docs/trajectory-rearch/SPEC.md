@@ -816,7 +816,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `OPENBOX_TRACE_ROLE` / `OPENBOX_RESTORE_DIR` | `openbox_trace` / `/var/backups/openbox/restore-check` | ops scripts |
 | existing: `TRAJECTORY_RECORDING_ENABLED`, `TRAJECTORY_RECORD_USER_IDS`, `TRAJECTORY_ADMIN_ENABLED`, `TRAJECTORY_ADMIN_USER_IDS`, `JWT_SECRET`, `INTERNAL_API_TOKEN`, `REDIS_URL` | | both |
 
-Every integer setting has a minimum (at least 1); a value that is not an integer or is below its minimum falls back to the default with a warning.
+Every integer setting has a minimum (at least 1, except `TRAJECTORY_SPOOL_MIN_FREE_BYTES`, where 0 disables the disk floor); a value that is not an integer or is below its minimum falls back to the default with a warning.
 
 ---
 

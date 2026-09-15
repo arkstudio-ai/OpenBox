@@ -379,6 +379,8 @@ class _Backoff:
     #: Ids of new payloads by (trajectory id, dedupe key), reused by later attempts: blobs that embed references keep
     #: the keys that ``unavailable`` names.
     payload_ids: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: Times in a row the batch kept changing underneath through MAX_PREPARE_RETRIES: they set its backoff.
+    conflicts: int = 0
 
 
 @dataclass
@@ -574,6 +576,8 @@ class IngestService:
         listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
         self._failures = {key: value for key, value in self._failures.items() if key in listed}
         self._positions = {key: value for key, value in self._positions.items() if key in listed}
+        self._backoff = {key: value for key, value in self._backoff.items() if key[:2] in listed}
+        self._stored = {key: value for key, value in self._stored.items() if key[:2] in listed}
         await self._finish_producers(scan, result)
         await self._save_state()
         self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)
@@ -720,10 +724,13 @@ class IngestService:
                     continue
                 retries += 1
                 if retries > MAX_PREPARE_RETRIES:
-                    log.warning("Ingest batch keeps changing underneath; retrying later producer_id=%s file=%s",
-                                spool_file.producer_id, spool_file.name)
                     held = self._backoff.setdefault(key, _Backoff())
-                    held.next_at = time.monotonic() + BACKOFF_FIRST_SECONDS
+                    held.conflicts += 1
+                    delay = backoff_seconds(held.conflicts)
+                    held.next_at = time.monotonic() + delay
+                    # Once per backoff step: the batch is not read again before the backoff ends.
+                    log.warning("Ingest batch keeps changing underneath; retrying in %.0f s producer_id=%s file=%s "
+                                "conflicts=%s", delay, spool_file.producer_id, spool_file.name, held.conflicts)
                     return False
                 continue
             self._backoff.pop(key, None)

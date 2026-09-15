@@ -1,5 +1,6 @@
 """Ingest failure handling (SPEC §8.2, §8.3): quarantine moves that fail, transient errors, failure counts, retries."""
 import asyncio
+import hashlib
 import logging
 import sqlite3
 import time
@@ -9,9 +10,10 @@ import pytest
 from sqlalchemy import exc as sa_exc
 
 from trajectory.store.models import TrajectoryWorkerState
+from trajectory.types import canonical
 from trajectory.worker import ingest as ingest_module
 from trajectory.worker import spool_reader
-from trajectory.worker.ingest import FAILURES_STATE_KEY, _transient
+from trajectory.worker.ingest import FAILURES_STATE_KEY, RetryBatch, _Transaction, _transient
 from tests.unit.test_worker_ingest import event, events_of, harness, rows, settings, trace_db  # noqa: F401
 
 DELETED = {"type": "session.deleted", "session_id": "ses_1", "user_id": "u1", "deleted_at": "2026-09-14T09:00:00.000Z"}
@@ -221,3 +223,46 @@ async def test_the_failure_count_of_a_poison_batch_survives_a_restart(harness, m
     harness.configure(ingest_max_batch_failures=3)
     result = await harness.run()
     assert (result["failed_batches"], result["quarantined_files"]) == (1, 1) and not poison.exists()
+
+
+async def test_a_batch_that_keeps_changing_backs_off_exponentially_and_warns_once_per_step(harness, monkeypatch,
+                                                                                         warnings_with):
+    async def changed(self, db, scan, **options):
+        raise RetryBatch()
+
+    monkeypatch.setattr(_Transaction, "begin", changed)
+    warnings = warnings_with("keeps changing underneath")
+    path = harness.writer.events(event(event_id="e1"))
+    key = (harness.writer.producer_id, path.name, 0)
+    result = await harness.run()
+    held = harness.service._backoff[key]
+    assert result["events"] == 0 and held.conflicts == 1 and 0 < _wait(held) <= 1 and len(warnings) == 1
+    # While it backs off the batch is not prepared again, and nothing is logged.
+    assert (await harness.run())["deferred_batches"] == 1 and len(warnings) == 1
+    for conflicts, longest in ((2, 2), (3, 4), (4, 8), (5, 16), (6, 32), (7, 60), (8, 60)):
+        _release(harness.service)
+        await harness.run()
+        held = harness.service._backoff[key]
+        assert held.conflicts == conflicts and longest / 2 < _wait(held) <= longest and len(warnings) == conflicts
+    monkeypatch.undo()
+    _release(harness.service)
+    assert (await harness.run())["events"] == 1 and harness.service._backoff == {}
+
+
+async def test_the_backoff_and_upload_record_of_a_batch_whose_file_is_gone_are_dropped(harness):
+    tools = [{"name": "t", "description": "D" * 3000}]
+    tools_sha = hashlib.sha256(canonical(tools)).hexdigest()
+
+    def failing_tools(key):
+        if key.endswith(tools_sha):
+            raise ConnectionError("the tools upload fails")
+
+    harness.store.faults["put"] = failing_tools
+    path = harness.writer.events(event("request.prepared", request_id="r1", event_id="r1",
+                                       data={"model": "m", "input": {"system": "S" * 3000, "tools": tools}}))
+    await harness.run()
+    key = (harness.writer.producer_id, path.name, 0)
+    assert set(harness.service._backoff) == {key} and len(harness.service._stored[key]) == 1
+    path.unlink()  # removed by hand: the batch never commits
+    await harness.run()
+    assert harness.service._backoff == {} and harness.service._stored == {}

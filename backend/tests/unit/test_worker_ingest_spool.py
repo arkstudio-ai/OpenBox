@@ -1,26 +1,38 @@
 """Ingest file handling (SPEC §8.2, §8.3, §8.6): readiness, producer loss, quarantine, restarts, blob outages."""
+import asyncio
 import os
 import socket
 import subprocess
 import sys
 import time
+from contextlib import asynccontextmanager
 
 import pytest
 
 from trajectory import spool
+from trajectory.store.database import close_trace_engine
 from trajectory.store.models import TrajectoryEvent, TrajectoryIngestFile, TrajectoryIngestProducer
+from trajectory.worker import ingest as ingest_module
 from trajectory.worker import spool_reader
 from trajectory.worker.content import BLOB_UNAVAILABLE
 from trajectory.worker.ingest import IngestService
+from trajectory.worker.metrics import Metrics
 from tests.unit.test_worker_ingest import (SpoolWriter, event, events_of, harness, rows, settings,  # noqa: F401
     trace_db)
 
 TORN = b'{"v":1,"k":"event","n":3,"t":"2026-09-14T08:0'
+DELETED = {"type": "session.deleted", "session_id": "ses_1", "user_id": "u1", "deleted_at": "2026-09-14T09:00:00.000Z"}
 
 
 def _age(path, seconds):
     moment = time.time() - seconds
     os.utime(path, (moment, moment))
+
+
+def _release(service):
+    """Let every file that backs off after a failure retry on the next pass."""
+    for failure in service._failures.values():
+        failure.next_at = 0.0
 
 
 async def test_open_part_blocks_its_producer_until_abandoned(harness):
@@ -72,7 +84,6 @@ async def test_goodbye_producer_directory_is_removed_after_its_files(harness):
 
 
 async def test_dead_local_producer_without_goodbye_is_declared_crashed(harness):
-    harness.configure(spool_abandon_seconds=1)
     finished = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
     dead_pid = int(finished.stdout.strip())
     local = SpoolWriter(harness.settings.spool_dir, "20260914080001-local-2-bbbbbbbb", hostname=socket.gethostname(),
@@ -80,13 +91,35 @@ async def test_dead_local_producer_without_goodbye_is_declared_crashed(harness):
     local.events(event(session="ses_local", run_id="run_l"))
     await harness.run()
     assert local.directory.exists()
-    _age(local.directory, 30)
+    # Same host and boot: a gone pid is enough, its producer.json need not be stale yet.
     result = await harness.run()
     assert not local.directory.exists() and result["producer_losses"] == 1
     _, stored = await events_of("ses_local")
     assert stored[-1].event_id == f"gap:{local.producer_id}:2-:ses_local:run_l"
-    # The default producer lives on another host and stays untouched.
+    # The default producer lives on another host and its producer.json is fresh: it stays untouched.
     assert harness.writer.directory.exists()
+
+
+async def test_a_producer_whose_heartbeat_stopped_is_declared_crashed_on_any_host(harness):
+    """A killed backend container comes back under a new hostname, so no later producer ever shares the old one.
+    A running emitter refreshes its producer.json every few seconds; one left unrefreshed for
+    TRAJECTORY_SPOOL_ABANDON_SECONDS without goodbye is dead: loss reported once, directory removed."""
+    gone = SpoolWriter(harness.settings.spool_dir, "20260914080006-oldcontainer-7-ffffffff", hostname="oldcontainer",
+                       pid=7)
+    gone.events(event(session="ses_gone", run_id="run_g"))
+    await harness.run()
+    assert (await harness.run())["producer_losses"] == 0 and gone.directory.exists()  # heartbeat fresh
+    _age(gone.directory / spool.PRODUCER_FILE, 120)
+    result = await harness.run()
+    assert not gone.directory.exists() and result["producer_losses"] == 1
+    _, stored = await events_of("ses_gone")
+    assert stored[-1].event_id == f"gap:{gone.producer_id}:2-:ses_gone:run_g"
+    assert stored[-1].data == {"phase": "lost", "reason": "producer_crashed", "producer_id": gone.producer_id,
+                               "from_n": 2, "to_n": None}
+    [row] = await rows(TrajectoryIngestProducer, TrajectoryIngestProducer.producer_id == gone.producer_id)
+    assert row.abandoned
+    assert harness.writer.directory.exists()
+    assert (await harness.run())["producer_losses"] == 0
 
 
 async def test_missing_counters_are_reported_as_lost_lines(harness):
@@ -252,11 +285,93 @@ async def test_a_failing_batch_backs_off_while_other_producers_continue(harness,
     # The failed file waits for its backoff instead of failing on every pass.
     result = await harness.run()
     assert result["failed_batches"] == 0 and result["deferred_batches"] == 1 and failing.exists()
-    for key, (_, attempts) in list(harness.service._failures.items()):
-        harness.service._failures[key] = (0.0, attempts)
+    _release(harness.service)
     result = await harness.run()
     assert result["failed_batches"] == 0 and not failing.exists()
     assert (await events_of("ses_1"))[0].deleted_at is not None and harness.service._failures == {}
+
+
+async def test_a_poison_batch_is_quarantined_after_repeated_failures_and_the_producer_goes_on(harness, monkeypatch):
+    """TRAJECTORY_INGEST_MAX_BATCH_FAILURES failures in a row while the trace database answers: the file is
+    quarantined like one with an unparsable line (reason batch_failed), and the producer's later files proceed.
+    Every failed attempt counts failed_batches in the metrics registry."""
+    registry = Metrics()
+    harness.metrics = registry
+    harness.configure(ingest_max_batch_failures=3)
+    writer = harness.writer
+    writer.events(event(event_id="first", run_id="run_p"))
+    await harness.run()
+
+    async def poisoned(db, trajectory, *, reason):
+        raise RuntimeError("value out of range for type integer")
+
+    monkeypatch.setattr(harness.retention, "tombstone", poisoned)
+    poison = writer.controls(DELETED, age=30)
+    later = writer.events(event(event_id="later"), age=20)
+    for attempt in (1, 2):
+        result = await harness.run()
+        assert (result["failed_batches"], result["quarantined_files"], result["events"]) == (1, 0, 0)
+        assert poison.exists() and later.exists()  # the later file waits behind the failing one
+        assert registry.snapshot()["counters"]["failed_batches"] == attempt
+        _release(harness.service)
+    result = await harness.run()
+    assert (result["failed_batches"], result["quarantined_files"], result["events"]) == (1, 1, 1)
+    assert not poison.exists() and not later.exists()
+    target = harness.settings.spool_dir / "quarantine" / f"{writer.producer_id}__{poison.name}"
+    reason = spool_reader.read_producer_document(target.with_name(target.name + ".reason"))
+    assert reason["reason"] == "batch_failed" and reason["error"] == "RuntimeError: value out of range for type integer"
+    assert (reason["offset"], reason["first_n"], reason["last_n"]) == (0, 2, 2)
+    _, stored = await events_of("ses_1")
+    assert [row.event_id for row in stored[1:]] == ["first", f"gap:{writer.producer_id}:2-2:ses_1:run_p", "later"]
+    assert stored[2].data == {"phase": "lost", "reason": "producer_lines_lost", "producer_id": writer.producer_id,
+                              "from_n": 2, "to_n": 2}
+    counters = registry.snapshot()["counters"]
+    assert (counters["failed_batches"], counters["quarantined_files"]) == (3, 1)
+    assert harness.service._failures == {} and await rows(TrajectoryIngestFile) == []
+
+
+async def test_failures_while_the_trace_database_does_not_answer_never_quarantine(harness, monkeypatch):
+    harness.configure(ingest_max_batch_failures=2)
+    harness.writer.events(event(event_id="first"))
+    await harness.run()
+
+    async def lost_connection(db, trajectory, *, reason):
+        raise ConnectionError("connection was closed in the middle of operation")
+
+    async def unreachable(timeout=ingest_module.DB_PROBE_SECONDS):
+        return False
+
+    probe = ingest_module.trace_db_available
+    monkeypatch.setattr(harness.retention, "tombstone", lost_connection)
+    monkeypatch.setattr(ingest_module, "trace_db_available", unreachable)
+    failing = harness.writer.controls(DELETED, age=30)
+    for _ in range(5):
+        result = await harness.run()
+        assert (result["failed_batches"], result["quarantined_files"]) == (1, 0)
+        _release(harness.service)
+    [failure] = harness.service._failures.values()
+    assert (failure.attempts, failure.failures) == (5, 0) and failing.exists()
+    assert not (harness.settings.spool_dir / "quarantine").exists()
+    # Once the database answers again, failures of the batch count.
+    monkeypatch.setattr(ingest_module, "trace_db_available", probe)
+    assert (await harness.run())["quarantined_files"] == 0
+    _release(harness.service)
+    assert (await harness.run())["quarantined_files"] == 1 and not failing.exists()
+
+
+async def test_the_trace_database_probe_reports_errors_and_timeouts_as_unavailable(trace_db, monkeypatch):
+    assert await ingest_module.trace_db_available() is True
+
+    @asynccontextmanager
+    async def hanging():
+        await asyncio.sleep(10)
+        yield None
+
+    monkeypatch.setattr(ingest_module, "trace_session", hanging)
+    assert await ingest_module.trace_db_available(timeout=0.05) is False
+    monkeypatch.undo()
+    await close_trace_engine()
+    assert await ingest_module.trace_db_available() is False
 
 
 async def test_out_of_range_times_are_invalid_values_not_fatal_errors(harness):

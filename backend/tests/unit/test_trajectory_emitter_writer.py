@@ -71,6 +71,23 @@ def start_idle(emitter):
     assert wait_for(idle)
 
 
+def test_the_writer_refreshes_producer_json_while_it_runs(make_emitter):
+    """The worker declares a producer whose producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS
+    dead, whatever host it ran on; an idle writer keeps refreshing it."""
+    emitter = make_emitter()
+    emitter.HEARTBEAT_SECONDS = 0.05
+    start_idle(emitter)
+    document = emitter.producer_dir / spool.PRODUCER_FILE
+    past = time.time() - 600
+    os.utime(document, (past, past))
+    assert wait_for(lambda: time.time() - os.stat(document).st_mtime < 60)
+    # A producer.json that is gone never breaks the writer.
+    document.unlink()
+    emitter._heartbeat()
+    assert emit(emitter, 1) and emitter.flush(5)
+    assert [record["n"] for record in records(emitter)] == [1]
+
+
 def test_size_rotation_fsyncs_then_renames_complete_files(make_emitter):
     emitter = make_emitter(file_bytes=2 * KIB)
     calls = []

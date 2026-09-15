@@ -3,6 +3,7 @@ import io
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,33 @@ def test_distinct_trace_url_migrates_only_the_trace_database(tmp_path, env):
     tables = _tables(trace)
     assert {"trajectory_alembic_version", "session_trajectories", "trajectory_events"} <= tables
     assert "alembic_version" not in tables
+
+
+class _Connection:
+    """The parts of a synchronous SQLAlchemy connection ``allow_long_migrations`` uses."""
+
+    def __init__(self, dialect: str):
+        self.dialect = types.SimpleNamespace(name=dialect)
+        self.calls: list = []
+
+    def exec_driver_sql(self, statement: str) -> None:
+        self.calls.append(statement)
+
+    def commit(self) -> None:
+        self.calls.append("COMMIT")
+
+
+def test_postgresql_migrations_get_a_long_session_statement_timeout():
+    """The trace role defaults to statement_timeout 5s; t0002 rewrites a column type (wave-3 contract 2)."""
+    from trajectory.store.database import allow_long_migrations
+
+    postgresql = _Connection("postgresql")
+    allow_long_migrations(postgresql)
+    # Session level and committed: it outlives the transaction alembic begins next.
+    assert postgresql.calls == ["SET statement_timeout = '15min'", "COMMIT"]
+    sqlite = _Connection("sqlite")
+    allow_long_migrations(sqlite)
+    assert sqlite.calls == []
 
 
 def _cli(*args: str, **environment: str) -> subprocess.CompletedProcess:

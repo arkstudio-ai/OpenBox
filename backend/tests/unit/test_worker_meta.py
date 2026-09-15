@@ -6,8 +6,8 @@ import pytest
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine, trace_session
 from trajectory.store.models import (TrajectoryMetaAsset, TrajectoryMetaSession, TrajectoryMetaUser,
     TrajectoryMetaWorkspace)
-from trajectory.worker.meta import (DELETED, OWNERSHIP, MetaCache, apply_meta, control_epoch, mark_asset_deleted,
-    mark_session_deleted, ownership_verdict, parse_time, recording_transition)
+from trajectory.worker.meta import (DELETED, MAX_RECORDING_EPOCH, OWNERSHIP, MetaCache, apply_meta, control_epoch,
+    mark_asset_deleted, mark_session_deleted, ownership_verdict, parse_time, recording_transition)
 
 AT = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
 
@@ -146,11 +146,14 @@ def test_recording_transitions_follow_epochs_and_the_status_rule_without_them():
                                  ("paused", 1, "gap")):
         assert recording_transition(state, epoch, status=status, current_epoch=first) is None
     assert recording_transition("resumed", second, status="recording", current_epoch=first) == second
-    # Without an epoch: a pause applies unless paused, a resume only ends a pause, and the epoch stays.
+    # Without an epoch (SPEC §8.5): a pause applies unless paused and keeps the epoch, a resume only ends a pause,
+    # one period further.
     assert recording_transition("paused", None, status="gap", current_epoch=first) == first
     assert recording_transition("paused", None, status="paused", current_epoch=first) is None
-    assert recording_transition("resumed", None, status="paused", current_epoch=first) == first
+    assert recording_transition("resumed", None, status="paused", current_epoch=first) == first + 1
     assert recording_transition("resumed", None, status="recording", current_epoch=0) is None
+    assert recording_transition("resumed", None, status="paused", current_epoch=MAX_RECORDING_EPOCH) == \
+        MAX_RECORDING_EPOCH
 
 
 def test_control_epochs_are_non_negative_64_bit_integers():

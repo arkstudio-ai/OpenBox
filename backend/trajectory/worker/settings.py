@@ -81,8 +81,6 @@ class WorkerSettings:
     segment_events: int
     segment_max_bytes: int
     segment_idle_seconds: int
-    segment_cache_bytes: int
-    blob_cache_bytes: int
     hot_days: int
     dedupe_days: int
     content_retention_days: int
@@ -108,6 +106,8 @@ class WorkerSettings:
     internal_api_token: str | None = field(default=None, repr=False)
     #: TRAJECTORY_EXPORT_MAX_BYTES: size cap of one export archive (defaulted, so it follows the secrets).
     export_max_bytes: int = 256 * 1024 * 1024
+    #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES: consecutive failures of one spool file batch before it is quarantined.
+    ingest_max_batch_failures: int = 10
 
     @classmethod
     def from_env(cls) -> WorkerSettings:
@@ -137,13 +137,12 @@ class WorkerSettings:
             segment_events=integer("TRAJECTORY_SEGMENT_EVENTS", 1000),
             segment_max_bytes=integer("TRAJECTORY_SEGMENT_MAX_BYTES", 4 * 1024 * 1024),
             segment_idle_seconds=integer("TRAJECTORY_SEGMENT_IDLE_SECONDS", 300),
-            segment_cache_bytes=integer("TRAJECTORY_SEGMENT_CACHE_BYTES", 128 * 1024 * 1024),
-            blob_cache_bytes=integer("TRAJECTORY_BLOB_CACHE_BYTES", 256 * 1024 * 1024),
             hot_days=integer("TRAJECTORY_HOT_DAYS", 7),
             dedupe_days=integer("TRAJECTORY_DEDUPE_DAYS", 30),
             content_retention_days=integer("TRAJECTORY_CONTENT_RETENTION_DAYS", 180),
             export_retention_days=integer("TRAJECTORY_EXPORT_RETENTION_DAYS", 30),
             export_max_bytes=integer("TRAJECTORY_EXPORT_MAX_BYTES", 256 * 1024 * 1024),
+            ingest_max_batch_failures=integer("TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10),
             budget_trajectory_events=integer("TRAJECTORY_BUDGET_TRAJECTORY_EVENTS", 50000),
             budget_trajectory_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BYTES", 200 * 1024 * 1024),
             budget_trajectory_block_bytes=integer("TRAJECTORY_BUDGET_TRAJECTORY_BLOCK_BYTES", 1024 * 1024 * 1024),

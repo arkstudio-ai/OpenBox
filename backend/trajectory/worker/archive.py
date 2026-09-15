@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import orjson
 from sqlalchemy import delete, func, or_, select, text, update
@@ -63,6 +63,8 @@ MAINTENANCE_STATEMENT_TIMEOUT = "60s"
 KEY_PRUNE_INTERVAL_SECONDS = 3600
 KEY_PRUNE_BATCH = 1000
 KEY_PRUNE_MAX_BATCHES = 50
+#: ``events_ingested_24h`` counts a day of idempotency keys: sampled at most this often.
+INGESTED_SAMPLE_SECONDS = 300
 #: Uncommitted uploads one marker remembers; anything older waits for the trajectory's prefix deletion.
 MAX_TRACKED_UPLOADS = 50
 #: A trajectory whose archival fails is selected again after 30 s, doubling up to an hour; the others go on.
@@ -114,6 +116,14 @@ def tracked_uploads(value) -> list[dict]:
     return uploads
 
 
+def hot_partition_count(names, today: date) -> int:
+    """Attached daily ``trajectory_events`` partitions dated ``today`` or earlier: the ``hot_partitions`` gauge.
+
+    Partitions created ahead for later days, the default partition and any other name do not count.
+    """
+    return sum(1 for name in names if (day := partitions.partition_date(name)) is not None and day <= today)
+
+
 class ArchiveService:
     """Moves projected hot events into verified object-storage segments; runs in the single writer."""
 
@@ -130,6 +140,7 @@ class ArchiveService:
         self.dedupe_days = worker_setting(settings, "dedupe_days", "TRAJECTORY_DEDUPE_DAYS", 30)
         self._partitions_due = 0.0
         self._keys_due = 0.0
+        self._ingested_due = 0.0
         self._reported_holes: set[tuple[str, int]] = set()
         self._active: set[str] = set()
         #: trajectory id -> (monotonic time it is selected again, failures in a row).
@@ -152,6 +163,12 @@ class ArchiveService:
                     self._keys_due = clock
             except Exception as exc:
                 log.warning("Trajectory event key pruning failed: %s", type(exc).__name__)
+        if clock >= self._ingested_due:
+            self._ingested_due = clock + INGESTED_SAMPLE_SECONDS
+            try:
+                await self.sample_ingested_events()
+            except Exception as exc:
+                log.warning("Trajectory ingested events sample failed: %s", type(exc).__name__)
         archived = 0
         for trajectory_id in await self._candidates():
             try:
@@ -373,6 +390,8 @@ class ArchiveService:
                       first: int, last: int) -> None:
         timestamp = now()
         async with trace_session() as db:
+            # Deleting a segment's hot rows can outlast the trace role's 5 s statement timeout (contract 2).
+            await allow_long_statements(db)
             trajectory = await db.get(SessionTrajectory, trajectory_id, with_for_update=True)
             if trajectory is None or trajectory.deleted_at is not None or trajectory.content_expired_at is not None:
                 raise ArchiveAbandoned("the trajectory content was deleted")
@@ -444,6 +463,17 @@ class ArchiveService:
         # Watermark arithmetic, not a table count: live hot rows are exactly (archived_seq, committed_seq].
         self.metrics.set_gauge("hot_events_rows", int(committed))
 
+    async def sample_ingested_events(self) -> int:
+        """``events_ingested_24h``: idempotency keys recorded in the last 24 hours, one per ingested event."""
+        since = now() - timedelta(hours=24)
+        async with trace_session() as db:
+            # A day of keys can take longer to count than the trace role's 5 s statement timeout (contract 2).
+            await allow_long_statements(db)
+            count = int(await db.scalar(select(func.count()).select_from(TrajectoryEventKey)
+                                        .where(TrajectoryEventKey.recorded_at >= since)) or 0)
+        self.metrics.set_gauge("events_ingested_24h", count)
+        return count
+
     async def maintain_partitions(self) -> None:
         """PostgreSQL: create partitions for today..today+7 and drop empty ones older than TRAJECTORY_HOT_DAYS.
 
@@ -451,10 +481,13 @@ class ArchiveService:
         a 60 s statement timeout. Busy locks (PartitionLockUnavailable) and a
         refused isolation level are logged and retried after a minute instead
         of an hour. Old partitions that still hold rows are logged and counted
-        in the ``stale_hot_partitions`` gauge. SQLite has no partitions.
+        in the ``stale_hot_partitions`` gauge; ``hot_partitions`` counts the
+        attached daily partitions dated today or earlier that remain. SQLite
+        has no partitions (``hot_partitions`` 0).
         """
         clock = time.monotonic()
         if get_trace_engine().dialect.name != "postgresql":
+            self.metrics.set_gauge("hot_partitions", 0)
             self._partitions_due = clock + PARTITION_INTERVAL_SECONDS
             return
         today = now().date()
@@ -471,8 +504,9 @@ class ArchiveService:
             retry = True
             log.error("Trajectory event partition maintenance refused: %s", exc)
         oldest_hot_day = today - timedelta(days=self.hot_days)
-        stale = []
-        for name in await self._maintenance(partitions.list_partitions):
+        stale, removed = [], set()
+        names = await self._maintenance(partitions.list_partitions)
+        for name in names:
             day = partitions.partition_date(name)
             if day is None or day >= oldest_hot_day:
                 continue
@@ -483,9 +517,13 @@ class ArchiveService:
                 retry = True
                 dropped = False
                 log.warning("Trajectory event partition %s was not checked: %s", name, type(exc).__name__)
-            if not dropped:
+            if dropped:
+                removed.add(name)
+            else:
                 stale.append(name)
         self.metrics.set_gauge("stale_hot_partitions", len(stale))
+        self.metrics.set_gauge("hot_partitions", hot_partition_count(
+            [name for name in names if name not in removed], today))
         if stale:
             log.warning("Trajectory event partitions older than %s days still exist: %s", self.hot_days,
                         ",".join(stale))

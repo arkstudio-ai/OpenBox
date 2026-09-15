@@ -238,6 +238,9 @@ class Emitter:
     WAIT_SECONDS = 0.1
     GAP_INTERVAL_SECONDS = 0.1
     SPOOL_SAMPLE_SECONDS = 5.0
+    #: The writer refreshes the mtime of producer.json this often: the worker declares a producer whose
+    #: producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS dead, on any host.
+    HEARTBEAT_SECONDS = 5.0
     RETRY_SECONDS = 1.0
     ALIVE_CHECK_SECONDS = 1.0
     WRITE_CHUNK_BYTES = 1024 * 1024
@@ -305,6 +308,7 @@ class Emitter:
         self._file_opened = 0.0
         self._retry_at = 0.0
         self._next_sample = 0.0
+        self._next_heartbeat = 0.0
         self._spool_estimate = 0
         self._last_gap = float("-inf")
         self._inflight: collections.deque = collections.deque()
@@ -615,12 +619,22 @@ class Emitter:
             self.budgets.maybe_refresh()
         except Exception as exc:
             self._note_error(exc)
+        if now >= self._next_heartbeat:
+            self._next_heartbeat = now + self.HEARTBEAT_SECONDS
+            self._heartbeat()
         if now >= self._next_sample:
             self._next_sample = now + self.SPOOL_SAMPLE_SECONDS
             try:
                 self._spool_estimate = spool.spool_usage_bytes(self.spool_dir)
             except Exception as exc:
                 self._note_error(exc)
+
+    def _heartbeat(self) -> None:
+        """Refresh the mtime of producer.json (``HEARTBEAT_SECONDS``); never raises."""
+        try:
+            os.utime(self.producer_dir / spool.PRODUCER_FILE)
+        except Exception:
+            pass
 
     def _write_batch(self) -> None:
         batch = self._inflight

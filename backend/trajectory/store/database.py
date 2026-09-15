@@ -23,6 +23,9 @@ SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 #: Settings for request-serving PostgreSQL connections. Background jobs that
 #: need longer statements use ``SET LOCAL statement_timeout`` per transaction.
 PG_SERVER_SETTINGS = {"statement_timeout": "5000", "application_name": "openbox-trace"}
+#: Statement timeout of the trace migration connection: DDL on populated tables (t0002 rewrites a column type)
+#: outlasts the trace role's 5 s default (wave-3 contract 2).
+MIGRATION_STATEMENT_TIMEOUT = "15min"
 
 
 class TraceEngineNotInitialized(RuntimeError):
@@ -81,6 +84,19 @@ def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
     finally:
         cursor.close()
+
+
+def allow_long_migrations(connection) -> None:
+    """PostgreSQL: give a synchronous migration connection MIGRATION_STATEMENT_TIMEOUT for its whole session.
+
+    Call it before the migrations begin their transaction: it commits, so the
+    setting outlives that transaction and any commit a migration makes. SQLite:
+    nothing to do.
+    """
+    if connection.dialect.name != "postgresql":
+        return
+    connection.exec_driver_sql(f"SET statement_timeout = '{MIGRATION_STATEMENT_TIMEOUT}'")
+    connection.commit()
 
 
 def get_trace_engine() -> AsyncEngine:

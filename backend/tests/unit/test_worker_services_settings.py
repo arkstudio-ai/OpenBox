@@ -32,11 +32,13 @@ def test_defaults_follow_the_configuration_reference(tmp_path):
     assert settings.ingest_poll_ms == 200
     assert (settings.ingest_batch_lines, settings.ingest_batch_bytes) == (2000, 16777216)
     assert settings.spool_abandon_seconds == 60
+    assert settings.ingest_max_batch_failures == 10
     assert (settings.inline_bytes, settings.record_inline_bytes) == (65536, 16384)
     assert (settings.projection_batch_ms, settings.projection_batch_events) == (250, 200)
     assert settings.checkpoint_interval == 1000
     assert (settings.segment_events, settings.segment_max_bytes, settings.segment_idle_seconds) == (1000, 4194304, 300)
-    assert (settings.segment_cache_bytes, settings.blob_cache_bytes) == (134217728, 268435456)
+    # The segment and blob cache sizes are read where the caches live (repository.py, payload.py).
+    assert not hasattr(settings, "segment_cache_bytes") and not hasattr(settings, "blob_cache_bytes")
     assert (settings.hot_days, settings.dedupe_days) == (7, 30)
     assert (settings.content_retention_days, settings.export_retention_days) == (180, 30)
     assert settings.budget_trajectory_events == 50000

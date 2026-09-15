@@ -209,7 +209,7 @@ async def test_recording_state_pauses_and_resumes(harness):
     assert len(stored) == 4
     assert paused.data == {"phase": "paused", "reason": "recording_disabled", "last_recorded_seq": "2"}
     assert resumed.data == {"phase": "resumed", "reason": "recording_reenabled", "previous_committed_seq": "3"}
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 1)
     assert paused.event_id == f"gap:{harness.writer.producer_id}:2:ses_1"
     [row] = await rows(SessionTrajectory)
     assert row.id == trajectory.id
@@ -235,7 +235,7 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     gaps = [(row.data["phase"], row.event_id) for row in stored if row.type == "recording.gap"]
     assert gaps == [("paused", f"gap:{harness.writer.producer_id}:2:ses_1"),
                     ("resumed", f"gap:{harness.writer.producer_id}:3:ses_1")]
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 1)
     # The next period pauses and resumes once more, whatever the duplicates.
     harness.writer.controls({**state, "state": "paused", "at": "2026-09-14T08:03:00.000Z"}, resumed, resumed,
                             {**state, "state": "resumed", "at": "2026-09-14T08:04:00.000Z"})
@@ -243,7 +243,7 @@ async def test_duplicate_recording_state_controls_from_several_processes_apply_o
     trajectory, stored = await events_of("ses_1")
     assert [row.data["phase"] for row in stored if row.type == "recording.gap"] == [
         "paused", "resumed", "paused", "resumed"]
-    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 0)
+    assert (trajectory.recording_status, trajectory.recording_epoch) == ("gap", 2)
     # A resume without a pause (a trajectory that never paused) changes nothing.
     harness.writer.events(event(session="ses_2"))
     harness.writer.controls({**resumed, "session_id": "ses_2"})
@@ -317,3 +317,5 @@ async def test_a_session_deletion_publishes_its_deleted_notification_once(trace_
          "committed_seq": "3", "deleted": True}]
     assert result["deleted_trajectories"] == {trajectory.id}
     assert (await events_of("ses_1"))[0].deleted_at is not None
+    # Counted once, after the commit, for the retention service's daily report.
+    assert retention.report.counters["tombstones_processed"] == 1

@@ -85,16 +85,17 @@ def recording_transition(state: str, epoch: int | None, *, status: str, current_
     is stored: a repeated control, or a stale one from a crashed producer's
     abandoned file, applies nowhere.
 
-    Controls without an epoch keep the status rule and leave the stored epoch
-    alone: a pause applies only when the trajectory is not paused, and a resume
-    only ends a pause.
+    Controls without an epoch keep the status rule of SPEC §8.5: a pause
+    applies only when the trajectory is not paused and leaves the epoch alone;
+    a resume only ends a pause and increments the epoch (at most
+    MAX_RECORDING_EPOCH).
     """
     if epoch is not None:
         return epoch if epoch > current_epoch else None
     paused = status == PAUSED
     if state == PAUSED:
         return None if paused else current_epoch
-    return current_epoch if paused else None
+    return min(current_epoch + 1, MAX_RECORDING_EPOCH) if paused else None
 
 
 def _identifier(value) -> str | None:

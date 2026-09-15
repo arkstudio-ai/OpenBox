@@ -347,6 +347,8 @@ class Upload:
     events: set[int] = field(default_factory=set)
     #: False overwrites: a queued GC entry means an existing object may already be deleted.
     if_absent: bool = True
+    #: Size of the content before its encoding (``data`` holds the stored bytes).
+    raw_bytes: int = 0
 
 
 @dataclass
@@ -626,7 +628,8 @@ class ContentPlanner:
         if known is None and ref.content is not None:
             stored, encoding = encode_blob(ref.content, ref.media_type)
             known = self._objects[object_key] = (encoding, len(stored))
-            self.uploads[object_key] = Upload(object_key, stored, ref.media_type, {index})
+            self.uploads[object_key] = Upload(object_key, stored, ref.media_type, {index},
+                                              raw_bytes=len(ref.content))
         elif object_key in self.uploads:
             self.uploads[object_key].events.add(index)
         elif object_key in self.reused:
@@ -663,7 +666,8 @@ class ContentPlanner:
             return False
         data = (zstandard.ZstdCompressor(level=ZSTD_LEVEL).compress(reused.content) if reused.encoding == "zstd"
                 else bytes(reused.content))
-        self.uploads[key] = Upload(key, data, reused.media_type, set(reused.events), if_absent=False)
+        self.uploads[key] = Upload(key, data, reused.media_type, set(reused.events), if_absent=False,
+                                   raw_bytes=len(reused.content))
         return True
 
     def release_reused(self) -> None:

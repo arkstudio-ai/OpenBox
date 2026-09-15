@@ -17,8 +17,8 @@ import json
 from sqlalchemy import and_, case, func, or_, select
 
 from trajectory.config import enabled, integer, selected_user_ids
-from trajectory.payload import (LruCache, Resolver, ensure_payload_rows, existing_payloads, expand_all, expand_pages,
-    json_blob, reference, require_content, upload_json_blobs)
+from trajectory.payload import (LruCache, Resolver, ensure_payload_rows, expand_all, expand_pages, json_blob, reference,
+    require_content)
 from trajectory.projector import agents, contribution, empty_state, reduce, statistics
 from trajectory.segments import load_segment_lines
 from trajectory.storage import get_blob_store
@@ -430,42 +430,6 @@ async def store_checkpoint(db, trajectory, state: dict, blobs: list[dict]) -> Tr
     trajectory.stored_bytes = (trajectory.stored_bytes or 0) + inserted
     await db.flush()
     return row
-
-
-async def create_checkpoint_in_tx(db, trajectory, state=None, *, blob_store=None, metrics=None) -> TrajectoryCheckpoint:
-    """Checkpoint at projected_seq (or at state["through_seq"]) inside the caller's transaction.
-
-    Uploads run inside that transaction; the worker's ProjectionService
-    uploads first and locks the trajectory only for the inserts.
-    """
-    through_seq = trajectory.projected_seq if state is None else int(state["through_seq"])
-    existing = await db.get(TrajectoryCheckpoint, (trajectory.id, through_seq))
-    if existing is not None:
-        return existing
-    if state is None:
-        state = await expanded_state(db, trajectory, through_seq, blob_store=blob_store)
-    blobs = checkpoint_blobs(trajectory.id, state)
-    present = await existing_payloads(db, trajectory.id, [blob["dedupe_key"] for blob in blobs])
-    await upload_json_blobs(blob_store or get_blob_store(), [blob for blob in blobs if blob["dedupe_key"] not in present],
-                            metrics=metrics)
-    return await store_checkpoint(db, trajectory, state, blobs)
-
-
-async def drain_checkpoints(limit=10, *, blob_store=None, metrics=None) -> int:
-    """Checkpoint live trajectories whose projection moved TRAJECTORY_CHECKPOINT_INTERVAL past the last one."""
-    from trajectory.store.database import trace_session
-    from trajectory.worker.projection import build_checkpoint
-    interval = integer("TRAJECTORY_CHECKPOINT_INTERVAL", 1000)
-    async with trace_session() as db:
-        candidates = (await db.scalars(select(SessionTrajectory.id).where(SessionTrajectory.deleted_at.is_(None),
-            SessionTrajectory.content_expired_at.is_(None),
-            SessionTrajectory.projected_seq - SessionTrajectory.checkpoint_seq >= interval)
-            .order_by(SessionTrajectory.updated_at).limit(limit))).all()
-    completed = 0
-    for trajectory_id in candidates:
-        completed += await build_checkpoint(trajectory_id, interval=interval, blob_store=blob_store or get_blob_store(),
-                                            metrics=metrics)
-    return completed
 
 
 # -- Sessions and headers --

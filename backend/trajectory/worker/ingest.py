@@ -16,14 +16,14 @@ import contextlib
 import hashlib
 import os
 import socket
+import sqlite3
 import time
-import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import insert, select, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as PoolTimeoutError
 
 from core.log import create_logger
 from trajectory import spool
@@ -55,6 +55,15 @@ QUERY_CHUNK = 500
 RECENT_SESSION_SECONDS = 600.0
 RECENT_PERSIST_SECONDS = 60.0
 RECENT_STATE_KEY = "ingest.recent_sessions"
+FAILURES_STATE_KEY = "ingest.file_failures"
+#: SQLSTATE classes of failures that pass by themselves: connection exceptions (08), transaction rollbacks such as
+#: serialization failures and deadlocks (40), insufficient resources such as a full disk or too many connections
+#: (53), operator intervention such as a statement timeout or an admin shutdown (57) and system errors (58).
+TRANSIENT_SQLSTATE_CLASSES = frozenset({"08", "40", "53", "57", "58"})
+#: lock_not_available (a lock timeout) and read_only_sql_transaction (a primary that became a standby).
+TRANSIENT_SQLSTATES = frozenset({"55P03", "25006"})
+#: Causes, contexts and wrapped driver errors followed below the failure itself.
+TRANSIENT_DEPTH = 8
 GAP_RUN_IDS = 10
 GAP_REQUEST_IDS = 50
 EVENT_ID_CHARS = 128
@@ -62,7 +71,6 @@ SESSION_ID_CHARS = 64
 TYPE_CHARS = 64
 REQUEST_ID_CHARS = 128
 TRAJECTORY_SCHEMA_VERSION = 2
-PROVISIONAL_IDS = 10000
 LOGGED_CONFLICTS = 10000
 INVALID_LOG_SECONDS = 60.0
 #: Invalid event field -> monotonic time before which it is not logged again.
@@ -83,6 +91,15 @@ class RetryBatch(Exception):
 
 class UploadsDeferred(Exception):
     """Blob uploads failed; the batch waits for its backoff."""
+
+
+class QuarantineDeferred(Exception):
+    """A file to quarantine could not be moved: it stays unfinished and is retried after a backoff."""
+
+    def __init__(self, lines: int):
+        super().__init__(lines)
+        #: Lines of the file committed before the move failed.
+        self.lines = lines
 
 
 # -- Lines ----------------------------------------------------------------------
@@ -193,6 +210,11 @@ def gap_event_id(producer_id: str, n_or_range: str, session_id: str, run_id: str
     return f"gap:h:{hashlib.sha256(value.encode()).hexdigest()}"
 
 
+def session_trajectory_id(session_id: str) -> str:
+    """The trajectory id of a root session: blobs uploaded before its row exists already use the row's prefix."""
+    return "trj_" + hashlib.sha256(b"openbox-trajectory\0" + session_id.encode()).hexdigest()[:32]
+
+
 def loss_range(first: int, last: int | None) -> str:
     return f"{first}-{last}" if last is not None else f"{first}-"
 
@@ -218,6 +240,39 @@ async def trace_db_available(timeout: float = DB_PROBE_SECONDS) -> bool:
     except Exception:
         return False
     return True
+
+
+def backoff_seconds(attempts: int) -> float:
+    """The wait after ``attempts`` failed attempts in a row: BACKOFF_FIRST_SECONDS, doubling up to BACKOFF_MAX_SECONDS."""
+    return min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(max(attempts, 1) - 1, 16))
+
+
+def _transient(exc: BaseException) -> bool:
+    """Whether a failure passes by itself: a timeout, a lock or serialization conflict, a lost connection, a full disk.
+
+    Follows ``__cause__``, ``__context__`` and SQLAlchemy's ``orig`` down to TRANSIENT_DEPTH levels. asyncpg errors
+    carry their SQLSTATE as ``sqlstate``, psycopg errors as ``pgcode``; ``asyncio.TimeoutError`` is ``TimeoutError``.
+    """
+    pending, seen = [(exc, 0)], set()
+    while pending:
+        error, depth = pending.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        if isinstance(error, (TimeoutError, ConnectionError, PoolTimeoutError)):
+            return True
+        if isinstance(error, DBAPIError) and error.connection_invalidated:
+            return True
+        code = getattr(error, "sqlstate", None) or getattr(error, "pgcode", None)
+        if isinstance(code, str) and (code[:2] in TRANSIENT_SQLSTATE_CLASSES or code in TRANSIENT_SQLSTATES):
+            return True
+        if isinstance(error, sqlite3.OperationalError) and any(
+                word in str(error).lower() for word in ("locked", "busy")):
+            return True
+        if depth < TRANSIENT_DEPTH:
+            nested = (getattr(error, "orig", None), error.__cause__, error.__context__)
+            pending.extend((item, depth + 1) for item in nested if isinstance(item, BaseException))
+    return False
 
 
 @dataclass(eq=False)
@@ -317,12 +372,15 @@ class RecentSessions:
 class _Backoff:
     attempts: int = 0
     next_at: float = 0.0
-    #: Line counters whose new content is replaced by a not-recorded marker.
-    unavailable: set[int] = field(default_factory=set)
-    #: Objects already stored by an earlier attempt of this batch.
-    uploaded: set[str] = field(default_factory=set)
+    #: Object keys the blob store kept failing to store: references to them become not-recorded markers.
+    unavailable: set[str] = field(default_factory=set)
     #: Objects that had a queued GC entry in any attempt: stored again on every attempt, never reused.
     queued: set[str] = field(default_factory=set)
+    #: Ids of new payloads by (trajectory id, dedupe key), reused by later attempts: blobs that embed references keep
+    #: the keys that ``unavailable`` names.
+    payload_ids: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: Times in a row the batch kept changing underneath through MAX_PREPARE_RETRIES: they set its backoff.
+    conflicts: int = 0
 
 
 @dataclass
@@ -334,8 +392,36 @@ class _FileFailure:
     attempts: int
     #: Committed offset of the batch that failed.
     offset: int
-    #: Failures in a row while the trace database answered; TRAJECTORY_INGEST_MAX_BATCH_FAILURES quarantines the file.
+    #: Failures in a row that were not transient and happened while the trace database answered;
+    #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES quarantines the file.
     failures: int
+
+
+def _failures_to_state(failures: dict[tuple[str, str], _FileFailure]) -> dict:
+    return {"files": sorted([producer_id, name, failure.attempts, failure.failures, failure.offset]
+                            for (producer_id, name), failure in failures.items())}
+
+
+def _failures_from_state(value) -> dict[tuple[str, str], _FileFailure]:
+    """File failures as ``_failures_to_state`` saved them; retried at once, as their backoff is not saved."""
+    failures = {}
+    entries = value.get("files") if isinstance(value, dict) else None
+    for entry in entries if isinstance(entries, list) else ():
+        if (isinstance(entry, list) and len(entry) == 5 and all(isinstance(item, str) for item in entry[:2])
+                and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in entry[2:])):
+            producer_id, name, attempts, count, offset = entry
+            failures[(producer_id, name)] = _FileFailure(0.0, attempts, offset, count)
+    return failures
+
+
+async def _write_state(key: str, value: dict) -> None:
+    now = datetime.now(timezone.utc)
+    async with trace_session() as db:
+        row = await db.get(TrajectoryWorkerState, key)
+        if row is None:
+            db.add(TrajectoryWorkerState(key=key, value=value, updated_at=now))
+        else:
+            row.value, row.updated_at = value, now
 
 
 @dataclass
@@ -366,52 +452,63 @@ class IngestService:
         self.last_lag_seconds = 0.0
         self._documents: dict[str, dict | None] = {}
         self._backoff: dict[tuple[str, str, int], _Backoff] = {}
-        self._provisional: OrderedDict[str, str] = OrderedDict()
+        #: (producer_id, file name, offset) of a batch -> blob keys any of its attempts stored, until it commits.
+        self._stored: dict[tuple[str, str, int], set[str]] = {}
         self._logged_conflicts: OrderedDict[str, None] = OrderedDict()
         self._recent: RecentSessions | None = None
         self._recent_saved = 0.0
         #: (producer_id, file name) of files whose batch failed -> backoff and failures in a row.
         self._failures: dict[tuple[str, str], _FileFailure] = {}
+        #: ``_failures`` as last saved (FAILURES_STATE_KEY), and when.
+        self._saved_failures = _failures_to_state({})
+        self._failures_saved = 0.0
         #: (producer_id, file name) -> committed offset of the batch being ingested (the one a failure is about).
         self._positions: dict[tuple[str, str], int] = {}
         self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
                                                  "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
 
+    def _next_failure(self, key, offset: int) -> _FileFailure:
+        """The failure of file ``key`` after one more failed attempt at ``offset``, backed off; not stored."""
+        previous = self._failures.get(key)
+        if previous is None or previous.offset != offset:
+            # The first failure, or an earlier batch of the file committed since: this one fails for the first time.
+            previous = _FileFailure(0.0, 0, offset, 0)
+        attempts = previous.attempts + 1
+        return _FileFailure(time.monotonic() + backoff_seconds(attempts), attempts, offset, previous.failures)
+
     async def _failed(self, spool_file, scan, exc: Exception, result: dict) -> bool:
         """Back off a file whose batch failed; True when the batch failed too often and the file was quarantined.
 
-        Only failures while the trace database answers a probe (``trace_db_available``) count: an outage keeps
-        backing off without bringing any file closer to quarantine. A batch that fails
+        A failure counts only when it is not transient (``_transient``: a timeout, a lock or serialization conflict,
+        a lost connection, a full disk) and the trace database answers a probe (``trace_db_available``): the others
+        keep backing off without bringing the file closer to quarantine. A batch that fails
         TRAJECTORY_INGEST_MAX_BATCH_FAILURES times in a row goes to ``quarantine/`` like a file with an
         unparsable line (reason ``batch_failed`` with the last error), so the producer's later files proceed.
+        The counts survive a restart (FAILURES_STATE_KEY).
         """
         key = (spool_file.producer_id, spool_file.name)
         result["failed_batches"] += 1
         self._inc("failed_batches")
-        offset = self._positions.get(key, 0)
-        previous = self._failures.get(key)
-        if previous is not None and previous.offset != offset:
-            previous = None  # an earlier batch of the file committed since: this one fails for the first time
-        attempts = (previous.attempts if previous is not None else 0) + 1
-        failures = previous.failures if previous is not None else 0
-        available = await trace_db_available()
+        failure = self._next_failure(key, self._positions.get(key, 0))
+        transient = _transient(exc)
+        # A transient failure never counts, so it needs no probe.
+        available = None if transient else await trace_db_available()
         if available:
-            failures += 1
+            failure.failures += 1
         # The error type only in the log: database messages can carry event content.
         error_type = type(exc).__name__
-        # Only a failure while the database answers quarantines: an outage never does, even at the limit.
-        if available and failures >= self.max_batch_failures:
+        # Only a counted failure quarantines: an outage or a transient failure never does, even at the limit.
+        if available and failure.failures >= self.max_batch_failures:
             path = spool_reader.locate(spool_file)
-            parsed = ParsedBatch([], offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
-            if path is not None and await self._quarantine(spool_file, scan, path, offset, parsed, result):
+            parsed = ParsedBatch([], failure.offset, "batch_failed", f"{error_type}: {exc}"[:ERROR_TEXT_LIMIT])
+            if path is not None and await self._quarantine(spool_file, scan, path, failure.offset, parsed, result):
                 self._failures.pop(key, None)
                 self._positions.pop(key, None)
                 return True
-        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_FIRST_SECONDS * 2 ** min(attempts - 1, 16))
-        self._failures[key] = _FileFailure(time.monotonic() + delay, attempts, offset, failures)
+        self._failures[key] = failure
         log.warning("Ingest of a spool file failed; retrying in %.0f s producer_id=%s file=%s attempts=%s "
-                    "failures=%s trace_db_available=%s error_type=%s", delay, key[0], key[1], attempts, failures,
-                    available, error_type)
+                    "failures=%s transient=%s trace_db_available=%s error_type=%s", backoff_seconds(failure.attempts),
+                    key[0], key[1], failure.attempts, failure.failures, transient, available, error_type)
         return False
 
     async def run_once(self, max_lines: int | None = None) -> dict:
@@ -420,7 +517,7 @@ class IngestService:
         result["trajectories"] = set()
         result["deleted_trajectories"] = set()
         now = time.time()
-        await self._load_recent()
+        await self._load_state()
         scan = await asyncio.to_thread(spool_reader.scan_spool, self.spool_dir, documents=self._documents)
         self._gauge("spool_bytes", scan.bytes)
         self._gauge("spool_files", scan.files)
@@ -451,6 +548,13 @@ class IngestService:
                     continue
                 try:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
+                except QuarantineDeferred as deferred:
+                    # Unfinished until the move succeeds: the producer's later files must not overtake the file.
+                    self._failures[key] = self._next_failure(key, self._positions.get(key, 0))
+                    if remaining is not None:
+                        remaining -= deferred.lines
+                    waiting[key] = spool_file.mtime
+                    continue
                 except Exception as exc:
                     # One file's failure (a purge that times out, a value the database rejects, a bug) must
                     # not stop the other producers: the file retries from its committed offset after a backoff,
@@ -472,8 +576,10 @@ class IngestService:
         listed = {(producer.producer_id, item.name) for producer in scan.producers.values() for item in producer.files}
         self._failures = {key: value for key, value in self._failures.items() if key in listed}
         self._positions = {key: value for key, value in self._positions.items() if key in listed}
+        self._backoff = {key: value for key, value in self._backoff.items() if key[:2] in listed}
+        self._stored = {key: value for key, value in self._stored.items() if key[:2] in listed}
         await self._finish_producers(scan, result)
-        await self._save_recent()
+        await self._save_state()
         self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)
         self._gauge("ingest_lag_seconds", self.last_lag_seconds)
         return result
@@ -525,7 +631,9 @@ class IngestService:
                 consumed += len(parsed.items)
                 offset = end_offset
             if bad:
-                await self._quarantine(spool_file, scan, path, offset, parsed, result)
+                if not await self._quarantine(spool_file, scan, path, offset, parsed, result):
+                    self._positions[key] = offset
+                    raise QuarantineDeferred(consumed)
                 return consumed, True
             if finished:
                 if spool_reader.remove_file(path):
@@ -616,18 +724,23 @@ class IngestService:
                     continue
                 retries += 1
                 if retries > MAX_PREPARE_RETRIES:
-                    log.warning("Ingest batch keeps changing underneath; retrying later producer_id=%s file=%s",
-                                spool_file.producer_id, spool_file.name)
                     held = self._backoff.setdefault(key, _Backoff())
-                    held.next_at = time.monotonic() + BACKOFF_FIRST_SECONDS
+                    held.conflicts += 1
+                    delay = backoff_seconds(held.conflicts)
+                    held.next_at = time.monotonic() + delay
+                    # Once per backoff step: the batch is not read again before the backoff ends.
+                    log.warning("Ingest batch keeps changing underneath; retrying in %.0f s producer_id=%s file=%s "
+                                "conflicts=%s", delay, spool_file.producer_id, spool_file.name, held.conflicts)
                     return False
                 continue
             self._backoff.pop(key, None)
+            self._stored.pop(key, None)
             return True
 
     async def _prepare(self, items: list[Item], backoff: _Backoff | None) -> PreparedBatch:
         """Lookups, media binding, content addressing and payload ids (SPEC §8.4) outside the transaction."""
-        planner = content.ContentPlanner(inline_bytes=self.settings.inline_bytes, blob_key=blob_key)
+        planner = content.ContentPlanner(inline_bytes=self.settings.inline_bytes, blob_key=blob_key,
+                                         payload_ids=dict(backoff.payload_ids) if backoff is not None else None)
         cache = meta.MetaCache()
         events = [(index, item) for index, item in enumerate(items) if item.event is not None and item.invalid is None]
         if not events:
@@ -643,7 +756,7 @@ class IngestService:
                 event = item.event
                 row = rows.get(event["session_id"])
                 root = cache.sessions.get(event["session_id"])
-                item.trajectory_id = row.id if row is not None else self._provisional_id(event["session_id"])
+                item.trajectory_id = row.id if row is not None else session_trajectory_id(event["session_id"])
                 item.skipped = (event["event_id"] in keys or (root is not None and root.deleted) or (
                     row is not None and (row.deleted_at is not None or row.content_expired_at is not None
                                          or row.user_id != event["user_id"])))
@@ -675,7 +788,7 @@ class IngestService:
                 merged = {row.payload_id: row for row in found.get(tid, [])}
                 merged.update({row.payload_id: row for row in extra})
                 contents[tid] = content.TrajectoryContent.from_rows(merged.values())
-        unavailable = backoff.unavailable if backoff is not None else set()
+        unavailable = frozenset(backoff.unavailable) if backoff is not None else frozenset()
         queued = frozenset(backoff.queued) if backoff is not None else frozenset()
         await asyncio.to_thread(self._assign_all, events, planner, contents, unavailable, queued)
         return PreparedBatch(items, planner, cache)
@@ -696,12 +809,12 @@ class IngestService:
                 assets=assets, owner_user_id=event["user_id"], workspace_id=workspace)
 
     @staticmethod
-    def _assign_all(events, planner, contents, unavailable, queued=frozenset()) -> None:
+    def _assign_all(events, planner, contents, unavailable=frozenset(), queued=frozenset()) -> None:
         for index, item in events:
             if item.plan is not None:
                 planner.assign(item.plan, index=index, trajectory_id=item.trajectory_id,
                                lookup=contents.get(item.trajectory_id) or content.TrajectoryContent(),
-                               unavailable=item.n in unavailable, size_hint=item.size, queued=queued)
+                               unavailable=unavailable, size_hint=item.size, queued=queued)
 
     async def _trajectory_rows(self, db, sessions, *, lock: bool = False) -> dict[str, SessionTrajectory]:
         found = {}
@@ -741,17 +854,6 @@ class IngestService:
                         rows[row.payload_id] = content.ExistingPayload(*row)
         return {trajectory_id: list(rows.values()) for trajectory_id, rows in found.items()}
 
-    def _provisional_id(self, session_id: str) -> str:
-        """Stable across retries: blobs of a new trajectory are uploaded under this id before it exists."""
-        identifier = self._provisional.get(session_id)
-        if identifier is None:
-            identifier = self._provisional[session_id] = f"trj_{uuid.uuid4().hex}"
-            while len(self._provisional) > PROVISIONAL_IDS:
-                self._provisional.popitem(last=False)
-        else:
-            self._provisional.move_to_end(session_id)
-        return identifier
-
     # Uploads ----------------------------------------------------------------------
 
     async def _check_queued(self, prepared: PreparedBatch, key) -> None:
@@ -778,28 +880,31 @@ class IngestService:
         planner.release_reused()
 
     async def _upload(self, prepared: PreparedBatch, key, result) -> None:
-        uploads = prepared.planner.uploads
+        planner = prepared.planner
+        uploads = planner.uploads
         if not uploads:
             return
-        backoff = self._backoff.get(key)
-        uploaded = backoff.uploaded if backoff is not None else set()
-        failed: set[int] = set()
+        stored = self._stored.setdefault(key, set())
+        earlier = frozenset(stored)
+        failed: set[str] = set()
         semaphore = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
         async def put(upload: content.Upload) -> None:
-            if upload.key in uploaded and upload.if_absent:
-                return  # stored by an earlier attempt, and no GC entry has doubted it since
             async with semaphore:
                 try:
+                    # A GC entry queued and processed between two attempts may have deleted what an earlier attempt
+                    # stored; an object that still exists stays, as no GC delete runs inside the object guard.
+                    if upload.if_absent and upload.key in earlier and await self.blob_store.exists(upload.key):
+                        return
                     await self.blob_store.put(upload.key, upload.data, content_type=upload.content_type,
                                               if_absent=upload.if_absent)
                 except Exception as exc:
-                    failed.update(upload.events)
+                    failed.add(upload.key)
                     result["blob_put_failures"] += 1
                     self._inc("blob_put_failures")
                     log.warning("Trajectory blob upload failed error_type=%s", type(exc).__name__)
                     return
-            uploaded.add(upload.key)
+            stored.add(upload.key)
             result["blob_puts"] += 1
             result["blob_put_bytes"] += len(upload.data)
             self._inc("blob_puts")
@@ -812,14 +917,14 @@ class IngestService:
         if not failed:
             return
         backoff = self._backoff.setdefault(key, _Backoff())
-        backoff.uploaded |= uploaded
+        # Later attempts give new payloads the same ids, so the blobs that embed them keep their keys.
+        backoff.payload_ids.update(planner.new_payload_ids())
         backoff.attempts += 1
         if backoff.attempts < MAX_UPLOAD_ATTEMPTS:
-            backoff.next_at = time.monotonic() + min(BACKOFF_MAX_SECONDS,
-                                                     BACKOFF_FIRST_SECONDS * 2 ** (backoff.attempts - 1))
+            backoff.next_at = time.monotonic() + backoff_seconds(backoff.attempts)
             raise UploadsDeferred()
-        # Out of attempts: the affected events keep a not-recorded marker instead of their content.
-        backoff.unavailable |= {prepared.items[index].n for index in failed}
+        # Out of attempts: references to the objects that could not be stored become not-recorded markers.
+        backoff.unavailable |= failed
         raise RetryBatch("replan")
 
     # Metrics ------------------------------------------------------------------------
@@ -841,7 +946,8 @@ class IngestService:
 
     async def _commit(self, spool_file, scan, prepared: PreparedBatch, *, offset, end_offset, finished, abandoned,
                       torn, result) -> None:
-        tx = _Transaction(self, prepared, producer_id=spool_file.producer_id)
+        stored = self._stored.get((spool_file.producer_id, spool_file.name, offset), ())
+        tx = _Transaction(self, prepared, producer_id=spool_file.producer_id, stored=frozenset(stored))
         try:
             async with trace_session() as db:
                 await tx.begin(db, scan, file_name=spool_file.name, offset=offset)
@@ -879,7 +985,12 @@ class IngestService:
             return False
         log.warning("Quarantined spool file producer_id=%s file=%s reason=%s", spool_file.producer_id,
                     spool_file.name, parsed.bad_reason)
-        tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=spool_file.producer_id)
+        # The file's uncommitted batches never commit now: what their attempts stored is queued with the loss report.
+        stored: set[str] = set()
+        for batch in [batch for batch in self._stored if batch[:2] == (spool_file.producer_id, spool_file.name)]:
+            stored |= self._stored.pop(batch)
+        tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=spool_file.producer_id,
+                          stored=frozenset(stored))
         try:
             async with trace_session() as db:
                 await tx.begin(db, scan, file_name=spool_file.name, offset=offset)
@@ -960,18 +1071,27 @@ class IngestService:
 
     # Worker state ------------------------------------------------------------------
 
-    async def _load_recent(self) -> None:
+    async def _load_state(self) -> None:
+        """Recent producer sessions and file failures as the previous writer saved them, once."""
         if self._recent is not None:
             return
+        values = {}
         try:
             async with trace_session() as db:
-                row = await db.get(TrajectoryWorkerState, RECENT_STATE_KEY)
-                value = row.value if row is not None else None
-            self._recent = RecentSessions.from_state(value)
+                for key in (RECENT_STATE_KEY, FAILURES_STATE_KEY):
+                    row = await db.get(TrajectoryWorkerState, key)
+                    values[key] = row.value if row is not None else None
         except Exception as exc:
-            log.warning("Recent producer sessions unavailable error_type=%s", type(exc).__name__)
-            self._recent = RecentSessions()
-        self._recent_saved = time.monotonic()
+            log.warning("Ingest worker state unavailable error_type=%s", type(exc).__name__)
+            values = {}
+        self._recent = RecentSessions.from_state(values.get(RECENT_STATE_KEY))
+        self._failures = _failures_from_state(values.get(FAILURES_STATE_KEY))
+        self._saved_failures = _failures_to_state(self._failures)
+        self._recent_saved = self._failures_saved = time.monotonic()
+
+    async def _save_state(self, *, force: bool = False) -> None:
+        await self._save_recent(force=force)
+        await self._save_failures(force=force)
 
     async def _save_recent(self, *, force: bool = False) -> None:
         recent = self._recent
@@ -980,23 +1100,31 @@ class IngestService:
         if not force and time.monotonic() - self._recent_saved < RECENT_PERSIST_SECONDS:
             return
         recent.prune(time.time())
-        now = datetime.now(timezone.utc)
         try:
-            async with trace_session() as db:
-                row = await db.get(TrajectoryWorkerState, RECENT_STATE_KEY)
-                if row is None:
-                    db.add(TrajectoryWorkerState(key=RECENT_STATE_KEY, value=recent.to_state(), updated_at=now))
-                else:
-                    row.value, row.updated_at = recent.to_state(), now
+            await _write_state(RECENT_STATE_KEY, recent.to_state())
         except Exception as exc:
             log.warning("Recent producer sessions not saved error_type=%s", type(exc).__name__)
             return
         recent.dirty = False
         self._recent_saved = time.monotonic()
 
+    async def _save_failures(self, *, force: bool = False) -> None:
+        """Save ``_failures`` when they changed: a restart must not reset the failure count of a poison batch."""
+        value = _failures_to_state(self._failures)
+        if value == self._saved_failures:
+            return
+        if not force and time.monotonic() - self._failures_saved < RECENT_PERSIST_SECONDS:
+            return
+        try:
+            await _write_state(FAILURES_STATE_KEY, value)
+        except Exception as exc:
+            log.warning("Ingest file failures not saved error_type=%s", type(exc).__name__)
+            return
+        self._saved_failures, self._failures_saved = value, time.monotonic()
+
     async def flush_state(self) -> None:
-        """Persist in-memory producer bookkeeping (worker shutdown)."""
-        await self._save_recent(force=True)
+        """Persist in-memory producer bookkeeping and file failures (worker shutdown)."""
+        await self._save_state(force=True)
 
     def _tombstones_committed(self, count: int) -> None:
         """Committed ``session.deleted`` tombstones, for the retention service's daily report."""
@@ -1022,9 +1150,12 @@ class IngestService:
 class _Transaction:
     """One ingest transaction: applies a batch's lines in order and writes the rows at the end."""
 
-    def __init__(self, service: IngestService, prepared: PreparedBatch, *, producer_id: str):
+    def __init__(self, service: IngestService, prepared: PreparedBatch, *, producer_id: str,
+                 stored: frozenset[str] = frozenset()):
         self.service = service
         self.prepared = prepared
+        #: Blob keys the attempts of the batch stored (``IngestService._stored``): queued unless a row references them.
+        self.stored = stored
         self.cache = prepared.cache
         self.producer_id = producer_id
         self.now = datetime.now(timezone.utc)
@@ -1050,7 +1181,6 @@ class _Transaction:
         self.user_bytes: dict[str, int] = {}
         self.unavailable: dict[str, list[tuple]] = {}
         self.notes: list[tuple] = []
-        self.created: list[str] = []
         self.counters = {name: 0 for name in COUNTERS}
         self.lines = 0
         self.producer: TrajectoryIngestProducer | None = None
@@ -1135,6 +1265,9 @@ class _Transaction:
                 "dropped_bytes": sum(entry[3] for entry in entries), "producer_id": self.producer_id,
                 "request_ids": list(dict.fromkeys(entry[2] for entry in entries if entry[2]))[:GAP_REQUEST_IDS],
                 "event_ids": [entry[1] for entry in entries][:GAP_REQUEST_IDS]})
+        # Stored by an attempt of the batch but referenced by no row of this transaction (a replan planned other
+        # objects, an event was dropped, the file was quarantined): nothing else would ever delete the object.
+        self.gc_keys.extend(sorted(self.stored))
         await self.flush(db)
         # Objects this transaction references stay stored: their queued GC entries end here (lock.ObjectGuard).
         cancelled = [entry_id for entry_id, storage_key in self.claimable if storage_key in self.referenced]
@@ -1167,8 +1300,6 @@ class _Transaction:
                 publish_available(state)
         if tombstones:
             service._tombstones_committed(tombstones)
-        for session_id in self.created:
-            service._provisional.pop(session_id, None)
         if service._recent is not None:
             for user_id, session_id, run_id, at in self.notes:
                 service._recent.note(self.producer_id, user_id, session_id, run_id, at)
@@ -1267,22 +1398,24 @@ class _Transaction:
     async def _create(self, db, item: Item) -> TrajectoryState:
         event = item.event
         root = event["session_id"]
+        identifier = session_trajectory_id(root)
+        if item.trajectory_id != identifier:
+            raise RetryBatch()  # planned for a row that is gone: its blobs sit under another prefix
         root_meta = self.cache.sessions.get(root)
         workspace = event.get("workspace_id")
         if not _identifier(workspace, SESSION_ID_CHARS):
             workspace = root_meta.workspace_id if root_meta is not None and root_meta.workspace_id else ""
         occurred = item.occurred_at
         await db.execute(insert(SessionTrajectory).values(
-            id=item.trajectory_id, user_id=event["user_id"], session_id=root, workspace_id=workspace,
+            id=identifier, user_id=event["user_id"], session_id=root, workspace_id=workspace,
             started_at=self.now, updated_at=self.now, last_activity_at=occurred, next_seq=1, committed_seq=0,
             projected_seq=0, archived_seq=0, checkpoint_seq=0, schema_version=TRAJECTORY_SCHEMA_VERSION,
             recording_status="recording", recording_epoch=0, event_count=0, stored_bytes=0, budget_level="normal"))
-        state = TrajectoryState(item.trajectory_id, event["user_id"], root, workspace, 1, 0, 0, 0, "recording", 0,
+        state = TrajectoryState(identifier, event["user_id"], root, workspace, 1, 0, 0, 0, "recording", 0,
                                 occurred, created=True)
         state.mark_written()
         self.states[root] = state
         self.missing.discard(root)
-        self.created.append(root)
         await self.append_worker_event(state, event_id=f"evt_start_{state.id}", event_type="trajectory.started",
                                        occurred_at=occurred, data={"existing_session": item.history,
                                                                    "coverage_start": iso(occurred),

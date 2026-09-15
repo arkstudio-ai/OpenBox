@@ -337,14 +337,15 @@ async def test_failures_while_the_trace_database_does_not_answer_never_quarantin
     harness.writer.events(event(event_id="first"))
     await harness.run()
 
-    async def lost_connection(db, trajectory, *, reason):
-        raise ConnectionError("connection was closed in the middle of operation")
+    async def unexplained(db, trajectory, *, reason):
+        # Not a failure ingest recognizes as transient: only the probe tells that the database is out.
+        raise RuntimeError("the statement failed")
 
     async def unreachable(timeout=ingest_module.DB_PROBE_SECONDS):
         return False
 
     probe = ingest_module.trace_db_available
-    monkeypatch.setattr(harness.retention, "tombstone", lost_connection)
+    monkeypatch.setattr(harness.retention, "tombstone", unexplained)
     monkeypatch.setattr(ingest_module, "trace_db_available", unreachable)
     failing = harness.writer.controls(DELETED, age=30)
     for _ in range(5):

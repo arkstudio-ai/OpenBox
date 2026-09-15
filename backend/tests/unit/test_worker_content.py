@@ -24,7 +24,7 @@ def _planner(inline_bytes=65536):
 
 
 def _plan(planner, data, *, event_type="tool.finished", helpers=None, lookup=None, assets=None, index=0,
-          unavailable=False, workspace_id="w1"):
+          unavailable=frozenset(), workspace_id="w1"):
     media = extract_media(data)
     return planner.plan(index=index, trajectory_id=TID, event_type=event_type, data=data, media=media,
                         helpers=helpers or {}, lookup=lookup or TrajectoryContent(), assets=assets or {},
@@ -228,18 +228,24 @@ def test_whole_data_blob_contains_final_nested_references():
     assert hashlib.sha256(canonical(stored)).hexdigest() == whole["sha256"]
 
 
-def test_unavailable_mode_replaces_new_content_with_markers():
+def test_references_to_objects_the_store_kept_failing_become_markers():
     encoded = base64.b64encode(PNG).decode()
+    sha = hashlib.sha256(PNG).hexdigest()
+    image, output = _key(TID, sha), _key(TID, hashlib.sha256(canonical("o" * 3000)).hexdigest())
     planner = _planner(inline_bytes=1024)
     data = {"image": f"data:image/png;base64,{encoded}", "output": "o" * 3000, "small": 1}
-    plan = _plan(planner, data, unavailable=True)
+    plan = _plan(planner, data, unavailable={image, output})
     assert plan.data["image"]["$media"] == {**BLOB_UNAVAILABLE, "media_type": "image/png"}
     assert plan.data["output"] == BLOB_UNAVAILABLE and plan.data["small"] == 1
     assert planner.uploads == {} and all(ref.failed for ref in plan.refs)
+    # Only the objects that failed: the rest of the event's content is still stored and referenced.
+    planner = _planner(inline_bytes=1024)
+    plan = _plan(planner, {"image": f"data:image/png;base64,{encoded}", "output": "o" * 3000}, unavailable={image})
+    assert plan.data["image"]["$media"] == {**BLOB_UNAVAILABLE, "media_type": "image/png"}
+    assert plan.data["output"]["$ref"]["payload_id"].startswith("pld_") and set(planner.uploads) == {output}
     # Bytes that already exist are still referenced.
-    sha = hashlib.sha256(PNG).hexdigest()
     lookup = TrajectoryContent.from_rows([_existing("pld_img", sha, media_type="image/jpeg")])
-    plan = _plan(_planner(), {"image": f"data:image/png;base64,{encoded}"}, lookup=lookup, unavailable=True)
+    plan = _plan(_planner(), {"image": f"data:image/png;base64,{encoded}"}, lookup=lookup, unavailable={image})
     assert plan.data["image"]["$media"]["availability"] == "available" and not plan.refs[0].failed
 
 

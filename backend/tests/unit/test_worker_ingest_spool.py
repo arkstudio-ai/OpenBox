@@ -100,6 +100,32 @@ async def test_spool_gauges_count_blobs_and_quarantine_like_the_emitter_budget(h
     assert (gauges["spool_quarantine_bytes"], gauges["spool_quarantine_files"]) == (usage.quarantine_bytes, 1)
 
 
+async def test_backlog_metrics_refresh_between_batches_of_one_long_pass(harness, monkeypatch):
+    harness.configure(ingest_batch_lines=2)
+    harness.writer.events(*(event(event_id=f"e{index}") for index in range(4)), age=60)
+    original = harness.service._ingest_batch
+    observed = []
+
+    async def ingest_batch(*args, **kwargs):
+        gauges = harness.metrics.gauges
+        observed.append((gauges.get("ingest_lag_seconds", 0), gauges["spool_bytes"]))
+        if len(observed) == 1:
+            # New spool content arrives while this pass is still running; let
+            # the existing 30-second sampling interval elapse before batch 2.
+            blobs = spool.blobs_dir(harness.settings.spool_dir)
+            spool.ensure_private_dir(blobs)
+            (blobs / ("a" * 64)).write_bytes(b"x" * 5000)
+            harness.service._usage_sampled = time.monotonic() - ingest_module.SPOOL_USAGE_SAMPLE_SECONDS - 1
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(harness.service, "_ingest_batch", ingest_batch)
+    result = await harness.run()
+    assert result["events"] == 4 and len(observed) >= 2
+    assert all(lag >= 60 for lag, _ in observed)
+    assert observed[1][1] >= observed[0][1] + 5000
+    assert harness.service.last_lag_seconds == harness.metrics.gauges["ingest_lag_seconds"] == 0
+
+
 async def test_an_old_newest_part_waits_while_its_producer_heartbeats(harness):
     """A process whose writer thread is stalled still refreshes producer.json from a thread of its own: its open
     file stays unread however old. Once the heartbeat is stale too the file is consumed, without a gap."""

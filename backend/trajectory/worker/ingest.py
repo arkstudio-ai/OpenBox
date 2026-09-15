@@ -655,7 +655,8 @@ class IngestService:
         self._stored = {key: value for key, value in self._stored.items() if key[:2] in listed}
         await self._finish_producers(scan, result)
         await self._save_state()
-        self.last_lag_seconds = max((now - mtime for mtime in waiting.values()), default=0.0)
+        moment = time.time()
+        self.last_lag_seconds = max((spool_reader.monotonic_age(mtime, moment) for mtime in waiting.values()), default=0.0)
         self._gauge("ingest_lag_seconds", self.last_lag_seconds)
         return result
 
@@ -690,6 +691,12 @@ class IngestService:
                     limit = min(limit, remaining - consumed)
                     if limit <= 0:
                         return consumed, False
+                # One pass can take minutes under load. Refresh before each
+                # batch so its heartbeat and metrics expose the active backlog;
+                # disk usage retains its existing 30-second sampling limit.
+                self.last_lag_seconds = spool_reader.monotonic_age(spool_file.mtime, time.time())
+                self._gauge("ingest_lag_seconds", self.last_lag_seconds)
+                await self._sample_usage()
                 self._mark_inflight(key, offset)
                 batch = await asyncio.to_thread(spool_reader.read_batch, path, offset, max_lines=limit,
                                                 max_bytes=self.settings.ingest_batch_bytes)

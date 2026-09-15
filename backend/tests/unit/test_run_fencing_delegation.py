@@ -21,10 +21,11 @@ from tests.unit.test_durable_questions import read, state  # noqa: F401
 from tests.unit.test_run_fencing_api import (  # noqa: F401
     acting_as,
     add_session,
+    emitted,
+    facts,
     loop_harness,
     recording,
     supersede_elsewhere,
-    trajectory_events,
 )
 from tool.tool import ToolContext
 
@@ -99,7 +100,8 @@ async def test_parent_superseded_elsewhere_spawns_no_subagent(state, monkeypatch
     assert spawned == []
 
 
-async def test_cron_timeout_interrupts_the_run_and_releases_its_lease(state, recording, loop_harness, monkeypatch):
+async def test_cron_timeout_interrupts_the_run_and_releases_its_lease(
+        state, recording, loop_harness, emitted, monkeypatch):
     from session.session import create_user_message
     streaming = endless_provider(monkeypatch, loop_harness.processor)
     await add_session("cron-run", kind="cron", parent_id="s1")
@@ -110,8 +112,8 @@ async def test_cron_timeout_interrupts_the_run_and_releases_its_lease(state, rec
     execution = await read(SessionExecution, "cron-run")
     assert execution.run_id is None and execution.lease_until is None
     if recording:
-        terminal = [event.data for event in await trajectory_events("run.finished", "run.interrupted")
-                    if event.source_session_id == "cron-run"]
+        terminal = [fact["data"] for fact in facts(emitted, "run.finished", "run.interrupted")
+                    if fact.get("source_session_id") == "cron-run"]
         assert [(data["status"], data["reason"]) for data in terminal] == [("cancelled", "interrupted")]
 
 

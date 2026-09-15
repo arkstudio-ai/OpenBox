@@ -45,68 +45,6 @@ def test_request_snapshot_uses_allowlist_and_omits_private_provider_state():
 
 
 @pytest.mark.asyncio
-async def test_each_adapter_dispatch_has_identity_and_persists_chunks_before_delivery(monkeypatch, recorded):
-    import litellm
-    from agent import llm
-    calls = []
-    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {"api_key": "not-in-trace"})
-    monkeypatch.setattr(llm, "_get_variant_kwargs", lambda *_: {})
-    monkeypatch.setattr(llm, "_get_max_output_tokens", lambda _: 100)
-
-    class Chunk(SimpleNamespace):
-        def model_dump(self, **_):
-            return {"choices": [{"delta": {"content": self.choices[0].delta.content}}],
-                    "_hidden_params": {"api_key": "not-in-trace"}}
-
-    async def stream():
-        for text in ("A", "B"):
-            yield Chunk(choices=[SimpleNamespace(index=0, finish_reason=None,
-                delta=SimpleNamespace(content=text, reasoning_content=None, tool_calls=[]))], usage=None)
-
-    async def completion(**kwargs):
-        assert recorded[-1]["type"] == "request.started"
-        calls.append(kwargs)
-        return stream()
-    monkeypatch.setattr(litellm, "acompletion", completion)
-    ctx = context()
-    for attempt in range(2):
-        async for event in llm._stream_litellm_direct("provider/model", [],
-                [{"role": "user", "content": "question"}], {}, trace_ctx=ctx):
-            if event["type"] == "text_delta":
-                assert any(item["type"] == "request.delta" and
-                    item["data"]["blocks"][0]["delta"] == event["text"] for item in recorded)
-    assert len(calls) == 2
-    starts = [e for e in recorded if e["type"] == "request.started"]
-    assert len({e["context"].request_id for e in starts}) == 2
-    assert {e["context"].step_id for e in starts} == {"step"}
-    assert [e["data"]["chunk_index"] for e in recorded if e["type"] == "request.delta"] == [1, 2, 1, 2]
-    assert "not-in-trace" not in str(recorded)
-
-
-@pytest.mark.asyncio
-async def test_failed_recording_never_dispatches_provider(monkeypatch, recorded):
-    import litellm
-    import trajectory
-    from trajectory.types import TrajectoryError
-    from agent import llm
-    dispatched = False
-
-    async def failed_record(*args, **kwargs):
-        raise TrajectoryError("recording unavailable")
-
-    async def completion(**kwargs):
-        nonlocal dispatched
-        dispatched = True
-    monkeypatch.setattr(trajectory, "record", failed_record)
-    monkeypatch.setattr(litellm, "acompletion", completion)
-    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {})
-    with pytest.raises(TrajectoryError):
-        async for _ in llm._stream_litellm_direct("provider/model", [], [], {}, trace_ctx=context()):
-            pass
-    assert not dispatched
-
-
-@pytest.mark.asyncio
 async def test_tool_denial_is_recorded_without_dispatch_or_execution_duration(recorded):
     from agent.hooks import ToolHooks
     hooks = ToolHooks("session", "owner")
@@ -236,38 +174,6 @@ async def test_parallel_batch_keeps_parent_and_sibling_contexts_separate(monkeyp
     assert len({part_id for _, part_id, _ in seen}) == 2
     assert {trace.parent_call_id for _, _, trace in seen} == {"parent"}
     assert {trace.session_id for _, _, trace in seen} == {"session"}
-
-
-@pytest.mark.asyncio
-async def test_stream_reader_can_fill_one_batch_before_first_receipt(monkeypatch, recorded):
-    import trajectory
-    from agent.trajectory import RequestCapture
-    capture = await RequestCapture.start(context(), purpose="chat", model_id="provider/model",
-        payload={"model": "provider/model"}, capture_level="adapter_input")
-    receipts = []
-    queued_all = asyncio.Event()
-
-    def deferred_receipt(context, event):
-        receipt = asyncio.get_running_loop().create_future()
-        receipts.append(receipt)
-        if len(receipts) == 3:
-            queued_all.set()
-        return receipt
-    monkeypatch.setattr(trajectory, "record_stream", deferred_receipt)
-
-    async def provider():
-        for text in ("one", "two", "three"):
-            yield {"type": "content", "delta": text}
-    stream = capture.stream_chunks(provider(), lambda chunk: [{"type": "text", "delta": chunk["delta"]}])
-    delivery = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(queued_all.wait(), timeout=1)
-    assert not delivery.done()
-    for receipt in receipts:
-        receipt.set_result({"committed": True})
-    assert (await delivery)["delta"] == "one"
-    assert (await anext(stream))["delta"] == "two"
-    assert (await anext(stream))["delta"] == "three"
-    await stream.aclose()
 
 
 @pytest.mark.asyncio

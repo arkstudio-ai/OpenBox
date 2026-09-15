@@ -15,20 +15,21 @@ from datetime import datetime
 from functools import wraps
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from trajectory import export as exports, payload as payloads, repository
 from trajectory.auth import NoStoreRoute, record_audit, require_trajectory_admin, revalidate_viewer
-from trajectory.store.database import trace_session
+from trajectory.store.database import TraceEngineNotInitialized, trace_session
 from trajectory.types import CorruptContent, TrajectoryError
 
 router = APIRouter(prefix="/api/admin/trajectories", tags=["admin-trajectories"], route_class=NoStoreRoute)
 
 #: Every response carrying stored content.
 CONTENT_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
-SHA256_PATTERN = r"^[0-9a-f]{64}$"
+#: The trace database is not open: an embedded worker whose start failed still has these routes mounted.
+UNAVAILABLE = "Trajectory database is unavailable"
 
 
 def errors(function):
@@ -36,6 +37,8 @@ def errors(function):
     async def wrapped(*args, **kwargs):
         try:
             return await function(*args, **kwargs)
+        except TraceEngineNotInitialized as exc:
+            raise HTTPException(503, detail=UNAVAILABLE) from exc
         except FileNotFoundError as exc:
             raise HTTPException(410, detail={"code": "trajectory_content_deleted", "message": str(exc)}) from exc
         except LookupError as exc:
@@ -88,8 +91,6 @@ async def header(session_id: str, request: Request, through_seq: str | None = No
                  admin: dict = Depends(require_trajectory_admin)):
     async with trace_session() as db:
         result = await repository.get_session_header(db, session_id, through_seq)
-    # The worker resolves $ref values on /blobs and records honour expand=refs.
-    result["capabilities"] = {**(result.get("capabilities") or {}), "refs": True}
     await audit(admin, request, "view", session_id, {"through_seq": result["through_seq"]})
     return result
 
@@ -180,9 +181,12 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
 
 @router.get("/sessions/{session_id}/blobs/{sha256}")
 @errors
-async def blob(session_id: str, request: Request, sha256: str = Path(pattern=SHA256_PATTERN),
-               through_seq: str | None = None, admin: dict = Depends(require_trajectory_admin)):
-    """The JSON value of a ``$ref`` visible at ``through_seq`` in this session's trajectory."""
+async def blob(session_id: str, sha256: str, request: Request, through_seq: str | None = None,
+               admin: dict = Depends(require_trajectory_admin)):
+    """The JSON value of a ``$ref`` visible at ``through_seq`` in this session's trajectory.
+
+    A malformed digest names no blob: 404, as for an unknown one (``payload.visible_blob``).
+    """
     async with trace_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, through_seq)

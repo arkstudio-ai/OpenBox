@@ -706,15 +706,6 @@ async def expand_all(db, trajectory_id: str, values: list, *, through_seq: int, 
     return await resolver.visible(values)
 
 
-async def expand(db, trajectory_id: str, data: dict, *, through_seq: int, refs: bool = True, blob_store=None) -> dict:
-    return (await expand_all(db, trajectory_id, [data], through_seq=through_seq, refs=refs, blob_store=blob_store))[0]
-
-
-async def visible_references(db, trajectory_id: str, value, *, through_seq: int):
-    """Current deletion rules apply even while viewing a historical prefix."""
-    return (await Resolver(db, trajectory_id, through_seq=through_seq).visible([value]))[0]
-
-
 async def expand_pages(db, trajectory_id: str, references: list, *, through_seq: int, blob_store=None) -> list[dict]:
     """Checkpoint record pages, each digest-verified; any unavailable page is corruption (409)."""
     ids = [item["$payload"]["payload_id"] for item in references]
@@ -777,6 +768,7 @@ async def upload_json_blobs(store, blobs: list[dict], *, metrics=None) -> None:
         if metrics is not None:
             metrics.inc("blob_puts")
             metrics.inc("blob_put_bytes", blob["stored_bytes"])
+            metrics.inc("blob_put_raw_bytes", blob["size_bytes"])
     unique = {blob["dedupe_key"]: blob for blob in blobs}
     await asyncio.gather(*(put(blob) for blob in unique.values()))
 

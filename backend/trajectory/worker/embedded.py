@@ -6,8 +6,9 @@ the migration head, starts WorkerServices and mounts the admin routers into the
 business app. Alembic's env calls ``asyncio.run``, so no migration runs on this
 event loop: SQLite is prepared by ``migrate_sqlite`` and PostgreSQL upgraded by
 alembic, each in a worker thread. Viewer authority and audit use this process's
-business database directly; a distributed backend (``JWT_SECRET``) shares
-hints with its replicas over ``trajectory:hints``.
+business database directly; a distributed backend (``JWT_SECRET`` and its Redis
+cache) shares hints with its replicas over ``trajectory:hints``. Worker start
+also removes stale temporary export archives.
 
 ``migrate_sqlite`` uses its own sqlite3 connection:
 
@@ -156,11 +157,18 @@ async def prepare_schema(engine, url: str) -> None:
 
 
 async def _open_hints() -> bool:
-    """Open the hint channel for a distributed backend (JWT_SECRET); whether this call opened it."""
+    """Open the hint channel for a distributed backend; whether this call opened it.
+
+    Distributed means JWT_SECRET with the business Redis cache. A process whose
+    cache is not Redis (the dev server) has no replicas to reach: in-process
+    dispatch reaches every socket, and no Redis connection is attempted.
+    """
     try:
+        from cache import get_cache
+        from cache.redis_cache import RedisCache
         from core.config import get_config
         config = get_config()
-        if not config.jwt_secret:
+        if not config.jwt_secret or not isinstance(get_cache(), RedisCache):
             return False
         from bus.trajectory_hints import init_trajectory_hints
         return await init_trajectory_hints(config.redis_url) is not None
@@ -179,6 +187,7 @@ async def start_embedded_worker(app, *, blob_store=None, services_factory: Calla
     global _embedded
     if _embedded is None:
         from trajectory.auth import AuditDelivery, LocalBackend, configure_backend
+        from trajectory.export import remove_stale_temp_files
         from trajectory.payload import oss_asset_reader, set_asset_reader
         from trajectory.store.database import close_trace_engine, init_trace_engine
         from trajectory.storage import get_blob_store, set_blob_store
@@ -198,6 +207,7 @@ async def start_embedded_worker(app, *, blob_store=None, services_factory: Calla
                 set_blob_store(blob_store)
             store = blob_store if blob_store is not None else get_blob_store()
             set_asset_reader(asset_reader or oss_asset_reader(internal=oss_internal()))
+            await asyncio.to_thread(remove_stale_temp_files)
             services = (services_factory or default_services)(store)
             await services.start()
             owns_hints = await _open_hints()

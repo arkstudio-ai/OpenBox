@@ -7,8 +7,9 @@ from sqlalchemy import event, func, select, update
 
 from tests.unit.test_worker_projection_support import (AT, JSON, add_asset, add_payload, add_trajectory, blobs,  # noqa: F401
     trace_db)
-from trajectory.payload import (LruCache, blob_cache, ensure_payload_rows, expand, expand_all, expand_pages, json_blob,
-    payload_meta, read_blob, read_payload, reference, reset_blob_cache, set_asset_reader, validate_payload)
+from trajectory.payload import (LruCache, blob_cache, ensure_payload_rows, expand_all, expand_pages, json_blob,
+    payload_meta, read_blob, read_payload, reference, reset_blob_cache, set_asset_reader, upload_json_blobs,
+    validate_payload)
 from trajectory.store.database import trace_session
 from trajectory.store.models import SessionTrajectory, TrajectoryPayload
 from trajectory.types import CorruptContent, canonical
@@ -25,6 +26,12 @@ async def trajectory(trace_db, blobs):
 def _ref(row, kind="value"):
     return {"$ref": {"sha256": row.sha256, "size_bytes": row.size_bytes, "media_type": JSON, "kind": kind,
                      "payload_id": row.payload_id}}
+
+
+async def _expanded(db, value, **kwargs):
+    """One stored value as the admin API returns it (``expand_all`` of that value alone)."""
+    (result,) = await expand_all(db, TRAJECTORY, [value], **kwargs)
+    return result
 
 
 async def _row() -> SessionTrajectory:
@@ -171,15 +178,15 @@ async def test_expand_resolves_refs_payloads_and_current_availability(trajectory
     artifact = {"artifact_id": "a1", "payload": {**reference(gone), "availability": "available"}}
     data = {"input": {"messages": [_ref(outer, "message")], "tools": schema}, "media": media, "artifact": artifact}
     async with trace_session() as db:
-        full = await expand(db, TRAJECTORY, data, through_seq=1)
+        full = await _expanded(db, data, through_seq=1)
         assert full["input"] == {"messages": [{"text": "inner text", "items": [1, 2]}], "tools": schema}
         assert full["media"]["$media"]["availability"] == "available" and full["media"]["source_kind"] == "inline_non_asset"
         assert full["artifact"]["payload"]["availability"] == "deleted" and full["artifact"]["availability"] == "deleted"
         assert full["artifact"]["payload"]["reason"] == "explicitly_deleted"
         # expand=refs: only $ref values stay references, untouched.
-        kept = await expand(db, TRAJECTORY, data, through_seq=1, refs=False)
+        kept = await _expanded(db, data, through_seq=1, refs=False)
         assert kept["input"] == data["input"] and kept["artifact"] == full["artifact"]
-        assert await expand(db, TRAJECTORY, {"value": _ref(outer)}, through_seq=0) == {
+        assert await _expanded(db, {"value": _ref(outer)}, through_seq=0) == {
             "value": {"$ref": {**_ref(outer)["$ref"], "availability": "not_recorded"}}}
     assert data["artifact"]["payload"]["availability"] == "available"
 
@@ -193,14 +200,14 @@ async def test_whole_data_payloads_load_as_today(trajectory, blobs):
     def envelope(row):
         return {"$payload": {**reference(row), "availability": "available"}}
     async with trace_session() as db:
-        assert await expand(db, TRAJECTORY, envelope(stored), through_seq=2) == {"big": "inner text"}
-        assert await expand(db, TRAJECTORY, envelope(stored), through_seq=2, refs=False) == {"big": _ref(inner)}
-        assert await expand(db, TRAJECTORY, envelope(removed), through_seq=2) == {
+        assert await _expanded(db, envelope(stored), through_seq=2) == {"big": "inner text"}
+        assert await _expanded(db, envelope(stored), through_seq=2, refs=False) == {"big": _ref(inner)}
+        assert await _expanded(db, envelope(removed), through_seq=2) == {
             "$payload": {**reference(removed), "availability": "deleted", "reason": "explicitly_deleted"}}
         with pytest.raises(LookupError):
-            await expand(db, TRAJECTORY, envelope(stored), through_seq=1)
+            await _expanded(db, envelope(stored), through_seq=1)
         with pytest.raises(CorruptContent, match="not an object"):
-            await expand(db, TRAJECTORY, envelope(listed), through_seq=2)
+            await _expanded(db, envelope(listed), through_seq=2)
 
 
 async def test_many_values_resolve_with_a_constant_number_of_statements(trajectory, blobs, trace_db):
@@ -257,7 +264,7 @@ async def test_blob_fetches_are_cached_and_at_most_sixteen_are_in_flight(traject
         assert values == [f"v{index:02d}" for index in range(40)]
         assert 1 < peak <= 16 and blob_cache().size <= 64
         gets = blobs.gets
-        assert await expand(db, TRAJECTORY, _ref(rows[-1]), through_seq=1) == "v39"
+        assert await _expanded(db, _ref(rows[-1]), through_seq=1) == "v39"
         assert blobs.gets == gets
 
 
@@ -305,3 +312,20 @@ async def test_rows_referenced_from_an_earlier_position_become_visible_there(tra
         assert json.loads(await read_blob(db, trajectory_row, later.sha256, through_seq=5)) == value
         with pytest.raises(LookupError):
             await read_blob(db, trajectory_row, later.sha256, through_seq=4)
+
+
+async def test_json_blob_uploads_count_stored_and_raw_bytes(blobs):
+    class Counters:
+        def __init__(self):
+            self.values = {}
+
+        def inc(self, name, value=1):
+            self.values[name] = self.values.get(name, 0) + value
+
+    value = {"text": "repeated words " * 200}
+    blob = json_blob(TRAJECTORY, value)
+    metrics = Counters()
+    await upload_json_blobs(blobs, [blob, dict(blob)], metrics=metrics)
+    assert blob["encoding"] == "zstd" and blob["stored_bytes"] < blob["size_bytes"] == len(canonical(value))
+    assert metrics.values == {"blob_puts": 1, "blob_put_bytes": blob["stored_bytes"],
+                              "blob_put_raw_bytes": blob["size_bytes"]}

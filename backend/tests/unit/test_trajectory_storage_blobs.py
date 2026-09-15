@@ -1,6 +1,7 @@
 """Trajectory blob stores, encodings, keys, fault injection and configuration."""
 import asyncio
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -768,3 +769,80 @@ async def test_oss_blob_store_signs_with_credentials_refreshed_every_ten_minutes
         oss.clear_credentials_cache()
     assert [request.headers["authorization"].split(":")[0] for request in bucket.requests] == ["OSS ak-1", "OSS ak-1", "OSS ak-2"]
     assert [request.headers["x-oss-security-token"] for request in bucket.requests] == ["sts-1", "sts-1", "sts-2"]
+
+
+# -- put_file --
+
+async def test_local_put_file_copies_in_chunks_into_a_renamed_temp_file(tmp_path, monkeypatch):
+    root, source = tmp_path / "root", tmp_path / "archive.zip"
+    store = LocalBlobStore(root)
+    content = os.urandom(storage.CHUNK_BYTES * 2 + 17)
+    source.write_bytes(content)
+    key = export_key("exp_1", SHA)
+    lengths, real_copy = [], storage.shutil.copyfileobj
+
+    def copy(reader, writer, length):
+        lengths.append(length)
+        real_copy(reader, writer, length)
+
+    monkeypatch.setattr(storage.shutil, "copyfileobj", copy)
+    await store.put_file(key, source, content_type="application/zip", if_absent=False)
+    assert await store.get(key) == content and lengths == [storage.CHUNK_BYTES]
+    source.write_bytes(b"replacement")
+    await store.put_file(key, str(source), content_type="application/zip")
+    assert await store.get(key) == content  # if_absent keeps the first object
+    await store.put_file(key, source, content_type="application/zip", if_absent=False)
+    assert await store.get(key) == b"replacement"
+    with pytest.raises(FileNotFoundError):
+        await store.put_file(blob_key("trj_1", SHA), tmp_path / "missing.zip", content_type="application/zip")
+    assert await keys_of(store, "") == [key] and list(root.rglob(".tmp-*")) == []
+    with pytest.raises(ValueError):
+        await store.put_file("../escape", source, content_type="application/zip")
+
+
+async def test_memory_put_file_is_a_counted_put_of_the_file_bytes(tmp_path):
+    store = MemoryBlobStore()
+    source = tmp_path / "archive.zip"
+    source.write_bytes(b"zip bytes")
+    await store.put_file("t/a", source, content_type="application/zip")
+    await store.put_file("t/a", str(source), content_type="text/plain")
+    assert (store.objects, store.content_types, store.puts, store.bytes) == (
+        {"t/a": b"zip bytes"}, {"t/a": "application/zip"}, 2, 9)
+    store.fail("put", times=1)
+    with pytest.raises(ConnectionError):
+        await store.put_file("t/b", source, content_type="application/zip")
+    assert "t/b" not in store.objects
+    with pytest.raises(ValueError):
+        await store.put_file("../x", source, content_type="application/zip")
+
+
+async def test_wrappers_delegate_put_file(tmp_path):
+    from trajectory.worker.services import GuardedGcBlobStore
+
+    source = tmp_path / "archive.zip"
+    source.write_bytes(b"zip")
+    inner = MemoryBlobStore()
+    faulty = FaultInjectingBlobStore(inner, "put:1.0", seed=1)
+    with pytest.raises(BlobFaultInjected):
+        await faulty.put_file("t/a", source, content_type="application/zip")
+    assert inner.objects == {} and faulty.injected["put"] == 1
+    faulty.probabilities = {}
+    await GuardedGcBlobStore(faulty, guard=None).put_file("t/a", source, content_type="application/zip")
+    assert inner.objects == {"t/a": b"zip"}
+
+
+async def test_oss_blob_store_put_file_streams_the_file_with_its_md5(tmp_path):
+    bucket = FakeOssBucket()
+    store = oss_store(bucket)
+    source = tmp_path / "archive.zip"
+    content = os.urandom(storage.CHUNK_BYTES + 5)
+    source.write_bytes(content)
+    key = export_key("exp_1", SHA)
+    await store.put_file(key, source, content_type="application/zip", if_absent=False)
+    await store.put_file(key, source, content_type="application/zip")
+    assert bucket.objects == {key: content}
+    first, second = [request for request in bucket.requests if request.method == "PUT"]
+    assert first.headers["content-md5"] == base64.b64encode(hashlib.md5(content).digest()).decode()
+    assert first.headers["content-length"] == str(len(content)) and "transfer-encoding" not in first.headers
+    assert (first.headers.get("x-oss-forbid-overwrite"), second.headers["x-oss-forbid-overwrite"]) == (None, "true")
+    assert first.url.host == "bucket.oss-cn-shanghai-internal.aliyuncs.com"

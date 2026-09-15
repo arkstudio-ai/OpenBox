@@ -83,6 +83,9 @@ class GuardedGcBlobStore:
     def __getattr__(self, name):
         return getattr(self.store, name)
 
+    async def put_file(self, key: str, path, *, content_type: str, if_absent: bool = True) -> None:
+        await self.store.put_file(key, path, content_type=content_type, if_absent=if_absent)
+
     async def delete(self, key: str) -> None:
         reference = blob_reference(key)
         if reference is None:

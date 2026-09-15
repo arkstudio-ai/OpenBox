@@ -80,7 +80,7 @@ class ReadLayer:
     REPOSITORY = ("get_trajectory", "watermark", "get_session_header", "list_sessions", "read_events",
                   "list_records", "get_record", "get_checkpoint", "search")
     PAYLOAD = ("validate_payload", "read_payload", "payload_meta", "read_blob")
-    EXPORT = ("create_export", "export_status", "read_export")
+    EXPORT = ("create_export", "export_status")
 
     def __init__(self, blob: MemoryBlobStore):
         self.blob = blob
@@ -150,7 +150,7 @@ class ReadLayer:
         meta, trajectory = await self.get_trajectory(db, session_id, optional=True)
         head = self.watermark(trajectory, through_seq)
         return {**await self._row(db, meta, trajectory, head), "agents": [], "projector_version": 1,
-                "capabilities": {"recording": True, "admin_read": True, "export": trajectory is not None},
+                "capabilities": {"recording": True, "admin_read": True, "export": trajectory is not None, "refs": True},
                 "unsupported_events": []}
 
     async def list_sessions(self, db, *, user_id=None, user_query=None, q=None, workspace_id=None, status=None,
@@ -306,19 +306,6 @@ class ReadLayer:
         return {"export_id": row.id, "status": row.status, "through_seq": str(row.through_seq), "error": row.error,
                 "download_url": f"{PREFIX}/sessions/{session_id}/exports/{row.id}/download"
                 if row.status == "completed" else None}
-
-    async def read_export(self, db, trajectory, export_id):
-        row = await db.scalar(select(TrajectoryExport).where(TrajectoryExport.id == export_id,
-                                                            TrajectoryExport.trajectory_id == trajectory.id))
-        if row is None:
-            raise LookupError("Export does not belong to this trajectory")
-        try:
-            content = await self.blob.get(row.storage_key)
-        except FileNotFoundError as exc:
-            raise CorruptContent("Export blob is missing") from exc
-        if hashlib.sha256(content).hexdigest() != row.sha256:
-            raise CorruptContent("Export digest mismatch")
-        return row, content
 
 
 # -- Seeded trace database --

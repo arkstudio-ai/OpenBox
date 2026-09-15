@@ -10,6 +10,11 @@ object is not referenced again (content-addressed keys can be reused) and
 refuses anything outside the trajectory namespace and the prefix of a live
 trajectory.
 
+Some objects no row ever references: blobs of a batch that never committed,
+segments of an archive attempt that died before its row did. The orphan sweep
+pages through the namespace and queues GC entries for the old ones nothing
+uses.
+
 The duties of one pass are independent: a purge that fails (a statement
 timeout on a huge trajectory, say) is logged and the others still run.
 """
@@ -17,12 +22,12 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 
 from core.log import create_logger
-from trajectory.lifecycle import (GC_KEY, GC_PREFIX, allow_long_statements, delete_exports,
+from trajectory.lifecycle import (GC_KEY, GC_PREFIX, allow_long_statements, delete_exports, enqueue_gc,
     expire_trajectory_content, gc_retry_delay, lock_trajectory, tombstone_trajectory, utc, worker_setting)
-from trajectory.storage import key_prefix
+from trajectory.storage import check_key, key_prefix
 from trajectory.store.database import trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryExport, TrajectoryGcQueue, TrajectoryMetaSession,
     TrajectoryPayload, TrajectorySegment, TrajectoryWorkerState)
@@ -40,7 +45,17 @@ EXPORTS_DIRECTORY = "_exports"
 #: users it lists as degraded are those of that day (their budget resets at midnight).
 REPORT_TIME = time(23, 55)
 #: Work the daily report counts, in the order it lists it.
-REPORT_COUNTERS = ("trajectories_expired", "tombstones_processed", "gc_objects_deleted", "gc_failures")
+REPORT_COUNTERS = ("trajectories_expired", "tombstones_processed", "gc_objects_deleted", "gc_failures",
+                   "gc_orphans_queued")
+#: Keys the orphan sweep lists per pass (``RetentionService.sweep_orphans``).
+ORPHAN_BATCH = 1000
+#: Younger objects are never orphans: far beyond any ingest or archive retry horizon.
+ORPHAN_MIN_AGE_SECONDS = 7 * 24 * 3600
+#: ``trajectory_worker_state`` key of the last key the orphan sweep listed.
+ORPHAN_CURSOR_STATE_KEY = "gc.orphan_cursor"
+ORPHAN_REASON = "orphan_object"
+#: Keys per statement of the orphan sweep.
+QUERY_CHUNK = 500
 
 
 class DailyReport:
@@ -67,6 +82,11 @@ class DailyReport:
         self.since, self.reported_day = moment, utc_day(moment)
         self.counters = dict.fromkeys(REPORT_COUNTERS, 0)
         return fields
+
+
+def _chunks(values: list, size: int = QUERY_CHUNK):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
 
 
 class GcRefused(ValueError):
@@ -277,6 +297,90 @@ class RetentionService:
             log.warning("Trajectory GC rescheduled %s failed entries", len(failed))
         self.metrics.set_gauge("gc_queue_depth", int(depth or 0))
         return len(completed)
+
+    async def sweep_orphans(self, limit: int = ORPHAN_BATCH) -> int:
+        """Queue GC key entries for old objects nothing references; returns how many were queued.
+
+        Each call lists the next ``limit`` keys of the trajectory namespace after the cursor kept under
+        ORPHAN_CURSOR_STATE_KEY and starts over after a short page. Objects younger than
+        ORPHAN_MIN_AGE_SECONDS, or of unknown age, are left alone; the others are checked by the rules of
+        ``_still_used``, a few statements per page. An unused key without a queued key entry gets one (reason
+        ``orphan_object``), which the GC pass checks again before it deletes the object. Prefixes are never
+        queued.
+        """
+        limit, namespace, moment = max(1, limit), key_prefix(), now()
+        async with trace_session() as db:
+            state = await db.get(TrajectoryWorkerState, ORPHAN_CURSOR_STATE_KEY)
+        cursor = state.value.get("after") if state is not None and isinstance(state.value, dict) else None
+        if not isinstance(cursor, str) or not cursor.startswith(namespace):
+            cursor = None
+        page = await self.blob_store.list_objects(namespace, start_after=cursor, limit=limit)
+        cutoff = moment.timestamp() - ORPHAN_MIN_AGE_SECONDS
+        old = [key for key, modified in page if modified is not None and modified <= cutoff]
+        async with trace_session() as db:
+            unused = await self._unused_keys(db, namespace, old)
+            queued = set()
+            for chunk in _chunks(unused):
+                queued.update((await db.scalars(select(TrajectoryGcQueue.storage_key).where(
+                    TrajectoryGcQueue.kind == GC_KEY, TrajectoryGcQueue.storage_key.in_(chunk)))).all())
+            orphans = [key for key in unused if key not in queued]
+            for key in orphans:
+                await enqueue_gc(db, GC_KEY, key, ORPHAN_REASON, at=moment)
+            value = {"after": page[-1][0] if len(page) >= limit else None}
+            state = await db.get(TrajectoryWorkerState, ORPHAN_CURSOR_STATE_KEY)
+            if state is None:
+                db.add(TrajectoryWorkerState(key=ORPHAN_CURSOR_STATE_KEY, value=value, updated_at=moment))
+            else:
+                state.value, state.updated_at = value, moment
+        self.report.add("gc_orphans_queued", len(orphans))
+        if orphans:
+            log.info("Trajectory orphan sweep queued %s of %s listed objects for GC", len(orphans), len(page))
+        return len(orphans)
+
+    @staticmethod
+    async def _unused_keys(db, namespace: str, keys: list[str]) -> list[str]:
+        """The keys ``_still_used`` finds unused, in their order, decided for a chunk of keys per statement.
+
+        Only keys in a trajectory directory or the exports directory are candidates: objects directly in the
+        namespace, other reserved ("_") directories and keys ``enqueue_gc`` refuses are left alone.
+        """
+        candidates = []
+        for key in keys:
+            owner, _, rest = key[len(namespace):].partition("/")
+            if not rest or (owner.startswith("_") and owner != EXPORTS_DIRECTORY):
+                continue
+            try:
+                check_key(key)
+            except ValueError:
+                continue
+            section, _, name = rest.partition("/")
+            candidates.append((key, owner, section, name))
+        used = set()
+        for chunk in _chunks(candidates):
+            blobs, segments, exports = {}, {}, []
+            for key, owner, section, name in chunk:
+                if owner == EXPORTS_DIRECTORY:
+                    exports.append(key)
+                elif section == "blobs":
+                    blobs.setdefault(owner, {})[name] = key
+                elif section == "segments":
+                    segments.setdefault(owner, []).append(key)
+            if blobs:
+                rows = await db.execute(
+                    select(TrajectoryPayload.trajectory_id, TrajectoryPayload.sha256, TrajectoryPayload.storage_key)
+                    .where(TrajectoryPayload.availability == "available",
+                           or_(*(and_(TrajectoryPayload.trajectory_id == owner, TrajectoryPayload.sha256.in_(names))
+                                 for owner, names in blobs.items()))))
+                used.update(storage_key for owner, sha256, storage_key in rows
+                            if blobs[owner].get(sha256) == storage_key)
+            if segments:
+                used.update((await db.scalars(select(TrajectorySegment.storage_key).where(
+                    or_(*(and_(TrajectorySegment.trajectory_id == owner, TrajectorySegment.storage_key.in_(names))
+                          for owner, names in segments.items()))))).all())
+            if exports:
+                used.update((await db.scalars(select(TrajectoryExport.storage_key).where(
+                    TrajectoryExport.storage_key.in_(exports), TrajectoryExport.status != "deleted"))).all())
+        return [key for key, *_ in candidates if key not in used]
 
     @staticmethod
     async def _still_used(kind: str, storage_key: str) -> bool:

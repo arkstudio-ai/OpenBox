@@ -65,6 +65,10 @@ class FakeRetentionService(FakeRetention):
         self.calls.append(("process_gc_queue", limit))
         return 0
 
+    async def sweep_orphans(self):
+        self.calls.append(("sweep_orphans",))
+        return 0
+
 
 class FakeExports:
     def __init__(self):
@@ -268,3 +272,12 @@ async def test_gc_deletes_go_through_the_object_guard_that_ingest_shares(trace_d
     assert key not in store.objects
     await guarded.put(key, b"y", content_type="application/octet-stream")
     assert await guarded.get(key) == b"y"
+
+
+async def test_the_orphan_sweep_is_a_writer_step_every_ten_minutes(trace_db, settings):
+    services = _services(settings)
+    steps = {name: (interval, step) for name, interval, step in services._steps()}
+    assert steps["orphans"][0] == 600.0
+    await steps["orphans"][1]()
+    assert services.retention.calls == [("sweep_orphans",)]
+

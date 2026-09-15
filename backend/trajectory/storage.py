@@ -13,6 +13,7 @@ never do.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import inspect
 import operator
 import os
@@ -20,6 +21,8 @@ import random
 import re
 import shutil
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import AsyncIterator, Callable, Mapping, Protocol, runtime_checkable
 
@@ -64,6 +67,9 @@ class BlobStore(Protocol):
     stores stream them, so memory does not grow with the file), get raises
     FileNotFoundError for a missing key, delete is idempotent, delete_prefix
     returns how many keys it removed and list yields keys in lexical order.
+    list_objects returns one page of that order: at most limit keys after
+    start_after, each with its last-modified time in epoch seconds (None when
+    the store cannot tell).
     """
 
     async def put(self, key: str, data: bytes, *, content_type: str, if_absent: bool = True) -> None: ...
@@ -80,6 +86,9 @@ class BlobStore(Protocol):
     async def delete_prefix(self, prefix: str) -> int: ...
 
     def list(self, prefix: str) -> AsyncIterator[str]: ...
+
+    async def list_objects(self, prefix: str, *, start_after: str | None = None,
+                           limit: int) -> list[tuple[str, float | None]]: ...
 
 
 async def read_chunks(store: BlobStore, key: str, *, chunk_bytes: int = CHUNK_BYTES) -> AsyncIterator[bytes]:
@@ -173,6 +182,22 @@ def _check_delete_prefix(prefix: str) -> str:
     if not prefix.endswith("/"):
         raise ValueError(f"delete_prefix needs a non-empty prefix ending in '/': {prefix!r}")
     return prefix
+
+
+def _page_limit(limit: int) -> int:
+    value = operator.index(limit)
+    if value < 1:
+        raise ValueError(f"A listing page needs a positive limit: {limit!r}")
+    return value
+
+
+def _epoch_seconds(value) -> float | None:
+    """An ISO 8601 time ("2026-09-14T08:00:00.000Z", OSS LastModified) in epoch seconds; None when unreadable."""
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def key_prefix() -> str:
@@ -328,6 +353,21 @@ class OssBlobStore:
             if token is None:
                 return
 
+    async def list_objects(self, prefix: str, *, start_after: str | None = None,
+                           limit: int) -> list[tuple[str, float | None]]:
+        check_key(prefix, prefix=True)
+        remaining, token, listed = _page_limit(limit), None, []
+        while remaining > 0:
+            # start-after places the first request only; a continuation token carries its own position.
+            objects, token = await self._client().list_objects(
+                prefix, continuation_token=token, start_after=None if token else start_after,
+                max_keys=min(remaining, 1000), internal=self.internal)
+            listed.extend((item["key"], _epoch_seconds(item["last_modified"])) for item in objects)
+            remaining -= len(objects)
+            if token is None:
+                break
+        return listed
+
 
 class LocalBlobStore:
     """Blobs as files under root (desktop and dev).
@@ -377,6 +417,12 @@ class LocalBlobStore:
         check_key(prefix, prefix=True)
         for key in await asyncio.to_thread(_walk_keys, self.root, prefix):
             yield key
+
+    async def list_objects(self, prefix: str, *, start_after: str | None = None,
+                           limit: int) -> list[tuple[str, float | None]]:
+        """Last-modified times are the mtimes of the files."""
+        check_key(prefix, prefix=True)
+        return await asyncio.to_thread(_page_of_files, self.root, prefix, start_after, _page_limit(limit))
 
     def _write(self, path: Path, if_absent: bool, fill: Callable[..., object]) -> None:
         # Check-then-write is enough here: if_absent keys are content addressed
@@ -477,6 +523,20 @@ def _walk_keys(root: Path, prefix: str) -> list[str]:
     return _walk(root, prefix)[0]
 
 
+def _page_of_files(root: Path, prefix: str, start_after: str | None, limit: int) -> list[tuple[str, float | None]]:
+    """At most limit keys after start_after with their files' mtimes; a file removed meanwhile is skipped."""
+    keys = _walk_keys(root, prefix)
+    listed = []
+    for key in keys[0 if start_after is None else bisect.bisect_right(keys, start_after):]:
+        try:
+            listed.append((key, (root / key).stat().st_mtime))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if len(listed) == limit:
+            break
+    return listed
+
+
 def _walk(root: Path, prefix: str) -> tuple[list[str], list[str]]:
     """(sorted keys, temp files of in-flight or interrupted writes) under root
     whose relative paths start with prefix."""
@@ -502,6 +562,9 @@ class MemoryBlobStore:
     delete_prefix) and bytes (bytes stored by puts that wrote). A call stopped
     by a fault changes nothing.
 
+    modified[key] is the clock() time (time.time unless replaced) of the put
+    that wrote the object; list_objects reports it as the last-modified time.
+
     faults[operation] is an exception to raise or a callable (sync or async)
     that receives the key and may raise; fail() installs a counted one.
     get_hook(key) runs after an object was read and before get returns — the
@@ -511,6 +574,8 @@ class MemoryBlobStore:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
         self.content_types: dict[str, str] = {}
+        self.modified: dict[str, float] = {}
+        self.clock: Callable[[], float] = time.time
         self.puts = 0
         self.gets = 0
         self.deletes = 0
@@ -557,6 +622,7 @@ class MemoryBlobStore:
             return
         self.objects[key] = stored
         self.content_types[key] = content_type
+        self.modified[key] = self.clock()
         self.bytes += len(stored)
 
     async def put_file(self, key: str, path: str | os.PathLike[str], *, content_type: str,
@@ -590,6 +656,7 @@ class MemoryBlobStore:
         self.deletes += 1
         self.objects.pop(key, None)
         self.content_types.pop(key, None)
+        self.modified.pop(key, None)
 
     async def delete_prefix(self, prefix: str) -> int:
         _check_delete_prefix(prefix)
@@ -598,6 +665,7 @@ class MemoryBlobStore:
         for key in doomed:
             del self.objects[key]
             self.content_types.pop(key, None)
+            self.modified.pop(key, None)
         self.deletes += len(doomed)
         return len(doomed)
 
@@ -606,6 +674,15 @@ class MemoryBlobStore:
         await self._fault("list", prefix)
         for key in sorted(key for key in self.objects if key.startswith(prefix)):
             yield key
+
+    async def list_objects(self, prefix: str, *, start_after: str | None = None,
+                           limit: int) -> list[tuple[str, float | None]]:
+        check_key(prefix, prefix=True)
+        limit = _page_limit(limit)
+        await self._fault("list", prefix)
+        keys = sorted(key for key in self.objects
+                      if key.startswith(prefix) and (start_after is None or key > start_after))
+        return [(key, self.modified.get(key)) for key in keys[:limit]]
 
 
 def parse_blob_faults(spec: str | Mapping[str, float]) -> dict[str, float]:
@@ -687,6 +764,11 @@ class FaultInjectingBlobStore:
         self._maybe_fail("list", prefix)
         async for key in self.inner.list(prefix):
             yield key
+
+    async def list_objects(self, prefix: str, *, start_after: str | None = None,
+                           limit: int) -> list[tuple[str, float | None]]:
+        self._maybe_fail("list", prefix)
+        return await self.inner.list_objects(prefix, start_after=start_after, limit=limit)
 
 
 # -- Configuration --

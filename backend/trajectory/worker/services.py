@@ -2,9 +2,10 @@
 
 ``WorkerServices`` holds the single-writer lock and runs every writer loop:
 ingest, projection with checkpoints, archive and partition maintenance,
-retention with the GC queue, exports, budgets and the heartbeat. A process
-without the lock serves reads only and retries the lock every 10 seconds; a
-writer that loses it (its lock connection died) stops writing at once.
+retention with the GC queue and the orphan sweep, exports, budgets and the
+heartbeat. A process without the lock serves reads only and retries the lock
+every 10 seconds; a writer that loses it (its lock connection died) stops
+writing at once.
 
 On PostgreSQL every loop is its own task. SQLite allows one writer at a time,
 so the embedded worker runs the same steps one after another in one task.
@@ -42,6 +43,7 @@ ARCHIVE_SECONDS = 30.0
 PARTITION_SECONDS = 3600.0
 RETENTION_SECONDS = 60.0
 GC_SECONDS = 5.0
+ORPHAN_SECONDS = 600.0
 EXPORT_SECONDS = 2.0
 BUDGET_SECONDS = 10.0
 HEARTBEAT_SECONDS = 5.0
@@ -203,6 +205,7 @@ class WorkerServices:
                 ("partitions", PARTITION_SECONDS, self._partition_step),
                 ("retention", RETENTION_SECONDS, self._retention_step),
                 ("gc", GC_SECONDS, self._gc_step),
+                ("orphans", ORPHAN_SECONDS, self._orphan_step),
                 ("exports", EXPORT_SECONDS, self._export_step),
                 ("budgets", BUDGET_SECONDS, self._budget_step),
                 ("heartbeat", HEARTBEAT_SECONDS, self._heartbeat_step)]
@@ -311,6 +314,9 @@ class WorkerServices:
 
     async def _gc_step(self) -> int:
         return await self.retention.process_gc_queue(limit=GC_BATCH)
+
+    async def _orphan_step(self) -> int:
+        return await self.retention.sweep_orphans()
 
     async def _export_step(self) -> int:
         return await self.exports.run_once()

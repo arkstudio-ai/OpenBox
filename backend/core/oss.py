@@ -535,6 +535,7 @@ class OssClient:
         prefix: str,
         *,
         continuation_token: str | None = None,
+        start_after: str | None = None,
         max_keys: int = 1000,
         internal: bool = False,
     ) -> tuple[list[dict], str | None]:
@@ -542,6 +543,8 @@ class OssClient:
 
         Returns ([{key, size, etag, last_modified, storage_class}], token):
         token is None on the last page, else pass it back as continuation_token.
+        start_after lists only the keys after it; a continuation token carries
+        its own position.
         """
         if not 1 <= max_keys <= 1000:
             raise ValueError("max_keys must be between 1 and 1000")
@@ -550,6 +553,8 @@ class OssClient:
             params["prefix"] = prefix
         if continuation_token:
             params["continuation-token"] = continuation_token
+        if start_after:
+            params["start-after"] = start_after
         resp = await self._request("GET", params=params, internal=internal)
         if resp.status_code != 200:
             raise _error(resp)

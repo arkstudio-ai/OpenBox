@@ -421,7 +421,8 @@ async def test_the_daily_report_logs_the_work_since_the_previous_report_once_a_d
         await retention.run_once()
         assert lines == [(logging.INFO, "Trajectory worker daily report since=2026-09-15T23:50:00.000Z "
                                         "until=2026-09-15T23:56:00.000Z trajectories_expired=1 tombstones_processed=2 "
-                                        "gc_objects_deleted=1 gc_failures=1 degraded_trajectories=2 degraded_users=2")]
+                                        "gc_objects_deleted=1 gc_failures=1 gc_orphans_queued=0 "
+                                        "degraded_trajectories=2 degraded_users=2")]
         clock["now"] = datetime(2026, 9, 15, 23, 59, tzinfo=timezone.utc)
         await retention.run_once()
         clock["now"] = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
@@ -430,8 +431,8 @@ async def test_the_daily_report_logs_the_work_since_the_previous_report_once_a_d
         # Counters start again after each report; the users degraded on 09-15 are not degraded on 09-16.
         assert await retention.report_if_due() == {
             "since": "2026-09-15T23:56:00.000Z", "until": "2026-09-16T23:55:00.000Z", "trajectories_expired": 0,
-            "tombstones_processed": 0, "gc_objects_deleted": 0, "gc_failures": 0, "degraded_trajectories": 2,
-            "degraded_users": 0}
+            "tombstones_processed": 0, "gc_objects_deleted": 0, "gc_failures": 0, "gc_orphans_queued": 0,
+            "degraded_trajectories": 2, "degraded_users": 0}
         assert len(lines) == 2
     finally:
         retention_module.log.removeHandler(handler)
@@ -474,3 +475,81 @@ async def test_gc_keeps_objects_in_use_and_refuses_foreign_keys_and_live_prefixe
     assert set(refused) == {trajectory_prefix("trj_live"), foreign}
     assert all(attempts == 1 and error.startswith("GcRefused") for attempts, error in refused.values())
     assert metrics.counters == {"gc_deleted": 2, "gc_failures": 2}
+
+
+async def put_aged(blob_store, key: str, days: float) -> None:
+    """An object last written ``days`` ago."""
+    await blob_store.put(key, b"x", content_type="application/octet-stream")
+    blob_store.modified[key] = now().timestamp() - days * 86400
+
+
+async def test_the_orphan_sweep_queues_only_old_objects_nothing_references(trace_db, blob_store):
+    await add_trajectory("trj_a")
+    stamp = now()
+    keys = {"used_blob": blob_key("trj_a", sha("used")), "deleted_blob": blob_key("trj_a", sha("gone")),
+            "other_trajectory_blob": blob_key("trj_b", sha("used")), "committed": segment_key("trj_a", 1, 5),
+            "uncommitted": segment_key("trj_a", 6, 9), "live_export": export_key("exp_done", sha("zip")),
+            "deleted_export": export_key("exp_gone", sha("zip")), "stray": trajectory_prefix("trj_a") + "pages/1",
+            "queued": blob_key("trj_a", sha("queued")), "namespace_file": "trajectories/notes",
+            "reserved": "trajectories/_backups/1"}
+    for key in keys.values():
+        await put_aged(blob_store, key, days=8)
+    young = blob_key("trj_a", sha("young"))
+    await put_aged(blob_store, young, days=6)
+    await blob_store.put("assets/user_a/photo.png", b"x", content_type="image/png")
+    async with trace_session() as db:
+        # trj_a's row for the "used" digest does not reference trj_b's object of the same digest.
+        for payload_id, key, digest, state in (("pld_used", keys["used_blob"], "used", "available"),
+                                               ("pld_gone", keys["deleted_blob"], "gone", "deleted")):
+            db.add(TrajectoryPayload(payload_id=payload_id, trajectory_id="trj_a", dedupe_key=sha(payload_id),
+                                     sha256=sha(digest), size_bytes=1, media_type="application/json",
+                                     storage_kind="blob", storage_key=key, availability=state, first_seq=1,
+                                     created_at=stamp))
+        db.add(TrajectorySegment(trajectory_id="trj_a", from_seq=1, to_seq=5, storage_key=keys["committed"],
+                                 event_count=5, raw_bytes=1, stored_bytes=1, sha256=sha("segment"), created_at=stamp))
+        for export_id, status in (("exp_done", "completed"), ("exp_gone", "deleted")):
+            db.add(TrajectoryExport(id=export_id, trajectory_id="trj_a", viewer_id="admin", through_seq=1,
+                                    status=status, storage_key=export_key(export_id, sha("zip")), sha256=sha("zip"),
+                                    created_at=stamp, updated_at=stamp))
+        await enqueue_gc(db, GC_KEY, keys["queued"], "asset_deleted")
+    retention = service(blob_store)
+
+    assert await retention.sweep_orphans() == 5
+    orphans = sorted(keys[name] for name in ("deleted_blob", "other_trajectory_blob", "uncommitted", "deleted_export",
+                                             "stray"))
+    assert await gc_entries() == [("key", keys["queued"], "asset_deleted")] + [
+        ("key", key, "orphan_object") for key in orphans]
+    assert retention.report.counters["gc_orphans_queued"] == 5
+    assert await worker_state("gc.orphan_cursor") == {"after": None}  # a short page: the next sweep starts over
+    assert await retention.sweep_orphans() == 0 and len(await gc_entries()) == 6
+
+    assert await retention.process_gc_queue() == 6
+    assert sorted(blob_store.objects) == sorted([keys["used_blob"], keys["committed"], keys["live_export"],
+                                                 keys["namespace_file"], keys["reserved"], young,
+                                                 "assets/user_a/photo.png"])
+
+
+async def test_the_orphan_sweep_resumes_from_its_cursor_and_starts_over_after_a_short_page(trace_db, blob_store):
+    keys = sorted(blob_key("trj_c", sha(str(index))) for index in range(5))
+    for key in keys:
+        await put_aged(blob_store, key, days=30)
+    retention = service(blob_store)
+    for expected, cursor in ((2, keys[1]), (2, keys[3]), (1, None)):
+        assert await retention.sweep_orphans(limit=2) == expected
+        assert await worker_state("gc.orphan_cursor") == {"after": cursor}
+    assert [entry[1] for entry in await gc_entries()] == keys
+
+    # Starting over lists the first keys again; only the object without an entry is queued.
+    first = blob_key("trj_0", sha("new"))
+    await put_aged(blob_store, first, days=30)
+    assert await retention.sweep_orphans(limit=2) == 1
+    assert await worker_state("gc.orphan_cursor") == {"after": keys[0]}
+    assert [entry[1] for entry in await gc_entries()] == keys + [first]
+
+    # A failed listing keeps the cursor.
+    blob_store.fail("list", times=1)
+    with pytest.raises(ConnectionError):
+        await retention.sweep_orphans(limit=2)
+    assert await worker_state("gc.orphan_cursor") == {"after": keys[0]}
+    assert await retention.sweep_orphans(limit=2) == 0
+    assert await worker_state("gc.orphan_cursor") == {"after": keys[2]}

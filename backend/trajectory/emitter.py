@@ -2,9 +2,11 @@
 
 Business code only validates, serializes and enqueues (SPEC §5). One writer
 thread per process owns line counters, file I/O, rotation, the spool budget,
-blob files for large values (SPEC §3) and budget-file refreshes. Nothing here
-raises into callers: every loss is counted and reported to the worker through
-``gap`` control lines.
+the disk floor, blob files for large values (SPEC §3) and budget-file
+refreshes; a separate heartbeat thread keeps ``producer.json`` fresh even
+while the writer stalls.
+Nothing here raises into callers: every loss is counted and reported to the
+worker through ``gap`` control lines.
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ from sqlalchemy.orm import Session as SyncSession
 
 from trajectory import spool
 from trajectory.budget import DROP_BUDGET, NORMAL, BudgetReader, filter_event
-from trajectory.config import emitter_settings, enabled, integer, pipeline_off
+from trajectory.config import SPOOL_MIN_FREE_BYTES, emitter_settings, enabled, integer, pipeline_off
 from trajectory.context import TraceContext, current
 from trajectory.types import TrajectoryError, prepare_fast
 
@@ -241,11 +243,17 @@ class Emitter:
     #: SHARED_SAMPLE_SECONDS; its own blob writes are added in between.
     SPOOL_SAMPLE_SECONDS = 5.0
     SHARED_SAMPLE_SECONDS = 60.0
+    #: From NEAR_CAP_FRACTION of spool_max_bytes on, the rescans run at most this far apart: processes sharing one
+    #: spool each check the cap against their own sample and overshoot it by what the others wrote since.
+    NEAR_CAP_FRACTION = 0.9
+    NEAR_CAP_SAMPLE_SECONDS = 0.5
+    NEAR_CAP_SHARED_SAMPLE_SECONDS = 5.0
     #: Writer-owned lines (gap controls, producer.goodbye) may exceed spool_max_bytes by this much: without its
     #: goodbye, a producer restarted while the spool is full is reported as crashed for every recent session.
     CONTROL_RESERVE_BYTES = 1024 * 1024
-    #: The writer refreshes the mtime of producer.json this often: the worker declares a producer whose
-    #: producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS dead, on any host.
+    #: The heartbeat thread refreshes the mtime of producer.json this often: the worker declares a producer whose
+    #: producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS dead, on any host. It is not the
+    #: writer's job, so a writer stalled on a slow disk or a long write never looks dead.
     HEARTBEAT_SECONDS = 5.0
     RETRY_SECONDS = 1.0
     ALIVE_CHECK_SECONDS = 1.0
@@ -253,7 +261,7 @@ class Emitter:
 
     def __init__(self, spool_dir: Path, *, role: str = "backend", queue_bytes: int, max_event_bytes: int,
                  file_bytes: int, file_ms: int, spool_max_bytes: int, budget_refresh_ms: int = 5000,
-                 blob_min_bytes: int = spool.BLOB_MIN_BYTES):
+                 blob_min_bytes: int = spool.BLOB_MIN_BYTES, spool_min_free_bytes: int = SPOOL_MIN_FREE_BYTES):
         self.spool_dir = Path(spool_dir)
         self.role = role
         self.queue_bytes = max(1, int(queue_bytes))
@@ -261,6 +269,8 @@ class Emitter:
         self.file_bytes = max(1, int(file_bytes))
         self.file_seconds = max(1, int(file_ms)) / 1000
         self.spool_max_bytes = max(1, int(spool_max_bytes))
+        #: Free bytes to leave on the spool's file system; 0 disables the floor.
+        self.spool_min_free_bytes = max(0, int(spool_min_free_bytes))
         self.blob_min_bytes = max(1, int(blob_min_bytes))
         self.blob_dir = spool.blobs_dir(self.spool_dir)
         self.started_at = time.time()
@@ -274,6 +284,7 @@ class Emitter:
         self._fsync = os.fsync
         self._rename = os.replace
         self._truncate = os.ftruncate
+        self._statvfs = os.statvfs
 
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
@@ -281,6 +292,9 @@ class Emitter:
         self._queue: collections.deque = collections.deque()
         self._state = "new"
         self._thread: threading.Thread | None = None
+        #: Only ever a started thread; stopped once the writer has handled producer.goodbye.
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_stop = threading.Event()
         self._forked = False
         self._waiting = False
         self._wake_bytes = max(1, min(self.queue_bytes // 4, 4 * 1024 * 1024))
@@ -317,12 +331,16 @@ class Emitter:
         self._file_size = 0
         self._file_opened = 0.0
         self._retry_at = 0.0
-        self._next_sample = 0.0
-        self._next_shared_sample = 0.0
-        self._next_heartbeat = 0.0
+        #: Monotonic times of the last producers/ and the last blobs/ plus quarantine/ rescan.
+        self._sampled_at = float("-inf")
+        self._shared_sampled_at = float("-inf")
         self._spool_estimate = 0
         #: The blobs/ and quarantine/ part of _spool_estimate: the last rescan plus this writer's blob writes since.
         self._shared_estimate = 0
+        #: Free bytes of the spool's file system at the last producers/ rescan; None sets no disk floor.
+        self._disk_free: int | None = None
+        #: _spool_estimate right after that rescan: this writer's writes since are what it has grown by.
+        self._disk_free_estimate = 0
         self._last_gap = float("-inf")
         self._inflight: collections.deque = collections.deque()
         self._unreleased_bytes = 0
@@ -500,7 +518,7 @@ class Emitter:
                     self._restart_if_dead_locked()
                     self._state = "closing"
                     self._wake.notify()
-                thread = self._thread
+                thread, beat = self._thread, self._heartbeat_thread
                 while self._state != "closed":
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or thread is None or not thread.is_alive():
@@ -509,6 +527,8 @@ class Emitter:
                 closed = self._state == "closed"
             if closed and thread is not None:
                 thread.join(max(0.0, deadline - time.monotonic()))
+                if beat is not None:
+                    beat.join(max(0.0, deadline - time.monotonic()))
             else:
                 log.warning("Trajectory emitter close timed out producer_id=%s", self.producer_id)
         except Exception as exc:
@@ -553,14 +573,49 @@ class Emitter:
         thread = threading.Thread(target=self._run, name=f"trajectory-emitter-{self.pid}", daemon=True)
         self._thread = thread
         thread.start()
+        self._start_heartbeat_locked()
+
+    def _start_heartbeat_locked(self) -> None:
+        """Start the heartbeat thread unless it runs; never in a fork child, never raises."""
+        beat = self._heartbeat_thread
+        if self._forked or (beat is not None and beat.is_alive()):
+            return
+        try:
+            beat = threading.Thread(target=self._run_heartbeat, name=f"trajectory-emitter-heartbeat-{self.pid}",
+                                    daemon=True)
+            beat.start()
+            self._heartbeat_thread = beat
+        except Exception as exc:
+            self._note_error(exc)
 
     def _restart_if_dead_locked(self) -> None:
+        if self._state != "running" or self._forked:
+            return
         thread = self._thread
-        if self._state != "running" or self._forked or (thread is not None and thread.is_alive()):
+        if thread is not None and thread.is_alive():
+            # A heartbeat that could not start with the writer is retried here.
+            self._start_heartbeat_locked()
             return
         try:
             self._restarts += 1
             self._start_thread_locked()
+        except Exception as exc:
+            self._note_error(exc)
+
+    def _run_heartbeat(self) -> None:
+        """Heartbeat thread: refresh producer.json every HEARTBEAT_SECONDS until the writer is done."""
+        while True:
+            self._heartbeat()
+            if self._heartbeat_stop.wait(self.HEARTBEAT_SECONDS):
+                return
+
+    def _heartbeat(self) -> None:
+        """Refresh the mtime of producer.json; never raises."""
+        try:
+            os.utime(self.producer_dir / spool.PRODUCER_FILE)
+        except FileNotFoundError:
+            # Recreating the producer directory stays the writer's job, on its next file open.
+            pass
         except Exception as exc:
             self._note_error(exc)
 
@@ -618,6 +673,8 @@ class Emitter:
             self._state = "closed"
             self._flush_done = self._flush_seq
             self._done.notify_all()
+        # Nothing follows producer.goodbye: the worker needs no heartbeat from here on.
+        self._heartbeat_stop.set()
         return True
 
     def _wait_timeout(self) -> float:
@@ -634,28 +691,46 @@ class Emitter:
             self.budgets.maybe_refresh()
         except Exception as exc:
             self._note_error(exc)
-        if now >= self._next_heartbeat:
-            self._next_heartbeat = now + self.HEARTBEAT_SECONDS
-            self._heartbeat()
-        if now >= self._next_sample:
-            self._next_sample = now + self.SPOOL_SAMPLE_SECONDS
-            if now >= self._next_shared_sample:
-                self._next_shared_sample = now + self.SHARED_SAMPLE_SECONDS
-                try:
-                    self._shared_estimate = spool.shared_usage_bytes(self.spool_dir)
-                except Exception as exc:
-                    self._note_error(exc)
+        # Checked against the estimate as it stands, so this writer's own writes also shorten the interval.
+        interval, shared_interval = self.SPOOL_SAMPLE_SECONDS, self.SHARED_SAMPLE_SECONDS
+        if self._spool_estimate >= self.NEAR_CAP_FRACTION * self.spool_max_bytes:
+            interval = min(interval, self.NEAR_CAP_SAMPLE_SECONDS)
+            shared_interval = min(shared_interval, self.NEAR_CAP_SHARED_SAMPLE_SECONDS)
+        if now < self._sampled_at + interval:
+            return
+        self._sampled_at = now
+        if now >= self._shared_sampled_at + shared_interval:
+            self._shared_sampled_at = now
             try:
-                self._spool_estimate = spool.producer_usage_bytes(self.spool_dir) + self._shared_estimate
+                self._shared_estimate = spool.shared_usage_bytes(self.spool_dir)
             except Exception as exc:
                 self._note_error(exc)
-
-    def _heartbeat(self) -> None:
-        """Refresh the mtime of producer.json (``HEARTBEAT_SECONDS``); never raises."""
         try:
-            os.utime(self.producer_dir / spool.PRODUCER_FILE)
-        except Exception:
-            pass
+            self._spool_estimate = spool.producer_usage_bytes(self.spool_dir) + self._shared_estimate
+        except Exception as exc:
+            self._note_error(exc)
+        self._disk_free, self._disk_free_estimate = None, self._spool_estimate
+        if self.spool_min_free_bytes:
+            try:
+                status = self._statvfs(self.spool_dir)
+                self._disk_free = status.f_bavail * status.f_frsize
+            except Exception as exc:
+                # Fail-open: no floor until a sample succeeds.
+                self._note_error(exc)
+
+    def _no_room(self, size: int, writer_owned: bool) -> str | None:
+        """``spool_full`` or ``disk_full`` when ``size`` more bytes past the buffer do not fit, else ``None``.
+
+        Writer-owned lines may use CONTROL_RESERVE_BYTES past the spool cap and half of the disk floor.
+        """
+        needed = self._buffer_bytes + size
+        if self._spool_estimate + needed > self.spool_max_bytes + (self.CONTROL_RESERVE_BYTES if writer_owned else 0):
+            return "spool_full"
+        if self._disk_free is not None:
+            free = self._disk_free - (self._spool_estimate - self._disk_free_estimate) - needed
+            if free < (self.spool_min_free_bytes // 2 if writer_owned else self.spool_min_free_bytes):
+                return "disk_full"
+        return None
 
     def _write_batch(self) -> None:
         batch = self._inflight
@@ -680,10 +755,10 @@ class Emitter:
         else:
             encode = spool.encode_event_line if kind == EVENT else spool.encode_control_line
             line, pending, added = encode(self._n, stamp, payload), [], 0
-        # New blob bytes count against the spool budget like the line itself.
-        limit = self.spool_max_bytes + (0 if routing is not None else self.CONTROL_RESERVE_BYTES)
-        if self._spool_estimate + self._buffer_bytes + len(line) + added > limit:
-            self._refuse("spool_full", len(payload), at, routing)
+        # New blob bytes count against the spool budget and the disk floor like the line itself.
+        reason = self._no_room(len(line) + added, routing is None)
+        if reason is not None:
+            self._refuse(reason, len(payload), at, routing)
             return False
         if not self._open_file():
             self._refuse("writer_error", len(payload), at, routing)
@@ -691,8 +766,9 @@ class Emitter:
         if external is not None and not self._store_blobs(pending):
             # A blob that cannot be stored leaves the event inline.
             line = spool.encode_event_line(self._n, stamp, payload)
-            if self._spool_estimate + self._buffer_bytes + len(line) > self.spool_max_bytes:
-                self._writer_drop("spool_full", len(payload), at, routing)
+            reason = self._no_room(len(line), False)
+            if reason is not None:
+                self._writer_drop(reason, len(payload), at, routing)
                 return False
         self._buffer.append(line)
         self._meta.append((self._n, len(line), len(payload), at, routing, window))
@@ -1077,6 +1153,7 @@ def get_emitter() -> Emitter | None:
                 emitter = Emitter(settings.spool_dir, queue_bytes=settings.queue_bytes,
                                   max_event_bytes=settings.max_event_bytes, file_bytes=settings.file_bytes,
                                   file_ms=settings.file_ms, spool_max_bytes=settings.spool_max_bytes,
+                                  spool_min_free_bytes=settings.spool_min_free_bytes,
                                   budget_refresh_ms=settings.budget_refresh_ms,
                                   blob_min_bytes=integer("TRAJECTORY_SPOOL_BLOB_MIN_BYTES", spool.BLOB_MIN_BYTES))
                 emitter.start()

@@ -341,7 +341,7 @@ def test_close_during_start_leaves_no_writer_on_the_closed_emitter(make_emitter)
     release.set()
     thread.join(5)
     time.sleep(0.05)
-    assert emitter._thread is None and not emitter.stats()["writer_alive"]
+    assert emitter._thread is None and emitter._heartbeat_thread is None and not emitter.stats()["writer_alive"]
     assert emitter.emit_bytes(b'{"late":true}', user_id="u", session_id="s") is False
 
 

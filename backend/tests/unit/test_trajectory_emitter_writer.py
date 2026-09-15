@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 
 import orjson
 import pytest
@@ -71,21 +72,87 @@ def start_idle(emitter):
     assert wait_for(idle)
 
 
-def test_the_writer_refreshes_producer_json_while_it_runs(make_emitter):
+def age(path) -> float:
+    return time.time() - os.stat(path).st_mtime
+
+
+def backdate(path) -> None:
+    past = time.time() - 600
+    os.utime(path, (past, past))
+
+
+def test_the_heartbeat_keeps_producer_json_fresh_while_the_writer_is_stalled_and_stops_on_close(make_emitter):
     """The worker declares a producer whose producer.json stays unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS
-    dead, whatever host it ran on; an idle writer keeps refreshing it."""
+    dead, whatever host it ran on, and deletes its open .part: a writer stuck in a write must not look dead."""
     emitter = make_emitter()
-    emitter.HEARTBEAT_SECONDS = 0.05
+    emitter.HEARTBEAT_SECONDS = 0.02
+    release, entered = threading.Event(), threading.Event()
+
+    def stalled_write(descriptor, data):
+        entered.set()
+        release.wait(10)
+        return os.write(descriptor, data)
+
+    emitter._write = stalled_write
+    emitter.start()
+    beat = emitter._heartbeat_thread
+    assert beat.daemon and beat.name == f"trajectory-emitter-heartbeat-{os.getpid()}"
+    document = emitter.producer_dir / spool.PRODUCER_FILE
+    try:
+        assert emit(emitter, 0)
+        assert emitter.flush(0.05) is False
+        assert entered.wait(5)
+        for _ in range(3):
+            backdate(document)
+            assert wait_for(lambda: age(document) < 60)
+        assert not release.is_set() and emitter._thread.is_alive()
+    finally:
+        release.set()
+    emitter.close(5)
+    assert emitter.stats()["state"] == "closed" and not beat.is_alive()
+    assert records(emitter)[-1]["control"]["type"] == "producer.goodbye"
+    backdate(document)
+    time.sleep(0.1)
+    assert age(document) > 500
+
+
+def test_the_heartbeat_leaves_a_missing_producer_json_to_the_writer_and_notes_other_errors(make_emitter, tmp_path):
+    emitter = make_emitter()
+    emitter.HEARTBEAT_SECONDS = 0.02
     start_idle(emitter)
     document = emitter.producer_dir / spool.PRODUCER_FILE
-    past = time.time() - 600
-    os.utime(document, (past, past))
-    assert wait_for(lambda: time.time() - os.stat(document).st_mtime < 60)
-    # A producer.json that is gone never breaks the writer.
     document.unlink()
-    emitter._heartbeat()
+    time.sleep(0.1)
+    assert not document.exists() and emitter._heartbeat_thread.is_alive()
+    assert emitter.stats()["last_error"] is None
     assert emit(emitter, 1) and emitter.flush(5)
     assert [record["n"] for record in records(emitter)] == [1]
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the producer directory should be")
+    other = make_emitter()
+    other.producer_dir = blocker / "producer"
+    other._heartbeat()
+    assert other.stats()["last_error"] == "NotADirectoryError:ENOTDIR"
+
+
+def test_a_fork_child_never_starts_the_heartbeat(make_emitter):
+    """A fork child inherits the running emitter without its threads, marked forked: heartbeating the parent's
+    producer from there would keep it alive for the worker after the parent is gone."""
+    emitter = make_emitter()
+    emitter.ALIVE_CHECK_SECONDS = 0.0
+    ended = threading.Thread(target=int)
+    ended.start()
+    ended.join()
+    emitter._state, emitter._thread, emitter._heartbeat_thread, emitter._forked = "running", ended, ended, True
+    emitter.start()
+    assert emit(emitter, 0)
+    assert emitter.flush(0.05) is False
+    with emitter._lock:
+        emitter._start_heartbeat_locked()
+    emitter.close(0.05)
+    assert (emitter._thread, emitter._heartbeat_thread) == (ended, ended)
+    assert emitter.stats()["writer_restarts"] == 0 and not emitter.producer_dir.exists()
 
 
 def test_size_rotation_fsyncs_then_renames_complete_files(make_emitter):
@@ -199,9 +266,113 @@ def test_producers_are_rescanned_every_sample_and_blobs_and_quarantine_every_sha
     assert emit(emitter, 1) and emitter.flush(5)
     # The next cycle sees the other producer's file; blobs/ and quarantine/ keep their first sample.
     assert 256 * KIB <= emitter.stats()["spool_bytes"] < 512 * KIB
-    emitter._next_shared_sample = 0.0
+    emitter._shared_sampled_at = float("-inf")
     assert emit(emitter, 2) and emitter.flush(5)
     assert emitter.stats()["spool_bytes"] >= 768 * KIB
+
+
+def test_usage_and_free_space_are_sampled_ten_times_as_often_near_the_spool_cap(make_emitter, monkeypatch):
+    """Processes sharing a spool each check the cap against their own sample, so near it they could pass together."""
+    emitter = make_emitter(spool_max_bytes=10_000)
+    usage, scans, paths = {"producers": 0}, [], []
+    monkeypatch.setattr(spool, "shared_usage_bytes", lambda root: scans.append("shared") or 0)
+    monkeypatch.setattr(spool, "producer_usage_bytes", lambda root: scans.append("producers") or usage["producers"])
+
+    def statvfs(path):
+        scans.append("statvfs")
+        paths.append(path)
+        return SimpleNamespace(f_bavail=1 << 20, f_frsize=4096)
+
+    emitter._statvfs = statvfs
+
+    def cycle(now):
+        scans.clear()
+        emitter._maintain(now)
+        return scans[:]
+
+    both, producers = ["shared", "producers", "statvfs"], ["producers", "statvfs"]
+    assert (cycle(1000.0), cycle(1004.9), cycle(1005.0)) == (both, [], producers)
+    usage["producers"] = 8_999
+    assert (cycle(1010.0), cycle(1014.9)) == (producers, [])
+    # 90 % of the cap: producers/ every 0.5 s, blobs/ and quarantine/ every 5 s.
+    usage["producers"] = 9_000
+    assert (cycle(1015.0), cycle(1015.4), cycle(1015.5), cycle(1016.0)) == (producers, [], both, producers)
+    assert (cycle(1020.0), cycle(1020.5)) == (producers, both)
+    # Back below 90 %: every 5 s again, until this writer's own writes since the last rescan reach it.
+    usage["producers"] = 100
+    assert (cycle(1021.0), cycle(1021.5)) == (producers, [])
+    emitter._spool_estimate += 9_000
+    assert (cycle(1022.0), cycle(1022.5)) == (producers, [])
+    assert paths and set(paths) == {emitter.spool_dir}
+
+
+def test_the_disk_floor_drops_events_and_leaves_writer_lines_half_of_it(make_emitter):
+    """The floor protects the host disk even when spool_max_bytes is misconfigured or other data fills it."""
+    free = {"bytes": 48 * KIB}
+    emitter = make_emitter(spool_min_free_bytes=64 * KIB)
+    emitter.WAIT_SECONDS = 10
+    # Every cycle samples; free space is f_bavail blocks of f_frsize bytes (not f_bfree, not f_bsize).
+    emitter.SPOOL_SAMPLE_SECONDS = 0
+    emitter._statvfs = lambda path: SimpleNamespace(f_bavail=free["bytes"] // 512, f_frsize=512,
+                                                    f_bfree=1 << 30, f_bsize=1 << 20)
+    start_idle(emitter)
+    for index in range(3):
+        assert emit(emitter, index)
+    assert emitter.flush(5) is False
+    free["bytes"] = 1 << 30
+    assert emit(emitter, 3) and emitter.flush(5)
+    free["bytes"] = 48 * KIB
+    assert emit(emitter, 4)
+    # Between half the floor and the floor, gap lines and the goodbye are still written.
+    emitter.close(5)
+    everything = records(emitter)
+    assert [record["n"] for record in everything] == [1, 2, 3, 4]
+    assert [record["event"]["index"] for record in everything if record["k"] == "event"] == [3]
+    controls = [record["control"] for record in everything if record["k"] == "control"]
+    assert [(control["type"], control.get("reason"), control.get("dropped_events")) for control in controls] == [
+        ("gap", "disk_full", 3), ("gap", "disk_full", 1), ("producer.goodbye", None, None)]
+    assert controls[0]["dropped_bytes"] == 3 * len(event(0))
+    assert controls[0]["sessions"] == [{"user_id": "user", "session_id": "root", "run_ids": ["run"],
+                                        "request_ids": ["req0", "req1", "req2"]}]
+    stats = emitter.stats()
+    assert stats["dropped_by_reason"] == {"disk_full": 4} and stats["writer_lines_skipped"] == 0
+
+    # Below half the floor a writer-owned line is skipped, and counted.
+    free["bytes"] = 16 * KIB
+    second = make_emitter(spool_min_free_bytes=64 * KIB)
+    second._statvfs = emitter._statvfs
+    start_idle(second)
+    second.close(5)
+    stats = second.stats()
+    assert (stats["state"], stats["writer_lines_skipped"]) == ("closed", 1)
+    assert data_files(second, closed_only=False) == []
+
+
+def test_a_failed_free_space_sample_sets_no_floor(make_emitter):
+    emitter = make_emitter(spool_min_free_bytes=64 * KIB)
+    emitter.WAIT_SECONDS = 10
+    emitter.SPOOL_SAMPLE_SECONDS = 0
+    failing = threading.Event()
+
+    def statvfs(path):
+        if failing.is_set():
+            raise OSError(errno.EIO, "Input/output error")
+        return SimpleNamespace(f_bavail=1, f_frsize=4 * KIB)
+
+    emitter._statvfs = statvfs
+    start_idle(emitter)
+    assert emit(emitter, 0)
+    assert emitter.flush(5) is False
+    failing.set()
+    assert wait_for(lambda: emitter.stats()["pending_gaps"] == 0)
+    assert emit(emitter, 1) and emitter.flush(5)
+    stats = emitter.stats()
+    assert stats["last_error"] == "OSError:EIO" and stats["dropped_by_reason"] == {"disk_full": 1}
+    everything = records(emitter)
+    assert [record["n"] for record in everything] == [1, 2]
+    assert [record["event"]["index"] for record in everything if record["k"] == "event"] == [1]
+    [gap] = [record["control"] for record in everything if record["k"] == "control"]
+    assert (gap["reason"], gap["dropped_events"]) == ("disk_full", 1)
 
 
 def test_goodbye_and_gap_lines_fit_above_the_spool_cap_within_the_control_reserve(make_emitter, tmp_path):

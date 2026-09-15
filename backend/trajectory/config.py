@@ -8,6 +8,8 @@ log = logging.getLogger(__name__)
 
 SERVER_SPOOL_DIR = Path("/var/lib/openbox/trajectory-spool")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+#: Default of TRAJECTORY_SPOOL_MIN_FREE_BYTES: free bytes the emitter leaves on the spool's file system.
+SPOOL_MIN_FREE_BYTES = 1024 * 1024 * 1024
 _warned: set[tuple[str, str]] = set()
 
 
@@ -83,6 +85,7 @@ class EmitterSettings:
     file_bytes: int
     file_ms: int
     spool_max_bytes: int
+    spool_min_free_bytes: int
     budget_refresh_ms: int
 
 
@@ -94,5 +97,7 @@ def emitter_settings() -> EmitterSettings:
         file_bytes=integer("TRAJECTORY_SPOOL_FILE_BYTES", 8 * 1024 * 1024),
         file_ms=integer("TRAJECTORY_SPOOL_FILE_MS", 1000),
         spool_max_bytes=integer("TRAJECTORY_SPOOL_MAX_BYTES", 2 * 1024 * 1024 * 1024),
+        # 0 disables the disk floor.
+        spool_min_free_bytes=integer("TRAJECTORY_SPOOL_MIN_FREE_BYTES", SPOOL_MIN_FREE_BYTES, minimum=0),
         budget_refresh_ms=integer("TRAJECTORY_BUDGET_REFRESH_MS", 5000),
     )

@@ -93,6 +93,12 @@ async def test_read_only_protocol_and_direct_watermarks(worker):
         subscribed = await receive()
         assert subscribed == {"type": "subscribed", "data": {"user_id": "a", "owner_user_id": "a",
                               "session_id": "session_a_1", "trajectory_id": "trj_a1", "committed_seq": "3"}}
+        # The watermark comes from the trajectory row alone, never from the session header.
+        assert worker.layer.called("get_session_header") == []
+        assert worker.layer.called("get_trajectory")[-1] == (("session_a_1",), {"optional": True})
+        await send({"type": "subscribe", "session_id": "session_a_2"})
+        assert await receive() == {"type": "subscribed", "data": {"user_id": "a", "owner_user_id": "a",
+                                   "session_id": "session_a_2", "trajectory_id": None, "committed_seq": "0"}}
         for action in ("permission.reply", "question.reply", "session.prompt", "session.cancel"):
             await send({"type": action, "session_id": "session_a_1", "answers": [["yes"]]})
             assert await receive() == {"type": "error", "data": {"code": "READ_ONLY",
@@ -139,7 +145,40 @@ async def test_read_only_protocol_and_direct_watermarks(worker):
         assert await receive() == {"type": "pong", "data": {}}
     audit = [(row.resource_id, row.details) for row in await worker.delivered_audit()
              if row.action == "trajectory.subscribe"]
-    assert audit == [("trj_a1", {"owner_user_id": "a", "session_id": "session_a_1", "through_seq": "3"})] * 2
+    recorded = ("trj_a1", {"owner_user_id": "a", "session_id": "session_a_1", "through_seq": "3"})
+    assert audit == [recorded, ("session_a_2", {"owner_user_id": "a", "session_id": "session_a_2", "through_seq": "0"}),
+                     recorded]
+
+
+async def test_the_viewer_is_checked_once_per_second_however_busy_the_socket_is(worker, monkeypatch):
+    checks, original = [], ws.validate_viewer
+
+    async def counted(identity):
+        checks.append(time.monotonic())
+        await original(identity)
+
+    monkeypatch.setattr(ws, "validate_viewer", counted)
+    ticket = await ticket_for(worker)
+    async with worker.socket(ticket) as (send, receive):
+        assert (await receive())["type"] == "websocket.accept"
+
+        async def burst():
+            for _ in range(20):
+                await send({"type": "ping"})
+                assert await receive() == {"type": "pong", "data": {}}
+
+        # Forty messages within the second after the connect check (every pong follows it) reuse it.
+        await burst()
+        assert len(checks) == 1
+        await asyncio.sleep(1.2)
+        assert len(checks) == 2  # the periodic check, once
+        await burst()
+        assert len(checks) == 2
+        # A revocation still closes the socket within a second.
+        revoked = time.monotonic()
+        await worker.cache.set(f"jwt_bl:{decode_access_token(worker.token)['jti']}", True, ttl=60)
+        assert (await receive(timeout=2))["code"] == 4401
+        assert time.monotonic() - revoked <= 1.5
 
 
 async def test_a_deletion_hint_is_not_replaced_by_a_hint_delivered_after_it(worker):

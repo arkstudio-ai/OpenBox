@@ -3,7 +3,11 @@
 The protocol of docs/trajectory-rearch/maps/api.md §3. A refusal happens after
 ``accept`` so browsers see 4401/4403 instead of 1006, and uvicorn pings every
 20 s (``ws_ping_interval``). A notification is forwarded as the published
-5-key watermark; only ``subscribe`` reads the session header.
+5-key watermark; only ``subscribe`` reads the trace database, and only the
+trajectory row (the watermark), never the session header. A socket's viewer
+is checked once per ``WATCH_SECONDS``: a send or a received message within
+that window reuses the last check, so a revocation closes the socket within
+a second at one authority check per second per socket.
 """
 import asyncio
 import json
@@ -96,10 +100,13 @@ def watermark(data: dict) -> dict:
 
 
 async def _header(session_id: str, app=None) -> dict:
-    """A subscription's session header, read by at most READ_POOL_RESERVE sockets of ``app`` at once.
+    """A subscription's watermark: the owner ``user_id``, ``session_id``, ``trajectory_id`` and ``committed_seq``
+    (None and "0" for a session that has not started recording), read by at most READ_POOL_RESERVE sockets
+    of ``app`` at once.
 
-    The read pool keeps that many connections beyond the HTTP read slots, so admin reads that fill their
-    slots cannot make a subscription wait for a connection until the pool times out.
+    Only the trajectory row is read: statistics and agents are the viewer's HTTP header probe. The read
+    pool keeps that many connections beyond the HTTP read slots, so admin reads that fill their slots
+    cannot make a subscription wait for a connection until the pool times out.
     """
     state = getattr(app, "state", None)
     reads = getattr(state, "trajectory_header_reads", None) if state is not None else None
@@ -107,7 +114,10 @@ async def _header(session_id: str, app=None) -> dict:
         reads = state.trajectory_header_reads = asyncio.Semaphore(READ_POOL_RESERVE)
     async with reads if reads is not None else nullcontext():
         async with trace_read_session() as db:
-            return await repository.get_session_header(db, session_id)
+            session, trajectory = await repository.get_trajectory(db, session_id, optional=True)
+    return {"user_id": session.user_id, "session_id": session_id,
+            "trajectory_id": trajectory.id if trajectory is not None else None,
+            "committed_seq": str(trajectory.committed_seq) if trajectory is not None else "0"}
 
 
 @router.websocket("/ws/admin/trajectories")
@@ -118,6 +128,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
         if identity is None:
             await websocket.close(code=4401)
             return
+        validated = time.monotonic()
         await validate_viewer(identity)
     except HTTPException as exc:
         await websocket.close(code=close_code(exc))
@@ -132,10 +143,22 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
     pending: dict[str, dict] = {}
     wake = asyncio.Event()
     send_lock = asyncio.Lock()
+    check_lock = asyncio.Lock()
+
+    async def revalidate():
+        """The viewer's checks once the last one started WATCH_SECONDS ago: a message within that window reuses
+        it, and callers that find it due at the same time share one check."""
+        nonlocal validated
+        async with check_lock:
+            if time.monotonic() - validated < WATCH_SECONDS:
+                return
+            started = time.monotonic()
+            await validate_viewer(identity)
+            validated = started
 
     async def send(message: dict):
         async with send_lock:
-            await validate_viewer(identity)
+            await revalidate()
             await websocket.send_json(message)
 
     def notify(event: dict):
@@ -155,7 +178,7 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
             except (ValueError, KeyError, TypeError):
                 await send({"type": "error", "data": {"code": "INVALID_MESSAGE"}})
                 continue
-            await validate_viewer(identity)
+            await revalidate()
             if not isinstance(message, dict):
                 await send({"type": "error", "data": {"code": "INVALID_MESSAGE"}})
                 continue
@@ -202,9 +225,11 @@ async def trajectory_websocket(websocket: WebSocket, ticket: str = Query(default
                 await send({"type": "trajectory.available", "data": watermark(data)})
 
     async def watch():
+        # Wakes WATCH_SECONDS after the last check, wherever it happened, so an idle socket is checked every
+        # second and a busy one no more often.
         while True:
-            await asyncio.sleep(WATCH_SECONDS)
-            await validate_viewer(identity)
+            await asyncio.sleep(max(0.0, validated + WATCH_SECONDS - time.monotonic()))
+            await revalidate()
 
     unsubscribe = bus.subscribe("trajectory.available", notify)
     tasks = [asyncio.create_task(receive()), asyncio.create_task(publish()), asyncio.create_task(watch())]

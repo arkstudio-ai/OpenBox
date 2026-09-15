@@ -322,20 +322,22 @@ async def test_downloads_stream_under_transfer_slots_and_give_their_read_slot_ba
         assert get_metrics().snapshot()["gauges"]["read_transfers"] == 0
 
 
-async def test_subscription_headers_read_within_the_pool_reserve(trace_db, monkeypatch):
+async def test_subscription_watermarks_read_within_the_pool_reserve(trace_db, monkeypatch):
     from trajectory.store.database import READ_POOL_RESERVE
     from trajectory.worker import ws
     running, peak, release = 0, 0, asyncio.Event()
 
-    async def header(_db, session_id):
+    async def get_trajectory(_db, session_id, *, optional=False):
         nonlocal running, peak
         running += 1
         peak = max(peak, running)
         await release.wait()
         running -= 1
-        return {"session_id": session_id}
+        recorded = session_id != "s0"
+        return (SimpleNamespace(id=session_id, user_id="owner"),
+                SimpleNamespace(id=f"trj_{session_id}", committed_seq=7) if recorded else None)
 
-    monkeypatch.setattr(ws.repository, "get_session_header", header)
+    monkeypatch.setattr(ws.repository, "get_trajectory", get_trajectory)
     app, count = FastAPI(), READ_POOL_RESERVE + 3
     reads = [asyncio.create_task(ws._header(f"s{index}", app)) for index in range(count)]
     async with asyncio.timeout(1):
@@ -344,7 +346,11 @@ async def test_subscription_headers_read_within_the_pool_reserve(trace_db, monke
     await asyncio.sleep(0.01)
     assert peak == READ_POOL_RESERVE
     release.set()
-    assert [item["session_id"] for item in await asyncio.gather(*reads)] == [f"s{index}" for index in range(count)]
+    headers = await asyncio.gather(*reads)
+    assert [item["session_id"] for item in headers] == [f"s{index}" for index in range(count)]
+    # Just the watermark, never the session header; an unrecorded session subscribes at "0".
+    assert headers[1] == {"user_id": "owner", "session_id": "s1", "trajectory_id": "trj_s1", "committed_seq": "7"}
+    assert headers[0] == {"user_id": "owner", "session_id": "s0", "trajectory_id": None, "committed_seq": "0"}
 
 
 async def test_the_read_pool_reserves_connections_for_subscriptions_and_follows_engine_replacement(monkeypatch):

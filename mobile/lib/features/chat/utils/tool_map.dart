@@ -57,8 +57,10 @@ String resolveToolLayout(String tool) {
   // part a reader needs.
   if (t == 'skill') return 'skill';
   if (t == 'task' || t == 'agent') return 'agent';
-  // A question is worth reading back as the exchange it was.
-  if (t == 'question') return 'question';
+  // A question is worth reading back as the exchange it was. A desktop
+  // takeover files one and records the same questions and answers, plus what
+  // blocked the agent and where.
+  if (t == 'question' || t == 'desktop_takeover') return 'question';
   return 'generic';
 }
 

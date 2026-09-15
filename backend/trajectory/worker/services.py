@@ -136,6 +136,8 @@ class WorkerServices:
         self._lock = lock
         self._supervisor: asyncio.Task | None = None
         self._writer_tasks: list[asyncio.Task] = []
+        #: Cancelled writer tasks still unwinding, whichever call stopped them.
+        self._stopping: set[asyncio.Task] = set()
         self._stop: asyncio.Event | None = None
         self._projection_wake: asyncio.Event | None = None
         self._checkpoints: set[str] = set()
@@ -224,8 +226,12 @@ class WorkerServices:
         tasks, self._writer_tasks = self._writer_tasks, []
         for task in tasks:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            self._stopping.add(task)
+            task.add_done_callback(self._stopping.discard)
+        if self._stopping:
+            # Also the tasks an earlier call cancelled: stop() cancels the supervisor, which may be waiting here
+            # for them. The shield keeps that cancellation from interrupting their unwinding a second time.
+            await asyncio.shield(asyncio.gather(*self._stopping, return_exceptions=True))
 
     async def _loop(self, name: str, interval: float, step) -> None:
         wake = self._projection_wake if name == "projection" else None

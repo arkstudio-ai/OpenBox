@@ -90,12 +90,15 @@ async def _db_write(key: list[str], content: Any) -> None:
 async def _todo_trace(session, session_id: str, db_key: str):
     """Recorded identity and previous list of a todo write, taking no session row lock.
 
-    The fact waits for the write's commit; the previous list is read only while
-    the owner is recorded.
+    Without that lock the write records nothing while the session's recording
+    markers report a pause that is not resumed yet (SPEC §5.6). The fact waits
+    for the write's commit; the previous list is read only while the owner is
+    recorded. On PostgreSQL it is read under the todo row's lock, so another
+    process cannot commit a write between that read and this update.
     """
     from sqlalchemy import select, text
     from trajectory import current, enabled
-    from trajectory.producers import activity_context
+    from trajectory.producers import activity_context, paused_in_tx
     inherited = current()
     if inherited is not None and inherited.source_session_id == session_id:
         user_id = inherited.user_id
@@ -106,9 +109,12 @@ async def _todo_trace(session, session_id: str, db_key: str):
     if user_id is None or not enabled(user_id):
         return None, None
     trace = await activity_context(session, user_id, session_id)
-    if trace is None:
+    if trace is None or await paused_in_tx(session, trace):
         return None, None
-    previous = await session.execute(text("SELECT value FROM kv_store WHERE key = :key"), {"key": db_key})
+    query = "SELECT value FROM kv_store WHERE key = :key"
+    if session.bind.dialect.name == "postgresql":
+        query += " FOR UPDATE"  # SQLite has no FOR UPDATE.
+    previous = await session.execute(text(query), {"key": db_key})
     old = previous.scalar_one_or_none()
     try:
         return trace, json.loads(old) if old else None

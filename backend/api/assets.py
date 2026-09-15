@@ -295,10 +295,13 @@ async def complete_asset(
         row.size = actual_size or row.size
         row.status = "ready"
         if row.session_id:
-            from trajectory.producers import activity_context
+            from trajectory.producers import activity_context, paused_in_tx
             from trajectory.artifacts import capture_asset_in_tx
             trace = await activity_context(db, row.user_id, row.session_id)
-            await capture_asset_in_tx(db, trace, row, role="input")
+            # No session row lock is held here, so the upload is not recorded
+            # while the session's recording is paused and not resumed yet (SPEC §5.6).
+            if trace is not None and not await paused_in_tx(db, trace):
+                await capture_asset_in_tx(db, trace, row, role="input")
         await db.commit()
         return _to_item(row, oss)
 

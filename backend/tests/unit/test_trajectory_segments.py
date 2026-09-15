@@ -8,9 +8,8 @@ import pytest
 import zstandard
 
 from trajectory.segments import (SEGMENT_FIELDS, SegmentLines, decode_segment, encode_segment, load_segment,
-    load_segment_lines, segment_row)
+    load_segment_lines)
 from trajectory.storage import MemoryBlobStore
-from trajectory.store.models import TrajectoryEvent
 from trajectory.types import CorruptContent, canonical
 
 AT = datetime(2026, 9, 14, 8, 0, 0, 123456, tzinfo=timezone.utc)
@@ -69,16 +68,6 @@ def test_timestamps_strings_and_naive_datetimes_are_utc_instants():
     stored, _ = encode_segment([_row(1, occurred_at=naive, recorded_at="2026-09-14T08:00:01.5Z")])
     [row] = decode_segment(stored)
     assert row["occurred_at"] == "2026-09-14T08:00:00Z" and row["recorded_at"] == "2026-09-14T08:00:01.5Z"
-
-
-def test_segment_row_of_a_stored_event():
-    event = TrajectoryEvent(trajectory_id="trj_a", seq=3, recorded_on=AT.date(), event_id="evt_3", type="tool.output",
-        version=1, user_id="user_a", session_id="session_a", source_session_id="child", request_id="req",
-        call_id="call", agent_id="agent", context={"call_id": "call"}, data={"output": "x"},
-        hints={"preview": {"output": "x"}}, content_hash="b" * 64, occurred_at=AT, recorded_at=AT)
-    row = segment_row(event)
-    assert set(row) == set(SEGMENT_FIELDS) and row["recorded_at"] == "2026-09-14T08:00:00.123456Z"
-    assert decode_segment(encode_segment([row])[0]) == [row]
 
 
 @pytest.mark.parametrize("rows, message", [

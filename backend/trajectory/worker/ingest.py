@@ -1299,8 +1299,8 @@ class _Transaction:
         """A reference at ``seq`` makes its row visible from there (first_seq only moves down).
 
         Other writers can register a row with a later first_seq than an event that references it (the
-        projection stores record values under the position of its batch, the converter keeps legacy
-        positions); readers resolve a reference only when ``first_seq <= H``. Availability is untouched,
+        projection stores record values under the position of its batch); readers resolve a reference only
+        when ``first_seq <= H``. Availability is untouched,
         so deleted content stays deleted. The projection's ``ensure_payload_rows`` applies the same rule.
         """
         current = self.first_seqs.get(payload_id)

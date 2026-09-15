@@ -24,12 +24,13 @@ from sqlalchemy import delete, select
 from trajectory.payload import dedupe_key, is_ref, reset_blob_cache, set_asset_reader
 from trajectory.projector import PREVIEW_FIELDS, RESULT_FIELDS, _preview
 from trajectory.repository import reset_segment_cache
-from trajectory.segments import encode_segment, segment_row
+from trajectory.segments import encode_segment
 from trajectory.storage import MemoryBlobStore, blob_key, encode_blob, segment_key, set_blob_store
 from trajectory.store.database import TraceBase, close_trace_engine, init_trace_engine, trace_session
 from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryEventKey, TrajectoryMetaAsset,
     TrajectoryMetaSession, TrajectoryMetaUser, TrajectoryMetaWorkspace, TrajectoryPayload, TrajectorySegment)
 from trajectory.types import ID_FIELDS, canonical, digest
+from trajectory.worker.archive import segment_row
 
 FIXTURES = sorted((Path(__file__).parents[2] / "trajectory" / "fixtures").glob("*.json"))
 AT = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
@@ -246,8 +247,9 @@ async def archive(store, trajectory_id: str, through_seq: int) -> None:
     async with trace_session() as db:
         trajectory = await db.get(SessionTrajectory, trajectory_id)
         start = trajectory.archived_seq + 1
-        rows = (await db.scalars(select(TrajectoryEvent).where(TrajectoryEvent.trajectory_id == trajectory_id,
-            TrajectoryEvent.seq >= start, TrajectoryEvent.seq <= through_seq).order_by(TrajectoryEvent.seq))).all()
+        events = TrajectoryEvent.__table__
+        rows = (await db.execute(select(events).where(events.c.trajectory_id == trajectory_id,
+            events.c.seq >= start, events.c.seq <= through_seq).order_by(events.c.seq))).mappings().all()
         stored, meta = encode_segment([segment_row(row) for row in rows])
         key = segment_key(trajectory_id, meta["from_seq"], meta["to_seq"])
         await store.put(key, stored, content_type="application/zstd", if_absent=False)

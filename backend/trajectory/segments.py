@@ -41,13 +41,6 @@ def _line(row: dict) -> bytes:
     return json.dumps(row, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
 
-def segment_row(event) -> dict:
-    """The segment line dict of a stored ``TrajectoryEvent`` row."""
-    row = {field: getattr(event, field) for field in SEGMENT_FIELDS}
-    row["occurred_at"], row["recorded_at"] = _timestamp(event.occurred_at), _timestamp(event.recorded_at)
-    return row
-
-
 def encode_segment(rows: list[dict]) -> tuple[bytes, dict]:
     """(zstd bytes, metadata) for contiguous event rows of one trajectory.
 

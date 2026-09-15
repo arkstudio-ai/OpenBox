@@ -12,7 +12,7 @@ the live database, and compares a digest of the rebuilt stream read back from
 the scratch database with a digest of the stream read from the sources. Event
 ids and content hashes are also checked against trajectory_event_keys where
 those rows still exist. The scratch copy has archived/projected/checkpoint
-watermarks reset to 0, like a converted trajectory (SPEC §8.14).
+watermarks reset to 0.
 
 The live database is only read, in one read-only snapshot on PostgreSQL. The
 scratch database name must start with openbox_trace_rebuild_ so a wrong URL

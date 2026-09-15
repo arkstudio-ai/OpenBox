@@ -98,6 +98,25 @@ def test_private_directories_are_created_0700_below_the_existing_parent(tmp_path
     assert mode(tmp_path) == before
 
 
+def test_atomic_json_writes_can_skip_the_fsync(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(os, "fsync", calls.append)
+    spool.write_json_atomic(tmp_path / "marker.json", {"offset": 1}, fsync=False)
+    assert calls == [] and orjson.loads((tmp_path / "marker.json").read_bytes()) == {"offset": 1}
+    spool.write_json_atomic(tmp_path / "marker.json", {"offset": 2})
+    assert len(calls) == 1 and os.listdir(tmp_path) == ["marker.json"]
+
+
+def test_blobs_kept_for_a_quarantined_file_are_named_after_it_and_are_no_quarantined_files():
+    name = f"p1__{spool.file_name(2)}"
+    kept = spool.quarantine_blob_name(name, "a" * 64)
+    assert kept == f"{name}.blob-{'a' * 64}" and spool.quarantine_blob_owner(kept) == name
+    assert spool.is_quarantined_file(name) and not spool.is_quarantined_file(kept)
+    for other in (name, name + spool.REASON_SUFFIX, f"{name}.blob-{'A' * 64}", f"{name}.blob-{'a' * 63}",
+                  f".{kept}", f".blob-{'a' * 64}"):
+        assert spool.quarantine_blob_owner(other) is None
+
+
 def allocated(*paths) -> int:
     return sum(max(os.stat(path).st_size, os.stat(path).st_blocks * 512) for path in paths)
 
@@ -123,10 +142,12 @@ def test_spool_usage_counts_allocated_bytes_of_producers_blobs_and_quarantine(tm
     quarantined.write_bytes(b"q" * 7)
     reason = quarantined.with_name(quarantined.name + spool.REASON_SUFFIX)
     reason.write_bytes(b"{}")
+    kept = quarantined.with_name(spool.quarantine_blob_name(quarantined.name, "b" * 64))
+    kept.write_bytes(b"k" * 9)
 
     usage = spool.spool_usage(tmp_path)
     assert usage == spool.SpoolUsage(producers_bytes=allocated(*data), blob_bytes=allocated(blob),
-                                     quarantine_bytes=allocated(quarantined, reason), quarantine_files=1)
+                                     quarantine_bytes=allocated(quarantined, reason, kept), quarantine_files=1)
     assert usage.producers_bytes >= 15 and usage.blob_bytes >= 1024 * 1024
     assert spool.spool_usage_bytes(tmp_path) == usage.total == (
         usage.producers_bytes + usage.blob_bytes + usage.quarantine_bytes)

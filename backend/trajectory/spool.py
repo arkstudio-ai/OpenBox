@@ -27,6 +27,8 @@ CONTROL_DIR = "control"
 QUARANTINE_DIR = "quarantine"
 #: Sidecar of a quarantined data file: ``quarantine/<name>.reason``.
 REASON_SUFFIX = ".reason"
+#: A blob a quarantined data file references, kept beside it: ``quarantine/<name>.blob-<sha256>``.
+QUARANTINE_BLOB_INFIX = ".blob-"
 BLOBS_DIR = "blobs"
 PRODUCER_FILE = "producer.json"
 BUDGETS_FILE = "budgets.json"
@@ -214,15 +216,16 @@ def ensure_private_dir(path: Path) -> None:
         os.chmod(directory, DIR_MODE)
 
 
-def write_json_atomic(path: Path, value, *, mode: int = FILE_MODE) -> None:
-    """Temp file in the same directory, fsync, then rename over ``path``."""
+def write_json_atomic(path: Path, value, *, mode: int = FILE_MODE, fsync: bool = True) -> None:
+    """Temp file in the same directory, fsync (unless ``fsync`` is False), then rename over ``path``."""
     path = Path(path)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
         try:
             os.write(descriptor, orjson.dumps(value))
-            os.fsync(descriptor)
+            if fsync:
+                os.fsync(descriptor)
         finally:
             os.close(descriptor)
         os.chmod(temporary, mode)
@@ -235,9 +238,21 @@ def write_json_atomic(path: Path, value, *, mode: int = FILE_MODE) -> None:
         raise
 
 
+def quarantine_blob_name(name: str, sha: str) -> str:
+    return f"{name}{QUARANTINE_BLOB_INFIX}{sha}"
+
+
+def quarantine_blob_owner(name: str) -> str | None:
+    """The name of the quarantined data file a kept blob belongs to; ``None`` for any other file name."""
+    start = len(name) - 64 - len(QUARANTINE_BLOB_INFIX)
+    if start <= 0 or name.startswith(".") or not name.startswith(QUARANTINE_BLOB_INFIX, start):
+        return None
+    return name[:start] if is_blob_name(name[-64:]) else None
+
+
 def is_quarantined_file(name: str) -> bool:
-    """A quarantined data file: not its ``.reason`` sidecar and not a temporary (dot) file."""
-    return not name.startswith(".") and not name.endswith(REASON_SUFFIX)
+    """A quarantined data file: not its ``.reason`` sidecar or a blob kept for it, and not a temporary (dot) file."""
+    return not name.startswith(".") and not name.endswith(REASON_SUFFIX) and quarantine_blob_owner(name) is None
 
 
 @dataclass(frozen=True)
@@ -245,9 +260,9 @@ class SpoolUsage:
     """Allocated bytes of the files that count against ``TRAJECTORY_SPOOL_MAX_BYTES``."""
     producers_bytes: int = 0
     blob_bytes: int = 0
-    #: Every file in ``quarantine/``, sidecars included.
+    #: Every file in ``quarantine/``, sidecars and kept blobs included.
     quarantine_bytes: int = 0
-    #: Quarantined data files, without their ``.reason`` sidecars.
+    #: Quarantined data files, without their ``.reason`` sidecars and kept blobs.
     quarantine_files: int = 0
 
     @property

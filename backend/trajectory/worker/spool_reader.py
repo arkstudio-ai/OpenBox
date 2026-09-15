@@ -1,11 +1,13 @@
 """Spool file discovery and reading for ingest (SPEC §3.1, §8.2).
 
 A data file is ready when it is closed (``.jsonl``) or is an open ``.part``
-whose mtime is older than ``TRAJECTORY_SPOOL_ABANDON_SECONDS``. Within one
-producer files are consumed strictly by counter: a lower counter that is not
-ready blocks the producer. Across producers the oldest ready file goes first.
-Offsets are tracked under the closed name, so a ``.part`` renamed while it was
-being consumed keeps its progress.
+whose mtime is older than ``TRAJECTORY_SPOOL_ABANDON_SECONDS``; a producer's
+newest ``.part`` also needs a producer heartbeat (the mtime of
+``producer.json``) that old (``abandoned``). Within one producer files are
+consumed strictly by counter: a lower counter that is not ready blocks the
+producer. Across producers the oldest ready file goes first. Offsets are
+tracked under the closed name, so a ``.part`` renamed while it was being
+consumed keeps its progress.
 
 Version 2 event lines reference values stored in ``blobs/<sha256>``.
 ``read_batch`` returns them with those values in place, so ingest sees the
@@ -24,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -77,9 +80,6 @@ class SpoolFile:
         """The closed file name: the offset key in ``trajectory_ingest_files``."""
         return spool.file_name(self.counter)
 
-    def ready(self, now: float, abandon_seconds: float) -> bool:
-        return self.closed or now - self.mtime >= abandon_seconds
-
 
 @dataclass
 class ProducerDir:
@@ -87,6 +87,8 @@ class ProducerDir:
     path: Path
     document: dict | None
     files: list[SpoolFile] = field(default_factory=list)
+    #: The mtime of ``producer.json``, which a running writer refreshes every few seconds; ``None`` when missing.
+    heartbeat: float | None = None
 
 
 @dataclass
@@ -135,6 +137,14 @@ def read_producer_document(path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
+def heartbeat(directory: Path) -> float | None:
+    """The mtime of a producer directory's ``producer.json``; ``None`` when it cannot be read."""
+    try:
+        return os.stat(Path(directory) / spool.PRODUCER_FILE).st_mtime
+    except OSError:
+        return None
+
+
 def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = None, sweep: bool = True,
                quarantine_max_bytes: int | None = None,
                quarantine_max_age_seconds: float | None = None) -> SpoolScan:
@@ -168,7 +178,7 @@ def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = No
             document = read_producer_document(Path(entry.path) / spool.PRODUCER_FILE)
             if documents is not None:
                 documents[producer_id] = document
-        producer = ProducerDir(producer_id, Path(entry.path), document)
+        producer = ProducerDir(producer_id, Path(entry.path), document, heartbeat=heartbeat(entry.path))
         by_counter: dict[int, SpoolFile] = {}
         for child in children:
             parsed = spool.parse_file_name(child.name)
@@ -201,19 +211,38 @@ def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = No
     return scan
 
 
-def select_ready(scan: SpoolScan, done: set[tuple[str, str]], *, now: float,
-                 abandon_seconds: float) -> list[SpoolFile]:
+def abandoned(producer: ProducerDir, item: SpoolFile, *, now: float, abandon_seconds: float,
+              heartbeat: float | None, alive: bool = False) -> bool:
+    """Whether the open file ``item`` of ``producer`` may be consumed (SPEC §8.2).
+
+    Its mtime must be ``abandon_seconds`` old. The producer's newest file also needs ``heartbeat`` (the mtime of
+    ``producer.json``, ``None`` when missing) that old and a producer not known to be ``alive``: a running writer
+    refreshes ``producer.json`` from a thread of its own, so the file of a writer that is only stalled stays. An
+    older ``.part`` was left behind by a writer that went on to a later file.
+    """
+    if now - item.mtime < abandon_seconds:
+        return False
+    if producer.files and producer.files[-1].counter != item.counter:
+        return True
+    return not alive and (heartbeat is None or now - heartbeat >= abandon_seconds)
+
+
+def select_ready(scan: SpoolScan, done: set[tuple[str, str]], *, now: float, abandon_seconds: float,
+                 alive=None) -> list[SpoolFile]:
     """The next consumable file of every producer, oldest mtime first.
 
     ``done`` holds ``(producer_id, name)`` of fully consumed files that still
     exist on disk (their deletion failed or is pending); they never block.
+    An open file must be ``abandoned``; ``alive(producer)`` is true for the
+    producers of this very process.
     """
     ready = []
     for producer in scan.producers.values():
         for item in producer.files:
             if (producer.producer_id, item.name) in done:
                 continue
-            if item.ready(now, abandon_seconds):
+            if item.closed or abandoned(producer, item, now=now, abandon_seconds=abandon_seconds,
+                                        heartbeat=producer.heartbeat, alive=alive is not None and alive(producer)):
                 ready.append(item)
             break
     return sorted(ready, key=lambda item: (item.mtime, item.producer_id, item.counter))
@@ -466,8 +495,6 @@ def _blob_references(files: list[SpoolFile], max_bytes: int) -> set[str] | None:
     if sum(item.size for item in files) > max_bytes:
         return None
     found: set[str] = set()
-    # A reference cut by a chunk boundary is found in the next window: keep all but its last byte.
-    overlap = len(spool.BLOB_REFERENCE) + 64 + 1
     budget = max_bytes
     for item in files:
         try:
@@ -475,17 +502,27 @@ def _blob_references(files: list[SpoolFile], max_bytes: int) -> set[str] | None:
             if handle is None:
                 continue  # consumed and deleted since the scan
             with handle:
-                tail = b""
-                while chunk := handle.read(READ_CHUNK_BYTES):
-                    budget -= len(chunk)
-                    if budget < 0:
-                        return None
-                    window = tail + chunk
-                    found.update(sha.decode("ascii") for sha in _BLOB_REFERENCE.findall(window))
-                    tail = window[-overlap:]
+                budget = _read_references(handle, found, budget)
+            if budget < 0:
+                return None
         except OSError:
             return None
     return found
+
+
+def _read_references(handle, found: set[str], budget: float = float("inf")) -> float:
+    """Add the blobs referenced in an open file to ``found``: the budget left, negative once reading exceeded it."""
+    # A reference cut by a chunk boundary is found in the next window: keep all but its last byte.
+    overlap = len(spool.BLOB_REFERENCE) + 64 + 1
+    tail = b""
+    while chunk := handle.read(READ_CHUNK_BYTES):
+        budget -= len(chunk)
+        if budget < 0:
+            return budget
+        window = tail + chunk
+        found.update(sha.decode("ascii") for sha in _BLOB_REFERENCE.findall(window))
+        tail = window[-overlap:]
+    return budget
 
 
 def _open_listed(item: SpoolFile):
@@ -537,8 +574,9 @@ def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: di
                     max_bytes: int | None = None) -> Path | None:
     """Move ``item`` to ``quarantine/`` with a ``.reason`` sidecar; ``None`` when the move failed.
 
-    With ``max_bytes`` the oldest quarantined files are then deleted until their data bytes fit,
-    the file just moved too when it alone is larger.
+    The blobs its lines reference are kept beside it (``keep_blobs``), as the blob sweep no longer
+    sees the file; the sidecar counts them. With ``max_bytes`` the oldest quarantined files are then
+    deleted until their bytes fit, the file just moved too when it alone is larger.
     """
     directory = Path(spool_dir) / spool.QUARANTINE_DIR
     path = item.path if item.path.exists() else item.path.with_name(
@@ -551,10 +589,11 @@ def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: di
         os.replace(path, target)
     except OSError:
         return None
+    blobs = keep_blobs(spool_dir, target)
     try:
         spool.write_json_atomic(target.with_name(target.name + spool.REASON_SUFFIX), {
             "version": spool.VERSION, "producer_id": item.producer_id, "file": path.name,
-            "reason": reason, "quarantined_at": spool.timestamp(), **detail})
+            "reason": reason, "quarantined_at": spool.timestamp(), "blobs": blobs, **detail})
     except OSError:
         pass
     if max_bytes is not None:
@@ -571,17 +610,66 @@ def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: di
     return target
 
 
+def keep_blobs(spool_dir: Path, target: Path) -> int:
+    """Hard-link, or else copy, every existing blob the quarantined file ``target`` references next to it
+    (``spool.quarantine_blob_name``): the number of blobs kept."""
+    found: set[str] = set()
+    try:
+        with open(target, "rb") as handle:
+            _read_references(handle, found)
+    except OSError as exc:
+        log.warning("Blobs of a quarantined spool file not kept file=%s error_type=%s", target.name,
+                    type(exc).__name__)
+        return 0
+    kept = 0
+    for sha in sorted(found):
+        blob = spool.blobs_dir(spool_dir) / sha
+        copy = target.with_name(spool.quarantine_blob_name(target.name, sha))
+        try:
+            os.link(blob, copy)
+        except FileNotFoundError:
+            continue  # already gone: its lines read as gaps
+        except OSError:
+            # Another file system, or hard links not permitted.
+            if not _copy_blob(blob, copy):
+                continue
+        kept += 1
+    return kept
+
+
+def _copy_blob(source: Path, target: Path) -> bool:
+    """Copy ``source`` to the new file ``target``; False, leaving no ``target`` behind, when that fails."""
+    try:
+        reader = open(source, "rb")
+    except OSError:
+        return False
+    with reader:
+        try:
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, spool.FILE_MODE)
+        except OSError:
+            return False
+        try:
+            with open(descriptor, "wb") as writer:
+                shutil.copyfileobj(reader, writer, READ_CHUNK_BYTES)
+        except OSError:
+            remove_file(target)
+            return False
+    return True
+
+
 @dataclass(frozen=True)
 class _Quarantined:
     path: Path
+    #: Bytes of the data file and of the blobs kept for it.
     size: int
     #: When it was quarantined: the mtime of its ``.reason`` sidecar, else its own.
     mtime: float
     reason: Path | None
+    blobs: tuple[Path, ...] = ()
 
 
 def _quarantined(directory: Path) -> tuple[list[_Quarantined], list[tuple[Path, float]]]:
-    """Quarantined data files, oldest first, and the ``.reason`` sidecars whose data file is gone."""
+    """Quarantined data files, oldest first, and the ``.reason`` sidecars and kept blobs whose data file is gone."""
     try:
         entries = list(os.scandir(directory))
     except FileNotFoundError:
@@ -594,12 +682,23 @@ def _quarantined(directory: Path) -> tuple[list[_Quarantined], list[tuple[Path, 
         except OSError:
             continue
     files, orphans = [], []
+    blobs: dict[str, list[tuple[Path, int]]] = {}
+    for name, status in statuses.items():
+        owner = spool.quarantine_blob_owner(name)
+        if owner is None:
+            continue
+        if owner in statuses and spool.is_quarantined_file(owner):
+            blobs.setdefault(owner, []).append((directory / name, status.st_size))
+        else:
+            orphans.append((directory / name, status.st_mtime))
     for name, status in statuses.items():
         if spool.is_quarantined_file(name):
             sidecar = statuses.get(name + spool.REASON_SUFFIX)
-            files.append(_Quarantined(directory / name, status.st_size,
+            kept = blobs.get(name, ())
+            files.append(_Quarantined(directory / name, status.st_size + sum(size for _, size in kept),
                                       status.st_mtime if sidecar is None else sidecar.st_mtime,
-                                      None if sidecar is None else directory / (name + spool.REASON_SUFFIX)))
+                                      None if sidecar is None else directory / (name + spool.REASON_SUFFIX),
+                                      tuple(path for path, _ in kept)))
         elif (not name.startswith(".") and name.endswith(spool.REASON_SUFFIX)
               and name[:-len(spool.REASON_SUFFIX)] not in statuses):
             orphans.append((directory / name, status.st_mtime))
@@ -608,16 +707,21 @@ def _quarantined(directory: Path) -> tuple[list[_Quarantined], list[tuple[Path, 
 
 
 def _remove_quarantined(quarantined: _Quarantined) -> bool:
-    # The data file first: a sidecar left behind is an orphan the age sweep removes later.
+    # The data file first: a sidecar or blob left behind is an orphan the age sweep removes later.
     if not remove_file(quarantined.path):
         return False
+    for path in quarantined.blobs:
+        remove_file(path)
     if quarantined.reason is not None:
         remove_file(quarantined.reason)
     return True
 
 
 def _prune_quarantine(files: list[_Quarantined], max_bytes: int) -> tuple[int, int]:
-    """Delete quarantined files, oldest first, until at most ``max_bytes`` of data remain: ``(files, bytes)``."""
+    """Delete quarantined files, oldest first, until at most ``max_bytes`` of them remain: ``(files, bytes)``.
+
+    A file's bytes include the blobs kept for it.
+    """
     total = sum(quarantined.size for quarantined in files)
     deleted = size = 0
     for quarantined in files:
@@ -632,11 +736,11 @@ def _prune_quarantine(files: list[_Quarantined], max_bytes: int) -> tuple[int, i
 
 def sweep_quarantine(spool_dir: Path, *, max_bytes: int | None, max_age_seconds: float | None,
                      now: float | None = None) -> tuple[int, int]:
-    """Delete quarantined files older than ``max_age_seconds``, then the oldest beyond ``max_bytes`` of data.
+    """Delete quarantined files older than ``max_age_seconds``, then the oldest beyond ``max_bytes``.
 
     Age counts from the ``.reason`` sidecar's mtime, else the data file's. A data file goes together
-    with its sidecar; sidecars without a data file go once that old. ``None`` disables a limit.
-    ``(files, bytes)`` of the data files deleted.
+    with its sidecar and kept blobs, which count towards its bytes; sidecars and blobs without a data
+    file go once that old. ``None`` disables a limit. ``(files, bytes)`` of the data files deleted.
     """
     now = time.time() if now is None else now
     files, orphans = _quarantined(Path(spool_dir) / spool.QUARANTINE_DIR)

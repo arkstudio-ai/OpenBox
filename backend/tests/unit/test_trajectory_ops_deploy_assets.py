@@ -224,6 +224,7 @@ def test_spool_stats_counts_every_spool_file_in_bytes_and_producer_data_files_in
         producer / "00000000000000000002.jsonl.part": 50, producer / "00000000000000000003.jsonl.part": 0,
         spool / "blobs" / ("a" * 64): 1000, spool / "quarantine" / "p1__00000000000000000009.jsonl": 30,
         spool / "quarantine" / "p1__00000000000000000009.jsonl.reason": 5,
+        spool / "quarantine" / ("p1__00000000000000000009.jsonl.blob-" + "b" * 64): 40,
     }
     for path, size in files.items():
         path.write_bytes(b"x" * size)

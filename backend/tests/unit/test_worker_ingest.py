@@ -71,13 +71,13 @@ class SpoolWriter:
     """Producer directories and lines in spool format v1, as the emitter writes them."""
 
     def __init__(self, spool_dir: Path, producer_id: str = "20260914080000-host-1-aaaaaaaa", *,
-                 hostname: str = "elsewhere", pid: int = 1, boot_id: str = "boot"):
+                 hostname: str = "elsewhere", pid: int = 1, boot_id: str = "boot", started_at: str = AT):
         self.producer_id = producer_id
         self.directory = Path(spool_dir) / "producers" / producer_id
         spool.ensure_private_dir(self.directory)
         spool.write_json_atomic(self.directory / spool.PRODUCER_FILE, {
             "version": 1, "producer_id": producer_id, "boot_id": boot_id, "hostname": hostname, "pid": pid,
-            "role": "backend", "started_at": AT})
+            "role": "backend", "started_at": started_at})
         self.n = 0
         self.counter = 0
 

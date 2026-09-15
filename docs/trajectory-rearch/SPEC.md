@@ -506,11 +506,11 @@ backend/trajectory/ops/backup.py          # pg_dump upload helper used by deploy
 - Without the lock the worker serves read APIs only and retries acquisition every 10 s. `/health` reports `writer: true|false`.
 
 ### 8.2 Spool reader
-- Poll every `TRAJECTORY_INGEST_POLL_MS` (200). A file is ready when its name ends in `.jsonl`, or it is a `.part` whose mtime is older than `TRAJECTORY_SPOOL_ABANDON_SECONDS` (60).
+- Poll every `TRAJECTORY_INGEST_POLL_MS` (200). A file is ready when its name ends in `.jsonl`, or it is a `.part` whose mtime is older than `TRAJECTORY_SPOOL_ABANDON_SECONDS` (60). A producer's newest `.part` also needs the producer's heartbeat, the mtime of `producer.json` (refreshed every 5 s by an emitter thread of its own, even while the writer is stalled), to be that old or missing; the producer of the worker's own process (same hostname, boot id and pid) never abandons it.
 - Order: among ready files, the oldest mtime first; within a producer strictly by counter (never skip ahead of an unconsumed lower counter unless that file is abandoned-and-consumed).
 - Resume from `trajectory_ingest_files.bytes_consumed`. Parse complete lines only; a torn last line of an abandoned `.part` is ignored and reported as producer loss.
-- Unparsable line → move the whole file to `quarantine/` with a `.reason` file, count `quarantined_files`, emit producer-loss gaps for sessions seen from that producer in the last 10 minutes.
-- Producer tracking: first line `n` must equal `last_n + 1`; otherwise record loss `[last_n+1, n-1]`. A producer whose files are all consumed, has no `goodbye`, and whose newest file is abandoned → `abandoned=true` and loss is reported once.
+- Unparsable line → move the whole file to `quarantine/` with a `.reason` file, count `quarantined_files`, emit producer-loss gaps for sessions seen from that producer in the last 10 minutes. The blobs the file references stay readable beside it as `<name>.blob-<sha256>` (a hard link, else a copy; counted in the `.reason` file); they count towards the quarantine limits and go with the file, and orphaned ones age out like orphaned `.reason` files. A batch that fails `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` times (reason `batch_failed`) or that the worker process died in 3 times (reason `batch_crashed`) is quarantined the same way: the worker names each batch in `control/ingest.json` (no fsync) before reading it and removes the marker afterwards, so a marker found at start counts a crash of that batch. Failure and crash counts and the end of a file's backoff survive a restart.
+- Producer tracking: first line `n` must equal `last_n + 1`; otherwise record loss `[last_n+1, n-1]`. Consuming an abandoned `.part` records no loss by itself. A producer whose files are all consumed and that has no `goodbye` → `abandoned=true` and loss `producer_crashed` from `last_n+1`, reported once, but only when it is confirmed gone: its heartbeat (without a readable `producer.json`, the directory's mtime) is `TRAJECTORY_SPOOL_ABANDON_SECONDS` old and another producer directory with the same hostname and boot id has a later `started_at` (a restart), or the heartbeat is 300 s old. A producer that writes again before then was only frozen and gets no gap.
 
 ### 8.3 Ingest transaction
 Per batch (≤ `TRAJECTORY_INGEST_BATCH_LINES` lines or ≤ `TRAJECTORY_INGEST_BATCH_BYTES`):
@@ -555,7 +555,7 @@ Order per event:
 
 ### 8.6 Gaps
 - `gap` control → for each listed session with an existing trajectory: one `recording.gap` event per run_id (≤ 10) with `run_id` set, plus one without run_id: data `{"phase":"dropped","reason","dropped_events","dropped_bytes","producer_id","request_ids"}`.
-- Producer loss (missing `n`, torn tail, quarantined file, abandoned producer) → for sessions seen from that producer within the last 10 minutes (in-memory map, persisted in `trajectory_worker_state` every minute): `recording.gap {"phase":"lost","reason":"producer_lines_lost"|"producer_crashed","producer_id","from_n","to_n"}` with the last known run_id of each session.
+- Producer loss (missing `n`, torn tail, quarantined file, producer confirmed crashed, §8.2) → for sessions seen from that producer within the last 10 minutes (in-memory map, persisted in `trajectory_worker_state` every minute): `recording.gap {"phase":"lost","reason":"producer_lines_lost"|"producer_crashed","producer_id","from_n","to_n"}` with the last known run_id of each session.
 - Gap events use deterministic ids `gap:{producer_id}:{n_or_range}:{session_id}[:{run_id}]` for idempotency.
 
 ### 8.7 Notifications
@@ -789,7 +789,7 @@ Owner: WP-G. Source inventory: `maps/producers.md` §1 and Migration notes A.
 | `TRAJECTORY_INGEST_BATCH_LINES` / `_BYTES` | 2000 / 16777216 | worker |
 | `TRAJECTORY_INGEST_MAX_BATCH_FAILURES` | 10 (consecutive failures of one file batch before the file is quarantined with a `recording.gap`; failures while the trace database does not answer and transient ones — timeouts, lock or serialization conflicts, lost connections, a full disk — never count; the counts survive a worker restart) | worker |
 | `TRAJECTORY_SPOOL_ABANDON_SECONDS` | 60 | worker |
-| `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` | 268435456 (data bytes kept in `quarantine/`; the oldest quarantined files and their `.reason` sidecars are deleted first) | worker |
+| `TRAJECTORY_SPOOL_QUARANTINE_MAX_BYTES` | 268435456 (bytes of the quarantined data files and the blobs kept for them in `quarantine/`; the oldest files are deleted first, with their `.reason` sidecars and blobs) | worker |
 | `TRAJECTORY_SPOOL_QUARANTINE_RETENTION_DAYS` | 7 (quarantined files older than this are deleted; age from the `.reason` sidecar) | worker |
 | `TRAJECTORY_INLINE_BYTES` | 65536 | worker |
 | `TRAJECTORY_RECORD_INLINE_BYTES` | 16384 | worker |

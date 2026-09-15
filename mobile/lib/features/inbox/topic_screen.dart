@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
+import '../../shared/api/api_error.dart';
 import '../../shared/appearance/tokens.dart';
 import '../../shared/appearance/type_scale.dart';
 import '../../shared/i18n/i18n.dart';
@@ -70,18 +71,24 @@ class _TopicScreenState extends ConsumerState<TopicScreen> {
         future: _topic,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
+            // Drafts, unpublished and mistyped slugs are 404 for good (web
+            // `TopicPage`); retrying only helps when the request itself failed.
+            final gone = apiErrorOf(snapshot.error!)?.status == 404;
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    i18n.t('inbox:topic.loadFailed'),
+                    i18n.t(
+                      gone ? 'inbox:topic.notFound' : 'inbox:topic.loadFailed',
+                    ),
                     style: TextStyle(fontSize: FontSizes.sm, color: t.n600),
                   ),
-                  TextButton(
-                    onPressed: () => setState(() => _topic = _load()),
-                    child: Text(i18n.t('common:action.retry')),
-                  ),
+                  if (!gone)
+                    TextButton(
+                      onPressed: () => setState(() => _topic = _load()),
+                      child: Text(i18n.t('common:action.retry')),
+                    ),
                 ],
               ),
             );

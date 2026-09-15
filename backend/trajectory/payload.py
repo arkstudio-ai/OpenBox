@@ -28,6 +28,7 @@ import re
 import tempfile
 import weakref
 from collections import OrderedDict
+from contextlib import aclosing
 from uuid import uuid4
 
 import zstandard
@@ -362,6 +363,7 @@ class _SpoolWriter:
     def __init__(self, encoding: str, memory_bytes: int, consume=None):
         if encoding not in ("identity", "zstd"):
             raise CorruptContent(f"Unsupported blob encoding: {encoding!r}")
+        self.encoding = encoding
         self.digest = hashlib.sha256()
         self.size = 0
         self.stored = 0
@@ -399,7 +401,8 @@ class _SpoolWriter:
             raise CorruptContent("Invalid zstd blob") from exc
 
     def finish(self) -> Spooled:
-        if self._zstd is not None and not self.stored:
+        self._close_decoder()
+        if not self.stored and self.encoding == "zstd":
             raise CorruptContent("Empty zstd blob")
         if self.file is None:
             return Spooled(self.digest.hexdigest(), self.size, content=bytes(self.buffer))
@@ -407,9 +410,20 @@ class _SpoolWriter:
         return Spooled(self.digest.hexdigest(), self.size, file=self.file)
 
     def discard(self) -> None:
-        self.buffer = None
-        if self.file is not None:
-            self.file.close()
+        try:
+            self._close_decoder()
+        finally:
+            self.buffer = None
+            if self.file is not None:
+                self.file.close()
+
+    def _close_decoder(self) -> None:
+        # The native stream writer holds this sink. Its back-reference is not
+        # GC-tracked, so leaving this cycle alive retains every decoded buffer
+        # and decompression context, including after a successful read.
+        decoder, self._zstd = self._zstd, None
+        if decoder is not None:
+            decoder.close()
 
 
 async def _spool_step(function, *args):
@@ -425,21 +439,28 @@ async def _spool_step(function, *args):
 
 async def _spool(chunks, *, encoding: str, sha256: str | None, mismatch: str, memory_bytes: int = 0, consume=None) -> Spooled:
     """Decode, hash and keep the stored bytes ``chunks`` yields; CorruptContent(mismatch) unless they match sha256."""
+    spooled = None
     try:
-        writer = await asyncio.to_thread(_SpoolWriter, encoding, memory_bytes, consume)
-        try:
-            async for chunk in chunks:
-                await _spool_step(writer.feed, chunk)
-            spooled = await _spool_step(writer.finish)
-        except BaseException:
-            writer.discard()
-            raise
-    finally:
-        await chunks.aclose()
-    if sha256 is not None and spooled.sha256 != sha256:
-        spooled.close()
-        raise CorruptContent(mismatch)
-    return spooled
+        async with aclosing(chunks):
+            # Construction does no I/O. Keep it synchronous so cancellation
+            # cannot abandon a newly created decoder in an executor thread.
+            writer = _SpoolWriter(encoding, memory_bytes, consume)
+            try:
+                async for chunk in chunks:
+                    await _spool_step(writer.feed, chunk)
+                spooled = await _spool_step(writer.finish)
+                # Transfer ownership only after finish was successfully awaited;
+                # a cancelled finish must still close its file in discard().
+                writer.file = None
+            finally:
+                writer.discard()
+        if sha256 is not None and spooled.sha256 != sha256:
+            raise CorruptContent(mismatch)
+        return spooled
+    except BaseException:
+        if spooled is not None:
+            spooled.close()
+        raise
 
 
 async def _blob_chunks(store, key: str):

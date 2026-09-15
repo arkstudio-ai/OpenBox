@@ -148,10 +148,6 @@ class UserRow extends ConsumerWidget {
                       i18n.t('workspace:adminConsole'),
                       style: TextStyle(fontSize: FontSizes.base, color: t.ink),
                     ),
-                    subtitle: Text(
-                      i18n.t('admin:console.subtitle'),
-                      style: TextStyle(fontSize: FontSizes.xs, color: t.n600),
-                    ),
                     trailing: Icon(
                       Icons.chevron_right,
                       size: 18,

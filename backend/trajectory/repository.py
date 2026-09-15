@@ -499,18 +499,20 @@ async def _cache_changed_after(db, trajectory_id, head):
 
 
 async def _model_at(db, trajectory_id: str, head: int):
-    """The model of the request record updated last at head, reading one row at a time."""
-    rows = await db.stream_scalars(select(TrajectoryRecord.data).where(TrajectoryRecord.trajectory_id == trajectory_id,
-        TrajectoryRecord.kind == "request", TrajectoryRecord.start_seq <= head)
+    """The model of the request record updated last at head: one indexed query, no record data loaded.
+
+    ``JSONType`` is JSONB on PostgreSQL and JSON text on SQLite, so the path expression is per dialect.
+    """
+    column = TrajectoryRecord.data
+    if db.bind.dialect.name == "postgresql":
+        model = func.jsonb_extract_path_text(column, "data", "model")
+    else:
+        model = func.json_extract(column, "$.data.model")
+    return await db.scalar(select(model).where(
+        TrajectoryRecord.trajectory_id == trajectory_id, TrajectoryRecord.kind == "request",
+        TrajectoryRecord.start_seq <= head, model.is_not(None), model != "")
         .order_by(TrajectoryRecord.applied_seq.desc(), TrajectoryRecord.start_seq.desc(), TrajectoryRecord.record_id.desc())
-        .execution_options(yield_per=10))
-    try:
-        async for record in rows:
-            if isinstance(record.get("data"), dict) and record["data"].get("model"):
-                return record["data"]["model"]
-    finally:
-        await rows.close()
-    return None
+        .limit(1))
 
 
 async def get_session_header(db, session_id: str, through_seq=None, *, blob_store=None):

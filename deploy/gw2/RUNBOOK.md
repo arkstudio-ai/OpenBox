@@ -45,7 +45,7 @@ The ingest/projection writer pool is separate; these reader settings do not chan
 
 Worker GET requests allow 2 active reads and 4 queued reads, waiting at most 250 ms.
 Overflow returns HTTP 429 with `Retry-After: 1`; a query deadline returns 503.
-JSON reads have a 10 s preparation deadline, a 16 MiB budget for decoded blobs/segments,
+JSON reads have a 10 s preparation deadline, an 8 MiB budget for decoded blobs/segments,
 and an 8 MiB response limit. Oversize reads return 413; the viewer halves event pages
 without moving the cursor. Individual payload/blob/export downloads spool to disk and
 hold a read slot through delivery (60 s preparation deadline). They do not have the

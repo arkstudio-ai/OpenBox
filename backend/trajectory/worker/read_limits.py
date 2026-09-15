@@ -90,7 +90,9 @@ class BoundedReadRoute(NoStoreRoute):
             # Explicit content downloads spool to disk in chunks; allow their
             # full content, while still bounding concurrent transfers and preparation time.
             download = ("/payloads/" in self.path or "/blobs/" in self.path or self.path.endswith("/download"))
-            budget = nullcontext() if download else read_budget(integer("TRAJECTORY_READ_MAX_BYTES", 16 * 1024 * 1024))
+            # The decoded budget defaults to the response cap: content a JSON read could not send anyway is
+            # refused before it is fetched and decoded.
+            budget = nullcontext() if download else read_budget(integer("TRAJECTORY_READ_MAX_BYTES", 8 * 1024 * 1024))
             timeout = integer("TRAJECTORY_DOWNLOAD_PREPARE_TIMEOUT_SECONDS", 60) if download else integer(
                 "TRAJECTORY_READ_TIMEOUT_SECONDS", 10)
             try:

@@ -15,8 +15,9 @@ from datetime import datetime
 from functools import wraps
 from typing import Literal
 
+import orjson
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from trajectory import export as exports, payload as payloads, repository
@@ -29,6 +30,30 @@ router = APIRouter(prefix="/api/admin/trajectories", tags=["admin-trajectories"]
 
 #: Every response carrying stored content.
 CONTENT_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+def _json_default(value):
+    if isinstance(value, (set, frozenset)):
+        return list(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    raise TypeError(f"Not JSON serializable: {type(value).__name__}")
+
+
+class TraceJSONResponse(ORJSONResponse):
+    """The repository's dicts serialized by orjson, returned as a Response.
+
+    A returned dict goes through FastAPI's ``jsonable_encoder`` (a deep copy) and stdlib ``json.dumps``:
+    a 10 MiB event page took about 9 s and 100 MiB on the event loop the worker's ingest shares, past
+    any read deadline. orjson serializes the same page in milliseconds.
+    """
+
+    def render(self, content) -> bytes:
+        return orjson.dumps(content, default=_json_default, option=orjson.OPT_NON_STR_KEYS)
+
+
+def _json(result, *, status_code: int = 200, headers: dict | None = None) -> TraceJSONResponse:
+    return TraceJSONResponse(result, status_code=status_code, headers=headers)
 #: The trace database is not open: an embedded worker whose start failed still has these routes mounted.
 UNAVAILABLE = "Trajectory database is unavailable"
 
@@ -83,7 +108,7 @@ async def sessions(request: Request, admin: dict = Depends(require_trajectory_ad
             status=status, recording_status=recording_status, activity_from=activity_from, activity_to=activity_to,
             include_unrecorded=include_unrecorded, cursor=cursor, limit=limit, sort=sort)
     await audit(admin, request, "list", details={"user_id": user_id, "workspace_id": workspace_id})
-    return result
+    return _json(result)
 
 
 @router.get("/sessions/{session_id}")
@@ -93,7 +118,7 @@ async def header(session_id: str, request: Request, through_seq: str | None = No
     async with trace_read_session() as db:
         result = await repository.get_session_header(db, session_id, through_seq)
     await audit(admin, request, "view", session_id, {"through_seq": result["through_seq"]})
-    return result
+    return _json(result)
 
 
 @router.get("/sessions/{session_id}/events")
@@ -103,8 +128,8 @@ async def events(session_id: str, after_seq: str = "0", until_seq: str | None = 
     admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
-        return await repository.read_events(db, trajectory, after_seq=after_seq, until_seq=until_seq, limit=limit,
-                                            include_data=include_data)
+        return _json(await repository.read_events(db, trajectory, after_seq=after_seq, until_seq=until_seq,
+                                                  limit=limit, include_data=include_data))
 
 
 @router.get("/sessions/{session_id}/records")
@@ -114,8 +139,8 @@ async def records(session_id: str, through_seq: str | None = None, before: str |
     agent_id: str | None = None, admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
-        return await repository.list_records(db, trajectory, through_seq=through_seq, before=before, limit=limit,
-            kind=kind, status=status, agent_id=agent_id)
+        return _json(await repository.list_records(db, trajectory, through_seq=through_seq, before=before,
+                                                   limit=limit, kind=kind, status=status, agent_id=agent_id))
 
 
 @router.get("/sessions/{session_id}/records/{record_id:path}")
@@ -125,7 +150,7 @@ async def record_detail(session_id: str, record_id: str, through_seq: str | None
                         admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
-        return await repository.get_record(db, trajectory, record_id, through_seq=through_seq, expand=expand)
+        return _json(await repository.get_record(db, trajectory, record_id, through_seq=through_seq, expand=expand))
 
 
 @router.get("/sessions/{session_id}/checkpoint")
@@ -134,7 +159,8 @@ async def checkpoint(session_id: str, at_seq: str | None = None, admin: dict = D
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, at_seq)
-        return {"checkpoint": await repository.get_checkpoint(db, trajectory, through), "through_seq": str(through)}
+        return _json({"checkpoint": await repository.get_checkpoint(db, trajectory, through),
+                      "through_seq": str(through)})
 
 
 @router.get("/sessions/{session_id}/search")
@@ -144,7 +170,7 @@ async def search_records(session_id: str, q: str = Query(min_length=1, max_lengt
     admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
-        return await repository.search(db, trajectory, q=q, through_seq=through_seq, cursor=cursor, limit=limit)
+        return _json(await repository.search(db, trajectory, q=q, through_seq=through_seq, cursor=cursor, limit=limit))
 
 
 @router.get("/sessions/{session_id}/payloads/{payload_id}")
@@ -157,7 +183,7 @@ async def payload(session_id: str, payload_id: str, request: Request, through_se
             _, trajectory = await repository.get_trajectory(db, session_id)
             through = repository.watermark(trajectory, through_seq)
             info = await payloads.payload_meta(db, trajectory, payload_id, through_seq=through)
-        return JSONResponse(info, headers=CONTENT_HEADERS)
+        return _json(info, headers=CONTENT_HEADERS)
     async with trace_read_session() as db:
         _, trajectory = await repository.get_trajectory(db, session_id)
         through = repository.watermark(trajectory, through_seq)
@@ -219,7 +245,7 @@ async def export(session_id: str, body: ExportBody, request: Request, admin: dic
                                           repository.watermark(trajectory, body.through_seq))
         result = exports.export_status(row, session_id)
     await audit(admin, request, "export", session_id, {"through_seq": result["through_seq"], "export_id": result["export_id"]})
-    return result
+    return _json(result, status_code=202)
 
 
 async def _export(db, session_id, export_id):
@@ -232,7 +258,7 @@ async def _export(db, session_id, export_id):
 async def export_info(session_id: str, export_id: str, admin: dict = Depends(require_trajectory_admin)):
     async with trace_read_session() as db:
         _, row = await _export(db, session_id, export_id)
-        return exports.export_status(row, session_id)
+        return _json(exports.export_status(row, session_id))
 
 
 @router.get("/sessions/{session_id}/exports/{export_id}/download")

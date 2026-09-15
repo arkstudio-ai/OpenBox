@@ -193,6 +193,28 @@ async def test_header_at_head_reads_summaries_and_matches_the_replayed_state(tra
     assert fresh["capabilities"]["export"] is False and fresh["statistics"] == statistics(empty_state())
 
 
+async def test_header_at_the_projected_position_reads_through_the_read_facade(trace_db, blobs, monkeypatch):
+    """The read facade (routes) offers unlocked SELECTs only: the model of a header behind the committed head
+    comes from one query over the request records, not from a streamed scan."""
+    from trajectory.store.database import trace_read_session
+    monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
+    events = await recorded(blobs, "trj_1", "s1")
+    run = {"run_id": "run_2", "turn_id": "turn_2", "agent_id": "root"}
+    await Ingest(blobs).append("trj_1", [
+        _event("trj_1", "s1", "user_a", 13, "run.started", {}, at=AT + timedelta(minutes=5), **run),
+        _event("trj_1", "s1", "user_a", 14, "request.started", {"model": "model-y"}, at=AT + timedelta(minutes=6),
+               request_id="req_2", **run)])
+    async with trace_read_session() as reader:
+        with statements(trace_db) as seen:
+            at_projection = await get_session_header(reader, "s1", "12")
+        live = await get_session_header(reader, "s1")
+    assert (at_projection["through_seq"], at_projection["running_status"], at_projection["model"]) == ("12", "idle", "model-x")
+    assert at_projection["statistics"] == statistics(replay(events))
+    assert not any("trajectory_records.data" in statement and "LIMIT" not in statement.upper()
+                   for statement in seen if "trajectory_records" in statement)
+    assert live["through_seq"] == "14"
+
+
 async def test_live_header_statuses_include_events_the_projection_has_not_applied(trace_db, blobs, monkeypatch):
     monkeypatch.setenv("TRAJECTORY_RECORDING_ENABLED", "true")
     events = await recorded(blobs, "trj_1", "s1")

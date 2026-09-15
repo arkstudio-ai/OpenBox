@@ -5,7 +5,27 @@
 
 Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 
-## 当前阿里云发布：2026-09-14 16:31 长会话读取完整历史 + 聊天记录按轮分页（backend + frontend 叠加镜像）
+## 当前两边发布：2026-09-15 15:28 `20260915-main-73a311b`（backend + frontend，归零发布，M5 消息中心上线）
+
+- 源码 `main@73a311b` 全量构建，两边同一 tag，**gw2 与 AWS 自此回到可追溯的 main sha**，此前 gw2 的三层叠加热修镜像（714a30b / 6f90252 / 6aee878+68bb0fa）全部已在 main 内。
+  本次随 main 一起上线：PR [#36](https://github.com/arkstudio-ai/OpenBox/pull/36)（Seedance 选择器精简 + Fast 计费 + autopilot 高档改 `video-sd-1080p-pro`）、
+  [#30](https://github.com/arkstudio-ai/OpenBox/pull/30) 消息中心全套（M5）、[#29](https://github.com/arkstudio-ai/OpenBox/pull/29) 删除边界、[#1](https://github.com/arkstudio-ai/OpenBox/pull/1) SEO 落地页、
+  [#35](https://github.com/arkstudio-ai/OpenBox/pull/35) 历史分页后端与 nginx gzip、`0b99bf1`。**移动端（#30 App 侧、#35 分页）尚未发版。**
+- 迁移：两边 `f6a8c0e2b4d6 → a1c2e3b4d5f6 → c7e9b1d3f5a7`（notifications 加 inbox 列，新建 announcements / topics），backend 启动自跑，gw2 21s / AWS 15s healthy。
+- 运行时配置：两边 `config/openbox.json` 的 `video_generation.models` 从 5 条 Seedance 减为 3 条（Seedance 2.0 补 480p；下架 `seedance-2.0-480-fastⅠ`、`video-sd-720p-proⅠ`），
+  备份 `backups/20260915-sdtrim-*/openbox.json.pre-sdtrim-*`。依据：5 条实测全通且成片同出火山 `doubao-seedance-2-0` 桶（见 DEVLOG 09-12 条）。
+- 构建：EC2 `/opt/openbox/build-main` checkout `73a311b`，backend 41s（缓存）/ frontend 8min，`docker save|gzip -1` 落盘后 scp 到 gw2 `releases/20260915-main-73a311b/`，`sha256sum -c` 两边一致。
+- 切换：AWS 先发作金丝雀（07:25Z，租约 0），验证迁移/模型表/计费后再发 gw2（07:27Z，守门时租约恰为 0，未打断任何回合）。各自先 backend 后 frontend；
+  AWS 的 override 只钉 backend，前端靠 `.env` 的 `OPENBOX_IMAGE_TAG`，本次已同步改为新 tag（`.env.bak-20260915T*`）；gw2 的 override 两行都改。
+  备份：gw2 `backups/20260915-main-73a311b/activation-20260915T072*Z/`（含 `preflight.dump` 173M，`pg_restore -l` 62 表）、AWS 同结构。
+- 验证：公网 `/`、`/api/environment`、`/api/auth/logto/config` 200，`index.html` app-build 为新 tag，入口 JS `content-encoding: gzip`，`/api/inbox` 匿名 401；
+  容器内 registry 3 条 / 高档 `video-sd-1080p-pro`@1080p / `doubao-seedance-2-0-fast-260128` 720p 5s 报价 2.40；切换后 5 分钟 969 个 200、无 traceback。
+  AWS 启动时一条 `WUYING sandbox unreachable host.docker.internal:18001` 为隧道启动竞态，单次，隧道服务在跑。
+- 分支治理（同日）：删除 31 个已合入的远端分支与本机 9 个工作树；远端只剩 `main`、`release/trajectory-rework`（andrew，未走 PR）、`codex/minimax-video-submit-fix`。
+- 回滚：两边 override（AWS 另加 `.env`）改回 backend `20260914-history-6aee878-68bb0fa-on-6f90252` / frontend `20260914-history-6aee878-68bb0fa-on-961075e`（AWS 为 `20260912-videourl-961075e`），
+  **须先 `alembic downgrade f6a8c0e2b4d6`**（旧镜像不认识新 revision），再 `up -d --no-deps backend` / `frontend`；`config/openbox.json` 按需恢复 pre-sdtrim 备份。
+
+## 历史阿里云发布：2026-09-14 16:31 长会话读取完整历史 + 聊天记录按轮分页（backend + frontend 叠加镜像）
 
 - 现象一：智能体每步用 `get_messages()` 读历史，默认只取最早 200 条。会话超过 200 条后模型看到的上下文冻结，看不到之后的工具结果、卡片回答和新消息：
   `session_7YBXNNJ7KGM2YPWK39MXAJZXCF` 的字幕样式卡被连问 6 次；12 个会话超过 200 条，冻结后共约 1,672 步、228 credits。

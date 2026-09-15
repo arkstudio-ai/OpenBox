@@ -36,7 +36,7 @@ What `docker-compose.trajectory.yml` changes:
 ### Protecting business concurrency
 
 The admin reader now uses short, read-only PostgreSQL transactions and its own pool
-(4 connections: one per HTTP read slot plus 2 for WebSocket subscription headers; no overflow,
+(4 connections: one per HTTP read slot plus 2 for WebSocket subscription watermarks; no overflow,
 1 s pool wait). Each query releases its connection before
 waiting for OSS or decoding content. Reader connections enforce `statement_timeout=5s`,
 `lock_timeout=1s`, `idle_in_transaction_session_timeout=5s`, `work_mem=4MB` and disable
@@ -47,12 +47,28 @@ Worker GET requests allow 2 active reads and 4 queued reads, waiting at most 250
 Overflow returns HTTP 429 with `Retry-After: 1`; a query deadline returns 503.
 JSON reads have a 10 s preparation deadline, an 8 MiB budget for decoded blobs/segments,
 and an 8 MiB response limit. Oversize reads return 413; the viewer halves event pages
-without moving the cursor. Individual payload/blob/export downloads spool to disk and
-hold a read slot through delivery (60 s preparation deadline). They do not have the
-JSON decoded-byte limit. JSON responses release their slot before they are sent, so a slow
-client does not hold one. Health, metrics, recording and background jobs do not wait
-for admin read slots. Monitor `read_active`, `read_waiting`, `read_rejected`,
-`read_timed_out` and `read_too_large` alongside spool age and ingest lag.
+without moving the cursor. Individual payload/blob/export downloads spool to disk under a
+read slot (60 s preparation deadline, no JSON decoded-byte limit), then give the slot back
+and stream under one of 4 transfer slots (`TRAJECTORY_READ_TRANSFERS`); a download that
+finds no transfer slot free within 250 ms gets the same 429. Slow download clients hold
+transfer slots, never the read slots other admin reads need. JSON responses release their
+slot before they are sent, so a slow client does not hold one either.
+
+The viewer's frequent reads stay cheap while a session streams:
+- The live session header does not replay while projection lags. It reads the summary row,
+  the record summaries and the unprojected run/permission/question/`request.started` events
+  (a tail that fills the 2000-row limit, or a projection landing mid-read, falls back to a
+  replay), so its statistics are as of `projected_through_seq` and its status and model as of
+  the head.
+- A WebSocket subscription reads only the trajectory row. Each socket checks the viewer once
+  a second however many messages it carries; a revocation still closes it within about a second.
+- The event stream reads for a watermark hint at once only when its previous event read
+  ended 300 ms ago or more, otherwise 300 ms after it, with one follow-up read for all hints
+  that arrive during a read. A 429 or 503 is retried after `Retry-After` (1 s without one).
+
+Health, metrics, recording and background jobs do not wait for admin read slots. Monitor
+`read_active`, `read_waiting`, `read_transfers`, `read_rejected`, `read_timed_out` and
+`read_too_large` alongside spool age and ingest lag.
 
 Blob and segment cache defaults are 64 MiB and 32 MiB of cached content. These are
 **not process RSS limits**: Python objects, SQL results, serialization and concurrent

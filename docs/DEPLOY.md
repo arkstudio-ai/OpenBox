@@ -10,7 +10,7 @@ Logto SSO 的取值另见 [LOGTO_PROD.md](LOGTO_PROD.md)。
 - 源码 `main@73a311b` 全量构建，两边同一 tag，**gw2 与 AWS 自此回到可追溯的 main sha**，此前 gw2 的三层叠加热修镜像（714a30b / 6f90252 / 6aee878+68bb0fa）全部已在 main 内。
   本次随 main 一起上线：PR [#36](https://github.com/arkstudio-ai/OpenBox/pull/36)（Seedance 选择器精简 + Fast 计费 + autopilot 高档改 `video-sd-1080p-pro`）、
   [#30](https://github.com/arkstudio-ai/OpenBox/pull/30) 消息中心全套（M5）、[#29](https://github.com/arkstudio-ai/OpenBox/pull/29) 删除边界、[#1](https://github.com/arkstudio-ai/OpenBox/pull/1) SEO 落地页、
-  [#35](https://github.com/arkstudio-ai/OpenBox/pull/35) 历史分页后端与 nginx gzip、`0b99bf1`。**移动端（#30 App 侧、#35 分页）尚未发版。**
+  [#35](https://github.com/arkstudio-ai/OpenBox/pull/35) 历史分页后端与 nginx gzip、`0b99bf1`。移动端同日发 Android `1.0.19+30`（见 [MOBILE_RELEASE_1_0_19_20260915.md](MOBILE_RELEASE_1_0_19_20260915.md)），iOS 待在有发布密钥的机器上补发。
 - 迁移：两边 `f6a8c0e2b4d6 → a1c2e3b4d5f6 → c7e9b1d3f5a7`（notifications 加 inbox 列，新建 announcements / topics），backend 启动自跑，gw2 21s / AWS 15s healthy。
 - 运行时配置：两边 `config/openbox.json` 的 `video_generation.models` 从 5 条 Seedance 减为 3 条（Seedance 2.0 补 480p；下架 `seedance-2.0-480-fastⅠ`、`video-sd-720p-proⅠ`），
   备份 `backups/20260915-sdtrim-*/openbox.json.pre-sdtrim-*`。依据：5 条实测全通且成片同出火山 `doubao-seedance-2-0` 桶（见 DEVLOG 09-12 条）。

@@ -1,5 +1,8 @@
 """Spool reader (SPEC §8.2): readiness, per-producer order, bounded batch reads, quarantine."""
+import errno
+import hashlib
 import os
+import stat
 import time
 
 from trajectory import spool
@@ -29,12 +32,13 @@ def test_scan_lists_data_files_by_counter_with_totals(tmp_path):
     _write(root / "p1", 1, [_line(1), _line(2)], mtime=now - 10)
     _write(root / "p1", 3, [_line(4)], closed=False, mtime=now - 1)
     (root / "p1" / spool.PRODUCER_FILE).write_bytes(b'{"version":1,"producer_id":"p1","role":"backend"}')
+    os.utime(root / "p1" / spool.PRODUCER_FILE, (now - 30, now - 30))
     (root / "p1" / "notes.txt").write_text("ignored")
     (root / "stray-file").write_text("ignored")
     scan = scan_spool(tmp_path)
     producer = scan.producers["p1"]
     assert [(item.counter, item.closed) for item in producer.files] == [(1, True), (2, True), (3, False)]
-    assert producer.document["role"] == "backend"
+    assert producer.document["role"] == "backend" and abs(producer.heartbeat - (now - 30)) < 1
     assert scan.files == 3
     assert scan.bytes == sum(item.size for item in producer.files)
     assert abs(scan.oldest_mtime - (now - 10)) < 1
@@ -57,6 +61,25 @@ def test_open_file_blocks_its_producer_until_abandoned(tmp_path):
     ready = select_ready(scan, {("a", spool.file_name(1))}, now=now, abandon_seconds=60)
     assert [(item.producer_id, item.counter) for item in ready] == [("c", 7), ("a", 2), ("b", 1)]
     assert select_ready(scan, set(), now=now + 60, abandon_seconds=60)[0].producer_id == "c"
+
+
+def test_a_newest_open_file_is_abandoned_only_once_its_producer_heartbeat_is_stale(tmp_path):
+    root = tmp_path / "producers"
+    now = time.time()
+    for name, heartbeat_age in (("live", 5), ("stale", 90), ("own", 90), ("behind", 5), ("missing", None)):
+        _write(root / name, 1, [_line(1)], closed=False, mtime=now - 120)
+        if heartbeat_age is not None:
+            document = root / name / spool.PRODUCER_FILE
+            document.write_bytes(b"{}")
+            os.utime(document, (now - heartbeat_age, now - heartbeat_age))
+    # Behind a later file, an open file was left by a writer that went on: its mtime alone decides.
+    _write(root / "behind", 2, [_line(2)], closed=False, mtime=now - 1)
+    scan = scan_spool(tmp_path)
+    assert scan.producers["missing"].heartbeat is None and abs(scan.producers["stale"].heartbeat - (now - 90)) < 1
+    ready = select_ready(scan, set(), now=now, abandon_seconds=60, alive=lambda producer: producer.producer_id == "own")
+    assert sorted(item.producer_id for item in ready) == ["behind", "missing", "stale"]
+    # Once the live writer's heartbeat is stale too, its file is ready.
+    assert "live" in {item.producer_id for item in select_ready(scan, set(), now=now + 60, abandon_seconds=60)}
 
 
 def test_batches_respect_line_and_byte_limits_and_resume(tmp_path):
@@ -113,6 +136,57 @@ def test_quarantine_moves_the_file_with_a_reason(tmp_path):
     item = scan_spool(tmp_path).producers["p1"].files[0]
     second = quarantine_file(tmp_path, item, reason="unsupported_version", detail={})
     assert second != target and second.exists() and target.exists()
+
+
+def _blob(directory, value: bytes) -> str:
+    sha = hashlib.sha256(value).hexdigest()
+    (directory / sha).write_bytes(value)
+    return sha
+
+
+def _blob_line(n: int, *shas: str) -> bytes:
+    values = b",".join(b'"v%d":{"$blob":"%s"}' % (index, sha.encode()) for index, sha in enumerate(shas))
+    return spool.encode_event_line(n, b"2026-09-14T08:00:00.000Z", b'{"type":"tool.finished","data":{%s}}' % values,
+                                   version=spool.BLOB_VERSION)
+
+
+def _reason(target):
+    return spool_reader.read_producer_document(target.with_name(target.name + spool.REASON_SUFFIX))
+
+
+def test_quarantine_keeps_the_blobs_its_file_references_beside_it(tmp_path, monkeypatch):
+    blobs = spool.blobs_dir(tmp_path)
+    blobs.mkdir(parents=True)
+    first, second, missing = _blob(blobs, b'"first value"'), _blob(blobs, b'"second value"'), "f" * 64
+    root = tmp_path / "producers" / "p1"
+    _write(root, 1, [_blob_line(1, first, missing), _blob_line(2, second, first), b"not json\n"])
+    target = quarantine_file(tmp_path, scan_spool(tmp_path, sweep=False).producers["p1"].files[0],
+                             reason="unparsable_line", detail={})
+    kept = [target.with_name(spool.quarantine_blob_name(target.name, sha)) for sha in (first, second)]
+    # Hard links: no bytes are copied.
+    assert [os.stat(path).st_ino for path in kept] == [os.stat(blobs / sha).st_ino for sha in (first, second)]
+    assert not target.with_name(spool.quarantine_blob_name(target.name, missing)).exists()
+    assert _reason(target)["blobs"] == 2
+
+    def no_hard_links(source, destination):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "link", no_hard_links)
+    _write(root, 2, [_blob_line(3, second), b"not json\n"])
+    other = quarantine_file(tmp_path, scan_spool(tmp_path, sweep=False).producers["p1"].files[0],
+                            reason="unparsable_line", detail={})
+    copy = other.with_name(spool.quarantine_blob_name(other.name, second))
+    assert copy.read_bytes() == b'"second value"' and os.stat(copy).st_ino != os.stat(blobs / second).st_ino
+    assert stat.S_IMODE(os.stat(copy).st_mode) == spool.FILE_MODE and _reason(other)["blobs"] == 1
+    # Once the blob sweep deleted them from blobs/, the quarantined lines can still be read in full.
+    for sha in (first, second):
+        (blobs / sha).unlink()
+    assert [path.read_bytes() for path in kept] == [b'"first value"', b'"second value"']
+    quarantine = tmp_path / spool.QUARANTINE_DIR
+    paths = list(quarantine.iterdir())
+    usage = spool.spool_usage(tmp_path)
+    assert usage.quarantine_files == 2 and len(paths) == 7
+    assert usage.quarantine_bytes == sum(max(os.stat(path).st_size, os.stat(path).st_blocks * 512) for path in paths)
 
 
 def test_locate_follows_a_rename_and_directories_are_removed_only_when_empty(tmp_path):
@@ -174,6 +248,27 @@ def test_quarantine_sweep_deletes_old_files_and_orphans_then_the_oldest_beyond_t
     assert sweep_quarantine(tmp_path, max_bytes=40, max_age_seconds=week, now=now) == (3, 140)
     assert sorted(os.listdir(quarantine)) == ["p1__d.jsonl.reason", "p1__f.jsonl", "p1__f.jsonl.reason"]
     assert sweep_quarantine(tmp_path / "missing", max_bytes=0, max_age_seconds=0) == (0, 0)
+
+
+def test_kept_blobs_go_with_their_quarantined_file_count_towards_its_bytes_and_age_out_as_orphans(tmp_path):
+    now, week = time.time(), 7 * 86400
+    quarantine = tmp_path / "quarantine"
+
+    def keep(data, char, size):
+        (quarantine / spool.quarantine_blob_name(data.name, char * 64)).write_bytes(b"x" * size)
+
+    old, _ = _quarantined(quarantine, "p1__a.jsonl", 10, week + 60, now)
+    keep(old, "a", 5)
+    large, _ = _quarantined(quarantine, "p1__b.jsonl", 10, 120, now)
+    keep(large, "b", 40)
+    recent, _ = _quarantined(quarantine, "p1__c.jsonl", 10, 60, now)
+    orphans = [quarantine / spool.quarantine_blob_name(f"p1__{char}.jsonl", char * 64) for char in "de"]
+    for path in orphans:
+        path.write_bytes(b"x")
+    os.utime(orphans[0], (now - week - 60, now - week - 60))
+    # The old file goes by age, the large one (10 bytes and a 40 byte blob) by size; each takes its blob along.
+    assert sweep_quarantine(tmp_path, max_bytes=45, max_age_seconds=week, now=now) == (2, 65)
+    assert sorted(os.listdir(quarantine)) == sorted([recent.name, recent.name + spool.REASON_SUFFIX, orphans[1].name])
 
 
 def test_scan_applies_quarantine_limits_once_per_interval_without_a_blobs_directory(tmp_path, monkeypatch):

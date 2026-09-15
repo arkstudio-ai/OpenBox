@@ -17,10 +17,11 @@ from pathlib import Path
 
 import pytest
 
+from trajectory import spool
 from trajectory.storage import LocalBlobStore, decode_blob
 from trajectory.store.models import TrajectoryEventKey, TrajectoryIngestFile, TrajectoryPayload
 from trajectory.types import canonical
-from trajectory.worker.ingest import IngestService
+from trajectory.worker.ingest import INFLIGHT_FILE, IngestService
 from tests.unit.test_worker_ingest import (FakeMetrics, FakeRetention, SpoolWriter, event, events_of, rows,  # noqa: F401
     settings, trace_db)
 
@@ -149,6 +150,9 @@ async def test_a_killed_ingest_resumes_without_duplicates_or_losses(trace_db, se
     blob_root, marker = tmp_path / "blobs", tmp_path / "marker"
     await asyncio.to_thread(_kill_at, boundary, str(trace_db.url.render_as_string(hide_password=False)),
                             settings.spool_dir, blob_root, marker)
+    # Killed inside a batch of the first file: no finally block removed the in-flight marker that names it.
+    inflight = settings.spool_dir / spool.CONTROL_DIR / INFLIGHT_FILE
+    assert json.loads(inflight.read_bytes())["file"] == spool.file_name(1)
 
     # What the killed process left behind: committed offsets only.
     files = await rows(TrajectoryIngestFile)
@@ -166,6 +170,7 @@ async def test_a_killed_ingest_resumes_without_duplicates_or_losses(trace_db, se
     for _ in range(5):
         if not (await service.run_once())["lines"]:
             break
+    assert not inflight.exists()
 
     trajectory, stored = await events_of("ses_1")
     assert [row.event_id for row in stored] == [f"evt_start_{trajectory.id}", *ids]

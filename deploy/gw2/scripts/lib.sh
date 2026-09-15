@@ -221,7 +221,8 @@ spool_host_dir() {
 
 # spool_stats: "BYTES FILES CLOSED OLDEST_AGE_SECONDS QUARANTINED". BYTES is the allocated size of every regular file
 # under producers/, blobs/ and quarantine/, as the emitter counts it against TRAJECTORY_SPOOL_MAX_BYTES; FILES, CLOSED
-# and the age are about the non-empty producer data files; QUARANTINED counts data files, not .reason sidecars.
+# and the age are about the non-empty producer data files; QUARANTINED counts data files, not their .reason sidecars
+# or the blobs kept for them (<name>.blob-<sha256>).
 spool_stats() {
   local dir now
   dir=$(spool_host_dir) || return 1
@@ -233,7 +234,7 @@ spool_stats() {
       $NF ~ /\/producers$/ && $1 > 0 && $4 ~ /\.jsonl(\.part)?$/ {
         files++; if ($4 ~ /\.jsonl$/) closed++; if (oldest == "" || $3 < oldest) oldest = $3
       }
-      $NF ~ /\/quarantine$/ && $4 !~ /^\./ && $4 !~ /\.reason$/ { quarantined++ }
+      $NF ~ /\/quarantine$/ && $4 !~ /^\./ && $4 !~ /\.reason$/ && $4 !~ /\.blob-/ { quarantined++ }
       END {
         age = (oldest == "" || now < oldest) ? 0 : now - oldest
         printf "%.0f %d %d %.0f %d\n", bytes, files, closed, age, quarantined

@@ -22,6 +22,8 @@ from tests.unit.test_worker_ingest import (SpoolWriter, event, events_of, harnes
 
 TORN = b'{"v":1,"k":"event","n":3,"t":"2026-09-14T08:0'
 DELETED = {"type": "session.deleted", "session_id": "ses_1", "user_id": "u1", "deleted_at": "2026-09-14T09:00:00.000Z"}
+#: A heartbeat this old confirms an idle producer without goodbye gone, whether or not a restart is seen.
+CONFIRMED = ingest_module.CRASH_CONFIRM_SECONDS + 1
 
 
 def _age(path, seconds):
@@ -60,6 +62,7 @@ async def test_open_part_blocks_its_producer_until_abandoned(harness):
 async def test_an_abandoned_part_whose_writer_resumes_during_the_commit_is_read_on(harness, monkeypatch):
     writer = harness.writer
     part = writer.file([writer.line("event", event(event_id="e1"))], closed=False, age=120)
+    _age(writer.directory / spool.PRODUCER_FILE, 120)
     removal = spool_reader.remove_if_unchanged
 
     def resumed(path, signature):
@@ -97,9 +100,40 @@ async def test_spool_gauges_count_blobs_and_quarantine_like_the_emitter_budget(h
     assert (gauges["spool_quarantine_bytes"], gauges["spool_quarantine_files"]) == (usage.quarantine_bytes, 1)
 
 
-async def test_abandoned_newest_part_reports_a_crashed_producer_once(harness):
+async def test_an_old_newest_part_waits_while_its_producer_heartbeats(harness):
+    """A process whose writer thread is stalled still refreshes producer.json from a thread of its own: its open
+    file stays unread however old. Once the heartbeat is stale too the file is consumed, without a gap."""
     writer = harness.writer
+    part = writer.file([writer.line("event", event(event_id="e1", run_id="run_1")), TORN], closed=False, age=600)
+    result = await harness.run()
+    assert (result["lines"], result["producer_losses"]) == (0, 0) and part.exists()
+    _age(writer.directory / spool.PRODUCER_FILE, 120)
+    result = await harness.run()
+    assert (result["events"], result["producer_losses"], result["gaps"]) == (1, 0, 0) and not part.exists()
+    assert [row.event_id for row in (await events_of("ses_1"))[1][1:]] == ["e1"]
+
+
+async def test_the_producer_of_this_process_never_abandons_its_newest_part(harness):
+    own = SpoolWriter(harness.settings.spool_dir, "20260914080008-own-9-12345678", hostname=socket.gethostname(),
+                      pid=os.getpid(), boot_id=spool.boot_id())
+    part = own.file([own.line("event", event(session="ses_own"))], closed=False, age=600)
+    _age(own.directory / spool.PRODUCER_FILE, CONFIRMED)
+    result = await harness.run()
+    assert (result["lines"], result["producer_losses"]) == (0, 0) and part.exists()
+    os.rename(part, part.with_name(spool.file_name(own.counter)))  # closed
+    assert (await harness.run())["events"] == 1
+    assert (await harness.run())["producer_losses"] == 0 and own.directory.exists()
+
+
+async def test_a_crashed_producer_is_reported_once_its_heartbeat_is_old_enough(harness):
+    writer = harness.writer
+    heartbeat = writer.directory / spool.PRODUCER_FILE
     writer.file([writer.line("event", event(event_id="e1", run_id="run_1")), TORN], closed=False, age=120)
+    _age(heartbeat, 120)
+    assert (await harness.run())["producer_losses"] == 0
+    # Idle without goodbye, but no restart is seen and the heartbeat is not CRASH_CONFIRM_SECONDS old.
+    assert (await harness.run())["producer_losses"] == 0 and writer.directory.exists()
+    _age(heartbeat, CONFIRMED)
     result = await harness.run()
     _, stored = await events_of("ses_1")
     producer = writer.producer_id
@@ -107,10 +141,71 @@ async def test_abandoned_newest_part_reports_a_crashed_producer_once(harness):
     assert stored[2].data == {"phase": "lost", "reason": "producer_crashed", "producer_id": producer, "from_n": 2,
                               "to_n": None}
     [producer_row] = await rows(TrajectoryIngestProducer)
-    assert producer_row.abandoned and result["producer_losses"] == 1
-    await harness.run()
-    assert not writer.directory.exists()
+    assert producer_row.abandoned and result["producer_losses"] == 1 and not writer.directory.exists()
+    assert (await harness.run())["producer_losses"] == 0
     assert len((await events_of("ses_1"))[1]) == 3
+
+
+async def test_a_restart_on_the_same_host_and_boot_confirms_a_crash_at_once(harness):
+    writer = harness.writer
+    spool_dir = harness.settings.spool_dir
+    writer.file([writer.line("event", event(event_id="e1", run_id="run_1"))], closed=False, age=120)
+    _age(writer.directory / spool.PRODUCER_FILE, 120)
+    await harness.run()
+    # Another boot, or a start before the old heartbeat stopped, is no restart of that process.
+    SpoolWriter(spool_dir, "20260914080100-elsewhere-2-bbbbbbbb", boot_id="another", started_at=spool.timestamp())
+    SpoolWriter(spool_dir, "20260914080101-elsewhere-3-cccccccc", started_at=spool.timestamp(time.time() - 3600))
+    assert (await harness.run())["producer_losses"] == 0 and writer.directory.exists()
+    SpoolWriter(spool_dir, "20260914080102-elsewhere-4-dddddddd", started_at=spool.timestamp())
+    result = await harness.run()
+    assert result["producer_losses"] == 1 and not writer.directory.exists()
+    assert (await events_of("ses_1"))[1][-1].event_id == f"gap:{writer.producer_id}:2-:ses_1:run_1"
+
+
+async def test_a_producer_that_writes_again_before_its_crash_is_confirmed_gets_no_gap(harness):
+    writer = harness.writer
+    heartbeat = writer.directory / spool.PRODUCER_FILE
+    writer.file([writer.line("event", event(event_id="e1", run_id="run_1"))], closed=False, age=120)
+    _age(heartbeat, 120)
+    assert (await harness.run())["events"] == 1
+    assert (await harness.run())["producer_losses"] == 0  # idle, not confirmed
+    # The process was only frozen: its heartbeat is fresh again and its next lines go to a new file.
+    os.utime(heartbeat)
+    writer.events(event(event_id="e2", run_id="run_1"))
+    for _ in range(2):
+        assert (await harness.run())["producer_losses"] == 0
+    _, stored = await events_of("ses_1")
+    assert [row.event_id for row in stored[1:]] == ["e1", "e2"] and writer.directory.exists()
+
+
+async def test_the_crash_gap_names_sessions_seen_in_the_300_seconds_before_the_heartbeat_stopped(harness):
+    """Sessions come from RecentSessions, which keeps RECENT_SESSION_SECONDS: a crash confirmed only
+    CRASH_CONFIRM_SECONDS after the last heartbeat still names the sessions seen in the 300 s before it."""
+    window, confirm = ingest_module.RECENT_SESSION_SECONDS, ingest_module.CRASH_CONFIRM_SECONDS
+    assert window - confirm >= 300
+    writer = harness.writer
+    writer.events(event(event_id="e1", run_id="run_1"), event(session="ses_old", event_id="old", run_id="run_o"))
+    await harness.run()
+    sessions = harness.service._recent.producers[writer.producer_id]
+    now = time.time()
+    sessions[("u1", "ses_1")] = (now - confirm - 290, "run_1")
+    sessions[("u1", "ses_old")] = (now - window - 10, "run_o")
+    _age(writer.directory / spool.PRODUCER_FILE, confirm + 1)
+    assert (await harness.run())["producer_losses"] == 1
+    assert (await events_of("ses_1"))[1][-1].event_id == f"gap:{writer.producer_id}:3-:ses_1:run_1"
+    assert [row.type for row in (await events_of("ses_old"))[1]] == ["trajectory.started", "input.accepted"]
+
+
+async def test_an_idle_producer_without_a_readable_producer_json_ages_by_its_directory(harness):
+    gone = SpoolWriter(harness.settings.spool_dir, "20260914080007-gone-8-99999999", hostname="gone", pid=8)
+    gone.events(event(session="ses_gone", run_id="run_g"))
+    await harness.run()
+    (gone.directory / spool.PRODUCER_FILE).unlink()
+    assert (await harness.run())["producer_losses"] == 0 and gone.directory.exists()  # the directory changed just now
+    _age(gone.directory, CONFIRMED)
+    result = await harness.run()
+    assert result["producer_losses"] == 1 and not gone.directory.exists()
+    assert (await events_of("ses_gone"))[1][-1].event_id == f"gap:{gone.producer_id}:2-:ses_gone:run_g"
 
 
 async def test_goodbye_producer_directory_is_removed_after_its_files(harness):
@@ -134,6 +229,8 @@ async def test_a_local_producer_is_declared_crashed_only_once_its_heartbeat_stop
     await harness.run()
     assert (await harness.run())["producer_losses"] == 0 and local.directory.exists()  # heartbeat fresh
     _age(local.directory / spool.PRODUCER_FILE, 120)
+    assert (await harness.run())["producer_losses"] == 0 and local.directory.exists()  # stale, not yet confirmed
+    _age(local.directory / spool.PRODUCER_FILE, CONFIRMED)
     result = await harness.run()
     assert not local.directory.exists() and result["producer_losses"] == 1
     _, stored = await events_of("ses_local")
@@ -145,13 +242,13 @@ async def test_a_local_producer_is_declared_crashed_only_once_its_heartbeat_stop
 async def test_a_producer_whose_heartbeat_stopped_is_declared_crashed_on_any_host(harness):
     """A killed backend container comes back under a new hostname, so no later producer ever shares the old one.
     A running emitter refreshes its producer.json every few seconds; one left unrefreshed for
-    TRAJECTORY_SPOOL_ABANDON_SECONDS without goodbye is dead: loss reported once, directory removed."""
+    CRASH_CONFIRM_SECONDS without goodbye is dead: loss reported once, directory removed."""
     gone = SpoolWriter(harness.settings.spool_dir, "20260914080006-oldcontainer-7-ffffffff", hostname="oldcontainer",
                        pid=7)
     gone.events(event(session="ses_gone", run_id="run_g"))
     await harness.run()
     assert (await harness.run())["producer_losses"] == 0 and gone.directory.exists()  # heartbeat fresh
-    _age(gone.directory / spool.PRODUCER_FILE, 120)
+    _age(gone.directory / spool.PRODUCER_FILE, CONFIRMED)
     result = await harness.run()
     assert not gone.directory.exists() and result["producer_losses"] == 1
     _, stored = await events_of("ses_gone")

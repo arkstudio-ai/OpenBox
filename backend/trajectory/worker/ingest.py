@@ -19,8 +19,9 @@ import socket
 import sqlite3
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as PoolTimeoutError
@@ -48,6 +49,13 @@ BACKOFF_MAX_SECONDS = 60.0
 DB_PROBE_SECONDS = 5.0
 #: Characters of the last error a quarantined batch records in its ``.reason`` file.
 ERROR_TEXT_LIMIT = 1000
+#: A file whose batch the worker process died in this often is quarantined (reason ``batch_crashed``).
+MAX_BATCH_CRASHES = 3
+#: The in-flight batch marker in the spool's ``control/`` directory: left behind, it names the batch a killed
+#: worker process was in.
+INFLIGHT_FILE = "ingest.json"
+#: An idle producer without goodbye whose heartbeat is this old is gone, even when no restart of it is seen.
+CRASH_CONFIRM_SECONDS = 300.0
 #: Immediate re-preparations of one batch when the transaction finds changed state.
 MAX_PREPARE_RETRIES = 3
 UPLOAD_CONCURRENCY = 8
@@ -397,22 +405,33 @@ class _FileFailure:
     #: Failures in a row that were not transient and happened while the trace database answered;
     #: TRAJECTORY_INGEST_MAX_BATCH_FAILURES quarantines the file.
     failures: int
+    #: Times the worker process died inside the batch (``IngestService._count_crash``); MAX_BATCH_CRASHES
+    #: quarantines the file.
+    crashes: int = 0
+    #: Wall-clock time of ``next_at``, saved so that a restart keeps the backoff.
+    retry_at: float = 0.0
 
 
 def _failures_to_state(failures: dict[tuple[str, str], _FileFailure]) -> dict:
-    return {"files": sorted([producer_id, name, failure.attempts, failure.failures, failure.offset]
-                            for (producer_id, name), failure in failures.items())}
+    return {"files": sorted([producer_id, name, failure.attempts, failure.failures, failure.offset, failure.crashes,
+                             failure.retry_at] for (producer_id, name), failure in failures.items())}
 
 
 def _failures_from_state(value) -> dict[tuple[str, str], _FileFailure]:
-    """File failures as ``_failures_to_state`` saved them; retried at once, as their backoff is not saved."""
+    """File failures as ``_failures_to_state`` saved them, each backing off for the time it had left.
+
+    That time is capped by the backoff of its attempts: a wall clock set back must not hold a file longer.
+    """
     failures = {}
     entries = value.get("files") if isinstance(value, dict) else None
+    now, moment = time.time(), time.monotonic()
     for entry in entries if isinstance(entries, list) else ():
-        if (isinstance(entry, list) and len(entry) == 5 and all(isinstance(item, str) for item in entry[:2])
-                and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in entry[2:])):
-            producer_id, name, attempts, count, offset = entry
-            failures[(producer_id, name)] = _FileFailure(0.0, attempts, offset, count)
+        if (isinstance(entry, list) and len(entry) == 7 and all(isinstance(item, str) for item in entry[:2])
+                and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in entry[2:6])
+                and isinstance(entry[6], (int, float)) and not isinstance(entry[6], bool)):
+            producer_id, name, attempts, count, offset, crashes, retry_at = entry
+            wait = min(max(0.0, retry_at - now), backoff_seconds(attempts))
+            failures[(producer_id, name)] = _FileFailure(moment + wait, attempts, offset, count, crashes, retry_at)
     return failures
 
 
@@ -466,6 +485,11 @@ class IngestService:
         self._failures_saved = 0.0
         #: (producer_id, file name) -> committed offset of the batch being ingested (the one a failure is about).
         self._positions: dict[tuple[str, str], int] = {}
+        #: The in-flight batch marker (``_mark_inflight``), whether this process may have one on disk, and whether
+        #: writing it fails (logged once).
+        self._inflight_path = Path(self.spool_dir) / spool.CONTROL_DIR / INFLIGHT_FILE
+        self._inflight = False
+        self._inflight_failing = False
         self.max_batch_failures = worker_setting(settings, "ingest_max_batch_failures",
                                                  "TRAJECTORY_INGEST_MAX_BATCH_FAILURES", 10)
         self.quarantine_max_bytes = worker_setting(settings, "quarantine_max_bytes",
@@ -482,7 +506,9 @@ class IngestService:
             # The first failure, or an earlier batch of the file committed since: this one fails for the first time.
             previous = _FileFailure(0.0, 0, offset, 0)
         attempts = previous.attempts + 1
-        return _FileFailure(time.monotonic() + backoff_seconds(attempts), attempts, offset, previous.failures)
+        delay = backoff_seconds(attempts)
+        return _FileFailure(time.monotonic() + delay, attempts, offset, previous.failures, previous.crashes,
+                            time.time() + delay)
 
     async def _failed(self, spool_file, scan, exc: Exception, result: dict) -> bool:
         """Back off a file whose batch failed; True when the batch failed too often and the file was quarantined.
@@ -519,6 +545,23 @@ class IngestService:
                     key[0], key[1], failure.attempts, failure.failures, transient, available, error_type)
         return False
 
+    async def _crashed(self, spool_file, scan, failure: _FileFailure, result: dict) -> bool:
+        """Quarantine a file whose batch the worker process died in MAX_BATCH_CRASHES times (``batch_crashed``).
+
+        A batch that kills the process (out of memory, say) never counts as failed, so it would be retried forever.
+        Its lines from the offset are reported lost like those of any quarantined file. False when the file could
+        not be moved.
+        """
+        key = (spool_file.producer_id, spool_file.name)
+        path = spool_reader.locate(spool_file)
+        parsed = ParsedBatch([], failure.offset, "batch_crashed",
+                             f"the worker process died in this batch {failure.crashes} times")
+        if path is None or not await self._quarantine(spool_file, scan, path, failure.offset, parsed, result):
+            return False
+        self._failures.pop(key, None)
+        self._positions.pop(key, None)
+        return True
+
     async def run_once(self, max_lines: int | None = None) -> dict:
         """One pass over the ready spool files; counters plus ``trajectories`` (ids whose committed seq advanced)."""
         result: dict = {name: 0 for name in COUNTERS}
@@ -543,7 +586,7 @@ class IngestService:
             # A finished file makes the producer's next listed file eligible in the same pass;
             # a file left unfinished blocks its producer until the next pass.
             progressed = False
-            for spool_file in spool_reader.select_ready(scan, consumed, now=now,
+            for spool_file in spool_reader.select_ready(scan, consumed, now=now, alive=self._own,
                                                         abandon_seconds=self.settings.spool_abandon_seconds):
                 key = (spool_file.producer_id, spool_file.name)
                 if key in waiting:
@@ -555,6 +598,16 @@ class IngestService:
                 if failure is not None and time.monotonic() < failure.next_at:
                     result["deferred_batches"] += 1
                     waiting[key] = spool_file.mtime
+                    continue
+                row = files.get(key)
+                if (failure is not None and failure.crashes >= MAX_BATCH_CRASHES
+                        and failure.offset == (row["bytes_consumed"] if row else 0)):
+                    if await self._crashed(spool_file, scan, failure, result):
+                        consumed.add(key)
+                        progressed = True
+                    else:
+                        self._failures[key] = self._next_failure(key, failure.offset)
+                        waiting[key] = spool_file.mtime
                     continue
                 try:
                     lines, finished = await self._consume_file(spool_file, scan, files, result, remaining)
@@ -597,75 +650,87 @@ class IngestService:
     # Files ----------------------------------------------------------------------
 
     async def _consume_file(self, spool_file, scan, files, result, remaining) -> tuple[int, bool]:
-        """Ingest one file batch by batch: ``(lines consumed, file finished)``."""
+        """Ingest one file batch by batch: ``(lines consumed, file finished)``.
+
+        Every batch is named in the in-flight marker before it is read (``_mark_inflight``). The marker goes when
+        this returns or raises, so only a process that was killed leaves it behind (``_count_crash``).
+        """
         key = (spool_file.producer_id, spool_file.name)
         row = files.get(key)
         offset = row["bytes_consumed"] if row else 0
         consumed = 0
-        while True:
-            # The committed offset of the batch that follows: a failure of this file is about that batch.
-            self._positions[key] = offset
-            held = self._backoff.get((spool_file.producer_id, spool_file.name, offset))
-            if held is not None and time.monotonic() < held.next_at:
-                # Waiting for the blob store: skip reading and preparing the batch again.
-                result["deferred_batches"] += 1
-                return consumed, False
-            path = spool_reader.locate(spool_file)
-            if path is None:
-                return consumed, False
-            closed = path.name.endswith(spool.CLOSED_SUFFIX)
-            signature = spool_reader.stat_signature(path)
-            limit = self.settings.ingest_batch_lines
-            if remaining is not None:
-                limit = min(limit, remaining - consumed)
-                if limit <= 0:
+        try:
+            while True:
+                # The committed offset of the batch that follows: a failure of this file is about that batch.
+                self._positions[key] = offset
+                held = self._backoff.get((spool_file.producer_id, spool_file.name, offset))
+                if held is not None and time.monotonic() < held.next_at:
+                    # Waiting for the blob store: skip reading and preparing the batch again.
+                    result["deferred_batches"] += 1
                     return consumed, False
-            batch = await asyncio.to_thread(spool_reader.read_batch, path, offset, max_lines=limit,
-                                            max_bytes=self.settings.ingest_batch_bytes)
-            parsed = await asyncio.to_thread(parse_batch, batch.lines)
-            if parsed.bad_offset is None and batch.eof and batch.tail_bytes and closed:
-                # A closed file ends with a complete line; anything else is damage.
-                parsed.bad_offset, parsed.bad_reason, parsed.bad_error = batch.end_offset, "torn_closed_file", "tail"
-            bad = parsed.bad_offset is not None
-            finished = not bad and batch.eof and (closed or self._still_abandoned(path, signature))
-            end_offset = parsed.items[-1].end if parsed.items else offset
-            abandoned = finished and not closed and scan.producers[spool_file.producer_id].files[-1].counter == \
-                spool_file.counter
-            if parsed.items or finished:
-                committed = await self._ingest_batch(
-                    spool_file, scan, lines=batch.lines[:len(parsed.items)], parsed=parsed, offset=offset,
-                    end_offset=end_offset, finished=finished, abandoned=abandoned, torn=batch.tail_bytes > 0,
-                    result=result)
-                if not committed:
+                path = spool_reader.locate(spool_file)
+                if path is None:
                     return consumed, False
-                consumed += len(parsed.items)
-                offset = end_offset
-            if bad:
-                if not await self._quarantine(spool_file, scan, path, offset, parsed, result):
-                    self._positions[key] = offset
-                    raise QuarantineDeferred(consumed)
-                return consumed, True
-            if finished:
-                if closed:
-                    removed = spool_reader.remove_file(path)
-                else:
-                    # An abandoned .part whose writer resumed while the batch committed keeps its new lines: the
-                    # file stays and its row reopens, so the next pass reads on from the committed offset.
-                    removed = await asyncio.to_thread(spool_reader.remove_if_unchanged, path, signature)
-                    if not removed and spool_reader.locate(spool_file) is not None:
-                        await self._reopen_file(key)
+                closed = path.name.endswith(spool.CLOSED_SUFFIX)
+                signature = spool_reader.stat_signature(path)
+                limit = self.settings.ingest_batch_lines
+                if remaining is not None:
+                    limit = min(limit, remaining - consumed)
+                    if limit <= 0:
                         return consumed, False
-                if removed:
-                    await self._forget_files([key])
-                result["files_done"] += 1
-                return consumed, True
-            if batch.eof:
-                return consumed, False
+                self._mark_inflight(key, offset)
+                batch = await asyncio.to_thread(spool_reader.read_batch, path, offset, max_lines=limit,
+                                                max_bytes=self.settings.ingest_batch_bytes)
+                parsed = await asyncio.to_thread(parse_batch, batch.lines)
+                if parsed.bad_offset is None and batch.eof and batch.tail_bytes and closed:
+                    # A closed file ends with a complete line; anything else is damage.
+                    parsed.bad_offset, parsed.bad_reason = batch.end_offset, "torn_closed_file"
+                    parsed.bad_error = "tail"
+                bad = parsed.bad_offset is not None
+                finished = not bad and batch.eof and (
+                    closed or self._still_abandoned(spool_file, scan, path, signature))
+                end_offset = parsed.items[-1].end if parsed.items else offset
+                if parsed.items or finished:
+                    committed = await self._ingest_batch(
+                        spool_file, scan, lines=batch.lines[:len(parsed.items)], parsed=parsed, offset=offset,
+                        end_offset=end_offset, finished=finished, torn=batch.tail_bytes > 0, result=result)
+                    if not committed:
+                        return consumed, False
+                    consumed += len(parsed.items)
+                    offset = end_offset
+                if bad:
+                    if not await self._quarantine(spool_file, scan, path, offset, parsed, result):
+                        self._positions[key] = offset
+                        raise QuarantineDeferred(consumed)
+                    return consumed, True
+                if finished:
+                    if closed:
+                        removed = spool_reader.remove_file(path)
+                    else:
+                        # An abandoned .part whose writer resumed while the batch committed keeps its new lines:
+                        # the file stays and its row reopens, so the next pass reads on from the committed offset.
+                        removed = await asyncio.to_thread(spool_reader.remove_if_unchanged, path, signature)
+                        if not removed and spool_reader.locate(spool_file) is not None:
+                            await self._reopen_file(key)
+                            return consumed, False
+                    if removed:
+                        await self._forget_files([key])
+                    result["files_done"] += 1
+                    return consumed, True
+                if batch.eof:
+                    return consumed, False
+        finally:
+            self._clear_inflight()
 
-    def _still_abandoned(self, path, signature) -> bool:
+    def _still_abandoned(self, spool_file, scan, path, signature) -> bool:
+        """A ``.part`` read to its end is unchanged and still abandoned, with its producer's heartbeat read again."""
         current = spool_reader.stat_signature(path)
-        return (current is not None and current == signature
-                and time.time() - current[1] >= self.settings.spool_abandon_seconds)
+        if current is None or current != signature:
+            return False
+        producer = scan.producers[spool_file.producer_id]
+        return spool_reader.abandoned(producer, replace(spool_file, mtime=current[1]), now=time.time(),
+                                      abandon_seconds=self.settings.spool_abandon_seconds,
+                                      heartbeat=spool_reader.heartbeat(producer.path), alive=self._own(producer))
 
     async def _reopen_file(self, key) -> None:
         """A file consumed as abandoned changed before its removal: its writer was only stalled, so read on."""
@@ -722,7 +787,7 @@ class IngestService:
 
     # Batches ----------------------------------------------------------------------
 
-    async def _ingest_batch(self, spool_file, scan, *, lines, parsed, offset, end_offset, finished, abandoned, torn,
+    async def _ingest_batch(self, spool_file, scan, *, lines, parsed, offset, end_offset, finished, torn,
                             result) -> bool:
         """Prepare, upload and commit one batch; False when it waits for a blob store backoff."""
         key = (spool_file.producer_id, spool_file.name, offset)
@@ -747,7 +812,7 @@ class IngestService:
                     await self._check_queued(prepared, key)
                     await self._upload(prepared, key, result)
                     await self._commit(spool_file, scan, prepared, offset=offset, end_offset=end_offset,
-                                       finished=finished, abandoned=abandoned, torn=torn, result=result)
+                                       finished=finished, torn=torn, result=result)
             except UploadsDeferred:
                 result["deferred_batches"] += 1
                 return False
@@ -992,8 +1057,8 @@ class IngestService:
 
     # Transactions -------------------------------------------------------------------
 
-    async def _commit(self, spool_file, scan, prepared: PreparedBatch, *, offset, end_offset, finished, abandoned,
-                      torn, result) -> None:
+    async def _commit(self, spool_file, scan, prepared: PreparedBatch, *, offset, end_offset, finished, torn,
+                      result) -> None:
         stored = self._stored.get((spool_file.producer_id, spool_file.name, offset), ())
         tx = _Transaction(self, prepared, producer_id=spool_file.producer_id, stored=frozenset(stored))
         try:
@@ -1001,16 +1066,14 @@ class IngestService:
                 await tx.begin(db, scan, file_name=spool_file.name, offset=offset)
                 for item in prepared.items:
                     await tx.apply(db, item)
-                if abandoned:
-                    # All files consumed, no goodbye, and the newest file was an abandoned .part.
-                    await tx.producer_crashed(db)
+                # An abandoned .part reports no loss by itself: only a producer confirmed gone does (_dead).
                 await tx.finish(db, end_offset=end_offset, finished=finished)
         except IntegrityError as exc:
             log.warning("Ingest transaction conflict error_type=%s producer_id=%s", type(exc).__name__,
                         spool_file.producer_id)
             raise RetryBatch() from exc
         tx.after_commit(result)
-        if torn and finished and not abandoned:
+        if torn and finished:
             log.info("Ignored the torn last line of abandoned spool file producer_id=%s file=%s",
                      spool_file.producer_id, spool_file.name)
 
@@ -1058,7 +1121,7 @@ class IngestService:
         return True
 
     async def _finish_producers(self, scan, result) -> None:
-        """Remove finished producer directories; declare dead producers without goodbye abandoned once."""
+        """Remove finished producer directories; declare producers without goodbye crashed once, when confirmed gone."""
         idle = [producer for producer in scan.producers.values() if not producer.files]
         if not idle:
             return
@@ -1074,7 +1137,7 @@ class IngestService:
                 if await asyncio.to_thread(spool_reader.remove_producer_dir, producer.path):
                     await self._forget_producer(producer.producer_id)
                 continue
-            if not self._dead(producer):
+            if not self._dead(producer, scan):
                 continue
             tx = _Transaction(self, PreparedBatch([], None, meta.MetaCache()), producer_id=producer.producer_id)
             try:
@@ -1099,29 +1162,59 @@ class IngestService:
         except Exception as exc:
             log.warning("Ingest producer bookkeeping cleanup failed error_type=%s", type(exc).__name__)
 
-    def _dead(self, producer) -> bool:
-        """Whether an idle producer without goodbye has ended (SPEC §8.2).
-
-        A running emitter refreshes the mtime of its producer.json every few seconds
-        (``Emitter.HEARTBEAT_SECONDS``), so one unrefreshed for TRAJECTORY_SPOOL_ABANDON_SECONDS belongs to a
-        process that is gone, wherever it ran: a recreated container never comes back under its old hostname.
-        A pid is no evidence either way: the containers of one pod share hostname and boot id but not
-        their pid namespace. The producer of this very process is never dead.
-        """
-        try:
-            age = time.time() - os.stat(producer.path / spool.PRODUCER_FILE).st_mtime
-        except OSError:
-            return False
+    def _own(self, producer) -> bool:
+        """Whether ``producer`` is the emitter of this very process (embedded mode), alive whatever its heartbeat."""
         document = producer.document if isinstance(producer.document, dict) else {}
-        if (document.get("hostname") == self.hostname and document.get("boot_id") == self.boot_id
-                and document.get("pid") == os.getpid()):
+        return (document.get("hostname") == self.hostname and document.get("boot_id") == self.boot_id
+                and document.get("pid") == os.getpid())
+
+    def _dead(self, producer, scan) -> bool:
+        """Whether an idle producer without goodbye is confirmed gone (SPEC §8.2).
+
+        A running emitter refreshes the mtime of its producer.json every few seconds from a thread of its
+        own (``Emitter.HEARTBEAT_SECONDS``), even while its writer is stalled. A heartbeat
+        TRAJECTORY_SPOOL_ABANDON_SECONDS old confirms the producer gone once another producer with the same
+        hostname and boot id started after it (the process restarted), and one CRASH_CONFIRM_SECONDS old in
+        any case: a process that writes again before then was only frozen and gets no gap. Without a
+        readable producer.json the directory's mtime stands in for the heartbeat. A pid is no evidence
+        either way: the containers of one pod share hostname and boot id but not their pid namespace, and a
+        recreated container never comes back under its old hostname. The producer of this very process is
+        never dead.
+        """
+        if self._own(producer):
             return False
-        return age >= self.settings.spool_abandon_seconds
+        seen = spool_reader.heartbeat(producer.path)
+        if seen is None:
+            try:
+                seen = os.stat(producer.path).st_mtime
+            except OSError:
+                return False
+        age = time.time() - seen
+        if age < self.settings.spool_abandon_seconds:
+            return False
+        return age >= CRASH_CONFIRM_SECONDS or self._restarted(producer, scan, seen)
+
+    @staticmethod
+    def _restarted(producer, scan, seen: float) -> bool:
+        """Whether another producer of the scan with ``producer``'s hostname and boot id started after ``seen``."""
+        document = producer.document if isinstance(producer.document, dict) else {}
+        identity = (document.get("hostname"), document.get("boot_id"))
+        if not all(isinstance(value, str) for value in identity):
+            return False
+        for other in scan.producers.values():
+            if other is producer or not isinstance(other.document, dict):
+                continue
+            if (other.document.get("hostname"), other.document.get("boot_id")) != identity:
+                continue
+            started = meta.parse_time(other.document.get("started_at"))
+            if started is not None and started.timestamp() > seen:
+                return True
+        return False
 
     # Worker state ------------------------------------------------------------------
 
     async def _load_state(self) -> None:
-        """Recent producer sessions and file failures as the previous writer saved them, once."""
+        """Recent producer sessions, file failures and a crash the previous writer left behind; once."""
         if self._recent is not None:
             return
         values = {}
@@ -1137,6 +1230,57 @@ class IngestService:
         self._failures = _failures_from_state(values.get(FAILURES_STATE_KEY))
         self._saved_failures = _failures_to_state(self._failures)
         self._recent_saved = self._failures_saved = time.monotonic()
+        if self._count_crash():
+            # At once: the batch may kill this process too, before any throttled save.
+            await self._save_failures(force=True)
+        self._clear_inflight(force=True)
+
+    def _count_crash(self) -> bool:
+        """One more crash of the batch a leftover in-flight marker names: the previous process died inside it.
+
+        The first crash unless the file's failure is about the same offset. True when a crash was counted.
+        """
+        marker = spool_reader.read_producer_document(self._inflight_path) or {}
+        producer_id, name, offset = marker.get("producer_id"), marker.get("file"), marker.get("offset")
+        if not (isinstance(producer_id, str) and isinstance(name, str) and isinstance(offset, int)
+                and not isinstance(offset, bool) and offset >= 0):
+            return False
+        key = (producer_id, name)
+        failure = self._failures.get(key)
+        if failure is None or failure.offset != offset:
+            failure = self._failures[key] = _FileFailure(0.0, 0, offset, 0)
+        failure.crashes += 1
+        log.warning("The previous ingest process died inside a batch producer_id=%s file=%s offset=%s crashes=%s",
+                    producer_id, name, offset, failure.crashes)
+        return True
+
+    def _mark_inflight(self, key, offset: int) -> None:
+        """Name the batch about to be read in the in-flight marker (INFLIGHT_FILE).
+
+        Without fsync: the marker only has to outlive a killed process. When it cannot be written a crash in
+        this batch goes uncounted, and the marker of an earlier batch is removed so it takes no blame.
+        """
+        document = {"producer_id": key[0], "file": key[1], "offset": offset}
+        try:
+            try:
+                spool.write_json_atomic(self._inflight_path, document, fsync=False)
+            except FileNotFoundError:
+                spool.ensure_private_dir(self._inflight_path.parent)
+                spool.write_json_atomic(self._inflight_path, document, fsync=False)
+        except OSError as exc:
+            self._clear_inflight(force=True)
+            if not self._inflight_failing:
+                self._inflight_failing = True
+                log.warning("Ingest in-flight marker not written error_type=%s", type(exc).__name__)
+            return
+        self._inflight, self._inflight_failing = True, False
+
+    def _clear_inflight(self, *, force: bool = False) -> None:
+        """Remove the in-flight marker if this process may have written it, or with ``force`` in any case."""
+        if self._inflight or force:
+            with contextlib.suppress(OSError):
+                self._inflight_path.unlink(missing_ok=True)
+                self._inflight = False
 
     async def _save_state(self, *, force: bool = False) -> None:
         await self._save_recent(force=force)
@@ -1172,7 +1316,8 @@ class IngestService:
         self._saved_failures, self._failures_saved = value, time.monotonic()
 
     async def flush_state(self) -> None:
-        """Persist in-memory producer bookkeeping and file failures (worker shutdown)."""
+        """Persist producer bookkeeping and file failures and remove the in-flight marker (worker shutdown)."""
+        self._clear_inflight(force=True)
         await self._save_state(force=True)
 
     def _tombstones_committed(self, count: int) -> None:

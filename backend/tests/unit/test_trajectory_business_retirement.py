@@ -1,0 +1,140 @@
+"""Retirement of the business-database trajectory tables (SPEC §6.9) and the producer import boundary."""
+import ast
+import importlib
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+
+BACKEND = Path(__file__).resolve().parents[2]
+#: Not business code: the trajectory package, tests, developer scripts and
+#: migrations; main.py wires the embedded worker in embedded mode.
+_SKIPPED_DIRECTORIES = {".venv", "node_modules", "__pycache__", "tests", "trajectory", "scripts", "migrations"}
+_SKIPPED_FILES = {"main.py"}
+_TRACE_STORAGE_MODULES = ("db.models.trajectory", "trajectory.payload", "trajectory.repository",
+                          "trajectory.lifecycle", "trajectory.export", "trajectory.store", "trajectory.worker",
+                          "trajectory.storage")
+#: Removed in-transaction recorder helpers and recording-only asset downloads.
+_RETIRED_NAMES = {"read_asset_bytes", "prepare_asset_ids", "retain_request_media_in_tx", "ensure_trajectory_in_tx",
+                  "append_events_in_tx", "mark_capture_paused_in_tx", "delete_trajectory_in_tx",
+                  "prepare_trajectory_assets", "prepare_trajectory_baseline_assets",
+                  "capture_trajectory_baseline_in_tx", "PendingRange"}
+
+
+#: The producer side of the trajectory package runs inside the business process too.
+_PRODUCER_MODULES = ("trajectory/__init__.py", "trajectory/artifacts.py", "trajectory/budget.py",
+                     "trajectory/config.py", "trajectory/context.py", "trajectory/emitter.py",
+                     "trajectory/files.py", "trajectory/jobs.py", "trajectory/meta_sync.py",
+                     "trajectory/producers.py", "trajectory/recorder.py", "trajectory/spool.py",
+                     "trajectory/types.py")
+
+
+def _business_modules():
+    for directory, subdirectories, files in os.walk(BACKEND):
+        subdirectories[:] = sorted(name for name in subdirectories if name not in _SKIPPED_DIRECTORIES)
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = Path(directory) / name
+            relative = path.relative_to(BACKEND).as_posix()
+            if relative not in _SKIPPED_FILES:
+                yield relative, ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    for relative in _PRODUCER_MODULES:
+        yield relative, ast.parse((BACKEND / relative).read_text(encoding="utf-8"), filename=relative)
+
+
+def _is_trace_storage(module: str) -> bool:
+    return any(module == forbidden or module.startswith(forbidden + ".") for forbidden in _TRACE_STORAGE_MODULES)
+
+
+def test_business_code_imports_no_trajectory_storage_and_no_recording_only_downloads():
+    violations = []
+    scanned = 0
+    for relative, tree in _business_modules():
+        scanned += 1
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                violations += [f"{relative}: import {alias.name}" for alias in node.names
+                               if _is_trace_storage(alias.name)]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if _is_trace_storage(node.module) or any(
+                        _is_trace_storage(f"{node.module}.{alias.name}") for alias in node.names):
+                    violations.append(f"{relative}: from {node.module} import ...")
+                violations += [f"{relative}: imports {alias.name}" for alias in node.names
+                               if alias.name in _RETIRED_NAMES]
+            elif isinstance(node, ast.Name) and node.id in _RETIRED_NAMES:
+                violations.append(f"{relative}: uses {node.id}")
+            elif isinstance(node, ast.Attribute) and node.attr in _RETIRED_NAMES:
+                violations.append(f"{relative}: uses .{node.attr}")
+    assert scanned > 200  # The walk really covers the business packages.
+    assert violations == []
+
+
+def test_business_metadata_and_readiness_hold_no_trajectory_tables():
+    import db.models  # noqa: F401
+    from db.base import _READINESS_SCHEMA, Base
+    assert not [name for name in Base.metadata.tables if "trajector" in name]
+    assert not [name for name in _READINESS_SCHEMA if "trajector" in name]
+    # The identity carriers stay in the business schema.
+    assert "trace_context" in _READINESS_SCHEMA["session_executions"]
+    assert "trace_context" in _READINESS_SCHEMA["cron_runs"]
+    for table in ("sessions", "users", "workspaces"):
+        assert f"ix_{table}_updated_id" in {index.name for index in Base.metadata.tables[table].indexes}
+
+
+_OLD_TABLES = ("session_trajectories", "trajectory_events", "trajectory_payloads", "trajectory_records",
+               "trajectory_session_summaries", "trajectory_checkpoints", "trajectory_exports")
+
+
+def _legacy_tables(connection) -> None:
+    """The old business trajectory tables, as revision f6a8c0e2b4d6 created them, holding one recording."""
+    with Operations.context(MigrationContext.configure(connection)):
+        importlib.import_module("db.migrations.versions.f6a8c0e2b4d6_session_trajectories").create_trajectory_tables()
+    moment = datetime.now(timezone.utc)
+    connection.execute(sa.text(
+        "INSERT INTO session_trajectories (id, user_id, session_id, workspace_id, started_at, updated_at, next_seq, "
+        "committed_seq, projected_seq, schema_version, recording_status) VALUES ('trj_kept', 'u1', 's1', 'w1', "
+        ":moment, :moment, 1, 0, 0, 1, 'recording')"), {"moment": moment})
+
+
+def test_the_retirement_migration_drops_the_tables_and_downgrade_recreates_them_empty(tmp_path):
+    from db.base import RETIRED_TRAJECTORY_TABLES
+    retirement = importlib.import_module("db.migrations.versions.d3b5f7a9c1e2_retire_session_trajectories")
+    assert tuple(retirement.TABLES) == RETIRED_TRAJECTORY_TABLES
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'business.db'}")
+    with engine.begin() as connection:
+        _legacy_tables(connection)
+        # A database migrated by the earlier revision holds renamed copies.
+        connection.exec_driver_sql('ALTER TABLE "trajectory_exports" RENAME TO "legacy_trajectory_exports"')
+        with Operations.context(MigrationContext.configure(connection)):
+            retirement.upgrade()
+            retirement.upgrade()  # Nothing left to drop the second time.
+    with engine.begin() as connection:
+        assert not set(RETIRED_TRAJECTORY_TABLES) & set(sa.inspect(connection).get_table_names())
+        with Operations.context(MigrationContext.configure(connection)):
+            retirement.downgrade()
+    with engine.connect() as connection:
+        # The previous business code finds its tables again, but no old recording.
+        assert set(_OLD_TABLES) <= set(sa.inspect(connection).get_table_names())
+        assert connection.exec_driver_sql("SELECT COUNT(*) FROM session_trajectories").scalar() == 0
+    engine.dispose()
+
+
+def test_desktop_databases_drop_the_tables_and_index_the_sync_cursors_repeatably():
+    from db.base import RETIRED_TRAJECTORY_TABLES, _index_desktop_metadata_sync, _retire_desktop_trajectory_tables
+    engine = sa.create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        _legacy_tables(connection)
+        for table in ("sessions", "users", "workspaces"):
+            connection.exec_driver_sql(f"CREATE TABLE {table} (id VARCHAR PRIMARY KEY, updated_at DATETIME)")
+        for _ in range(2):
+            _retire_desktop_trajectory_tables(connection)
+            _index_desktop_metadata_sync(connection)
+        inspector = sa.inspect(connection)
+        assert not set(RETIRED_TRAJECTORY_TABLES) & set(inspector.get_table_names())
+        for table in ("sessions", "users", "workspaces"):
+            assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
+    engine.dispose()

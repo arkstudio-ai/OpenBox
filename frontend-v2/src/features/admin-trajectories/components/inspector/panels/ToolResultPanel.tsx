@@ -7,6 +7,7 @@ import { ContentActions } from "../ContentActions"
 import { Field, FieldList, Section } from "../Field"
 import { InlineValue } from "../InlineValue"
 import { JsonTree } from "../JsonTree"
+import { OutputTruncationNote } from "../OutputTruncationNote"
 import { RecordLink } from "../RecordLink"
 import { useInspector } from "../context"
 import { NS, type PanelProps } from "../types"
@@ -75,6 +76,7 @@ export function ToolResultPanel({ record }: PanelProps) {
         }
       >
         <ValueView field={output} />
+        <OutputTruncationNote events={record.events} />
       </Section>
       <Section
         title={t("tool.modelOutput")}

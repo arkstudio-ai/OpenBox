@@ -46,6 +46,7 @@ class FileAsset(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (
+        Index("ix_file_assets_oss_key", "oss_key"),
         Index("ix_file_assets_user_created", "user_id", "created_at"),
         Index("ix_file_assets_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_file_assets_user_project", "user_id", "project_id", "created_at"),

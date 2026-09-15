@@ -1,8 +1,20 @@
 """Shared test fixtures for all tests."""
 import asyncio
+import atexit
 import os
+import shutil
+import tempfile
+
 import pytest
 from db.base import Base, init_engine, close_engine, get_db_session
+
+# The spool is the default recording sink. Unless the shell picked a spool
+# directory, whatever tests emit lands in a throwaway one, never under
+# backend/.openbox where no worker consumes it.
+if not os.environ.get("TRAJECTORY_SPOOL_DIR"):
+    _TEST_SPOOL_DIR = tempfile.mkdtemp(prefix="openbox-test-spool-")
+    os.environ["TRAJECTORY_SPOOL_DIR"] = _TEST_SPOOL_DIR
+    atexit.register(shutil.rmtree, _TEST_SPOOL_DIR, ignore_errors=True)
 
 # Recording switches from the shell that started pytest. Importing litellm (in
 # its default DEV mode) or main.py loads backend/.env for the rest of the run,

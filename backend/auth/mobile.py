@@ -1,6 +1,8 @@
 """Durable latest-login-wins mobile sessions, independent of web sessions.
 
 Binding/login mutations share a short PostgreSQL advisory transaction lock.
+Notification writes share that lock in read mode and serialize per recipient,
+so unrelated chat completions can commit concurrently.
 No network I/O happens under this lock. This also serializes cross-account
 installation/token moves without a lock-order inversion. Reads don't lock.
 """
@@ -37,6 +39,21 @@ def session_error(code="AUTH_MOBILE_SESSION_REPLACED"):
 async def lock_mutation(db):
     if db.bind.dialect.name == "postgresql":
         await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LOCK_ID})
+
+
+async def lock_notification(db, user_id):
+    """Keep a recipient's outbox atomic with device changes, without blocking other users.
+
+    Always take the shared binding guard before the recipient lock. Login,
+    token moves and delivery claims retain the exclusive binding guard.
+    Transactions writing multiple recipients must take lock_mutation() first.
+    PostgreSQL's two-integer advisory keys are separate from the binding
+    guard's bigint key; hash collisions only serialize extra recipients.
+    """
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(text("SELECT pg_advisory_xact_lock_shared(:key)"), {"key": _LOCK_ID})
+        await db.execute(text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:recipient))"),
+                         {"namespace": _LOCK_ID, "recipient": user_id})
 
 
 @asynccontextmanager

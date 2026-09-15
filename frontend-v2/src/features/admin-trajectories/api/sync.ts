@@ -1,4 +1,4 @@
-// Ordered catch-up for one target session. The socket and the 1 s poll only
+// Ordered catch-up for one target session. The socket and the periodic poll only
 // say "something may be committed"; every fact arrives through REST event
 // pages, applied strictly in seq order. Duplicates and stale watermarks are
 // ignored, a hole in the sequence is reported instead of skipped, and any
@@ -18,7 +18,7 @@ import { ApiError } from "@/shared/api/http"
 import type { CheckpointResponse, EventPage, ProjectionState, Seq, TrajectoryEvent } from "../types/protocol"
 import { EventShapeError, ingestCheckpoint, validateEvent, type CheckpointRejection } from "../utils/adapter"
 import { emptyState, reduceMany } from "../utils/projector"
-import { addSeq, eqSeq, gtSeq, lastIndexAtOrBefore, lteSeq, ltSeq, maxSeq } from "../utils/seq"
+import { addSeq, eqSeq, gtSeq, lastIndexAtOrBefore, lteSeq, ltSeq, maxSeq, minSeq } from "../utils/seq"
 import type { EventPageParams } from "./endpoints"
 
 export interface SyncTransport {
@@ -92,6 +92,15 @@ export interface SyncOptions {
  */
 const SIDE_EXTEND_PAGES = 4
 
+/**
+ * Least time from the end of one live event read to a read a watermark hint
+ * starts. A streaming run announces every commit: the hints in between are
+ * coalesced into one read on the trailing edge.
+ */
+export const HINT_READ_SPACING_MS = 300
+/** A live read refused as busy or unavailable is retried this long after, when the answer names no Retry-After. */
+export const DEFAULT_RETRY_AFTER_MS = 1_000
+
 class GapError extends Error {
   constructor(readonly expected: Seq) {
     super(`Trajectory sequence gap at ${expected}`)
@@ -121,6 +130,25 @@ export function classifyError(error: unknown): SyncError {
   if (error instanceof WatermarkError) return { kind: "malformed", seq: error.seq }
   if (error instanceof GapError) return { kind: "gap", seq: error.expected }
   return { kind: "network" }
+}
+
+/**
+ * When to read again after a refusal the server marks as temporary — 429 (its
+ * read slots are busy) or 503 (a read deadline, or the database) — from the
+ * answer's Retry-After (delay-seconds or an HTTP date), never sooner than
+ * HINT_READ_SPACING_MS. Null for any other failure.
+ */
+export function busyRetryDelay(error: unknown, now: number = Date.now()): number | null {
+  if (!(error instanceof ApiError) || (error.status !== 429 && error.status !== 503)) return null
+  const header = error.retryAfter?.trim() ?? ""
+  let delay = DEFAULT_RETRY_AFTER_MS
+  if (/^\d+$/.test(header)) {
+    delay = Number(header) * 1000
+  } else if (header) {
+    const at = Date.parse(header)
+    if (!Number.isNaN(at)) delay = at - now
+  }
+  return Math.max(HINT_READ_SPACING_MS, delay)
 }
 
 /** Events strictly after `after` (and not after `until`), verified contiguous. Throws on holes or bad envelopes. */
@@ -174,6 +202,12 @@ export class TrajectorySync {
   private opening = false
   private pumping = false
   private pumpAgain = false
+  /** When the last live event read ended (`Date.now()`); a hint's read keeps HINT_READ_SPACING_MS after it. */
+  private lastRead = 0
+  /** A pump that is due: a hint's trailing read, or a retry the server asked for. */
+  private timer: ReturnType<typeof setTimeout> | null = null
+  /** The due pump honours a Retry-After: neither hints nor polls read before it. */
+  private backoff = false
   private phase: SyncPhase = "idle"
   private error: SyncError | null = null
   private version = 0
@@ -249,21 +283,26 @@ export class TrajectorySync {
     }
   }
 
-  /** A watermark hint from the socket or a status probe. Stale or duplicate hints do nothing. */
+  /**
+   * A watermark hint from the socket or a status probe. Stale or duplicate
+   * hints do nothing; the rest are coalesced into spaced reads (`requestPump`).
+   */
   noteCommitted(seq: Seq): void {
     if (this.phase !== "live" || !this.main) return
     if (lteSeq(seq, lastSeq(this.main))) return
     this.head = maxSeq(this.head, seq)
     this.emit()
-    void this.pump()
+    this.requestPump()
   }
 
   /**
    * The periodic head check. Recovers a notification that was never delivered,
    * retries an open that failed on the network, and is how a deletion without
-   * a new seq is noticed (the next read answers 404/410).
+   * a new seq is noticed (the next read answers 404/410). It reads at once,
+   * unless the server asked to wait: then its scheduled retry is the next read.
    */
   poll(): Promise<void> {
+    if (this.backoff) return Promise.resolve()
     if (this.phase === "live") return this.pump()
     if (this.phase === "opening" && !this.main && !this.opening) return this.open()
     return Promise.resolve()
@@ -289,39 +328,95 @@ export class TrajectorySync {
     this.head = "0"
     this.opening = false
     this.pumpAgain = false
+    this.cancelDue()
     this.phase = phase
     this.emit()
   }
 
+  /**
+   * Reads up to the committed head now. One already running is followed by
+   * exactly one more (`pumpAgain`), spaced like a hint's read. A 429 or 503
+   * does not fail the stream: the read is retried after the server's
+   * Retry-After, and nothing reads before then.
+   */
   private async pump(): Promise<void> {
     if (this.pumping) {
       this.pumpAgain = true
       return
     }
+    this.cancelDue()
     this.pumping = true
+    this.pumpAgain = false
     const generation = this.generation
+    let retry: number | null = null
+    let failed = false
     try {
-      do {
-        this.pumpAgain = false
-        await this.fetchTail(generation)
-      } while (this.pumpAgain && generation === this.generation)
+      let more = true
+      while (more) more = await this.fetchTail(generation)
     } catch (error) {
-      if (generation === this.generation) this.fail(error)
+      if (generation === this.generation) {
+        retry = busyRetryDelay(error)
+        failed = retry === null
+        if (failed) this.fail(error)
+      }
     } finally {
       this.pumping = false
     }
+    if (generation !== this.generation) return
+    if (retry !== null) {
+      this.due(retry, true)
+    } else if (this.pumpAgain && !failed) {
+      this.pumpAgain = false
+      this.requestPump()
+    }
   }
 
-  private async fetchTail(generation: number): Promise<void> {
+  /**
+   * A read for a hint: at once when the last live read ended at least
+   * HINT_READ_SPACING_MS ago, otherwise on the trailing edge of that spacing.
+   * However many hints arrive, a running pump records one more and a read that
+   * is already due (trailing, or a retry) takes them all.
+   */
+  private requestPump(): void {
+    if (this.pumping) {
+      this.pumpAgain = true
+      return
+    }
+    if (this.timer !== null) return
+    const wait = this.lastRead + HINT_READ_SPACING_MS - Date.now()
+    if (wait <= 0) void this.pump()
+    else this.due(wait, false)
+  }
+
+  private due(delay: number, backoff: boolean): void {
+    this.cancelDue()
+    const generation = this.generation
+    this.backoff = backoff
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.backoff = false
+      if (generation === this.generation) void this.pump()
+    }, delay)
+  }
+
+  private cancelDue(): void {
+    if (this.timer !== null) clearTimeout(this.timer)
+    this.timer = null
+    this.backoff = false
+  }
+
+  /** Event pages up to the committed head; true when the page budget ran out with more to read. */
+  private async fetchTail(generation: number): Promise<boolean> {
     for (let pages = 0; pages < this.maxPages; pages += 1) {
       const main = this.main
-      if (!main || generation !== this.generation) return
+      if (!main || generation !== this.generation) return false
       const after = lastSeq(main)
-      const page = await this.transport.events(
-        { afterSeq: after, limit: this.pageSize },
-        this.controller.signal,
-      )
-      if (generation !== this.generation || this.main !== main) return
+      const page = await this.transport
+        .events({ afterSeq: after, limit: this.pageSize }, this.controller.signal)
+        .finally(() => {
+          this.lastRead = Date.now()
+        })
+      if (generation !== this.generation || this.main !== main) return false
       const fresh = contiguousTail(page.events, lastSeq(main), page.until_seq)
       this.head = maxSeq(this.head, maxSeq(page.committed_seq, page.until_seq))
       if (fresh.length) {
@@ -331,10 +426,10 @@ export class TrajectorySync {
       if (this.error) this.error = null
       this.emit()
       // No `until` was sent, so an exhausted page means the server's committed
-      // head at answer time is loaded. A newer hint re-runs the pump.
-      if (!page.has_more) return
+      // head at answer time is loaded. A newer hint pumps again.
+      if (!page.has_more) return false
     }
-    this.pumpAgain = true
+    return true
   }
 
   private fail(error: unknown): void {
@@ -381,9 +476,15 @@ export class TrajectorySync {
     return { status: "loading", seq: target }
   }
 
-  ensurePosition(seq: Seq): void {
+  ensurePosition(seq: Seq, { readAhead = false }: { readAhead?: boolean } = {}): void {
     if (this.stateAt(seq).status !== "loading" || !this.main || this.phase !== "live") return
-    void this.loadSide(seq)
+    // Playback consumes nearby events in order. Fetch at most one page ahead,
+    // stopping before the installed checkpoint; stateAt still folds only
+    // through the displayed position. A manual seek reads exactly its target.
+    const until = readAhead
+      ? minSeq(addSeq(seq, this.pageSize - 1), addSeq(this.main.base.through_seq, -1))
+      : seq
+    void this.loadSide(seq, until)
   }
 
   private project(segment: Segment, seq: Seq): ProjectionState {
@@ -396,14 +497,14 @@ export class TrajectorySync {
   }
 
   /**
-   * Events through exactly `seq` — never the history after it, which may be
-   * large and is not needed to show `seq`. A short step forward extends the
+   * Events through `until`: the target for a seek, or a bounded page for
+   * playback. A short step forward extends the
    * installed replay segment on its own base; anything else starts from the
    * checkpoint at or before `seq`. Only the most recent seek may install its
    * result, and it installs a new segment, so a superseded read never touches
    * the one on screen.
    */
-  private async loadSide(seq: Seq): Promise<void> {
+  private async loadSide(seq: Seq, until: Seq): Promise<void> {
     if (this.sideLoading && eqSeq(this.sideLoading, seq)) return
     if (!this.main) return
     const generation = this.generation
@@ -418,7 +519,7 @@ export class TrajectorySync {
         if (!current()) return
         base = segmentFrom(response, seq)
       }
-      const fresh = await this.readThrough(lastSeq(base), seq, current)
+      const fresh = await this.readThrough(lastSeq(base), until, current)
       if (!fresh) return
       const segment: Segment = { ...base, events: base.events.concat(fresh) }
       // Same base and same leading events: the fold so far still holds.

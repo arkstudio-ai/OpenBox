@@ -260,6 +260,9 @@ async def test_wait_completes_marks_asset_ready_with_size(env):
     kv = _kv(done)
     assert kv["status"] == "completed" and kv["asset_id"] == asset.id and kv["bytes"] == "1234567"
     assert "download_url" in kv and kv["duration_sec"] == "9.5"
+    # A completed OSS asset need not exist in the sandbox. A guessed absolute
+    # path made callers pass a nonexistent file to share_file.
+    assert "path" not in kv and "workspace_path" not in kv
     assert done.metadata["still_running"] is False
 
 

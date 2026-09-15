@@ -446,6 +446,12 @@ async def process_step(
     result so the caller stays the only writer.
     """
     from trajectory import bind as bind_trace, record as record_trace
+    from question.runtime import RunRevoked, current_run, is_revoked
+    run_ticket = current_run.get()
+
+    def stop_requested() -> bool:
+        # A revoked run stops dispatching exactly like an aborted one (0 SQL).
+        return abort.is_set() or (run_ticket is not None and is_revoked(run_ticket.run_id))
 
     async def persist_part(*args, **kwargs):
         with bind_trace(getattr(ctx, "trace_context", None)):
@@ -891,7 +897,7 @@ async def process_step(
 
         async def execute_one(tc_event: dict):
             nonlocal questions_waiting
-            if abort.is_set():
+            if stop_requested():
                 return None
 
             tc_idx = int(tc_event["_batch_index"])
@@ -1090,6 +1096,9 @@ async def process_step(
                 # ask() atomically saved the waiting part and its details.
                 from tool.tool import ToolResult
                 return tool_part, ToolResult(metadata={"waiting_input": True})
+            except RunRevoked:
+                # As on abort: the revoked run's tool part is not saved.
+                return None
 
             tool_part.status = (
                 ToolStatus.COMPLETED
@@ -1108,7 +1117,7 @@ async def process_step(
             pending_tool_calls,
             supports_parallel=supports_parallel,
             run_one=execute_one,
-            stop_requested=abort.is_set,
+            stop_requested=stop_requested,
         )
 
         # Gather preserves provider order, so shared loop state stays
@@ -1144,8 +1153,7 @@ async def process_step(
                                         model_id=model_id)
         finish_reason = "compact"
     except Exception as e:
-        from trajectory.types import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        if isinstance(e, RunRevoked):
             raise
         # Preserve partial prose as process narration before returning early;
         # the normal final-save block below is skipped by both retry and error
@@ -1163,8 +1171,7 @@ async def process_step(
                     user_id=user_id,
                 )
             except Exception as checkpoint_error:
-                from trajectory import TrajectoryError
-                if isinstance(checkpoint_error, TrajectoryError):
+                if isinstance(checkpoint_error, RunRevoked):
                     raise
                 log.warning("Could not checkpoint partial text after LLM failure", exc_info=True)
         retry_msg = is_retryable(e)

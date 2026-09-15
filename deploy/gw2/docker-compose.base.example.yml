@@ -1,0 +1,117 @@
+# Sanitized copy of the production base compose file, /opt/openbox/docker-compose.yml on gw2.
+#
+# The real file exists only on the servers (docs/DEPLOY.md "四、已知问题 1"). This copy follows the
+# gw2 file as read on 2026-09-14 (services, images, commands, health checks, memory limits, logging,
+# volumes) with every secret and host name replaced by a placeholder. It lets
+# docker-compose.trajectory.yml be validated with `docker compose config` (RUNBOOK.md §2, §4); compare it
+# with the server's file before a release. Secrets come from .env and config/backend.env.
+
+name: openbox
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: openbox
+      POSTGRES_PASSWORD: ${OPENBOX_DB_PASSWORD}
+      POSTGRES_DB: openbox
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openbox -d openbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 512m
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 192m
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  backend:
+    # OPENBOX_IMAGE_TAG in .env is stale on gw2: docker-compose.override.yml pins the image.
+    image: openbox-backend:${OPENBOX_IMAGE_TAG}
+    env_file:
+      - ./config/backend.env
+    # Compose environment overrides the env file for these keys (docs/DEPLOY.md).
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql+asyncpg://openbox:${OPENBOX_DB_PASSWORD}@postgres:5432/openbox
+      REDIS_URL: redis://redis:6379/0
+      WUYING_ENDPOINT: http://host.docker.internal:18001
+      LOGTO_REDIRECT_URI: https://ai.example.invalid/callback
+      LOGTO_POST_LOGOUT_REDIRECT_URI: https://ai.example.invalid
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./config/openbox.json:/app/openbox.json:ro
+      # Local blob store (BLOB_PROVIDER=local, BLOB_LOCAL_PATH=/tmp/openbox-blobs). Its trajectories/
+      # directory holds old trajectory payload files, deleted in release step 7 (RUNBOOK.md §5).
+      - blob-data:/tmp/openbox-blobs
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8080
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 3g
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "4"
+
+  frontend:
+    image: openbox-frontend-v2:${OPENBOX_IMAGE_TAG}
+    environment:
+      BACKEND_HOST: backend:8080
+    ports:
+      - 80:80
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 128m
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  postgres-data:
+  redis-data:
+  blob-data:

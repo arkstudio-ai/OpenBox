@@ -16,8 +16,6 @@ export interface FileVersion {
   sha256: string | null
   sizeBytes: number | null
   source: string | null
-  /** The retained text differs from what the executor saw (secrets removed). */
-  redacted: boolean
 }
 
 export interface FileRevision {
@@ -27,6 +25,8 @@ export interface FileRevision {
   before: FileVersion
   after: FileVersion
   diff: FieldState
+  /** Why no diff was made of two recorded versions ("too_large"). */
+  diffSkipped: string | null
 }
 
 export interface FileDiffArtifact extends Omit<FileRevision, "seq" | "occurredAt"> {
@@ -53,7 +53,6 @@ function version(record: ViewRecord, data: Record<string, unknown>, key: "before
     sha256: str(wrapper.sha256),
     sizeBytes: num(wrapper.size_bytes),
     source: str(wrapper.source),
-    redacted: wrapper.redacted === true,
   }
 }
 
@@ -69,6 +68,7 @@ function revisionFrom(record: ViewRecord, data: Record<string, unknown>) {
     before: version(record, data, "before"),
     after: version(record, data, "after"),
     diff: diffField(record, data),
+    diffSkipped: str(data.diff_skipped),
   }
 }
 

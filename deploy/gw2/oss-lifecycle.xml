@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenBox-managed lifecycle rules for the shared OSS bucket (SPEC section 12).
+
+  Apply with scripts/apply-oss-lifecycle.sh. PutBucketLifecycle replaces every rule of a
+  bucket, so the script reads the existing rules and merges these in by ID; never PUT this
+  file directly.
+
+  * Trajectory blobs and segments move to IA after 30 days. A rule on the last modified time
+    transitions objects of every size (AllowSmallFile only applies to rules on the last access
+    time), and IA bills an object under 64 KB as 64 KB. Exports are excluded by a Not filter
+    because they expire on the same day.
+  * Exports and PostgreSQL backups expire after 30 days.
+  * Incomplete multipart uploads are aborted after 7 days. OSS allows no part policy in a
+    rule with a Not filter and no two part policies on overlapping prefixes, hence the
+    separate rule for trajectories/ (it also covers trajectories/_exports/).
+-->
+<LifecycleConfiguration>
+  <Rule>
+    <ID>openbox-trajectories-ia-30d</ID>
+    <Prefix>trajectories/</Prefix>
+    <Status>Enabled</Status>
+    <Filter>
+      <Not>
+        <Prefix>trajectories/_exports/</Prefix>
+      </Not>
+    </Filter>
+    <Transition>
+      <Days>30</Days>
+      <StorageClass>IA</StorageClass>
+    </Transition>
+  </Rule>
+  <Rule>
+    <ID>openbox-trajectory-exports-expire-30d</ID>
+    <Prefix>trajectories/_exports/</Prefix>
+    <Status>Enabled</Status>
+    <Expiration>
+      <Days>30</Days>
+    </Expiration>
+  </Rule>
+  <Rule>
+    <ID>openbox-trajectories-abort-multipart-7d</ID>
+    <Prefix>trajectories/</Prefix>
+    <Status>Enabled</Status>
+    <AbortMultipartUpload>
+      <Days>7</Days>
+    </AbortMultipartUpload>
+  </Rule>
+  <Rule>
+    <ID>openbox-postgres-backups-expire-30d</ID>
+    <Prefix>backups/postgres/</Prefix>
+    <Status>Enabled</Status>
+    <Expiration>
+      <Days>30</Days>
+    </Expiration>
+    <AbortMultipartUpload>
+      <Days>7</Days>
+    </AbortMultipartUpload>
+  </Rule>
+</LifecycleConfiguration>

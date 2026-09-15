@@ -70,17 +70,17 @@ async def execute(args: BatchArgs, ctx: ToolContext) -> ToolResult:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                from trajectory.types import TrajectoryError
-                if isinstance(e, TrajectoryError):
+                from question.runtime import RunRevoked
+                if isinstance(e, RunRevoked):
                     raise
                 return f"[{inv.tool}] Error: {e}"
 
     tasks = [run_one(inv) for inv in args.invocations]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    from trajectory.types import TrajectoryError
+    from question.runtime import RunRevoked
     for result in results:
-        if isinstance(result, TrajectoryError):
+        if isinstance(result, RunRevoked):
             raise result
     output_parts = []
     for i, result in enumerate(results):

@@ -1,5 +1,8 @@
 """Production adapter/executor boundaries, independent of external providers."""
 import asyncio
+import hashlib
+import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -30,80 +33,49 @@ def context():
                                    run_id="run", step_id="step", agent_id="agent"))
 
 
-def test_request_snapshot_uses_allowlist_and_omits_private_provider_state():
+def allowing_hooks():
+    from agent.hooks import ToolHooks
+    hooks = ToolHooks("session", "owner")
+
+    async def allow(*args):
+        return None
+    hooks.authorize_tool = allow
+    return hooks
+
+
+def trace_events(recorded, call_id="call"):
+    """The recorded facts as stored events, in the order they were enqueued."""
+    return [{"seq": str(index), "version": 1, "type": event["type"], "data": event["data"],
+             "event_id": f"evt_{index}", "occurred_at": "2026-09-15T00:00:00.000Z", "user_id": "owner",
+             "session_id": "session", "source_session_id": "session", "call_id": call_id}
+            for index, event in enumerate(recorded, 1)]
+
+
+def test_request_snapshot_keeps_the_complete_body_without_transport_settings_and_credentials():
+    class Part(BaseModel):
+        type: str
+        text: str
+        provider_specific_fields: dict
+
     snapshot = request_snapshot({
-        "model": "provider/model", "api_key": "never-persist", "headers": {"Authorization": "secret"},
-        "messages": [{"role": "assistant", "content": "visible", "encrypted_content": "hidden",
-                      "_responses_input_items": [{"secret": "private"}]}],
-        "extra_body": {"reasoning_effort": "high", "access_token": "never-persist"},
-        "custom_auth_option": "never-persist", "_hidden_params": {"key": "secret"},
+        "model": "provider/model", "api_key": "sk-never-recorded", "api_base": "https://proxy.invalid/v1",
+        "extra_headers": {"Authorization": "Bearer never-recorded"}, "timeout": 30,
+        "previous_response_id": "resp_1", "include": ["reasoning.encrypted_content"],
+        "messages": [{"role": "assistant", "encrypted_content": "gAAAAB-fixture",
+                      "_responses_input_items": [{"type": "reasoning", "id": "rs_1"}],
+                      "content": [{"type": "thinking", "thinking": "why", "signature": "sig-1"},
+                                  Part(type="text", text="visible", provider_specific_fields={"cache": "hit"})]}],
+        "extra_body": {"enable_thinking": True, "top_k": 20},
     })
-    assert snapshot["messages"] == [{"role": "assistant", "content": "visible"}]
-    assert snapshot["extra_body"] == {"reasoning_effort": "high"}
-    assert "never-persist" not in str(snapshot)
-    assert "custom_auth_option" in snapshot["omitted_fields"]
-
-
-@pytest.mark.asyncio
-async def test_each_adapter_dispatch_has_identity_and_persists_chunks_before_delivery(monkeypatch, recorded):
-    import litellm
-    from agent import llm
-    calls = []
-    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {"api_key": "not-in-trace"})
-    monkeypatch.setattr(llm, "_get_variant_kwargs", lambda *_: {})
-    monkeypatch.setattr(llm, "_get_max_output_tokens", lambda _: 100)
-
-    class Chunk(SimpleNamespace):
-        def model_dump(self, **_):
-            return {"choices": [{"delta": {"content": self.choices[0].delta.content}}],
-                    "_hidden_params": {"api_key": "not-in-trace"}}
-
-    async def stream():
-        for text in ("A", "B"):
-            yield Chunk(choices=[SimpleNamespace(index=0, finish_reason=None,
-                delta=SimpleNamespace(content=text, reasoning_content=None, tool_calls=[]))], usage=None)
-
-    async def completion(**kwargs):
-        assert recorded[-1]["type"] == "request.started"
-        calls.append(kwargs)
-        return stream()
-    monkeypatch.setattr(litellm, "acompletion", completion)
-    ctx = context()
-    for attempt in range(2):
-        async for event in llm._stream_litellm_direct("provider/model", [],
-                [{"role": "user", "content": "question"}], {}, trace_ctx=ctx):
-            if event["type"] == "text_delta":
-                assert any(item["type"] == "request.delta" and
-                    item["data"]["blocks"][0]["delta"] == event["text"] for item in recorded)
-    assert len(calls) == 2
-    starts = [e for e in recorded if e["type"] == "request.started"]
-    assert len({e["context"].request_id for e in starts}) == 2
-    assert {e["context"].step_id for e in starts} == {"step"}
-    assert [e["data"]["chunk_index"] for e in recorded if e["type"] == "request.delta"] == [1, 2, 1, 2]
-    assert "not-in-trace" not in str(recorded)
-
-
-@pytest.mark.asyncio
-async def test_failed_recording_never_dispatches_provider(monkeypatch, recorded):
-    import litellm
-    import trajectory
-    from trajectory.types import TrajectoryError
-    from agent import llm
-    dispatched = False
-
-    async def failed_record(*args, **kwargs):
-        raise TrajectoryError("recording unavailable")
-
-    async def completion(**kwargs):
-        nonlocal dispatched
-        dispatched = True
-    monkeypatch.setattr(trajectory, "record", failed_record)
-    monkeypatch.setattr(litellm, "acompletion", completion)
-    monkeypatch.setattr(llm, "_get_provider_kwargs", lambda _: {})
-    with pytest.raises(TrajectoryError):
-        async for _ in llm._stream_litellm_direct("provider/model", [], [], {}, trace_ctx=context()):
-            pass
-    assert not dispatched
+    assert snapshot["omitted_fields"] == ["api_base", "api_key", "extra_headers", "timeout"]
+    assert "never-recorded" not in json.dumps(snapshot) and "proxy.invalid" not in json.dumps(snapshot)
+    assert snapshot["previous_response_id"] == "resp_1" and snapshot["include"] == ["reasoning.encrypted_content"]
+    assert snapshot["extra_body"] == {"enable_thinking": True, "top_k": 20}
+    assert snapshot["messages"] == [{"role": "assistant", "encrypted_content": "gAAAAB-fixture",
+                                     "_responses_input_items": [{"type": "reasoning", "id": "rs_1"}],
+                                     "content": [{"type": "thinking", "thinking": "why", "signature": "sig-1"},
+                                                 {"type": "text", "text": "visible",
+                                                  "provider_specific_fields": {"cache": "hit"}}]}]
 
 
 @pytest.mark.asyncio
@@ -198,6 +170,186 @@ async def test_custom_executor_full_output_slot_is_cleared_between_calls(recorde
         "model preview", "second result"]
 
 
+@pytest.mark.asyncio
+async def test_cumulative_output_pushes_are_recorded_as_suffixes_and_replay_to_the_final_output(monkeypatch, recorded):
+    from agent.hooks import ToolHooks
+    from trajectory import tool_output
+    from trajectory.projector import replay
+    # Without an interval every change is recorded at once.
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
+    hooks = ToolHooks("session", "owner")
+
+    async def allow(*args):
+        return None
+    hooks.authorize_tool = allow
+
+    async def execute(args, ctx):
+        # bash pushes its whole collected output on every chunk, repeats a push
+        # while idle, and appends an idle notice that the next chunk drops again.
+        for output in ("one", "one two", "one two", "one two three", "one two three\n[Waiting...]\n",
+                       "one two three four"):
+            await ctx.update_output(output)
+        return ToolResult(output="one two three four")
+    await hooks.wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    assert [(item["mode"], item["output"]) for item in outputs] == [
+        ("delta", "one"), ("delta", " two"), ("delta", " three"), ("delta", "\n[Waiting...]\n"),
+        ("replace", "one two three four"), ("replace", "one two three four")]
+    assert [item.get("chunk_index") for item in outputs] == [0, 1, 2, 3, 4, None]
+    assert outputs[-1]["stage"] == "executor_result" and outputs[-1]["final"] is True
+    assert all("redaction" not in item for item in outputs)
+
+    events = trace_events(recorded)
+    streamed = [event for event in events if event["type"] != "tool.output" or event["data"].get("stage") == "executor_stream"]
+    assert replay(streamed[:5])["records"]["tool:call"]["data"]["output"] == "one two three"
+    assert replay(streamed)["records"]["tool:call"]["data"]["output"] == "one two three four"
+    assert replay(events)["records"]["tool:call"]["data"]["output"] == "one two three four"
+
+
+@pytest.mark.asyncio
+async def test_hundreds_of_pushes_record_at_most_one_change_a_second_and_replay_to_the_output(monkeypatch, recorded):
+    from agent import hooks as hooks_module
+    from bus.events import PART_UPDATED
+    from trajectory.projector import replay
+    published = []
+    monkeypatch.setattr(hooks_module.bus, "publish", lambda kind, data: published.append(kind))
+    line = "x" * 230 + "\n"
+    span = {}
+
+    async def execute(args, ctx):
+        output = ""
+        span["start"] = time.monotonic()
+        for _ in range(400):
+            output += line
+            await ctx.update_output(output)
+            await asyncio.sleep(0.0025)
+        span["end"] = time.monotonic()
+        # The timer records what the burst left pending, within the interval.
+        await asyncio.sleep(1.05)
+        return ToolResult(output=output)
+    await allowing_hooks().wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    final = line * 400
+    assert len(final) // 1024 == 90
+    assert published.count(PART_UPDATED) == 400  # the chat still gets every push
+    events = trace_events(recorded)
+    stream = [event["data"] for event in events if event["data"].get("stage") == "executor_stream"]
+    assert 2 <= len(stream) <= span["end"] - span["start"] + 2
+    assert [item["chunk_index"] for item in stream] == list(range(len(stream)))
+    assert {item["mode"] for item in stream} == {"delta"}
+    assert events[-2]["data"]["stage"] == "executor_result" and events[-1]["type"] == "tool.finished"
+    streamed = [event for event in events if event["data"].get("stage") != "executor_result"]
+    assert replay(streamed)["records"]["tool:call"]["data"]["output"] == final
+    assert replay(events)["records"]["tool:call"]["data"]["output"] == final
+
+
+@pytest.mark.asyncio
+async def test_the_final_result_stays_the_last_output_while_a_flush_is_pending(monkeypatch, recorded):
+    from trajectory import tool_output
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0.05)
+
+    class Args(BaseModel):
+        value: str
+
+    async def execute(args, ctx):
+        await ctx.update_output("first")
+        await ctx.update_output("first second")  # within the interval: its flush is pending
+        return ToolResult(output="first second third")
+
+    async def custom(args, ctx):
+        return await execute(args, ctx)
+    registered = define_tool("example", description="Example", parameters=Args, execute=execute,
+                             sandbox_required=False)
+    hooks = allowing_hooks()
+    await hooks.wrap_execute("example", registered.execute, {"value": "x"}, context(), part_id="call")
+    await hooks.wrap_execute("custom", custom, {}, context(), part_id="custom")
+    await asyncio.sleep(0.12)  # past the interval: the cancelled flush records nothing
+
+    for call_id in ("call", "custom"):
+        outputs = [(event["data"]["stage"], event["data"]["output"]) for event in recorded
+                   if event["type"] == "tool.output" and event["context"].call_id == call_id]
+        assert outputs == [("executor_stream", "first"), ("executor_result", "first second third")]
+    assert recorded[-1]["type"] == "tool.finished"
+
+
+@pytest.mark.asyncio
+async def test_a_2_mib_output_is_recorded_within_the_cap_with_its_size_and_digest(monkeypatch, recorded):
+    from trajectory import tool_output
+    from trajectory.projector import replay
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
+    offloaded = []
+    to_thread = asyncio.to_thread
+
+    async def spy(function, *args):
+        offloaded.append(function.__name__)
+        return await to_thread(function, *args)
+    monkeypatch.setattr(tool_output.asyncio, "to_thread", spy)
+    block = "".join(f"{index:06d} ✓ output line\n" for index in range(1000))
+    produced = {}
+
+    async def execute(args, ctx):
+        output = ""
+        while len(output.encode()) < 2 * 1024 * 1024:
+            output += block
+            await ctx.update_output(output)
+        produced["output"] = output
+        return ToolResult(output=output)
+    await allowing_hooks().wrap_execute("custom", execute, {}, context(), part_id="call")
+
+    encoded = produced["output"].encode()
+    limit = tool_output.TOOL_OUTPUT_MAX_BYTES
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    stream, final = outputs[:-1], outputs[-1]
+    assert sum(len(item["output"].encode()) for item in stream) <= limit
+    assert stream[-1]["stream_truncated"] is True and not any(item.get("stream_truncated") for item in stream[:-1])
+    assert final["stage"] == "executor_result" and final["output_truncated"] is True
+    assert final["output_bytes"] == len(encoded) >= 2 * 1024 * 1024
+    assert final["output_sha256"] == hashlib.sha256(encoded).hexdigest()
+    head = encoded[:limit // 2].decode("utf-8", "ignore")
+    tail = encoded[len(encoded) - (limit - limit // 2):].decode("utf-8", "ignore")
+    omitted = len(encoded) - len(head.encode()) - len(tail.encode())
+    assert final["output"] == head + tool_output.OMITTED.format(size=omitted) + tail
+    assert offloaded == ["_bounded"]
+    assert replay(trace_events(recorded))["records"]["tool:call"]["data"]["output"] == final["output"]
+
+
+@pytest.mark.asyncio
+async def test_bash_without_an_output_callback_records_each_chunk_once(monkeypatch, recorded):
+    import tool.truncation
+    from tool.bash import MAX_STREAM_OUTPUT, bash_tool
+    from trajectory import tool_output
+
+    async def truncate(text):
+        return SimpleNamespace(content=text[:100], truncated=True)
+    monkeypatch.setattr(tool.truncation, "truncate_output", truncate)
+    # Every chunk is recorded (no interval, no cap), so the recorded bytes show the growth directly.
+    monkeypatch.setattr(tool_output, "TOOL_OUTPUT_RECORD_SECONDS", 0)
+    monkeypatch.setenv("TRAJECTORY_TOOL_OUTPUT_MAX_BYTES", str(64 * 1024 * 1024))
+    chunks = [f"{index:05d} {'y' * 993}\n" for index in range(300)]
+
+    class Sandbox:
+        async def execute_stream(self, **kwargs):
+            for chunk in chunks:
+                yield SimpleNamespace(content=chunk)
+            yield 0
+    ctx = context()
+    ctx.sandbox = Sandbox()
+    ctx.trace_context = ctx.trace_context.derive(call_id="call")
+    result = await bash_tool.execute({"command": "cat big.log"}, ctx)
+
+    full = "".join(chunks)
+    assert result.metadata["exit_code"] == 0 and len(full) > 2 * MAX_STREAM_OUTPUT
+    outputs = [event["data"] for event in recorded if event["type"] == "tool.output"]
+    stream = [item for item in outputs if item["stage"] == "executor_stream"]
+    # Linear: the output up to the chat budget once, then each later chunk once.
+    assert sum(len(item["output"]) for item in stream) == len(full)
+    assert "".join(item["output"] for item in stream) == full
+    assert len(stream) == len(chunks) - MAX_STREAM_OUTPUT // len(chunks[0])
+    assert {item["tool"] for item in stream} == {"bash"}
+    assert outputs[-1]["stage"] == "executor_result" and outputs[-1]["output"] == full
+
+
 def test_responses_final_only_output_is_a_replace_checkpoint():
     blocks = responses_chunk_blocks({"type": "response.completed", "response": {"output": [
         {"id": "item", "type": "message", "content": [{"type": "output_text", "text": "answer"}]},
@@ -236,38 +388,6 @@ async def test_parallel_batch_keeps_parent_and_sibling_contexts_separate(monkeyp
     assert len({part_id for _, part_id, _ in seen}) == 2
     assert {trace.parent_call_id for _, _, trace in seen} == {"parent"}
     assert {trace.session_id for _, _, trace in seen} == {"session"}
-
-
-@pytest.mark.asyncio
-async def test_stream_reader_can_fill_one_batch_before_first_receipt(monkeypatch, recorded):
-    import trajectory
-    from agent.trajectory import RequestCapture
-    capture = await RequestCapture.start(context(), purpose="chat", model_id="provider/model",
-        payload={"model": "provider/model"}, capture_level="adapter_input")
-    receipts = []
-    queued_all = asyncio.Event()
-
-    def deferred_receipt(context, event):
-        receipt = asyncio.get_running_loop().create_future()
-        receipts.append(receipt)
-        if len(receipts) == 3:
-            queued_all.set()
-        return receipt
-    monkeypatch.setattr(trajectory, "record_stream", deferred_receipt)
-
-    async def provider():
-        for text in ("one", "two", "three"):
-            yield {"type": "content", "delta": text}
-    stream = capture.stream_chunks(provider(), lambda chunk: [{"type": "text", "delta": chunk["delta"]}])
-    delivery = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(queued_all.wait(), timeout=1)
-    assert not delivery.done()
-    for receipt in receipts:
-        receipt.set_result({"committed": True})
-    assert (await delivery)["delta"] == "one"
-    assert (await anext(stream))["delta"] == "two"
-    assert (await anext(stream))["delta"] == "three"
-    await stream.aclose()
 
 
 @pytest.mark.asyncio

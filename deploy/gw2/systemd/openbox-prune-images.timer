@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly OpenBox Docker image prune (Sunday 04:30 Asia/Shanghai)
+Documentation=file:/opt/openbox/deploy/gw2/RUNBOOK.md
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00 Asia/Shanghai
+Persistent=true
+Unit=openbox-prune-images.service
+
+[Install]
+WantedBy=timers.target

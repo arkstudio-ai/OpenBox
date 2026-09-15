@@ -2,12 +2,14 @@
 // is a read except `createExport`. Nothing here can reach the chat, tool,
 // permission, question, cancel, sandbox or attachment APIs — the inspector
 // shows another person's session and must not be able to act on it.
-import { http, requestBlob, type BlobResponse } from "@/shared/api/http"
+import { ApiError, http, requestBlob, type BlobResponse } from "@/shared/api/http"
 import type {
   CheckpointResponse,
   EventPage,
   ExportJob,
+  PayloadMeta,
   RecordDetail,
+  RecordExpand,
   RecordPage,
   SearchPage,
   SessionHeader,
@@ -31,6 +33,12 @@ export function queryString(params: Params): string {
 
 function sessionPath(sessionId: string, suffix = ""): string {
   return `${TRAJECTORY_API}/sessions/${encodeURIComponent(sessionId)}${suffix}`
+}
+
+function recordPath(sessionId: string, recordId: string, throughSeq: Seq, expand: RecordExpand): string {
+  // Only `refs` is sent: for the default a server answers exactly as it did before the parameter existed.
+  const query = queryString({ through_seq: throughSeq, expand: expand === "refs" ? expand : undefined })
+  return sessionPath(sessionId, `/records/${encodeURIComponent(recordId)}${query}`)
 }
 
 export interface SessionListParams {
@@ -74,6 +82,26 @@ export interface SearchParams {
 
 const withSignal = (signal?: AbortSignal): RequestInit => (signal ? { signal } : {})
 
+async function eventPage(sessionId: string, params: EventPageParams, signal?: AbortSignal): Promise<EventPage> {
+  let limit = params.limit
+  for (;;) {
+    signal?.throwIfAborted()
+    try {
+      return await http.get<EventPage>(
+        sessionPath(sessionId, `/events${queryString({
+          after_seq: params.afterSeq, until_seq: params.untilSeq, limit, include_data: "true",
+        })}`),
+        withSignal(signal),
+      )
+    } catch (error) {
+      // Keep the cursor and watermark: smaller pages still replay every event.
+      // A single oversized event needs its individual download, not more retries.
+      if (!(error instanceof ApiError) || error.status !== 413 || (limit ?? 500) <= 1) throw error
+      limit = Math.max(1, Math.floor((limit ?? 500) / 2))
+    }
+  }
+}
+
 export const trajectoryApi = {
   listSessions: (params: SessionListParams, signal?: AbortSignal) =>
     http.get<SessionPage>(`${TRAJECTORY_API}/sessions${queryString({ ...params })}`, withSignal(signal)),
@@ -101,22 +129,13 @@ export const trajectoryApi = {
     ),
 
   record: (sessionId: string, recordId: string, throughSeq: Seq, signal?: AbortSignal) =>
-    http.get<RecordDetail>(
-      sessionPath(
-        sessionId,
-        `/records/${encodeURIComponent(recordId)}${queryString({ through_seq: throughSeq })}`,
-      ),
-      withSignal(signal),
-    ),
+    http.get<RecordDetail>(recordPath(sessionId, recordId, throughSeq, "full"), withSignal(signal)),
 
-  events: (sessionId: string, params: EventPageParams, signal?: AbortSignal) =>
-    http.get<EventPage>(
-      sessionPath(
-        sessionId,
-        `/events${queryString({ after_seq: params.afterSeq, until_seq: params.untilSeq, limit: params.limit, include_data: "true" })}`,
-      ),
-      withSignal(signal),
-    ),
+  /** The same detail with content-addressed values left as `$ref` envelopes (`capabilities.refs` servers). */
+  recordRefs: (sessionId: string, recordId: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<RecordDetail>(recordPath(sessionId, recordId, throughSeq, "refs"), withSignal(signal)),
+
+  events: eventPage,
 
   /** Without `atSeq` the server answers at its committed head and reports that head. */
   checkpoint: (sessionId: string, atSeq?: Seq, signal?: AbortSignal) =>
@@ -144,6 +163,26 @@ export const trajectoryApi = {
       sessionPath(
         sessionId,
         `/payloads/${encodeURIComponent(payloadId)}${queryString({ through_seq: throughSeq })}`,
+      ),
+      withSignal(signal),
+    ),
+
+  /** Whether protected content is still readable at H, without its bytes (`capabilities.refs` servers). */
+  payloadMeta: (sessionId: string, payloadId: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<PayloadMeta>(
+      sessionPath(
+        sessionId,
+        `/payloads/${encodeURIComponent(payloadId)}${queryString({ through_seq: throughSeq, meta: 1 })}`,
+      ),
+      withSignal(signal),
+    ),
+
+  /** The JSON a `$ref` stands for, as visible at H (`capabilities.refs` servers). */
+  blob: (sessionId: string, sha256: string, throughSeq: Seq, signal?: AbortSignal) =>
+    http.get<unknown>(
+      sessionPath(
+        sessionId,
+        `/blobs/${encodeURIComponent(sha256)}${queryString({ through_seq: throughSeq })}`,
       ),
       withSignal(signal),
     ),

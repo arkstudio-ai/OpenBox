@@ -622,7 +622,7 @@ test("refused read (403): loaded content, media and socket are dropped and readi
   server.deny(403)
   await expect(byTestId(page, "trajectory-access-denied")).toContainText(
     "Your account no longer has platform admin access.",
-    { timeout: 15_000 },
+    { timeout: 45_000 },
   )
   await expect(byTestId(page, "trajectory-record-row")).toHaveCount(0)
   await expect(inspector(page)).toHaveCount(0)

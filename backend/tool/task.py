@@ -33,6 +33,10 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
     parent_session = await session_mod.get_session(ctx.session_id, user_id=ctx.user_id or "default")
     child_model = agent_def.model or (parent_session.model if parent_session else "")
 
+    # A revoked run creates no child session; the check repeats before the child runs.
+    from question.runtime import assert_current
+    await assert_current("spawn")
+
     # Create a child session linked to parent (won't appear in sidebar)
     child = await session_mod.create_session(
         agent=args.subagent_type,
@@ -85,6 +89,11 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
             # is why the parent's row read "task · running" and nothing else.
             await _announce_child(ctx, child.id, args.subagent_type)
 
+            # The parent may have been superseded while the child was prepared:
+            # a revoked run spawns no child.
+            from question.runtime import assert_current
+            await assert_current("spawn")
+
             # Run the agent loop, and let the parent's stop reach it. The child has
             # its own abort signal, so aborting the parent alone left the subagent
             # running to completion after the user had already stopped the run.
@@ -92,7 +101,9 @@ async def execute(args: TaskArgs, ctx: ToolContext) -> ToolResult:
 
     except BaseException as exc:
         import asyncio
-        await record("agent.finished", {"status": "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+        from question.runtime import RunRevoked
+        stopped = isinstance(exc, (asyncio.CancelledError, RunRevoked))
+        await record("agent.finished", {"status": "cancelled" if stopped else "failed",
             "error": {"type": type(exc).__name__, "message": str(exc)}, "child_session_id": child.id,
             "duration_ms": (time.monotonic() - child_started) * 1000,
             "timing_source": "producer_monotonic"}, context=child_trace)
@@ -167,8 +178,8 @@ async def _announce_child(ctx: ToolContext, child_id: str, subagent_type: str) -
                     )
                     return
     except Exception as e:  # never fail the task over a progress pointer
-        from trajectory import TrajectoryError
-        if isinstance(e, TrajectoryError):
+        from question.runtime import RunRevoked
+        if isinstance(e, RunRevoked):
             raise
         log.debug(f"could not announce child session {child_id}: {e}")
 

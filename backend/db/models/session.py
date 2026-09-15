@@ -63,4 +63,6 @@ class Session(Base):
         Index("ix_sessions_user_created", "user_id", "created_at"),
         Index("ix_sessions_workspace_active", "workspace_id", "is_deleted"),
         Index("ix_sessions_parent", "parent_id"),
+        # The trajectory metadata sync pages changed rows by this cursor.
+        Index("ix_sessions_updated_id", "updated_at", "id"),
     )

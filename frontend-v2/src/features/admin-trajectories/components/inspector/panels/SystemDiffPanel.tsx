@@ -4,6 +4,7 @@ import { isPlainObject } from "../../../utils/python"
 import { DiffView } from "../DiffView"
 import { Section } from "../Field"
 import { RecordLink } from "../RecordLink"
+import { ResolvedRecord } from "../ResolvedRecord"
 import { NS, type PanelProps } from "../types"
 
 interface ToolChanges {
@@ -11,6 +12,9 @@ interface ToolChanges {
   removed: string[]
   changed: Array<{ name: string; before: string; after: string }>
 }
+
+/** The captured fields whose references this panel reads when it opens. */
+const SHOWN_FIELDS = ["before", "system", "tools"] as const
 
 function byName(tools: unknown): Map<string, string> {
   const map = new Map<string, string>()
@@ -36,8 +40,7 @@ function compareTools(before: unknown, after: unknown): ToolChanges {
   }
 }
 
-/** What changed from the previous system state of the same agent: prompt text and tool definitions. */
-export function SystemDiffPanel({ record }: PanelProps) {
+function SystemDiff({ record }: PanelProps) {
   const { t } = useTranslation(NS)
   const data = record.data ?? {}
   const before = isPlainObject(data.before) ? data.before : null
@@ -79,5 +82,14 @@ export function SystemDiffPanel({ record }: PanelProps) {
         ))}
       </Section>
     </div>
+  )
+}
+
+/** What changed from the previous system state of the same agent: prompt text and tool definitions. */
+export function SystemDiffPanel({ record }: PanelProps) {
+  return (
+    <ResolvedRecord record={record} fields={SHOWN_FIELDS}>
+      {(resolved) => <SystemDiff record={resolved} />}
+    </ResolvedRecord>
   )
 }

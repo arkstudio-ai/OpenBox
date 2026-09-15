@@ -288,7 +288,7 @@ export const USAGE_LABELS: Readonly<Record<string, string>> = {
   cost: "usage.cost",
 }
 
-/** Request snapshot keys that are options rather than content (agent/trajectory.py REQUEST_FIELDS). */
+/** Request snapshot keys that are options rather than content; other captured keys show as other fields. */
 export const REQUEST_OPTION_KEYS = [
   "model",
   "stream",

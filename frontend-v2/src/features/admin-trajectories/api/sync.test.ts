@@ -1,10 +1,10 @@
 // Recovery behaviour of the catch-up engine against the shared backend
 // fixture served by an in-memory stand-in for the events/checkpoint endpoints.
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/shared/api/http"
 import type { CheckpointResponse, EventPage, ProjectionState, TrajectoryEvent } from "../types/protocol"
 import { emptyState, replay } from "../utils/projector"
-import { TrajectorySync, type SyncTransport } from "./sync"
+import { busyRetryDelay, HINT_READ_SPACING_MS, TrajectorySync, type SyncTransport } from "./sync"
 import type { EventPageParams } from "./endpoints"
 
 interface GoldenFixture {
@@ -20,6 +20,10 @@ const fixtureFiles = import.meta.glob<GoldenFixture>("../../../../../backend/tra
 const golden = Object.entries(fixtureFiles).find(([path]) => path.endsWith("/session_v1.json"))![1]
 
 const EVENTS = golden.events
+
+/** A refusal as the http client builds it, with the answer's Retry-After. */
+const refused = (status: number, code: string, retryAfter: string | null = null) =>
+  Object.assign(new ApiError(status, code, code), { retryAfter })
 
 interface ServerOptions {
   events?: TrajectoryEvent[]
@@ -410,6 +414,79 @@ describe("seeking into history older than the live base", () => {
   // Live base 30 (head checkpoint), older checkpoint at 5.
   const CHECKPOINTS = [prefix(5), prefix(30)]
 
+  it("plays 1000 older events with two pages while preserving every displayed position", async () => {
+    const events: TrajectoryEvent[] = Array.from({ length: 1002 }, (_, index) => ({
+      ...EVENTS[0],
+      event_id: `settings_${index + 1}`,
+      seq: String(index + 1),
+      type: "session.settings_changed",
+      data: { after: { title: `Title ${index + 1}` } },
+    }))
+    const server = fakeServer({ events, checkpoints: [replay(events.slice(0, 1001))] })
+    const sync = new TrajectorySync(server.transport)
+    await sync.open()
+    await seek(sync, "0")
+    sync.ensurePosition("1", { readAhead: true })
+    await vi.waitFor(() => expect(sync.stateAt("1").status).toBe("ready"))
+    expect(historyReads(server)).toEqual(["0..500"])
+
+    for (let index = 1; index <= 1000; index += 1) {
+      const seq = String(index)
+      sync.ensurePosition(seq, { readAhead: true })
+      if (sync.stateAt(seq).status === "loading")
+        await vi.waitFor(() => expect(sync.stateAt(seq).status).toBe("ready"))
+      const position = sync.stateAt(seq)
+      expect(position).toMatchObject({ status: "ready", seq, state: { through_seq: seq } })
+      if ([1, 499, 500, 501, 999, 1000].includes(index) && position.status === "ready")
+        expect(position.state).toEqual(replay(events.slice(0, index)))
+    }
+    expect(historyReads(server)).toEqual(["0..500", "500..1000"])
+    expect(sync.getSnapshot()).toMatchObject({ baseSeq: "1001", loadedSeq: "1002", headSeq: "1002" })
+    sync.stop()
+  })
+
+  it("discards a playback prefetch when a newer seek replaces it", async () => {
+    const server = fakeServer({ checkpoints: CHECKPOINTS })
+    let release: (() => void) | undefined
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: async (params, signal) => {
+        if (params.untilSeq === "29") await new Promise<void>((resolve) => (release = resolve))
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    await seek(sync, "12")
+    sync.ensurePosition("13", { readAhead: true })
+    await vi.waitFor(() => expect(release).toBeDefined())
+    const at3 = await seek(sync, "3")
+    release!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sync.stateAt("3")).toEqual(at3)
+    expect(sync.stateAt("13").status).toBe("loading")
+    sync.stop()
+  })
+
+  it("drops loaded content if access is revoked during playback prefetch", async () => {
+    const server = fakeServer({ checkpoints: CHECKPOINTS })
+    let denied = false
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: (params, signal) => {
+        if (denied) throw new ApiError(403, "HTTP_403", "Forbidden")
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    await seek(sync, "12")
+    denied = true
+    sync.ensurePosition("13", { readAhead: true })
+    await vi.waitFor(() => expect(sync.getSnapshot().phase).toBe("denied"))
+    expect(sync.getSnapshot()).toMatchObject({ live: null, events: [], loadedSeq: "0" })
+  })
+
   it("reads events only through the target and shows it without the later history", async () => {
     const server = fakeServer({ checkpoints: CHECKPOINTS })
     const transport: SyncTransport = {
@@ -509,5 +586,154 @@ describe("sequence numbers beyond Number.MAX_SAFE_INTEGER", () => {
       start_seq: "9007199254740993",
       result_preview: "one",
     })
+  })
+})
+
+describe("watermark hint cadence and busy refusals", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Runs the timers due within `ms` and every answer they lead to. */
+  const settle = (ms = 0) => vi.advanceTimersByTimeAsync(ms)
+  /** Live reads so far (no `until`): what hints and polls cost the server. */
+  const liveReads = (server: ReturnType<typeof fakeServer>) =>
+    server.calls.filter((call) => call.kind === "events" && call.until === undefined).length
+
+  it("reads a hint at once after a quiet spell and coalesces the next hints onto the trailing edge", async () => {
+    const server = fakeServer({ committed: 20 })
+    const sync = new TrajectorySync(server.transport)
+    await sync.open()
+    const reads = liveReads(server)
+    await settle(HINT_READ_SPACING_MS)
+    server.state.committed = 22
+    sync.noteCommitted("22")
+    await settle()
+    expect(liveReads(server)).toBe(reads + 1)
+    expect(sync.getSnapshot().loadedSeq).toBe("22")
+
+    server.state.committed = 25
+    for (const seq of ["23", "24", "25"]) sync.noteCommitted(seq)
+    await settle(HINT_READ_SPACING_MS - 1)
+    expect(liveReads(server)).toBe(reads + 1)
+    await settle(1)
+    expect(liveReads(server)).toBe(reads + 2)
+    expect(sync.getSnapshot()).toMatchObject({ loadedSeq: "25", headSeq: "25" })
+  })
+
+  it("follows a read that hints arrived during with exactly one more, spaced like a hint's read", async () => {
+    const server = fakeServer({ committed: 20 })
+    let hold: Promise<void> | null = null
+    let release: () => void = () => undefined
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: async (params, signal) => {
+        // The page is read when the request is made; its answer lands once released.
+        const page = server.transport.events(params, signal)
+        if (hold) await hold
+        return page
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    await settle(HINT_READ_SPACING_MS)
+    hold = new Promise<void>((resolve) => (release = resolve))
+    server.state.committed = 22
+    sync.noteCommitted("22")
+    await settle()
+    const reads = liveReads(server)
+    server.state.committed = 30
+    for (const seq of ["25", "28", "30"]) sync.noteCommitted(seq)
+    hold = null
+    release()
+    await settle()
+    expect(sync.getSnapshot().loadedSeq).toBe("22")
+    expect(liveReads(server)).toBe(reads)
+    await settle(HINT_READ_SPACING_MS)
+    expect(liveReads(server)).toBe(reads + 1)
+    expect(sync.getSnapshot().loadedSeq).toBe("30")
+    await settle(10 * HINT_READ_SPACING_MS)
+    expect(liveReads(server)).toBe(reads + 1)
+  })
+
+  it("retries a read refused as busy or unavailable after its Retry-After, with no error and no read before", async () => {
+    const server = fakeServer({ committed: 20 })
+    const refusals: ApiError[] = []
+    let reads = 0
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: async (params, signal) => {
+        reads += 1
+        const refusal = refusals.shift()
+        if (refusal) throw refusal
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    server.state.committed = 34
+    refusals.push(refused(429, "trajectory_read_busy", "2"), refused(503, "trajectory_read_timeout"))
+    await sync.poll()
+    const first = reads
+    expect(sync.getSnapshot()).toMatchObject({ phase: "live", loadedSeq: "20", error: null })
+    // The server asked for two seconds: hints and polls wait for the retry.
+    sync.noteCommitted("34")
+    await sync.poll()
+    await settle(1_999)
+    expect(reads).toBe(first)
+    await settle(1)
+    expect(reads).toBe(first + 1)
+    // Refused again, without a Retry-After: one second.
+    expect(sync.getSnapshot()).toMatchObject({ loadedSeq: "20", error: null })
+    await settle(999)
+    expect(reads).toBe(first + 1)
+    await settle(1)
+    expect(reads).toBe(first + 2)
+    expect(sync.getSnapshot()).toMatchObject({ loadedSeq: "34", error: null })
+    expect(sync.getSnapshot().live).toEqual(golden.expected_state)
+  })
+
+  it("still fails on other refusals and reads nothing more on its own", async () => {
+    const server = fakeServer({ committed: 20 })
+    let refuse = false
+    let reads = 0
+    const transport: SyncTransport = {
+      checkpoint: server.transport.checkpoint,
+      events: async (params, signal) => {
+        reads += 1
+        if (refuse) throw refused(500, "HTTP_500", "1")
+        return server.transport.events(params, signal)
+      },
+    }
+    const sync = new TrajectorySync(transport)
+    await sync.open()
+    refuse = true
+    await sync.poll()
+    const failed = reads
+    expect(sync.getSnapshot()).toMatchObject({
+      phase: "live",
+      loadedSeq: "20",
+      error: { kind: "network", status: 500 },
+    })
+    await settle(10_000)
+    expect(reads).toBe(failed)
+  })
+})
+
+describe("retry delays", () => {
+  it("follow Retry-After for 429 and 503 only, as seconds or a date, never sooner than a hint's read", () => {
+    const now = Date.parse("2026-09-15T08:00:00Z")
+    expect(busyRetryDelay(refused(429, "busy", "3"), now)).toBe(3_000)
+    expect(busyRetryDelay(refused(503, "unavailable"), now)).toBe(1_000)
+    expect(busyRetryDelay(refused(429, "busy", "Tue, 15 Sep 2026 08:00:05 GMT"), now)).toBe(5_000)
+    expect(busyRetryDelay(refused(503, "unavailable", "soon"), now)).toBe(1_000)
+    expect(busyRetryDelay(refused(429, "busy", "0"), now)).toBe(HINT_READ_SPACING_MS)
+    for (const status of [401, 403, 404, 409, 410, 413, 500]) {
+      expect(busyRetryDelay(refused(status, "refused", "1"), now)).toBeNull()
+    }
+    expect(busyRetryDelay(new TypeError("Failed to fetch"), now)).toBeNull()
   })
 })

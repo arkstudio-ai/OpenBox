@@ -14,6 +14,7 @@ import { positionOf, type Ordinals } from "./ordinals"
 import { COLUMN_VISIBILITY, ROW_GRID, ROW_HEIGHT } from "./tableLayout"
 
 const MAX_INDENT_LEVELS = 8
+const INPUT_PREVIEW_LENGTH = 80
 
 export interface RowContext {
   ordinals: Ordinals
@@ -46,6 +47,12 @@ export function RecordRowView({
 }: RecordRowViewProps) {
   const { t } = useTranslation("admin-trajectories")
   const { record } = row
+  const preview = row.inputPreview ?? record.preview
+  const inputCharacters = row.inputPreview ? Array.from(row.inputPreview) : []
+  const previewText =
+    inputCharacters.length > INPUT_PREVIEW_LENGTH
+      ? `${inputCharacters.slice(0, INPUT_PREVIEW_LENGTH).join("")}…`
+      : preview
   const id = record.record_id
   const failed = ERROR_STATUSES.has(record.status ?? "")
   const point = POINT_KINDS.has(record.kind)
@@ -109,9 +116,15 @@ export function RecordRowView({
         <span className="text-ink min-w-8 shrink truncate font-medium" title={record.title}>
           {record.title}
         </span>
-        {record.preview && (
-          <span className="text-n500 hidden min-w-0 flex-1 truncate @min-[36rem]/records:inline">
-            {record.preview}
+        {preview && (
+          <span
+            className={cn(
+              "text-n500 min-w-0 flex-1 truncate",
+              record.kind !== "turn" && "hidden @min-[36rem]/records:inline",
+            )}
+            title={preview}
+          >
+            {previewText}
           </span>
         )}
         {record.result_preview && (

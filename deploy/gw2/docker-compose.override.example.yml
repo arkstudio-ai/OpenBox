@@ -1,0 +1,23 @@
+# Sanitized copy of /opt/openbox/docker-compose.override.yml on gw2 (per-environment differences).
+#
+# Since 2026-09-07 the override pins the backend and frontend images (docs/DEPLOY.md); OPENBOX_IMAGE_TAG
+# in .env is stale and has no effect on them. The trajectory worker is pinned the same way and always
+# runs the backend's tag. The override is the last file of COMPOSE_FILE, so these pins win over
+# docker-compose.trajectory.yml. Secrets are mounted file by file from /opt/openbox/secrets; the APNs
+# key name below is a placeholder for the real AuthKey_<key id>.p8.
+
+services:
+  backend:
+    ports:
+      - 127.0.0.1:8080:8080
+    environment:
+      ALIYUN_CLI_CONFIG: /run/secrets/aliyun-config.json
+    volumes:
+      - ./secrets/aliyun-config.json:/run/secrets/aliyun-config.json:ro
+      - ./secrets/alipay:/run/secrets/alipay:ro
+      - ./secrets/mobile-push/AuthKey_EXAMPLEKEY.p8:/run/secrets/bossip-apns.p8:ro
+    image: openbox-backend:20260915-trajectory-example
+  trajectory-worker:
+    image: openbox-backend:20260915-trajectory-example
+  frontend:
+    image: openbox-frontend-v2:20260915-trajectory-example

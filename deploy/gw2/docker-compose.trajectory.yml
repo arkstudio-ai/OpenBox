@@ -1,0 +1,95 @@
+# Trajectory worker topology for the single-host Compose deployments (SPEC §12, RUNBOOK.md).
+#
+# It is the middle file of COMPOSE_FILE in /opt/openbox/.env:
+#   COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml
+# so every plain `docker compose` command in /opt/openbox includes it, and the override's
+# image pins still win. Relative paths resolve against /opt/openbox, the directory of the
+# first file.
+
+x-trajectory-logging: &trajectory-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  # Never name this service "backend-worker": `make retire-legacy-worker` deletes that service's containers.
+  trajectory-worker:
+    # Pin the backend's tag for this service in docker-compose.override.yml as well.
+    image: openbox-backend:${OPENBOX_IMAGE_TAG}
+    # Mandatory: the image CMD would run the business migrations and start a second uvicorn.
+    command: ["/bin/sh", "-ec", "alembic -c alembic_trajectory.ini upgrade head && exec python -m trajectory.worker"]
+    env_file:
+      - config/backend.env
+    environment:
+      # Dedicated role (scripts/create-trace-db.sh): owns openbox_trace, has no business data, and its
+      # defaults are statement_timeout 5s and work_mem 32MB. Its password is OPENBOX_TRACE_DB_PASSWORD in .env.
+      # Use a separate PostgreSQL instance for database CPU/memory/IO isolation.
+      TRAJECTORY_DATABASE_URL: ${OPENBOX_TRACE_DATABASE_URL:-postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace}
+      # Blank on purpose: the business connection string of config/backend.env must not reach the worker.
+      DATABASE_URL: ""
+      REDIS_URL: redis://redis:6379/0
+      TRAJECTORY_WORKER_MODE: external
+      TRAJECTORY_BLOB_PROVIDER: oss
+      TRAJECTORY_BACKEND_INTERNAL_URL: http://backend:8080
+      TRAJECTORY_SPOOL_DIR: /var/lib/openbox/trajectory-spool
+      TRAJECTORY_READ_CONCURRENCY: "2"
+      TRAJECTORY_READ_MAX_WAITING: "4"
+      TRAJECTORY_READ_WAIT_MS: "250"
+      TRAJECTORY_READ_DB_POOL_SIZE: "4"
+      TRAJECTORY_READ_TIMEOUT_SECONDS: "10"
+      TRAJECTORY_READ_MAX_BYTES: "8388608"
+      TRAJECTORY_READ_RESPONSE_BYTES: "8388608"
+      TRAJECTORY_BLOB_CACHE_BYTES: "67108864"
+      TRAJECTORY_SEGMENT_CACHE_BYTES: "33554432"
+      ALIYUN_CLI_CONFIG: /run/secrets/aliyun-config.json
+    volumes:
+      - trajectory-spool:/var/lib/openbox/trajectory-spool
+      - ./secrets/aliyun-config.json:/run/secrets/aliyun-config.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    cpus: 1.0
+    mem_limit: 1g
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *trajectory-logging
+
+  backend:
+    environment:
+      TRAJECTORY_WORKER_MODE: external
+      TRAJECTORY_SPOOL_DIR: /var/lib/openbox/trajectory-spool
+    volumes:
+      # The spool may hold unredacted data: mount it into backend and trajectory-worker only.
+      - trajectory-spool:/var/lib/openbox/trajectory-spool
+
+  frontend:
+    environment:
+      # nginx sends /api/admin/trajectories/ and /ws/admin/trajectories here (SPEC §11.1).
+      TRAJECTORY_HOST: trajectory-worker:8090
+
+  postgres:
+    mem_limit: 2g
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - max_connections=200
+
+volumes:
+  trajectory-spool: {}

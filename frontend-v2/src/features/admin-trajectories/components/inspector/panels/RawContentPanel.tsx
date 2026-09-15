@@ -7,7 +7,6 @@ import { Section } from "../Field"
 import { JsonTree } from "../JsonTree"
 import { TextBlock } from "../TextBlock"
 import { NS, type PanelProps } from "../types"
-import { hasSanitizedRaw } from "./eventNotes"
 
 /** Captured structure without rendering: ordered blocks with their ids and chunk indexes, and the stored fields. */
 export function RawContentPanel({ record }: PanelProps) {
@@ -15,9 +14,6 @@ export function RawContentPanel({ record }: PanelProps) {
   const parts = record.data?.committed_parts
   return (
     <div className="flex flex-col gap-4">
-      {hasSanitizedRaw(record.events) && (
-        <p className="bg-hairsoft text-n700 rounded-lg px-3 py-2 text-xs">{t("events.sanitizedRawNote")}</p>
-      )}
       <Section
         title={t("raw.blocks", { count: record.blocks.length })}
         actions={

@@ -70,6 +70,7 @@ export function inspectorEnv(
     }),
     ordinals: buildOrdinals(tree.nodes.values()),
     select: () => undefined,
+    refs: false,
     ...overrides,
   }
 }

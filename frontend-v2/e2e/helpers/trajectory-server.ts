@@ -350,8 +350,14 @@ export class TrajectoryFixtureServer {
     return this.sockets.size
   }
 
+  /** Delete a session; like the trajectory worker, the socket announces it with `deleted: true`. */
   deleteSession(sessionId: string): void {
-    this.require(sessionId).gone = true
+    const session = this.require(sessionId)
+    session.gone = true
+    for (const socket of this.sockets) {
+      if (socket.subscriptions.has(sessionId))
+        this.send(socket.ws, { type: "trajectory.available", data: { ...this.notice(session), deleted: true } })
+    }
   }
 
   setPayloadState(sessionId: string, payloadId: string, state: PayloadState): void {

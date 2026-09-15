@@ -1,0 +1,12 @@
+[Unit]
+Description=Prune old OpenBox Docker images (keeps images in use and the newest 3 tags per repository)
+Documentation=file:/opt/openbox/deploy/gw2/RUNBOOK.md
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=OPENBOX_DIR=/opt/openbox
+ExecStart=/opt/openbox/deploy/gw2/scripts/prune-images.sh --execute
+TimeoutStartSec=30min
+Nice=10

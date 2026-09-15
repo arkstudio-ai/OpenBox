@@ -527,7 +527,9 @@
     "executorOutput": "执行输出",
     "modelOutput": "交给模型的结果",
     "modelOutputSame": "与执行输出相同",
-    "produced": "产生的内容"
+    "produced": "产生的内容",
+    "outputTruncated": "此输出只记录了开头和结尾：共 {{size}}，sha256 {{sha256}}",
+    "streamTruncated": "流式输出已达到记录上限，其余内容随调用的最终结果记录"
   },
   "tools": {
     "catalog_one": "{{count}} 个工具",
@@ -579,6 +581,12 @@
     "mediaLabel": "受保护内容 {{id}}",
     "download": "下载"
   },
+  "content": {
+    "loading": "正在加载记录的内容…",
+    "failed": "无法加载记录的内容。",
+    "preparing": "正在准备内容…",
+    "actionFailed": "无法准备此内容，请重试。"
+  },
   "markdown": {
     "imageBlocked": "[未加载图片：{{alt}}（{{source}}）]"
   },
@@ -622,11 +630,10 @@
     "noDiff": "未记录差异",
     "absent": "当时文件还不存在（例如新建的文件）。",
     "source": "内容来源",
-    "redacted": "已脱敏",
-    "redactedNote": "敏感内容在记录前已移除",
     "revision": "第 {{index}} 次修改",
     "revisions_one": "{{count}} 次修改",
-    "revisions_other": "{{count}} 次修改"
+    "revisions_other": "{{count}} 次修改",
+    "diffTooLarge": "未生成差异：两个版本过大，无法比较。两个版本均已记录。"
   },
   "state": {
     "baselineNote": "从这里开始记录。更早的活动只出现在此快照或之后请求的输入中，不会补造成执行步骤。",
@@ -645,10 +652,7 @@
   "events": {
     "count_one": "截至 #{{seq}} 共 {{count}} 个事件",
     "count_other": "截至 #{{seq}} 共 {{count}} 个事件",
-    "seq": "#{{seq}}",
-    "sanitizedRawNote": "此处原始分片字段引用同一事件中已脱敏的内容块，实际保留的文本见这些内容块。",
-    "finalizeNote": "记录器刷新是在流结束时写出缓冲的脱敏文本，不是新的模型分片或请求。",
-    "finalize": "记录器刷新"
+    "seq": "#{{seq}}"
   },
   "session": {
     "loading": "正在加载会话…",

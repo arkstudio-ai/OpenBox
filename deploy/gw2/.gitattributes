@@ -1,0 +1,3 @@
+# The validation placeholder stays out of the release bundle (`git archive HEAD deploy/gw2`, RUNBOOK.md §3).
+config export-ignore
+config/** export-ignore

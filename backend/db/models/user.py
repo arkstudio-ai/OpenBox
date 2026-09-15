@@ -36,4 +36,6 @@ class User(Base):
         Index("ix_users_username_active", "username", unique=True, postgresql_where=text("is_deleted = false")),
         Index("ix_users_email_active", "email", unique=True, postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
         Index("ix_users_oauth", "oauth_provider", "oauth_id", unique=True, postgresql_where=text("oauth_provider IS NOT NULL")),
+        # The trajectory metadata sync pages changed rows by this cursor.
+        Index("ix_users_updated_id", "updated_at", "id"),
     )

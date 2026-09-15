@@ -13,6 +13,7 @@ import { Field, FieldList, Section } from "../Field"
 import { InlineValue } from "../InlineValue"
 import { InstantValue } from "../InstantValue"
 import { JsonTree } from "../JsonTree"
+import { OutputTruncationNote } from "../OutputTruncationNote"
 import { RecordLink } from "../RecordLink"
 import { useInspector } from "../context"
 import { NS, type PanelProps } from "../types"
@@ -65,6 +66,7 @@ function ToolFacts({ record }: PanelProps) {
     <>
       <Field label={t("summary.resultPreview")}>
         {record.result_preview ?? <AvailabilityNote state={isClosed(record) ? "not_recorded" : "pending"} />}
+        <OutputTruncationNote events={record.events} />
       </Field>
       <Field label={t("summary.childCalls")}>{children}</Field>
       <Field label={t("summary.artifacts")}>{artifacts}</Field>

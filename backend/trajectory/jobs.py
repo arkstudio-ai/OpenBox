@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 
 from trajectory import enabled, record
-from trajectory.producers import activity_context
+from trajectory.producers import activity_context, paused_in_tx
 from trajectory.types import canonical
 
 CONTEXT_KEY = "_trajectory_context"
@@ -12,7 +12,13 @@ _TERMINAL = {"completed", "failed", "cancelled", "published", "draft", "expired"
 
 
 async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None = None):
-    """No latest-session lookup: a callback follows its saved root and call."""
+    """No latest-session lookup: a callback follows its saved root and call.
+
+    Facts wait for the job row's commit. A callback for a deleted session is
+    dropped by the worker, which keeps the session's tombstone. Job writes hold
+    no session row lock, so nothing is recorded while the session's recording
+    is paused and not resumed yet (SPEC §5.6).
+    """
     if not enabled(job.user_id):
         return None
     field = "request_data" if hasattr(job, "request_data") else "details"
@@ -21,14 +27,8 @@ async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None =
     source_session = (saved or {}).get("source_session_id") or session_id or getattr(job, "session_id", None)
     if not source_session:
         return None
-    from db.models.session import Session
-    source = await db.get(Session, source_session)
-    root = await db.get(Session, saved["session_id"]) if saved else source
-    # Explicit deletion ends retention; late callbacks cannot create a fresh log.
-    if source is None or root is None or source.is_deleted or root.is_deleted:
-        return None
     context = await activity_context(db, job.user_id, source_session, saved=saved)
-    if context is None:
+    if context is None or await paused_in_tx(db, context):
         return None
     if not saved:
         setattr(job, field, {**metadata, CONTEXT_KEY: context.to_dict()})
@@ -53,7 +53,11 @@ async def record_job_in_tx(db, job, *, submitted=False, session_id: str | None =
         data["result"] = getattr(job, "result_data", None) or {
             "item_id": getattr(job, "item_id", None), "video_id": getattr(job, "video_id", None),
             "details": {key: value for key, value in metadata.items() if not key.startswith("_trajectory_")}}
-    digest = hashlib.sha256(canonical(data)).hexdigest()[:24]
+    try:
+        digest = hashlib.sha256(canonical(data)).hexdigest()[:24]
+    except (TypeError, ValueError):
+        # Business values the canonical encoding rejects still get a stable id.
+        digest = hashlib.sha256(repr(sorted(data.items(), key=lambda item: item[0])).encode()).hexdigest()[:24]
     await record(kind, data, context=context, db=db, event_id=f"job:{job.id}:{digest}")
     if not submitted and job.status in _TERMINAL and context.run_id:
         from db.models.question import SessionExecution

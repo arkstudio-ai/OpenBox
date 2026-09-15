@@ -992,8 +992,8 @@ AWS 在目标纠正前已更新到 `20260906-billing-9bfb283`，本次阿里云�
 ```
 /opt/openbox/
 ├── docker-compose.yml            # 编排主文件（★ 目前只存在于服务器，未进仓库）
-├── docker-compose.override.yml   # 各环境差异（端口绑定 / 挂载凭证）
-├── .env                          # OPENBOX_IMAGE_TAG、OPENBOX_DB_PASSWORD
+├── docker-compose.override.yml   # 各环境差异（端口绑定 / 挂载凭证 / 镜像钉版）
+├── .env                          # OPENBOX_IMAGE_TAG（已过期，镜像以 override 钉版为准）、OPENBOX_DB_PASSWORD
 ├── config/
 │   ├── backend.env               # 后端环境变量（★ 与本地 backend/.env 同构）
 │   └── openbox.json              # 模型/供应商配置（★ 与本地 backend/openbox.json 同构）
@@ -1009,7 +1009,7 @@ AWS 在目标纠正前已更新到 `20260906-billing-9bfb283`，本次阿里云�
 |---|---|---|---|
 | `config/backend.env` | `backend/.env` | ❌ 忽略 | 同构。模板见 `backend/.env.example` |
 | `config/openbox.json` | `backend/openbox.json` | ❌ 忽略 | 同构。模板见 `backend/openbox.jsonc.example` |
-| `.env` | 无 | ❌ | 只有 `OPENBOX_IMAGE_TAG` 和 `OPENBOX_DB_PASSWORD` |
+| `.env` | 无 | ❌ | `OPENBOX_IMAGE_TAG`（gw2 上已过期，镜像以 override 钉版为准）和 `OPENBOX_DB_PASSWORD`；轨迹发布后另有 `OPENBOX_TRACE_DB_PASSWORD`、`COMPOSE_FILE`（见 `deploy/gw2/env.example`） |
 | `secrets/*` | 无 | ❌ | 密钥，永不入库 |
 | `docker-compose.yml` | 无 | ❌ | **仅存在于服务器**，见下方「已知问题」 |
 
@@ -1044,6 +1044,9 @@ docker build -t openbox-frontend-v2:<TAG> frontend-v2/
 cd /opt/openbox && sed -i "s/^OPENBOX_IMAGE_TAG=.*/OPENBOX_IMAGE_TAG=<TAG>/" .env
 docker compose up -d
 ```
+
+> 轨迹 worker 拓扑（§五）上线后，AWS 开发机的 `config/backend.env` 必须设 `TRAJECTORY_OSS_INTERNAL=false`：worker 默认走 OSS 内网端点，
+> 该端点只在阿里云内可达，AWS 上访问不到。
 
 ### 阿里云生产机（无源码，镜像装载）
 
@@ -1080,6 +1083,9 @@ docker compose up -d --no-deps <实际变更的服务>
 ```
 
 **用完请删除 OSS 临时对象。**
+
+> 2026-09-07 起 gw2 的 override 钉住 backend、frontend 镜像，`.env` 的 `OPENBOX_IMAGE_TAG` 已不决定运行的镜像（2026-09-14 仍是过期的
+> `20260912-videourl-961075e`）；换镜像请改 `docker-compose.override.yml` 的 `image:`。
 
 ### 发布可用性要求
 
@@ -1162,3 +1168,92 @@ docker rm recover
 **在把这份代码整理入库之前，不要从本地向生产发布。**
 
 > **2026-09-04 更新**：上述 5 个迁移与对应代码已随 `main`（`b1f77ae`）入库并推到 GitHub；生产 gw2 已用 `main` 构建的 `20260904-main-b1f77ae` 部署，库升到 `c3e5a7b9d1f4`。本条已解决，可直接从 `main` 构建发布。构建走 AWS 机的 `/opt/openbox/build-main`（`git worktree`，不动 `src/` 的本地改动），传输用 `docker save | gzip | ssh gw2 docker load`（EC2 的 `/root/.ssh/gw2ship`）。
+
+## 五、会话轨迹 worker 拓扑与发布流程（轨迹改造，尚未上线）
+
+> 状态：随 `feat/trajectory-rearch` 准备（SPEC §12），**尚未在任何环境发布**；上线后照惯例在本文开头追加发布记录。
+> 命令、校验、回滚、告警与演练的完整步骤见 [deploy/gw2/RUNBOOK.md](../deploy/gw2/RUNBOOK.md)，设计见 [trajectory-rearch/SPEC.md](trajectory-rearch/SPEC.md)。
+
+### 拓扑
+
+```
+浏览器 → 反向代理 → frontend 容器(nginx)
+                      ├── /api/admin/trajectories/*、/ws/admin/trajectories → trajectory-worker:8090
+                      ├── /api/、/ws/                                        → backend:8080
+                      └── /                                                  静态 SPA
+backend ──(追加 JSONL)──► trajectory-spool 卷（只挂给 backend 与 worker）──► trajectory-worker
+trajectory-worker ──► postgres 的 openbox_trace 库、OSS <桶>/trajectories/、redis、backend 内部接口（viewer / audit）
+宿主机 systemd 定时器 ──► 云监控自定义指标、OSS backups/postgres/、镜像清理
+```
+
+- **新服务 `trajectory-worker`**：与 backend 同一镜像，override 里与 backend 钉同一 tag。命令只跑轨迹库迁移
+  （`alembic -c alembic_trajectory.ini upgrade head`）再 `python -m trajectory.worker`，不覆盖命令就会跑业务迁移并再起一个 uvicorn。
+  单实例单写者（advisory lock），禁止 `--scale`；服务名不能叫 `backend-worker`（`make retire-legacy-worker` 会删除它）。
+  以专用角色 `openbox_trace` 连接轨迹库（`TRAJECTORY_DATABASE_URL=postgresql+asyncpg://openbox_trace:${OPENBOX_TRACE_DB_PASSWORD}@postgres:5432/openbox_trace`），
+  并把 `DATABASE_URL` 置空，`backend.env` 里的业务库连接串不会进入 worker。worker 默认走 OSS 内网端点；AWS 开发环境访问不到该端点，
+  那里的 worker 必须设 `TRAJECTORY_OSS_INTERNAL=false`（写在 `config/backend.env`）。
+- **backend**：`TRAJECTORY_WORKER_MODE=external`，挂 spool 卷；业务请求只做内存入队与追加写，业务库不再有轨迹读写。
+  `TRAJECTORY_WORKER_MODE=off` 时整条轨迹链路关闭：不启动 emitter 与元数据同步，也没有 worker。
+- **frontend**：`TRAJECTORY_HOST=trajectory-worker:8090`，nginx 把两条管理端轨迹路径转给 worker（镜像内默认仍指向 backend）。
+- **postgres**：`mem_limit 2g`，`shared_buffers=512MB`、`effective_cache_size=1GB`、`pg_stat_statements`、`max_connections=200`；生效要重建 postgres，需维护窗口。
+- **新库 `openbox_trace` 与角色 `openbox_trace`**：同一 postgres 实例，`deploy/gw2/scripts/create-trace-db.sh` 幂等创建角色（LOGIN，
+  密码取 `.env` 的 `OPENBOX_TRACE_DB_PASSWORD`，经 stdin 交给 psql，不出现在任何进程参数里，缺密码时拒绝执行；角色默认
+  `statement_timeout = '5s'`、`work_mem = '32MB'`）和属于该角色的 `openbox_trace` 库（含 `pg_trgm`），并在业务库 `openbox` 装 `pg_stat_statements`；日常备份一并覆盖。
+- **编排文件**：`deploy/gw2/docker-compose.trajectory.yml` 放在基础 compose 与 override 之间，`.env` 增加
+  `COMPOSE_FILE=docker-compose.yml:deploy/gw2/docker-compose.trajectory.yml:docker-compose.override.yml`，
+  这样所有裸 `docker compose` 命令都带上 overlay，override 的镜像钉版仍然最后生效。`deploy/gw2` 随发布包下发到 `/opt/openbox/deploy/gw2`（服务器无源码）。
+- **`.env`**：发布后有 `OPENBOX_IMAGE_TAG`、`OPENBOX_DB_PASSWORD`、`OPENBOX_TRACE_DB_PASSWORD`、`COMPOSE_FILE`。`OPENBOX_IMAGE_TAG` 在 gw2 上早已过期
+  （2026-09-14 仍是 `20260912-videourl-961075e`），镜像以 override 钉版为准。
+- `deploy/gw2/docker-compose.base.example.yml`、`docker-compose.override.example.yml`、`env.example` 按 2026-09-14 gw2 上的真实文件脱敏
+  （`name: openbox`、postgres 512m / redis 192m / backend 3g / frontend 128m、日志轮转、`condition: service_healthy`、redis `--appendonly yes`、
+  `public.ecr.aws/docker/library/postgres:16-alpine`、`alembic upgrade head && exec uvicorn …`、`blob-data:/tmp/openbox-blobs`、override 的端口 `127.0.0.1:8080`、逐个挂载的密钥文件与镜像钉版），
+  只用于 `docker compose config` 校验 overlay（单测覆盖）；发布前仍要与服务器上的文件逐项核对。
+
+### 发布顺序（SPEC §12.1）
+
+0. 前置：**发布提交先合入 `origin/main`**。否则其他人从 main 例行发布会让 backend 起不来：main 构建的镜像在迁移脚本里找不到
+   `d3b5f7a9c1e2`、`e5c7a9b1d3f4` 两个业务迁移版本，`alembic upgrade head` 失败，backend 无法启动。
+   `.env` 先写入 `OPENBOX_TRACE_DB_PASSWORD`（`openssl rand -hex 32`，只含字母数字与 `._~-`，因为它也是连接串的一部分）。
+1. 从发布提交**全量**构建 `linux/amd64` 的 backend、frontend 镜像（本次新增 Python 依赖，不能在线上镜像上叠加），frontend 用
+   `--build-arg NGINX_IMAGE=nginx:1.31.5-alpine` 固定 nginx 运行时；另打 `deploy/gw2` 包（`git archive`）。
+2. 经 OSS `_deploy-tmp/` 中转并装载到 gw2，保留旧 tag，解包 `deploy/gw2`；用完删除中转对象。
+3. 备份：`.env`、`config/backend.env`、两份 compose、容器 inspect、`pg_dump openbox`（`pg_restore -l` 校验）。
+4. 维护窗口、0 个持有租约的运行：`.env` 写入 `COMPOSE_FILE`，`up -d --no-deps postgres` 让调优生效，
+   `create-trace-db.sh` 建角色与 `openbox_trace`，再 `docker compose restart backend` 重置连接池（restart 不改 backend 配置）。
+5. override 钉 `trajectory-worker` 镜像，`up -d --no-deps trajectory-worker`，等 healthy：迁移完成、`/health` 的 writer/db/spool/blob_store 均为 true，此时录制仍关闭。
+6. `backend.env` 先设 `TRAJECTORY_RECORDING_ENABLED=false`，override 改 backend 镜像，0 活动运行时 `up -d --no-deps backend`；
+   业务迁移删除 7 张旧轨迹表，旧录制不保留。核对业务库已没有旧轨迹表、`alembic current` 为 `e5c7a9b1d3f4`（命令见 RUNBOOK §5），
+   随后立即在 `openbox` 执行 `SELECT pg_stat_statements_reset();`：迁移的 `DROP TABLE` 语句会命中 `business_trajectory_statements` 的隔离过滤。
+7. 删除旧录制的 payload 文件：业务 `blob-data` 卷（backend 内挂在 `/tmp/openbox-blobs`）只删 `trajectories/` 目录（约 1.5 GB，未脱敏），
+   保留 `policies/`；先列出大小再删除，不可恢复，命令见 RUNBOOK §5 第 7 步。
+8. override 改 frontend 镜像，`up -d --no-deps frontend`，确认两条轨迹路径由 worker 应答。
+9. 先在录制关闭时取一个窗口（≥ 60 分钟），再对内部账号开启录制（`TRAJECTORY_RECORD_USER_IDS`）取等长窗口：用前端访问日志的 `rt=` 字段算各 API 路径 p95、
+   `docker stats` 采样 backend CPU，两窗口用 `python -m trajectory.ops.latency` 比对；开启前后记录 `SELECT pg_database_size('openbox')`，录制窗口的增长应与关闭窗口相当；
+   用 `pg_stat_statements` 核对业务库没有 `trajectory_` 语句、指标正常，再对全部用户开启；backend 与 worker 共用录制开关，改完两者都要重建（backend 仍需 0 活动运行）。
+10. `install-timers.sh` 安装定时器；操作机上执行 `apply-oss-lifecycle.sh`、`setup-alarms.sh`；完成演练与备份恢复检查并在本文开头记录。
+
+### 回滚要点
+
+- **worker 异常**（任一步）：`docker compose stop trajectory-worker`，业务不受影响；spool 最多积累到 2 GiB，之后以录制缺口丢弃事件。
+- **backend（第 6 步及以后）**，0 活动运行时依次：
+  1. 用**新** backend 镜像执行 `docker compose run --rm --no-deps backend alembic downgrade c7e9b1d3f5a7`，重建 7 张旧轨迹表（空表；
+     main 构建镜像的就绪检查与会话删除仍依赖这些表）；
+  2. `config/backend.env` 保持 `TRAJECTORY_RECORDING_ENABLED`、`TRAJECTORY_ADMIN_ENABLED` 为 false（第 9 步已开启录制时先改回，再做下一步）；
+  3. override 把 backend、frontend 改回旧 tag，逐个 `up -d --no-deps` 并等 healthy；
+  4. `docker compose stop trajectory-worker`，再从 `.env` 的 `COMPOSE_FILE` 去掉 overlay。
+
+  旧录制在升级与回退两个方向都不保留：重建的旧表是空的，写入 `openbox_trace` 的轨迹旧后台也看不到。
+- **frontend**：override 改回旧 tag，`up -d --no-deps frontend`。
+- **postgres 调优**：只随整体回退一起撤销（`.env` 去掉 `COMPOSE_FILE` 后在维护窗口重建 postgres）；角色、`openbox_trace` 与 `OPENBOX_TRACE_DB_PASSWORD` 可以保留。
+  整体回退顺序 frontend → backend → 停 worker → `install-timers.sh --uninstall` → `.env` → postgres。
+
+### 定时器、告警、生命周期规则与演练
+
+| 项 | 内容 |
+|---|---|
+| `openbox-trajectory-metrics.timer` | 每分钟：宿主机磁盘、spool 大小与最老文件年龄、近 1 小时 OOM kill、轨迹库大小、backend 的 CPU（单核百分比）与内存（占上限百分比，均取自 `docker stats --no-stream`）、业务库 `pg_stat_statements` 中含 `trajectory_` 的语句数（未装扩展时为 0），加上 worker 的 `/health`、`/metrics`（含 wave 3 新指标），经云监控 `PutCustomMetric` 上报（维度 `instance=gw2`；其他主机如 AWS 开发机要用 `install-timers.sh --instance <名称>` 安装，否则会触发 gw2 的告警） |
+| `openbox-pg-backup.timer` | 每天 03:30（北京时间）：`openbox`、`openbox_trace` 的 `pg_dump -Fc` 经预签名 PUT 上传到 OSS `backups/postgres/<日期>/`，校验大小与 sha256 后删除本地文件；旧录制不保留，`openbox` 的 dump 用 `--exclude-table-data` 跳过旧轨迹表的数据（只留表结构，迁移删表后不再匹配任何表）；PostgreSQL 查询失败、导出或上传失败都会让本次运行失败；单次 PUT 上限 5 GiB |
+| `openbox-prune-images.timer` | 每周日 04:30（北京时间）：保留容器在用、compose 引用及每个仓库最新 3 个 tag 的镜像，其余删除；读不出 compose 配置时不删除任何镜像 |
+| 告警（`setup-alarms.sh`，联系人组 `云账号报警联系人`，共 15 条） | 磁盘 ≥ 80%、spool ≥ 1 GiB、最老 spool 文件 ≥ 60 s、worker 健康检查失败、近 1 小时出现录制缺口、投影积压 ≥ 5000 事件、5 分钟内 blob 上传失败 ≥ 10、轨迹库 ≥ 20 GiB、OOM kill > 0、归档积压 ≥ 50000 事件持续 15 分钟、`hot_partitions` > 10（已挂载且日期不晚于今天的每日事件分区数，按 UTC，不含预建的未来分区与默认分区，健康时约 8 个）、backend CPU 或内存 > 90% 持续 5 分钟、业务库出现 `trajectory_` 语句、`events_ingested_24h` > 1,000,000（近 24 小时摄取的事件数，每 5 分钟采样，INFO）；`--instance`、`--group-id` 要与指标上报一致 |
+| OSS 生命周期（`oss-lifecycle.xml`） | `trajectories/`（不含 `_exports/`）30 天转低频（按最后修改时间，小于 64 KB 的对象也会转，并按 64 KB 计费）；`trajectories/_exports/` 与 `backups/postgres/` 30 天过期；两个前缀的未完成分片 7 天清理。桶与用户资产共用且 PUT 会覆盖全部规则，脚本先读现有规则按 ID 合并，默认 dry run |
+| 演练（默认 dry run，`--execute` 执行） | `drill-worker-stop.sh`（停 worker 15 分钟，业务不受影响，重启后 5 分钟内排空 spool）、`drill-blob-outage.sh`（OSS 故障注入 30 分钟）、`drill-spool-full.sh`（spool 预算耗尽只产生缺口）、`drill-delete-session.sh`（经业务接口删除内部测试会话，管理端接口返回 404/410，经 `trajectory.ops.deletion` 确认轨迹已墓碑化、无待清理 GC、前缀下无 OSS 对象）、`restore-check.sh`（把备份恢复到临时库 `openbox_restore_check_*` 核对表后删除，不碰线上库）、`rebuild-trace-db.sh`（用 OSS 段恢复到临时库并比对摘要） |

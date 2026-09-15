@@ -83,7 +83,7 @@ describe("usePosition", () => {
     sync.stop()
   })
 
-  it("reads the next older event before playback moves onto it", async () => {
+  it("prefetches older playback in a page before advancing through its events", async () => {
     const server = fakeServer()
     const sync = new TrajectorySync(server.transport)
     await sync.open()
@@ -96,9 +96,10 @@ describe("usePosition", () => {
       () => expect(useTrajectoryView.getState()).toMatchObject({ playhead: "34", playing: false }),
       { timeout: 5_000 },
     )
-    const expected = [{ until: "12", playhead: "12" }]
-    for (let seq = 13; seq < 30; seq += 1) expected.push({ until: String(seq), playhead: String(seq - 1) })
-    expect(server.reads).toEqual(expected)
+    expect(server.reads).toEqual([
+      { until: "12", playhead: "12" },
+      { until: "29", playhead: "12" },
+    ])
     expect(sync.stateAt("15")).toMatchObject({ status: "ready", state: prefix(15) })
     sync.stop()
   })

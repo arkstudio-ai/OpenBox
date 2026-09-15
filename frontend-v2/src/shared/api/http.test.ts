@@ -59,3 +59,24 @@ describe("request scope during authentication refresh", () => {
     expect(new Headers(fetch.mock.calls[0][1].headers).get("X-Workspace-Id")).toBe("captured-workspace")
   })
 })
+
+describe("refusals", () => {
+  it("carry the answer's Retry-After", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { detail: { code: "trajectory_read_busy", message: "busy" } },
+          { status: 429, headers: { "Retry-After": "1" } },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({ detail: "gone" }, { status: 410 }))
+    vi.stubGlobal("fetch", fetch)
+    await expect(http.get("/api/admin/trajectories/sessions")).rejects.toMatchObject({
+      status: 429,
+      code: "trajectory_read_busy",
+      retryAfter: "1",
+    })
+    await expect(http.get("/api/admin/trajectories/sessions")).rejects.toMatchObject({ status: 410, retryAfter: null })
+  })
+})

@@ -117,6 +117,8 @@ async def ensure_engine(config: Any) -> AsyncEngine:
         await connection.run_sync(_upgrade_desktop_billing_columns)
         await connection.run_sync(_upgrade_desktop_skill_store_columns)
         await connection.run_sync(_upgrade_desktop_trajectory_columns)
+        await connection.run_sync(_retire_desktop_trajectory_tables)
+        await connection.run_sync(_index_desktop_metadata_sync)
         await connection.run_sync(_upgrade_desktop_message_center_columns)
         await connection.run_sync(_seed_single_user_scope)
     log.info(f"Single-user application database at {database_path}")
@@ -133,6 +135,48 @@ def _upgrade_desktop_trajectory_columns(connection) -> None:
         columns = {column["name"] for column in inspector.get_columns(table)}
         if "trace_context" not in columns:
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trace_context TEXT")
+
+
+#: Retired business trajectory tables and the legacy_trajectory_* names an earlier
+#: revision of migration d3b5f7a9c1e2 gave them. Old recordings are not kept, so both
+#: are dropped; children come before session_trajectories (SQLite has no CASCADE).
+RETIRED_TRAJECTORY_TABLES = (
+    "trajectory_exports", "legacy_trajectory_exports",
+    "trajectory_checkpoints", "legacy_trajectory_checkpoints",
+    "trajectory_session_summaries", "legacy_trajectory_session_summaries",
+    "trajectory_records", "legacy_trajectory_records",
+    "trajectory_payloads", "legacy_trajectory_payloads",
+    "trajectory_events", "legacy_trajectory_events",
+    "session_trajectories", "legacy_trajectory_sessions",
+)
+
+
+def _retire_desktop_trajectory_tables(connection) -> None:
+    """Drop the retired trajectory tables the way migration d3b5f7a9c1e2 does.
+
+    Desktop databases never run Alembic. Trajectory data now lives in the
+    trace database and old recordings are not kept.
+    """
+    tables = set(sa.inspect(connection).get_table_names())
+    for table in RETIRED_TRAJECTORY_TABLES:
+        if table in tables:
+            connection.exec_driver_sql(f'DROP TABLE "{table}"')
+
+
+#: The metadata sync cursor indexes of migration e5c7a9b1d3f4.
+_METADATA_SYNC_INDEXES = (
+    ("ix_sessions_updated_id", "sessions"),
+    ("ix_users_updated_id", "users"),
+    ("ix_workspaces_updated_id", "workspaces"),
+)
+
+
+def _index_desktop_metadata_sync(connection) -> None:
+    """create_all adds indexes only to new tables; existing desktop tables get them here."""
+    tables = set(sa.inspect(connection).get_table_names())
+    for name, table in _METADATA_SYNC_INDEXES:
+        if table in tables:
+            connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {table} (updated_at, id)")
 
 
 def _upgrade_desktop_billing_columns(connection) -> None:
@@ -332,13 +376,8 @@ _READINESS_SCHEMA: dict[str, frozenset[str]] = {
         "run_origin", "run_progress", "resume_pending", "resume_error", "next_attempt_at", "updated_at", "trace_context",
     }),
     "cron_runs": frozenset({"id", "trace_context"}),
-    "session_trajectories": frozenset({"id", "user_id", "session_id", "committed_seq", "projected_seq", "deleted_at"}),
-    "trajectory_events": frozenset({"event_id", "trajectory_id", "seq", "context", "data", "content_hash"}),
-    "trajectory_payloads": frozenset({"payload_id", "first_seq", "content", "storage_status", "availability", "sha256"}),
-    "trajectory_records": frozenset({"record_id", "applied_seq", "projector_version", "summary", "data"}),
-    "trajectory_session_summaries": frozenset({"trajectory_id", "applied_seq", "statistics"}),
-    "trajectory_checkpoints": frozenset({"trajectory_id", "through_seq", "projector_version", "state", "digest"}),
-    "trajectory_exports": frozenset({"id", "trajectory_id", "through_seq", "status", "storage_key"}),
+    # Trajectory data lives in the trace database; the business schema keeps
+    # only the identity carriers above.
     "question_checkpoints": frozenset({
         "id", "session_id", "user_id", "generation", "message_id", "part_id", "status",
         "questions", "answers", "draft", "draft_revision", "continuation", "applied",

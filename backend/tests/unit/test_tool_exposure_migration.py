@@ -33,7 +33,7 @@ def _current_head() -> str:
 def _previous_head_fixture(database_path: Path) -> None:
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY, updated_at DATETIME)")
         # These tables already existed at PREVIOUS_HEAD. Later migrations in
         # the real head chain alter them, so the old fixture cannot omit them.
         connection.exec_driver_sql(
@@ -45,7 +45,10 @@ def _previous_head_fixture(database_path: Path) -> None:
             "user_id VARCHAR(64) NOT NULL, is_deleted BOOLEAN NOT NULL DEFAULT 0)"
         )
         connection.exec_driver_sql("CREATE TABLE cron_runs (id VARCHAR(64) PRIMARY KEY)")
-        connection.exec_driver_sql("CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY)")
+        connection.exec_driver_sql(
+            "CREATE TABLE file_assets (id VARCHAR(64) PRIMARY KEY, "
+            "oss_key VARCHAR(512) NOT NULL)"
+        )
         connection.exec_driver_sql(
             "CREATE TABLE video_material_groups ("
             "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
@@ -95,7 +98,7 @@ def _previous_head_fixture(database_path: Path) -> None:
         connection.exec_driver_sql(
             "CREATE TABLE sessions ("
             "id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, "
-            "project_id VARCHAR(64) NOT NULL)"
+            "project_id VARCHAR(64) NOT NULL, updated_at DATETIME)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE messages ("
@@ -164,9 +167,13 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
     assert state == "{}"
     assert version == _current_head()
     assert "internal_parts" in inspector.get_table_names()
-    assert {"session_trajectories", "trajectory_events", "trajectory_payloads",
-            "trajectory_records", "trajectory_session_summaries", "trajectory_checkpoints",
-            "trajectory_exports"} <= set(inspector.get_table_names())
+    from db.base import RETIRED_TRAJECTORY_TABLES
+    # Trajectory data lives in the trace database and old recordings are not kept.
+    assert not set(RETIRED_TRAJECTORY_TABLES) & set(inspector.get_table_names())
+    for table in ("sessions", "users", "workspaces"):
+        assert f"ix_{table}_updated_id" in {index["name"] for index in inspector.get_indexes(table)}
+    asset_indexes = {index["name"]: index["column_names"] for index in inspector.get_indexes("file_assets")}
+    assert asset_indexes["ix_file_assets_oss_key"] == ["oss_key"]
     assert "trace_context" in {column["name"] for column in inspector.get_columns("session_executions")}
     assert "trace_context" in {column["name"] for column in inspector.get_columns("cron_runs")}
     assert next(column["type"].length for column in inspector.get_columns("audit_logs") if column["name"] == "resource_id") == 128
@@ -211,6 +218,7 @@ def test_previous_head_upgrade_backfills_state_and_keeps_single_head(tmp_path, m
         ).scalar_one() == PREVIOUS_HEAD
     assert "internal_parts" not in inspector.get_table_names()
     assert "session_trajectories" not in inspector.get_table_names()
+    assert "ix_file_assets_oss_key" not in {index["name"] for index in inspector.get_indexes("file_assets")}
     assert "trace_context" not in {column["name"] for column in inspector.get_columns("cron_runs")}
     assert "video_material_groups" in inspector.get_table_names()
     assert "video_material_assets" in inspector.get_table_names()

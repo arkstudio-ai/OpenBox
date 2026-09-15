@@ -4,9 +4,7 @@ import 'package:bossip_mobile/features/chat/api/chat_api.dart';
 import 'package:bossip_mobile/features/chat/state/chat_session_controller.dart';
 import 'package:bossip_mobile/features/chat/state/stream_store.dart';
 import 'package:bossip_mobile/features/chat/state/subagent_progress.dart';
-import 'package:bossip_mobile/shared/api/providers.dart';
 import 'package:bossip_mobile/shared/events/app_lifecycle.dart';
-import 'package:bossip_mobile/shared/models/interaction.dart';
 import 'package:bossip_mobile/shared/models/message.dart';
 import 'package:bossip_mobile/shared/models/message_part.dart';
 import 'package:bossip_mobile/shared/models/session.dart';
@@ -14,179 +12,9 @@ import 'package:bossip_mobile/shared/ws/ws_client.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'message_history_fixtures.dart';
 import 'suggestion_fixtures.dart';
-
-/// Ids sort the way the server's do: in creation order.
-String _id(int n) => 'm${n.toString().padLeft(2, '0')}';
-
-ChatMessage _user(String id, {String? clientId}) => ChatMessage(
-  id: id,
-  sessionId: 's1',
-  role: 'user',
-  clientMessageId: clientId,
-  parts: [TextPart(id: '$id-text', text: 'ask $id')],
-);
-
-ChatMessage _reply(
-  String id, {
-  String text = 'reply',
-  ToolStatus tool = ToolStatus.completed,
-  String? finish,
-}) => ChatMessage(
-  id: id,
-  sessionId: 's1',
-  role: 'assistant',
-  finish: finish,
-  parts: [
-    TextPart(id: '$id-text', text: text),
-    ToolPart(id: '$id-tool', tool: 'bash', status: tool),
-  ],
-);
-
-/// What `send` puts up before the server confirms the message.
-ChatMessage _echo(String clientId) => ChatMessage(
-  id: 'tmp-$clientId',
-  sessionId: 's1',
-  role: 'user',
-  clientMessageId: clientId,
-  parts: [TextPart(id: 'tmp-part-$clientId', text: 'next')],
-);
-
-/// [count] turns, a user message and its reply each, from turn [from].
-List<ChatMessage> _turns(int count, {int from = 0}) => [
-  for (var i = from; i < from + count; i++) ...[
-    _user(_id(2 * i)),
-    _reply(_id(2 * i + 1)),
-  ],
-];
-
-typedef _Read = ({int? turns, String? before, String? after});
-
-/// A backend holding one transcript. Reads answer at once unless [hold] is
-/// set; held reads wait until [release].
-class _Server extends ChatApi {
-  _Server() : super(Dio());
-
-  List<ChatMessage> messages = [];
-  String status = 'idle';
-  String agent = 'build';
-  bool hold = false;
-  final reads = <_Read>[];
-  final _waiting = <(_Read, Completer<HistoryPage>)>[];
-
-  /// Session and question-list reads, counted.
-  int sessionReads = 0;
-  int questionReads = 0;
-
-  /// While set, session reads wait for it before answering.
-  Completer<void>? sessionGate;
-
-  @override
-  Future<HistoryPage> history(
-    String sessionId, {
-    int? turns,
-    String? before,
-    String? after,
-  }) {
-    final read = (turns: turns, before: before, after: after);
-    reads.add(read);
-    if (!hold) return Future.sync(() => _answer(read));
-    final reply = Completer<HistoryPage>();
-    _waiting.add((read, reply));
-    return reply.future;
-  }
-
-  HistoryPage _answer(_Read read) => SuggestionApi.window(
-    messages,
-    turns: read.turns,
-    before: read.before,
-    after: read.after,
-  );
-
-  /// Answer the oldest held read from the transcript as it is now.
-  void release() {
-    final (read, reply) = _waiting.removeAt(0);
-    try {
-      reply.complete(_answer(read));
-    } on DioException catch (error) {
-      reply.completeError(error);
-    }
-  }
-
-  @override
-  Future<Session> getSession(String sessionId) async {
-    sessionReads++;
-    await sessionGate?.future;
-    return Session.fromJson({
-      'id': sessionId,
-      'status': status,
-      'agent': agent,
-    });
-  }
-
-  @override
-  Future<List<PermissionRequest>> listPermissions() async => [];
-
-  @override
-  Future<List<QuestionRequest>> listQuestions() async {
-    questionReads++;
-    return [];
-  }
-}
-
-Future<(ProviderContainer, SuggestionWs)> _open(ChatApi api) async {
-  SharedPreferences.setMockInitialValues({});
-  final prefs = await SharedPreferences.getInstance();
-  final ws = SuggestionWs();
-  final container = ProviderContainer(
-    overrides: [
-      chatApiProvider.overrideWithValue(api),
-      apiDioProvider.overrideWithValue(Dio()),
-      prefsProvider.overrideWithValue(prefs),
-      wsClientProvider.overrideWithValue(ws),
-    ],
-  );
-  return (container, ws);
-}
-
-List<String> _ids(ProviderContainer container) => [
-  for (final m in container.read(chatStreamProvider).messagesOf('s1')) m.id,
-];
-
-/// Opens session s1's controller on [server] and disposes it inside the test
-/// body, so its poll timer is gone before the fake clock is checked.
-Future<void> _withController(
-  WidgetTester tester,
-  _Server server,
-  Future<void> Function(ProviderContainer, SuggestionWs) body,
-) async {
-  final (container, ws) = await _open(server);
-  try {
-    container.read(chatSessionProvider('s1'));
-    await tester.pump();
-    await body(container, ws);
-  } finally {
-    container.dispose();
-    await ws.close();
-  }
-}
-
-Dio _recordingDio(
-  List<RequestOptions> requests,
-  Object? Function(RequestOptions) answer,
-) => Dio()
-  ..interceptors.add(
-    InterceptorsWrapper(
-      onRequest: (options, handler) {
-        requests.add(options);
-        final data = answer(options);
-        if (data is DioException) return handler.reject(data);
-        handler.resolve(Response<dynamic>(requestOptions: options, data: data));
-      },
-    ),
-  );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -198,7 +26,7 @@ void main() {
         container.read(chatStreamProvider).messagesOf('s1');
 
     setUp(() async {
-      final (opened, ws) = await _open(_Server());
+      final (opened, ws) = await openHistory(HistoryServer());
       container = opened;
       addTearDown(() async {
         container.dispose();
@@ -208,23 +36,23 @@ void main() {
     });
 
     test('keeps older pages, drops what the range lost, keeps newer ones', () {
-      store.mergeHistory('s1', _turns(2, from: 2));
-      store.mergeHistory('s1', _turns(2));
-      expect(_ids(container), [for (var i = 0; i < 8; i++) _id(i)]);
+      store.mergeHistory('s1', historyTurns(2, from: 2));
+      store.mergeHistory('s1', historyTurns(2));
+      expect(historyIds(container), [for (var i = 0; i < 8; i++) historyId(i)]);
       final older = held().sublist(0, 4);
 
       // Over the socket while a window read was out.
-      store.addMessage('s1', _reply(_id(8)));
-      store.addMessage('s1', _echo('c1'));
+      store.addMessage('s1', historyReply(historyId(8)));
+      store.addMessage('s1', historyEcho('c1'));
       // The window m04..m07 comes back without m05 (deleted on the server)
       // and with m07 grown.
       store.mergeHistory('s1', [
-        _user(_id(4)),
-        _user(_id(6)),
-        _reply(_id(7), text: 'reply, and more'),
+        historyUser(historyId(4)),
+        historyUser(historyId(6)),
+        historyReply(historyId(7), text: 'reply, and more'),
       ]);
 
-      expect(_ids(container), [
+      expect(historyIds(container), [
         'm00', 'm01', 'm02', 'm03', 'm04', 'm06', 'm07', 'm08', 'tmp-c1', //
       ]);
       for (var i = 0; i < older.length; i++) {
@@ -236,25 +64,25 @@ void main() {
     test(
       'a read that changed nothing keeps instances and publishes nothing',
       () {
-        store.mergeHistory('s1', _turns(1));
+        store.mergeHistory('s1', historyTurns(1));
         final before = held();
         var published = 0;
         container.listen(chatStreamProvider, (_, _) => published++);
 
         // A fresh decode of the same data, then a stale one — shorter text and
         // a tool still running. Streamed state never moves backwards.
-        store.mergeHistory('s1', _turns(1));
+        store.mergeHistory('s1', historyTurns(1));
         store.mergeHistory('s1', [
-          _user(_id(0)),
-          _reply(_id(1), text: 're', tool: ToolStatus.running),
+          historyUser(historyId(0)),
+          historyReply(historyId(1), text: 're', tool: ToolStatus.running),
         ]);
         expect(held(), same(before));
         expect(published, 0);
 
         // A real change replaces only the message it touched.
         store.mergeHistory('s1', [
-          _user(_id(0)),
-          _reply(_id(1), finish: 'stop'),
+          historyUser(historyId(0)),
+          historyReply(historyId(1), finish: 'stop'),
         ]);
         expect(published, 1);
         expect(held()[0], same(before[0]));
@@ -268,43 +96,47 @@ void main() {
     );
 
     test('an optimistic echo stays until a read confirms its client id', () {
-      store.mergeHistory('s1', _turns(1));
-      store.addMessage('s1', _echo('c1'));
+      store.mergeHistory('s1', historyTurns(1));
+      store.addMessage('s1', historyEcho('c1'));
       expect(container.read(chatStreamProvider).newestHistoryId('s1'), 'm01');
 
-      store.mergeHistory('s1', [_reply(_id(1), text: 'reply!')]);
-      expect(_ids(container), ['m00', 'm01', 'tmp-c1']);
+      store.mergeHistory('s1', [historyReply(historyId(1), text: 'reply!')]);
+      expect(historyIds(container), ['m00', 'm01', 'tmp-c1']);
 
       store.mergeHistory('s1', [
-        _reply(_id(1), text: 'reply!'),
-        _user(_id(2), clientId: 'c1'),
-        _reply(_id(3)),
+        historyReply(historyId(1), text: 'reply!'),
+        historyUser(historyId(2), clientId: 'c1'),
+        historyReply(historyId(3)),
       ]);
-      expect(_ids(container), ['m00', 'm01', 'm02', 'm03']);
+      expect(historyIds(container), ['m00', 'm01', 'm02', 'm03']);
       // The server's copy as it stands. Merged with the echo, it kept the
       // echo's part as well, and the bubble said the message twice.
       expect([for (final p in held()[2].parts) p.id], ['m02-text']);
     });
 
     test('the socket confirming a send replaces its echo whole', () {
-      store.mergeHistory('s1', _turns(1));
-      store.addMessage('s1', _echo('c1'));
-      store.addMessage('s1', _user(_id(2), clientId: 'c1'));
-      expect(_ids(container), ['m00', 'm01', 'm02']);
+      store.mergeHistory('s1', historyTurns(1));
+      store.addMessage('s1', historyEcho('c1'));
+      store.addMessage('s1', historyUser(historyId(2), clientId: 'c1'));
+      expect(historyIds(container), ['m00', 'm01', 'm02']);
       expect([for (final p in held()[2].parts) p.id], ['m02-text']);
     });
 
     test('a late message.created merges into what a read already brought', () {
       store.mergeHistory('s1', [
-        _user(_id(0)),
-        _reply(_id(1), text: 'reply, streamed in full', finish: 'stop'),
+        historyUser(historyId(0)),
+        historyReply(
+          historyId(1),
+          text: 'reply, streamed in full',
+          finish: 'stop',
+        ),
       ]);
       final brought = held()[1];
 
       // Its creation frame, sent before any of that streamed.
       store.addMessage(
         's1',
-        _reply(_id(1), text: 'rep', tool: ToolStatus.running),
+        historyReply(historyId(1), text: 'rep', tool: ToolStatus.running),
       );
       expect(held()[1], same(brought));
       expect((held()[1].parts[0] as TextPart).text, 'reply, streamed in full');
@@ -316,20 +148,22 @@ void main() {
   testWidgets(
     'opens on the newest window, then polls after it, one at a time',
     (tester) async {
-      final server = _Server()
-        ..messages = _turns(12)
+      final server = HistoryServer()
+        ..messages = historyTurns(12)
         ..status = 'busy';
-      await _withController(tester, server, (container, ws) async {
+      await withHistoryController(tester, server, (container, ws) async {
         expect(server.reads, [
           (turns: chatHistoryTurns, before: null, after: null),
         ]);
-        expect(_ids(container), [for (var i = 8; i < 24; i++) _id(i)]);
+        expect(historyIds(container), [
+          for (var i = 8; i < 24; i++) historyId(i),
+        ]);
         expect(container.read(chatSessionProvider('s1')).hasMore, isTrue);
 
         server.hold = true;
         container
             .read(chatStreamProvider.notifier)
-            .addMessage('s1', _echo('c1'));
+            .addMessage('s1', historyEcho('c1'));
         await tester.pump(const Duration(seconds: 1));
         // The echo means nothing to the server: read on from its newest.
         expect(server.reads.last, (turns: null, before: null, after: 'm23'));
@@ -340,16 +174,21 @@ void main() {
         await tester.pump();
         expect(server.reads, hasLength(2));
 
-        server.messages = [...server.messages, _reply(_id(24))];
+        server.messages = [...server.messages, historyReply(historyId(24))];
         server.release();
         await tester.pump();
-        expect(_ids(container).sublist(14), ['m22', 'm23', 'm24', 'tmp-c1']);
+        expect(historyIds(container).sublist(14), [
+          'm22',
+          'm23',
+          'm24',
+          'tmp-c1',
+        ]);
         // Only now does the reconnect's window read start.
         expect(server.reads, hasLength(3));
         expect(server.reads.last.turns, chatHistoryTurns);
         server.release();
         await tester.pump();
-        expect(_ids(container), hasLength(18));
+        expect(historyIds(container), hasLength(18));
       });
     },
   );
@@ -357,8 +196,8 @@ void main() {
   testWidgets(
     'loading older prepends the turns before and stops at the start',
     (tester) async {
-      final server = _Server()..messages = _turns(12);
-      await _withController(tester, server, (container, ws) async {
+      final server = HistoryServer()..messages = historyTurns(12);
+      await withHistoryController(tester, server, (container, ws) async {
         final controller = container.read(chatSessionProvider('s1').notifier);
         final newest = container.read(chatStreamProvider).messagesOf('s1');
 
@@ -374,7 +213,9 @@ void main() {
         server.release();
         await tester.pump();
         final state = container.read(chatSessionProvider('s1'));
-        expect(_ids(container), [for (var i = 0; i < 24; i++) _id(i)]);
+        expect(historyIds(container), [
+          for (var i = 0; i < 24; i++) historyId(i),
+        ]);
         expect(
           container.read(chatStreamProvider).messagesOf('s1').sublist(8),
           newest,
@@ -392,15 +233,18 @@ void main() {
   testWidgets('a vanished anchor drops held history and reloads the newest', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(12)
+    final server = HistoryServer()
+      ..messages = historyTurns(12)
       ..status = 'busy';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       await container.read(chatSessionProvider('s1').notifier).loadOlder();
-      expect(_ids(container), hasLength(24));
+      expect(historyIds(container), hasLength(24));
 
       // Regenerated elsewhere: the reply the view last holds is gone.
-      server.messages = [..._turns(12).take(23), _reply(_id(24))];
+      server.messages = [
+        ...historyTurns(12).take(23),
+        historyReply(historyId(24)),
+      ];
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
 
@@ -409,7 +253,10 @@ void main() {
         (turns: chatHistoryTurns, before: null, after: null),
       ]);
       // The older page went with the reset; the window starts over.
-      expect(_ids(container), [for (var i = 8; i < 23; i++) _id(i), 'm24']);
+      expect(historyIds(container), [
+        for (var i = 8; i < 23; i++) historyId(i),
+        'm24',
+      ]);
       expect(container.read(chatSessionProvider('s1')).hasMore, isTrue);
     });
   });
@@ -417,10 +264,10 @@ void main() {
   testWidgets('a chat nobody watches fetches nothing until watched again', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'busy';
-    final (container, ws) = await _open(server);
+    final (container, ws) = await openHistory(server);
     try {
       final screen = container.listen(chatSessionProvider('s1'), (_, _) {});
       await tester.pump();
@@ -473,10 +320,10 @@ void main() {
   testWidgets(
     'a live chat reads its session every fifth tick with the socket up',
     (tester) async {
-      final server = _Server()
-        ..messages = _turns(3)
+      final server = HistoryServer()
+        ..messages = historyTurns(3)
         ..status = 'busy';
-      await _withController(tester, server, (container, ws) async {
+      await withHistoryController(tester, server, (container, ws) async {
         ws.open = true;
         server.reads.clear();
         server.sessionReads = 0;
@@ -501,10 +348,10 @@ void main() {
   testWidgets(
     'a tick skipped behind a read in flight leaves its session read due',
     (tester) async {
-      final server = _Server()
-        ..messages = _turns(3)
+      final server = HistoryServer()
+        ..messages = historyTurns(3)
         ..status = 'busy';
-      await _withController(tester, server, (container, ws) async {
+      await withHistoryController(tester, server, (container, ws) async {
         ws.open = true;
         server.reads.clear();
         server.sessionReads = 0;
@@ -530,10 +377,10 @@ void main() {
   testWidgets(
     'a lost end of run is found by the session read, which reloads once',
     (tester) async {
-      final server = _Server()
-        ..messages = _turns(3)
+      final server = HistoryServer()
+        ..messages = historyTurns(3)
         ..status = 'busy';
-      await _withController(tester, server, (container, ws) async {
+      await withHistoryController(tester, server, (container, ws) async {
         ws.open = true;
         server.reads.clear();
         // The run ends, and its session.status frame never arrives.
@@ -560,10 +407,10 @@ void main() {
   testWidgets('a queued chat reads only its session until its run starts', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'queued';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       ws.open = true;
       server.reads.clear();
       server.sessionReads = 0;
@@ -594,10 +441,10 @@ void main() {
   testWidgets('session.updated reads the record once; a newer status stands', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'busy';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       ws.open = true;
       server.reads.clear();
       server.sessionReads = 0;
@@ -637,10 +484,10 @@ void main() {
   testWidgets('a session.updated read that finds the run over reloads once', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'busy';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       ws.open = true;
       server.reads.clear();
       server
@@ -664,8 +511,8 @@ void main() {
   testWidgets('session.updated reads coalesce: one out, one waiting', (
     tester,
   ) async {
-    final server = _Server()..messages = _turns(3);
-    await _withController(tester, server, (container, ws) async {
+    final server = HistoryServer()..messages = historyTurns(3);
+    await withHistoryController(tester, server, (container, ws) async {
       server
         ..sessionReads = 0
         ..sessionGate = Completer<void>();
@@ -691,8 +538,8 @@ void main() {
   testWidgets(
     'title and usage frames patch the record; plan frames read nothing',
     (tester) async {
-      final server = _Server()..messages = _turns(3);
-      await _withController(tester, server, (container, ws) async {
+      final server = HistoryServer()..messages = historyTurns(3);
+      await withHistoryController(tester, server, (container, ws) async {
         server.sessionReads = 0;
         ws.frames
           ..add(
@@ -732,10 +579,10 @@ void main() {
     testWidgets(
       'the end of a run re-reads the newest turns (store first: $storeFirst)',
       (tester) async {
-        final server = _Server()
-          ..messages = _turns(3)
+        final server = HistoryServer()
+          ..messages = historyTurns(3)
           ..status = 'busy';
-        final (container, ws) = await _open(server);
+        final (container, ws) = await openHistory(server);
         try {
           // The chat screen builds its controller before anything has read
           // the store, and that controller hears every frame first.
@@ -778,10 +625,10 @@ void main() {
   testWidgets('a queued run is not polled until the socket starts it', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'queued';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       await tester.pump(const Duration(seconds: 3));
       expect(server.reads, [
         (turns: chatHistoryTurns, before: null, after: null),
@@ -799,8 +646,8 @@ void main() {
   testWidgets('only an answered question re-reads the transcript', (
     tester,
   ) async {
-    final server = _Server()..messages = _turns(3);
-    await _withController(tester, server, (container, ws) async {
+    final server = HistoryServer()..messages = historyTurns(3);
+    await withHistoryController(tester, server, (container, ws) async {
       await tester.pump();
       server.reads.clear();
       final questionReads = server.questionReads;
@@ -827,10 +674,10 @@ void main() {
   testWidgets('an app off screen skips its ticks and catches up on the next', (
     tester,
   ) async {
-    final server = _Server()
-      ..messages = _turns(3)
+    final server = HistoryServer()
+      ..messages = historyTurns(3)
       ..status = 'busy';
-    await _withController(tester, server, (container, ws) async {
+    await withHistoryController(tester, server, (container, ws) async {
       server.reads.clear();
       final visible = container.read(appVisibleProvider.notifier);
 
@@ -852,7 +699,7 @@ void main() {
     () async {
       final requests = <RequestOptions>[];
       final api = ChatApi(
-        _recordingDio(
+        recordingHistoryDio(
           requests,
           (options) => options.queryParameters['after'] == 'gone'
               ? SuggestionApi.cursorGone()
@@ -883,7 +730,7 @@ void main() {
 
   test('subagent backfill reads the child session as one turn', () async {
     final requests = <RequestOptions>[];
-    final dio = _recordingDio(
+    final dio = recordingHistoryDio(
       requests,
       (_) => {
         'messages': [
@@ -899,7 +746,7 @@ void main() {
         'has_more': false,
       },
     );
-    final (container, ws) = await _open(ChatApi(dio));
+    final (container, ws) = await openHistory(ChatApi(dio));
     addTearDown(() async {
       container.dispose();
       await ws.close();

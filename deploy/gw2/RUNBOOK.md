@@ -1,6 +1,6 @@
 # gw2 runbook: trajectory worker topology
 
-> Status: prepared with the trajectory re-architecture (SPEC §12, work packages w1-ops and w3-ops); **not released yet**.
+> Status: deployed to gw2 on 2026-09-16 from `main@08f5d952`; recording is enabled only for the designated internal validation account. Broad rollout and the production comparison windows remain pending; see the release record in [docs/DEPLOY.md](../../docs/DEPLOY.md).
 > Scope: the Alibaba Cloud production host gw2 (`/opt/openbox`, cn-shanghai). The AWS development host uses the same files.
 > Companions: [docs/DEPLOY.md §五](../../docs/DEPLOY.md) (Chinese summary; the release log stays there),
 > [SPEC](../../docs/trajectory-rearch/SPEC.md) §8, §12, §13.
@@ -282,7 +282,7 @@ Keep a terminal probing the public site during every switch, as in previous rele
    docker compose exec -T postgres psql -U openbox -d openbox -c '\dt trajectory_*'          # Did not find any relation
    docker compose exec -T postgres psql -U openbox -d openbox -c '\dt session_trajectories'          # Did not find any relation
    docker compose exec -T postgres psql -U openbox -d openbox -c '\dt legacy_trajectory_*'   # Did not find any relation
-   docker compose exec -T backend alembic current                                            # e5c7a9b1d3f4 (head)
+   docker compose exec -T backend alembic current                                            # f8c2a6e0b4d1 (head)
    docker compose exec -T postgres psql -U openbox -d openbox -c 'SELECT pg_stat_statements_reset()'
    ```
 
@@ -416,6 +416,14 @@ Overlapping runs are skipped through `/run/lock/openbox-<name>.lock`. Re-run `in
 one-off container while the worker is stopped), which adds the worker's `/health` and `/metrics` and reports with
 CloudMonitor `PutCustomMetric` (API 2019-01-01, endpoint `metrics.cn-shanghai.aliyuncs.com`, 21 entries per call),
 group `TRAJECTORY_CMS_GROUP_ID` (default `0`) and dimension `instance=<instance>` (§7; `gw2` in production).
+
+Check the account's custom-metric quota before enabling this timer, and verify at least two
+successive runs plus `DescribeCustomMetricList`. On the 2026-09-16 gw2 rollout, the first
+58-metric report returned API success, but the account registered only 10 total time series
+and subsequent reports failed with `206: reach max time series num`. An initial 200 does not
+prove that all series are available. Keep this failure visible, use the worker's local health
+and metrics for diagnosis, and resolve the cloud quota/product choice before claiming complete
+monitoring coverage. Do not buy a plan or delete existing series as an automatic workaround.
 
 | Metric | Source |
 |---|---|

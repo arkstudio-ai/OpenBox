@@ -11,7 +11,8 @@ Version 2 event lines reference values stored in ``blobs/<sha256>``.
 ``read_batch`` returns them with those values in place, so ingest sees the
 line a writer without blobs would have written; a line whose blob is missing
 or corrupt comes back as a ``gap`` control and the file goes on. ``scan_spool``
-sweeps the blob files that no data file can still reference.
+sweeps the blob files that no data file can still reference and keeps
+``quarantine/`` within its age and size limits.
 
 Everything here is blocking file I/O; the ingest service calls it through
 ``asyncio.to_thread``. Lines are read in chunks and a batch stops at its line
@@ -37,9 +38,17 @@ log = create_logger("trajectory.worker.spool_reader")
 
 READ_CHUNK_BYTES = 1024 * 1024
 #: Blob files are swept at most this often; the mtime of ``blobs/.swept`` records the last sweep.
+#: The ``quarantine/`` limits are applied at the same cadence.
 BLOB_SWEEP_SECONDS = 60.0
 SWEEP_MARKER = ".swept"
 SWEEP_SUFFIX = ".sweep"
+#: Data files unmodified this long no longer hold back the blob sweep: the blobs they reference are read instead.
+OLD_DATA_SECONDS = 15 * 60.0
+#: Bytes of old data files one sweep reads at most; beyond that the sweep keeps every blob newer than the
+#: oldest data file, as if none were old.
+OLD_DATA_READ_BYTES = 256 * 1024 * 1024
+#: Suffix of a file renamed aside by ``remove_if_unchanged``.
+REMOVE_SUFFIX = ".remove"
 #: ``gap`` reasons of event lines whose blob cannot be used.
 BLOB_MISSING = "spool_blob_missing"
 BLOB_CORRUPT = "spool_blob_corrupt"
@@ -47,8 +56,11 @@ IDENTITY_MAX_CHARS = 128
 LOG_INTERVAL_SECONDS = 60.0
 _LINE_COUNTER = re.compile(rb'^\{"v":\d+,"k":"(?:event|control)","n":(\d+),')
 _SHA256 = re.compile(rb"[0-9a-f]{64}")
+_BLOB_REFERENCE = re.compile(re.escape(spool.BLOB_REFERENCE) + rb'([0-9a-f]{64})"\}')
 #: Gap reason -> monotonic time before which it is not logged again.
 _logged: dict[str, float] = {}
+#: Spool directory -> wall time of its last quarantine sweep.
+_quarantine_swept: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -123,13 +135,15 @@ def read_producer_document(path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
-def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = None,
-               sweep: bool = True) -> SpoolScan:
+def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = None, sweep: bool = True,
+               quarantine_max_bytes: int | None = None,
+               quarantine_max_age_seconds: float | None = None) -> SpoolScan:
     """Producers and their data files (sorted by counter), with size totals.
 
     ``documents`` caches parsed ``producer.json`` files between scans. With ``sweep`` a complete
-    scan also removes the blob files older than every listed data file (``sweep_blobs``), at most
-    once per ``BLOB_SWEEP_SECONDS``.
+    scan also removes the blob files no listed data file can reference (``sweep_blobs``), and any
+    scan applies the quarantine limits given (``sweep_quarantine``); each at most once per
+    ``BLOB_SWEEP_SECONDS``.
     """
     started = time.time()
     scan = SpoolScan(producers={})
@@ -181,7 +195,9 @@ def scan_spool(spool_dir: Path, *, documents: dict[str, dict | None] | None = No
         producer.files = [by_counter[counter] for counter in sorted(by_counter)]
         scan.producers[producer_id] = producer
     if sweep and scan.complete:
-        _sweep_when_due(spool_dir, scan.oldest_mtime, started)
+        _sweep_when_due(spool_dir, [item for producer in scan.producers.values() for item in producer.files], started)
+    if sweep and (quarantine_max_bytes is not None or quarantine_max_age_seconds is not None):
+        _sweep_quarantine_when_due(spool_dir, quarantine_max_bytes, quarantine_max_age_seconds, started)
     return scan
 
 
@@ -338,7 +354,7 @@ def _gap_line(body: bytes, reason: str, source) -> bytes:
     return orjson.dumps({"v": spool.VERSION, "k": spool.KIND_CONTROL, "n": n, "t": t, "control": control})
 
 
-def _sweep_when_due(spool_dir: Path, oldest_mtime: float | None, now: float) -> None:
+def _sweep_when_due(spool_dir: Path, data_files: list[SpoolFile], now: float) -> None:
     marker = spool.blobs_dir(spool_dir) / SWEEP_MARKER
     try:
         if 0 <= now - os.stat(marker).st_mtime < BLOB_SWEEP_SECONDS:
@@ -357,7 +373,7 @@ def _sweep_when_due(spool_dir: Path, oldest_mtime: float | None, now: float) -> 
         log.warning("Spool blob sweep skipped error_type=%s", type(exc).__name__)
         return
     try:
-        files, size = sweep_blobs(spool_dir, oldest_mtime=oldest_mtime, now=now)
+        files, size = sweep_blobs(spool_dir, data_files=data_files, now=now)
     except OSError as exc:
         log.warning("Spool blob sweep failed error_type=%s", type(exc).__name__)
         return
@@ -365,20 +381,50 @@ def _sweep_when_due(spool_dir: Path, oldest_mtime: float | None, now: float) -> 
         log.info("Swept spool blobs files=%s bytes=%s", files, size)
 
 
-def sweep_blobs(spool_dir: Path, *, oldest_mtime: float | None, now: float | None = None,
-                margin: float = spool.BLOB_MARGIN_SECONDS) -> tuple[int, int]:
-    """Delete the blob files older than every data file by ``margin``: ``(files, bytes)`` deleted.
+def _sweep_quarantine_when_due(spool_dir: Path, max_bytes: int | None, max_age_seconds: float | None,
+                               now: float) -> None:
+    # In memory: a marker file in quarantine/ would count as a quarantined file, and blobs/ may not exist.
+    key = os.fspath(spool_dir)
+    if 0 <= now - _quarantine_swept.get(key, float("-inf")) < BLOB_SWEEP_SECONDS:
+        return
+    _quarantine_swept[key] = now
+    try:
+        files, size = sweep_quarantine(spool_dir, max_bytes=max_bytes, max_age_seconds=max_age_seconds, now=now)
+    except OSError as exc:
+        log.warning("Spool quarantine sweep failed error_type=%s", type(exc).__name__)
+        return
+    if files:
+        log.info("Swept quarantined spool files files=%s bytes=%s", files, size)
 
-    ``oldest_mtime`` is the oldest mtime among the data files that exist, consumed or not (``None``
-    when there are none). A writer refreshes the mtime of every blob a line references when it
-    writes the line, or at most ``spool.BLOB_REFRESH_SECONDS`` earlier, so no blob of an existing
-    or later line is older than the cutoff. A candidate is renamed aside before its mtime is read
-    again: a writer that refreshed it in between keeps it (it is put back), and a writer that looks
-    for it afterwards finds it missing and stores it again. Temporary files of writers that died
-    and entries left by an interrupted sweep are cleaned up too.
+
+def sweep_blobs(spool_dir: Path, *, data_files: list[SpoolFile], now: float | None = None,
+                margin: float = spool.BLOB_MARGIN_SECONDS,
+                max_read_bytes: int = OLD_DATA_READ_BYTES) -> tuple[int, int]:
+    """Delete the blob files no data file can reference: ``(files, bytes)`` deleted.
+
+    ``data_files`` are the ``SpoolFile``s of a complete scan: the data files that exist, consumed or
+    not. A writer refreshes the mtime of every blob a line references when it writes the line, or
+    at most ``spool.BLOB_REFRESH_SECONDS`` earlier, so no blob of an existing or later line is older
+    than the oldest data file's mtime minus ``margin``. Data files unmodified for ``OLD_DATA_SECONDS``
+    are read instead: the blobs they reference are kept whatever their age and the cutoff follows the
+    other files, so one stuck file does not keep every later blob until the spool is full. When the
+    old files hold more than ``max_read_bytes``, or one cannot be read, every file sets the cutoff.
+
+    A candidate is renamed aside before its mtime is read again: a writer that refreshed it in
+    between keeps it (it is put back), and a writer that looks for it afterwards finds it missing
+    and stores it again. Temporary files of writers that died and entries left by an interrupted
+    sweep are cleaned up too.
     """
     now = time.time() if now is None else now
-    cutoff = min(now, now if oldest_mtime is None else oldest_mtime) - margin
+    data_files = list(data_files)
+    recent = [item for item in data_files if item.mtime >= now - OLD_DATA_SECONDS]
+    referenced: set[str] | None = set()
+    if len(recent) < len(data_files):
+        referenced = _blob_references([item for item in data_files if item.mtime < now - OLD_DATA_SECONDS],
+                                      max_read_bytes)
+        if referenced is None:
+            referenced, recent = set(), data_files
+    cutoff = min(now, min((item.mtime for item in recent), default=now)) - margin
     directory = spool.blobs_dir(spool_dir)
     try:
         entries = list(os.scandir(directory))
@@ -394,7 +440,7 @@ def sweep_blobs(spool_dir: Path, *, oldest_mtime: float | None, now: float | Non
         except OSError:
             continue
         if spool.is_blob_name(name):
-            if status.st_mtime >= cutoff:
+            if status.st_mtime >= cutoff or name in referenced:
                 continue
             aside = directory / f".{name}.{uuid.uuid4().hex[:8]}{SWEEP_SUFFIX}"
             try:
@@ -404,7 +450,7 @@ def sweep_blobs(spool_dir: Path, *, oldest_mtime: float | None, now: float | Non
             deleted = _settle(aside, directory / name, cutoff)
         elif name.startswith(".") and name.endswith(SWEEP_SUFFIX) and spool.is_blob_name(name[1:65]):
             # Left by a sweep that stopped between its rename and the unlink.
-            deleted = _settle(Path(entry.path), directory / name[1:65], cutoff)
+            deleted = _settle(Path(entry.path), directory / name[1:65], cutoff, keep=name[1:65] in referenced)
         elif name.startswith(".") and name.endswith(".tmp") and status.st_mtime < now - margin:
             deleted = status.st_size if remove_file(entry.path) else None
         else:
@@ -415,11 +461,49 @@ def sweep_blobs(spool_dir: Path, *, oldest_mtime: float | None, now: float | Non
     return files, size
 
 
-def _settle(aside: Path, path: Path, cutoff: float) -> int | None:
-    """Delete a blob renamed aside, or put it back when a writer refreshed it: bytes deleted, else ``None``."""
+def _blob_references(files: list[SpoolFile], max_bytes: int) -> set[str] | None:
+    """The blobs referenced in ``files``; ``None`` when that takes reading over ``max_bytes`` or a file fails."""
+    if sum(item.size for item in files) > max_bytes:
+        return None
+    found: set[str] = set()
+    # A reference cut by a chunk boundary is found in the next window: keep all but its last byte.
+    overlap = len(spool.BLOB_REFERENCE) + 64 + 1
+    budget = max_bytes
+    for item in files:
+        try:
+            handle = _open_listed(item)
+            if handle is None:
+                continue  # consumed and deleted since the scan
+            with handle:
+                tail = b""
+                while chunk := handle.read(READ_CHUNK_BYTES):
+                    budget -= len(chunk)
+                    if budget < 0:
+                        return None
+                    window = tail + chunk
+                    found.update(sha.decode("ascii") for sha in _BLOB_REFERENCE.findall(window))
+                    tail = window[-overlap:]
+        except OSError:
+            return None
+    return found
+
+
+def _open_listed(item: SpoolFile):
+    """A listed data file opened under its current name (a ``.part`` may be closed since); ``None`` when gone."""
+    names = [item.path] if item.closed else [item.path, item.path.with_name(spool.file_name(item.counter))]
+    for path in names:
+        try:
+            return open(path, "rb")
+        except FileNotFoundError:
+            continue
+    return None
+
+
+def _settle(aside: Path, path: Path, cutoff: float, *, keep: bool = False) -> int | None:
+    """Delete a blob renamed aside, or put it back when refreshed or ``keep``: bytes deleted, else ``None``."""
     try:
         status = os.stat(aside)
-        if status.st_mtime < cutoff:
+        if status.st_mtime < cutoff and not keep:
             os.unlink(aside)
             return status.st_size
         if os.path.exists(path):
@@ -449,8 +533,13 @@ def counter_range(path: Path, offset: int) -> tuple[int | None, int | None]:
     return low, high
 
 
-def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: dict) -> Path | None:
-    """Move ``item`` to ``quarantine/`` with a ``.reason`` sidecar; ``None`` when the move failed."""
+def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: dict,
+                    max_bytes: int | None = None) -> Path | None:
+    """Move ``item`` to ``quarantine/`` with a ``.reason`` sidecar; ``None`` when the move failed.
+
+    With ``max_bytes`` the oldest quarantined files are then deleted until their data bytes fit,
+    the file just moved too when it alone is larger.
+    """
     directory = Path(spool_dir) / spool.QUARANTINE_DIR
     path = item.path if item.path.exists() else item.path.with_name(
         spool.file_name(item.counter, closed=not item.closed))
@@ -463,12 +552,113 @@ def quarantine_file(spool_dir: Path, item: SpoolFile, *, reason: str, detail: di
     except OSError:
         return None
     try:
-        spool.write_json_atomic(target.with_name(target.name + ".reason"), {
+        spool.write_json_atomic(target.with_name(target.name + spool.REASON_SUFFIX), {
             "version": spool.VERSION, "producer_id": item.producer_id, "file": path.name,
             "reason": reason, "quarantined_at": spool.timestamp(), **detail})
     except OSError:
         pass
+    if max_bytes is not None:
+        try:
+            files, size = _prune_quarantine(_quarantined(directory)[0], max_bytes)
+        except OSError as exc:
+            log.warning("Spool quarantine limit not applied error_type=%s", type(exc).__name__)
+            return target
+        if files:
+            log.info("Deleted the oldest quarantined spool files files=%s bytes=%s", files, size)
+        if not target.exists():
+            log.warning("Quarantined spool file deleted at once: larger than the quarantine limit "
+                        "producer_id=%s file=%s max_bytes=%s", item.producer_id, path.name, max_bytes)
     return target
+
+
+@dataclass(frozen=True)
+class _Quarantined:
+    path: Path
+    size: int
+    #: When it was quarantined: the mtime of its ``.reason`` sidecar, else its own.
+    mtime: float
+    reason: Path | None
+
+
+def _quarantined(directory: Path) -> tuple[list[_Quarantined], list[tuple[Path, float]]]:
+    """Quarantined data files, oldest first, and the ``.reason`` sidecars whose data file is gone."""
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return [], []
+    statuses = {}
+    for entry in entries:
+        try:
+            if entry.is_file(follow_symlinks=False):
+                statuses[entry.name] = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+    files, orphans = [], []
+    for name, status in statuses.items():
+        if spool.is_quarantined_file(name):
+            sidecar = statuses.get(name + spool.REASON_SUFFIX)
+            files.append(_Quarantined(directory / name, status.st_size,
+                                      status.st_mtime if sidecar is None else sidecar.st_mtime,
+                                      None if sidecar is None else directory / (name + spool.REASON_SUFFIX)))
+        elif (not name.startswith(".") and name.endswith(spool.REASON_SUFFIX)
+              and name[:-len(spool.REASON_SUFFIX)] not in statuses):
+            orphans.append((directory / name, status.st_mtime))
+    files.sort(key=lambda quarantined: (quarantined.mtime, quarantined.path.name))
+    return files, orphans
+
+
+def _remove_quarantined(quarantined: _Quarantined) -> bool:
+    # The data file first: a sidecar left behind is an orphan the age sweep removes later.
+    if not remove_file(quarantined.path):
+        return False
+    if quarantined.reason is not None:
+        remove_file(quarantined.reason)
+    return True
+
+
+def _prune_quarantine(files: list[_Quarantined], max_bytes: int) -> tuple[int, int]:
+    """Delete quarantined files, oldest first, until at most ``max_bytes`` of data remain: ``(files, bytes)``."""
+    total = sum(quarantined.size for quarantined in files)
+    deleted = size = 0
+    for quarantined in files:
+        if total <= max_bytes:
+            break
+        if _remove_quarantined(quarantined):
+            total -= quarantined.size
+            deleted += 1
+            size += quarantined.size
+    return deleted, size
+
+
+def sweep_quarantine(spool_dir: Path, *, max_bytes: int | None, max_age_seconds: float | None,
+                     now: float | None = None) -> tuple[int, int]:
+    """Delete quarantined files older than ``max_age_seconds``, then the oldest beyond ``max_bytes`` of data.
+
+    Age counts from the ``.reason`` sidecar's mtime, else the data file's. A data file goes together
+    with its sidecar; sidecars without a data file go once that old. ``None`` disables a limit.
+    ``(files, bytes)`` of the data files deleted.
+    """
+    now = time.time() if now is None else now
+    files, orphans = _quarantined(Path(spool_dir) / spool.QUARANTINE_DIR)
+    deleted = size = 0
+    if max_age_seconds is not None:
+        cutoff = now - max_age_seconds
+        kept = []
+        for quarantined in files:
+            if quarantined.mtime < cutoff and _remove_quarantined(quarantined):
+                deleted += 1
+                size += quarantined.size
+            else:
+                kept.append(quarantined)
+        files = kept
+        for path, mtime in orphans:
+            if mtime < cutoff:
+                remove_file(path)
+    if max_bytes is not None:
+        pruned, pruned_bytes = _prune_quarantine(files, max_bytes)
+        deleted += pruned
+        size += pruned_bytes
+    return deleted, size
 
 
 def locate(item: SpoolFile) -> Path | None:
@@ -487,6 +677,32 @@ def stat_signature(path: Path) -> tuple[int, float] | None:
     except OSError:
         return None
     return status.st_size, status.st_mtime
+
+
+def remove_if_unchanged(path: Path, signature: tuple[int, float] | None) -> bool:
+    """Delete ``path`` if its ``(st_size, st_mtime)`` still equals ``signature``; False when missing or changed.
+
+    For an abandoned ``.part`` consumed while its writer may have resumed: the file is renamed aside
+    before it is checked, so lines written up to the check make it differ and it is put back.
+    """
+    path = Path(path)
+    aside = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}{REMOVE_SUFFIX}")
+    try:
+        os.rename(path, aside)
+    except OSError:
+        return False
+    try:
+        status = os.stat(aside)
+        if signature is not None and (status.st_size, status.st_mtime) == tuple(signature):
+            os.unlink(aside)
+            return True
+    except OSError:
+        pass
+    try:
+        os.replace(aside, path)
+    except OSError as exc:
+        log.warning("Could not put back a changed spool file path=%s error_type=%s", path, type(exc).__name__)
+    return False
 
 
 def remove_file(path: Path) -> bool:

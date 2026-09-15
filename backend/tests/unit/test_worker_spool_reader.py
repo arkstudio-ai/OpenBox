@@ -4,8 +4,8 @@ import time
 
 from trajectory import spool
 from trajectory.worker import spool_reader
-from trajectory.worker.spool_reader import (counter_range, locate, quarantine_file, read_batch, remove_producer_dir,
-    scan_spool, select_ready)
+from trajectory.worker.spool_reader import (counter_range, locate, quarantine_file, read_batch, remove_if_unchanged,
+    remove_producer_dir, scan_spool, select_ready, stat_signature, sweep_blobs, sweep_quarantine)
 
 
 def _line(n: int, text: str = "x") -> bytes:
@@ -127,3 +127,109 @@ def test_locate_follows_a_rename_and_directories_are_removed_only_when_empty(tmp
     assert locate(item) is None
     assert remove_producer_dir(root) is True and not root.exists()
     assert remove_producer_dir(root) is True
+
+
+def _quarantined(directory, name, size, age, now):
+    """A quarantined data file with its sidecar, quarantined ``age`` seconds before ``now``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    data, reason = directory / name, directory / (name + spool.REASON_SUFFIX)
+    data.write_bytes(b"x" * size)
+    reason.write_bytes(b"{}")
+    os.utime(reason, (now - age, now - age))
+    return data, reason
+
+
+def test_quarantine_keeps_its_byte_limit_deleting_the_oldest_files_first(tmp_path):
+    now = time.time()
+    quarantine = tmp_path / "quarantine"
+    oldest = _quarantined(quarantine, "p0__a.jsonl", 40, 300, now)
+    older = _quarantined(quarantine, "p0__b.jsonl", 40, 200, now)
+    _write(tmp_path / "producers" / "p1", 3, [_line(1)])
+    item = scan_spool(tmp_path).producers["p1"].files[0]
+    target = quarantine_file(tmp_path, item, reason="unparsable_line", detail={}, max_bytes=40 + item.size)
+    assert target.exists() and target.with_name(target.name + spool.REASON_SUFFIX).exists()
+    assert not any(path.exists() for path in oldest) and all(path.exists() for path in older)
+    # A file larger than the limit on its own goes too, after every older one; its path is still returned.
+    _write(tmp_path / "producers" / "p1", 4, [_line(2)])
+    item = scan_spool(tmp_path).producers["p1"].files[0]
+    second = quarantine_file(tmp_path, item, reason="unparsable_line", detail={}, max_bytes=10)
+    assert second.parent == quarantine and not second.exists()
+    assert os.listdir(quarantine) == []
+
+
+def test_quarantine_sweep_deletes_old_files_and_orphans_then_the_oldest_beyond_the_byte_limit(tmp_path):
+    now, week = time.time(), 7 * 86400
+    quarantine = tmp_path / "quarantine"
+    _quarantined(quarantine, "p1__a.jsonl", 100, week + 60, now)
+    # Without a sidecar the data file's own mtime is its age.
+    bare = quarantine / "p1__b.jsonl"
+    bare.write_bytes(b"x" * 10)
+    os.utime(bare, (now - week - 60, now - week - 60))
+    orphan = quarantine / ("p1__c.jsonl" + spool.REASON_SUFFIX)
+    orphan.write_bytes(b"{}")
+    os.utime(orphan, (now - week - 60, now - week - 60))
+    (quarantine / ("p1__d.jsonl" + spool.REASON_SUFFIX)).write_bytes(b"{}")
+    _quarantined(quarantine, "p1__e.jsonl", 30, 3 * 86400, now)
+    _quarantined(quarantine, "p1__f.jsonl", 30, 60, now)
+    assert sweep_quarantine(tmp_path, max_bytes=40, max_age_seconds=week, now=now) == (3, 140)
+    assert sorted(os.listdir(quarantine)) == ["p1__d.jsonl.reason", "p1__f.jsonl", "p1__f.jsonl.reason"]
+    assert sweep_quarantine(tmp_path / "missing", max_bytes=0, max_age_seconds=0) == (0, 0)
+
+
+def test_scan_applies_quarantine_limits_once_per_interval_without_a_blobs_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(spool_reader, "_quarantine_swept", {})
+    now, week = time.time(), 7 * 86400
+    limits = {"quarantine_max_bytes": 1024, "quarantine_max_age_seconds": week}
+    first, _ = _quarantined(tmp_path / "quarantine", "p1__a.jsonl", 10, week + 60, now)
+    scan_spool(tmp_path, **limits)
+    assert not first.exists() and not spool.blobs_dir(tmp_path).exists()
+    second, _ = _quarantined(tmp_path / "quarantine", "p1__b.jsonl", 10, week + 60, now)
+    scan_spool(tmp_path, **limits)
+    assert second.exists()  # swept less than BLOB_SWEEP_SECONDS ago
+    monkeypatch.setattr(spool_reader, "BLOB_SWEEP_SECONDS", 0.0)
+    scan_spool(tmp_path)
+    assert second.exists()  # no limits given
+    scan_spool(tmp_path, **limits)
+    assert not second.exists()
+
+
+def test_blob_sweep_reads_old_data_files_instead_of_keeping_every_later_blob(tmp_path, monkeypatch):
+    now = time.time()
+    blobs = spool.blobs_dir(tmp_path)
+    blobs.mkdir(parents=True)
+
+    def blob(char, age):
+        path = blobs / (char * 64)
+        path.write_bytes(b'"value"')
+        os.utime(path, (now - age, now - age))
+        return path
+
+    # An hour-old data file references blob a; blob b is newer than that file but referenced by nothing.
+    referenced, unreferenced, fresh = blob("a", 3900), blob("b", 1800), blob("c", 30)
+    event = b'{"type":"tool.finished","data":{"output":{"$blob":"%s"}}}' % (b"a" * 64)
+    _write(tmp_path / "producers" / "p1", 1, [spool.encode_event_line(1, b"2026-09-14T08:00:00.000Z", event,
+                                                                      version=spool.BLOB_VERSION)], mtime=now - 3600)
+    _write(tmp_path / "producers" / "p2", 1, [_line(1)], closed=False, mtime=now - 30)
+    files = [item for producer in scan_spool(tmp_path, sweep=False).producers.values() for item in producer.files]
+    # Over the read limit the oldest data file sets the cutoff, as if none were old.
+    assert sweep_blobs(tmp_path, data_files=files, now=now, max_read_bytes=10) == (0, 0)
+    # A reference split across read chunks is still found.
+    monkeypatch.setattr(spool_reader, "READ_CHUNK_BYTES", 7)
+    scan_spool(tmp_path)
+    assert referenced.exists() and fresh.exists() and not unreferenced.exists()
+    assert sorted(os.listdir(blobs)) == sorted([spool_reader.SWEEP_MARKER, "a" * 64, "c" * 64])
+
+
+def test_remove_if_unchanged_puts_back_a_file_written_since_its_signature(tmp_path):
+    path = _write(tmp_path, 1, [_line(1)], closed=False)
+    signature = stat_signature(path)
+    with open(path, "ab") as handle:
+        handle.write(_line(2))
+    assert remove_if_unchanged(path, signature) is False
+    assert path.read_bytes() == _line(1) + _line(2)
+    signature = stat_signature(path)
+    os.utime(path, (signature[1] - 10, signature[1] - 10))  # same size, another mtime
+    assert remove_if_unchanged(path, signature) is False and path.exists()
+    assert remove_if_unchanged(path, stat_signature(path)) is True
+    assert os.listdir(tmp_path) == []
+    assert remove_if_unchanged(path, signature) is False

@@ -2,9 +2,12 @@
 import base64
 import hashlib
 
+import pytest
+
 from bus import bus
-from trajectory.store.models import (SessionTrajectory, TrajectoryGcQueue, TrajectoryMetaSession, TrajectoryMetaUser,
-    TrajectoryPayload)
+from trajectory import spool
+from trajectory.store.models import (SessionTrajectory, TrajectoryEvent, TrajectoryGcQueue, TrajectoryMetaSession,
+    TrajectoryMetaUser, TrajectoryPayload)
 from tests.unit.test_worker_ingest import (AT, SpoolWriter, event, events_of, harness, rows, settings,  # noqa: F401
     trace_db)
 
@@ -193,6 +196,35 @@ async def test_gap_controls_append_gap_events_per_run(harness):
                             "producer_id": producer, "request_ids": ["req_a", "req_b"]}
     assert result["gaps"] == 11 and harness.metrics.counters["gaps_recorded"] == 11
     assert [row.type for row in (await events_of("ses_2"))[1]] == ["trajectory.started", "input.accepted"]
+
+
+@pytest.mark.parametrize("truncated", [True, False, None])
+async def test_capped_gap_control_preserves_uncertain_coverage_after_worker_restart(harness, truncated):
+    count = spool.GAP_MAX_SESSIONS + 5
+    harness.writer.events(*(event(session=f"ses_{index}", user=f"u{index}") for index in range(count)))
+    other = SpoolWriter(harness.settings.spool_dir, producer_id="20260914080000-other-1-bbbbbbbb")
+    other.events(event(session="ses_other", user="other"))
+    await harness.run()
+    await harness.service.flush_state()
+    harness.service = harness._service()
+    control = {"type": "gap", "reason": "queue_overflow", "dropped_events": count, "dropped_bytes": 10000,
+               "first_dropped_at": AT, "last_dropped_at": AT,
+               "sessions": [{"user_id": f"u{index}", "session_id": f"ses_{index}", "run_ids": [],
+                             "request_ids": []} for index in range(spool.GAP_MAX_SESSIONS)]}
+    if truncated is not None:
+        control["sessions_truncated"] = truncated
+    harness.writer.controls(control)
+    await harness.run()
+    gaps = [row for row in await rows(TrajectoryEvent) if row.type == "recording.gap"]
+    expected = spool.GAP_MAX_SESSIONS if truncated is False else count
+    assert {row.session_id for row in gaps} == {f"ses_{index}" for index in range(expected)}
+    assert len(gaps) == expected
+    for gap in gaps:
+        index = int(gap.session_id.removeprefix("ses_"))
+        if index >= spool.GAP_MAX_SESSIONS:
+            assert gap.context == {}
+            assert gap.data["sessions_truncated"] is True and gap.data["session_scope"] == "producer"
+            assert "dropped_events" not in gap.data
 
 
 async def test_recording_state_pauses_and_resumes(harness):

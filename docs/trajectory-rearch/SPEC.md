@@ -138,7 +138,7 @@ Shape equals today's `trajectory.types.prepare()` output:
 
 | type | fields | producer | worker action |
 |---|---|---|---|
-| `gap` | `reason` (`queue_overflow`,`spool_full`,`disk_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`; the worker's reader adds `spool_blob_missing`,`spool_blob_corrupt`, §3.5), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
+| `gap` | `reason` (`queue_overflow`,`spool_full`,`disk_full`,`serialization_failed`,`invalid_event`,`event_too_large`,`writer_error`,`budget`; the worker's reader adds `spool_blob_missing`,`spool_blob_corrupt`, §3.5), `dropped_events`, `dropped_bytes`, `first_dropped_at`, `last_dropped_at`, `sessions_truncated` (boolean), `sessions`: `[{user_id, session_id, run_ids:[..≤20], request_ids:[..≤50]}]` (≤200 sessions) | emitter writer | append `recording.gap` events (§8.6) |
 | `producer.goodbye` | `last_n` | emitter on graceful close | mark producer closed |
 | `session.meta` | `session`: `{id,user_id,workspace_id,project_id,parent_id,kind,title,status,model,agent,is_deleted,deleted_at,created_at,updated_at}` | meta sync | upsert `trajectory_meta_sessions` |
 | `user.meta` | `user`: `{id,username,email,role,is_active,is_deleted,updated_at}` | meta sync | upsert `trajectory_meta_users` |
@@ -559,6 +559,7 @@ Order per event:
 
 ### 8.6 Gaps
 - `gap` control → for each listed session with an existing trajectory: one `recording.gap` event per run_id (≤ 10) with `run_id` set, plus one without run_id: data `{"phase":"dropped","reason","dropped_events","dropped_bytes","producer_id","request_ids"}`.
+- If `sessions_truncated` is true, the identity list cannot establish which other sessions lost events. Mark the other live sessions seen from that producer within the last 10 minutes, including the current batch, with a session-level `recording.gap` carrying `sessions_truncated:true` and `session_scope:"producer"`. These conservative coverage markers have no per-session dropped count or run attribution. Reuse the persisted producer history used for crash recovery. A legacy control with a full 200-session list and no truncation flag receives the same treatment; an explicit false keeps the list authoritative. Producer memory and control size remain bounded by the existing identity caps.
 - Producer loss (missing `n`, torn tail, quarantined file, producer confirmed crashed, §8.2) → for sessions seen from that producer within the last 10 minutes (in-memory map, persisted in `trajectory_worker_state` every minute): `recording.gap {"phase":"lost","reason":"producer_lines_lost"|"producer_crashed","producer_id","from_n","to_n"}` with the last known run_id of each session.
 - Gap events use deterministic ids `gap:{producer_id}:{n_or_range}:{session_id}[:{run_id}]` for idempotency.
 

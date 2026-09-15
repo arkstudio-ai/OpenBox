@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from trajectory import spool
 from trajectory.context import TraceContext, bind
-from trajectory.emitter import (Emitter, _json_default, emit, emit_control, emit_stream, get_emitter,
+from trajectory.emitter import (Emitter, _DropWindow, _json_default, emit, emit_control, emit_stream, get_emitter,
                                 reset_emitter_for_tests)
 from trajectory.types import TrajectoryError, prepare, prepare_fast
 
@@ -411,11 +411,27 @@ def test_queue_overflow_is_reported_by_one_gap_with_capped_identities(make_emitt
     assert seconds(gap["first_dropped_at"]) <= seconds(gap["last_dropped_at"])
     sessions = gap["sessions"]
     assert len(sessions) == spool.GAP_MAX_SESSIONS
+    assert gap["sessions_truncated"] is True
     assert sessions[0] == {"user_id": "user", "session_id": "warm", "run_ids": ["r"], "request_ids": ["q"]}
     assert sessions[1] == {"user_id": "user", "session_id": "busy", "run_ids": [f"run{i}" for i in range(20)],
                            "request_ids": [f"req{i}" for i in range(50)]}
     assert [session["session_id"] for session in sessions[2:]] == [f"s{i}" for i in range(198)]
     assert sessions[2]["run_ids"] == [] and sessions[2]["request_ids"] == []
+
+
+@pytest.mark.parametrize("overlapping", [False, True])
+def test_restoring_gap_windows_keeps_session_overflow_visible(overlapping):
+    first, later = _DropWindow(1.0), _DropWindow(2.0)
+    for index in range(spool.GAP_MAX_SESSIONS):
+        first.add(10, 1.0, "user", f"s{index}", None, None)
+    assert first.control("queue_overflow")["sessions_truncated"] is False
+    for index in range(spool.GAP_MAX_SESSIONS + 1):
+        later.add(10, 2.0, "user", f"s{index}" if overlapping else f"other{index}", None, None)
+    first.merge(later)
+    control = first.control("queue_overflow")
+    assert len(control["sessions"]) == spool.GAP_MAX_SESSIONS
+    assert control["sessions_truncated"] is True
+    assert control["dropped_events"] == spool.GAP_MAX_SESSIONS * 2 + 1
 
 
 def test_gap_lines_are_rate_limited_and_totals_stay_exact(make_emitter):

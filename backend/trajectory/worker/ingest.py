@@ -1837,6 +1837,17 @@ class _Transaction:
         self.states[row.session_id] = TrajectoryState.from_row(row)
         return self.states[row.session_id]
 
+    def _recent_session_runs(self) -> dict[tuple[str, str], str | None]:
+        sessions: dict[tuple[str, str], str | None] = {}
+        recent = self.service._recent
+        if recent is not None:
+            for user_id, session_id, run_id in recent.sessions(self.producer_id, time.time()):
+                sessions[(user_id, session_id)] = run_id
+        for user_id, session_id, run_id, _ in self.notes:
+            previous = sessions.get((user_id, session_id))
+            sessions[(user_id, session_id)] = run_id if isinstance(run_id, str) else previous
+        return sessions
+
     async def _gap(self, db, item: Item) -> None:
         control = item.control
         sessions = control.get("sessions")
@@ -1846,6 +1857,7 @@ class _Transaction:
         base = {"phase": "dropped", "reason": control.get("reason") if isinstance(control.get("reason"), str) else None,
                 "dropped_events": _count(control.get("dropped_events")),
                 "dropped_bytes": _count(control.get("dropped_bytes")), "producer_id": self.producer_id}
+        marked = set()
         for entry in sessions[:spool.GAP_MAX_SESSIONS]:
             if not isinstance(entry, dict) or not _identifier(entry.get("session_id"), SESSION_ID_CHARS):
                 continue
@@ -1853,6 +1865,7 @@ class _Transaction:
             state = await self.state(db, session_id)
             if state is None or not state.live or state.user_id != entry.get("user_id"):
                 continue
+            marked.add((state.user_id, session_id))
             request_ids = [value for value in entry.get("request_ids") or [] if _identifier(value, REQUEST_ID_CHARS)]
             data = {**base, "request_ids": request_ids[:GAP_REQUEST_IDS]}
             run_ids = [value for value in entry.get("run_ids") or [] if _identifier(value, REQUEST_ID_CHARS)]
@@ -1864,17 +1877,28 @@ class _Transaction:
             await self.append_worker_event(state, event_id=gap_event_id(self.producer_id, str(item.n), session_id),
                                            event_type="recording.gap", data=data, occurred_at=occurred, gap=True)
 
+        truncated = control.get("sessions_truncated") is True or (
+            "sessions_truncated" not in control and len(sessions) >= spool.GAP_MAX_SESSIONS)
+        if truncated:
+            # The bounded producer list no longer identifies every affected session. Use the same
+            # ten-minute producer history as crash recovery, including this batch, to mark uncertain
+            # coverage. Do not attribute these losses to a particular run or claim a per-session count.
+            # A full list from an older producer is also uncertain; new producers explicitly send false.
+            data = {"phase": "dropped", "reason": base["reason"], "producer_id": self.producer_id,
+                    "request_ids": [], "sessions_truncated": True, "session_scope": "producer"}
+            for (user_id, session_id), _ in sorted(self._recent_session_runs().items()):
+                if (user_id, session_id) in marked:
+                    continue
+                state = await self.state(db, session_id)
+                if state is None or not state.live or state.user_id != user_id:
+                    continue
+                await self.append_worker_event(state, event_id=gap_event_id(self.producer_id, str(item.n), session_id),
+                                               event_type="recording.gap", data=data, occurred_at=occurred, gap=True)
+
     async def report_loss(self, db, first: int, last: int | None, *, reason: str, occurred_at: datetime) -> None:
         """``recording.gap {phase: lost}`` for the sessions this producer served in the last 10 minutes."""
         self.counters["producer_losses"] += 1
-        sessions: dict[tuple[str, str], str | None] = {}
-        recent = self.service._recent
-        if recent is not None:
-            for user_id, session_id, run_id in recent.sessions(self.producer_id, time.time()):
-                sessions[(user_id, session_id)] = run_id
-        for user_id, session_id, run_id, _ in self.notes:
-            previous = sessions.get((user_id, session_id))
-            sessions[(user_id, session_id)] = run_id if isinstance(run_id, str) else previous
+        sessions = self._recent_session_runs()
         log.warning("Spool producer lost lines producer_id=%s from_n=%s to_n=%s reason=%s", self.producer_id, first,
                     last, reason)
         for (user_id, session_id), run_id in sorted(sessions.items(), key=lambda entry: entry[0]):

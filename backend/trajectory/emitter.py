@@ -88,7 +88,7 @@ def _listable(value) -> bool:
 
 class _DropWindow:
     """Drops of one reason since the last gap line written for that reason."""
-    __slots__ = ("events", "bytes", "first", "last", "sessions")
+    __slots__ = ("events", "bytes", "first", "last", "sessions", "sessions_truncated")
 
     def __init__(self, at: float):
         self.events = 0
@@ -96,6 +96,7 @@ class _DropWindow:
         self.first = at
         self.last = at
         self.sessions: dict[tuple, tuple[dict, dict]] = {}
+        self.sessions_truncated = False
 
     def add(self, size: int, at: float, user_id, session_id, run_id, request_id) -> None:
         self.events += 1
@@ -113,6 +114,7 @@ class _DropWindow:
         entry = self.sessions.get((user_id, session_id))
         if entry is None:
             if len(self.sessions) >= spool.GAP_MAX_SESSIONS:
+                self.sessions_truncated = True
                 return
             entry = self.sessions[(user_id, session_id)] = ({}, {})
         runs, requests = entry
@@ -128,6 +130,7 @@ class _DropWindow:
         self.bytes += newer.bytes
         self.first = min(self.first, newer.first)
         self.last = max(self.last, newer.last)
+        self.sessions_truncated |= newer.sessions_truncated
         for (user_id, session_id), (runs, requests) in newer.sessions.items():
             self._note(user_id, session_id, runs, requests)
 
@@ -135,6 +138,7 @@ class _DropWindow:
         return {"type": "gap", "reason": reason, "dropped_events": self.events,
                 "dropped_bytes": self.bytes, "first_dropped_at": spool.timestamp(self.first),
                 "last_dropped_at": spool.timestamp(self.last),
+                "sessions_truncated": self.sessions_truncated,
                 "sessions": [{"user_id": user_id, "session_id": session_id,
                               "run_ids": list(runs), "request_ids": list(requests)}
                              for (user_id, session_id), (runs, requests) in self.sessions.items()]}

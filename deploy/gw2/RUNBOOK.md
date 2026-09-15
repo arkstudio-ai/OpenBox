@@ -532,7 +532,9 @@ Record the output of each drill in the release log.
   Find it: `SELECT pid, application_name, backend_start FROM pg_stat_activity WHERE datname = 'openbox_trace'` and
   `SELECT pid FROM pg_locks WHERE locktype = 'advisory'`; stop the extra container.
 - **Spool keeps growing**: worker stopped or lagging (`ingest_lag_seconds`), disk full, or quarantined files blocking a
-  producer. Business requests are not affected; at the budget the backend records gaps.
+  producer. Business requests are not affected; at the budget the backend records gaps (`spool_full`), and while the
+  spool's file system has less than `TRAJECTORY_SPOOL_MIN_FREE_BYTES` (1 GiB) free it drops events as `disk_full`
+  gaps even below the budget.
 - **Files in `quarantine/`**: read the `.reason` sidecar and the worker log. The files may contain unredacted content;
   keep them only as long as the analysis needs, then delete them.
 - **Admin trajectory pages fail (502/404)**: `docker compose exec frontend env | grep TRAJECTORY_HOST`, worker health,
